@@ -5,6 +5,10 @@ pub trait Init<T> {
 #[macro_export]
 macro_rules! singleton {
     ($t:tt) => {
+        use std::ops::DerefMut;
+        use std::sync::Mutex;
+        use lazy_static::lazy_static;
+
         lazy_static! {
             pub static ref INSTANCE: Mutex<$t> = Mutex::new($t::default());
         }

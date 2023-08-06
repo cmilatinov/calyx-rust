@@ -1,8 +1,5 @@
-use std::ops::DerefMut;
 use std::collections::HashMap;
 use std::time::{Instant, SystemTime};
-use lazy_static::lazy_static;
-use std::sync::Mutex;
 use crate::utils::{Init, singleton, get_singleton_instance};
 
 pub type TimeType = f64;

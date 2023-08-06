@@ -8,8 +8,10 @@ default = []
 syntax_highlighting = ["syntect"]
 
 [dependencies]
+assets_manager = "0.10.2"
 engine = { path = "../engine" }
 enum-map = "2.6.1"
+serde = "1.0.182"
 syntect = { version = "5", optional = true, default-features = false, features = [
     "default-fancy",
 ] }
