@@ -1,5 +1,5 @@
 pub trait Init<T> {
-    fn initialize(instance: &mut T) {}
+    fn initialize(_instance: &mut T) {}
 }
 
 #[macro_export]
@@ -11,7 +11,8 @@ macro_rules! singleton {
 
         impl $t {
             pub fn init() {
-                let mut binding = INSTANCE.lock().unwrap();
+                let mut binding = INSTANCE.lock()
+                    .expect("Failed to lock singleton instance of $t");
                 let instance = binding.deref_mut();
                 $t::initialize(instance);
             }
@@ -22,7 +23,8 @@ macro_rules! singleton {
 #[macro_export]
 macro_rules! get_singleton_instance {
     () => {
-        INSTANCE.lock().unwrap()
+        INSTANCE.lock()
+            .expect("Failed to lock singleton instance")
     }
 }
 

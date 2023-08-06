@@ -1,3 +1,4 @@
+use engine::*;
 use egui::Ui;
 use std::fs;
 use std::path::Path;
@@ -50,6 +51,6 @@ impl Panel for PanelContentBrowser {
                 });
             });
 
-        egui::CentralPanel::default().show_inside(ui, |ui| {});
+        egui::CentralPanel::default().show_inside(ui, |_ui| {});
     }
 }

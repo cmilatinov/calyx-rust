@@ -8,8 +8,10 @@ eframe = "0.22.0"
 egui = "0.22.0"
 egui-wgpu = "0.22.0"
 egui_dock = "0.6.3"
+enum-map = "2.6.1"
 lazy_static = "1.4.0"
 log = "0.4.19"
+serde = "1.0.182"
 
 [features]
 default = ["eframe/wgpu"]

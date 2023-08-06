@@ -1,4 +1,5 @@
-use egui::{Id, ScrollArea, Ui};
+use engine::egui;
+use egui::{ScrollArea, Ui};
 use crate::panel::Panel;
 
 pub struct PanelTerminal {

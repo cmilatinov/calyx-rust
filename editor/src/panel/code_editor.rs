@@ -1,3 +1,4 @@
+use engine::*;
 use egui::{Align, Ui, Widget};
 use crate::panel::Panel;
 

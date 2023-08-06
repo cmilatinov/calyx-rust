@@ -2,33 +2,12 @@ mod panel;
 pub mod syntax_highlighting;
 
 use engine::*;
-use engine::eframe::{egui, NativeOptions};
-use engine::egui_dock::{DockArea, NodeIndex, Style, Tree};
+use eframe::{egui};
+use egui_dock::{DockArea, NodeIndex, Style, Tree};
 use engine::core::time::Time;
-use engine::egui_wgpu::WgpuConfiguration;
 use self::panel::*;
 
-pub struct Editor;
-impl Editor {
-    pub fn run(&self) -> eframe::Result<()> {
-        let options = NativeOptions {
-            decorated: true,
-            transparent: true,
-            min_window_size: Some(egui::vec2(1280.0, 720.0)),
-            initial_window_size: Some(egui::vec2(1280.0, 720.0)),
-            renderer: eframe::Renderer::Wgpu,
-            wgpu_options: WgpuConfiguration::default(),
-            ..Default::default()
-        };
-        eframe::run_native(
-            "Calyx",
-            options,
-            Box::new(|cc| Box::<EditorApp>::new(EditorApp::new(cc))),
-        )
-    }
-}
-
-struct EditorApp {
+pub struct EditorApp {
     fps: i32,
     tree: Tree<String>,
     panel_manager: PanelManager
@@ -52,35 +31,22 @@ impl EditorApp {
             PanelSceneHierarchy::name().to_owned(),
         ]);
 
-        let [_, b] = tree.split_right(NodeIndex::root(), 0.2, vec![PanelViewport::name().to_owned()]);
-        let [_, c] = tree.split_right(b, 0.8, vec![PanelInspector::name().to_owned()]);
-        let [_, _] = tree.split_below(c, 0.7, vec![PanelContentBrowser::name().to_owned()]);
-
-        Self {
-            fps: 0,
-            tree
-        }
-    }
-}
-
-impl Default for EditorApp {
-    fn default() -> Self {
-        let mut tree = Tree::new(vec![
-            PanelSceneHierarchy::name().to_owned(),
+        let [_, b] = tree.split_right(NodeIndex::root(), 0.2, vec![
+            PanelViewport::name().to_owned(),
+            PanelCodeEditor::name().to_owned()
         ]);
-
-        let [_, b] = tree.split_right(NodeIndex::root(), 0.2, vec![PanelViewport::name().to_owned()]);
-        let [_, c] = tree.split_right(b, 0.8, vec![PanelInspector::name().to_owned()]);
+        let [c, _] = tree.split_right(b, 0.8, vec![PanelInspector::name().to_owned()]);
         let [_, _] = tree.split_below(c, 0.7, vec![PanelContentBrowser::name().to_owned()]);
 
         Self {
             fps: 0,
-            tree
+            tree,
+            panel_manager: PanelManager::default()
         }
     }
 }
 
-impl eframe::App for Editor {
+impl eframe::App for EditorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         Time::update_time();
         DockArea::new(&mut self.tree)

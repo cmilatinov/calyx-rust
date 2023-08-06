@@ -1,3 +1,4 @@
+use engine::*;
 use egui::text::LayoutJob;
 
 /// View some code with syntax highlighting and selection.

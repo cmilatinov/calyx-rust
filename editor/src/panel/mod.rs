@@ -12,7 +12,8 @@ pub use self::inspector::*;
 pub use self::scene_hierarchy::*;
 pub use self::terminal::*;
 pub use self::viewport::*;
-use engine::egui::{Ui, WidgetText};
+use engine::*;
+use egui::{Ui, WidgetText};
 
 pub trait Panel {
     fn name() -> &'static str where Self: Sized;

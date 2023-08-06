@@ -68,9 +68,4 @@ impl Default for Time {
     }
 }
 
-impl Init<Time> for Time {
-    fn initialize(instance: &mut Time) {
-        println!("INIT");
-        println!("{}", instance.timers.len());
-    }
-}
+impl Init<Time> for Time {}

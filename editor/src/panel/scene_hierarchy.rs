@@ -1,4 +1,5 @@
-use engine::egui::Ui;
+use engine::*;
+use egui::Ui;
 use crate::panel::Panel;
 
 pub struct PanelSceneHierarchy;

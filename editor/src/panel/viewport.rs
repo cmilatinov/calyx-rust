@@ -1,5 +1,5 @@
-use engine::egui::Ui;
-use engine::egui_wgpu;
+use engine::*;
+use egui::Ui;
 use crate::panel::Panel;
 
 pub struct PanelViewport;
