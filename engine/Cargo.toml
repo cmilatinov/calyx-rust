@@ -4,3 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+gl = "0.14.0"
+gl_loader = "0.1.2"
+glfw = "0.52.0"
