@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-gl = "0.14.0"
-gl_loader = "0.1.2"
-glfw = "0.52.0"
+eframe = "0.22.0"
+egui = "0.22.0"
+egui-wgpu = "0.22.0"
+egui_dock = "0.6.3"
+lazy_static = "1.4.0"
+log = "0.4.19"
+
+[features]
+default = ["eframe/wgpu"]

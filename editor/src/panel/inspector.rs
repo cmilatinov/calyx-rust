@@ -1,4 +1,4 @@
-use egui::Ui;
+use engine::egui::Ui;
 use crate::panel::Panel;
 
 pub struct PanelInspector;
@@ -9,7 +9,7 @@ impl Panel for PanelInspector {
     }
 
     fn ui(&mut self, ui: &mut Ui) {
-        use egui::special_emojis::{OS_APPLE, OS_LINUX, OS_WINDOWS};
+        use engine::egui::special_emojis::{OS_APPLE, OS_LINUX, OS_WINDOWS};
 
         ui.heading("egui");
         ui.label(format!(

@@ -1,3 +1,7 @@
-pub extern crate glfw;
-pub extern crate gl;
-pub extern crate gl_loader;
+pub extern crate eframe;
+pub extern crate egui;
+pub extern crate egui_wgpu;
+pub extern crate egui_dock;
+
+pub mod core;
+pub mod utils;

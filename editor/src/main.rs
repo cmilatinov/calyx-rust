@@ -1,5 +1,6 @@
 use eframe::NativeOptions;
 use editor::*;
+use engine::*;
 
 fn main() -> eframe::Result<()> {
     let options = NativeOptions {

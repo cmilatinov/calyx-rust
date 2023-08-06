@@ -3,6 +3,7 @@ mod content_browser;
 mod inspector;
 mod scene_hierarchy;
 mod terminal;
+mod viewport;
 
 use std::collections::HashMap;
 pub use self::code_editor::*;
@@ -10,7 +11,8 @@ pub use self::content_browser::*;
 pub use self::inspector::*;
 pub use self::scene_hierarchy::*;
 pub use self::terminal::*;
-use egui::{Ui, WidgetText};
+pub use self::viewport::*;
+use engine::egui::{Ui, WidgetText};
 
 pub trait Panel {
     fn name() -> &'static str where Self: Sized;
@@ -29,14 +31,14 @@ impl Default for PanelManager {
         panels.insert(PanelInspector::name().to_string(), Box::new(PanelInspector));
         panels.insert(PanelSceneHierarchy::name().to_string(), Box::new(PanelSceneHierarchy::default()));
         panels.insert(PanelTerminal::name().to_string(), Box::new(PanelTerminal::default()));
-
+        panels.insert(PanelViewport::name().to_string(), Box::new(PanelViewport));
         PanelManager {
             panels
         }
     }
 }
 
-impl egui_dock::TabViewer for PanelManager {
+impl engine::egui_dock::TabViewer for PanelManager {
     type Tab = String;
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
