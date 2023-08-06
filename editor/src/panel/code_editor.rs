@@ -13,10 +13,10 @@ impl Default for PanelCodeEditor {
         Self {
             language: "rs".into(),
             code: "// A very simple example\n\
-fn main() {\n\
-\tprintln!(\"Hello world!\");\n\
-}\n\
-"
+                fn main() {\n\
+                \tprintln!(\"Hello world!\");\n\
+                }\n\
+                "
                 .into(),
         }
     }
@@ -28,6 +28,21 @@ impl Panel for PanelCodeEditor {
     }
 
     fn ui(&mut self, ui: &mut Ui) {
+        // use FontFamily::{Monospace, Proportional};
+        //
+        //     let mut style = (*ctx.style()).clone();
+        //     style.text_styles = [
+        //         (TextStyle::Heading, FontId::new(25.0, Proportional)),
+        //         (heading2(), FontId::new(22.0, Proportional)),
+        //         (heading3(), FontId::new(19.0, Proportional)),
+        //         (TextStyle::Body, FontId::new(16.0, Proportional)),
+        //         (TextStyle::Monospace, FontId::new(12.0, Monospace)),
+        //         (TextStyle::Button, FontId::new(12.0, Proportional)),
+        //         (TextStyle::Small, FontId::new(8.0, Proportional)),
+        //     ]
+        //     .into();
+        //     ctx.set_style(style);
+
         let Self { language, code } = self;
 
         let theme = crate::syntax_highlighting::CodeTheme::from_memory(ui.ctx());

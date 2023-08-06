@@ -1,11 +1,9 @@
 use egui::Ui;
 use std::fs;
 use std::path::Path;
-use std::env;
 use crate::panel::Panel;
 
 pub struct PanelContentBrowser;
-
 impl PanelContentBrowser {
     fn render_directory(&self, ui: &mut egui::Ui, path: &Path) {
         // Attempt to read the directory
@@ -45,11 +43,10 @@ impl Panel for PanelContentBrowser {
     fn ui(&mut self, ui: &mut Ui) {
         egui::SidePanel::left("file_tree")
             .resizable(true)
-            .default_width(350.0)
+            .default_width(550.0)
             .show_inside(ui, |ui| {
-                let path = Path::new("/run/media/rubens/ssd/projects/calyx-rust/");
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    self.render_directory(ui, path);
+                    self.render_directory(ui, Path::new("/run/media/rubens/ssd/projects/calyx-rust/"));
                 });
             });
 
