@@ -1,8 +1,10 @@
+mod code_editor;
 mod content_browser;
 mod inspector;
 mod scene_hierarchy;
 
 use std::collections::HashMap;
+pub use self::code_editor::*;
 pub use self::content_browser::*;
 pub use self::inspector::*;
 pub use self::scene_hierarchy::*;
@@ -23,6 +25,7 @@ impl Default for PanelManager {
         panels.insert(PanelContentBrowser::name().to_string(), Box::new(PanelContentBrowser));
         panels.insert(PanelInspector::name().to_string(), Box::new(PanelInspector));
         panels.insert(PanelSceneHierarchy::name().to_string(), Box::new(PanelSceneHierarchy::default()));
+        panels.insert(PanelCodeEditor::name().to_string(), Box::new(PanelCodeEditor::default()));
 
         PanelManager {
             panels

@@ -1,30 +1,58 @@
 use egui::Ui;
+use std::fs;
+use std::path::Path;
+use std::env;
 use crate::panel::Panel;
 
 pub struct PanelContentBrowser;
+
+impl PanelContentBrowser {
+    fn render_directory(&self, ui: &mut egui::Ui, path: &Path) {
+        // Attempt to read the directory
+        match fs::read_dir(path) {
+            Ok(entries) => {
+                for entry in entries {
+                    if let Ok(entry) = entry {
+                        let curr_path = entry.path();
+                        // If the entry is a directory, create a collapsing header
+                        if entry.file_type().unwrap().is_dir() {
+                            let dir_name = curr_path.file_name().unwrap().to_str().unwrap();
+
+                            // Use collapsing header for directories
+                            ui.collapsing(dir_name, |ui| {
+                                self.render_directory(ui, &entry.path());
+                            });
+                        } else {
+                            // Simply list the file if it's not a directory
+                            let file_name = curr_path.file_name().unwrap().to_str().unwrap();
+                            ui.label(file_name);
+                        }
+                    }
+                }
+            },
+            Err(e) => {
+                ui.label(format!("Failed to read directory: {}", e));
+            }
+        }
+    }
+}
+
 impl Panel for PanelContentBrowser {
     fn name() -> &'static str {
         "Content Browser"
     }
 
     fn ui(&mut self, ui: &mut Ui) {
-        use egui::special_emojis::{OS_APPLE, OS_LINUX, OS_WINDOWS};
+        egui::SidePanel::left("file_tree")
+            .resizable(true)
+            .default_width(350.0)
+            .show_inside(ui, |ui| {
+                let path = Path::new("/run/media/rubens/ssd/projects/calyx-rust/");
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    self.render_directory(ui, path);
+                });
+            });
 
-        ui.heading("egui");
-        ui.label(format!(
-            "egui is an immediate mode GUI library written in Rust. egui runs both on the web and natively on {}{}{}. \
-            On the web it is compiled to WebAssembly and rendered with WebGL.{}",
-            OS_APPLE, OS_LINUX, OS_WINDOWS,
-            if cfg!(target_arch = "wasm32") {
-                " Everything you see is rendered as textured triangles. There is no DOM, HTML, JS or CSS. Just Rust."
-            } else {""}
-        ));
-        ui.label("egui is designed to be easy to use, portable, and fast.");
-
-        ui.add_space(12.0);
-        ui.heading("Immediate mode");
-
-        ui.add_space(12.0);
-        ui.heading("Links");
+        egui::CentralPanel::default().show_inside(ui, |ui| {});
     }
 }
