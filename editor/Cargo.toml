@@ -4,4 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+eframe = "0.22.0"
+egui = "0.22.0"
+egui_dock = "0.6.3"
 engine = { path = "../engine" }
