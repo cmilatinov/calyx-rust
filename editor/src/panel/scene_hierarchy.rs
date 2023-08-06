@@ -1,7 +1,15 @@
 use egui::Ui;
 use crate::panel::Panel;
 
-pub struct PanelSceneHierarchy;
+pub struct PanelSceneHierarchy {
+
+}
+
+impl Default for PanelSceneHierarchy {
+    fn default() -> Self {
+        PanelSceneHierarchy {}
+    }
+}
 
 impl Panel for PanelSceneHierarchy {
     fn name() -> &'static str {

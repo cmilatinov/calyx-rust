@@ -705,6 +705,7 @@ dependencies = [
  "eframe",
  "egui",
  "egui_dock",
+ "egui_glow",
  "engine",
 ]
 
