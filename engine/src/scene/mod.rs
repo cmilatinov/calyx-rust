@@ -2,6 +2,7 @@ use specs::{Builder, Component, Entity, VecStorage, World, WorldExt};
 use specs::world::Index;
 use crate::math::transform::Transform;
 use indextree::{Arena, NodeId};
+use crate::core::error::EngineError;
 
 struct Scene {
     world: World,
@@ -19,24 +20,47 @@ impl Default for Scene {
     }
 }
 
-pub enum SceneError {
-    InvalidNodeId
-}
-
 impl Scene {
     pub fn update(&mut self) {
         self.world.maintain();
     }
 
-    pub fn bind_component_default<T: Component<Storage=VecStorage<T>> + Sync + Send + Default>(&mut self, node_id: NodeId) -> Result<(), SceneError>{
-        let entity = self.get_entity(node_id).ok_or(SceneError::InvalidNodeId)?;
-        self.world.write_storage().insert(entity, T::default()).expect("TODO: implement trait `From<specs::error::Error>` is not implemented for `SceneError`");
+    /// Binds a component of type `T` to an entity in the ECS, given by its `NodeId`.
+    ///
+    /// The function will create a default instance of the component `T` and associate it with the entity.
+    /// The component `T` must implement the `Component` trait with `VecStorage`, as well as `Sync`, `Send`, and `Default` traits.
+    ///
+    /// # Arguments
+    ///
+    /// * `node_id` - The `NodeId` of the entity to which the component should be bound.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` if the component was successfully bound to the entity.
+    /// * `Err(EngineError)` if the entity could not be found for the given `NodeId`,
+    ///   or if an error occurred while writing the component to storage in the ECS world.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// // Assuming `scene` is an instance of `Scene`.
+    /// let node_id = /* the NodeId of the entity */;
+    /// scene.bind_component_default::<MyComponent>(node_id);
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// This function will return `Err(EngineError)` if the `NodeId` is invalid
+    /// or if there's an error when inserting the component into the `world` storage.
+    pub fn bind_component_default<T: Component<Storage=VecStorage<T>> + Sync + Send + Default>(&mut self, node_id: NodeId) -> Result<(), EngineError>{
+        let entity = self.get_entity(node_id).ok_or(EngineError::new("Invalid NodeId"))?;
+        self.world.write_storage().insert(entity, T::default())?;
         Ok(())
     }
 
-    pub fn bind_component<T: Component<Storage=VecStorage<T>> + Sync + Send>(&mut self, node_id: NodeId, component: T) -> Result<(), SceneError>{
-        let entity = self.get_entity(node_id).ok_or(SceneError::InvalidNodeId)?;
-        self.world.write_storage().insert(entity, component).expect("TODO: implement trait `From<specs::error::Error>` is not implemented for `SceneError`");
+    pub fn bind_component<T: Component<Storage=VecStorage<T>> + Sync + Send>(&mut self, node_id: NodeId, component: T) -> Result<(), EngineError>{
+        let entity = self.get_entity(node_id).ok_or(EngineError::new("Invalid NodeId"))?;
+        self.world.write_storage().insert(entity, component)?;
         Ok(())
     }
 
