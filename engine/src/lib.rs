@@ -7,3 +7,4 @@ pub extern crate serde;
 pub mod core;
 pub mod utils;
 pub mod assets;
+pub mod render;

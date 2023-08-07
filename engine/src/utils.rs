@@ -6,7 +6,7 @@ pub trait Init<T> {
 macro_rules! singleton {
     ($t:tt) => {
         use std::ops::DerefMut;
-        use std::sync::Mutex;
+        use std::sync::{Mutex, MutexGuard};
         use lazy_static::lazy_static;
 
         lazy_static! {
@@ -14,6 +14,11 @@ macro_rules! singleton {
         }
 
         impl $t {
+            pub fn get() -> MutexGuard<'static, $t> {
+                INSTANCE.lock()
+                    .expect("Failed to lock singleton instance of $t")
+            }
+
             pub fn init() {
                 let mut binding = INSTANCE.lock()
                     .expect("Failed to lock singleton instance of $t");
@@ -24,13 +29,4 @@ macro_rules! singleton {
     }
 }
 
-#[macro_export]
-macro_rules! get_singleton_instance {
-    () => {
-        INSTANCE.lock()
-            .expect("Failed to lock singleton instance")
-    }
-}
-
 pub use singleton;
-pub use get_singleton_instance;

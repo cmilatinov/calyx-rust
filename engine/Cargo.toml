@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 assets_manager = "0.10.2"
+bytemuck = "1.13.1"
 eframe = "0.22.0"
 egui = "0.22.0"
 egui-wgpu = "0.22.0"

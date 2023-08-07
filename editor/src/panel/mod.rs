@@ -32,7 +32,7 @@ impl Default for PanelManager {
         panels.insert(PanelInspector::name().to_string(), Box::new(PanelInspector));
         panels.insert(PanelSceneHierarchy::name().to_string(), Box::new(PanelSceneHierarchy::default()));
         panels.insert(PanelTerminal::name().to_string(), Box::new(PanelTerminal::default()));
-        panels.insert(PanelViewport::name().to_string(), Box::new(PanelViewport));
+        panels.insert(PanelViewport::name().to_string(), Box::new(PanelViewport::default()));
         PanelManager {
             panels
         }

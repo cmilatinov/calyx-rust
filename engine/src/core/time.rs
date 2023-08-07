@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::time::{Instant, SystemTime};
-use crate::utils::{Init, singleton, get_singleton_instance};
+use crate::utils::{Init, singleton};
 
 pub type TimeType = f64;
 
@@ -18,7 +18,7 @@ singleton!(Time);
 macro_rules! time_member_getter {
     ($member:ident) => {
         pub fn $member() -> TimeType {
-            let instance = INSTANCE.lock().unwrap();
+            let instance = Self::get();
             instance.$member
         }
     }
@@ -26,7 +26,7 @@ macro_rules! time_member_getter {
 
 impl Time {
     pub fn update_time() {
-        let mut instance = get_singleton_instance!();
+        let mut instance = Self::get();
         let now = SystemTime::now();
         instance.static_delta_time = now.elapsed().unwrap().as_secs_f64();
         instance.static_time += instance.static_delta_time;
@@ -35,13 +35,13 @@ impl Time {
     }
 
     pub fn timer(name: &'static str) -> TimeType {
-        let mut instance = get_singleton_instance!();
+        let mut instance = Self::get();
         let instant = instance.timers.entry(name).or_insert(Instant::now());
         instant.elapsed().as_secs_f64()
     }
 
     pub fn reset_timer(name: &'static str) {
-        let mut instance = get_singleton_instance!();
+        let mut instance = Self::get();
         instance.timers.insert(name, Instant::now());
     }
 

@@ -839,6 +839,7 @@ name = "editor"
 version = "0.1.0"
 dependencies = [
  "assets_manager",
+ "bytemuck",
  "engine",
  "enum-map",
  "serde",
@@ -961,6 +962,7 @@ name = "engine"
 version = "0.1.0"
 dependencies = [
  "assets_manager",
+ "bytemuck",
  "eframe",
  "egui",
  "egui-wgpu",

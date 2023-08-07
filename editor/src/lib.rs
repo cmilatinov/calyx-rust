@@ -5,32 +5,34 @@ use engine::*;
 use eframe::{egui};
 use egui_dock::{DockArea, NodeIndex, Style, Tree};
 use engine::core::time::Time;
+use engine::render::SceneRenderer;
 use self::panel::*;
 
 pub struct EditorApp {
     fps: i32,
     tree: Tree<String>,
-    panel_manager: PanelManager
+    panel_manager: PanelManager,
+}
+
+pub struct EditorAppResources {
+    pub scene_renderer: SceneRenderer
 }
 
 impl EditorApp {
     pub fn new(cc: &eframe::CreationContext) -> Self {
-        let wgpu_render_state = cc.wgpu_render_state.as_ref().unwrap();
-
         Time::init();
 
-        let adapter = &wgpu_render_state.adapter;
-        let info = adapter.get_info();
-        println!("Name: {}", info.name);
-        println!("Device Type: {:?}", info.device_type);
-        println!("Driver Info: {}", info.driver_info);
-        println!("Driver: {}", info.driver);
-        println!("Vendor: {}", info.vendor);
+        let wgpu_render_state = cc.wgpu_render_state.as_ref().unwrap();
+        wgpu_render_state.renderer
+            .write()
+            .paint_callback_resources
+            .insert(EditorAppResources {
+                scene_renderer: SceneRenderer::new(wgpu_render_state)
+            });
 
         let mut tree = Tree::new(vec![
             PanelSceneHierarchy::name().to_owned(),
         ]);
-
         let [_, b] = tree.split_right(NodeIndex::root(), 0.2, vec![
             PanelViewport::name().to_owned(),
             PanelCodeEditor::name().to_owned()
@@ -51,7 +53,7 @@ impl eframe::App for EditorApp {
         Time::update_time();
         DockArea::new(&mut self.tree)
             .style(Style::from_egui(ctx.style().as_ref()))
-            .show(ctx, &mut PanelManager::default());
+            .show(ctx, &mut self.panel_manager);
         self.fps += 1;
         if Time::timer("fps") >= 1.0 {
             println!("{}", self.fps);
