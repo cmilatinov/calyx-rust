@@ -1,1 +1,1 @@
-struct Mesh;
+pub struct Mesh;
