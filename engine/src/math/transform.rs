@@ -13,9 +13,9 @@ unsafe impl Sync for Transform {}
 
 impl Default for Transform {
     fn default() -> Self {
-        let position = Vec3::new(0f32, 0f32, 0f32);
-        let rotation= Vec3::new(0f32, 0f32, 0f32);
-        let scale = Vec3::new(1f32, 1f32, 1f32);
+        let position = Vec3::default();
+        let rotation= Vec3::default();
+        let scale = Vec3::identity();
         let matrix = compose_transform(&position, &rotation, &scale);
 
         Transform {
