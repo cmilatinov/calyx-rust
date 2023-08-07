@@ -1,5 +1,6 @@
-use glm::{Vec3};
+use specs::{Component, VecStorage};
+use crate::math::transform::Transform;
 
-pub struct ComponentTransform {
-    position: Vec3
+impl Component for Transform {
+    type Storage = VecStorage<Self>;
 }

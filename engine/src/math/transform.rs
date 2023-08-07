@@ -12,6 +12,8 @@ pub struct Transform {
     matrix: Mat4
 }
 
+unsafe impl Sync for Transform {}
+
 impl Default for Transform {
     fn default() -> Self {
         let position = Vec3::new(0f32, 0f32, 0f32);
