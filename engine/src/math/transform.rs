@@ -106,16 +106,16 @@ impl Transform {
         self.update_matrix();
     }
 
-    pub fn forward(&self) {
-        self.transform_direction(&glm::vec3(0f32, 0f32, 1f32));
+    pub fn forward(&self) -> Vec3 {
+        self.transform_direction(&glm::vec3(0f32, 0f32, 1f32))
     }
 
-    pub fn right(&self)  {
-        self.transform_direction(&glm::vec3(1f32, 0f32, 0f32));
+    pub fn right(&self) -> Vec3  {
+        self.transform_direction(&glm::vec3(1f32, 0f32, 0f32))
     }
 
-    pub fn up(&self)  {
-        self.transform_direction(&glm::vec3(0f32, 1f32, 0f32));
+    pub fn up(&self) -> Vec3 {
+        self.transform_direction(&glm::vec3(0f32, 1f32, 0f32))
     }
 
     pub fn update_matrix(&mut self) {
@@ -156,5 +156,24 @@ impl Transform {
                 Some(p.borrow().matrix)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::math::transform::Transform;
+
+    #[test]
+    fn basic_transform_translation() {
+        let transform = Transform::default();
+
+        assert_eq!(transform.forward(), glm::vec3(0f32, 0f32, 1f32));
+        assert_eq!(transform.forward().scale(-1f32), glm::vec3(0f32, 0f32, -1f32));
+
+        assert_eq!(transform.right(), glm::vec3(1f32, 0f32, 0f32));
+        assert_eq!(transform.right().scale(-1f32), glm::vec3(-1f32, 0f32, 0f32));
+
+        assert_eq!(transform.up(), glm::vec3(0f32, 1f32, 0f32));
+        assert_eq!(transform.up().scale(-1f32), glm::vec3(0f32, -1f32, 0f32));
     }
 }
