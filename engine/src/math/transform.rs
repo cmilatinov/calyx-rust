@@ -1,10 +1,7 @@
-use std::cell::RefCell;
 use super::{compose_transform, decompose_transform};
 use glm::{Vec3, Mat4};
 
 pub struct Transform {
-    parent: Option<RefCell<Box<Transform>>>,
-
     position: Vec3,
     rotation: Vec3,
     scale: Vec3,
@@ -22,8 +19,6 @@ impl Default for Transform {
         let matrix = compose_transform(&position, &rotation, &scale);
 
         Transform {
-            parent: None,
-
             position,
             rotation,
             scale,
@@ -44,17 +39,6 @@ impl Transform {
         self.update_matrix();
     }
 
-    pub fn get_inverse_matrix(&mut self) -> Mat4 {
-        return match &self.parent {
-            None => {
-                glm::inverse(&self.matrix)
-            }
-            Some(p) => {
-                glm::inverse(&(self.matrix * p.borrow_mut().get_inverse_matrix()))
-            }
-        }
-    }
-
     pub fn transform_position(&self, position: &Vec3) -> Vec3 {
         let transformed = self.matrix * glm::vec4(position.x, position.y, position.z, 1.0);
         glm::vec3(transformed.x, transformed.y, transformed.z)
@@ -73,18 +57,6 @@ impl Transform {
     pub fn inverse_transform_direction(&self, direction: &Vec3) -> Vec3 {
         let matrix = glm::mat4_to_mat3(&glm::inverse(&self.matrix));
         matrix * direction
-    }
-
-    pub fn set_world_matrix(&mut self, matrix: &Mat4) {
-        match &self.parent {
-            None => {
-                self.set_local_matrix(matrix);
-            }
-            Some(p) => {
-                self.matrix = p.borrow_mut().get_inverse_matrix() * matrix;
-                self.update_components();
-            }
-        }
     }
 
     pub fn set_local_matrix(&mut self, matrix: &Mat4) {
@@ -140,25 +112,7 @@ impl Transform {
         self.scale
     }
 
-    pub fn get_matrix(&self) -> Mat4 {
-        return match &self.parent {
-            None => {
-                self.matrix
-            }
-            Some(p) => {
-                p.borrow().matrix * self.matrix
-            }
-        }
-    }
-
-    pub fn get_parent_matrix(&self) -> Option<Mat4> {
-        return match &self.parent {
-            None => {None}
-            Some(p) => {
-                Some(p.borrow().matrix)
-            }
-        }
-    }
+    pub fn get_matrix(&self) -> Mat4 { self.matrix }
 }
 
 #[cfg(test)]

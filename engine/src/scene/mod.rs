@@ -1,8 +1,10 @@
+use glm::Mat4;
 use specs::{Builder, Component, Entity, VecStorage, World, WorldExt};
 use specs::world::Index;
-use crate::math::transform::Transform;
 use indextree::{Arena, NodeId};
-use crate::core::error::EngineError;
+use crate::core::error::SceneError;
+use crate::ecs::transform::ComponentTransform;
+use crate::math::transform::Transform;
 
 struct Scene {
     world: World,
@@ -40,32 +42,24 @@ impl Scene {
     /// * `Err(EngineError)` if the entity could not be found for the given `NodeId`,
     ///   or if an error occurred while writing the component to storage in the ECS world.
     ///
-    /// # Example
-    ///
-    /// ```
-    /// // Assuming `scene` is an instance of `Scene`.
-    /// let node_id = /* the NodeId of the entity */;
-    /// scene.bind_component_default::<MyComponent>(node_id);
-    /// ```
-    ///
     /// # Errors
     ///
     /// This function will return `Err(EngineError)` if the `NodeId` is invalid
     /// or if there's an error when inserting the component into the `world` storage.
-    pub fn bind_component_default<T: Component<Storage=VecStorage<T>> + Sync + Send + Default>(&mut self, node_id: NodeId) -> Result<(), EngineError>{
-        let entity = self.get_entity(node_id).ok_or(EngineError::new("Invalid NodeId"))?;
+    pub fn bind_component_default<T: Component<Storage=VecStorage<T>> + Sync + Send + Default>(&mut self, node_id: NodeId) -> Result<(), SceneError>{
+        let entity = self.get_entity(node_id).ok_or(SceneError::InvalidNodeId)?;
         self.world.write_storage().insert(entity, T::default())?;
         Ok(())
     }
 
-    pub fn bind_component<T: Component<Storage=VecStorage<T>> + Sync + Send>(&mut self, node_id: NodeId, component: T) -> Result<(), EngineError>{
-        let entity = self.get_entity(node_id).ok_or(EngineError::new("Invalid NodeId"))?;
+    pub fn bind_component<T: Component<Storage=VecStorage<T>> + Sync + Send>(&mut self, node_id: NodeId, component: T) -> Result<(), SceneError>{
+        let entity = self.get_entity(node_id).ok_or(SceneError::InvalidNodeId)?;
         self.world.write_storage().insert(entity, component)?;
         Ok(())
     }
 
     pub fn add_entity(&mut self, parent: Option<NodeId>) -> NodeId {
-        let new_entity = self.world.create_entity().with(Transform::default()).build();
+        let new_entity = self.world.create_entity().with(ComponentTransform{transform: Transform::default()}).build();
         let new_node = self.entity_arena.new_node(new_entity.id());
 
         // push into root otherwise push under parent specified
@@ -81,8 +75,69 @@ impl Scene {
         new_node
     }
 
+    pub fn get_parent_entity(&self, node_id: NodeId) -> Option<Entity> {
+        let parent_node_id = self.entity_arena.get(node_id)?.parent()?;
+        let parent_node = self.entity_arena.get(parent_node_id)?;
+        Some(self.world.entities().entity(*parent_node.get()))
+    }
+
+    pub fn get_parent_node(&self, node_id: NodeId) -> Option<NodeId> {
+        self.entity_arena.get(node_id)?.parent()
+    }
+
     pub fn get_entity(&self, node_id: NodeId) -> Option<Entity> {
         let node = self.entity_arena.get(node_id)?;
         Some(self.world.entities().entity(*node.get()))
+    }
+
+    pub fn get_entity_matrix(&self, node_id: NodeId) -> Result<Mat4, SceneError> {
+        let entity = self.get_entity(node_id).ok_or(SceneError::InvalidNodeId)?;
+        let storage = self.world.read_storage::<ComponentTransform>();
+        let entity_transform = &storage.get(entity).ok_or(SceneError::ComponentNotBound)?.transform;
+
+        return match self.get_parent_entity(node_id) {
+            None => {
+                Ok(entity_transform.get_matrix())
+            }
+            Some(parent) => {
+                let parent_transform = &storage.get(parent).ok_or(SceneError::ComponentNotBound)?.transform;
+                Ok(parent_transform.get_matrix() * entity_transform.get_matrix())
+            }
+        }
+    }
+
+    pub fn get_entity_inverse_matrix(&self, node_id: NodeId) -> Result<Mat4, SceneError> {
+        let entity = self.get_entity(node_id).ok_or(SceneError::InvalidNodeId)?;
+        let storage = self.world.read_storage::<ComponentTransform>();
+        let entity_transform = &storage.get(entity).ok_or(SceneError::ComponentNotBound)?.transform;
+
+        return match self.get_parent_entity(node_id) {
+            None => {
+                Ok(glm::inverse(&entity_transform.get_matrix()))
+            }
+            Some(_) => {
+                let parent_inverse_matrix = self.get_entity_inverse_matrix(self.get_parent_node(node_id).ok_or(SceneError::InvalidNodeId)?)?;
+                Ok(glm::inverse(&(entity_transform.get_matrix() * parent_inverse_matrix)))
+            }
+        }
+    }
+
+    pub fn set_entity_world_matrix(&self, node_id: NodeId, matrix: &Mat4) -> Result<(), SceneError> {
+        let entity = self.get_entity(node_id).ok_or(SceneError::InvalidNodeId)?;
+        let mut storage = self.world.write_storage::<ComponentTransform>();
+        let mut transform = &mut storage.get_mut(entity).ok_or(SceneError::ComponentNotBound)?.transform;
+
+        match self.get_parent_entity(node_id) {
+            None => {
+                transform.set_local_matrix(matrix);
+            }
+            Some(parent) => {
+                let mut parent_storage = self.world.write_storage::<ComponentTransform>();
+                let mut parent_transform = &mut parent_storage.get_mut(parent).ok_or(SceneError::ComponentNotBound)?.transform;
+                transform.set_local_matrix(&(parent_transform.get_matrix() * transform.get_matrix()));
+            }
+        }
+
+        Ok(())
     }
 }

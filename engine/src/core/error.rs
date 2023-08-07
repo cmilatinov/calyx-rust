@@ -1,30 +1,34 @@
 use std::fmt;
 
 #[derive(Debug)]
-pub struct EngineError {
-    details: String,
+pub enum SceneError {
+    InvalidNodeId,
+    ComponentNotBound,
+    ParseSpecsError(specs::error::Error)
 }
 
-impl EngineError {
-    pub fn new(msg: &str) -> EngineError {
-        EngineError{ details: msg.to_string() }
-    }
-}
-
-impl fmt::Display for EngineError {
+impl fmt::Display for SceneError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.details)
+        match *self {
+            SceneError::InvalidNodeId => write!(f, "invalid node ID"),
+            SceneError::ComponentNotBound => write!(f, "component not bound to entity specified"),
+            SceneError::ParseSpecsError(..) => write!(f, "specs error")
+        }
     }
 }
 
-impl std::error::Error for EngineError {
-    fn description(&self) -> &str {
-        &self.details
+impl std::error::Error for SceneError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match *self {
+            SceneError::InvalidNodeId |
+            SceneError::ComponentNotBound => None,
+            SceneError::ParseSpecsError(ref e) => Some(e)
+        }
     }
 }
 
-impl From<specs::error::Error> for EngineError {
+impl From<specs::error::Error> for SceneError {
     fn from(error: specs::error::Error) -> Self {
-        EngineError::new(&format!("Specs error: {}", error))
+        SceneError::ParseSpecsError(error)
     }
 }
