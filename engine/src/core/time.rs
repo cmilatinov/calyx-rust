@@ -6,6 +6,7 @@ pub type TimeType = f64;
 
 pub struct Time {
     timers: HashMap<&'static str, Instant>,
+    last_time: Instant,
     pub time: TimeType,
     pub static_time: TimeType,
     pub delta_time: TimeType,
@@ -27,11 +28,11 @@ macro_rules! time_member_getter {
 impl Time {
     pub fn update_time() {
         let mut instance = Self::get();
-        let now = SystemTime::now();
-        instance.static_delta_time = now.elapsed().unwrap().as_secs_f64();
+        instance.static_delta_time = instance.last_time.elapsed().as_secs_f64();
         instance.static_time += instance.static_delta_time;
         instance.delta_time = instance.static_delta_time * instance.time_scale;
         instance.time += instance.delta_time;
+        instance.last_time = Instant::now();
     }
 
     pub fn timer(name: &'static str) -> TimeType {
@@ -56,6 +57,7 @@ impl Default for Time {
     fn default() -> Self {
         Self {
             timers: HashMap::new(),
+            last_time: Instant::now(),
             time: 0.0,
             static_time: 0.0,
             delta_time: 0.0,

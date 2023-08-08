@@ -9,9 +9,9 @@ struct CameraUniforms {
 };
 
 var<private> v_positions: array<vec4<f32>, 3> = array<vec4<f32>, 3>(
-    vec4<f32>(1.0, 1.0, 100.0, 1.0),
-    vec4<f32>(1.0, -1.0, 100.0, 1.0),
-    vec4<f32>(-1.0, -1.0, 100.0, 1.0),
+    vec4<f32>(1.0, 1.0, 10.0, 1.0),
+    vec4<f32>(1.0, -1.0, 10.0, 1.0),
+    vec4<f32>(-1.0, -1.0, 10.0, 1.0),
 );
 
 @group(0) @binding(0)

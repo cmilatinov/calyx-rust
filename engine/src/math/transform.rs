@@ -1,5 +1,5 @@
 use super::{compose_transform, decompose_transform};
-use glm::{Vec3, Mat4};
+use glm::{Vec3, Mat4, vec3};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -18,7 +18,7 @@ impl Default for Transform {
     fn default() -> Self {
         let position = Vec3::default();
         let rotation= Vec3::default();
-        let scale = Vec3::identity();
+        let scale = vec3(1.0, 1.0, 1.0);
         let matrix = compose_transform(&position, &rotation, &scale);
 
         Transform {

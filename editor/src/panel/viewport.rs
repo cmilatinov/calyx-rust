@@ -31,7 +31,7 @@ impl Panel for PanelViewport {
                 egui::Sense::click_and_drag()
             );
         if res.dragged() {
-            const ROTATION_SPEED: f64 = 150.0;
+            const ROTATION_SPEED: f64 = 1.0;
             let drag = res.drag_delta();
             self.camera.transform.rotate(
                 &vec3(-drag.y, -drag.x, 0.0).scale(
@@ -39,10 +39,11 @@ impl Panel for PanelViewport {
                         ROTATION_SPEED) as f32
                 )
             );
+            println!("{:?}", drag);
         }
 
         let proj = glm::perspective_lh(rect.width() / rect.height(), 45.0f32.to_radians(), 0.1, 100.0);
-        let view = self.camera.view;
+        let view = self.camera.transform.get_matrix();
 
         let cb = egui_wgpu::CallbackFn::new()
             .prepare(move |device, queue, _encoder, paint_callback_resources| {
