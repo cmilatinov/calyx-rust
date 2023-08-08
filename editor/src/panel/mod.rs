@@ -39,7 +39,7 @@ impl Default for PanelManager {
     }
 }
 
-impl engine::egui_dock::TabViewer for PanelManager {
+impl egui_dock::TabViewer for PanelManager {
     type Tab = String;
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {

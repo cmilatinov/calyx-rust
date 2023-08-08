@@ -4,14 +4,15 @@ pub mod syntax_highlighting;
 use engine::*;
 use eframe::{egui};
 use egui_dock::{DockArea, NodeIndex, Style, Tree};
+use engine::assets::AssetRegistry;
 use engine::core::time::Time;
-use engine::render::SceneRenderer;
+use engine::render::{Camera, SceneRenderer};
 use self::panel::*;
 
 pub struct EditorApp {
     fps: i32,
     tree: Tree<String>,
-    panel_manager: PanelManager,
+    panel_manager: PanelManager
 }
 
 pub struct EditorAppResources {
@@ -21,6 +22,7 @@ pub struct EditorAppResources {
 impl EditorApp {
     pub fn new(cc: &eframe::CreationContext) -> Self {
         Time::init();
+        AssetRegistry::init();
 
         let wgpu_render_state = cc.wgpu_render_state.as_ref().unwrap();
         wgpu_render_state.renderer
@@ -49,7 +51,7 @@ impl EditorApp {
 }
 
 impl eframe::App for EditorApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         Time::update_time();
         DockArea::new(&mut self.tree)
             .style(Style::from_egui(ctx.style().as_ref()))
