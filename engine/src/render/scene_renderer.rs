@@ -1,12 +1,10 @@
 use std::num::NonZeroU64;
-use std::ops::Deref;
 use eframe::wgpu::{CommandBuffer, Device, RenderPass};
 use egui_wgpu::{RenderState, wgpu};
 use egui_wgpu::wgpu::Queue;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::wgpu::include_wgsl;
 use glm::Mat4;
-use crate::render::{Camera, CameraLike};
 
 #[repr(C)]
 #[derive(Default, Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -19,7 +17,8 @@ pub struct CameraUniform {
 pub struct SceneRenderer {
     pub pipeline: wgpu::RenderPipeline,
     pub bind_group: wgpu::BindGroup,
-    pub uniform_buffer: wgpu::Buffer
+    pub uniform_buffer: wgpu::Buffer,
+    pub camera: CameraUniform
 }
 
 impl<'rs> SceneRenderer {
@@ -90,19 +89,16 @@ impl<'rs> SceneRenderer {
         Self {
             pipeline,
             bind_group,
-            uniform_buffer
+            uniform_buffer,
+            camera: CameraUniform::default()
         }
     }
 
-    pub fn prepare(&self, device: &Device, queue: &Queue, camera: &Camera) -> Vec<CommandBuffer> {
-        let mut camera_uniform = CameraUniform::default();
-        camera_uniform.projection.clone_from_slice(&camera.projection.data.0);
-        camera_uniform.view.clone_from_slice(&camera.view.data.0);
-        camera_uniform.model.clone_from_slice(&Mat4::identity().data.0);
+    pub fn prepare(&self, _device: &Device, queue: &Queue) -> Vec<CommandBuffer> {
         queue.write_buffer(
             &self.uniform_buffer,
             0,
-            bytemuck::cast_slice(&[camera_uniform]),
+            bytemuck::cast_slice(&[self.camera]),
         );
         Vec::new()
     }

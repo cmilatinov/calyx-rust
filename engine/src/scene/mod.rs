@@ -22,6 +22,7 @@ impl Default for Scene {
     }
 }
 
+#[allow(dead_code)]
 impl Scene {
     pub fn update(&mut self) {
         self.world.maintain();
@@ -125,7 +126,7 @@ impl Scene {
     pub fn set_entity_world_matrix(&self, node_id: NodeId, matrix: &Mat4) -> Result<(), SceneError> {
         let entity = self.get_entity(node_id).ok_or(SceneError::InvalidNodeId)?;
         let mut storage = self.world.write_storage::<ComponentTransform>();
-        let mut transform = &mut storage.get_mut(entity).ok_or(SceneError::ComponentNotBound)?.transform;
+        let transform = &mut storage.get_mut(entity).ok_or(SceneError::ComponentNotBound)?.transform;
 
         match self.get_parent_entity(node_id) {
             None => {
@@ -133,7 +134,7 @@ impl Scene {
             }
             Some(parent) => {
                 let mut parent_storage = self.world.write_storage::<ComponentTransform>();
-                let mut parent_transform = &mut parent_storage.get_mut(parent).ok_or(SceneError::ComponentNotBound)?.transform;
+                let parent_transform = &mut parent_storage.get_mut(parent).ok_or(SceneError::ComponentNotBound)?.transform;
                 transform.set_local_matrix(&(parent_transform.get_matrix() * transform.get_matrix()));
             }
         }
