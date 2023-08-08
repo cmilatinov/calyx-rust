@@ -1,4 +1,3 @@
-use std::ops::Deref;
 use engine::*;
 use editor::*;
 use eframe::NativeOptions;

@@ -1,10 +1,9 @@
-use std::ops::Mul;
 use std::sync::Arc;
 use engine::*;
 use egui::Ui;
 use engine::core::time::Time;
-use engine::glm::{Vec3, vec3};
-use engine::render::Camera;
+use engine::glm::{Mat4, vec3};
+use engine::render::{Camera};
 use crate::EditorAppResources;
 use crate::panel::Panel;
 
@@ -12,6 +11,13 @@ use crate::panel::Panel;
 pub struct PanelViewport {
     camera: Camera
 }
+
+pub const OPENGL_TO_WGPU_MATRIX: Mat4 = Mat4::new(
+    1.0, 0.0, 0.0, 0.0,
+    0.0, 1.0, 0.0, 0.0,
+    0.0, 0.0, 0.5, 0.5,
+    0.0, 0.0, 0.0, 1.0,
+);
 
 impl Panel for PanelViewport {
     fn name() -> &'static str {
@@ -35,10 +41,16 @@ impl Panel for PanelViewport {
             );
         }
 
+        let proj = glm::perspective_lh(rect.width() / rect.height(), 45.0f32.to_radians(), 0.1, 100.0);
+        let view = self.camera.view;
+
         let cb = egui_wgpu::CallbackFn::new()
             .prepare(move |device, queue, _encoder, paint_callback_resources| {
-                let mut resources: &EditorAppResources = paint_callback_resources.get().unwrap();
-                resources.scene_renderer.prepare(device, queue, &self.camera);
+                let resources: &mut EditorAppResources = paint_callback_resources.get_mut().unwrap();
+                resources.scene_renderer.camera.projection.clone_from_slice(&proj.data.0);
+                resources.scene_renderer.camera.view.clone_from_slice(&view.data.0);
+                resources.scene_renderer.camera.model.clone_from_slice(&Mat4::identity().data.0);
+                resources.scene_renderer.prepare(device, queue);
                 Vec::new()
             })
             .paint(move |_info, render_pass, paint_callback_resources| {

@@ -6,7 +6,7 @@ use eframe::{egui};
 use egui_dock::{DockArea, NodeIndex, Style, Tree};
 use engine::assets::AssetRegistry;
 use engine::core::time::Time;
-use engine::render::{Camera, SceneRenderer};
+use engine::render::{SceneRenderer};
 use self::panel::*;
 
 pub struct EditorApp {
@@ -51,7 +51,7 @@ impl EditorApp {
 }
 
 impl eframe::App for EditorApp {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         Time::update_time();
         DockArea::new(&mut self.tree)
             .style(Style::from_egui(ctx.style().as_ref()))

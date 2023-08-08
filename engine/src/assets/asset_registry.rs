@@ -1,9 +1,3 @@
-use egui::epaint::ahash::HashMap;
-use uuid::Uuid;
-use std::any::{Any, TypeId};
-use std::ops::Deref;
-use std::path::Path;
-use std::rc::Weak;
 use assets_manager::{AssetCache, Compound, Error, Handle};
 use assets_manager::source::FileSystem;
 use crate::{singleton};
