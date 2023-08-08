@@ -1,15 +1,21 @@
 use super::{compose_transform, decompose_transform};
 use glm::{Vec3, Mat4};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::de::Visitor;
+use serde::ser::SerializeSeq;
+use serde::de::SeqAccess;
 
+#[derive(Serialize, Deserialize)]
 pub struct Transform {
+    #[serde(skip)]
     position: Vec3,
+    #[serde(skip)]
     rotation: Vec3,
+    #[serde(skip)]
     scale: Vec3,
 
     matrix: Mat4
 }
-
-unsafe impl Sync for Transform {}
 
 impl Default for Transform {
     fn default() -> Self {
@@ -29,6 +35,28 @@ impl Default for Transform {
 }
 
 impl Transform {
+    pub fn new_from_mat(matrix: Mat4) -> Self {
+        let mut transform = Transform {
+            position: Vec3::default(),
+            rotation: Vec3::default(),
+            scale: Vec3::identity(),
+            matrix
+        };
+        transform.update_components();
+        transform
+    }
+
+    pub fn new_from_vec(position: Vec3, rotation: Vec3, scale: Vec3) -> Self {
+        let mut transform = Transform {
+            position,
+            rotation,
+            scale,
+            matrix: Mat4::default()
+        };
+        transform.update_matrix();
+        transform
+    }
+
     pub fn look_at(&mut self, position: &Vec3) {
         let diff = self.position - position;
         if glm::length(&diff) <= 0.000001f32 {
