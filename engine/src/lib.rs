@@ -5,6 +5,7 @@ pub extern crate egui_dock;
 pub extern crate serde;
 pub extern crate nalgebra_glm as glm;
 pub extern crate indextree;
+pub extern crate russimp;
 
 pub mod utils;
 pub mod assets;
