@@ -1,13 +1,13 @@
 use assets_manager::{AssetCache, Compound, Error, Handle};
 use assets_manager::source::FileSystem;
-use crate::{singleton};
+use crate::{singleton_with_init};
 use crate::utils::Init;
 
 pub struct AssetRegistry {
     asset_cache: AssetCache<FileSystem>
 }
 
-singleton!(AssetRegistry);
+singleton_with_init!(AssetRegistry);
 
 impl AssetRegistry {
     pub fn load<A: Compound>(&self, id: &str) -> Result<Handle<A>, Error> {
@@ -22,5 +22,3 @@ impl Default for AssetRegistry {
         }
     }
 }
-
-impl Init<AssetRegistry> for AssetRegistry {}

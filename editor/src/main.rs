@@ -1,37 +1,12 @@
 use engine::*;
 use editor::*;
 use eframe::NativeOptions;
-use serde::Deserialize;
-use assets_manager::{Asset, loader};
+use engine::core::time::Time;
 use engine::assets::AssetRegistry;
 
-// The struct you want to load
-#[derive(Deserialize)]
-struct Point {
-    x: i32,
-    y: i32,
-}
-
-// Specify how you want the structure to be loaded
-impl Asset for Point {
-    // The extension of the files to look into
-    const EXTENSION: &'static str = "ron";
-
-    // The serialization format (RON)
-    type Loader = loader::RonLoader;
-}
-
 fn main() -> eframe::Result<()> {
+    Time::init();
     AssetRegistry::init();
-
-    {
-        let instance = AssetRegistry::get();
-        let handle = instance.load::<Point>("test").unwrap();
-        let point = handle.read();
-        println!("x: {}", point.x);
-        println!("y: {}", point.y);
-    }
-
     let options = NativeOptions {
         decorated: true,
         transparent: true,
@@ -43,6 +18,11 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Calyx",
         options,
-        Box::new(|cc| Box::new(EditorApp::new(cc))),
+        Box::new(|cc| {
+            let mut app_state = EditorAppState::get();
+            let app = EditorApp::new(cc);
+            app_state.scene_renderer = Some(app.scene_renderer.clone());
+            Box::new(app)
+        })
     )
 }

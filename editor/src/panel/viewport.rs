@@ -1,23 +1,14 @@
-use std::sync::Arc;
 use engine::*;
 use egui::Ui;
 use engine::core::time::Time;
-use engine::glm::{Mat4, vec3};
-use engine::render::{Camera};
-use crate::EditorAppResources;
+use engine::egui::{Image, Key, Margin, PointerButton, Sense};
+use engine::egui_dock::TabStyle;
+use engine::glm::{vec3, Vec3};
+use crate::EditorAppState;
 use crate::panel::Panel;
 
 #[derive(Default)]
-pub struct PanelViewport {
-    camera: Camera
-}
-
-pub const OPENGL_TO_WGPU_MATRIX: Mat4 = Mat4::new(
-    1.0, 0.0, 0.0, 0.0,
-    0.0, 1.0, 0.0, 0.0,
-    0.0, 0.0, 0.5, 0.5,
-    0.0, 0.0, 0.0, 1.0,
-);
+pub struct PanelViewport;
 
 impl Panel for PanelViewport {
     fn name() -> &'static str {
@@ -25,45 +16,52 @@ impl Panel for PanelViewport {
     }
 
     fn ui(&mut self, ui: &mut Ui) {
-        let (rect, res) =
-            ui.allocate_exact_size(
-                egui::Vec2::new(ui.available_width(), ui.available_height()),
-                egui::Sense::click_and_drag()
-            );
-        if res.dragged() {
-            const ROTATION_SPEED: f64 = 1.0;
-            let drag = res.drag_delta();
-            self.camera.transform.rotate(
-                &vec3(-drag.y, -drag.x, 0.0).scale(
-                    (Time::static_delta_time() *
-                        ROTATION_SPEED) as f32
-                )
-            );
-            println!("{:?}", drag);
-        }
+        let mut app_state = EditorAppState::get();
 
-        let proj = glm::perspective_lh(rect.width() / rect.height(), 45.0f32.to_radians(), 0.1, 100.0);
-        let view = self.camera.transform.get_matrix();
+        let res = ui.add(Image::new(
+            app_state.scene_renderer.as_ref()
+                .unwrap()
+                .read()
+                .unwrap().scene_texture_handle.id(),
+            egui::Vec2::new(ui.available_width(), ui.available_height()),
+        ).sense(Sense::drag()));
+        if !res.dragged_by(PointerButton::Secondary) { return; }
 
-        let cb = egui_wgpu::CallbackFn::new()
-            .prepare(move |device, queue, _encoder, paint_callback_resources| {
-                let resources: &mut EditorAppResources = paint_callback_resources.get_mut().unwrap();
-                resources.scene_renderer.camera.projection.clone_from_slice(&proj.data.0);
-                resources.scene_renderer.camera.view.clone_from_slice(&view.data.0);
-                resources.scene_renderer.camera.model.clone_from_slice(&Mat4::identity().data.0);
-                resources.scene_renderer.prepare(device, queue);
-                Vec::new()
-            })
-            .paint(move |_info, render_pass, paint_callback_resources| {
-                let resources: &EditorAppResources = paint_callback_resources.get().unwrap();
-                resources.scene_renderer.paint(render_pass);
-            });
+        // TODO: Put all this logic inside the camera
+        const TRANSLATION_SPEED: f32 = 10.0;
+        const ROTATION_SPEED: f32 = 0.5;
+        const GIGA_SPEED_FACTOR: f32 = 5.0;
 
-        let callback = egui::PaintCallback {
-            rect,
-            callback: Arc::new(cb),
-        };
+        let drag = res.drag_delta();
+        app_state.camera.transform.rotate(
+            &vec3(drag.y, drag.x, 0.0).scale(
+                Time::static_delta_time() *
+                    ROTATION_SPEED
+            )
+        );
 
-        ui.painter().add(callback);
+        let movement = ui.input(|i| {
+            let forward = (i.key_down(Key::W) as u8 as f32) - (i.key_down(Key::S) as u8 as f32);
+            let lateral = (i.key_down(Key::D) as u8 as f32) - (i.key_down(Key::A) as u8 as f32);
+            let vertical = (i.key_down(Key::Space) as u8 as f32) - (i.modifiers.shift as u8 as f32);
+            (app_state.camera.transform.forward().scale(forward) +
+                app_state.camera.transform.right().scale(lateral) +
+                Vec3::y_axis().scale(vertical))
+                .scale(if i.modifiers.ctrl { GIGA_SPEED_FACTOR } else { 1.0 })
+                .scale(Time::static_delta_time() * TRANSLATION_SPEED)
+        });
+        app_state.camera.transform.translate(&movement);
+    }
+
+    fn tab_style_override(&self, _global_style: &TabStyle) -> Option<TabStyle> {
+        Some(TabStyle {
+            inner_margin: Margin {
+                left: 0.0,
+                right: 0.0,
+                top: 0.0,
+                bottom: 0.0,
+            },
+            ..*_global_style
+        })
     }
 }

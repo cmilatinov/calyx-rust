@@ -12,6 +12,7 @@ assets_manager = "0.10.2"
 bytemuck = "1.13.1"
 engine = { path = "../engine" }
 enum-map = "2.6.1"
+lazy_static = "1.4.0"
 serde = "1.0.182"
 syntect = { version = "5", optional = true, default-features = false, features = [
     "default-fancy",

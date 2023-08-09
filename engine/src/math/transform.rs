@@ -17,7 +17,7 @@ pub struct Transform {
 impl Default for Transform {
     fn default() -> Self {
         let position = Vec3::default();
-        let rotation= Vec3::default();
+        let rotation = Vec3::default();
         let scale = vec3(1.0, 1.0, 1.0);
         let matrix = compose_transform(&position, &rotation, &scale);
 
@@ -138,6 +138,8 @@ impl Transform {
     }
 
     pub fn get_matrix(&self) -> Mat4 { self.matrix }
+
+    pub fn get_inverse_matrix(&self) -> Mat4 { glm::inverse(&self.matrix) }
 }
 
 #[cfg(test)]

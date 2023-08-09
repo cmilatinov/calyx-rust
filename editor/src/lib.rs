@@ -1,37 +1,33 @@
 mod panel;
 pub mod syntax_highlighting;
 
+use std::sync::{Arc, RwLock};
 use engine::*;
 use eframe::{egui};
 use egui_dock::{DockArea, NodeIndex, Style, Tree};
-use engine::assets::AssetRegistry;
 use engine::core::time::Time;
-use engine::render::{SceneRenderer};
+use engine::egui::Margin;
+use engine::render::{Camera, SceneRenderer};
+use engine::utils::Init;
 use self::panel::*;
 
 pub struct EditorApp {
     fps: i32,
     tree: Tree<String>,
-    panel_manager: PanelManager
+    panel_manager: PanelManager,
+    pub scene_renderer: Arc<RwLock<SceneRenderer>>
 }
 
-pub struct EditorAppResources {
-    pub scene_renderer: SceneRenderer
+#[derive(Default)]
+pub struct EditorAppState {
+    pub camera: Camera,
+    pub scene_renderer: Option<Arc<RwLock<SceneRenderer>>>
 }
+
+singleton_with_init!(EditorAppState);
 
 impl EditorApp {
     pub fn new(cc: &eframe::CreationContext) -> Self {
-        Time::init();
-        AssetRegistry::init();
-
-        let wgpu_render_state = cc.wgpu_render_state.as_ref().unwrap();
-        wgpu_render_state.renderer
-            .write()
-            .paint_callback_resources
-            .insert(EditorAppResources {
-                scene_renderer: SceneRenderer::new(wgpu_render_state)
-            });
-
         let mut tree = Tree::new(vec![
             PanelSceneHierarchy::name().to_owned(),
         ]);
@@ -45,23 +41,34 @@ impl EditorApp {
         Self {
             fps: 0,
             tree,
-            panel_manager: PanelManager::default()
+            panel_manager: PanelManager::default(),
+            scene_renderer: Arc::new(RwLock::new(SceneRenderer::new(cc)))
         }
     }
 }
 
 impl eframe::App for EditorApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         Time::update_time();
+
+        {
+            let app_state = EditorAppState::get();
+            let render_state = frame.wgpu_render_state().unwrap();
+            self.scene_renderer.read().unwrap().update(render_state, &app_state.camera);
+        }
+
+        let mut style = Style::from_egui(ctx.style().as_ref());
         DockArea::new(&mut self.tree)
             .style(Style::from_egui(ctx.style().as_ref()))
             .show(ctx, &mut self.panel_manager);
+
         self.fps += 1;
         if Time::timer("fps") >= 1.0 {
             println!("{}", self.fps);
             self.fps = 0;
             Time::reset_timer("fps");
         }
+
         ctx.request_repaint();
     }
 }

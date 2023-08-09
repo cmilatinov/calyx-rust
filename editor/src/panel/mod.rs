@@ -14,10 +14,14 @@ pub use self::terminal::*;
 pub use self::viewport::*;
 use engine::*;
 use egui::{Ui, WidgetText};
+use engine::egui_dock::TabStyle;
 
 pub trait Panel {
     fn name() -> &'static str where Self: Sized;
     fn ui(&mut self, ui: &mut Ui);
+    fn tab_style_override(&self, _global_style: &TabStyle) -> Option<TabStyle> {
+        None
+    }
 }
 
 pub struct PanelManager {
@@ -50,5 +54,13 @@ impl egui_dock::TabViewer for PanelManager {
 
     fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
         tab.as_str().into()
+    }
+
+    fn tab_style_override(&self, tab: &Self::Tab, global_style: &TabStyle) -> Option<TabStyle> {
+        if let Some(panel) = self.panels.get(tab) {
+            panel.tab_style_override(global_style)
+        } else {
+            None
+        }
     }
 }

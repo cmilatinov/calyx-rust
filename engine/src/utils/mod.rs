@@ -29,4 +29,14 @@ macro_rules! singleton {
     }
 }
 
+#[macro_export]
+macro_rules! singleton_with_init {
+    ($t:tt) => {
+        $crate::singleton!($t);
+
+        impl Init<$t> for $t {}
+    }
+}
+
 pub use singleton;
+pub use singleton_with_init;

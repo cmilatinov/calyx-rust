@@ -970,6 +970,7 @@ dependencies = [
  "bytemuck",
  "engine",
  "enum-map",
+ "lazy_static",
  "serde",
  "syntect",
 ]
@@ -1102,6 +1103,7 @@ dependencies = [
  "egui-wgpu",
  "egui_dock",
  "enum-map",
+ "impls",
  "indextree",
  "lazy_static",
  "log",
@@ -1660,6 +1662,12 @@ dependencies = [
  "num-traits",
  "png",
 ]
+
+[[package]]
+name = "impls"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a46645bbd70538861a90d0f26c31537cdf1e44aae99a794fb75a664b70951bc"
 
 [[package]]
 name = "indexmap"
