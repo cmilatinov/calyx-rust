@@ -4,7 +4,7 @@ use error::SceneError;
 use glm::Mat4;
 use specs::{Builder, Component, Entity, VecStorage, World, WorldExt};
 use specs::world::Index;
-use indextree::{Arena, NodeId};
+use indextree::{Arena, Node, NodeId};
 use crate::ecs::transform::ComponentTransform;
 use crate::math::transform::Transform;
 
