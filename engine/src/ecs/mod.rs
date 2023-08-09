@@ -41,8 +41,15 @@ mod tests {
             }
         }
 
+        impl ComponentTest {
+            pub fn new_test_impl(&self) -> i32 {
+                56
+            }
+        }
+
         let mut component = ComponentTest::new(23);
         let scene = component.scene.borrow();
         assert_eq!(scene.value, 24);
+        assert_eq!(component.new_test_impl(), 56);
     }
 }
