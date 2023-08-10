@@ -8,6 +8,7 @@ use egui_dock::{DockArea, NodeIndex, Style, Tree};
 use engine::core::time::Time;
 use engine::egui::Margin;
 use engine::render::{Camera, SceneRenderer};
+use engine::scene::Scene;
 use engine::utils::Init;
 use self::panel::*;
 
@@ -20,6 +21,7 @@ pub struct EditorApp {
 
 #[derive(Default)]
 pub struct EditorAppState {
+    pub scene: Scene,
     pub camera: Camera,
     pub scene_renderer: Option<Arc<RwLock<SceneRenderer>>>
 }
@@ -57,9 +59,9 @@ impl eframe::App for EditorApp {
             self.scene_renderer.read().unwrap().update(render_state, &app_state.camera);
         }
 
-        let mut style = Style::from_egui(ctx.style().as_ref());
         DockArea::new(&mut self.tree)
             .style(Style::from_egui(ctx.style().as_ref()))
+            .show_close_buttons(false)
             .show(ctx, &mut self.panel_manager);
 
         self.fps += 1;

@@ -1,24 +1,99 @@
-use assets_manager::{AssetCache, Compound, Error, Handle};
-use assets_manager::source::FileSystem;
-use crate::{singleton_with_init};
+use std::any::{Any, TypeId};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::error::Error;
+use std::fs::File;
+use std::path::Path;
+use std::sync::{Arc, RwLock};
+use std::{fs, thread};
+use std::fmt::format;
+use std::ops::Deref;
+use std::thread::JoinHandle;
+use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
+use serde::Deserialize;
+use crate::{singleton};
+use crate::assets::{Asset};
+use crate::assets::error::AssetError;
+use crate::core::refs;
+use crate::core::refs::Ref;
 use crate::utils::Init;
 
 pub struct AssetRegistry {
-    asset_cache: AssetCache<FileSystem>
+    asset_paths: Vec<String>,
+    asset_cache: HashMap<String, Ref<dyn Asset>>,
+    watcher_thread: Option<JoinHandle<()>>
 }
 
-singleton_with_init!(AssetRegistry);
+singleton!(AssetRegistry);
 
 impl AssetRegistry {
-    pub fn load<A: Compound>(&self, id: &str) -> Result<Handle<A>, Error> {
-        self.asset_cache.load::<A>(id)
+    pub fn filename<A: Asset>(&self, id: &str, instance: &A) -> String {
+        let extensions = instance.get_extensions();
+        for path in self.asset_paths.iter() {
+            for ext in extensions.iter() {
+                let full_path = format!("{}/{}.{}", path, id, ext);
+                let meta = fs::metadata(full_path.as_str());
+                if let Ok(_) = meta {
+                    return full_path;
+                }
+            }
+        }
+        String::from(id)
+    }
+
+    pub fn load<A: Asset + Default>(&mut self, id: &str) -> Result<Ref<A>, AssetError> {
+        // Asset already loaded
+        if let Some(asset) = self.asset_cache.get(id) {
+            if asset.read().unwrap().deref().type_id() == TypeId::of::<A>() {
+                return Ok(unsafe {
+                    Arc::from_raw(Arc::into_raw(asset.clone()) as *const RwLock<A>)
+                });
+            }
+        };
+
+        // Load from file
+        let mut instance = A::default();
+        let path = self.filename::<A>(id, &instance);
+        instance.load(path.as_str())?;
+
+        // Create ref
+        let rc = refs::create_ref(instance);
+        self.asset_cache.insert(String::from(id), rc.clone());
+        Ok(rc)
+    }
+
+    pub fn create<A: Asset>(&mut self, id: &str, value: A) {
+        let asset = Arc::new(RwLock::new(value));
+        self.asset_cache.insert(String::from(id), asset);
     }
 }
 
 impl Default for AssetRegistry {
     fn default() -> Self {
         Self {
-            asset_cache: AssetCache::new("assets").unwrap()
+            asset_paths: Vec::new(),
+            asset_cache: HashMap::new(),
+            watcher_thread: None
         }
+    }
+}
+
+impl Init for AssetRegistry {
+    type Type = AssetRegistry;
+    fn initialize(instance: &mut Self::Type) {
+        let watcher_thread = thread::spawn(|| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let mut watcher = RecommendedWatcher::new(tx, Config::default()).unwrap();
+            watcher.watch(Path::new("assets"), RecursiveMode::Recursive).unwrap();
+            for res in rx {
+                match res {
+                    Ok(event) => println!("FS Event: {:?}", event),
+                    _ => {}
+                }
+            }
+        });
+        instance.asset_paths = vec!["assets".to_string()];
+        instance.asset_cache = HashMap::new();
+        instance.watcher_thread = Some(watcher_thread);
     }
 }

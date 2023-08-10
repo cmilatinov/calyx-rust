@@ -1,14 +1,18 @@
 pub mod error;
+
+use std::sync::Arc;
 use error::SceneError;
 
 use glm::Mat4;
-use specs::{Builder, Component, Entity, VecStorage, World, WorldExt};
+use specs::{Builder, Component, DispatcherBuilder, Entity, Join, VecStorage, World, WorldExt};
 use specs::world::Index;
 use indextree::{Arena, NodeId};
+use crate::assets::{AssetRegistry, Mesh};
+use crate::ecs::mesh::ComponentMesh;
 use crate::ecs::transform::ComponentTransform;
 use crate::math::transform::Transform;
 
-struct Scene {
+pub struct Scene {
     world: World,
     entity_hierarchy: Vec<NodeId>,
     entity_arena: Arena<Index>
@@ -16,11 +20,37 @@ struct Scene {
 
 impl Default for Scene {
     fn default() -> Self {
-        Scene {
-            world: World::new(),
+        let mut world = World::new();
+        world.register::<ComponentTransform>();
+        world.register::<ComponentMesh>();
+        let mut scene = Scene {
+            world,
             entity_hierarchy: Vec::new(),
             entity_arena: Arena::new()
+        };
+
+        let mut mesh = AssetRegistry::get().load::<Mesh>("meshes/cube")
+            .expect("Failed to load cube mesh");
+        mesh.write().unwrap().name = "cube".to_string();
+
+        let mesh2 = AssetRegistry::get().load::<Mesh>("meshes/cube")
+            .expect("Failed to load cube mesh");
+
+        assert!(mesh2.read().unwrap().name == "cube");
+
+        let cube_id = scene.create_entity(None);
+        scene.bind_component(cube_id, ComponentMesh { mesh })
+            .expect("Failed to load cube mesh");
+
+        let dispatcher = DispatcherBuilder::new();
+
+        let t_s = scene.world.read_component::<ComponentTransform>();
+        let m_s = scene.world.read_component::<ComponentMesh>();
+        for (trans_comp, mesh_comp) in (t_s, m_s).join() {
+            println!("{:?}", mesh_comp.mesh.read().unwrap().name);
         }
+
+        scene
     }
 }
 
@@ -49,20 +79,24 @@ impl Scene {
     ///
     /// This function will return `Err(EngineError)` if the `NodeId` is invalid
     /// or if there's an error when inserting the component into the `world` storage.
-    pub fn bind_component_default<T: Component<Storage=VecStorage<T>> + Sync + Send + Default>(&mut self, node_id: NodeId) -> Result<(), SceneError>{
+    pub fn bind_component_default<T: Component<Storage=VecStorage<T>> + Sync + Send + Default>(
+        &mut self, node_id: NodeId
+    ) -> Result<(), SceneError>{
         let entity = self.get_entity(node_id).ok_or(SceneError::InvalidNodeId)?;
         self.world.write_storage().insert(entity, T::default())?;
         Ok(())
     }
 
-    pub fn bind_component<T: Component<Storage=VecStorage<T>> + Sync + Send>(&mut self, node_id: NodeId, component: T) -> Result<(), SceneError>{
+    pub fn bind_component<T: Component<Storage=VecStorage<T>> + Sync + Send>(
+        &mut self, node_id: NodeId, component: T
+    ) -> Result<(), SceneError>{
         let entity = self.get_entity(node_id).ok_or(SceneError::InvalidNodeId)?;
         self.world.write_storage().insert(entity, component)?;
         Ok(())
     }
 
-    pub fn add_entity(&mut self, parent: Option<NodeId>) -> NodeId {
-        let new_entity = self.world.create_entity().with(ComponentTransform{transform: Transform::default()}).build();
+    pub fn create_entity(&mut self, parent: Option<NodeId>) -> NodeId {
+        let new_entity = self.world.create_entity().with(ComponentTransform::default()).build();
         let new_node = self.entity_arena.new_node(new_entity.id());
 
         // push into root otherwise push under parent specified

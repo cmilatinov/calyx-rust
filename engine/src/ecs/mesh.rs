@@ -1,7 +1,13 @@
+use std::sync::Arc;
+use assets_manager::Handle;
 use specs::{Component, VecStorage};
 use crate::assets::Mesh;
+use crate::core::refs::Ref;
 
-struct ComponentMesh(Mesh);
+pub struct ComponentMesh {
+    pub mesh: Ref<Mesh>
+}
+
 impl Component for ComponentMesh {
     type Storage = VecStorage<Self>;
 }

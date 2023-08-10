@@ -1,5 +1,6 @@
-pub trait Init<T> {
-    fn initialize(_instance: &mut T) {}
+pub trait Init {
+    type Type;
+    fn initialize(_instance: &mut Self::Type) {}
 }
 
 #[macro_export]
@@ -34,7 +35,9 @@ macro_rules! singleton_with_init {
     ($t:tt) => {
         $crate::singleton!($t);
 
-        impl Init<$t> for $t {}
+        impl Init for $t {
+            type Type = $t;
+        }
     }
 }
 
