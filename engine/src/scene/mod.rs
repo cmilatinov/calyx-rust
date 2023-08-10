@@ -42,11 +42,7 @@ impl Default for Scene {
         scene.bind_component(cube_id, ComponentMesh { mesh })
             .expect("Failed to load cube mesh");
 
-        let dispatcher = DispatcherBuilder::new();
-
-        let t_s = scene.world.read_component::<ComponentTransform>();
-        let m_s = scene.world.read_component::<ComponentMesh>();
-        for (trans_comp, mesh_comp) in (t_s, m_s).join() {
+        for mesh_comp in scene.world.read_component::<ComponentMesh>().join() {
             println!("{:?}", mesh_comp.mesh.read().unwrap().name);
         }
 
