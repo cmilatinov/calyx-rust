@@ -1,19 +1,20 @@
-pub mod error;
+use std::ops::Deref;
+use glm::Mat4;
+use indextree::{Arena, NodeId};
+use specs::{Builder, Component, Entity, Join, VecStorage, World, WorldExt};
+use specs::world::Index;
 
-use std::sync::Arc;
 use error::SceneError;
 
-use glm::Mat4;
-use specs::{Builder, Component, DispatcherBuilder, Entity, Join, VecStorage, World, WorldExt};
-use specs::world::Index;
-use indextree::{Arena, NodeId};
-use crate::assets::{AssetRegistry, Mesh};
+use crate::assets::{AssetRegistry};
+use crate::assets::mesh::Mesh;
 use crate::ecs::mesh::ComponentMesh;
 use crate::ecs::transform::ComponentTransform;
-use crate::math::transform::Transform;
+
+pub mod error;
 
 pub struct Scene {
-    world: World,
+    pub(crate) world: World,
     entity_hierarchy: Vec<NodeId>,
     entity_arena: Arena<Index>
 }
@@ -31,19 +32,26 @@ impl Default for Scene {
 
         let mut mesh = AssetRegistry::get().load::<Mesh>("meshes/cube")
             .expect("Failed to load cube mesh");
-        mesh.write().unwrap().name = "cube".to_string();
 
         let mesh2 = AssetRegistry::get().load::<Mesh>("meshes/cube")
             .expect("Failed to load cube mesh");
 
-        assert!(mesh2.read().unwrap().name == "cube");
+        let ptr = mesh.read().unwrap().deref() as *const _;
+        let ptr2 = mesh2.read().unwrap().deref() as *const _;
+        assert_eq!(ptr, ptr2);
 
         let cube_id = scene.create_entity(None);
         scene.bind_component(cube_id, ComponentMesh { mesh })
             .expect("Failed to load cube mesh");
 
-        for mesh_comp in scene.world.read_component::<ComponentMesh>().join() {
-            println!("{:?}", mesh_comp.mesh.read().unwrap().name);
+        {
+            let m_s = scene.world.read_component::<ComponentMesh>();
+            let t_s = scene.world.read_component::<ComponentTransform>();
+
+            for (trans_comp, mesh_comp) in (&t_s, &m_s).join() {
+                println!("{}", trans_comp.transform.get_matrix());
+                println!("{:?}", mesh_comp.mesh.read().unwrap().name);
+            }
         }
 
         scene

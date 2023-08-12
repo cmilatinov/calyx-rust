@@ -1,10 +1,10 @@
-use std::fmt;
 use russimp::RussimpError;
 
 #[derive(Debug)]
 pub enum AssetError {
     NotFound,
-    LoadError
+    LoadError,
+    AssetAlreadyExists
 }
 
 impl From<RussimpError> for AssetError {

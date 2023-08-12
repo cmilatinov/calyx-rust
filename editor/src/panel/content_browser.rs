@@ -1,7 +1,10 @@
-use engine::*;
-use egui::Ui;
 use std::fs;
 use std::path::Path;
+
+use egui::Ui;
+
+use engine::*;
+
 use crate::panel::Panel;
 
 pub struct PanelContentBrowser;

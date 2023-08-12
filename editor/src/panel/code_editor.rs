@@ -1,5 +1,7 @@
-use engine::*;
 use egui::{Align, Ui, Widget};
+
+use engine::*;
+
 use crate::panel::Panel;
 
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]

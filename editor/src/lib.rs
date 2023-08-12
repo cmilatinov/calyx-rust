@@ -1,16 +1,18 @@
-mod panel;
-pub mod syntax_highlighting;
-
 use std::sync::{Arc, RwLock};
-use engine::*;
-use eframe::{egui};
+
+use eframe::egui;
 use egui_dock::{DockArea, NodeIndex, Style, Tree};
-use engine::core::time::Time;
-use engine::egui::Margin;
+
+use engine::*;
+use engine::core::Time;
 use engine::render::{Camera, SceneRenderer};
 use engine::scene::Scene;
 use engine::utils::Init;
+
 use self::panel::*;
+
+mod panel;
+pub mod syntax_highlighting;
 
 pub struct EditorApp {
     fps: i32,
@@ -56,7 +58,8 @@ impl eframe::App for EditorApp {
         {
             let app_state = EditorAppState::get();
             let render_state = frame.wgpu_render_state().unwrap();
-            self.scene_renderer.read().unwrap().update(render_state, &app_state.camera);
+            self.scene_renderer.read().unwrap()
+                .render_scene(render_state, &app_state.camera, &app_state.scene);
         }
 
         DockArea::new(&mut self.tree)

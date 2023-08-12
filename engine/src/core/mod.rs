@@ -1,2 +1,5 @@
-pub mod time;
-pub mod refs;
+mod time;
+mod refs;
+
+pub use time::*;
+pub use refs::*;

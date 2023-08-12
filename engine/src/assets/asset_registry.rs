@@ -1,21 +1,18 @@
-use std::any::{Any, TypeId};
-use std::cell::RefCell;
+use std::{fs, thread};
+use std::any::TypeId;
 use std::collections::HashMap;
-use std::error::Error;
-use std::fs::File;
+use std::ops::Deref;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
-use std::{fs, thread};
-use std::fmt::format;
-use std::ops::Deref;
 use std::thread::JoinHandle;
+
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
-use serde::Deserialize;
-use crate::{singleton};
-use crate::assets::{Asset};
+
+use crate::singleton;
+use crate::assets::Asset;
 use crate::assets::error::AssetError;
-use crate::core::refs;
-use crate::core::refs::Ref;
+use crate::core;
+use crate::core::Ref;
 use crate::utils::Init;
 
 pub struct AssetRegistry {
@@ -28,7 +25,7 @@ singleton!(AssetRegistry);
 
 impl AssetRegistry {
     pub fn filename<A: Asset>(&self, id: &str, instance: &A) -> String {
-        let extensions = instance.get_extensions();
+        let extensions = instance.get_file_extensions();
         for path in self.asset_paths.iter() {
             for ext in extensions.iter() {
                 let full_path = format!("{}/{}.{}", path, id, ext);
@@ -57,14 +54,18 @@ impl AssetRegistry {
         instance.load(path.as_str())?;
 
         // Create ref
-        let rc = refs::create_ref(instance);
+        let rc = core::create_ref(instance);
         self.asset_cache.insert(String::from(id), rc.clone());
         Ok(rc)
     }
 
-    pub fn create<A: Asset>(&mut self, id: &str, value: A) {
+    pub fn create<A: Asset>(&mut self, id: &str, value: A) -> Result<Ref<A>, AssetError> {
+        if self.asset_cache.contains_key(id) {
+            return Err(AssetError::AssetAlreadyExists);
+        }
         let asset = Arc::new(RwLock::new(value));
-        self.asset_cache.insert(String::from(id), asset);
+        self.asset_cache.insert(String::from(id), asset.clone());
+        Ok(asset)
     }
 }
 

@@ -1,20 +1,23 @@
-mod code_editor;
-mod content_browser;
-mod inspector;
-mod scene_hierarchy;
-mod terminal;
-mod viewport;
-
 use std::collections::HashMap;
+
+use egui::{Ui, WidgetText};
+
+use engine::*;
+use engine::egui_dock::TabStyle;
+
 pub use self::code_editor::*;
 pub use self::content_browser::*;
 pub use self::inspector::*;
 pub use self::scene_hierarchy::*;
 pub use self::terminal::*;
 pub use self::viewport::*;
-use engine::*;
-use egui::{Ui, WidgetText};
-use engine::egui_dock::TabStyle;
+
+mod code_editor;
+mod content_browser;
+mod inspector;
+mod scene_hierarchy;
+mod terminal;
+mod viewport;
 
 pub trait Panel {
     fn name() -> &'static str where Self: Sized;

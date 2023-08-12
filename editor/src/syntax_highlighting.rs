@@ -1,5 +1,6 @@
-use engine::*;
 use egui::text::LayoutJob;
+
+use engine::*;
 
 /// View some code with syntax highlighting and selection.
 pub fn code_view_ui(ui: &mut egui::Ui, mut code: &str) {

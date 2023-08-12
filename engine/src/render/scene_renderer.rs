@@ -1,19 +1,30 @@
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::num::NonZeroU64;
+use std::sync::{Arc, RwLock, RwLockWriteGuard};
+
 use eframe::wgpu::FilterMode;
-use egui::TextureHandle;
 use egui_wgpu::{RenderState, wgpu};
-use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::wgpu::include_wgsl;
+use egui_wgpu::wgpu::util::DeviceExt;
 use glm::Mat4;
+use specs::{Join, WorldExt};
+use crate::assets::mesh;
+use crate::assets::mesh::Mesh;
+use crate::core::Ref;
+use crate::ecs::mesh::ComponentMesh;
+use crate::ecs::transform::ComponentTransform;
+use crate::render::buffer::BufferLayout;
+
 use crate::render::Camera;
+use crate::scene::Scene;
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct CameraUniform {
     pub projection: [[f32; 4]; 4],
     pub view: [[f32; 4]; 4],
-    pub model: [[f32; 4]; 4],
 }
 
 impl Default for CameraUniform {
@@ -21,18 +32,19 @@ impl Default for CameraUniform {
         Self {
             projection: Mat4::identity().data.0,
             view: Mat4::identity().data.0,
-            model: Mat4::identity().data.0
         }
     }
 }
 
 pub struct SceneRenderer {
-    pub scene_texture: wgpu::Texture,
-    pub scene_texture_view: wgpu::TextureView,
     pub scene_texture_handle: egui::TextureHandle,
-    pub pipeline: wgpu::RenderPipeline,
-    pub bind_group: wgpu::BindGroup,
-    pub camera_uniform_buffer: wgpu::Buffer,
+    scene_texture: wgpu::Texture,
+    scene_texture_view: wgpu::TextureView,
+    scene_depth_texture: wgpu::Texture,
+    scene_depth_texture_view: wgpu::TextureView,
+    pipeline: wgpu::RenderPipeline,
+    bind_group: wgpu::BindGroup,
+    camera_uniform_buffer: wgpu::Buffer
 }
 
 impl<'rs> SceneRenderer {
@@ -41,6 +53,7 @@ impl<'rs> SceneRenderer {
         let device = &render_state.device;
 
         let scene_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Scene Texture"),
             size: wgpu::Extent3d {
                 width: 1920,
                 height: 1080,
@@ -53,7 +66,6 @@ impl<'rs> SceneRenderer {
             usage: wgpu::TextureUsages::COPY_SRC |
                 wgpu::TextureUsages::RENDER_ATTACHMENT |
                 wgpu::TextureUsages::TEXTURE_BINDING,
-            label: Some("Scene Texture"),
             view_formats: &[],
         });
         let scene_texture_view = scene_texture
@@ -62,11 +74,34 @@ impl<'rs> SceneRenderer {
             .register_native_texture(
                 device,
                 &scene_texture_view,
-                FilterMode::Linear
+                FilterMode::Linear,
             );
-        let scene_texture_handle = TextureHandle::new(cc.egui_ctx.tex_manager(), scene_texture_id);
+        let scene_texture_handle = egui::TextureHandle::new(
+            cc.egui_ctx.tex_manager(),
+            scene_texture_id,
+        );
 
-        let shader = device.create_shader_module(include_wgsl!("../../../assets/shaders/basic.wgsl"));
+        let scene_depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Scene Depth Texture"),
+            size: wgpu::Extent3d {
+                width: 1920,
+                height: 1080,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let scene_depth_texture_view = scene_depth_texture.create_view(
+            &wgpu::TextureViewDescriptor::default()
+        );
+
+        let shader = device.create_shader_module(
+            include_wgsl!("../../../assets/shaders/basic.wgsl")
+        );
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("custom3d"),
@@ -94,7 +129,10 @@ impl<'rs> SceneRenderer {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: "vs_main",
-                buffers: &[],
+                buffers: &[
+                    mesh::Vertex::layout(wgpu::VertexStepMode::Vertex),
+                    mesh::Instance::layout(wgpu::VertexStepMode::Instance)
+                ],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
@@ -102,7 +140,13 @@ impl<'rs> SceneRenderer {
                 targets: &[Some(render_state.target_format.into())],
             }),
             primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default()
+            }),
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
         });
@@ -126,18 +170,32 @@ impl<'rs> SceneRenderer {
             scene_texture,
             scene_texture_view,
             scene_texture_handle,
+            scene_depth_texture,
+            scene_depth_texture_view,
             pipeline,
             bind_group,
-            camera_uniform_buffer,
+            camera_uniform_buffer
         }
     }
 
-    pub fn update(&self, render_state: &RenderState, camera: &Camera) {
+    pub fn render_scene(
+        &self,
+        render_state: &RenderState,
+        camera: &Camera,
+        scene: &Scene,
+    ) {
         let queue = &render_state.queue;
         let device = &render_state.device;
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Scene Encoder")
         });
+        let e_s = scene.world.entities();
+        let t_s = scene.world.read_component::<ComponentTransform>();
+        let m_s = scene.world.read_component::<ComponentMesh>();
+        let mut mesh_set: HashMap<
+            *const RwLock<Mesh>,
+            RwLockWriteGuard<Mesh>
+        > = HashMap::new();
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Viewport Scene"),
@@ -154,34 +212,65 @@ impl<'rs> SceneRenderer {
                         store: true,
                     },
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.scene_depth_texture_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: true
+                    }),
+                    stencil_ops: None
+                }),
             });
-            self.render(queue, &mut render_pass, camera);
-        }
-        queue.submit(Some(encoder.finish()));
-    }
 
-    fn render<'rp>(
-        &'rp self,
-        queue: &wgpu::Queue,
-        render_pass: &mut wgpu::RenderPass<'rp>,
-        camera: &Camera
-    ) {
-        let mut camera_uniform = CameraUniform::default();
-        camera_uniform.projection = glm::perspective_lh::<f32>(
-            16.0 / 9.0,
-            45.0_f32.to_radians() as f32,
-            0.1,
-            100.0
-        ).data.0;
-        camera_uniform.view.clone_from_slice(&camera.transform.get_inverse_matrix().data.0);
-        queue.write_buffer(
-            &self.camera_uniform_buffer,
-            0,
-            bytemuck::cast_slice(&[camera_uniform]),
-        );
-        render_pass.set_pipeline(&self.pipeline);
-        render_pass.set_bind_group(0, &self.bind_group, &[]);
-        render_pass.draw(0..3, 0..1);
+            let mut camera_uniform = CameraUniform::default();
+            camera_uniform.projection = glm::perspective_lh::<f32>(
+                16.0 / 9.0,
+                45.0_f32.to_radians() as f32,
+                0.1,
+                100.0,
+            ).data.0;
+            camera_uniform.view.clone_from_slice(&camera.transform.get_inverse_matrix().data.0);
+            queue.write_buffer(
+                &self.camera_uniform_buffer,
+                0,
+                bytemuck::cast_slice(&[camera_uniform]),
+            );
+
+            for (id, m_comp) in (&e_s, &m_s).join() {
+                let default = ComponentTransform::default();
+                let t_comp = t_s.get(id).unwrap_or(&default);
+                let mut mesh = m_comp.mesh.write().unwrap();
+                if !mesh_set.contains_key(&(&*m_comp.mesh as *const _)) {
+                    mesh.instances.clear();
+                }
+                mesh.instances.push(
+                    t_comp.transform.get_matrix().into()
+                );
+                mesh_set.insert(&*m_comp.mesh as *const _, mesh);
+            }
+
+            render_pass.set_pipeline(&self.pipeline);
+            render_pass.set_bind_group(0, &self.bind_group, &[]);
+
+            for (_, mesh) in mesh_set.iter_mut() {
+                if mesh.dirty {
+                    mesh.rebuild_mesh_data(device);
+                    mesh.dirty = false;
+                }
+                mesh.rebuild_instance_data(device);
+                render_pass.set_index_buffer(
+                    mesh.index_buffer.as_ref().unwrap().slice(..),
+                    wgpu::IndexFormat::Uint32,
+                );
+                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.as_ref().unwrap().slice(..));
+                render_pass.set_vertex_buffer(1, mesh.instance_buffer.as_ref().unwrap().slice(..));
+                render_pass.draw_indexed(
+                    0..(mesh.indices.len() as u32), 0,
+                    0..(mesh.instances.len() as u32)
+                );
+            }
+        }
+
+        queue.submit(Some(encoder.finish()));
     }
 }

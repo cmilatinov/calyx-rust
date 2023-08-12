@@ -1,6 +1,7 @@
-use super::{compose_transform, decompose_transform};
-use glm::{Vec3, Mat4, vec3};
+use glm::{Mat4, Vec3, vec3};
 use serde::{Deserialize, Serialize};
+
+use super::{compose_transform, decompose_transform};
 
 #[derive(Serialize, Deserialize)]
 pub struct Transform {
