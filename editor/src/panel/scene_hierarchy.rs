@@ -24,7 +24,6 @@ impl Panel for PanelSceneHierarchy {
     }
 
     fn ui(&self, ui: &mut Ui) {
-        // TODO: Need better API for nodes
         let mut app_state = EditorAppState::get_mut();
         let entities = app_state.scene.root_entities().clone();
         let mut selection: Option<Uuid> = app_state.selected_entity;
@@ -38,9 +37,6 @@ impl Panel for PanelSceneHierarchy {
             );
         }
         app_state.selected_entity = selection;
-        if (selection.is_some()) {
-            println!("{:?} {:?}", selection, app_state.selected_entity);
-        }
     }
 }
 
@@ -62,9 +58,23 @@ impl PanelSceneHierarchy {
 
         if children.len() > 0 {
             for child_node in children {
-                ui.collapsing(id.name.as_str(), |ui| {
-                    self.render_scene_node(scene, selected, selection, ui, child_node);
-                });
+                let collapsing_id = ui.make_persistent_id("my_collapsing_header");
+                egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), collapsing_id, false)
+                    .show_header(ui, |ui| {
+                        let selected = if let Some(selected_id) = selected {
+                            *selected_id == id.id
+                        } else { false };
+                        let res = ui.selectable_label(
+                            selected,
+                            id.name.as_str()
+                        );
+                        if res.clicked() {
+                            *selection =
+                                if selected { None }
+                                else { Some(id.id) };
+                        }
+                    })
+                    .body(|ui| self.render_scene_node(scene, selected, selection, ui, child_node));
             }
         } else {
             let selected = if let Some(selected_id) = selected {
