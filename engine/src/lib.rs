@@ -6,6 +6,7 @@ pub extern crate indextree;
 pub extern crate nalgebra_glm as glm;
 pub extern crate russimp;
 pub extern crate serde;
+extern crate bevy_reflect;
 
 pub mod utils;
 pub mod assets;

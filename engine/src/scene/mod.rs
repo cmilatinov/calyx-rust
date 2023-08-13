@@ -1,7 +1,7 @@
 use std::ops::Deref;
 use glm::Mat4;
 use indextree::{Arena, NodeId};
-use specs::{Builder, Component, Entity, Join, VecStorage, World, WorldExt};
+use specs::{Builder, Entity, Join, VecStorage, World, WorldExt};
 use specs::world::Index;
 
 use error::SceneError;
@@ -83,7 +83,7 @@ impl Scene {
     ///
     /// This function will return `Err(EngineError)` if the `NodeId` is invalid
     /// or if there's an error when inserting the component into the `world` storage.
-    pub fn bind_component_default<T: Component<Storage=VecStorage<T>> + Sync + Send + Default>(
+    pub fn bind_component_default<T: specs::Component<Storage=VecStorage<T>> + Sync + Send + Default>(
         &mut self, node_id: NodeId
     ) -> Result<(), SceneError>{
         let entity = self.get_entity(node_id).ok_or(SceneError::InvalidNodeId)?;
@@ -91,7 +91,7 @@ impl Scene {
         Ok(())
     }
 
-    pub fn bind_component<T: Component<Storage=VecStorage<T>> + Sync + Send>(
+    pub fn bind_component<T: specs::Component<Storage=VecStorage<T>> + Sync + Send>(
         &mut self, node_id: NodeId, component: T
     ) -> Result<(), SceneError>{
         let entity = self.get_entity(node_id).ok_or(SceneError::InvalidNodeId)?;

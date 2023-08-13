@@ -4,14 +4,17 @@ pub mod mesh;
 pub mod transform;
 
 pub trait Component {
-    fn start(&mut self, scene: Scene);
-    fn update(&mut self, scene: Scene);
-    fn destroy(&mut self, scene: Scene);
+    fn start(&mut self, scene: &mut Scene);
+    fn update(&mut self, scene: &mut Scene);
+    fn destroy(&mut self, scene: &mut Scene);
 }
 
 #[macro_export]
 macro_rules! component {
     (pub struct $name:ident { $($field:vis $field_name:ident : $field_type:ty),* }) => {
+        use bevy_reflect::Reflect;
+
+        #[derive(Reflect)]
         pub struct $name {
             $($field $field_name: $field_type),*,
         }
@@ -25,16 +28,15 @@ macro_rules! component {
         }
 
         impl specs::Component for $name {
-            type specs::Storage = specs::VecStorage<Self>;
+            type Storage = specs::VecStorage<Self>;
         }
     };
 }
 
 #[cfg(test)]
 mod tests {
-    struct Data {
-        value: i32,
-    }
+    use crate::ecs::Component;
+    use crate::scene::Scene;
 
     #[test]
     pub fn create_component() {
@@ -43,5 +45,14 @@ mod tests {
                 test_visible: i32
             }
         }
+
+        impl Component for ComponentTest {
+            fn start(&mut self, scene: &mut Scene) {}
+
+            fn update(&mut self, scene: &mut Scene) {}
+
+            fn destroy(&mut self, scene: &mut Scene) {}
+        }
+
     }
 }

@@ -1,4 +1,4 @@
-use specs::{Component, VecStorage};
+use specs::{VecStorage};
 
 use crate::math::transform::Transform;
 
@@ -7,6 +7,6 @@ pub struct ComponentTransform {
     pub transform: Transform
 }
 
-impl Component for ComponentTransform {
+impl specs::Component for ComponentTransform {
     type Storage = VecStorage<Self>;
 }
