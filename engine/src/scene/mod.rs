@@ -1,6 +1,6 @@
 use glm::Mat4;
 use indextree::{Arena, NodeId};
-use specs::{Builder, Entity, Join, VecStorage, World, WorldExt};
+use specs::{Builder, Entity, VecStorage, World, WorldExt};
 use specs::world::Index;
 use uuid::Uuid;
 

@@ -6,6 +6,8 @@ pub use id::*;
 pub use transform::*;
 pub use mesh::*;
 
+use crate::scene::Scene;
+
 pub trait Component {
     fn start(&mut self, scene: &mut Scene);
     fn update(&mut self, scene: &mut Scene);
