@@ -20,7 +20,7 @@ fn main() -> eframe::Result<()> {
         "Calyx",
         options,
         Box::new(|cc| {
-            let mut app_state = EditorAppState::get();
+            let mut app_state = EditorAppState::get_mut();
             let app = EditorApp::new(cc);
             app_state.scene_renderer = Some(app.scene_renderer.clone());
             Box::new(app)

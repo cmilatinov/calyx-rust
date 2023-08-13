@@ -11,7 +11,7 @@ impl Panel for PanelInspector {
         "Inspector"
     }
 
-    fn ui(&mut self, ui: &mut Ui) {
+    fn ui(&self, ui: &mut Ui) {
         ui.heading("Inspector");
     }
 }

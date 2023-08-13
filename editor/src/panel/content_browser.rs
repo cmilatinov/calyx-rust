@@ -44,7 +44,7 @@ impl Panel for PanelContentBrowser {
         "Content Browser"
     }
 
-    fn ui(&mut self, ui: &mut Ui) {
+    fn ui(&self, ui: &mut Ui) {
         egui::SidePanel::left("file_tree")
             .resizable(true)
             .default_width(150.0)

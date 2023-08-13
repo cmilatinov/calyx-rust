@@ -7,22 +7,24 @@ pub trait Init {
 macro_rules! singleton {
     ($t:tt) => {
         use std::ops::DerefMut;
-        use std::sync::{Mutex, MutexGuard};
+        use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
         use lazy_static::lazy_static;
 
         lazy_static! {
-            pub static ref INSTANCE: Mutex<$t> = Mutex::new($t::default());
+            pub static ref INSTANCE: RwLock<$t> = RwLock::new($t::default());
         }
 
         impl $t {
-            pub fn get() -> MutexGuard<'static, $t> {
-                INSTANCE.lock()
-                    .expect("Failed to lock singleton instance of $t")
+            pub fn get() -> RwLockReadGuard<'static, $t> {
+                INSTANCE.read().unwrap()
+            }
+
+            pub fn get_mut() -> RwLockWriteGuard<'static, $t> {
+                INSTANCE.write().unwrap()
             }
 
             pub fn init() {
-                let mut binding = INSTANCE.lock()
-                    .expect("Failed to lock singleton instance of $t");
+                let mut binding = INSTANCE.write().unwrap();
                 let instance = binding.deref_mut();
                 $t::initialize(instance);
             }

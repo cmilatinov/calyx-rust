@@ -1,5 +1,5 @@
 use glm::Mat4;
-use indextree::{Arena, NodeId, Node};
+use indextree::{Arena, NodeId, Node, Children};
 use specs::{Builder, Entity, VecStorage, World, WorldExt};
 use specs::world::Index;
 use uuid::Uuid;
@@ -14,8 +14,8 @@ use crate::ecs::ComponentTransform;
 pub mod error;
 
 pub struct Scene {
-    pub(crate) world: World,
-    entity_hierarchy: Vec<NodeId>,
+    pub world: World,
+    pub entity_hierarchy: Vec<NodeId>,
     entity_arena: Arena<Index>
 }
 
@@ -31,12 +31,15 @@ impl Default for Scene {
             entity_arena: Arena::new()
         };
 
-        let mesh = AssetRegistry::get().load::<Mesh>("meshes/cube").unwrap();
+        let mesh = AssetRegistry::get_mut().load::<Mesh>("meshes/cube").unwrap();
 
         let cube = scene.create_entity(None, None);
         scene.bind_component(cube, ComponentMesh { mesh: mesh.clone() }).unwrap();
 
-        let cube2 = scene.create_entity(None, None);
+        let cube2 = scene.create_entity(Some(ComponentID {
+            id: Uuid::new_v4(),
+            name: "Bing bong".to_string()
+        }), Some(cube));
         scene.bind_component(cube2, ComponentMesh { mesh: mesh.clone() }).unwrap();
 
         {
@@ -96,9 +99,12 @@ impl Scene {
         Ok(())
     }
 
-    pub fn create_entity(&mut self, id: Option<Uuid>, parent: Option<NodeId>) -> NodeId {
+    pub fn create_entity(&mut self, id: Option<ComponentID>, parent: Option<NodeId>) -> NodeId {
         let new_entity = self.world.create_entity()
-            .with(ComponentID::new())
+            .with(
+                if let Some(id_comp) = id { id_comp }
+                else { ComponentID::new() }
+            )
             .with(ComponentTransform::default())
             .build();
         let new_node = self.entity_arena.new_node(new_entity.id());
@@ -133,6 +139,10 @@ impl Scene {
     pub fn get_entity(&self, node_id: NodeId) -> Option<Entity> {
         let node = self.entity_arena.get(node_id)?;
         Some(self.world.entities().entity(*node.get()))
+    }
+
+    pub fn get_children(&self, node_id: NodeId) -> Children<'_, Index> {
+        node_id.children(&self.entity_arena)
     }
 
     pub fn get_children_count(&self, node_id: NodeId) -> usize {

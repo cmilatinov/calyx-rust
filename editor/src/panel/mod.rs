@@ -20,7 +20,7 @@ mod viewport;
 
 pub trait Panel {
     fn name() -> &'static str where Self: Sized;
-    fn ui(&mut self, ui: &mut Ui);
+    fn ui(&self, ui: &mut Ui);
     fn tab_style_override(&self, _global_style: &TabStyle) -> Option<TabStyle> {
         None
     }

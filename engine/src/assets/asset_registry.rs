@@ -3,7 +3,7 @@ use std::any::TypeId;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::path::Path;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc};
 use std::thread::JoinHandle;
 
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};

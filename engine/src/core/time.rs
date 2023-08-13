@@ -28,7 +28,7 @@ macro_rules! time_member_getter {
 
 impl Time {
     pub fn update_time() {
-        let mut instance = Self::get();
+        let mut instance = Self::get_mut();
         instance.static_delta_time = instance.last_time.elapsed().as_secs_f32();
         instance.static_time += instance.static_delta_time;
         instance.delta_time = instance.static_delta_time * instance.time_scale;
@@ -37,13 +37,13 @@ impl Time {
     }
 
     pub fn timer(name: &'static str) -> TimeType {
-        let mut instance = Self::get();
+        let mut instance = Self::get_mut();
         let instant = instance.timers.entry(name).or_insert(Instant::now());
         instant.elapsed().as_secs_f32()
     }
 
     pub fn reset_timer(name: &'static str) {
-        let mut instance = Self::get();
+        let mut instance = Self::get_mut();
         instance.timers.insert(name, Instant::now());
     }
 
