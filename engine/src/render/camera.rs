@@ -1,23 +1,17 @@
 use glm::Mat4;
 
-use crate::math::transform::Transform;
-
 pub struct Camera {
-    pub projection: Mat4,
-    pub transform: Transform
+    pub projection: Mat4
 }
 
 pub trait CameraLike {
-    fn update(&mut self) {}
+    fn update(&mut self, _ui: &mut egui::Ui, _res: &egui::Response) {}
 }
-
-impl CameraLike for Camera {}
 
 impl Default for Camera {
     fn default() -> Self {
         Self {
-            projection: Mat4::identity(),
-            transform: Transform::default()
+            projection: Mat4::identity()
         }
     }
 }

@@ -1,6 +1,6 @@
 use specs::{VecStorage};
 
-use crate::math::transform::Transform;
+use crate::math::Transform;
 
 #[derive(Default)]
 pub struct ComponentTransform {

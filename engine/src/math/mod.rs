@@ -1,6 +1,7 @@
 use glm::{Mat4, Vec3, vec3};
 
-pub mod transform;
+mod transform;
+pub use transform::*;
 
 pub fn compose_transform(translation: &Vec3, rotation: &Vec3, scale: &Vec3) -> Mat4 {
     let mut matrix = glm::identity();

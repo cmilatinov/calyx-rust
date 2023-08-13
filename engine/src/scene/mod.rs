@@ -1,15 +1,15 @@
-use std::ops::Deref;
 use glm::Mat4;
 use indextree::{Arena, NodeId};
 use specs::{Builder, Entity, Join, VecStorage, World, WorldExt};
 use specs::world::Index;
+use uuid::Uuid;
 
 use error::SceneError;
 
 use crate::assets::{AssetRegistry};
 use crate::assets::mesh::Mesh;
-use crate::ecs::mesh::ComponentMesh;
-use crate::ecs::transform::ComponentTransform;
+use crate::ecs::{ComponentID, ComponentMesh};
+use crate::ecs::ComponentTransform;
 
 pub mod error;
 
@@ -22,6 +22,7 @@ pub struct Scene {
 impl Default for Scene {
     fn default() -> Self {
         let mut world = World::new();
+        world.register::<ComponentID>();
         world.register::<ComponentTransform>();
         world.register::<ComponentMesh>();
         let mut scene = Scene {
@@ -30,28 +31,20 @@ impl Default for Scene {
             entity_arena: Arena::new()
         };
 
-        let mut mesh = AssetRegistry::get().load::<Mesh>("meshes/cube")
-            .expect("Failed to load cube mesh");
+        let mesh = AssetRegistry::get().load::<Mesh>("meshes/cube").unwrap();
 
-        let mesh2 = AssetRegistry::get().load::<Mesh>("meshes/cube")
-            .expect("Failed to load cube mesh");
+        let cube = scene.create_entity(None, None);
+        scene.bind_component(cube, ComponentMesh { mesh: mesh.clone() }).unwrap();
 
-        let ptr = mesh.read().unwrap().deref() as *const _;
-        let ptr2 = mesh2.read().unwrap().deref() as *const _;
-        assert_eq!(ptr, ptr2);
-
-        let cube_id = scene.create_entity(None);
-        scene.bind_component(cube_id, ComponentMesh { mesh })
-            .expect("Failed to load cube mesh");
+        let cube2 = scene.create_entity(None, None);
+        scene.bind_component(cube2, ComponentMesh { mesh: mesh.clone() }).unwrap();
 
         {
-            let m_s = scene.world.read_component::<ComponentMesh>();
-            let t_s = scene.world.read_component::<ComponentTransform>();
-
-            for (trans_comp, mesh_comp) in (&t_s, &m_s).join() {
-                println!("{}", trans_comp.transform.get_matrix());
-                println!("{:?}", mesh_comp.mesh.read().unwrap().name);
-            }
+            let mut t_s = scene.world.write_storage::<ComponentTransform>();
+            t_s.get_mut(scene.get_entity(cube).unwrap())
+                .unwrap().transform.translate(&glm::vec3(0.0, 0.0, 0.0));
+            t_s.get_mut(scene.get_entity(cube2).unwrap())
+                .unwrap().transform.translate(&glm::vec3(0.0, 5.0, 0.0));
         }
 
         scene
@@ -99,8 +92,11 @@ impl Scene {
         Ok(())
     }
 
-    pub fn create_entity(&mut self, parent: Option<NodeId>) -> NodeId {
-        let new_entity = self.world.create_entity().with(ComponentTransform::default()).build();
+    pub fn create_entity(&mut self, id: Option<Uuid>, parent: Option<NodeId>) -> NodeId {
+        let new_entity = self.world.create_entity()
+            .with(ComponentID::new())
+            .with(ComponentTransform::default())
+            .build();
         let new_node = self.entity_arena.new_node(new_entity.id());
 
         // push into root otherwise push under parent specified

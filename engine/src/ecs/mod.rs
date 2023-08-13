@@ -1,7 +1,10 @@
-use crate::scene::Scene;
+mod id;
+mod transform;
+mod mesh;
 
-pub mod mesh;
-pub mod transform;
+pub use id::*;
+pub use transform::*;
+pub use mesh::*;
 
 pub trait Component {
     fn start(&mut self, scene: &mut Scene);

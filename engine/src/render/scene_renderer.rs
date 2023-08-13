@@ -1,8 +1,8 @@
-use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::mem;
 use std::num::NonZeroU64;
-use std::sync::{Arc, RwLock, RwLockWriteGuard};
+use std::ops::Deref;
+use std::sync::{RwLock, RwLockWriteGuard};
 
 use eframe::wgpu::FilterMode;
 use egui_wgpu::{RenderState, wgpu};
@@ -12,9 +12,9 @@ use glm::Mat4;
 use specs::{Join, WorldExt};
 use crate::assets::mesh;
 use crate::assets::mesh::Mesh;
-use crate::core::Ref;
-use crate::ecs::mesh::ComponentMesh;
-use crate::ecs::transform::ComponentTransform;
+use crate::ecs::ComponentMesh;
+use crate::ecs::ComponentTransform;
+use crate::math::Transform;
 use crate::render::buffer::BufferLayout;
 
 use crate::render::Camera;
@@ -139,7 +139,15 @@ impl<'rs> SceneRenderer {
                 entry_point: "fs_main",
                 targets: &[Some(render_state.target_format.into())],
             }),
-            primitive: wgpu::PrimitiveState::default(),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Cw,
+                cull_mode: Some(wgpu::Face::Back),
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
                 depth_write_enabled: true,
@@ -181,7 +189,8 @@ impl<'rs> SceneRenderer {
     pub fn render_scene(
         &self,
         render_state: &RenderState,
-        camera: &Camera,
+        camera_transform: &Transform,
+        _camera: &Camera,
         scene: &Scene,
     ) {
         let queue = &render_state.queue;
@@ -192,34 +201,13 @@ impl<'rs> SceneRenderer {
         let e_s = scene.world.entities();
         let t_s = scene.world.read_component::<ComponentTransform>();
         let m_s = scene.world.read_component::<ComponentMesh>();
-        let mut mesh_set: HashMap<
-            *const RwLock<Mesh>,
-            RwLockWriteGuard<Mesh>
-        > = HashMap::new();
+        let mut mesh_map: HashMap<*const RwLock<Mesh>, &RwLock<Mesh>> = HashMap::new();
+        let mut mesh_list: Vec<RwLockWriteGuard<Mesh>> = Vec::new();
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Viewport Scene"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.scene_texture_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.03,
-                            g: 0.03,
-                            b: 0.03,
-                            a: 1.0,
-                        }),
-                        store: true,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.scene_depth_texture_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: true
-                    }),
-                    stencil_ops: None
-                }),
+                color_attachments: &[Some(self.color_attachment())],
+                depth_stencil_attachment: Some(self.depth_stencil_attachment()),
             });
 
             let mut camera_uniform = CameraUniform::default();
@@ -229,30 +217,38 @@ impl<'rs> SceneRenderer {
                 0.1,
                 100.0,
             ).data.0;
-            camera_uniform.view.clone_from_slice(&camera.transform.get_inverse_matrix().data.0);
+            camera_uniform.view.clone_from_slice(&camera_transform.get_inverse_matrix().data.0);
             queue.write_buffer(
                 &self.camera_uniform_buffer,
                 0,
                 bytemuck::cast_slice(&[camera_uniform]),
             );
 
+            let default = ComponentTransform::default();
             for (id, m_comp) in (&e_s, &m_s).join() {
-                let default = ComponentTransform::default();
                 let t_comp = t_s.get(id).unwrap_or(&default);
-                let mut mesh = m_comp.mesh.write().unwrap();
-                if !mesh_set.contains_key(&(&*m_comp.mesh as *const _)) {
-                    mesh.instances.clear();
+                {
+                    let mut mesh = m_comp.mesh.write().unwrap();
+                    let ptr: *const RwLock<Mesh> = m_comp.mesh.deref();
+                    if !mesh_map.contains_key(&ptr) {
+                        mesh.instances.clear();
+                    }
+                    mesh.instances.push(
+                        t_comp.transform.get_matrix().into()
+                    );
                 }
-                mesh.instances.push(
-                    t_comp.transform.get_matrix().into()
-                );
-                mesh_set.insert(&*m_comp.mesh as *const _, mesh);
+                mesh_map.insert(&*m_comp.mesh as *const _, &*m_comp.mesh);
             }
 
             render_pass.set_pipeline(&self.pipeline);
             render_pass.set_bind_group(0, &self.bind_group, &[]);
 
-            for (_, mesh) in mesh_set.iter_mut() {
+            // Lock all meshes for writing at once
+            mesh_list = mesh_map.iter()
+                .map(|i| i.1.write().unwrap())
+                .collect();
+
+            for mesh in mesh_list.iter_mut() {
                 if mesh.dirty {
                     mesh.rebuild_mesh_data(device);
                     mesh.dirty = false;
@@ -272,5 +268,32 @@ impl<'rs> SceneRenderer {
         }
 
         queue.submit(Some(encoder.finish()));
+    }
+
+    fn color_attachment(&self) -> wgpu::RenderPassColorAttachment {
+        wgpu::RenderPassColorAttachment {
+            view: &self.scene_texture_view,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color {
+                    r: 0.03,
+                    g: 0.03,
+                    b: 0.03,
+                    a: 1.0,
+                }),
+                store: true,
+            },
+        }
+    }
+
+    fn depth_stencil_attachment(&self) -> wgpu::RenderPassDepthStencilAttachment {
+        wgpu::RenderPassDepthStencilAttachment {
+            view: &self.scene_depth_texture_view,
+            depth_ops: Some(wgpu::Operations {
+                load: wgpu::LoadOp::Clear(1.0),
+                store: true
+            }),
+            stencil_ops: None
+        }
     }
 }

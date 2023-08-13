@@ -3,12 +3,14 @@ use eframe::egui;
 use egui_dock::{DockArea, NodeIndex, Style, Tree};
 use engine::*;
 use engine::core::Time;
-use engine::render::{Camera, SceneRenderer};
+use engine::render::SceneRenderer;
 use engine::scene::Scene;
 use engine::utils::Init;
+use crate::camera::EditorCamera;
 
 use self::panel::*;
 
+mod camera;
 mod panel;
 
 pub struct EditorApp {
@@ -21,7 +23,7 @@ pub struct EditorApp {
 #[derive(Default)]
 pub struct EditorAppState {
     pub scene: Scene,
-    pub camera: Camera,
+    pub camera: EditorCamera,
     pub scene_renderer: Option<Arc<RwLock<SceneRenderer>>>
 }
 
@@ -55,7 +57,12 @@ impl eframe::App for EditorApp {
             let app_state = EditorAppState::get();
             let render_state = frame.wgpu_render_state().unwrap();
             self.scene_renderer.read().unwrap()
-                .render_scene(render_state, &app_state.camera, &app_state.scene);
+                .render_scene(
+                    render_state,
+                    &app_state.camera.transform,
+                    &app_state.camera.camera,
+                    &app_state.scene
+                );
         }
 
         DockArea::new(&mut self.tree)
