@@ -1,6 +1,7 @@
 use specs::{Component, VecStorage};
-use crate::assets::Mesh;
-use crate::core::refs::Ref;
+
+use crate::assets::mesh::Mesh;
+use crate::core::Ref;
 
 pub struct ComponentMesh {
     pub mesh: Ref<Mesh>

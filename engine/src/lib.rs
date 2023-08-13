@@ -1,11 +1,11 @@
 pub extern crate eframe;
 pub extern crate egui;
-pub extern crate egui_wgpu;
 pub extern crate egui_dock;
-pub extern crate serde;
-pub extern crate nalgebra_glm as glm;
+pub extern crate egui_wgpu;
 pub extern crate indextree;
+pub extern crate nalgebra_glm as glm;
 pub extern crate russimp;
+pub extern crate serde;
 
 pub mod utils;
 pub mod assets;

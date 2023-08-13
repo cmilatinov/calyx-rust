@@ -1,9 +1,11 @@
-use engine::*;
 use egui::Ui;
-use engine::core::time::Time;
+
+use engine::*;
+use engine::core::Time;
 use engine::egui::{Image, Key, Margin, PointerButton, Sense};
 use engine::egui_dock::TabStyle;
 use engine::glm::{vec3, Vec3};
+
 use crate::EditorAppState;
 use crate::panel::Panel;
 

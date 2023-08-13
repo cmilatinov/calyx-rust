@@ -1,4 +1,4 @@
-use glm::{Vec3, Mat4, vec3};
+use glm::{Mat4, Vec3, vec3};
 
 pub mod transform;
 

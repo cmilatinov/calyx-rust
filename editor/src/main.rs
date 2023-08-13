@@ -1,8 +1,9 @@
-use engine::*;
-use editor::*;
 use eframe::NativeOptions;
-use engine::core::time::Time;
+
+use editor::*;
+use engine::*;
 use engine::assets::AssetRegistry;
+use engine::core::Time;
 
 fn main() -> eframe::Result<()> {
     Time::init();

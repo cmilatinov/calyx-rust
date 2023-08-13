@@ -1,4 +1,5 @@
 use specs::{Component, VecStorage};
+
 use crate::math::transform::Transform;
 
 #[derive(Default)]
