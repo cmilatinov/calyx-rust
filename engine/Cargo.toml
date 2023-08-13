@@ -21,6 +21,7 @@ indextree = "4.6.0"
 russimp = "2.0.5"
 notify = "6.0.1"
 legion = "0.4.0"
+bevy_reflect = "0.10.1"
 
 [features]
 default = ["eframe/wgpu", "assets_manager/ron"]

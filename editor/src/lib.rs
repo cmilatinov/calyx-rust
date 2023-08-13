@@ -1,12 +1,10 @@
 mod panel;
-pub mod syntax_highlighting;
 
 use std::sync::{Arc, RwLock};
 use engine::*;
 use eframe::{egui};
 use egui_dock::{DockArea, NodeIndex, Style, Tree};
 use engine::core::time::Time;
-use engine::egui::Margin;
 use engine::render::{Camera, SceneRenderer};
 use engine::scene::Scene;
 use engine::utils::Init;
@@ -35,7 +33,6 @@ impl EditorApp {
         ]);
         let [_, b] = tree.split_right(NodeIndex::root(), 0.2, vec![
             PanelViewport::name().to_owned(),
-            PanelCodeEditor::name().to_owned()
         ]);
         let [c, _] = tree.split_right(b, 0.8, vec![PanelInspector::name().to_owned()]);
         let [_, _] = tree.split_below(c, 0.7, vec![PanelContentBrowser::name().to_owned()]);

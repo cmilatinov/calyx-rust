@@ -1,5 +1,3 @@
-use std::sync::Arc;
-use assets_manager::Handle;
 use specs::{Component, VecStorage};
 use crate::assets::Mesh;
 use crate::core::refs::Ref;

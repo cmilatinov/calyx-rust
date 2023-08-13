@@ -1,4 +1,3 @@
-mod code_editor;
 mod content_browser;
 mod inspector;
 mod scene_hierarchy;
@@ -6,7 +5,6 @@ mod terminal;
 mod viewport;
 
 use std::collections::HashMap;
-pub use self::code_editor::*;
 pub use self::content_browser::*;
 pub use self::inspector::*;
 pub use self::scene_hierarchy::*;
@@ -31,7 +29,6 @@ pub struct PanelManager {
 impl Default for PanelManager {
     fn default() -> Self {
         let mut panels: HashMap<String, Box<dyn Panel>> = HashMap::new();
-        panels.insert(PanelCodeEditor::name().to_string(), Box::new(PanelCodeEditor::default()));
         panels.insert(PanelContentBrowser::name().to_string(), Box::new(PanelContentBrowser));
         panels.insert(PanelInspector::name().to_string(), Box::new(PanelInspector));
         panels.insert(PanelSceneHierarchy::name().to_string(), Box::new(PanelSceneHierarchy::default()));

@@ -44,13 +44,22 @@ impl Panel for PanelContentBrowser {
     fn ui(&mut self, ui: &mut Ui) {
         egui::SidePanel::left("file_tree")
             .resizable(true)
-            .default_width(550.0)
+            .default_width(150.0)
+            .width_range(80.0..=250.0)
             .show_inside(ui, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.heading("Left Panel");
+                });
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     self.render_directory(ui, Path::new("/run/media/rubens/ssd/projects/calyx-rust/"));
                 });
             });
 
-        egui::CentralPanel::default().show_inside(ui, |_ui| {});
+        egui::CentralPanel::default()
+            .show_inside(ui, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.heading("Central Panel");
+                });
+            });
     }
 }

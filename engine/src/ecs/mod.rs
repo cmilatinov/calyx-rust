@@ -1,8 +1,12 @@
+use crate::scene::Scene;
+
 pub mod mesh;
 pub mod transform;
 
-struct Data {
-    value: i32,
+pub trait Component {
+    fn start(&mut self, scene: Scene);
+    fn update(&mut self, scene: Scene);
+    fn destroy(&mut self, scene: Scene);
 }
 
 #[macro_export]
@@ -10,25 +14,24 @@ macro_rules! component {
     (pub struct $name:ident { $($field:vis $field_name:ident : $field_type:ty),* }) => {
         pub struct $name {
             $($field $field_name: $field_type),*,
-            pub scene: Rc<RefCell<Data>>,
         }
 
         impl $name {
             pub fn new($($field_name: $field_type),*) -> Self {
                 $name {
-                    $($field_name),*,
-                    scene: Rc::new(RefCell::new(Data { value: 24 })),
+                    $($field_name),*
                 }
             }
+        }
+
+        impl specs::Component for $name {
+            type specs::Storage = specs::VecStorage<Self>;
         }
     };
 }
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
-    use std::rc::Rc;
-
     struct Data {
         value: i32,
     }
@@ -40,16 +43,5 @@ mod tests {
                 test_visible: i32
             }
         }
-
-        impl ComponentTest {
-            pub fn new_test_impl(&self) -> i32 {
-                56
-            }
-        }
-
-        let mut component = ComponentTest::new(23);
-        let scene = component.scene.borrow();
-        assert_eq!(scene.value, 24);
-        assert_eq!(component.new_test_impl(), 56);
     }
 }
