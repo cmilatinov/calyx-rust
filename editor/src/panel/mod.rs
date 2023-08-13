@@ -20,7 +20,7 @@ mod viewport;
 
 pub trait Panel {
     fn name() -> &'static str where Self: Sized;
-    fn ui(&self, ui: &mut Ui);
+    fn ui(&mut self, ui: &mut Ui);
     fn tab_style_override(&self, _global_style: &TabStyle) -> Option<TabStyle> {
         None
     }
@@ -33,7 +33,7 @@ pub struct PanelManager {
 impl Default for PanelManager {
     fn default() -> Self {
         let mut panels: HashMap<String, Box<dyn Panel>> = HashMap::new();
-        panels.insert(PanelContentBrowser::name().to_string(), Box::new(PanelContentBrowser));
+        panels.insert(PanelContentBrowser::name().to_string(), Box::new(PanelContentBrowser::default()));
         panels.insert(PanelInspector::name().to_string(), Box::new(PanelInspector));
         panels.insert(PanelSceneHierarchy::name().to_string(), Box::new(PanelSceneHierarchy::default()));
         panels.insert(PanelTerminal::name().to_string(), Box::new(PanelTerminal::default()));

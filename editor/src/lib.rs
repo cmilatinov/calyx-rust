@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::{Arc};
 use eframe::egui;
 use egui_dock::{DockArea, NodeIndex, Style, Tree};
@@ -7,6 +8,7 @@ use engine::render::SceneRenderer;
 use engine::scene::Scene;
 use engine::utils::Init;
 use engine::indextree::{NodeId};
+use engine::uuid::Uuid;
 use crate::camera::EditorCamera;
 
 use self::panel::*;
@@ -26,7 +28,13 @@ pub struct EditorAppState {
     pub scene: Scene,
     pub camera: EditorCamera,
     pub scene_renderer: Option<Arc<RwLock<SceneRenderer>>>,
-    pub selected_entity: Option<NodeId>
+    pub selection: Option<EditorSelection>
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub enum EditorSelection {
+    Entity(HashSet<NodeId>),
+    Asset(HashSet<Uuid>)
 }
 
 singleton_with_init!(EditorAppState);

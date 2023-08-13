@@ -24,6 +24,10 @@ pub struct AssetRegistry {
 singleton!(AssetRegistry);
 
 impl AssetRegistry {
+    pub fn root_path(&self) -> &str {
+        self.asset_paths[0].as_str()
+    }
+
     pub fn filename<A: Asset>(&self, id: &str, instance: &A) -> String {
         let extensions = instance.get_file_extensions();
         for path in self.asset_paths.iter() {

@@ -23,7 +23,7 @@ impl Panel for PanelTerminal {
         "Console"
     }
 
-    fn ui(&self, ui: &mut Ui) {
+    fn ui(&mut self, ui: &mut Ui) {
         // Display history
         ScrollArea::vertical().show(ui, |ui| {
             for message in &self.history {

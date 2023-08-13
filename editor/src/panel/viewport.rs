@@ -16,7 +16,7 @@ impl Panel for PanelViewport {
         "Viewport"
     }
 
-    fn ui(&self, ui: &mut Ui) {
+    fn ui(&mut self, ui: &mut Ui) {
         let mut app_state = EditorAppState::get_mut();
         let res = ui.add(Image::new(
             app_state.scene_renderer.as_ref()

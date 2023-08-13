@@ -1,8 +1,4 @@
-use egui::Ui;
-
-use engine::*;
-use crate::EditorAppState;
-
+use engine::egui::Ui;
 use crate::panel::Panel;
 
 pub struct PanelInspector;
@@ -12,7 +8,7 @@ impl Panel for PanelInspector {
         "Inspector"
     }
 
-    fn ui(&self, ui: &mut Ui) {
-        let app_state = EditorAppState::get();
+    fn ui(&mut self, ui: &mut Ui) {
+        // TODO: Reflect needs to be fully implemented
     }
 }
