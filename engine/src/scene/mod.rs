@@ -1,5 +1,5 @@
 use glm::Mat4;
-use indextree::{Arena, NodeId};
+use indextree::{Arena, NodeId, Node};
 use specs::{Builder, Entity, VecStorage, World, WorldExt};
 use specs::world::Index;
 use uuid::Uuid;
@@ -55,6 +55,10 @@ impl Default for Scene {
 impl Scene {
     pub fn update(&mut self) {
         self.world.maintain();
+    }
+
+    pub fn root_entities(&self) -> &Vec<NodeId> {
+        &self.entity_hierarchy
     }
 
     /// Binds a component of type `T` to an entity in the ECS, given by its `NodeId`.
@@ -122,9 +126,17 @@ impl Scene {
         self.entity_arena.get(node_id)?.parent()
     }
 
+    pub fn get_node(&self, node_id: NodeId) -> Option<&Node<Index>> {
+        self.entity_arena.get(node_id)
+    }
+
     pub fn get_entity(&self, node_id: NodeId) -> Option<Entity> {
         let node = self.entity_arena.get(node_id)?;
         Some(self.world.entities().entity(*node.get()))
+    }
+
+    pub fn get_children_count(&self, node_id: NodeId) -> usize {
+        node_id.children(&self.entity_arena).into_iter().count()
     }
 
     pub fn get_entity_matrix(&self, node_id: NodeId) -> Result<Mat4, SceneError> {

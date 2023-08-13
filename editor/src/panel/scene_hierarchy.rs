@@ -1,6 +1,8 @@
 use egui::Ui;
 
 use engine::*;
+use engine::indextree::NodeId;
+use crate::EditorAppState;
 
 use crate::panel::Panel;
 
@@ -18,24 +20,19 @@ impl Panel for PanelSceneHierarchy {
     }
 
     fn ui(&mut self, ui: &mut Ui) {
-        use engine::egui::special_emojis::{OS_APPLE, OS_LINUX, OS_WINDOWS};
-
-        ui.heading("egui");
-        ui.label(format!(
-            "egui is an immediate mode GUI library written in Rust. egui runs both on the web and natively on {}{}{}. \
-            On the web it is compiled to WebAssembly and rendered with WebGL.{}",
-            OS_APPLE, OS_LINUX, OS_WINDOWS,
-            if cfg!(target_arch = "wasm32") {
-                " Everything you see is rendered as textured triangles. There is no DOM, HTML, JS or CSS. Just Rust."
-            } else {""}
-        ));
-        ui.label("egui is designed to be easy to use, portable, and fast.");
-
-        ui.add_space(12.0);
-        ui.heading("Immediate mode");
-
-        ui.add_space(12.0);
-        ui.heading("Links");
+        {
+            // TODO: Need better API for nodes
+            // let mut app_state = EditorAppState::get();
+            //
+            // for root_node in app_state.scene.root_entities() {
+            //     let mut stack: Vec<&NodeId> = vec![root_node];
+            //
+            //     while let Some(node_id) = stack.pop() {
+            //         if app_state.scene.get_children_count(*node_id) > 0 {
+            //             ui.collapsing()
+            //         }
+            //     }
+            // }
+        }
     }
-
 }
