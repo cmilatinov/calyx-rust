@@ -103,7 +103,7 @@ impl Scene {
         let new_entity = self.world.create_entity()
             .with(
                 if let Some(id_comp) = id { id_comp }
-                else { ComponentID::new() }
+                else { ComponentID::new() } // TODO: Should be replaced with default to save new() for other types of constructors
             )
             .with(ComponentTransform::default())
             .build();
@@ -120,6 +120,18 @@ impl Scene {
         }
 
         new_node
+    }
+
+    pub fn get_entity_name(&self, node_id: NodeId) -> Option<String> {
+        let storage = self.world.read_storage::<ComponentID>();
+        let id = storage.get(self.get_entity(node_id)?)?;
+        Some(id.name.to_string())
+    }
+
+    pub fn get_entity_uuid(&self, node_id: NodeId) -> Option<Uuid> {
+        let storage = self.world.read_storage::<ComponentID>();
+        let id = storage.get(self.get_entity(node_id)?)?;
+        Some(id.id)
     }
 
     pub fn get_parent_entity(&self, node_id: NodeId) -> Option<Entity> {

@@ -26,7 +26,7 @@ impl Panel for PanelSceneHierarchy {
     fn ui(&self, ui: &mut Ui) {
         let mut app_state = EditorAppState::get_mut();
         let entities = app_state.scene.root_entities().clone();
-        let mut selection: Option<Uuid> = app_state.selected_entity;
+        let mut selection: Option<NodeId> = app_state.selected_entity;
         for root_node in entities {
             self.render_scene_node(
                 &app_state.scene,
@@ -44,8 +44,8 @@ impl PanelSceneHierarchy {
     fn render_scene_node(
         &self,
         scene: &Scene,
-        selected: &Option<Uuid>,
-        selection: &mut Option<Uuid>,
+        selected: &Option<NodeId>,
+        selection: &mut Option<NodeId>,
         ui: &mut Ui,
         node_id: NodeId
     ) {
@@ -53,8 +53,6 @@ impl PanelSceneHierarchy {
             scene.get_children(node_id)
                 .into_iter()
                 .collect();
-        let id_s = scene.world.read_storage::<ComponentID>();
-        let id = id_s.get(scene.get_entity(node_id).unwrap()).unwrap();
 
         if children.len() > 0 {
             for child_node in children {
@@ -62,32 +60,32 @@ impl PanelSceneHierarchy {
                 egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), collapsing_id, false)
                     .show_header(ui, |ui| {
                         let selected = if let Some(selected_id) = selected {
-                            *selected_id == id.id
+                            *selected_id == node_id
                         } else { false };
                         let res = ui.selectable_label(
                             selected,
-                            id.name.as_str()
+                            scene.get_entity_name(node_id).expect("Entity with no name")
                         );
                         if res.clicked() {
                             *selection =
                                 if selected { None }
-                                else { Some(id.id) };
+                                else { Some(node_id) };
                         }
                     })
                     .body(|ui| self.render_scene_node(scene, selected, selection, ui, child_node));
             }
         } else {
             let selected = if let Some(selected_id) = selected {
-                *selected_id == id.id
+                *selected_id == node_id
             } else { false };
             let res = ui.selectable_label(
                 selected,
-                id.name.as_str()
+                scene.get_entity_name(node_id).expect("Entity with no name")
             );
             if res.clicked() {
                 *selection =
                     if selected { None }
-                    else { Some(id.id) };
+                    else { Some(node_id) };
             }
         }
     }

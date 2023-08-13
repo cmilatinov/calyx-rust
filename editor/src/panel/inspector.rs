@@ -1,6 +1,7 @@
 use egui::Ui;
 
 use engine::*;
+use crate::EditorAppState;
 
 use crate::panel::Panel;
 
@@ -12,6 +13,6 @@ impl Panel for PanelInspector {
     }
 
     fn ui(&self, ui: &mut Ui) {
-        ui.heading("Inspector");
+        let app_state = EditorAppState::get();
     }
 }

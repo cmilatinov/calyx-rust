@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::sync::{Arc};
 use eframe::egui;
 use egui_dock::{DockArea, NodeIndex, Style, Tree};
@@ -7,7 +6,7 @@ use engine::core::Time;
 use engine::render::SceneRenderer;
 use engine::scene::Scene;
 use engine::utils::Init;
-use engine::uuid::Uuid;
+use engine::indextree::{NodeId};
 use crate::camera::EditorCamera;
 
 use self::panel::*;
@@ -27,7 +26,7 @@ pub struct EditorAppState {
     pub scene: Scene,
     pub camera: EditorCamera,
     pub scene_renderer: Option<Arc<RwLock<SceneRenderer>>>,
-    pub selected_entity: Option<Uuid>
+    pub selected_entity: Option<NodeId>
 }
 
 singleton_with_init!(EditorAppState);
