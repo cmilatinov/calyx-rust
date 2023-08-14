@@ -4,13 +4,10 @@ use editor::*;
 use engine::*;
 use engine::assets::AssetRegistry;
 use engine::core::Time;
-use engine::ecs::ComponentInfo;
-use engine::type_registry::TypeRegistry;
 
 fn main() -> eframe::Result<()> {
     Time::init();
     AssetRegistry::init();
-    TypeRegistry::init();
     let options = NativeOptions {
         decorated: true,
         transparent: true,

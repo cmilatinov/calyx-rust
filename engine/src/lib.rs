@@ -9,7 +9,6 @@ pub extern crate nalgebra_glm as glm;
 pub extern crate russimp;
 pub extern crate serde;
 pub extern crate specs;
-extern crate bevy_reflect;
 
 pub mod utils;
 pub mod assets;
@@ -18,4 +17,3 @@ pub mod ecs;
 pub mod math;
 pub mod scene;
 pub mod render;
-pub mod type_registry;

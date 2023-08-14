@@ -4,8 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bevy_reflect = "0.10.1"
-bevy_reflect_derive = "0.10.1"
 bytemuck = "1.13.1"
 eframe = { version = "0.22.0", features = ["wgpu"] }
 egui = "0.22.0"
