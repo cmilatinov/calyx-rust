@@ -74,7 +74,7 @@ mod tests {
     use chrono::Utc;
 
     #[test]
-    fn test_project_generate_and_load() {
+    fn project_generate_and_load() {
         // Generate project
         let name = "TestProject".to_string();
         let folder = "temp".to_string();
