@@ -1165,6 +1165,7 @@ name = "engine"
 version = "0.1.0"
 dependencies = [
  "bevy_reflect",
+ "bevy_reflect_derive",
  "bytemuck",
  "eframe",
  "egui",
@@ -1172,6 +1173,7 @@ dependencies = [
  "egui_dock",
  "enum-map",
  "indextree",
+ "inventory",
  "lazy_static",
  "log",
  "nalgebra-glm",
@@ -1815,6 +1817,12 @@ dependencies = [
  "wasm-bindgen",
  "web-sys",
 ]
+
+[[package]]
+name = "inventory"
+version = "0.3.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a53088c87cf71c9d4f3372a2cb9eea1e7b8a0b1bf8b7f7d23fe5b76dbb07e63b"
 
 [[package]]
 name = "io-lifetimes"

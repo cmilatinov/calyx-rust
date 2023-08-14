@@ -6,7 +6,6 @@ use engine::*;
 use engine::core::Time;
 use engine::render::SceneRenderer;
 use engine::scene::Scene;
-use engine::utils::Init;
 use engine::indextree::{NodeId};
 use engine::uuid::Uuid;
 use crate::camera::EditorCamera;

@@ -1,6 +1,8 @@
+use std::ops::Deref;
 use glm::Mat4;
 use indextree::{Arena, NodeId, Node, Children};
-use specs::{Builder, Entity, VecStorage, World, WorldExt};
+use specs::{Builder, Entity, ReadStorage, VecStorage, World, WorldExt};
+use specs::shred::ResourceId;
 use specs::world::Index;
 use uuid::Uuid;
 
@@ -8,7 +10,7 @@ use super::error::SceneError;
 
 use crate::assets::{AssetRegistry};
 use crate::assets::mesh::Mesh;
-use crate::ecs::{ComponentID, ComponentMesh};
+use crate::ecs::{Component, ComponentID, ComponentMesh, UUID};
 use crate::ecs::ComponentTransform;
 
 pub struct Scene {
@@ -35,7 +37,7 @@ impl Default for Scene {
         scene.bind_component(cube, ComponentMesh { mesh: mesh.clone() }).unwrap();
 
         let cube2 = scene.create_entity(Some(ComponentID {
-            id: Uuid::new_v4(),
+            id: UUID(Uuid::new_v4()),
             name: "Bing bong".to_string()
         }), Some(cube));
         scene.bind_component(cube2, ComponentMesh { mesh: mesh.clone() }).unwrap();
@@ -126,10 +128,10 @@ impl Scene {
         Some(id.name.to_string())
     }
 
-    pub fn get_entity_uuid(&self, node_id: NodeId) -> Option<Uuid> {
+    pub fn get_entity_uuid(&self, node_id: NodeId) -> Option<UUID> {
         let storage = self.world.read_storage::<ComponentID>();
-        let id = storage.get(self.get_entity(node_id)?)?;
-        Some(id.id)
+        let id_comp = storage.get(self.get_entity(node_id)?)?;
+        Some(id_comp.id.clone())
     }
 
     pub fn get_parent_entity(&self, node_id: NodeId) -> Option<Entity> {

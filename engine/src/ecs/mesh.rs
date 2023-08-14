@@ -1,12 +1,18 @@
+use bevy_reflect::TypeRegistry;
+use bevy_reflect_derive::impl_reflect_value;
 use specs::{Component, VecStorage};
 
+use std::sync::{Arc, RwLock};
+
 use crate::assets::mesh::Mesh;
-use crate::core::Ref;
+use crate::component;
+use crate::core::{OptionRef, Ref};
+use crate::ecs::ComponentInfo;
 
-pub struct ComponentMesh {
-    pub mesh: Ref<Mesh>
-}
+impl_reflect_value!(Ref<Mesh>(Debug));
 
-impl Component for ComponentMesh {
-    type Storage = VecStorage<Self>;
+component! {
+    pub struct ComponentMesh {
+        pub mesh: Ref<Mesh>
+    }
 }

@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 bevy_reflect = "0.10.1"
+bevy_reflect_derive = "0.10.1"
 bytemuck = "1.13.1"
 eframe = { version = "0.22.0", features = ["wgpu"] }
 egui = "0.22.0"
@@ -20,3 +21,4 @@ indextree = "4.6.0"
 russimp = "2.0.5"
 notify = "6.0.1"
 specs = "0.19.0"
+inventory = "0.3.11"
