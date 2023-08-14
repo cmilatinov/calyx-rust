@@ -43,6 +43,7 @@ pub struct TupleInfo {
     #[cfg(feature = "documentation")]
     docs: Option<&'static str>,
 }
+
 #[derive(Clone, Debug)]
 pub struct StructInfo {
     pub name: &'static str,
