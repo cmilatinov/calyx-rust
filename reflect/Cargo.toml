@@ -10,3 +10,4 @@ syn = {version = "2.0.22", features = ["extra-traits"] }
 quote = "1.0.9"
 reflect_derive = {path = "reflect_derive"}
 inventory = "0.3.6"
+impls = "1.0.3"

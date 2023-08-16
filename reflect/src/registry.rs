@@ -1,7 +1,7 @@
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use inventory::collect;
-use crate::types::{NamedField, StructInfo, TypeInfo};
+use crate::types::{FieldGetter, FieldSetter, NamedField, StructInfo, TypeInfo};
 
 collect!(TypeRegistrationFn);
 pub struct TypeRegistrationFn {
@@ -24,40 +24,51 @@ impl TypeRegistry {
         registry
     }
 
-    pub fn register<T: 'static>(&mut self, info: TypeInfo) {
-        self.types.insert(TypeId::of::<T>(), info);
+    pub fn new_struct<T: 'static>(&mut self) -> StructInfoBuilder {
+        let type_id = TypeId::of::<T>();
+        self.types.insert(type_id, TypeInfo::Struct(StructInfo {
+            type_name: "",
+            type_id,
+            fields: HashMap::new(),
+        }));
+        let type_info = self.types.get_mut(&type_id).unwrap();
+        if let TypeInfo::Struct(ref mut info) = type_info {
+            return StructInfoBuilder { info }
+        };
+        panic!("No type info!");
+    }
+
+    pub fn type_info<T: 'static>(&self) -> Option<&TypeInfo> {
+        self.types.get(&TypeId::of::<T>())
     }
 }
 
-pub struct TypeInfoBuilder {
-    name: &'static str,
-    fields: Vec<(&'static str, &'static str, TypeId)>,
-    type_id: TypeId
+pub struct StructInfoBuilder<'a> {
+    info: &'a mut StructInfo,
 }
 
-impl TypeInfoBuilder {
-    pub fn new<T: 'static>(name: &'static str) -> Self {
-        TypeInfoBuilder {
-            name,
-            fields: Vec::new(),
-            type_id: TypeId::of::<T>()
+impl<'a> StructInfoBuilder<'a> {
+    pub fn new<T: 'static>(info: &'a mut StructInfo) -> StructInfoBuilder<'a> {
+        info.type_id = TypeId::of::<T>();
+        info.type_name = std::any::type_name::<T>();
+        Self {
+            info
         }
     }
 
-    pub fn add_field(&mut self, name: &'static str, type_name: &'static str, type_id: TypeId) -> &mut Self {
-        self.fields.push((name, type_name, type_id));
+    pub fn field<T: 'static>(
+        &mut self,
+        name: &'static str,
+        getter: FieldGetter,
+        setter: FieldSetter
+    ) -> &mut StructInfoBuilder<'a> {
+        self.info.fields.insert(name, NamedField {
+            name,
+            type_name: std::any::type_name::<T>(),
+            type_id: TypeId::of::<T>(),
+            getter,
+            setter
+        });
         self
-    }
-
-    pub fn build(&self) -> TypeInfo {
-        TypeInfo::Struct(StructInfo {
-            name: self.name,
-            fields: self.fields.iter().map(|item| NamedField {
-                name: item.0,
-                type_name: item.1,
-                type_id: item.2,
-            }).collect(),
-            type_id: self.type_id
-        })
     }
 }

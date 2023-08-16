@@ -1,5 +1,4 @@
 use proc_macro::TokenStream;
-use std::fmt::Debug;
 use quote::quote;
 use syn::{DeriveInput, Fields};
 
@@ -24,21 +23,38 @@ pub fn reflect(input: TokenStream) -> TokenStream {
         }
         _ => panic!("Reflect requires named fields!"),
     }
-
     let add_field_calls = field_info.iter().map(|(ident, ty)| {
         quote! {
-            .add_field(stringify!(#ident), stringify!(#ty), std::any::TypeId::of::<#ty>())
+            .field::<#ty>(
+                stringify!(#ident),
+                Box::new(|x| {
+                    match x.downcast_ref::<#name>() {
+                        Some(value) => Some(&value.#ident),
+                        None => None
+                    }
+                }),
+                Box::new(|x, v| {
+                    match x.downcast_mut::<#name>() {
+                        Some(value) => match v.downcast::<#ty>() {
+                            Ok(rv) => {
+                                value.#ident = *rv;
+                                Some(())
+                            },
+                            _ => None
+                        },
+                        _ => None
+                    }
+                })
+            )
         }
     });
+
 
     let output = quote! {
         impl #name {
             pub fn register(registry: &mut reflect::registry::TypeRegistry) {
-                let info = reflect::registry::TypeInfoBuilder::new::<#name>(stringify!(#name))
-                #(#add_field_calls)*
-                .build();
-
-                registry.register::<#name>(info);
+                registry.new_struct::<#name>()
+                    #(#add_field_calls)*;
             }
         }
 
