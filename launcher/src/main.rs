@@ -1,6 +1,5 @@
 use std::process::Command;
 use std::env;
-
 mod app;
 use app::LauncherApp;
 
