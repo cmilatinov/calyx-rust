@@ -5,7 +5,10 @@ use engine::*;
 use engine::assets::AssetRegistry;
 use engine::core::Time;
 
+use std::env;
+
 fn main() -> eframe::Result<()> {
+    // START ACTUAL EDITOR
     Time::init();
     AssetRegistry::init();
     let options = NativeOptions {
