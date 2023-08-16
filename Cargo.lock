@@ -1037,6 +1037,7 @@ dependencies = [
  "engine",
  "enum-map",
  "lazy_static",
+ "project",
  "serde",
  "syntect",
 ]

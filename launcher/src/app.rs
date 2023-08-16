@@ -3,9 +3,10 @@ use dirs::config_dir;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::process::Command;
 use std::vec::Vec;
 use egui::text::LayoutJob;
-use egui::{Color32, FontFamily, FontId, TextFormat};
+use egui::TextFormat;
 use egui_modal::Modal;
 
 #[derive(Default)]
@@ -85,15 +86,7 @@ impl eframe::App for LauncherApp {
 
                     if ui.button("Open").clicked() {
                         if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                            self.new_project_form.root_directory = path.display().to_string();
-                            match Project::load(PathBuf::from(&self.new_project_form.root_directory)) {
-                                Ok(project) => {
-                                    println!("{}", project.name());
-                                }
-                                Err(e) => {
-                                    println!("{}", e);
-                                }
-                            }
+                            launch_editor(path.display().to_string());
                         }
                     }
                 });
@@ -111,8 +104,10 @@ impl eframe::App for LauncherApp {
                                           00.0,
                                           TextFormat::default());
 
-                        ui.add_sized([120., 40.],
-                                     egui::Button::new(layout_job));
+                        if ui.add_sized([120., 40.],
+                                        egui::Button::new(layout_job)).clicked() {
+                            launch_editor(String::from(project.root_directory().to_str().unwrap()));
+                        }
                     }
                 });
             });
@@ -159,4 +154,15 @@ fn get_config_path() -> Option<PathBuf> {
     } else {
         None
     }
+}
+
+pub fn launch_editor(root_directory: String) {
+    let mut dir = std::env::current_dir().unwrap().clone();
+    dir.push("target/debug/editor");
+    Command::new(dir)
+        .arg(root_directory)
+        .spawn()
+        .expect("Failed to start editor.");
+
+    std::process::exit(0);
 }
