@@ -1,28 +1,11 @@
-use std::fmt::Debug;
-
-pub mod types;
+mod reflect;
+mod type_info;
+mod trait_meta;
 pub mod registry;
+
+pub use reflect::*;
+pub use type_info::*;
+pub use trait_meta::*;
+
 pub extern crate reflect_derive;
 pub extern crate inventory;
-
-#[cfg(test)]
-mod tests {
-    use crate as reflect;
-
-    #[test]
-    fn derive_reflect() {
-        struct Test {
-            testing: usize
-        }
-
-        #[derive(reflect_derive::Reflect)]
-        struct MyStruct {
-            test1: u32,
-            test2: String,
-            more: Test
-        }
-
-        let mut registry = reflect::registry::TypeRegistry::new();
-        assert_eq!(registry.types.len(), 1);
-    }
-}

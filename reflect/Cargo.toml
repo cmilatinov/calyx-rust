@@ -6,8 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-syn = {version = "2.0.22", features = ["extra-traits"] }
+syn = {version = "2.0.22", features = ["full", "extra-traits"] }
 quote = "1.0.9"
 reflect_derive = {path = "reflect_derive"}
 inventory = "0.3.6"
 impls = "1.0.3"
+downcast-rs = "1.2.0"
