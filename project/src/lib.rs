@@ -2,7 +2,6 @@ use std::path::{Path, PathBuf};
 use std::fs::File;
 use std::fs;
 use std::io::{Write, Read};
-use toml::Value;
 use chrono::Utc;
 use serde::{Serialize, Deserialize};
 
@@ -46,32 +45,46 @@ impl Project {
 
         let mut file = match File::open(toml_path) {
             Ok(file) => file,
-            Err(e) => return Err(format!("Failed to open TOML file: {}", e)),
+            Err(e) => return Err(format!("Failed to find project file 'project.toml': {}", e)),
         };
 
         let mut toml_string = String::new();
         if let Err(e) = file.read_to_string(&mut toml_string) {
-            return Err(format!("Failed to read TOML file: {}", e));
+            return Err(format!("Failed to read project file 'project.toml': {}", e));
         }
 
         let project: Project = match toml::from_str(&toml_string) {
             Ok(project) => project,
-            Err(e) => return Err(format!("Failed to deserialize TOML: {}", e)),
+            Err(e) => return Err(format!("Failed to deserialize project file 'project.toml': {}", e)),
         };
 
         Ok(project)
     }
 }
 
+impl Project {
+    pub fn name(&self) -> &String {
+        &self.name
+    }
+
+    pub fn creation_date(&self) -> &String {
+        &self.creation_date
+    }
+
+    pub fn root_directory(&self) -> &PathBuf {
+        &self.root_directory
+    }
+
+    pub fn assets_directory(&self) -> PathBuf {
+        self.root_directory.join("/assets")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Project;
-    use std::path::{Path, PathBuf};
-    use std::fs::File;
+    use std::path::Path;
     use std::fs;
-    use std::io::{Write, Read};
-    use toml::Value;
-    use chrono::Utc;
 
     #[test]
     fn project_generate_and_load() {

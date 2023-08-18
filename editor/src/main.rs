@@ -5,7 +5,24 @@ use engine::*;
 use engine::assets::AssetRegistry;
 use engine::core::Time;
 
+use std::env;
+use std::path::PathBuf;
+use project::Project;
+
 fn main() -> eframe::Result<()> {
+    // LOAD PROJECT
+    let args: Vec<String> = env::args().collect();
+
+    if args.len() != 2 {
+        println!("Expected 2 arguments, got {}", args.len());
+        std::process::exit(1);
+    }
+
+    let project = Project::load(PathBuf::from(&args[1])).expect("Unable to load project");
+    println!("Loaded {}", project.name());
+    println!("From   {}", project.root_directory().to_str().unwrap());
+
+    // START ACTUAL EDITOR
     Time::init();
     AssetRegistry::init();
     let options = NativeOptions {
