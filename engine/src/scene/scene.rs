@@ -8,8 +8,8 @@ use super::error::SceneError;
 
 use crate::assets::{AssetRegistry};
 use crate::assets::mesh::Mesh;
-use crate::ecs::{ComponentID, ComponentMesh};
-use crate::ecs::ComponentTransform;
+use crate::component::{ComponentID, ComponentMesh};
+use crate::component::ComponentTransform;
 
 pub struct Scene {
     pub world: World,

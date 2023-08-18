@@ -13,7 +13,7 @@ pub extern crate specs;
 pub mod utils;
 pub mod assets;
 pub mod core;
-pub mod ecs;
+pub mod component;
 pub mod math;
 pub mod scene;
 pub mod render;

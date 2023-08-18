@@ -12,8 +12,8 @@ use glm::Mat4;
 use specs::{Join, WorldExt};
 use crate::assets::mesh;
 use crate::assets::mesh::Mesh;
-use crate::ecs::ComponentMesh;
-use crate::ecs::ComponentTransform;
+use crate::component::ComponentMesh;
+use crate::component::ComponentTransform;
 use crate::math::Transform;
 use crate::render::buffer::BufferLayout;
 
