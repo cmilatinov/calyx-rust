@@ -6,6 +6,7 @@ pub extern crate egui_wgpu;
 pub extern crate indextree;
 pub extern crate inventory;
 pub extern crate nalgebra_glm as glm;
+pub extern crate reflect;
 pub extern crate russimp;
 pub extern crate serde;
 pub extern crate specs;

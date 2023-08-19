@@ -36,6 +36,7 @@ impl Default for CameraUniform {
     }
 }
 
+#[allow(dead_code)]
 pub struct SceneRenderer {
     pub scene_texture_handle: egui::TextureHandle,
     scene_texture: wgpu::Texture,
@@ -202,6 +203,7 @@ impl<'rs> SceneRenderer {
         let t_s = scene.world.read_component::<ComponentTransform>();
         let m_s = scene.world.read_component::<ComponentMesh>();
         let mut mesh_map: HashMap<*const RwLock<Mesh>, &RwLock<Mesh>> = HashMap::new();
+        #[allow(unused_assignments)]
         let mut mesh_list: Vec<RwLockWriteGuard<Mesh>> = Vec::new();
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

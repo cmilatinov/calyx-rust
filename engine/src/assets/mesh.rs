@@ -11,7 +11,6 @@ use crate::assets::error::AssetError;
 use crate::render::buffer::{BufferLayout, wgpu_buffer_init_desc};
 
 const CX_MESH_NUM_UV_CHANNELS: usize = 4;
-const CX_MESH_MAX_NUM_INSTANCES: usize = 0;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -169,6 +168,8 @@ impl Mesh {
         self.vertex_buffer.as_ref().unwrap()
     }
 
+    // TODO: Do not recreate this buffer every frame,
+    // only grow it when necessary and use geometric growth
     pub fn create_instance_buffer(&mut self, device: &wgpu::Device) -> &wgpu::Buffer {
         self.instance_buffer = Some(device.create_buffer_init(
             &wgpu_buffer_init_desc(

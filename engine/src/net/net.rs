@@ -1,14 +1,6 @@
-use crate::utils::Init;
-use crate::singleton;
+use crate::{singleton_with_init};
 
 #[derive(Default)]
 pub struct NetRegistry;
 
-singleton!(NetRegistry);
-
-
-impl Init for NetRegistry {
-    type Type = NetRegistry;
-    fn initialize(instance: &mut Self::Type) {
-    }
-}
+singleton_with_init!(NetRegistry);

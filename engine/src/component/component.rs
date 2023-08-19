@@ -9,8 +9,6 @@ pub trait Component {
 #[macro_export]
 macro_rules! component {
     (pub struct $name:ident { $($field:vis $field_name:ident : $field_type:ty),* }) => {
-        use inventory::submit;
-
         #[derive(Default)]
         pub struct $name {
             $($field $field_name: $field_type),*,

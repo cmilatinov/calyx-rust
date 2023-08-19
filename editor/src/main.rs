@@ -18,9 +18,7 @@ fn main() -> eframe::Result<()> {
         std::process::exit(1);
     }
 
-    let project = Project::load(PathBuf::from(&args[1])).expect("Unable to load project");
-    println!("Loaded {}", project.name());
-    println!("From   {}", project.root_directory().to_str().unwrap());
+    let _project = Project::load(PathBuf::from(&args[1])).expect("Unable to load project");
 
     // START ACTUAL EDITOR
     Time::init();

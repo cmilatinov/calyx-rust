@@ -18,13 +18,12 @@ pub struct NewProjectForm {
 #[derive(Default)]
 pub struct LauncherApp {
     search: String,
-    boolean: bool,
     projects: Vec<Project>,
     new_project_form: NewProjectForm
 }
 
 impl LauncherApp {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         let mut app = LauncherApp::default();
         app.load_projects();
         app

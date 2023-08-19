@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 use egui::Ui;
-use specs::WorldExt;
 
 use engine::*;
 use engine::indextree::NodeId;

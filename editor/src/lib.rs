@@ -3,7 +3,7 @@ use std::sync::{Arc};
 use eframe::egui;
 use egui_dock::{DockArea, NodeIndex, Style, Tree};
 use engine::*;
-use engine::core::Time;
+use engine::core::{Ref, Time};
 use engine::render::SceneRenderer;
 use engine::scene::Scene;
 use engine::indextree::{NodeId};
@@ -14,19 +14,20 @@ use self::panel::*;
 
 mod camera;
 mod panel;
+mod inspector;
 
 pub struct EditorApp {
     fps: i32,
     tree: Tree<String>,
     panel_manager: PanelManager,
-    pub scene_renderer: Arc<RwLock<SceneRenderer>>
+    pub scene_renderer: Ref<SceneRenderer>
 }
 
 #[derive(Default)]
 pub struct EditorAppState {
     pub scene: Scene,
     pub camera: EditorCamera,
-    pub scene_renderer: Option<Arc<RwLock<SceneRenderer>>>,
+    pub scene_renderer: Option<Ref<SceneRenderer>>,
     pub selection: Option<EditorSelection>
 }
 
@@ -81,7 +82,7 @@ impl eframe::App for EditorApp {
 
         self.fps += 1;
         if Time::timer("fps") >= 1.0 {
-            println!("{}", self.fps);
+            println!("{} fps", self.fps);
             self.fps = 0;
             Time::reset_timer("fps");
         }

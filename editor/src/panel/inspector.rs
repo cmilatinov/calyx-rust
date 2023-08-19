@@ -8,7 +8,7 @@ impl Panel for PanelInspector {
         "Inspector"
     }
 
-    fn ui(&mut self, ui: &mut Ui) {
+    fn ui(&mut self, _ui: &mut Ui) {
         // TODO: Reflect needs to be fully implemented
     }
 }
