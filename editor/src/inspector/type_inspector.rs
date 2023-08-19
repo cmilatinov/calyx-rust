@@ -1,7 +1,7 @@
 use std::any::TypeId;
-use engine::reflect::{NamedField, Reflect};
 use engine::egui::Ui;
-use engine::reflect::reflect_trait;
+use reflect::{NamedField, Reflect};
+use reflect::reflect_trait;
 
 #[reflect_trait]
 pub trait TypeInspector {
