@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use inventory::collect;
 use crate::type_info::{FieldGetter, FieldSetter, NamedField, StructInfo, TypeInfo};
 use crate::trait_meta::TraitMeta;
-use crate::{Reflect, TraitMetaFrom};
+use crate::{Reflect, ReflectedType, TraitMetaFrom};
 
 collect!(TypeRegistrationFn);
 pub struct TypeRegistrationFn(pub fn(&mut TypeRegistry));
@@ -25,6 +25,10 @@ impl TypeRegistry {
             (f.0)(&mut registry);
         }
         registry
+    }
+
+    pub fn register<T: ReflectedType + 'static>(&mut self) {
+        T::register(self)
     }
 
     pub fn meta<T: 'static>(&mut self) -> StructInfoBuilder {

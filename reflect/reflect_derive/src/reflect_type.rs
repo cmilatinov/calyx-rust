@@ -4,8 +4,8 @@ use quote::quote;
 use syn::{DeriveInput, Fields, Path, Token};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
+use crate::fq::{FQReflect, FQReflectedType};
 
-// Define a custom attribute argument structure
 struct ReflectAttribute {
     traits: Punctuated<Path, Token![,]>,
 }
@@ -89,7 +89,7 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
     }
 
     TokenStream::from(quote! {
-        impl Reflect for #name {
+        impl #FQReflect for #name {
             #[inline]
             fn type_name(&self) -> &'static str { std::any::type_name::<Self>() }
             #[inline]
@@ -100,14 +100,14 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
             fn as_any_mut(&mut self) -> &mut dyn std::any::Any { self }
         }
 
-        impl #name {
-            pub fn register(registry: &mut reflect::registry::TypeRegistry) {
+        impl #FQReflectedType for #name {
+            fn register(registry: &mut reflect::registry::TypeRegistry) {
                 registry.meta::<#name>()
                     #(#add_field_calls)*;
                 #register_traits_impl
             }
         }
 
-        inventory::submit!(reflect::registry::TypeRegistrationFn(#name::register));
+        inventory::submit!(reflect::registry::TypeRegistrationFn(<#name as #FQReflectedType>::register));
     })
 }

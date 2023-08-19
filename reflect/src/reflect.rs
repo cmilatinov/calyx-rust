@@ -1,4 +1,5 @@
 use std::any::{Any, TypeId};
+use crate::registry::TypeRegistry;
 
 pub trait Reflect: Any + Send + Sync {
     fn type_name(&self) -> &'static str;
@@ -17,4 +18,8 @@ impl dyn Reflect {
     pub fn downcast_mut<T: Reflect>(&mut self) -> Option<&mut T> {
         self.as_any_mut().downcast_mut::<T>()
     }
+}
+
+pub trait ReflectedType {
+    fn register(registry: &mut TypeRegistry);
 }
