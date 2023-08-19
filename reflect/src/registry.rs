@@ -1,12 +1,13 @@
 use std::any::TypeId;
 use std::collections::HashMap;
 use inventory::collect;
+use utils::{singleton_with_init};
 use crate::type_info::{FieldGetter, FieldSetter, NamedField, StructInfo, TypeInfo};
 use crate::trait_meta::TraitMeta;
 use crate::{Reflect, ReflectedType, TraitMetaFrom};
 
-collect!(TypeRegistrationFn);
 pub struct TypeRegistrationFn(pub fn(&mut TypeRegistry));
+collect!(TypeRegistrationFn);
 
 pub struct TypeRegistration {
     trait_meta: HashMap<TypeId, Box<dyn TraitMeta>>,
@@ -17,6 +18,7 @@ pub struct TypeRegistration {
 pub struct TypeRegistry {
     pub types: HashMap<TypeId, TypeRegistration>
 }
+singleton_with_init!(TypeRegistry);
 
 impl TypeRegistry {
     pub fn new() -> Self {

@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::sync::{Arc};
 use eframe::egui;
 use egui_dock::{DockArea, NodeIndex, Style, Tree};
 use engine::*;
@@ -8,6 +7,7 @@ use engine::render::SceneRenderer;
 use engine::scene::Scene;
 use engine::indextree::{NodeId};
 use engine::uuid::Uuid;
+use utils::singleton_with_init;
 use crate::camera::EditorCamera;
 
 use self::panel::*;
@@ -54,7 +54,7 @@ impl EditorApp {
             fps: 0,
             tree,
             panel_manager: PanelManager::default(),
-            scene_renderer: Arc::new(RwLock::new(SceneRenderer::new(cc)))
+            scene_renderer: core::create_ref(SceneRenderer::new(cc))
         }
     }
 }

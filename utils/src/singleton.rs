@@ -35,8 +35,8 @@ macro_rules! singleton {
 #[macro_export]
 macro_rules! singleton_with_init {
     ($t:tt) => {
-        use crate::utils::Init;
-        $crate::singleton!($t);
+        use ::utils::Init;
+        ::utils::singleton!($t);
 
         impl Init for $t {
             type Type = $t;

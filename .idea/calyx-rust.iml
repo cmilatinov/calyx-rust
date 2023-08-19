@@ -8,7 +8,8 @@
       <sourceFolder url="file://$MODULE_DIR$/reflect/reflect_derive/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/reflect/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/launcher/src" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/engine/utils_derive/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/utils/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/utils/utils_derive/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

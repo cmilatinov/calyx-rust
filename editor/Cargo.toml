@@ -18,3 +18,5 @@ serde = "1.0.182"
 syntect = { version = "5", optional = true, default-features = false, features = [
     "default-fancy",
 ] }
+utils = { path = "../utils" }
+reflect = { path = "../reflect" }

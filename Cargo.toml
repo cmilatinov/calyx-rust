@@ -1,2 +1,2 @@
 [workspace]
-members = ["engine", "editor", "project", "reflect", "launcher"]
+members = ["engine", "editor", "project", "reflect", "launcher", "utils"]

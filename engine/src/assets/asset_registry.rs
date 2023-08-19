@@ -8,12 +8,11 @@ use std::thread::JoinHandle;
 
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 
-use crate::singleton;
 use crate::assets::Asset;
 use crate::assets::error::AssetError;
 use crate::core;
 use crate::core::Ref;
-use crate::utils::Init;
+use utils::{Init, singleton};
 
 pub struct AssetRegistry {
     asset_paths: Vec<String>,

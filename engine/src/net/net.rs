@@ -1,4 +1,4 @@
-use crate::{singleton_with_init};
+use utils::{singleton_with_init};
 
 #[derive(Default)]
 pub struct NetRegistry;

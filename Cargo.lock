@@ -1056,8 +1056,10 @@ dependencies = [
  "enum-map",
  "lazy_static",
  "project",
+ "reflect",
  "serde",
  "syntect",
+ "utils",
 ]
 
 [[package]]
@@ -1207,7 +1209,7 @@ dependencies = [
  "serde",
  "sha-1",
  "specs",
- "utils_derive",
+ "utils",
  "uuid 1.4.1",
 ]
 
@@ -2922,9 +2924,11 @@ dependencies = [
  "downcast-rs",
  "impls",
  "inventory",
+ "lazy_static",
  "quote",
  "reflect_derive",
  "syn 2.0.28",
+ "utils",
 ]
 
 [[package]]
@@ -3839,6 +3843,13 @@ dependencies = [
  "form_urlencoded",
  "idna",
  "percent-encoding",
+]
+
+[[package]]
+name = "utils"
+version = "0.1.0"
+dependencies = [
+ "utils_derive",
 ]
 
 [[package]]

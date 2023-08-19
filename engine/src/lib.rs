@@ -11,7 +11,6 @@ pub extern crate russimp;
 pub extern crate serde;
 pub extern crate specs;
 
-pub mod utils;
 pub mod assets;
 pub mod core;
 pub mod component;
@@ -19,4 +18,3 @@ pub mod math;
 pub mod scene;
 pub mod render;
 pub mod net;
-

@@ -1,7 +1,7 @@
 use reflect::registry::TypeRegistry;
 use reflect::TypeInfo;
 use reflect::Reflect;
-use reflect_derive::{Reflect, reflect_trait};
+use reflect::reflect_trait;
 
 #[derive(Copy, Clone)]
 struct Test {
