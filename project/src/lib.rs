@@ -20,9 +20,10 @@ impl Project {
         };
 
         let project_directory = base_directory.join(&name);
+        let assets_directory = project_directory.join("assets");
 
-        if let Err(e) = fs::create_dir_all(&project_directory) {
-            eprintln!("Failed to create project directory: {}", e);
+        if let Err(e) = fs::create_dir_all(&assets_directory) {
+            eprintln!("Failed to create project directory at: {}", e);
         }
 
         let project = Project {
@@ -97,6 +98,10 @@ mod tests {
         assert_eq!(project.name, name);
         let expected_path = Path::new("temp").join("TestProject");
         assert_eq!(project.root_directory, expected_path.clone());
+        
+        // Check assets folder was created
+        let assets_path = expected_path.join("assets");
+        assert!(Path::new(&assets_path).is_dir());
 
         // Check the .toml file
         let toml_path = expected_path.join("project.toml");
