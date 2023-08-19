@@ -9,11 +9,9 @@ pub(crate) struct FQOption;
 pub(crate) struct FQResult;
 pub(crate) struct FQSend;
 pub(crate) struct FQSync;
-
 pub(crate) struct FQReflect;
-
+pub(crate) struct FQReflectedType;
 pub(crate) struct FQTraitMeta;
-
 pub(crate) struct FQTraitMetaFrom;
 
 impl ToTokens for FQAny {
@@ -67,6 +65,12 @@ impl ToTokens for FQSync {
 impl ToTokens for FQReflect {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         quote!(::reflect::Reflect).to_tokens(tokens)
+    }
+}
+
+impl ToTokens for FQReflectedType {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        quote!(::reflect::ReflectedType).to_tokens(tokens)
     }
 }
 
