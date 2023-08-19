@@ -64,24 +64,24 @@ impl ToTokens for FQSync {
 
 impl ToTokens for FQReflect {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        quote!(::reflect::Reflect).to_tokens(tokens)
+        quote!(reflect::Reflect).to_tokens(tokens)
     }
 }
 
 impl ToTokens for FQReflectedType {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        quote!(::reflect::ReflectedType).to_tokens(tokens)
+        quote!(reflect::ReflectedType).to_tokens(tokens)
     }
 }
 
 impl ToTokens for FQTraitMeta {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        quote!(::reflect::TraitMeta).to_tokens(tokens)
+        quote!(reflect::TraitMeta).to_tokens(tokens)
     }
 }
 
 impl ToTokens for FQTraitMetaFrom {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        quote!(::reflect::TraitMetaFrom).to_tokens(tokens)
+        quote!(reflect::TraitMetaFrom).to_tokens(tokens)
     }
 }
