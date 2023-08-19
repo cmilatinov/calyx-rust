@@ -22,7 +22,7 @@ macro_rules! component {
 
 #[cfg(test)]
 mod tests {
-    use utils_derive::Component;
+    use utils::utils_derive::Component;
     use uuid::Uuid;
     use sha1::{Sha1, Digest};
 
