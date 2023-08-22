@@ -1,3 +1,8 @@
+mod camera;
+mod panel;
+mod inspector;
+mod project_manager;
+
 use std::collections::HashSet;
 use eframe::egui;
 use egui_dock::{DockArea, NodeIndex, Style, Tree};
@@ -11,10 +16,7 @@ use utils::singleton_with_init;
 use crate::camera::EditorCamera;
 
 use self::panel::*;
-
-mod camera;
-mod panel;
-mod inspector;
+pub use self::project_manager::*;
 
 pub struct EditorApp {
     fps: i32,
