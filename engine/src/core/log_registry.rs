@@ -17,7 +17,8 @@ impl Log for Logger {
         if metadata.target().starts_with("wgpu") ||
             metadata.target().starts_with("eframe") ||
             metadata.target().starts_with("naga") ||
-            metadata.target().starts_with("egui") {
+            metadata.target().starts_with("egui") ||
+            metadata.target().starts_with("winit"){
             return false;
         }
         true
