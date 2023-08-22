@@ -48,7 +48,8 @@ impl EditorApp {
             PanelViewport::name().to_owned(),
         ]);
         let [c, _] = tree.split_right(b, 0.8, vec![PanelInspector::name().to_owned()]);
-        let [_, _] = tree.split_below(c, 0.7, vec![PanelContentBrowser::name().to_owned()]);
+        let [_, _] = tree.split_below(c, 0.7,
+                                      vec![PanelContentBrowser::name().to_owned(), PanelTerminal::name().to_owned()]);
 
         Self {
             fps: 0,

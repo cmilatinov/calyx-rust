@@ -1,9 +1,11 @@
 use eframe::NativeOptions;
 
+use log::{LevelFilter};
+
 use editor::*;
 use engine::*;
 use engine::assets::AssetRegistry;
-use engine::core::Time;
+use engine::core::{Logger, LogRegistry, Time};
 
 use std::env;
 use std::path::PathBuf;
@@ -23,6 +25,11 @@ fn main() -> eframe::Result<()> {
     // START ACTUAL EDITOR
     Time::init();
     AssetRegistry::init();
+    LogRegistry::init();
+
+    log::set_boxed_logger(Box::new(Logger)).expect("Unable to setup logger");
+    log::set_max_level(LevelFilter::Debug);
+
     let options = NativeOptions {
         decorated: true,
         transparent: true,
