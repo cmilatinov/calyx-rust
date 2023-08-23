@@ -8,13 +8,8 @@ use crate::{EditorAppState, EditorSelection};
 
 use crate::panel::Panel;
 
+#[derive(Default)]
 pub struct PanelSceneHierarchy;
-
-impl Default for PanelSceneHierarchy {
-    fn default() -> Self {
-        PanelSceneHierarchy {}
-    }
-}
 
 impl Panel for PanelSceneHierarchy {
     fn name() -> &'static str {

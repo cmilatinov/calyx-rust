@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use project::Project;
 use utils::singleton_with_init;
 
+#[derive(Default)]
 pub struct ProjectManager {
     current_project: Option<Project>
 }
@@ -20,14 +21,6 @@ impl ProjectManager {
 
     pub fn current_project(&self) -> &Project {
         self.current_project.as_ref().expect("Unable to load project")
-    }
-}
-
-impl Default for ProjectManager {
-    fn default() -> Self {
-        ProjectManager {
-            current_project: None
-        }
     }
 }
 
