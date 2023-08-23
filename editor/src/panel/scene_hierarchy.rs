@@ -2,14 +2,18 @@ use std::collections::HashSet;
 use egui::Ui;
 
 use engine::*;
+use engine::assets::AssetRegistry;
+use engine::assets::mesh::Mesh;
+use engine::component::ComponentMesh;
 use engine::indextree::NodeId;
 use engine::scene::Scene;
 use crate::{EditorAppState, EditorSelection};
-
 use crate::panel::Panel;
 
 #[derive(Default)]
-pub struct PanelSceneHierarchy;
+pub struct PanelSceneHierarchy {
+    search: String
+}
 
 impl Panel for PanelSceneHierarchy {
     fn name() -> &'static str {
@@ -20,6 +24,28 @@ impl Panel for PanelSceneHierarchy {
         let mut app_state = EditorAppState::get_mut();
         let entities = app_state.scene.root_entities().clone();
         let mut selection = app_state.selection.clone();
+
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+            if ui.button("+").clicked() {
+                let mesh = AssetRegistry::get_mut().load::<Mesh>("meshes/cube").unwrap();
+                let mut parent: Option<NodeId> = None;
+                if let Some(selected) = selection.clone() {
+                    match selected {
+                        EditorSelection::Entity(set) => {
+                            for x in set.iter() {
+                                parent = Some(*x);
+                            }
+                        }
+                        EditorSelection::Asset(_) => {}
+                    }
+                }
+
+                let new_entity = app_state.scene.create_entity(None, parent);
+                app_state.scene.bind_component(new_entity, ComponentMesh { mesh: mesh.clone() }).unwrap();
+            }
+            ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("Search Here"));
+        });
+
         for root_node in entities {
             self.render_scene_node(
                 &app_state.scene,
@@ -56,14 +82,16 @@ impl PanelSceneHierarchy {
         } else { false };
 
         if children.len() > 0 {
-            for child_node in children {
-                let collapsing_id = ui.make_persistent_id(node_id);
-                egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), collapsing_id, false)
-                    .show_header(ui, |ui| {
-                        self.show_selectable_label(scene, is_selected, selection, ui, node_id);
-                    })
-                    .body(|ui| self.render_scene_node(scene, selected, selection, ui, child_node));
-            }
+            let collapsing_id = ui.make_persistent_id(node_id);
+            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), collapsing_id, false)
+                .show_header(ui, |ui| {
+                    self.show_selectable_label(scene, is_selected, selection, ui, node_id);
+                })
+                .body(|ui| {
+                    for child_node in children {
+                        self.render_scene_node(scene, selected, selection, ui, child_node)
+                    }
+                });
         } else {
             self.show_selectable_label(scene, is_selected, selection, ui, node_id);
         }
