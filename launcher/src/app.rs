@@ -140,6 +140,7 @@ impl LauncherApp {
                 let mut contents = String::new();
                 file.read_to_string(&mut contents).unwrap();
                 self.projects = serde_json::from_str(&contents).unwrap();
+                self.projects.retain(|p| p.root_directory().exists());
             }
         }
     }
