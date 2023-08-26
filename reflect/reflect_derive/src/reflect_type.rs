@@ -37,8 +37,8 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
                     field_info.push((ident, ty));
                 }
             }
-        }
-        _ => panic!("Reflect requires named fields!"),
+        },
+        _ => {}
     }
 
     let add_field_calls = field_info.iter().map(|(ident, ty)| {
@@ -102,7 +102,7 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
 
         impl #FQReflectedType for #name {
             fn register(registry: &mut reflect::registry::TypeRegistry) {
-                registry.meta::<#name>()
+                registry.meta_struct::<#name>()
                     #(#add_field_calls)*;
                 #register_traits_impl
             }

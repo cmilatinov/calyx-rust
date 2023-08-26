@@ -34,7 +34,7 @@ impl Default for PanelManager {
     fn default() -> Self {
         let mut panels: HashMap<String, Box<dyn Panel>> = HashMap::new();
         panels.insert(PanelContentBrowser::name().to_string(), Box::new(PanelContentBrowser::default()));
-        panels.insert(PanelInspector::name().to_string(), Box::new(PanelInspector));
+        panels.insert(PanelInspector::name().to_string(), Box::new(PanelInspector::default()));
         panels.insert(PanelSceneHierarchy::name().to_string(), Box::new(PanelSceneHierarchy::default()));
         panels.insert(PanelTerminal::name().to_string(), Box::new(PanelTerminal::default()));
         panels.insert(PanelViewport::name().to_string(), Box::new(PanelViewport::default()));

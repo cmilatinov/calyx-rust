@@ -1,7 +1,7 @@
 use std::any::TypeId;
 use std::collections::HashMap;
 use inventory::collect;
-use utils::{singleton_with_init};
+use utils::{Init, singleton};
 use crate::type_info::{FieldGetter, FieldSetter, NamedField, StructInfo, TypeInfo};
 use crate::trait_meta::TraitMeta;
 use crate::{Reflect, ReflectedType, TraitMetaFrom};
@@ -18,7 +18,16 @@ pub struct TypeRegistration {
 pub struct TypeRegistry {
     pub types: HashMap<TypeId, TypeRegistration>
 }
-singleton_with_init!(TypeRegistry);
+singleton!(TypeRegistry);
+
+impl Init for TypeRegistry {
+    type Type = TypeRegistry;
+    fn initialize(instance: &mut Self::Type) {
+        for f in inventory::iter::<TypeRegistrationFn> {
+            (f.0)(instance);
+        }
+    }
+}
 
 impl TypeRegistry {
     pub fn new() -> Self {
@@ -33,7 +42,18 @@ impl TypeRegistry {
         T::register(self)
     }
 
-    pub fn meta<T: 'static>(&mut self) -> StructInfoBuilder {
+    pub fn meta<T: 'static>(&mut self) {
+        let type_id = TypeId::of::<T>();
+        self.types.insert(
+            type_id,
+            TypeRegistration {
+                trait_meta: HashMap::new(),
+                type_info: TypeInfo::None
+            }
+        );
+    }
+
+    pub fn meta_struct<T: 'static>(&mut self) -> StructInfoBuilder {
         let type_id = TypeId::of::<T>();
         self.types.insert(
             type_id,
@@ -81,6 +101,14 @@ impl TypeRegistry {
             .and_then(|meta|
                 meta.downcast_ref::<T>()
             )
+    }
+
+    pub fn list_types<T: TraitMeta>(&self) -> Vec<TypeId> {
+        let type_id = TypeId::of::<T>();
+        self.types.iter()
+            .filter(|(id, reg)| reg.trait_meta.contains_key(&type_id))
+            .map(|(id, _)| *id)
+            .collect()
     }
 }
 

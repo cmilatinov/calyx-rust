@@ -6,8 +6,10 @@ use engine::assets::AssetRegistry;
 use engine::core::Time;
 
 use std::env;
+use std::ops::Deref;
 use std::path::PathBuf;
 use project::Project;
+use reflect::registry::TypeRegistry;
 
 fn main() -> eframe::Result<()> {
     // LOAD PROJECT
@@ -23,6 +25,8 @@ fn main() -> eframe::Result<()> {
     // START ACTUAL EDITOR
     Time::init();
     AssetRegistry::init();
+    TypeRegistry::init();
+    let registry = TypeRegistry::get().deref();
     let options = NativeOptions {
         decorated: true,
         transparent: true,
