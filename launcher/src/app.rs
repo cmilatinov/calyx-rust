@@ -95,6 +95,10 @@ impl eframe::App for LauncherApp {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
                     for project in &self.projects {
+                        if !self.search.is_empty() && !project.name().contains(&self.search) {
+                            continue;
+                        }
+
                         let mut layout_job = LayoutJob::default();
                         layout_job.append(&*(project.name().to_string() + "\n"),
                                           0.0,
