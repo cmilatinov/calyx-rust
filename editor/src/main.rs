@@ -1,15 +1,18 @@
 use eframe::NativeOptions;
 
+use log::{LevelFilter};
+
 use editor::*;
 use engine::*;
 use engine::assets::AssetRegistry;
-use engine::core::Time;
+use engine::core::{Logger, LogRegistry, Time};
 
 use std::env;
 use std::ops::Deref;
 use std::path::PathBuf;
 use project::Project;
 use reflect::registry::TypeRegistry;
+use editor::EditorSelection::Asset;
 
 fn main() -> eframe::Result<()> {
     // LOAD PROJECT
@@ -20,13 +23,32 @@ fn main() -> eframe::Result<()> {
         std::process::exit(1);
     }
 
-    let _project = Project::load(PathBuf::from(&args[1])).expect("Unable to load project");
-
     // START ACTUAL EDITOR
+    ProjectManager::init();
+    {
+        ProjectManager::get_mut().load(PathBuf::from(&args[1]));
+    }
+
     Time::init();
     AssetRegistry::init();
     TypeRegistry::init();
-    let registry = TypeRegistry::get().deref();
+
+    {
+        let pm = ProjectManager::get();
+        AssetRegistry::get_mut().add_assets_path(
+            pm.current_project()
+                .assets_directory()
+                .into_os_string()
+                .into_string()
+                .unwrap()
+        );
+    }
+
+    LogRegistry::init();
+
+    log::set_boxed_logger(Box::new(Logger)).expect("Unable to setup logger");
+    log::set_max_level(LevelFilter::Debug);
+
     let options = NativeOptions {
         decorated: true,
         transparent: true,

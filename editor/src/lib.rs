@@ -1,3 +1,8 @@
+mod camera;
+mod panel;
+mod inspector;
+mod project_manager;
+
 use std::collections::HashSet;
 use eframe::egui;
 use egui_dock::{DockArea, NodeIndex, Style, Tree};
@@ -11,10 +16,7 @@ use utils::singleton_with_init;
 use crate::camera::EditorCamera;
 
 use self::panel::*;
-
-mod camera;
-mod panel;
-mod inspector;
+pub use self::project_manager::*;
 
 pub struct EditorApp {
     fps: i32,
@@ -48,7 +50,8 @@ impl EditorApp {
             PanelViewport::name().to_owned(),
         ]);
         let [c, _] = tree.split_right(b, 0.8, vec![PanelInspector::name().to_owned()]);
-        let [_, _] = tree.split_below(c, 0.7, vec![PanelContentBrowser::name().to_owned()]);
+        let [_, _] = tree.split_below(c, 0.7,
+                                      vec![PanelContentBrowser::name().to_owned(), PanelTerminal::name().to_owned()]);
 
         Self {
             fps: 0,

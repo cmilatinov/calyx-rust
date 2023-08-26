@@ -77,7 +77,7 @@ impl Project {
     }
 
     pub fn assets_directory(&self) -> PathBuf {
-        self.root_directory.join("/assets")
+        self.root_directory.join("assets")
     }
 }
 

@@ -41,6 +41,10 @@ impl AssetRegistry {
         String::from(id)
     }
 
+    pub fn add_assets_path(&mut self, path: String) {
+        self.asset_paths.push(path);
+    }
+
     pub fn load<A: Asset + Default>(&mut self, id: &str) -> Result<Ref<A>, AssetError> {
         // Asset already loaded
         if let Some(asset) = self.asset_cache.get(id) {
@@ -69,6 +73,10 @@ impl AssetRegistry {
         let asset = Arc::new(RwLock::new(value));
         self.asset_cache.insert(String::from(id), asset.clone());
         Ok(asset)
+    }
+
+    pub fn assets(&self) -> &Vec<String> {
+        &self.asset_paths
     }
 }
 

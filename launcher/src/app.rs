@@ -95,6 +95,10 @@ impl eframe::App for LauncherApp {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
                     for project in &self.projects {
+                        if !self.search.is_empty() && !project.name().contains(&self.search) {
+                            continue;
+                        }
+
                         let mut layout_job = LayoutJob::default();
                         layout_job.append(&*(project.name().to_string() + "\n"),
                                           0.0,
@@ -140,6 +144,7 @@ impl LauncherApp {
                 let mut contents = String::new();
                 file.read_to_string(&mut contents).unwrap();
                 self.projects = serde_json::from_str(&contents).unwrap();
+                self.projects.retain(|p| p.root_directory().exists());
             }
         }
     }
