@@ -2,13 +2,14 @@ pub extern crate uuid;
 pub extern crate eframe;
 pub extern crate egui;
 pub extern crate egui_dock;
+pub extern crate egui_extras;
 pub extern crate egui_wgpu;
 pub extern crate indextree;
 pub extern crate inventory;
 pub extern crate nalgebra_glm as glm;
 pub extern crate russimp;
 pub extern crate serde;
-pub extern crate specs;
+pub extern crate legion;
 pub extern crate log;
 
 pub mod assets;

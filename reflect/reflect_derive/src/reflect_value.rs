@@ -1,20 +1,20 @@
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::quote;
-use syn::{Ident, parenthesized, Token, parse_macro_input, Path};
+use syn::{Ident, parenthesized, Token, parse_macro_input, Path, Type};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::token::Comma;
-use crate::fq::{FQReflect, FQReflectedType};
+use crate::fq::{FQBox, FQAny, FQReflect, FQReflectedType};
 
 struct ReflectValueDef {
-    type_name: Ident,
+    type_name: Type,
     traits: Punctuated<Path, Comma>,
 }
 
 impl Parse for ReflectValueDef {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let type_name: Ident = input.parse()?;
+        let type_name: Type = input.parse()?;
         let content;
         parenthesized!(content in input);
         let traits = content.parse_terminated(Path::parse, Token![,])?;
@@ -50,9 +50,15 @@ pub(crate) fn impl_reflect_value(input: TokenStream) -> TokenStream {
             #[inline]
             fn type_name_short(&self) -> &'static str { stringify!(#name) }
             #[inline]
-            fn as_any(&self) -> &dyn std::any::Any { self }
+            fn as_any(&self) -> &dyn #FQAny { self }
             #[inline]
-            fn as_any_mut(&mut self) -> &mut dyn std::any::Any { self }
+            fn as_any_mut(&mut self) -> &mut dyn #FQAny { self }
+            #[inline]
+            fn as_reflect(&self) -> &dyn #FQReflect { self }
+            #[inline]
+            fn as_reflect_mut(&mut self) -> &mut dyn #FQReflect { self }
+            #[inline]
+            fn into_any(self: #FQBox<Self>) -> #FQBox<dyn #FQAny> { self }
         }
 
         impl #FQReflectedType for #name {

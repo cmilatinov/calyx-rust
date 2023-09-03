@@ -1,21 +1,25 @@
 use std::any::TypeId;
 use engine::egui::Ui;
-use reflect::Reflect;
+use engine::uuid::Uuid;
+use reflect::{Reflect, ReflectDefault};
 use reflect::registry::TypeRegistry;
-use reflect::ReflectDefault;
 use utils::type_ids;
 use crate::inspector::type_inspector::{TypeInspector, ReflectTypeInspector};
 
 #[derive(Default, Reflect)]
 #[reflect(Default, TypeInspector)]
-pub struct FloatInspector;
+pub struct UuidInspector;
 
-impl TypeInspector for FloatInspector {
+impl TypeInspector for UuidInspector {
     fn target_type_ids(&self) -> Vec<TypeId> {
-        type_ids!(f32, f64)
+        type_ids!(Uuid)
     }
 
     fn show_inspector(&self, ui: &mut Ui, registry: &TypeRegistry, instance: &mut dyn Reflect) {
-        todo!()
+        if let Some(uuid) = instance.downcast_mut::<Uuid>() {
+            let value = uuid.to_string();
+            let mut str = value.as_str();
+            ui.text_edit_singleline(&mut str);
+        }
     }
 }

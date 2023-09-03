@@ -25,14 +25,25 @@ pub fn component_derive(input: TokenStream) -> TokenStream {
     input.attrs.push(attributes);
 
     let expanded = quote! {
-        impl #name {
-            pub fn type_uuid() -> uuid::Uuid {
+        impl engine::component::TypeUUID for #name {
+            fn type_uuid(&self) -> uuid::Uuid {
                 uuid::Uuid::parse_str(#type_uuid).unwrap()
             }
         }
 
-        impl specs::Component for #name {
-            type Storage = specs::VecStorage<Self>;
+        impl engine::component::Component for #name {
+            fn get_instance<'a>(
+                &self, entry: &'a legion::world::EntryRef
+            ) -> std::option::Option<&'a dyn engine::component::Component> {
+                let instance = entry.get_component::<#name>().ok()?;
+                Some(instance)
+            }
+            fn get_instance_mut<'a>(
+                &self, entry: &'a mut legion::world::Entry
+            ) -> std::option::Option<&'a mut dyn engine::component::Component> {
+                let instance = entry.get_component_mut::<#name>().ok()?;
+                Some(instance)
+            }
         }
     };
 

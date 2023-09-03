@@ -1,9 +1,10 @@
-use std::any::{Any, TypeId};
+use std::any::TypeId;
 use engine::egui;
 use engine::egui::Ui;
 use reflect::{Reflect, ReflectGenericInt};
 use reflect::registry::TypeRegistry;
 use reflect::ReflectDefault;
+use utils::type_ids;
 use crate::inspector::type_inspector::{TypeInspector, ReflectTypeInspector};
 
 #[derive(Default, Reflect)]
@@ -12,25 +13,17 @@ pub struct IntegerInspector;
 
 impl TypeInspector for IntegerInspector {
     fn target_type_ids(&self) -> Vec<TypeId> {
-        vec![
-            TypeId::of::<u8>(),
-            TypeId::of::<u16>(),
-            TypeId::of::<u32>(),
-            TypeId::of::<u64>(),
-            TypeId::of::<u128>(),
-            TypeId::of::<i8>(),
-            TypeId::of::<i16>(),
-            TypeId::of::<i32>(),
-            TypeId::of::<i64>(),
-            TypeId::of::<i128>()
-        ]
+        type_ids!(
+            u8, u16, u32, u64, u128, usize,
+            i8, i16, i32, i64, i128, isize
+        )
     }
 
     fn show_inspector(
         &self,
+        ui: &mut Ui,
         registry: &TypeRegistry,
-        instance: &mut dyn Reflect,
-        ui: &mut Ui
+        instance: &mut dyn Reflect
     ) {
         let id = instance.as_any().type_id();
         let meta = registry.trait_meta::<ReflectGenericInt>(id).unwrap();

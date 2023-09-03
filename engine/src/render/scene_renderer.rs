@@ -9,7 +9,7 @@ use egui_wgpu::{RenderState, wgpu};
 use egui_wgpu::wgpu::include_wgsl;
 use egui_wgpu::wgpu::util::DeviceExt;
 use glm::Mat4;
-use specs::{Join, WorldExt};
+use legion::IntoQuery;
 use crate::assets::mesh;
 use crate::assets::mesh::Mesh;
 use crate::component::ComponentMesh;
@@ -199,9 +199,6 @@ impl<'rs> SceneRenderer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Scene Encoder")
         });
-        let e_s = scene.world.entities();
-        let t_s = scene.world.read_component::<ComponentTransform>();
-        let m_s = scene.world.read_component::<ComponentMesh>();
         let mut mesh_map: HashMap<*const RwLock<Mesh>, &RwLock<Mesh>> = HashMap::new();
         #[allow(unused_assignments)]
         let mut mesh_list: Vec<RwLockWriteGuard<Mesh>> = Vec::new();
@@ -215,7 +212,7 @@ impl<'rs> SceneRenderer {
             let mut camera_uniform = CameraUniform::default();
             camera_uniform.projection = glm::perspective_lh::<f32>(
                 16.0 / 9.0,
-                45.0_f32.to_radians() as f32,
+                45.0_f32.to_radians(),
                 0.1,
                 100.0,
             ).data.0;
@@ -226,20 +223,19 @@ impl<'rs> SceneRenderer {
                 bytemuck::cast_slice(&[camera_uniform]),
             );
 
-            let default = ComponentTransform::default();
-            for (id, m_comp) in (&e_s, &m_s).join() {
-                let t_comp = t_s.get(id).unwrap_or(&default);
+            let mut query = <(&ComponentTransform, &ComponentMesh)>::query();
+            for (t_comp, m_comp) in query.iter(&scene.world) {
                 {
                     let mut mesh = m_comp.mesh.write().unwrap();
-                    let ptr: *const RwLock<Mesh> = m_comp.mesh.deref();
+                    let ptr: *const RwLock<Mesh> = m_comp.mesh.deref().deref();
                     if !mesh_map.contains_key(&ptr) {
                         mesh.instances.clear();
                     }
                     mesh.instances.push(
-                        t_comp.transform.get_matrix().into()
+                        t_comp.transform.matrix.into()
                     );
                 }
-                mesh_map.insert(&*m_comp.mesh as *const _, &*m_comp.mesh);
+                mesh_map.insert(&**m_comp.mesh as *const _, &**m_comp.mesh);
             }
 
             render_pass.set_pipeline(&self.pipeline);

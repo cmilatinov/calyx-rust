@@ -8,11 +8,8 @@ use engine::assets::AssetRegistry;
 use engine::core::{Logger, LogRegistry, Time};
 
 use std::env;
-use std::ops::Deref;
 use std::path::PathBuf;
-use project::Project;
 use reflect::registry::TypeRegistry;
-use editor::EditorSelection::Asset;
 
 fn main() -> eframe::Result<()> {
     // LOAD PROJECT

@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use eframe::egui;
 use egui_dock::{DockArea, NodeIndex, Style, Tree};
 use engine::*;
-use engine::core::{Ref, Time};
+use engine::core::{OptionRef, Ref, Time};
 use engine::render::SceneRenderer;
 use engine::scene::Scene;
 use engine::indextree::{NodeId};
@@ -29,7 +29,7 @@ pub struct EditorApp {
 pub struct EditorAppState {
     pub scene: Scene,
     pub camera: EditorCamera,
-    pub scene_renderer: Option<Ref<SceneRenderer>>,
+    pub scene_renderer: OptionRef<SceneRenderer>,
     pub selection: Option<EditorSelection>
 }
 
@@ -49,15 +49,19 @@ impl EditorApp {
         let [_, b] = tree.split_right(NodeIndex::root(), 0.2, vec![
             PanelViewport::name().to_owned(),
         ]);
-        let [c, _] = tree.split_right(b, 0.8, vec![PanelInspector::name().to_owned()]);
-        let [_, _] = tree.split_below(c, 0.7,
-                                      vec![PanelContentBrowser::name().to_owned(), PanelTerminal::name().to_owned()]);
-
+        let [c, _] = tree.split_right(b, 0.7, vec![PanelInspector::name().to_owned()]);
+        let [_, _] = tree.split_below(
+            c, 0.7, vec![
+                PanelContentBrowser::name().to_owned(),
+                PanelTerminal::name().to_owned()
+            ]
+        );
+        cc.egui_ctx.set_pixels_per_point(1.5);
         Self {
             fps: 0,
             tree,
             panel_manager: PanelManager::default(),
-            scene_renderer: core::create_ref(SceneRenderer::new(cc))
+            scene_renderer: Ref::new(SceneRenderer::new(cc))
         }
     }
 }

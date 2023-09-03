@@ -1,15 +1,19 @@
 use uuid::Uuid;
-use crate::component;
+use reflect::Reflect;
+use reflect::ReflectDefault;
+use utils::utils_derive::Component;
+use crate::component::{Component, ReflectComponent};
+use crate as engine;
 
-component! {
-    pub struct ComponentID {
-        pub id: Uuid,
-        pub name: String
-    }
+#[derive(Component, Reflect)]
+#[reflect(Default, Component)]
+pub struct ComponentID {
+    pub id: Uuid,
+    pub name: String
 }
 
-impl ComponentID {
-    pub fn new() -> Self {
+impl Default for ComponentID {
+    fn default() -> Self {
         Self {
             id: Uuid::new_v4(),
             name: "Game Object".to_string(),

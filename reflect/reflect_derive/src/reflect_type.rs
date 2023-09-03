@@ -4,7 +4,7 @@ use quote::quote;
 use syn::{DeriveInput, Fields, Path, Token};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use crate::fq::{FQReflect, FQReflectedType};
+use crate::fq::{FQBox, FQAny, FQReflect, FQReflectedType};
 
 struct ReflectAttribute {
     traits: Punctuated<Path, Token![,]>,
@@ -41,6 +41,7 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
         _ => {}
     }
 
+
     let add_field_calls = field_info.iter().map(|(ident, ty)| {
         quote! {
             .field::<#ty>(
@@ -48,6 +49,12 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
                 |x| {
                     match x.downcast_ref::<#name>() {
                         Some(value) => Some(&value.#ident),
+                        None => None
+                    }
+                },
+                |x| {
+                    match x.downcast_mut::<#name>() {
+                        Some(value) => Some(&mut value.#ident),
                         None => None
                     }
                 },
@@ -95,9 +102,15 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
             #[inline]
             fn type_name_short(&self) -> &'static str { stringify!(#name) }
             #[inline]
-            fn as_any(&self) -> &dyn std::any::Any { self }
+            fn as_any(&self) -> &dyn #FQAny { self }
             #[inline]
-            fn as_any_mut(&mut self) -> &mut dyn std::any::Any { self }
+            fn as_any_mut(&mut self) -> &mut dyn #FQAny { self }
+            #[inline]
+            fn as_reflect(&self) -> &dyn #FQReflect { self }
+            #[inline]
+            fn as_reflect_mut(&mut self) -> &mut dyn #FQReflect { self }
+            #[inline]
+            fn into_any(self: #FQBox<Self>) -> #FQBox<dyn #FQAny> { self }
         }
 
         impl #FQReflectedType for #name {

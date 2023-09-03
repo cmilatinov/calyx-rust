@@ -3,7 +3,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{Attribute, ItemTrait, parse_macro_input, Token};
 use syn::parse::Parse;
-use crate::fq::{FQClone, FQOption, FQReflect, FQTraitMeta, FQTraitMetaFrom};
+use crate::fq::{FQClone, FQOption, FQBox, FQResult, FQReflect, FQTraitMeta, FQTraitMetaFrom};
 
 #[derive(Debug)]
 pub(crate) struct TraitInfo {
@@ -36,7 +36,8 @@ pub(crate) fn reflect_trait(_args: TokenStream, input: TokenStream) -> TokenStre
         #[derive(#FQClone)]
         #trait_vis struct #reflect_trait_ident {
             get_func: fn(&dyn #FQReflect) -> #FQOption<&dyn #trait_ident>,
-            get_mut_func: fn(&mut dyn #FQReflect) -> #FQOption<&mut dyn #trait_ident>
+            get_mut_func: fn(&mut dyn #FQReflect) -> #FQOption<&mut dyn #trait_ident>,
+            get_boxed_func: fn(#FQBox<dyn #FQReflect>) -> #FQResult<#FQBox<dyn #trait_ident>, #FQBox<dyn #FQReflect>>,
         }
 
         impl #FQTraitMeta for #reflect_trait_ident {}
@@ -48,6 +49,9 @@ pub(crate) fn reflect_trait(_args: TokenStream, input: TokenStream) -> TokenStre
             pub fn get_mut<'a>(&self, value: &'a mut dyn #FQReflect) -> #FQOption<&'a mut dyn #trait_ident> {
                 (self.get_mut_func)(value)
             }
+            pub fn get_boxed(&self, value: #FQBox<dyn #FQReflect>) -> #FQResult<#FQBox<dyn #trait_ident>, #FQBox<dyn #FQReflect>> {
+                (self.get_boxed_func)(value)
+            }
         }
 
         impl<T: #trait_ident + #FQReflect> #FQTraitMetaFrom<T> for #reflect_trait_ident {
@@ -58,6 +62,9 @@ pub(crate) fn reflect_trait(_args: TokenStream, input: TokenStream) -> TokenStre
                     },
                     get_mut_func: |reflect_value| {
                         <dyn #FQReflect>::downcast_mut::<T>(reflect_value).map(|value| value as &mut dyn #trait_ident)
+                    },
+                    get_boxed_func: |reflect_value| {
+                        <dyn #FQReflect>::downcast::<T>(reflect_value).map(|value| value as #FQBox<dyn #trait_ident>)
                     }
                 }
             }

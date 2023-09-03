@@ -2,6 +2,8 @@ mod std_default;
 mod std_int;
 mod std_float;
 mod std;
+mod glm;
+mod uuid;
 
 pub use std_int::ReflectGenericInt;
 pub use std_float::ReflectGenericFloat;

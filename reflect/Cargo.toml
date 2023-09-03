@@ -15,3 +15,5 @@ downcast-rs = "1.2.0"
 utils = { path = "../utils" }
 lazy_static = "1.4.0"
 num-traits = "0.2.16"
+nalgebra-glm = "0.18.0"
+uuid = "1.4.1"

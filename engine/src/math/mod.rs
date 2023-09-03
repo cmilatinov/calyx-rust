@@ -8,9 +8,9 @@ pub fn compose_transform(translation: &Vec3, rotation: &Vec3, scale: &Vec3) -> M
 
     matrix = glm::translate(&matrix, translation);
 
-    matrix = glm::rotate_z(&matrix, rotation.z);
-    matrix = glm::rotate_y(&matrix, rotation.y);
-    matrix = glm::rotate_x(&matrix, rotation.x);
+    matrix = glm::rotate_z(&matrix, rotation.z.to_radians());
+    matrix = glm::rotate_y(&matrix, rotation.y.to_radians());
+    matrix = glm::rotate_x(&matrix, rotation.x.to_radians());
 
     matrix = glm::scale(&matrix, scale);
 

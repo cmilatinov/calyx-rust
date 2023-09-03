@@ -19,7 +19,9 @@ indextree = "4.6.0"
 reflect = { path = "../reflect" }
 russimp = "2.0.5"
 notify = "6.0.1"
-specs = "0.19.0"
 inventory = "0.3.6"
 sha-1 = "0.9"
 utils = { path = "../utils" }
+impls = "1.0.3"
+legion = "0.4.0"
+egui_extras = "0.22.0"

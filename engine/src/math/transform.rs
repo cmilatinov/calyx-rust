@@ -1,18 +1,18 @@
 use glm::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
+use reflect::Reflect;
 
 use super::{compose_transform, decompose_transform};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Reflect)]
 pub struct Transform {
     #[serde(skip)]
-    position: Vec3,
+    pub position: Vec3,
     #[serde(skip)]
-    rotation: Vec3,
+    pub rotation: Vec3,
     #[serde(skip)]
-    scale: Vec3,
-
-    matrix: Mat4
+    pub scale: Vec3,
+    pub matrix: Mat4
 }
 
 impl Default for Transform {
@@ -125,20 +125,6 @@ impl Transform {
     pub fn update_components(&mut self) {
         decompose_transform(&self.matrix, &mut self.position, &mut self.rotation, &mut self.scale);
     }
-
-    pub fn get_position(&self) -> Vec3 {
-        self.position
-    }
-
-    pub fn get_rotation(&self) -> Vec3 {
-        self.rotation
-    }
-
-    pub fn get_scale(&self) -> Vec3 {
-        self.scale
-    }
-
-    pub fn get_matrix(&self) -> Mat4 { self.matrix }
 
     pub fn get_inverse_matrix(&self) -> Mat4 { glm::inverse(&self.matrix) }
 }

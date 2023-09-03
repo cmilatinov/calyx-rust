@@ -4,7 +4,7 @@ use inventory::collect;
 use utils::{Init, singleton};
 use crate::type_info::{FieldGetter, FieldSetter, NamedField, StructInfo, TypeInfo};
 use crate::trait_meta::TraitMeta;
-use crate::{Reflect, ReflectedType, TraitMetaFrom};
+use crate::{FieldGetterMut, Reflect, ReflectedType, TraitMetaFrom};
 
 pub struct TypeRegistrationFn(pub fn(&mut TypeRegistry));
 collect!(TypeRegistrationFn);
@@ -80,12 +80,16 @@ impl TypeRegistry {
     }
 
     pub fn type_info<T: 'static>(&self) -> Option<&TypeInfo> {
-        self.types.get(&TypeId::of::<T>())
+        self.type_info_by_id(TypeId::of::<T>())
+    }
+
+    pub fn type_info_by_id(&self, id: TypeId) -> Option<&TypeInfo> {
+        self.types.get(&id)
             .and_then(|registration| Some(&registration.type_info))
     }
 
     pub fn type_registration<T: 'static>(&self) -> Option<&TypeRegistration> {
-        self.types.get(&TypeId::of::<T>())
+        self.type_registration_by_id(TypeId::of::<T>())
     }
 
     pub fn type_registration_by_id(&self, id: TypeId) -> Option<&TypeRegistration> {
@@ -106,7 +110,17 @@ impl TypeRegistry {
     pub fn list_types<T: TraitMeta>(&self) -> Vec<TypeId> {
         let type_id = TypeId::of::<T>();
         self.types.iter()
-            .filter(|(id, reg)| reg.trait_meta.contains_key(&type_id))
+            .filter(|(_id, reg)| reg.trait_meta.contains_key(&type_id))
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
+    pub fn all_of(&self, traits: Vec<TypeId>) -> Vec<TypeId> {
+        self.types.iter()
+            .filter(|(_id, reg)|
+                traits.iter()
+                    .all(|tid| reg.trait_meta.contains_key(tid))
+            )
             .map(|(id, _)| *id)
             .collect()
     }
@@ -121,6 +135,7 @@ impl<'a> StructInfoBuilder<'a> {
         &mut self,
         name: &'static str,
         getter: FieldGetter,
+        getter_mut: FieldGetterMut,
         setter: FieldSetter
     ) -> &mut StructInfoBuilder<'a> {
         self.type_info.fields.insert(name, NamedField {
@@ -128,6 +143,7 @@ impl<'a> StructInfoBuilder<'a> {
             type_name: std::any::type_name::<T>(),
             type_id: TypeId::of::<T>(),
             getter,
+            getter_mut,
             setter
         });
         self

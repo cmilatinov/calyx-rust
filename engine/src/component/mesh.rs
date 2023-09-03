@@ -1,10 +1,13 @@
+use reflect::Reflect;
+use reflect::ReflectDefault;
+use utils::utils_derive::Component;
 use crate::assets::mesh::Mesh;
-use crate::component;
 use crate::core::{Ref};
+use crate::component::{Component, ReflectComponent};
+use crate as engine;
 
-
-component! {
-    pub struct ComponentMesh {
-        pub mesh: Ref<Mesh>
-    }
+#[derive(Default, Component, Reflect)]
+#[reflect(Default, Component)]
+pub struct ComponentMesh {
+    pub mesh: Ref<Mesh>
 }

@@ -11,7 +11,7 @@ macro_rules! singleton {
         use lazy_static::lazy_static;
 
         lazy_static! {
-            pub static ref INSTANCE: RwLock<$t> = RwLock::new($t::default());
+            static ref INSTANCE: RwLock<$t> = RwLock::new($t::default());
         }
 
         impl $t {

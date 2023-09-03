@@ -3,6 +3,7 @@ use engine::egui::Ui;
 use reflect::Reflect;
 use reflect::registry::TypeRegistry;
 use reflect::ReflectDefault;
+use utils::type_ids;
 use crate::inspector::type_inspector::{TypeInspector, ReflectTypeInspector};
 
 #[derive(Default, Reflect)]
@@ -11,13 +12,13 @@ pub struct StringInspector;
 
 impl TypeInspector for StringInspector {
     fn target_type_ids(&self) -> Vec<TypeId> {
-        vec![TypeId::of::<String>()]
+        type_ids!(String)
     }
     fn show_inspector(
         &self,
+        ui: &mut Ui,
         _registry: &TypeRegistry,
-        instance: &mut dyn Reflect,
-        ui: &mut Ui
+        instance: &mut dyn Reflect
     ) {
         ui.text_edit_singleline(instance.downcast_mut::<String>().unwrap());
     }

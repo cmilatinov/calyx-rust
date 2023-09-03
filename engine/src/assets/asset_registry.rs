@@ -8,9 +8,8 @@ use std::thread::JoinHandle;
 
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 
-use crate::assets::Asset;
+use crate::assets::{Asset, AssetRef};
 use crate::assets::error::AssetError;
-use crate::core;
 use crate::core::Ref;
 use utils::{Init, singleton};
 
@@ -49,9 +48,9 @@ impl AssetRegistry {
         // Asset already loaded
         if let Some(asset) = self.asset_cache.get(id) {
             if asset.read().unwrap().deref().type_id() == TypeId::of::<A>() {
-                return Ok(unsafe {
-                    Arc::from_raw(Arc::into_raw(asset.clone()) as *const RwLock<A>)
-                });
+                return Ok(Ref::from_arc(unsafe {
+                    Arc::from_raw(Arc::into_raw(asset.deref().clone()) as *const RwLock<A>)
+                }));
             }
         };
 
@@ -61,17 +60,17 @@ impl AssetRegistry {
         instance.load(path.as_str())?;
 
         // Create ref
-        let rc = core::create_ref(instance);
-        self.asset_cache.insert(String::from(id), rc.clone());
-        Ok(rc)
+        let asset = Ref::new(instance);
+        self.asset_cache.insert(String::from(id), asset.as_asset());
+        Ok(asset)
     }
 
     pub fn create<A: Asset>(&mut self, id: &str, value: A) -> Result<Ref<A>, AssetError> {
         if self.asset_cache.contains_key(id) {
             return Err(AssetError::AssetAlreadyExists);
         }
-        let asset = Arc::new(RwLock::new(value));
-        self.asset_cache.insert(String::from(id), asset.clone());
+        let asset = Ref::new(value);
+        self.asset_cache.insert(String::from(id), asset.as_asset());
         Ok(asset)
     }
 

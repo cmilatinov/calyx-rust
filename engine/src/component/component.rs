@@ -1,23 +1,18 @@
+use legion::world::{Entry, EntryRef};
+use reflect::{Reflect, reflect_trait};
 use crate::scene::Scene;
 
-pub trait Component {
-    fn start(&mut self, scene: &mut Scene);
-    fn update(&mut self, scene: &mut Scene);
-    fn destroy(&mut self, scene: &mut Scene);
+pub trait TypeUUID {
+    fn type_uuid(&self) -> uuid::Uuid;
 }
 
-#[macro_export]
-macro_rules! component {
-    (pub struct $name:ident { $($field:vis $field_name:ident : $field_type:ty),* }) => {
-        #[derive(Default)]
-        pub struct $name {
-            $($field $field_name: $field_type),*,
-        }
-
-        impl specs::Component for $name {
-            type Storage = specs::VecStorage<Self>;
-        }
-    };
+#[reflect_trait]
+pub trait Component: Reflect + TypeUUID {
+    fn get_instance<'a>(&self, entry: &'a EntryRef) -> Option<&'a dyn Component>;
+    fn get_instance_mut<'a>(&self, entry: &'a mut Entry) -> Option<&'a mut dyn Component>;
+    fn start(&mut self, _scene: &mut Scene) {}
+    fn update(&mut self, _scene: &mut Scene) {}
+    fn destroy(&mut self, _scene: &mut Scene) {}
 }
 
 #[cfg(test)]

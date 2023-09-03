@@ -24,6 +24,10 @@ mod tests {
     #[test]
     fn test_reflection() {
 
+        struct TestGeneric<T> {
+            inner: T
+        }
+
         #[derive(Copy, Clone)]
         struct Test {
             testing: usize
@@ -41,7 +45,8 @@ mod tests {
         struct MyStruct {
             test_u32: u32,
             test_str: String,
-            test_struct: Test
+            test_struct: Test,
+            gen: TestGeneric<i32>
         }
 
         impl TestTrait for MyStruct {
@@ -55,7 +60,8 @@ mod tests {
         let mut instance: Box<dyn Reflect> = Box::new(MyStruct {
             test_u32: 123,
             test_str: String::from("testing string"),
-            test_struct: Test { testing: 321 }
+            test_struct: Test { testing: 321 },
+            gen: TestGeneric::<i32> { inner: 32 }
         });
 
         assert_eq!(instance.type_name_short(), "MyStruct");
