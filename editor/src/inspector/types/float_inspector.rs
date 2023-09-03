@@ -15,7 +15,7 @@ impl TypeInspector for FloatInspector {
         type_ids!(f32, f64)
     }
 
-    fn show_inspector(&self, ui: &mut Ui, registry: &TypeRegistry, instance: &mut dyn Reflect) {
+    fn show_inspector(&self, _ui: &mut Ui, _registry: &TypeRegistry, _instance: &mut dyn Reflect) {
         todo!()
     }
 }

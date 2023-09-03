@@ -16,7 +16,7 @@ impl TypeInspector for TransformInspector {
         type_ids!(ComponentTransform)
     }
 
-    fn show_inspector(&self, ui: &mut Ui, registry: &TypeRegistry, instance: &mut dyn Reflect) {
+    fn show_inspector(&self, ui: &mut Ui, _registry: &TypeRegistry, instance: &mut dyn Reflect) {
         if let Some(t_comp) = instance.downcast_mut::<ComponentTransform>() {
             ui.horizontal(|ui| {
                 ui.label("Position");

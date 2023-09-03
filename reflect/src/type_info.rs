@@ -17,8 +17,6 @@ pub struct StructInfo {
     pub type_name: &'static str,
     pub type_id: TypeId,
     pub fields: HashMap<&'static str, NamedField>,
-    #[cfg(feature = "documentation")]
-    docs: Option<&'static str>,
 }
 
 impl StructInfo {
@@ -34,8 +32,6 @@ pub struct NamedField {
     pub getter: FieldGetter,
     pub getter_mut: FieldGetterMut,
     pub setter: FieldSetter,
-    #[cfg(feature = "documentation")]
-    docs: Option<&'static str>,
 }
 
 impl NamedField {

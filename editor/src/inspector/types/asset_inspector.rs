@@ -18,9 +18,9 @@ impl TypeInspector for AssetInspector {
         type_ids!(Ref<Mesh>)
     }
 
-    fn show_inspector(&self, ui: &mut Ui, registry: &TypeRegistry, instance: &mut dyn Reflect) {
+    fn show_inspector(&self, _ui: &mut Ui, registry: &TypeRegistry, instance: &mut dyn Reflect) {
         let id = instance.as_any().type_id();
         let meta = registry.trait_meta::<ReflectAssetRef>(id).unwrap();
-        let asset = meta.get(instance).unwrap().as_asset();
+        let _asset = meta.get(instance).unwrap().as_asset();
     }
 }

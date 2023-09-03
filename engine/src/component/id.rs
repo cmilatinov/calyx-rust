@@ -2,7 +2,7 @@ use uuid::Uuid;
 use reflect::Reflect;
 use reflect::ReflectDefault;
 use utils::utils_derive::Component;
-use crate::component::{Component, ReflectComponent};
+use crate::component::ReflectComponent;
 use crate as engine;
 
 #[derive(Component, Reflect)]

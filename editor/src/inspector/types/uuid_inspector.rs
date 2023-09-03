@@ -15,7 +15,7 @@ impl TypeInspector for UuidInspector {
         type_ids!(Uuid)
     }
 
-    fn show_inspector(&self, ui: &mut Ui, registry: &TypeRegistry, instance: &mut dyn Reflect) {
+    fn show_inspector(&self, ui: &mut Ui, _registry: &TypeRegistry, instance: &mut dyn Reflect) {
         if let Some(uuid) = instance.downcast_mut::<Uuid>() {
             let value = uuid.to_string();
             let mut str = value.as_str();

@@ -1,4 +1,4 @@
-use std::any::{Any, TypeId};
+use std::any::TypeId;
 use std::collections::HashMap;
 use std::ops::Deref;
 use engine::egui::Ui;
@@ -10,14 +10,9 @@ use crate::inspector::type_inspector::{ReflectTypeInspector, TypeInspector};
 use crate::panel::Panel;
 use engine::component::{Component, ReflectComponent};
 
-struct ComponentDef {
-    pub type_id: TypeId,
-    pub instance: Box<dyn Component>,
-}
-
 pub struct PanelInspector {
-    components: Vec<ComponentDef>,
-    inspectors: HashMap<TypeId, Box<dyn Reflect>>,
+    components: Vec<Box<dyn Component>>,
+    inspectors: HashMap<TypeId, Box<dyn TypeInspector>>,
     type_association: HashMap<TypeId, TypeId>,
 }
 
@@ -30,10 +25,7 @@ impl Default for PanelInspector {
             let meta_component = registry.trait_meta::<ReflectComponent>(type_id).unwrap();
             let instance = meta_default.default();
             let component = meta_component.get_boxed(instance).unwrap();
-            components.push(ComponentDef {
-                type_id,
-                instance: component,
-            });
+            components.push(component);
         }
         let mut inspectors = HashMap::new();
         let mut type_association = HashMap::new();
@@ -41,11 +33,11 @@ impl Default for PanelInspector {
             let meta_default = registry.trait_meta::<ReflectDefault>(type_id).unwrap();
             let meta_inspector = registry.trait_meta::<ReflectTypeInspector>(type_id).unwrap();
             let instance = meta_default.default();
-            let inspector = meta_inspector.get(instance.deref()).unwrap();
+            let inspector = meta_inspector.get_boxed(instance).unwrap();
             for target_type_id in inspector.target_type_ids() {
                 type_association.insert(target_type_id, type_id);
             }
-            inspectors.insert(type_id, instance);
+            inspectors.insert(type_id, inspector);
         }
         Self {
             inspectors,
@@ -68,7 +60,7 @@ impl Panel for PanelInspector {
                 let node_id = entities.iter().next().unwrap();
                 let mut entry = app_state.scene.entry(*node_id).unwrap();
                 for component in self.components.iter() {
-                    if let Some(instance) = component.instance.get_instance_mut(&mut entry) {
+                    if let Some(instance) = component.get_instance_mut(&mut entry) {
                         self.show_inspector(ui, instance.as_reflect_mut());
                     }
                 }
@@ -79,24 +71,15 @@ impl Panel for PanelInspector {
 
 impl PanelInspector {
     fn inspector_lookup(&self, type_id: TypeId) -> Option<&dyn TypeInspector> {
-        let inspector = match self.type_association.get(&type_id) {
+        match self.type_association.get(&type_id) {
             Some(inspector_id) => match self.inspectors.get(&inspector_id) {
-                Some(inspector) => Some(inspector),
+                Some(inspector) => Some(inspector.as_ref()),
                 None => None
             }
             None => match self.inspectors.get(&type_id) {
-                Some(inspector) => Some(inspector),
+                Some(inspector) => Some(inspector.as_ref()),
                 None => None
             }
-        };
-        match inspector {
-            Some(inspector_ref) => {
-                let registry = TypeRegistry::get();
-                let type_id = inspector_ref.as_ref().type_id();
-                let meta = registry.trait_meta::<ReflectTypeInspector>(type_id)?;
-                meta.get(inspector_ref.as_ref())
-            },
-            None => None
         }
     }
 

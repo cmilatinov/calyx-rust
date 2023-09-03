@@ -1,4 +1,3 @@
-use glm::Mat4;
 use indextree::{Arena, NodeId, Node, Children};
 use legion::{Entity, EntityStore, World};
 use legion::world::{Entry, EntryRef};
