@@ -12,7 +12,7 @@ use engine::render::SceneRenderer;
 use engine::scene::Scene;
 use engine::indextree::{NodeId};
 use engine::uuid::Uuid;
-use utils::singleton_with_init;
+use utils::{Init, singleton};
 use crate::camera::EditorCamera;
 
 use self::panel::*;
@@ -39,7 +39,13 @@ pub enum EditorSelection {
     Asset(HashSet<Uuid>)
 }
 
-singleton_with_init!(EditorAppState);
+impl Init for EditorAppState {
+    fn initialize(instance: &mut Self) {
+
+    }
+}
+
+singleton!(EditorAppState);
 
 impl EditorApp {
     pub fn new(cc: &eframe::CreationContext) -> Self {
@@ -49,14 +55,14 @@ impl EditorApp {
         let [_, b] = tree.split_right(NodeIndex::root(), 0.2, vec![
             PanelViewport::name().to_owned(),
         ]);
-        let [c, _] = tree.split_right(b, 0.7, vec![PanelInspector::name().to_owned()]);
+        let [c, _] = tree.split_right(b, 0.75, vec![PanelInspector::name().to_owned()]);
         let [_, _] = tree.split_below(
             c, 0.7, vec![
                 PanelContentBrowser::name().to_owned(),
                 PanelTerminal::name().to_owned()
             ]
         );
-        cc.egui_ctx.set_pixels_per_point(1.5);
+        cc.egui_ctx.set_pixels_per_point(1.25);
         Self {
             fps: 0,
             tree,

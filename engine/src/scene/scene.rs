@@ -38,7 +38,7 @@ impl Default for Scene {
         {
             let mut e_cube = scene.entry(cube).unwrap();
             e_cube.get_component_mut::<ComponentTransform>()
-                .unwrap().transform.translate(&glm::vec3(0.0, 0.0, 0.0));
+                .unwrap().transform.translate(&glm::vec3(0.0, 0.0, 10.0));
         }
         {
             let mut e_cube2 = scene.entry(cube2).unwrap();

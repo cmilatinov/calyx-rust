@@ -21,8 +21,7 @@ pub struct TypeRegistry {
 singleton!(TypeRegistry);
 
 impl Init for TypeRegistry {
-    type Type = TypeRegistry;
-    fn initialize(instance: &mut Self::Type) {
+    fn initialize(instance: &mut Self) {
         for f in inventory::iter::<TypeRegistrationFn> {
             (f.0)(instance);
         }

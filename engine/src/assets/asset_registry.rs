@@ -90,8 +90,7 @@ impl Default for AssetRegistry {
 }
 
 impl Init for AssetRegistry {
-    type Type = AssetRegistry;
-    fn initialize(instance: &mut Self::Type) {
+    fn initialize(instance: &mut Self) {
         let watcher_thread = thread::spawn(|| {
             let (tx, rx) = std::sync::mpsc::channel();
             let mut watcher = RecommendedWatcher::new(tx, Config::default()).unwrap();

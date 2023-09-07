@@ -198,7 +198,7 @@ impl Mesh {
         self.create_instance_buffer(device);
     }
 
-    pub fn set_dirty(&mut self) {
+    pub fn mark_dirty(&mut self) {
         self.dirty = true;
     }
 }

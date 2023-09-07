@@ -10,7 +10,7 @@ use egui_wgpu::wgpu::include_wgsl;
 use egui_wgpu::wgpu::util::DeviceExt;
 use glm::Mat4;
 use legion::IntoQuery;
-use crate::assets::mesh;
+use crate::assets::{Assets, mesh};
 use crate::assets::mesh::Mesh;
 use crate::component::ComponentMesh;
 use crate::component::ComponentTransform;
@@ -25,6 +25,11 @@ use crate::scene::Scene;
 pub struct CameraUniform {
     pub projection: [[f32; 4]; 4],
     pub view: [[f32; 4]; 4],
+    pub inverse_view: [[f32; 4]; 4],
+    pub inverse_projection: [[f32; 4]; 4],
+    pub near_plane: f32,
+    pub far_plane: f32,
+    _padding: [f32; 2]
 }
 
 impl Default for CameraUniform {
@@ -32,6 +37,11 @@ impl Default for CameraUniform {
         Self {
             projection: Mat4::identity().data.0,
             view: Mat4::identity().data.0,
+            inverse_view: Mat4::identity().data.0,
+            inverse_projection: Mat4::identity().data.0,
+            near_plane: 0.0,
+            far_plane: 0.0,
+            _padding: [0.0, 0.0]
         }
     }
 }
@@ -43,8 +53,9 @@ pub struct SceneRenderer {
     scene_texture_view: wgpu::TextureView,
     scene_depth_texture: wgpu::Texture,
     scene_depth_texture_view: wgpu::TextureView,
-    pipeline: wgpu::RenderPipeline,
-    bind_group: wgpu::BindGroup,
+    scene_bind_group: wgpu::BindGroup,
+    scene_pipeline: wgpu::RenderPipeline,
+    grid_pipeline: wgpu::RenderPipeline,
     camera_uniform_buffer: wgpu::Buffer
 }
 
@@ -100,15 +111,18 @@ impl<'rs> SceneRenderer {
             &wgpu::TextureViewDescriptor::default()
         );
 
-        let shader = device.create_shader_module(
+        let scene_shader = device.create_shader_module(
             include_wgsl!("../../../assets/shaders/basic.wgsl")
         );
+        let grid_shader = device.create_shader_module(
+            include_wgsl!("../../../assets/shaders/grid.wgsl")
+        );
 
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("custom3d"),
+        let scene_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("scene_bind_group_layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -118,17 +132,17 @@ impl<'rs> SceneRenderer {
             }],
         });
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("custom3d"),
-            bind_group_layouts: &[&bind_group_layout],
+        let scene_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("scene_pipeline_layout"),
+            bind_group_layouts: &[&scene_bind_group_layout],
             push_constant_ranges: &[],
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("custom3d"),
-            layout: Some(&pipeline_layout),
+        let scene_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("scene_pipeline"),
+            layout: Some(&scene_pipeline_layout),
             vertex: wgpu::VertexState {
-                module: &shader,
+                module: &scene_shader,
                 entry_point: "vs_main",
                 buffers: &[
                     mesh::Vertex::layout(wgpu::VertexStepMode::Vertex),
@@ -136,7 +150,7 @@ impl<'rs> SceneRenderer {
                 ],
             },
             fragment: Some(wgpu::FragmentState {
-                module: &shader,
+                module: &scene_shader,
                 entry_point: "fs_main",
                 targets: &[Some(render_state.target_format.into())],
             }),
@@ -161,18 +175,64 @@ impl<'rs> SceneRenderer {
         });
 
         let camera_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("custom3d"),
+            label: Some("camera_uniform_buffer"),
             contents: bytemuck::cast_slice(&[CameraUniform::default()]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("custom3d"),
-            layout: &bind_group_layout,
+        let scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("scene_bind_group"),
+            layout: &scene_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: camera_uniform_buffer.as_entire_binding(),
             }],
+        });
+
+        let grid_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("grid_pipeline"),
+            layout: Some(&scene_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &grid_shader,
+                entry_point: "vs_main",
+                buffers: &[
+                    mesh::Vertex::layout(wgpu::VertexStepMode::Vertex)
+                ],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &grid_shader,
+                entry_point: "fs_main",
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: render_state.target_format,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent{
+                            src_factor: wgpu::BlendFactor::SrcAlpha,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add
+                        },
+                        alpha: wgpu::BlendComponent::OVER
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default()
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
         });
 
         Self {
@@ -181,8 +241,9 @@ impl<'rs> SceneRenderer {
             scene_texture_handle,
             scene_depth_texture,
             scene_depth_texture_view,
-            pipeline,
-            bind_group,
+            scene_pipeline,
+            scene_bind_group,
+            grid_pipeline,
             camera_uniform_buffer
         }
     }
@@ -202,6 +263,8 @@ impl<'rs> SceneRenderer {
         let mut mesh_map: HashMap<*const RwLock<Mesh>, &RwLock<Mesh>> = HashMap::new();
         #[allow(unused_assignments)]
         let mut mesh_list: Vec<RwLockWriteGuard<Mesh>> = Vec::new();
+        let quad_binding = Assets::screen_space_quad().unwrap();
+        let mut quad_mesh = quad_binding.write().unwrap();
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Viewport Scene"),
@@ -210,13 +273,19 @@ impl<'rs> SceneRenderer {
             });
 
             let mut camera_uniform = CameraUniform::default();
-            camera_uniform.projection = glm::perspective_lh::<f32>(
+            let projection = glm::perspective_lh::<f32>(
                 16.0 / 9.0,
                 45.0_f32.to_radians(),
                 0.1,
-                100.0,
-            ).data.0;
-            camera_uniform.view.clone_from_slice(&camera_transform.get_inverse_matrix().data.0);
+                1000.0,
+            );
+            camera_uniform.projection = projection.data.0;
+            let view = camera_transform.get_inverse_matrix();
+            camera_uniform.view.clone_from_slice(&view.data.0);
+            camera_uniform.inverse_view = glm::inverse(&view).data.0;
+            camera_uniform.inverse_projection = glm::inverse(&projection).data.0;
+            camera_uniform.near_plane = 0.1;
+            camera_uniform.far_plane = 100.0;
             queue.write_buffer(
                 &self.camera_uniform_buffer,
                 0,
@@ -238,8 +307,8 @@ impl<'rs> SceneRenderer {
                 mesh_map.insert(&**m_comp.mesh as *const _, &**m_comp.mesh);
             }
 
-            render_pass.set_pipeline(&self.pipeline);
-            render_pass.set_bind_group(0, &self.bind_group, &[]);
+            render_pass.set_pipeline(&self.scene_pipeline);
+            render_pass.set_bind_group(0, &self.scene_bind_group, &[]);
 
             // Lock all meshes for writing at once
             mesh_list = mesh_map.iter()
@@ -263,6 +332,22 @@ impl<'rs> SceneRenderer {
                     0..(mesh.instances.len() as u32)
                 );
             }
+
+            if quad_mesh.dirty {
+                quad_mesh.rebuild_mesh_data(device);
+                quad_mesh.dirty = false;
+            }
+            render_pass.set_pipeline(&self.grid_pipeline);
+            render_pass.set_bind_group(0, &self.scene_bind_group, &[]);
+            render_pass.set_index_buffer(
+                quad_mesh.index_buffer.as_ref().unwrap().slice(..),
+                wgpu::IndexFormat::Uint32,
+            );
+            render_pass.set_vertex_buffer(0, quad_mesh.vertex_buffer.as_ref().unwrap().slice(..));
+            render_pass.draw_indexed(
+                0..(quad_mesh.indices.len() as u32), 0,
+                0..1
+            );
         }
 
         queue.submit(Some(encoder.finish()));

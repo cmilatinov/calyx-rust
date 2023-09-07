@@ -25,3 +25,4 @@ utils = { path = "../utils" }
 impls = "1.0.3"
 legion = "0.4.0"
 egui_extras = "0.22.0"
+wgsl_preprocessor = "1.1.3"
