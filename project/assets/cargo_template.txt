@@ -1,0 +1,11 @@
+[package]
+name = "{project_name}"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "assets/lib.rs"
+
+[dependencies]
+engine = \{ git = "https://github.com/cmilatinov/calyx-rust", package = "engine" }
+editor = \{ git = "https://github.com/cmilatinov/calyx-rust", package = "editor" }

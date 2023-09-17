@@ -4,6 +4,7 @@ use std::fs;
 use std::io::{Write, Read};
 use chrono::Utc;
 use serde::{Serialize, Deserialize};
+use tinytemplate::TinyTemplate;
 
 #[derive(Serialize, Deserialize)]
 pub struct Project {
@@ -12,8 +13,17 @@ pub struct Project {
     root_directory: PathBuf
 }
 
+#[derive(Serialize)]
+struct CargoTemplateCtx {
+    project_name: String
+}
+
 impl Project {
     pub fn generate(name: String, folder: Option<String>) -> Self {
+        let mut tt = TinyTemplate::new();
+        tt.add_template("cargo template", include_str!("../assets/cargo_template.txt"))
+            .expect("Unable to extract cargo template.");
+
         let base_directory = match folder {
             Some(curr_folder) => Path::new(&curr_folder).to_path_buf(),
             None => Path::new(".").to_path_buf(),
@@ -22,9 +32,7 @@ impl Project {
         let project_directory = base_directory.join(&name);
         let assets_directory = project_directory.join("assets");
 
-        if let Err(e) = fs::create_dir_all(&assets_directory) {
-            eprintln!("Failed to create project directory at: {}", e);
-        }
+        fs::create_dir_all(&assets_directory).expect("Unable to create assets directory.");
 
         let project = Project {
             name,
@@ -37,6 +45,16 @@ impl Project {
         let mut file = File::create(toml_path).expect("Failed to create TOML file");
 
         file.write_all(toml_string.as_bytes()).expect("Failed to write to TOML file");
+
+        let mut cargo_file = File::create(project.root_directory.join("Cargo.toml")).expect("Unable to create cargo file.");
+
+        let cargo_content = tt.render("cargo template", &CargoTemplateCtx {
+            project_name: project.name.clone()
+        }).expect("Unable to apply template to cargo.toml");
+
+        cargo_file.write_all(cargo_content.as_bytes()).expect("Unable to write content of cargo.toml");
+
+        File::create(assets_directory.join("lib.rs")).expect("Unable to create lib.rs");
 
         project
     }
