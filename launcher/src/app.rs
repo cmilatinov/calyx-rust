@@ -27,6 +27,7 @@ impl LauncherApp {
         cc.egui_ctx.set_pixels_per_point(1.2);
         let mut app = LauncherApp::default();
         app.load_projects();
+        app.save_projects();
         app
     }
 }
@@ -101,7 +102,7 @@ impl eframe::App for LauncherApp {
                         ui.add_space(5.0);
 
                         let mut layout_job = LayoutJob::default();
-                        layout_job.append(&*(project.name().to_string() + "\n"),
+                        layout_job.append(&(project.name().to_string() + "\n"),
                                           0.0,
                                           TextFormat::default());
                         layout_job.append(project.root_directory().to_str().unwrap(),
@@ -120,6 +121,21 @@ impl eframe::App for LauncherApp {
 }
 
 impl LauncherApp {
+    pub fn save_projects(&mut self) {
+        if let Some(path) = get_config_path() {
+            // Make sure the directory exists
+            if let Some(parent) = path.parent() {
+                if !parent.exists() {
+                    fs::create_dir_all(parent).unwrap();
+                }
+            }
+
+            // Save the projects to the JSON file
+            let json_data = serde_json::to_string_pretty(&self.projects).unwrap();
+            let mut file = File::create(path).unwrap();
+            file.write_all(json_data.as_bytes()).unwrap();
+        }
+    }
     pub fn save_project(&mut self, curr_project: Project) {
         if let Some(path) = get_config_path() {
             // Make sure the directory exists
@@ -162,7 +178,7 @@ fn get_config_path() -> Option<PathBuf> {
 }
 
 pub fn launch_editor(root_directory: String) {
-    let mut dir = std::env::current_dir().unwrap().clone();
+    let mut dir = std::env::current_dir().expect("Unable to get environment directory");
     dir.push("target/debug/editor");
     Command::new(dir)
         .arg(root_directory)
