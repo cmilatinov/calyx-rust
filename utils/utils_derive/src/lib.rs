@@ -31,7 +31,10 @@ pub fn component_derive(input: TokenStream) -> TokenStream {
             }
         }
 
-        impl engine::component::Component for #name {
+        impl engine::component::ComponentInstance for #name {
+            fn component_type_id(&self) -> legion::storage::ComponentTypeId {
+                legion::storage::ComponentTypeId::of::<#name>()
+            }
             fn get_instance<'a>(
                 &self, entry: &'a legion::world::EntryRef
             ) -> std::option::Option<&'a dyn engine::component::Component> {

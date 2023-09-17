@@ -17,8 +17,8 @@ struct FragmentOut {
 struct CameraUniforms {
     projection: mat4x4<f32>,
     view: mat4x4<f32>,
-    inverse_view: mat4x4<f32>,
     inverse_projection: mat4x4<f32>,
+    inverse_view: mat4x4<f32>,
     near_plane: f32,
     far_plane: f32
 };
@@ -57,8 +57,8 @@ fn grid(frag_pos: vec3<f32>, grid_color: vec3<f32>, line_width: f32, scale: f32)
     let derivative = fwidth(coord);
     let grid = max(abs(fract(coord - vec2<f32>(0.5)) - vec2<f32>(0.5)) - vec2<f32>(line_width), vec2<f32>(0.0)) / derivative;
     var color = vec4<f32>(grid_color, 1.0 - min(min(grid.x, grid.y), 1.0));
-    let min_x = min(derivative.x, 1.0);
-    let min_z = min(derivative.y, 1.0);
+    let min_x = min(derivative.x, 0.05);
+    let min_z = min(derivative.y, 0.05);
     if (frag_pos.x > -min_x && frag_pos.x < min_x) {
         color.x = 0.1;
         color.y = 0.1;
@@ -81,12 +81,17 @@ fn fs_main(in: VertexOut) -> FragmentOut {
     var out: FragmentOut;
     let frag_pos = in.near_point + t * (in.far_point - in.near_point);
     out.color =
-        grid(frag_pos, vec3<f32>(0.2), 0.0001, 1.0) +
-        grid(frag_pos, vec3<f32>(0.1), 0.001, 0.1);
+        grid(frag_pos, vec3<f32>(0.05), 0.0001, 1.0) +
+        grid(frag_pos, vec3<f32>(0.025), 0.001, 0.1);
 
+    let view_pos = vec3<f32>(
+        camera.inverse_view[3][0],
+        camera.inverse_view[3][1],
+        camera.inverse_view[3][2]
+    );
     let depth = compute_depth(frag_pos);
-    let linear_depth = linearize_depth(depth);
-    let alpha = 1.0 - (5.0 * linear_depth * linear_depth);
+    let dist = distance(view_pos.xz, frag_pos.xz);
+    let alpha = pow(clamp(dist / 300.0, 0.0, 1.0) - 1.0, 2.0);
     out.color.a *= alpha;
 
     if (out.color.a > 0.0) {

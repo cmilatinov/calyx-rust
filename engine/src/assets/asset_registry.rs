@@ -90,7 +90,7 @@ impl Default for AssetRegistry {
 }
 
 impl Init for AssetRegistry {
-    fn initialize(instance: &mut Self) {
+    fn initialize(&mut self) {
         let watcher_thread = thread::spawn(|| {
             let (tx, rx) = std::sync::mpsc::channel();
             let mut watcher = RecommendedWatcher::new(tx, Config::default()).unwrap();
@@ -102,8 +102,8 @@ impl Init for AssetRegistry {
                 }
             }
         });
-        instance.asset_paths = vec!["assets".to_string()];
-        instance.asset_cache = HashMap::new();
-        instance.watcher_thread = Some(watcher_thread);
+        self.asset_paths = vec!["assets".to_string()];
+        self.asset_cache = HashMap::new();
+        self.watcher_thread = Some(watcher_thread);
     }
 }

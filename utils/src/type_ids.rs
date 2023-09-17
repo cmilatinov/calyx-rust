@@ -2,7 +2,7 @@
 macro_rules! type_ids {
     ($($ty:ty),*) => {
         vec![
-            $(TypeId::of::<$ty>()),*
+            $(std::any::TypeId::of::<$ty>()),*
         ]
     };
 }

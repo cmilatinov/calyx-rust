@@ -1,10 +1,9 @@
 use std::any::TypeId;
 use engine::egui::Ui;
 use reflect::Reflect;
-use reflect::registry::TypeRegistry;
 use reflect::ReflectDefault;
 use utils::type_ids;
-use crate::inspector::type_inspector::{TypeInspector, ReflectTypeInspector};
+use crate::inspector::type_inspector::{TypeInspector, ReflectTypeInspector, InspectorContext};
 
 #[derive(Default, Reflect)]
 #[reflect(Default, TypeInspector)]
@@ -17,7 +16,7 @@ impl TypeInspector for StringInspector {
     fn show_inspector(
         &self,
         ui: &mut Ui,
-        _registry: &TypeRegistry,
+        _ctx: &InspectorContext,
         instance: &mut dyn Reflect
     ) {
         ui.text_edit_singleline(instance.downcast_mut::<String>().unwrap());

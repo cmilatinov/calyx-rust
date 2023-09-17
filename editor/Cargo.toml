@@ -21,3 +21,4 @@ syntect = { version = "5", optional = true, default-features = false, features =
 utils = { path = "../utils" }
 reflect = { path = "../reflect" }
 inventory = "0.3.11"
+egui-gizmo = "0.11.0"

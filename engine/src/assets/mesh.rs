@@ -4,11 +4,11 @@ use std::path::Path;
 use glm::{Vec2, vec2, Vec3, vec3};
 use russimp::scene::{PostProcess, Scene};
 use egui_wgpu::wgpu;
-use wgpu::util::DeviceExt;
+use egui_wgpu::wgpu::util::DeviceExt;
 
 use crate::assets::Asset;
 use crate::assets::error::AssetError;
-use crate::render::buffer::{BufferLayout, wgpu_buffer_init_desc};
+use crate::render::buffer::{BufferLayout, ResizableBuffer, wgpu_buffer_init_desc};
 
 const CX_MESH_NUM_UV_CHANNELS: usize = 4;
 
@@ -59,7 +59,6 @@ impl BufferLayout for Instance {
     const ATTRIBS: &'static [wgpu::VertexAttribute] = &Instance::ATTRIBUTES;
 }
 
-#[derive(Default)]
 pub struct Mesh {
     pub name: String,
     pub indices: Vec<u32>,
@@ -71,7 +70,27 @@ pub struct Mesh {
     pub(crate) instances: Vec<[[f32; 4]; 4]>,
     pub(crate) index_buffer: Option<wgpu::Buffer>,
     pub(crate) vertex_buffer: Option<wgpu::Buffer>,
-    pub(crate) instance_buffer: Option<wgpu::Buffer>,
+    pub(crate) instance_buffer: ResizableBuffer,
+}
+
+impl Default for Mesh {
+    fn default() -> Self {
+        Self {
+            name: String::from(""),
+            indices: Vec::new(),
+            vertices: Vec::new(),
+            normals: Vec::new(),
+            uvs: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+            dirty: false,
+            instances: Vec::new(),
+            index_buffer: None,
+            vertex_buffer: None,
+            instance_buffer: ResizableBuffer::new(
+                wgpu::BufferUsages::COPY_DST |
+                    wgpu::BufferUsages::VERTEX
+            )
+        }
+    }
 }
 
 impl Asset for Mesh {
@@ -131,23 +150,22 @@ impl Mesh {
         self.indices.clear();
         self.vertices.clear();
         self.normals.clear();
-
+        self.instances.clear();
         for uv in &mut self.uvs {
             uv.clear();
         }
     }
 
-    pub fn create_index_buffer(&mut self, device: &wgpu::Device) -> &wgpu::Buffer {
+    pub fn rebuild_index_buffer(&mut self, device: &wgpu::Device) {
         self.index_buffer = Some(device.create_buffer_init(
             &wgpu_buffer_init_desc(
                 wgpu::BufferUsages::INDEX,
                 self.indices.as_slice(),
             )
         ));
-        self.index_buffer.as_ref().unwrap()
     }
 
-    pub fn create_vertex_buffer(&mut self, device: &wgpu::Device) -> &wgpu::Buffer {
+    fn rebuild_vertex_buffer(&mut self, device: &wgpu::Device) {
         let vertex_count = self.vertices.len();
         let mut vertices: Vec<Vertex> = Vec::new();
         vertices.resize(vertex_count, Vertex::default());
@@ -165,22 +183,13 @@ impl Mesh {
                 vertices.as_slice(),
             )
         ));
-        self.vertex_buffer.as_ref().unwrap()
     }
 
-    // TODO: Do not recreate this buffer every frame,
-    // only grow it when necessary and use geometric growth
-    pub fn create_instance_buffer(&mut self, device: &wgpu::Device) -> &wgpu::Buffer {
-        self.instance_buffer = Some(device.create_buffer_init(
-            &wgpu_buffer_init_desc(
-                wgpu::BufferUsages::VERTEX,
-                self.instances.as_slice(),
-            )
-        ));
-        self.instance_buffer.as_ref().unwrap()
+    fn rebuild_instance_buffer(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        self.instance_buffer.write_buffer(device, queue, self.instances.as_slice());
     }
 
-    pub fn normalize_mesh_data(&mut self) {
+    fn normalize_mesh_data(&mut self) {
         let vertex_count = self.vertices.len();
         self.normals.resize(vertex_count, Vec3::zeros());
         for i in 0..CX_MESH_NUM_UV_CHANNELS {
@@ -188,14 +197,14 @@ impl Mesh {
         }
     }
 
-    pub fn rebuild_mesh_data(&mut self, device: &wgpu::Device) {
+    pub(crate) fn rebuild_mesh_data(&mut self, device: &wgpu::Device) {
         self.normalize_mesh_data();
-        self.create_index_buffer(device);
-        self.create_vertex_buffer(device);
+        self.rebuild_index_buffer(device);
+        self.rebuild_vertex_buffer(device);
     }
 
-    pub fn rebuild_instance_data(&mut self, device: &wgpu::Device) {
-        self.create_instance_buffer(device);
+    pub(crate) fn rebuild_instance_data(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        self.rebuild_instance_buffer(device, queue);
     }
 
     pub fn mark_dirty(&mut self) {

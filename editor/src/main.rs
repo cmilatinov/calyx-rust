@@ -1,3 +1,4 @@
+use std::default::Default;
 use eframe::NativeOptions;
 
 use log::{LevelFilter};
@@ -9,7 +10,10 @@ use engine::core::{Logger, LogRegistry, Time};
 
 use std::env;
 use std::path::PathBuf;
-use reflect::registry::TypeRegistry;
+use std::sync::Arc;
+use engine::class_registry::ClassRegistry;
+use engine::eframe::wgpu;
+use reflect::type_registry::TypeRegistry;
 
 fn main() -> eframe::Result<()> {
     // LOAD PROJECT
@@ -29,6 +33,7 @@ fn main() -> eframe::Result<()> {
     Time::init();
     AssetRegistry::init();
     TypeRegistry::init();
+    ClassRegistry::init();
 
     {
         let pm = ProjectManager::get();
@@ -47,11 +52,20 @@ fn main() -> eframe::Result<()> {
     log::set_max_level(LevelFilter::Debug);
 
     let options = NativeOptions {
+        maximized: true,
         decorated: true,
         transparent: true,
         min_window_size: Some(egui::vec2(1280.0, 720.0)),
         initial_window_size: Some(egui::vec2(1280.0, 720.0)),
         renderer: eframe::Renderer::Wgpu,
+        wgpu_options: egui_wgpu::WgpuConfiguration {
+            device_descriptor: Arc::new(|_adapter| wgpu::DeviceDescriptor {
+                label: Some("Beans"),
+                features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
         ..Default::default()
     };
     eframe::run_native(
@@ -60,6 +74,8 @@ fn main() -> eframe::Result<()> {
         Box::new(|cc| {
             let mut app_state = EditorAppState::get_mut();
             let app = EditorApp::new(cc);
+            app_state.viewport_width = 0.0;
+            app_state.viewport_height = 0.0;
             app_state.scene_renderer = Some(app.scene_renderer.clone());
             Box::new(app)
         })

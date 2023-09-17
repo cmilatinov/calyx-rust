@@ -62,12 +62,12 @@ pub(crate) fn impl_reflect_value(input: TokenStream) -> TokenStream {
         }
 
         impl #FQReflectedType for #name {
-            fn register(registry: &mut reflect::registry::TypeRegistry) {
+            fn register(registry: &mut reflect::type_registry::TypeRegistry) {
                 registry.meta::<#name>();
                 #register_traits_impl
             }
         }
 
-        inventory::submit!(reflect::registry::TypeRegistrationFn(<#name as #FQReflectedType>::register));
+        inventory::submit!(reflect::type_registry::TypeRegistrationFn(<#name as #FQReflectedType>::register));
     })
 }

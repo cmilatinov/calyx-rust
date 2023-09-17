@@ -97,15 +97,17 @@ impl PanelSceneHierarchy {
         }
     }
 
-    fn show_selectable_label(&self,
-                             scene: &Scene,
-                             is_selected: bool,
-                             selection: &mut Option<EditorSelection>,
-                             ui: &mut Ui,
-                             node_id: NodeId) {
+    fn show_selectable_label(
+        &self,
+        scene: &Scene,
+        is_selected: bool,
+        selection: &mut Option<EditorSelection>,
+        ui: &mut Ui,
+        node_id: NodeId
+    ) {
         let res = ui.selectable_label(
             is_selected,
-            scene.get_entity_name(node_id).expect("Entity with no name")
+            scene.get_entity_name(node_id)
         );
 
         if res.clicked() {

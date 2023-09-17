@@ -2,7 +2,7 @@ mod reflect;
 mod type_info;
 mod trait_meta;
 mod impls;
-pub mod registry;
+pub mod type_registry;
 
 extern crate reflect_derive;
 extern crate inventory;
@@ -18,7 +18,7 @@ mod tests {
     use crate as reflect;
     use reflect::Reflect;
     use reflect::reflect_trait;
-    use reflect::registry::TypeRegistry;
+    use reflect::type_registry::TypeRegistry;
     use reflect::TypeInfo;
 
     #[test]

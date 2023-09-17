@@ -5,9 +5,8 @@ use engine::core::Ref;
 use engine::egui::Ui;
 use reflect::Reflect;
 use reflect::ReflectDefault;
-use reflect::registry::TypeRegistry;
 use utils::type_ids;
-use crate::inspector::type_inspector::{TypeInspector, ReflectTypeInspector};
+use crate::inspector::type_inspector::{TypeInspector, ReflectTypeInspector, InspectorContext};
 
 #[derive(Default, Reflect)]
 #[reflect(Default, TypeInspector)]
@@ -18,9 +17,9 @@ impl TypeInspector for AssetInspector {
         type_ids!(Ref<Mesh>)
     }
 
-    fn show_inspector(&self, _ui: &mut Ui, registry: &TypeRegistry, instance: &mut dyn Reflect) {
+    fn show_inspector(&self, _ui: &mut Ui, ctx: &InspectorContext, instance: &mut dyn Reflect) {
         let id = instance.as_any().type_id();
-        let meta = registry.trait_meta::<ReflectAssetRef>(id).unwrap();
+        let meta = ctx.registry.trait_meta::<ReflectAssetRef>(id).unwrap();
         let _asset = meta.get(instance).unwrap().as_asset();
     }
 }

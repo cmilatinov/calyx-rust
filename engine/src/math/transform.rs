@@ -4,7 +4,7 @@ use reflect::Reflect;
 
 use super::{compose_transform, decompose_transform};
 
-#[derive(Serialize, Deserialize, Reflect)]
+#[derive(Copy, Clone, Serialize, Deserialize, Reflect)]
 pub struct Transform {
     #[serde(skip)]
     pub position: Vec3,
@@ -12,7 +12,9 @@ pub struct Transform {
     pub rotation: Vec3,
     #[serde(skip)]
     pub scale: Vec3,
-    pub matrix: Mat4
+    pub matrix: Mat4,
+    #[serde(skip)]
+    pub inverse_matrix: Mat4,
 }
 
 impl Default for Transform {
@@ -21,24 +23,26 @@ impl Default for Transform {
         let rotation = Vec3::default();
         let scale = glm::vec3(1.0, 1.0, 1.0);
         let matrix = compose_transform(&position, &rotation, &scale);
-
+        let inverse_matrix = glm::inverse(&matrix);
         Transform {
             position,
             rotation,
             scale,
-
-            matrix
+            matrix,
+            inverse_matrix
         }
     }
 }
 
 impl Transform {
     pub fn from_matrix(matrix: Mat4) -> Self {
+        let inverse_matrix = glm::inverse(&matrix);
         let mut transform = Transform {
             position: Vec3::default(),
             rotation: Vec3::default(),
             scale: Vec3::identity(),
-            matrix
+            matrix,
+            inverse_matrix
         };
         transform.update_components();
         transform
@@ -49,7 +53,8 @@ impl Transform {
             position,
             rotation,
             scale,
-            matrix: Mat4::default()
+            matrix: Mat4::default(),
+            inverse_matrix: Mat4::default()
         };
         transform.update_matrix();
         transform
@@ -76,12 +81,12 @@ impl Transform {
     }
 
     pub fn inverse_transform_position(&self, position: &Vec3) -> Vec3 {
-        let transformed = glm::inverse(&self.matrix) * glm::vec4(position.x, position.y, position.z, 1.0);
+        let transformed = self.get_inverse_matrix() * glm::vec4(position.x, position.y, position.z, 1.0);
         glm::vec3(transformed.x, transformed.y, transformed.z)
     }
 
     pub fn inverse_transform_direction(&self, direction: &Vec3) -> Vec3 {
-        let matrix = glm::mat4_to_mat3(&glm::inverse(&self.matrix));
+        let matrix = glm::mat4_to_mat3(&self.get_inverse_matrix());
         matrix * direction
     }
 
@@ -107,19 +112,20 @@ impl Transform {
     }
 
     pub fn forward(&self) -> Vec3 {
-        self.transform_direction(&glm::vec3(0f32, 0f32, 1f32))
+        self.transform_direction(&glm::vec3(0.0, 0.0, 1.0))
     }
 
     pub fn right(&self) -> Vec3  {
-        self.transform_direction(&glm::vec3(1f32, 0f32, 0f32))
+        self.transform_direction(&glm::vec3(1.0, 0.0, 0.0))
     }
 
     pub fn up(&self) -> Vec3 {
-        self.transform_direction(&glm::vec3(0f32, 1f32, 0f32))
+        self.transform_direction(&glm::vec3(0.0, 1.0, 0.0))
     }
 
     pub fn update_matrix(&mut self) {
         self.matrix = compose_transform(&self.position, &self.rotation, &self.scale);
+        self.inverse_matrix = glm::inverse(&self.matrix);
     }
 
     pub fn update_components(&mut self) {

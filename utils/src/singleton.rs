@@ -1,5 +1,5 @@
 pub trait Init {
-    fn initialize(_instance: &mut Self) {}
+    fn initialize(&mut self) {}
 }
 
 #[macro_export]
@@ -25,7 +25,7 @@ macro_rules! singleton {
             pub fn init() {
                 let mut binding = INSTANCE.write().unwrap();
                 let instance = binding.deref_mut();
-                $t::initialize(instance);
+                instance.initialize();
             }
         }
     }

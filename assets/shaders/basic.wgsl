@@ -19,8 +19,8 @@ struct VertexOut {
 struct CameraUniforms {
     projection: mat4x4<f32>,
     view: mat4x4<f32>,
-    inverse_view: mat4x4<f32>,
     inverse_projection: mat4x4<f32>,
+    inverse_view: mat4x4<f32>,
     near_plane: f32,
     far_plane: f32
 };

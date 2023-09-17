@@ -2,10 +2,9 @@ use std::any::TypeId;
 use engine::egui;
 use engine::egui::Ui;
 use reflect::{Reflect, ReflectGenericInt};
-use reflect::registry::TypeRegistry;
 use reflect::ReflectDefault;
 use utils::type_ids;
-use crate::inspector::type_inspector::{TypeInspector, ReflectTypeInspector};
+use crate::inspector::type_inspector::{TypeInspector, ReflectTypeInspector, InspectorContext};
 
 #[derive(Default, Reflect)]
 #[reflect(Default, TypeInspector)]
@@ -22,12 +21,16 @@ impl TypeInspector for IntegerInspector {
     fn show_inspector(
         &self,
         ui: &mut Ui,
-        registry: &TypeRegistry,
+        ctx: &InspectorContext,
         instance: &mut dyn Reflect
     ) {
         let id = instance.as_any().type_id();
-        let meta = registry.trait_meta::<ReflectGenericInt>(id).unwrap();
-        let mut integer = meta.get(instance).unwrap().as_i64();
-        ui.add(egui::Slider::new(&mut integer, 0..=360));
+        let meta = ctx.registry.trait_meta::<ReflectGenericInt>(id).unwrap();
+        let integer = meta.get_mut(instance).unwrap();
+        let mut value = integer.as_i64();
+        let res = ui.add(egui::Slider::new(&mut value, 0..=360));
+        if res.changed() {
+            integer.set_from_i64(value);
+        }
     }
 }

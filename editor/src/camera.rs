@@ -14,7 +14,7 @@ pub struct EditorCamera {
 impl CameraLike for EditorCamera {
     fn update(&mut self, ui: &mut egui::Ui, res: &Response) {
         const TRANSLATION_SPEED: f32 = 10.0;
-        const ROTATION_SPEED: f32 = 30.0;
+        const ROTATION_SPEED: f32 = 0.5;
         const GIGA_SPEED_FACTOR: f32 = 5.0;
 
         if !res.dragged_by(PointerButton::Secondary) { return; }

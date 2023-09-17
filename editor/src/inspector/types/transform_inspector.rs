@@ -1,11 +1,14 @@
 use std::any::TypeId;
 use engine::component::ComponentTransform;
-use engine::egui::{DragValue, Ui};
+use engine::egui::{Align, DragValue, Layout, Ui, vec2};
+use engine::egui_extras;
+use engine::egui_extras::Column;
+use engine::math::Transform;
 use reflect::Reflect;
 use reflect::ReflectDefault;
-use reflect::registry::TypeRegistry;
 use utils::type_ids;
-use crate::inspector::type_inspector::{TypeInspector, ReflectTypeInspector};
+use crate::inspector::type_inspector::{TypeInspector, ReflectTypeInspector, InspectorContext};
+use crate::inspector::widgets::Widgets;
 
 #[derive(Default, Reflect)]
 #[reflect(Default, TypeInspector)]
@@ -16,33 +19,51 @@ impl TypeInspector for TransformInspector {
         type_ids!(ComponentTransform)
     }
 
-    fn show_inspector(&self, ui: &mut Ui, _registry: &TypeRegistry, instance: &mut dyn Reflect) {
+    fn show_inspector(&self, ui: &mut Ui, ctx: &InspectorContext, instance: &mut dyn Reflect) {
         if let Some(t_comp) = instance.downcast_mut::<ComponentTransform>() {
-            ui.horizontal(|ui| {
-                ui.label("Position");
-                ui.columns(3, |ui| {
-                    ui[0].add(DragValue::new(&mut t_comp.transform.position.x));
-                    ui[1].add(DragValue::new(&mut t_comp.transform.position.y));
-                    ui[2].add(DragValue::new(&mut t_comp.transform.position.z));
+            egui_extras::TableBuilder::new(ui)
+                .column(Column::auto().clip(true).resizable(true))
+                .column(Column::remainder().clip(true))
+                .cell_layout(Layout::left_to_right(Align::Center))
+                .body(|mut body| {
+                    let mut changed = false;
+                    let parent_transform = ctx.parent_node.map(|parent| ctx.scene.get_world_transform(parent))
+                        .unwrap_or(Transform::default());
+                    let mut transform = ctx.scene.get_world_transform(ctx.node);
+                    body.row(18.0, |mut row| {
+                        row.col(|ui| {
+                            ui.label("Position ");
+                        });
+                        row.col(|ui| {
+                            changed |= Widgets::drag_float3(ui, 0.1, &mut transform.position);
+                        });
+                    });
+                    body.row(18.0, |mut row| {
+                        row.col(|ui| {
+                            ui.label("Rotation ");
+                        });
+                        row.col(|ui| {
+                            changed |= Widgets::drag_angle3(ui, &mut transform.rotation);
+                        });
+                    });
+                    body.row(18.0, |mut row| {
+                        row.col(|ui| {
+                            ui.label("Scale ");
+                        });
+                        row.col(|ui| {
+                            changed |= Widgets::drag_float3(ui, 0.1, &mut transform.scale);
+                        });
+                    });
+                    if changed {
+                        transform.update_matrix();
+                        t_comp.transform.set_local_matrix(&(parent_transform.inverse_matrix * transform.matrix));
+                    }
                 });
-            });
-            ui.horizontal(|ui| {
-                ui.label("Rotation");
-                ui.columns(3, |ui| {
-                    ui[0].add(DragValue::new(&mut t_comp.transform.rotation.x));
-                    ui[1].add(DragValue::new(&mut t_comp.transform.rotation.y));
-                    ui[2].add(DragValue::new(&mut t_comp.transform.rotation.z));
-                });
-            });
-            ui.horizontal(|ui| {
-                ui.label("Scale");
-                ui.columns(3, |ui| {
-                    ui[0].add(DragValue::new(&mut t_comp.transform.scale.x));
-                    ui[1].add(DragValue::new(&mut t_comp.transform.scale.y));
-                    ui[2].add(DragValue::new(&mut t_comp.transform.scale.z));
-                });
-            });
             t_comp.transform.update_matrix();
         }
     }
+}
+
+impl TransformInspector {
+
 }

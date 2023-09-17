@@ -1,18 +1,26 @@
+use indextree::NodeId;
+use legion::storage::ComponentTypeId;
 use legion::world::{Entry, EntryRef};
 use reflect::{Reflect, reflect_trait};
+use crate::render::Gizmos;
 use crate::scene::Scene;
 
 pub trait TypeUUID {
     fn type_uuid(&self) -> uuid::Uuid;
 }
 
-#[reflect_trait]
-pub trait Component: Reflect + TypeUUID {
+pub trait ComponentInstance {
+    fn component_type_id(&self) -> ComponentTypeId;
     fn get_instance<'a>(&self, entry: &'a EntryRef) -> Option<&'a dyn Component>;
     fn get_instance_mut<'a>(&self, entry: &'a mut Entry) -> Option<&'a mut dyn Component>;
-    fn start(&mut self, _scene: &mut Scene) {}
-    fn update(&mut self, _scene: &mut Scene) {}
-    fn destroy(&mut self, _scene: &mut Scene) {}
+}
+
+#[reflect_trait]
+pub trait Component: TypeUUID + Reflect + ComponentInstance {
+    fn start(&mut self, _scene: &Scene) {}
+    fn update(&mut self, _scene: &Scene) {}
+    fn destroy(&mut self, _scene: &Scene) {}
+    fn draw_gizmos(&self, _scene: &Scene, _node: NodeId, _gizmos: &mut Gizmos) {}
 }
 
 #[cfg(test)]

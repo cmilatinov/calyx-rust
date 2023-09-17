@@ -114,13 +114,13 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
         }
 
         impl #FQReflectedType for #name {
-            fn register(registry: &mut reflect::registry::TypeRegistry) {
+            fn register(registry: &mut reflect::type_registry::TypeRegistry) {
                 registry.meta_struct::<#name>()
                     #(#add_field_calls)*;
                 #register_traits_impl
             }
         }
 
-        inventory::submit!(reflect::registry::TypeRegistrationFn(<#name as #FQReflectedType>::register));
+        inventory::submit!(reflect::type_registry::TypeRegistrationFn(<#name as #FQReflectedType>::register));
     })
 }

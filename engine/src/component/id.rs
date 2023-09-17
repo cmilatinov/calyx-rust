@@ -2,14 +2,14 @@ use uuid::Uuid;
 use reflect::Reflect;
 use reflect::ReflectDefault;
 use utils::utils_derive::Component;
-use crate::component::ReflectComponent;
+use crate::component::{Component, ReflectComponent};
 use crate as engine;
 
 #[derive(Component, Reflect)]
 #[reflect(Default, Component)]
 pub struct ComponentID {
-    pub id: Uuid,
-    pub name: String
+    pub name: String,
+    pub id: Uuid
 }
 
 impl Default for ComponentID {
@@ -20,3 +20,5 @@ impl Default for ComponentID {
         }
     }
 }
+
+impl Component for ComponentID {}

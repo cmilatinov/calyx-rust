@@ -1,17 +1,17 @@
 use std::any::TypeId;
 use std::collections::HashMap;
-use std::ops::Deref;
+use engine::class_registry::ClassRegistry;
 use engine::egui::Ui;
 use reflect::{Reflect, ReflectDefault, TypeInfo};
-use reflect::registry::TypeRegistry;
+use reflect::type_registry::TypeRegistry;
 use utils::type_ids;
 use crate::{EditorAppState, EditorSelection};
-use crate::inspector::type_inspector::{ReflectTypeInspector, TypeInspector};
+use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 use crate::panel::Panel;
-use engine::component::{Component, ReflectComponent};
+use engine::egui_extras;
+use engine::egui_extras::{Column, TableBody};
 
 pub struct PanelInspector {
-    components: Vec<Box<dyn Component>>,
     inspectors: HashMap<TypeId, Box<dyn TypeInspector>>,
     type_association: HashMap<TypeId, TypeId>,
 }
@@ -19,14 +19,6 @@ pub struct PanelInspector {
 impl Default for PanelInspector {
     fn default() -> Self {
         let registry = TypeRegistry::get();
-        let mut components = Vec::new();
-        for type_id in registry.all_of(type_ids!(ReflectDefault, ReflectComponent)) {
-            let meta_default = registry.trait_meta::<ReflectDefault>(type_id).unwrap();
-            let meta_component = registry.trait_meta::<ReflectComponent>(type_id).unwrap();
-            let instance = meta_default.default();
-            let component = meta_component.get_boxed(instance).unwrap();
-            components.push(component);
-        }
         let mut inspectors = HashMap::new();
         let mut type_association = HashMap::new();
         for type_id in registry.all_of(type_ids!(ReflectDefault, ReflectTypeInspector)) {
@@ -41,8 +33,7 @@ impl Default for PanelInspector {
         }
         Self {
             inspectors,
-            type_association,
-            components,
+            type_association
         }
     }
 }
@@ -55,13 +46,22 @@ impl Panel for PanelInspector {
 
     fn ui(&mut self, ui: &mut Ui) {
         let mut app_state = EditorAppState::get_mut();
+        let registry = TypeRegistry::get();
+
         if let Some(selection) = app_state.selection.clone() {
             if let EditorSelection::Entity(entities) = selection {
                 let node_id = entities.iter().next().unwrap();
-                let mut entry = app_state.scene.entry(*node_id).unwrap();
-                for component in self.components.iter() {
+                let ctx = InspectorContext {
+                    registry: &registry,
+                    scene: &app_state.scene,
+                    node: *node_id,
+                    parent_node: app_state.scene.get_parent_node(*node_id)
+                };
+                let mut world = app_state.scene.world_mut();
+                let mut entry = world.entry(app_state.scene.get_entity(*node_id)).unwrap();
+                for component in ClassRegistry::get().components().iter() {
                     if let Some(instance) = component.get_instance_mut(&mut entry) {
-                        self.show_inspector(ui, instance.as_reflect_mut());
+                        self.show_inspector(ui, &ctx, instance.as_reflect_mut());
                     }
                 }
             }
@@ -83,19 +83,19 @@ impl PanelInspector {
         }
     }
 
-    fn show_inspector(&self, ui: &mut Ui, instance: &mut dyn Reflect) {
-        let binding = TypeRegistry::get();
-        let registry = binding.deref();
+    fn show_inspector(&self, ui: &mut Ui, ctx: &InspectorContext, instance: &mut dyn Reflect) {
         match self.inspector_lookup(instance.as_any().type_id()) {
             Some(inspector) => {
-                ui.collapsing(format!("{}", instance.type_name_short()), |ui| {
-                   inspector.show_inspector(ui, registry, instance);
+                ui.collapsing(instance.type_name_short(), |ui| {
+                   inspector.show_inspector(ui, ctx, instance);
                 });
+                ui.separator();
             },
             None => {
-                ui.collapsing(format!("{}", instance.type_name_short()), |ui| {
-                    self.show_default_inspector(ui, registry, instance);
+                ui.collapsing(instance.type_name_short(), |ui| {
+                    self.show_default_inspector(ui, ctx, instance);
                 });
+                ui.separator();
             }
         };
     }
@@ -103,29 +103,38 @@ impl PanelInspector {
     fn show_default_inspector(
         &self,
         ui: &mut Ui,
-        registry: &TypeRegistry,
+        ctx: &InspectorContext,
         instance: &mut dyn Reflect
     ) {
-        if let Some(TypeInfo::Struct(info)) = registry.type_info_by_id(instance.as_any().type_id()) {
-            for (_, field) in info.fields.iter() {
-                if let Some(value) = field.get_reflect_mut(instance.as_reflect_mut()) {
-                    self.show_default_inspector_field(ui, registry, field.name, value);
-                }
-            }
+        if let Some(TypeInfo::Struct(info)) = ctx.registry.type_info_by_id(instance.as_any().type_id()) {
+            egui_extras::TableBuilder::new(ui)
+                .column(Column::auto().clip(true).resizable(true))
+                .column(Column::remainder().clip(true))
+                .body(|mut body| {
+                    for (_, field) in info.fields.iter() {
+                        if let Some(value) = field.get_reflect_mut(instance.as_reflect_mut()) {
+                            self.show_default_inspector_field(&mut body, ctx, field.name, value);
+                        }
+                    }
+                });
         }
     }
 
     fn show_default_inspector_field(
         &self,
-        ui: &mut Ui,
-        registry: &TypeRegistry,
+        body: &mut TableBody,
+        ctx: &InspectorContext,
         field_name: &str,
         instance: &mut dyn Reflect
     ) {
         if let Some(inspector) = self.inspector_lookup(instance.as_any().type_id()) {
-            ui.horizontal(|ui| {
-                ui.label(field_name);
-                inspector.show_inspector(ui, registry, instance);
+            body.row(16.0, |mut row| {
+                row.col(|ui| {
+                    ui.label(format!("{} ", field_name));
+                });
+                row.col(|ui| {
+                    inspector.show_inspector(ui, ctx, instance);
+                });
             });
         }
     }

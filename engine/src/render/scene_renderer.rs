@@ -1,15 +1,14 @@
 use std::collections::HashMap;
-use std::mem;
-use std::num::NonZeroU64;
 use std::ops::Deref;
 use std::sync::{RwLock, RwLockWriteGuard};
+use std::borrow::BorrowMut;
+use std::default::Default;
 
-use eframe::wgpu::FilterMode;
 use egui_wgpu::{RenderState, wgpu};
 use egui_wgpu::wgpu::include_wgsl;
 use egui_wgpu::wgpu::util::DeviceExt;
-use glm::Mat4;
-use legion::IntoQuery;
+use glm::{Mat4, vec4, Vec4};
+use legion::{Entity, IntoQuery};
 use crate::assets::{Assets, mesh};
 use crate::assets::mesh::Mesh;
 use crate::component::ComponentMesh;
@@ -17,7 +16,8 @@ use crate::component::ComponentTransform;
 use crate::math::Transform;
 use crate::render::buffer::BufferLayout;
 
-use crate::render::Camera;
+use crate::render::{Camera, GizmoRenderer};
+use crate::render::render_utils::RenderUtils;
 use crate::scene::Scene;
 
 #[repr(C)]
@@ -25,8 +25,8 @@ use crate::scene::Scene;
 pub struct CameraUniform {
     pub projection: [[f32; 4]; 4],
     pub view: [[f32; 4]; 4],
-    pub inverse_view: [[f32; 4]; 4],
     pub inverse_projection: [[f32; 4]; 4],
+    pub inverse_view: [[f32; 4]; 4],
     pub near_plane: f32,
     pub far_plane: f32,
     _padding: [f32; 2]
@@ -35,82 +35,59 @@ pub struct CameraUniform {
 impl Default for CameraUniform {
     fn default() -> Self {
         Self {
-            projection: Mat4::identity().data.0,
-            view: Mat4::identity().data.0,
-            inverse_view: Mat4::identity().data.0,
-            inverse_projection: Mat4::identity().data.0,
+            projection: Mat4::identity().into(),
+            view: Mat4::identity().into(),
+            inverse_view: Mat4::identity().into(),
+            inverse_projection: Mat4::identity().into(),
             near_plane: 0.0,
             far_plane: 0.0,
-            _padding: [0.0, 0.0]
+            _padding: [0.0; 2]
         }
     }
 }
 
 #[allow(dead_code)]
 pub struct SceneRenderer {
-    pub scene_texture_handle: egui::TextureHandle,
+    scene_samples: u32,
     scene_texture: wgpu::Texture,
-    scene_texture_view: wgpu::TextureView,
+    scene_texture_handle: egui::TextureHandle,
+    scene_texture_msaa: wgpu::Texture,
     scene_depth_texture: wgpu::Texture,
+    scene_texture_view_msaa: wgpu::TextureView,
     scene_depth_texture_view: wgpu::TextureView,
     scene_bind_group: wgpu::BindGroup,
     scene_pipeline: wgpu::RenderPipeline,
     grid_pipeline: wgpu::RenderPipeline,
-    camera_uniform_buffer: wgpu::Buffer
+    camera_uniform_buffer: wgpu::Buffer,
+    gizmo_renderer: GizmoRenderer,
+    clear_color: Vec4
 }
 
-impl<'rs> SceneRenderer {
+impl SceneRenderer {
     pub fn new(cc: &eframe::CreationContext) -> Self {
         let render_state = cc.wgpu_render_state.as_ref().unwrap();
         let device = &render_state.device;
+        let width = 1280;
+        let height = 720;
+        let samples = 8;
 
-        let scene_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Scene Texture"),
-            size: wgpu::Extent3d {
-                width: 1920,
-                height: 1080,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Bgra8Unorm,
-            usage: wgpu::TextureUsages::COPY_SRC |
-                wgpu::TextureUsages::RENDER_ATTACHMENT |
-                wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let scene_texture_view = scene_texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        // Textures
+        let (scene_texture, scene_texture_msaa, scene_depth_texture) = Self::create_textures(device, width, height, samples);
+        let scene_texture_view = scene_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let scene_texture_view_msaa = scene_texture_msaa.create_view(&wgpu::TextureViewDescriptor::default());
+        let scene_depth_texture_view = scene_depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let scene_texture_id = render_state.renderer.write()
             .register_native_texture(
                 device,
                 &scene_texture_view,
-                FilterMode::Linear,
+                wgpu::FilterMode::Linear,
             );
         let scene_texture_handle = egui::TextureHandle::new(
             cc.egui_ctx.tex_manager(),
             scene_texture_id,
         );
 
-        let scene_depth_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Scene Depth Texture"),
-            size: wgpu::Extent3d {
-                width: 1920,
-                height: 1080,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        let scene_depth_texture_view = scene_depth_texture.create_view(
-            &wgpu::TextureViewDescriptor::default()
-        );
-
+        // Shaders
         let scene_shader = device.create_shader_module(
             include_wgsl!("../../../assets/shaders/basic.wgsl")
         );
@@ -118,17 +95,32 @@ impl<'rs> SceneRenderer {
             include_wgsl!("../../../assets/shaders/grid.wgsl")
         );
 
+        let camera_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("camera_uniform_buffer"),
+            contents: bytemuck::cast_slice(&[CameraUniform::default()]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
         let scene_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("scene_bind_group_layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: NonZeroU64::new(mem::size_of::<CameraUniform>() as u64),
+                    min_binding_size: None,
                 },
                 count: None,
+            }],
+        });
+
+        let scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("scene_bind_group"),
+            layout: &scene_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_uniform_buffer.as_entire_binding(),
             }],
         });
 
@@ -152,41 +144,12 @@ impl<'rs> SceneRenderer {
             fragment: Some(wgpu::FragmentState {
                 module: &scene_shader,
                 entry_point: "fs_main",
-                targets: &[Some(render_state.target_format.into())],
+                targets: &[Some(RenderUtils::color_default(render_state))],
             }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Cw,
-                cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default()
-            }),
-            multisample: wgpu::MultisampleState::default(),
+            primitive: RenderUtils::primitive_default(wgpu::PrimitiveTopology::TriangleList),
+            depth_stencil: Some(RenderUtils::depth_default()),
+            multisample: RenderUtils::multisample_default(samples),
             multiview: None,
-        });
-
-        let camera_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("camera_uniform_buffer"),
-            contents: bytemuck::cast_slice(&[CameraUniform::default()]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("scene_bind_group"),
-            layout: &scene_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera_uniform_buffer.as_entire_binding(),
-            }],
         });
 
         let grid_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -202,57 +165,38 @@ impl<'rs> SceneRenderer {
             fragment: Some(wgpu::FragmentState {
                 module: &grid_shader,
                 entry_point: "fs_main",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: render_state.target_format,
-                    blend: Some(wgpu::BlendState {
-                        color: wgpu::BlendComponent{
-                            src_factor: wgpu::BlendFactor::SrcAlpha,
-                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                            operation: wgpu::BlendOperation::Add
-                        },
-                        alpha: wgpu::BlendComponent::OVER
-                    }),
-                    write_mask: wgpu::ColorWrites::ALL
-                })],
+                targets: &[Some(RenderUtils::color_alpha_blending(render_state))],
             }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default()
-            }),
-            multisample: wgpu::MultisampleState::default(),
+            primitive: RenderUtils::primitive_default(wgpu::PrimitiveTopology::TriangleList),
+            depth_stencil: Some(RenderUtils::depth_default()),
+            multisample: RenderUtils::multisample_default(samples),
             multiview: None,
         });
 
+        let gizmo_renderer = GizmoRenderer::new(cc, &camera_uniform_buffer, samples);
+
         Self {
+            scene_samples: samples,
+            scene_texture_msaa,
             scene_texture,
-            scene_texture_view,
+            scene_texture_view_msaa,
             scene_texture_handle,
             scene_depth_texture,
             scene_depth_texture_view,
             scene_pipeline,
             scene_bind_group,
             grid_pipeline,
-            camera_uniform_buffer
+            camera_uniform_buffer,
+            gizmo_renderer,
+            clear_color: vec4(0.03, 0.03, 0.03, 1.0)
         }
     }
 
     pub fn render_scene(
-        &self,
+        &mut self,
         render_state: &RenderState,
+        camera: &Camera,
         camera_transform: &Transform,
-        _camera: &Camera,
         scene: &Scene,
     ) {
         let queue = &render_state.queue;
@@ -260,123 +204,190 @@ impl<'rs> SceneRenderer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Scene Encoder")
         });
-        let mut mesh_map: HashMap<*const RwLock<Mesh>, &RwLock<Mesh>> = HashMap::new();
-        #[allow(unused_assignments)]
-        let mut mesh_list: Vec<RwLockWriteGuard<Mesh>> = Vec::new();
-        let quad_binding = Assets::screen_space_quad().unwrap();
-        let mut quad_mesh = quad_binding.write().unwrap();
+        let world = scene.world();
         {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Viewport Scene"),
-                color_attachments: &[Some(self.color_attachment())],
-                depth_stencil_attachment: Some(self.depth_stencil_attachment()),
-            });
+            let mut mesh_map: HashMap<*const RwLock<Mesh>, &RwLock<Mesh>> = HashMap::new();
+            #[allow(unused_assignments)]
+                let mut mesh_list: Vec<RwLockWriteGuard<Mesh>> = Vec::new();
+            let quad_binding = Assets::screen_space_quad().unwrap();
+            let mut quad_mesh = quad_binding.write().unwrap();
+            {
+                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Viewport Scene"),
+                    color_attachments: &[Some(RenderUtils::color_attachment(
+                        &self.scene_texture_view_msaa,
+                        &self.clear_color,
+                    ))],
+                    depth_stencil_attachment: Some(RenderUtils::depth_stencil_attachment(
+                        &self.scene_depth_texture_view,
+                        1.0,
+                    )),
+                });
 
-            let mut camera_uniform = CameraUniform::default();
-            let projection = glm::perspective_lh::<f32>(
-                16.0 / 9.0,
-                45.0_f32.to_radians(),
-                0.1,
-                1000.0,
-            );
-            camera_uniform.projection = projection.data.0;
-            let view = camera_transform.get_inverse_matrix();
-            camera_uniform.view.clone_from_slice(&view.data.0);
-            camera_uniform.inverse_view = glm::inverse(&view).data.0;
-            camera_uniform.inverse_projection = glm::inverse(&projection).data.0;
-            camera_uniform.near_plane = 0.1;
-            camera_uniform.far_plane = 100.0;
-            queue.write_buffer(
-                &self.camera_uniform_buffer,
-                0,
-                bytemuck::cast_slice(&[camera_uniform]),
-            );
+                self.load_camera_uniforms(queue, camera, camera_transform);
+                self.gizmo_renderer.draw_gizmos(device, queue, camera_transform, scene);
 
-            let mut query = <(&ComponentTransform, &ComponentMesh)>::query();
-            for (t_comp, m_comp) in query.iter(&scene.world) {
                 {
-                    let mut mesh = m_comp.mesh.write().unwrap();
-                    let ptr: *const RwLock<Mesh> = m_comp.mesh.deref().deref();
-                    if !mesh_map.contains_key(&ptr) {
-                        mesh.instances.clear();
+                    let mut query = <(Entity, &ComponentTransform, &ComponentMesh)>::query();
+                    for (entity, _, m_comp) in query.iter(world.deref()) {
+                        {
+                            let mut mesh = m_comp.mesh.write().unwrap();
+                            let ptr: *const RwLock<Mesh> = m_comp.mesh.deref().deref();
+                            if !mesh_map.contains_key(&ptr) {
+                                mesh.instances.clear();
+                            }
+                            let node = scene.get_node(*entity);
+                            mesh.instances.push(scene.get_world_transform(node).matrix.into());
+                        }
+                        mesh_map.insert(&**m_comp.mesh as *const _, &**m_comp.mesh);
                     }
-                    mesh.instances.push(
-                        t_comp.transform.matrix.into()
-                    );
                 }
-                mesh_map.insert(&**m_comp.mesh as *const _, &**m_comp.mesh);
-            }
 
-            render_pass.set_pipeline(&self.scene_pipeline);
-            render_pass.set_bind_group(0, &self.scene_bind_group, &[]);
+                // Lock all meshes for writing at once
+                mesh_list = mesh_map.iter()
+                    .map(|i| i.1.write().unwrap())
+                    .collect();
 
-            // Lock all meshes for writing at once
-            mesh_list = mesh_map.iter()
-                .map(|i| i.1.write().unwrap())
-                .collect();
-
-            for mesh in mesh_list.iter_mut() {
-                if mesh.dirty {
-                    mesh.rebuild_mesh_data(device);
-                    mesh.dirty = false;
+                // Render scene meshes
+                render_pass.set_pipeline(&self.scene_pipeline);
+                render_pass.set_bind_group(0, &self.scene_bind_group, &[]);
+                for mesh in mesh_list.iter_mut() {
+                    RenderUtils::render_mesh(device, queue, &mut render_pass, mesh.borrow_mut());
                 }
-                mesh.rebuild_instance_data(device);
-                render_pass.set_index_buffer(
-                    mesh.index_buffer.as_ref().unwrap().slice(..),
-                    wgpu::IndexFormat::Uint32,
-                );
-                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.as_ref().unwrap().slice(..));
-                render_pass.set_vertex_buffer(1, mesh.instance_buffer.as_ref().unwrap().slice(..));
-                render_pass.draw_indexed(
-                    0..(mesh.indices.len() as u32), 0,
-                    0..(mesh.instances.len() as u32)
-                );
-            }
 
-            if quad_mesh.dirty {
-                quad_mesh.rebuild_mesh_data(device);
-                quad_mesh.dirty = false;
+                // Render gizmos
+                self.gizmo_renderer.render_gizmos(&mut render_pass);
+
+                // Render grid
+                render_pass.set_pipeline(&self.grid_pipeline);
+                render_pass.set_bind_group(0, &self.scene_bind_group, &[]);
+                RenderUtils::render_mesh_instanced(device, queue, &mut render_pass, quad_mesh.borrow_mut(), 0..1);
             }
-            render_pass.set_pipeline(&self.grid_pipeline);
-            render_pass.set_bind_group(0, &self.scene_bind_group, &[]);
-            render_pass.set_index_buffer(
-                quad_mesh.index_buffer.as_ref().unwrap().slice(..),
-                wgpu::IndexFormat::Uint32,
-            );
-            render_pass.set_vertex_buffer(0, quad_mesh.vertex_buffer.as_ref().unwrap().slice(..));
-            render_pass.draw_indexed(
-                0..(quad_mesh.indices.len() as u32), 0,
-                0..1
-            );
         }
 
+        // Resolve MSAA texture
+        encoder.copy_texture_to_texture(
+            wgpu::ImageCopyTexture {
+                texture: &self.scene_texture_msaa,
+                mip_level: 0,
+                origin: Default::default(),
+                aspect: Default::default(),
+            },
+            wgpu::ImageCopyTexture {
+                texture: &self.scene_texture,
+                mip_level: 0,
+                origin: Default::default(),
+                aspect: Default::default(),
+            },
+            wgpu::Extent3d {
+                width: self.scene_texture.width(),
+                height: self.scene_texture.height(),
+                depth_or_array_layers: 1,
+            }
+        );
+        
         queue.submit(Some(encoder.finish()));
     }
 
-    fn color_attachment(&self) -> wgpu::RenderPassColorAttachment {
-        wgpu::RenderPassColorAttachment {
-            view: &self.scene_texture_view,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(wgpu::Color {
-                    r: 0.03,
-                    g: 0.03,
-                    b: 0.03,
-                    a: 1.0,
-                }),
-                store: true,
-            },
-        }
+    pub fn scene_texture_handle(&self) -> &egui::TextureHandle {
+        &self.scene_texture_handle
     }
 
-    fn depth_stencil_attachment(&self) -> wgpu::RenderPassDepthStencilAttachment {
-        wgpu::RenderPassDepthStencilAttachment {
-            view: &self.scene_depth_texture_view,
-            depth_ops: Some(wgpu::Operations {
-                load: wgpu::LoadOp::Clear(1.0),
-                store: true
-            }),
-            stencil_ops: None
+    fn create_textures(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        samples: u32
+    ) -> (wgpu::Texture, wgpu::Texture, wgpu::Texture) {
+        let scene_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("scene_texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Bgra8Unorm,
+            usage: wgpu::TextureUsages::COPY_DST |
+                wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let scene_texture_msaa = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("scene_texture_msaa"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1
+            },
+            mip_level_count: 1,
+            sample_count: samples,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Bgra8Unorm,
+            usage: wgpu::TextureUsages::COPY_SRC |
+                wgpu::TextureUsages::RENDER_ATTACHMENT |
+                wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let scene_depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("scene_depth_texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: samples,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        (scene_texture, scene_texture_msaa, scene_depth_texture)
+    }
+
+    fn load_camera_uniforms(
+        &self,
+        queue: &wgpu::Queue,
+        camera: &Camera,
+        camera_transform: &Transform
+    ) {
+        let mut camera_uniform = CameraUniform::default();
+        let projection = camera.projection;
+        let view = camera_transform.get_inverse_matrix();
+        camera_uniform.projection.clone_from_slice(projection.as_ref());
+        camera_uniform.view.clone_from_slice(view.as_ref());
+        camera_uniform.inverse_projection.clone_from_slice(glm::inverse(&projection).as_ref());
+        camera_uniform.inverse_view.clone_from_slice(glm::inverse(&view).as_ref());
+        camera_uniform.near_plane = camera.near_plane;
+        camera_uniform.far_plane = camera.far_plane;
+        queue.write_buffer(
+            &self.camera_uniform_buffer,
+            0,
+            bytemuck::cast_slice(&[camera_uniform]),
+        );
+    }
+
+    pub fn resize_textures(&mut self, ctx: &egui::Context, render_state: &RenderState, width: u32, height: u32) {
+        if self.scene_texture.width() == width && self.scene_texture.height() == height {
+            return;
         }
+        let device = &render_state.device;
+        let (
+            scene_texture,
+            scene_texture_msaa,
+            scene_depth_texture
+        ) = Self::create_textures(device, width, height, self.scene_samples);
+        self.scene_texture = scene_texture;
+        self.scene_texture_msaa = scene_texture_msaa;
+        self.scene_depth_texture = scene_depth_texture;
+        self.scene_texture_view_msaa = self.scene_texture_msaa.create_view(&Default::default());
+        self.scene_depth_texture_view = self.scene_depth_texture.create_view(&Default::default());
+        let scene_texture_view = self.scene_texture.create_view(&Default::default());
+        let mut renderer = render_state.renderer.write();
+        renderer.free_texture(&self.scene_texture_handle.id());
+        let scene_texture_id = renderer.register_native_texture(device, &scene_texture_view, wgpu::FilterMode::Linear);
+        self.scene_texture_handle = egui::TextureHandle::new(ctx.tex_manager(), scene_texture_id);
     }
 }

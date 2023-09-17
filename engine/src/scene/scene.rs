@@ -1,6 +1,8 @@
-use indextree::{Arena, NodeId, Node, Children};
+use std::collections::HashMap;
+use egui::mutex::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use glm::Mat4;
+use indextree::{Arena, NodeId, Children};
 use legion::{Entity, EntityStore, World};
-use legion::world::{Entry, EntryRef};
 use uuid::Uuid;
 
 use super::error::SceneError;
@@ -9,19 +11,24 @@ use crate::assets::{AssetRegistry};
 use crate::assets::mesh::Mesh;
 use crate::component::{ComponentID, ComponentMesh};
 use crate::component::ComponentTransform;
+use crate::math::Transform;
 
 pub struct Scene {
-    pub world: World,
+    pub world: RwLock<World>,
     pub entity_hierarchy: Vec<NodeId>,
-    entity_arena: Arena<Entity>
+    node_map: HashMap<Entity, NodeId>,
+    entity_arena: Arena<Entity>,
+    transform_cache: RwLock<HashMap<NodeId, Transform>>,
 }
 
 impl Default for Scene {
     fn default() -> Self {
         let mut scene = Scene {
-            world: World::default(),
+            world: RwLock::new(World::default()),
             entity_hierarchy: Vec::new(),
-            entity_arena: Arena::new()
+            entity_arena: Arena::new(),
+            node_map: HashMap::new(),
+            transform_cache: RwLock::new(HashMap::new()),
         };
 
         let mesh = AssetRegistry::get_mut().load::<Mesh>("meshes/cube").unwrap();
@@ -35,13 +42,13 @@ impl Default for Scene {
         }), Some(cube));
         scene.bind_component(cube2, ComponentMesh { mesh: mesh.clone() }).unwrap();
 
+
         {
-            let mut e_cube = scene.entry(cube).unwrap();
+            let mut world = scene.world_mut();
+            let mut e_cube = world.entry(scene.get_entity(cube)).unwrap();
             e_cube.get_component_mut::<ComponentTransform>()
                 .unwrap().transform.translate(&glm::vec3(0.0, 0.0, 10.0));
-        }
-        {
-            let mut e_cube2 = scene.entry(cube2).unwrap();
+            let mut e_cube2 = world.entry(scene.get_entity(cube2)).unwrap();
             e_cube2.get_component_mut::<ComponentTransform>()
                 .unwrap().transform.translate(&glm::vec3(0.0, 5.0, 0.0));
         }
@@ -59,8 +66,9 @@ impl Scene {
     pub fn create_entity(&mut self, id: Option<ComponentID>, parent: Option<NodeId>) -> NodeId {
         let id = if let Some(id_comp) = id { id_comp }
             else { ComponentID::default() };
-        let entity = self.world.push((id, ComponentTransform::default()));
+        let entity = self.world.write().push((id, ComponentTransform::default()));
         let new_node = self.entity_arena.new_node(entity);
+        self.node_map.insert(entity, new_node);
 
         // push into root otherwise push under parent specified
         match parent {
@@ -71,30 +79,36 @@ impl Scene {
         new_node
     }
 
-    pub fn entry(&mut self, node_id: NodeId) -> Option<Entry> {
-        self.world.entry(self.get_entity(node_id)?)
+    pub fn world(&self) -> RwLockReadGuard<World> {
+        self.world.read()
     }
 
-    pub fn entry_ref(&self, node_id: NodeId) -> Option<EntryRef> {
-        self.world.entry_ref(self.get_entity(node_id)?).ok()
+    pub fn world_mut(&self) -> RwLockWriteGuard<World> {
+        self.world.write()
     }
 
     pub fn bind_component<T: Send + Sync + 'static>(&mut self, node_id: NodeId, component: T) -> Result<(), SceneError> {
-        let mut entry = self.world.entry(self.get_entity(node_id).unwrap()).unwrap();
-        entry.add_component(component);
-        Ok(())
+        self.world_mut()
+            .entry(self.get_entity(node_id))
+            .map(|mut e| e.add_component(component))
+            .ok_or(SceneError::InvalidNodeId)
     }
 
-    pub fn get_entity_name(&self, node_id: NodeId) -> Option<String> {
-        let entry = self.entry_ref(node_id)?;
-        let id_comp = entry.get_component::<ComponentID>().ok()?;
-        Some(id_comp.name.clone())
+    pub fn get_entity_name(&self, node_id: NodeId) -> String {
+        self.world()
+            .entry_ref(self.get_entity(node_id))
+            .map(|e| e.get_component::<ComponentID>().ok().map(|c| c.name.clone()))
+            .map(|n| n.unwrap_or(String::default()))
+            .unwrap_or(String::default())
     }
 
-    pub fn get_entity_uuid(&self, node_id: NodeId) -> Option<Uuid> {
-        let entry = self.entry_ref(node_id)?;
-        let id_comp = entry.get_component::<ComponentID>().ok()?;
-        Some(id_comp.id)
+    pub fn get_entity_uuid(&self, node_id: NodeId) -> Uuid {
+        let default = Uuid::default();
+        self.world()
+            .entry_ref(self.get_entity(node_id))
+            .map(|e| e.get_component::<ComponentID>().ok().map(|c| c.id))
+            .map(|id| id.unwrap_or(default))
+            .unwrap_or(default)
     }
 
     pub fn get_parent_entity(&self, node_id: NodeId) -> Option<Entity> {
@@ -106,13 +120,12 @@ impl Scene {
         self.entity_arena.get(node_id)?.parent()
     }
 
-    pub fn get_node(&self, node_id: NodeId) -> Option<&Node<Entity>> {
-        self.entity_arena.get(node_id)
+    pub fn get_node(&self, entity: Entity) -> NodeId {
+        *self.node_map.get(&entity).unwrap()
     }
 
-    pub fn get_entity(&self, node_id: NodeId) -> Option<Entity> {
-        let node = self.entity_arena.get(node_id)?;
-        Some(*node.get())
+    pub fn get_entity(&self, node_id: NodeId) -> Entity {
+        *self.entity_arena.get(node_id).unwrap().get()
     }
 
     pub fn get_children(&self, node_id: NodeId) -> Children<'_, Entity> {
@@ -121,5 +134,37 @@ impl Scene {
 
     pub fn get_children_count(&self, node_id: NodeId) -> usize {
         node_id.children(&self.entity_arena).into_iter().count()
+    }
+
+    pub fn set_world_transform(&self, node_id: NodeId, matrix: Mat4) {
+        let parent_transform = self.get_parent_node(node_id)
+            .map_or(Mat4::identity(), |n| self.get_world_transform(n).inverse_matrix);
+        let mut world = self.world_mut();
+        if let Some(mut entry) = world.entry(self.get_entity(node_id)) {
+            if let Some(tc) = entry.get_component_mut::<ComponentTransform>().ok() {
+                tc.transform.set_local_matrix(&(parent_transform * matrix));
+            }
+        }
+    }
+
+    pub fn get_world_transform(&self, node_id: NodeId) -> Transform {
+        if let Some(transform) = self.transform_cache.read().get(&node_id) {
+            return *transform;
+        }
+        let world = self.world();
+        let entry = world.entry_ref(self.get_entity(node_id));
+        let mut matrix = entry.as_ref()
+            .map(|e| e.get_component::<ComponentTransform>().ok())
+            .map_or(Mat4::identity(), |co| co.map_or(Mat4::identity(), |c| c.transform.matrix));
+        if let Some(parent_node) = self.get_parent_node(node_id) {
+            matrix = self.get_world_transform(parent_node).matrix * matrix;
+        }
+        let transform = Transform::from_matrix(matrix);
+        self.transform_cache.write().insert(node_id, transform);
+        transform
+    }
+
+    pub fn clear_transform_cache(&mut self) {
+        self.transform_cache.write().clear();
     }
 }
