@@ -1,8 +1,8 @@
-use std::iter;
-use glm::{Mat4, vec2, Vec3, vec3, Vec4};
 use crate::assets::mesh::Mesh;
 use crate::math::{compose_transform, Transform};
 use crate::render::GizmoInstance;
+use glm::{vec2, vec3, Mat4, Vec3, Vec4};
+use std::iter;
 
 pub struct Gizmos<'a> {
     pub(crate) camera_transform: &'a Transform,
@@ -21,18 +21,10 @@ impl<'a> Gizmos<'a> {
         let translation = glm::translate(&Mat4::identity(), center);
         let scale = vec3(radius, radius, radius);
         instances.push(glm::scale(&translation, &scale).into());
-        instances.push(
-            glm::scale(
-                &glm::rotate_x(&translation, 90.0f32.to_radians()),
-                &scale
-            ).into()
-        );
-        instances.push(
-            glm::scale(
-                &glm::rotate_y(&translation, 90.0f32.to_radians()),
-                &scale
-            ).into()
-        );
+        instances
+            .push(glm::scale(&glm::rotate_x(&translation, 90.0f32.to_radians()), &scale).into());
+        instances
+            .push(glm::scale(&glm::rotate_y(&translation, 90.0f32.to_radians()), &scale).into());
 
         let to_camera = self.camera_transform.position - center;
         let to_camera_normal = glm::normalize(&to_camera);
@@ -41,27 +33,23 @@ impl<'a> Gizmos<'a> {
         let r = radius * alpha.sin();
         let l = radius * alpha.cos();
         let t = glm::scale(
-            &glm::inverse(
-                &glm::look_at(
-                    &(center + l * to_camera_normal),
-                    &self.camera_transform.position,
-                    &vec3(0.0, 1.0, 0.0)
-                )
-            ),
-            &vec3(r, r, r)
+            &glm::inverse(&glm::look_at(
+                &(center + l * to_camera_normal),
+                &self.camera_transform.position,
+                &vec3(0.0, 1.0, 0.0),
+            )),
+            &vec3(r, r, r),
         );
         instances.push(t.into());
-        self.circle_list.extend(
-            iter::repeat(self.gizmo_instance(true))
-                .take(3)
-        );
+        self.circle_list
+            .extend(iter::repeat(self.gizmo_instance(true)).take(3));
         self.circle_list.push(self.gizmo_instance(false));
     }
 
     pub fn wire_cube(&mut self, position: &Vec3, size: &Vec3) {
-        self.wire_cube_mesh.instances.push(
-            compose_transform(position, &vec3(0.0, 0.0, 0.0), size).into()
-        );
+        self.wire_cube_mesh
+            .instances
+            .push(compose_transform(position, &vec3(0.0, 0.0, 0.0), size).into());
         self.cube_list.push(self.gizmo_instance(false));
     }
 
@@ -86,7 +74,7 @@ impl<'a> Gizmos<'a> {
         GizmoInstance {
             color: *self.color.as_ref(),
             enable_normals: enable_normals as i32,
-            use_uv_colors: 0
+            use_uv_colors: 0,
         }
     }
 }

@@ -1,18 +1,18 @@
+use crate as engine;
+use crate::component::{Component, ReflectComponent};
+use crate::math::Transform;
+use crate::render::Gizmos;
+use crate::scene::Scene;
 use glm::vec3;
 use indextree::NodeId;
 use reflect::Reflect;
 use reflect::ReflectDefault;
 use utils::utils_derive::Component;
-use crate::math::Transform;
-use crate::component::{Component, ReflectComponent};
-use crate as engine;
-use crate::render::Gizmos;
-use crate::scene::Scene;
 
 #[derive(Default, Component, Reflect)]
 #[reflect(Default, Component)]
 pub struct ComponentTransform {
-    pub transform: Transform
+    pub transform: Transform,
 }
 
 impl Component for ComponentTransform {

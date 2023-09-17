@@ -1,7 +1,7 @@
+use crate::panel::Panel;
 use egui::{ScrollArea, Ui};
 use engine::core::LogRegistry;
 use engine::egui;
-use crate::panel::Panel;
 
 pub struct PanelTerminal {
     // input: String,
@@ -18,7 +18,10 @@ impl Default for PanelTerminal {
 }
 
 impl Panel for PanelTerminal {
-    fn name() -> &'static str where Self: Sized {
+    fn name() -> &'static str
+    where
+        Self: Sized,
+    {
         "Console"
     }
 
@@ -27,7 +30,8 @@ impl Panel for PanelTerminal {
         scroll_area = scroll_area.stick_to_bottom(true);
 
         scroll_area.show(ui, |ui| {
-            self.history.append(&mut LogRegistry::get_mut().drain_logs());
+            self.history
+                .append(&mut LogRegistry::get_mut().drain_logs());
             for message in &self.history {
                 ui.label(message);
             }

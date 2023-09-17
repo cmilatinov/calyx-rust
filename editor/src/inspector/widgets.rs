@@ -8,9 +8,24 @@ const DRAG_SIZE: f32 = 56.0;
 impl Widgets {
     pub fn drag_float3(ui: &mut Ui, speed: f32, value: &mut Vec3) -> bool {
         let mut changed = false;
-        changed |= ui.add_sized([DRAG_SIZE, ui.available_height()], DragValue::new(&mut value.x).speed(speed)).changed();
-        changed |= ui.add_sized([DRAG_SIZE, ui.available_height()], DragValue::new(&mut value.y).speed(speed)).changed();
-        changed |= ui.add_sized([DRAG_SIZE, ui.available_height()], DragValue::new(&mut value.z).speed(speed)).changed();
+        changed |= ui
+            .add_sized(
+                [DRAG_SIZE, ui.available_height()],
+                DragValue::new(&mut value.x).speed(speed),
+            )
+            .changed();
+        changed |= ui
+            .add_sized(
+                [DRAG_SIZE, ui.available_height()],
+                DragValue::new(&mut value.y).speed(speed),
+            )
+            .changed();
+        changed |= ui
+            .add_sized(
+                [DRAG_SIZE, ui.available_height()],
+                DragValue::new(&mut value.z).speed(speed),
+            )
+            .changed();
         changed
     }
 
@@ -18,9 +33,7 @@ impl Widgets {
         let mut degrees = value.to_degrees();
         let res = ui.add_sized(
             [DRAG_SIZE, ui.available_height()],
-            DragValue::new(&mut degrees)
-                .speed(1.0)
-                .suffix("°")
+            DragValue::new(&mut degrees).speed(1.0).suffix("°"),
         );
         let changed = res.changed();
         if changed {

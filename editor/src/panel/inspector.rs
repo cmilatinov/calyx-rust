@@ -1,15 +1,15 @@
-use std::any::TypeId;
-use std::collections::HashMap;
-use engine::class_registry::ClassRegistry;
-use engine::egui::Ui;
-use reflect::{Reflect, ReflectDefault, TypeInfo};
-use reflect::type_registry::TypeRegistry;
-use utils::type_ids;
-use crate::EditorAppState;
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 use crate::panel::Panel;
+use crate::EditorAppState;
+use engine::class_registry::ClassRegistry;
+use engine::egui::Ui;
 use engine::egui_extras;
 use engine::egui_extras::{Column, TableBody};
+use reflect::type_registry::TypeRegistry;
+use reflect::{Reflect, ReflectDefault, TypeInfo};
+use std::any::TypeId;
+use std::collections::HashMap;
+use utils::type_ids;
 
 pub struct PanelInspector {
     inspectors: HashMap<TypeId, Box<dyn TypeInspector>>,
@@ -23,7 +23,9 @@ impl Default for PanelInspector {
         let mut type_association = HashMap::new();
         for type_id in registry.all_of(type_ids!(ReflectDefault, ReflectTypeInspector)) {
             let meta_default = registry.trait_meta::<ReflectDefault>(type_id).unwrap();
-            let meta_inspector = registry.trait_meta::<ReflectTypeInspector>(type_id).unwrap();
+            let meta_inspector = registry
+                .trait_meta::<ReflectTypeInspector>(type_id)
+                .unwrap();
             let instance = meta_default.default();
             let inspector = meta_inspector.get_boxed(instance).unwrap();
             for target_type_id in inspector.target_type_ids() {
@@ -33,11 +35,10 @@ impl Default for PanelInspector {
         }
         Self {
             inspectors,
-            type_association
+            type_association,
         }
     }
 }
-
 
 impl Panel for PanelInspector {
     fn name() -> &'static str {
@@ -53,7 +54,7 @@ impl Panel for PanelInspector {
                     registry: &registry,
                     scene: &app_state.scene,
                     node,
-                    parent_node: app_state.scene.get_parent_node(node)
+                    parent_node: app_state.scene.get_parent_node(node),
                 };
                 let mut world = app_state.scene.world_mut();
                 let mut entry = world.entry(app_state.scene.get_entity(node)).unwrap();
@@ -72,12 +73,12 @@ impl PanelInspector {
         match self.type_association.get(&type_id) {
             Some(inspector_id) => match self.inspectors.get(&inspector_id) {
                 Some(inspector) => Some(inspector.as_ref()),
-                None => None
-            }
+                None => None,
+            },
             None => match self.inspectors.get(&type_id) {
                 Some(inspector) => Some(inspector.as_ref()),
-                None => None
-            }
+                None => None,
+            },
         }
     }
 
@@ -86,11 +87,13 @@ impl PanelInspector {
             Some(inspector) => {
                 ui.collapsing(instance.type_name_short(), |ui| {
                     inspector.show_inspector(ui, ctx, instance);
-                }).header_response.context_menu(|ui| {
+                })
+                .header_response
+                .context_menu(|ui| {
                     inspector.show_inspector_context(ui, ctx, instance);
                 });
                 ui.separator();
-            },
+            }
             None => {
                 ui.collapsing(instance.type_name_short(), |ui| {
                     self.show_default_inspector(ui, ctx, instance);
@@ -104,9 +107,11 @@ impl PanelInspector {
         &self,
         ui: &mut Ui,
         ctx: &InspectorContext,
-        instance: &mut dyn Reflect
+        instance: &mut dyn Reflect,
     ) {
-        if let Some(TypeInfo::Struct(info)) = ctx.registry.type_info_by_id(instance.as_any().type_id()) {
+        if let Some(TypeInfo::Struct(info)) =
+            ctx.registry.type_info_by_id(instance.as_any().type_id())
+        {
             egui_extras::TableBuilder::new(ui)
                 .column(Column::auto().clip(true).resizable(true))
                 .column(Column::remainder().clip(true))
@@ -125,7 +130,7 @@ impl PanelInspector {
         body: &mut TableBody,
         ctx: &InspectorContext,
         field_name: &str,
-        instance: &mut dyn Reflect
+        instance: &mut dyn Reflect,
     ) {
         if let Some(inspector) = self.inspector_lookup(instance.as_any().type_id()) {
             body.row(16.0, |mut row| {

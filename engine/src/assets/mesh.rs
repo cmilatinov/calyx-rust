@@ -1,14 +1,14 @@
 use std::cmp::min;
 use std::path::Path;
 
-use glm::{Vec2, vec2, Vec3, vec3};
-use russimp::scene::{PostProcess, Scene};
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
+use glm::{vec2, vec3, Vec2, Vec3};
+use russimp::scene::{PostProcess, Scene};
 
-use crate::assets::Asset;
 use crate::assets::error::AssetError;
-use crate::render::buffer::{BufferLayout, ResizableBuffer, wgpu_buffer_init_desc};
+use crate::assets::Asset;
+use crate::render::buffer::{wgpu_buffer_init_desc, BufferLayout, ResizableBuffer};
 
 const CX_MESH_NUM_UV_CHANNELS: usize = 4;
 
@@ -24,15 +24,14 @@ pub struct Vertex {
 }
 
 impl Vertex {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 6] =
-        wgpu::vertex_attr_array![
-            0 => Float32x3,
-            1 => Float32x3,
-            2 => Float32x2,
-            3 => Float32x2,
-            4 => Float32x2,
-            5 => Float32x2
-        ];
+    const ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
+        0 => Float32x3,
+        1 => Float32x3,
+        2 => Float32x2,
+        3 => Float32x2,
+        4 => Float32x2,
+        5 => Float32x2
+    ];
 }
 
 impl BufferLayout for Vertex {
@@ -46,13 +45,12 @@ pub struct Instance {
 }
 
 impl Instance {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 4] =
-        wgpu::vertex_attr_array![
-            6 => Float32x4,
-            7 => Float32x4,
-            8 => Float32x4,
-            9 => Float32x4
-        ];
+    const ATTRIBUTES: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
+        6 => Float32x4,
+        7 => Float32x4,
+        8 => Float32x4,
+        9 => Float32x4
+    ];
 }
 
 impl BufferLayout for Instance {
@@ -86,9 +84,8 @@ impl Default for Mesh {
             index_buffer: None,
             vertex_buffer: None,
             instance_buffer: ResizableBuffer::new(
-                wgpu::BufferUsages::COPY_DST |
-                    wgpu::BufferUsages::VERTEX
-            )
+                wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::VERTEX,
+            ),
         }
     }
 }
@@ -119,8 +116,17 @@ impl Mesh {
         let mesh = scene.meshes.get(0).ok_or(AssetError::NotFound)?;
 
         self.dirty = true;
-        self.name = Path::new(path).file_stem().unwrap().to_os_string().into_string().unwrap();
-        self.indices = mesh.faces.iter().flat_map(|face| face.0.iter().cloned()).collect();
+        self.name = Path::new(path)
+            .file_stem()
+            .unwrap()
+            .to_os_string()
+            .into_string()
+            .unwrap();
+        self.indices = mesh
+            .faces
+            .iter()
+            .flat_map(|face| face.0.iter().cloned())
+            .collect();
         self.vertices = vec![Vec3::zeros(); mesh.vertices.len()];
         self.normals = vec![Vec3::zeros(); mesh.vertices.len()];
 
@@ -129,7 +135,7 @@ impl Mesh {
             vec![Vec2::zeros(); mesh.vertices.len()],
             vec![Vec2::zeros(); mesh.vertices.len()],
             vec![Vec2::zeros(); mesh.vertices.len()],
-            vec![Vec2::zeros(); mesh.vertices.len()]
+            vec![Vec2::zeros(); mesh.vertices.len()],
         ];
 
         for (i, vertex) in mesh.vertices.iter().enumerate() {
@@ -157,12 +163,10 @@ impl Mesh {
     }
 
     pub fn rebuild_index_buffer(&mut self, device: &wgpu::Device) {
-        self.index_buffer = Some(device.create_buffer_init(
-            &wgpu_buffer_init_desc(
-                wgpu::BufferUsages::INDEX,
-                self.indices.as_slice(),
-            )
-        ));
+        self.index_buffer = Some(device.create_buffer_init(&wgpu_buffer_init_desc(
+            wgpu::BufferUsages::INDEX,
+            self.indices.as_slice(),
+        )));
     }
 
     fn rebuild_vertex_buffer(&mut self, device: &wgpu::Device) {
@@ -177,16 +181,15 @@ impl Mesh {
             vertices[i].uv2 = self.uvs[2][i].into();
             vertices[i].uv3 = self.uvs[3][i].into();
         }
-        self.vertex_buffer = Some(device.create_buffer_init(
-            &wgpu_buffer_init_desc(
-                wgpu::BufferUsages::VERTEX,
-                vertices.as_slice(),
-            )
-        ));
+        self.vertex_buffer = Some(device.create_buffer_init(&wgpu_buffer_init_desc(
+            wgpu::BufferUsages::VERTEX,
+            vertices.as_slice(),
+        )));
     }
 
     fn rebuild_instance_buffer(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        self.instance_buffer.write_buffer(device, queue, self.instances.as_slice());
+        self.instance_buffer
+            .write_buffer(device, queue, self.instances.as_slice());
     }
 
     fn normalize_mesh_data(&mut self) {

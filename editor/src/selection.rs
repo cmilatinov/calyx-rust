@@ -1,11 +1,11 @@
-use std::collections::HashSet;
 use engine::indextree::NodeId;
 use engine::uuid::Uuid;
+use std::collections::HashSet;
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum EditorSelection {
     Entity(HashSet<NodeId>),
-    Asset(HashSet<Uuid>)
+    Asset(HashSet<Uuid>),
 }
 
 impl EditorSelection {

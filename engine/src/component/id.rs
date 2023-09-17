@@ -1,15 +1,15 @@
-use uuid::Uuid;
+use crate as engine;
+use crate::component::{Component, ReflectComponent};
 use reflect::Reflect;
 use reflect::ReflectDefault;
 use utils::utils_derive::Component;
-use crate::component::{Component, ReflectComponent};
-use crate as engine;
+use uuid::Uuid;
 
 #[derive(Component, Reflect)]
 #[reflect(Default, Component)]
 pub struct ComponentID {
     pub name: String,
-    pub id: Uuid
+    pub id: Uuid,
 }
 
 impl Default for ComponentID {

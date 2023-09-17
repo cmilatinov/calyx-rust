@@ -1,6 +1,6 @@
+use crate::reflect::Reflect;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
-use crate::reflect::Reflect;
 
 pub type FieldGetter = fn(&dyn Any) -> Option<&dyn Reflect>;
 pub type FieldGetterMut = fn(&mut dyn Any) -> Option<&mut dyn Reflect>;
@@ -10,7 +10,7 @@ pub type FieldSetter = fn(&mut dyn Any, Box<dyn Any>) -> Option<()>;
 /// at runtime by listing, querying and setting their fields
 pub enum TypeInfo {
     Struct(StructInfo),
-    None
+    None,
 }
 
 pub struct StructInfo {
@@ -39,7 +39,10 @@ impl NamedField {
         let value = (self.getter)(instance.as_any())?;
         value.downcast_ref::<T>()
     }
-    pub fn get_mut<'a, T: 'static + Reflect>(&'a self, instance: &'a mut dyn Reflect) -> Option<&'a mut T> {
+    pub fn get_mut<'a, T: 'static + Reflect>(
+        &'a self,
+        instance: &'a mut dyn Reflect,
+    ) -> Option<&'a mut T> {
         let value = (self.getter_mut)(instance.as_any_mut())?;
         value.downcast_mut::<T>()
     }
@@ -47,7 +50,10 @@ impl NamedField {
         (self.getter)(instance.as_any())
     }
 
-    pub fn get_reflect_mut<'a>(&'a self, instance: &'a mut dyn Reflect) -> Option<&'a mut dyn Reflect> {
+    pub fn get_reflect_mut<'a>(
+        &'a self,
+        instance: &'a mut dyn Reflect,
+    ) -> Option<&'a mut dyn Reflect> {
         (self.getter_mut)(instance.as_any_mut())
     }
     pub fn set<T: 'static>(&self, instance: &mut dyn Reflect, value: T) -> Option<()> {

@@ -1,10 +1,9 @@
-
 use std::collections::HashMap;
 
 use egui::{Ui, WidgetText};
 
-use engine::*;
 use engine::egui_dock::TabStyle;
+use engine::*;
 
 pub use self::content_browser::*;
 pub use self::inspector::*;
@@ -19,7 +18,9 @@ mod terminal;
 mod viewport;
 
 pub trait Panel {
-    fn name() -> &'static str where Self: Sized;
+    fn name() -> &'static str
+    where
+        Self: Sized;
     fn ui(&mut self, ui: &mut Ui);
     fn tab_style_override(&self, _global_style: &TabStyle) -> Option<TabStyle> {
         None
@@ -27,20 +28,33 @@ pub trait Panel {
 }
 
 pub struct PanelManager {
-    panels: HashMap<String, Box<dyn Panel>>
+    panels: HashMap<String, Box<dyn Panel>>,
 }
 
 impl Default for PanelManager {
     fn default() -> Self {
         let mut panels: HashMap<String, Box<dyn Panel>> = HashMap::new();
-        panels.insert(PanelContentBrowser::name().to_string(), Box::new(PanelContentBrowser::default()));
-        panels.insert(PanelInspector::name().to_string(), Box::new(PanelInspector::default()));
-        panels.insert(PanelSceneHierarchy::name().to_string(), Box::new(PanelSceneHierarchy::default()));
-        panels.insert(PanelTerminal::name().to_string(), Box::new(PanelTerminal::default()));
-        panels.insert(PanelViewport::name().to_string(), Box::new(PanelViewport::default()));
-        PanelManager {
-            panels
-        }
+        panels.insert(
+            PanelContentBrowser::name().to_string(),
+            Box::new(PanelContentBrowser::default()),
+        );
+        panels.insert(
+            PanelInspector::name().to_string(),
+            Box::new(PanelInspector::default()),
+        );
+        panels.insert(
+            PanelSceneHierarchy::name().to_string(),
+            Box::new(PanelSceneHierarchy::default()),
+        );
+        panels.insert(
+            PanelTerminal::name().to_string(),
+            Box::new(PanelTerminal::default()),
+        );
+        panels.insert(
+            PanelViewport::name().to_string(),
+            Box::new(PanelViewport::default()),
+        );
+        PanelManager { panels }
     }
 }
 

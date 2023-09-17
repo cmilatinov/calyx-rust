@@ -1,25 +1,25 @@
-use project::Project;
 use dirs::config_dir;
+use egui::text::LayoutJob;
+use egui::TextFormat;
+use egui_modal::Modal;
+use project::Project;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::Command;
 use std::vec::Vec;
-use egui::text::LayoutJob;
-use egui::TextFormat;
-use egui_modal::Modal;
 
 #[derive(Default, Debug)]
 pub struct NewProjectForm {
     name: String,
-    root_directory: String
+    root_directory: String,
 }
 
 #[derive(Default, Debug)]
 pub struct LauncherApp {
     search: String,
     projects: Vec<Project>,
-    new_project_form: NewProjectForm
+    new_project_form: NewProjectForm,
 }
 
 impl LauncherApp {
@@ -52,7 +52,9 @@ impl eframe::App for LauncherApp {
 
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
                         ui.label("Directory");
-                        ui.add(egui::TextEdit::singleline(&mut self.new_project_form.root_directory));
+                        ui.add(egui::TextEdit::singleline(
+                            &mut self.new_project_form.root_directory,
+                        ));
 
                         if ui.button("🖹").clicked() {
                             if let Some(path) = rfd::FileDialog::new().pick_folder() {
@@ -69,7 +71,10 @@ impl eframe::App for LauncherApp {
                         }
 
                         if ui.button("Create").clicked() {
-                            let new_project = Project::generate(self.new_project_form.name.clone(), Some(self.new_project_form.root_directory.clone()));
+                            let new_project = Project::generate(
+                                self.new_project_form.name.clone(),
+                                Some(self.new_project_form.root_directory.clone()),
+                            );
                             self.save_project(new_project);
                             modal.close();
                         }
@@ -92,29 +97,40 @@ impl eframe::App for LauncherApp {
                     }
                 });
             });
-            
+
             egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
-                    for project in &self.projects {
-                        if !self.search.is_empty() && !project.name().contains(&self.search) {
-                            continue;
-                        }
-                        ui.add_space(5.0);
+                ui.with_layout(
+                    egui::Layout::top_down_justified(egui::Align::Center),
+                    |ui| {
+                        for project in &self.projects {
+                            if !self.search.is_empty() && !project.name().contains(&self.search) {
+                                continue;
+                            }
+                            ui.add_space(5.0);
 
-                        let mut layout_job = LayoutJob::default();
-                        layout_job.append(&(project.name().to_string() + "\n"),
-                                          0.0,
-                                          TextFormat::default());
-                        layout_job.append(project.root_directory().to_str().unwrap(),
-                                          00.0,
-                                          TextFormat::default());
+                            let mut layout_job = LayoutJob::default();
+                            layout_job.append(
+                                &(project.name().to_string() + "\n"),
+                                0.0,
+                                TextFormat::default(),
+                            );
+                            layout_job.append(
+                                project.root_directory().to_str().unwrap(),
+                                00.0,
+                                TextFormat::default(),
+                            );
 
-                        if ui.add_sized([120., 40.],
-                                        egui::Button::new(layout_job)).clicked() {
-                            launch_editor(String::from(project.root_directory().to_str().unwrap()));
+                            if ui
+                                .add_sized([120., 40.], egui::Button::new(layout_job))
+                                .clicked()
+                            {
+                                launch_editor(String::from(
+                                    project.root_directory().to_str().unwrap(),
+                                ));
+                            }
                         }
-                    }
-                });
+                    },
+                );
             });
         });
     }

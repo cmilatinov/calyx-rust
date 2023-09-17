@@ -1,19 +1,17 @@
+use engine::assets::AssetRegistry;
+use engine::egui;
+use engine::egui::Ui;
 use std::fs;
 use std::path::Path;
-use engine::egui::Ui;
-use engine::egui;
-use engine::assets::AssetRegistry;
 
 use crate::panel::Panel;
 
 pub struct PanelContentBrowser {
-    selected_folder: String
+    selected_folder: String,
 }
 
 impl PanelContentBrowser {
-    fn render_directory(&mut self,
-                        ui: &mut Ui,
-                        path: &Path) {
+    fn render_directory(&mut self, ui: &mut Ui, path: &Path) {
         match fs::read_dir(path) {
             Ok(entries) => {
                 for entry in entries {
@@ -23,26 +21,28 @@ impl PanelContentBrowser {
                         if entry.file_type().unwrap().is_dir() {
                             let path = curr_path.to_str().unwrap().to_string();
                             let collapsing_id = ui.make_persistent_id(path.clone());
-                            let is_selected =
-                                path ==
-                                self.selected_folder;
+                            let is_selected = path == self.selected_folder;
 
-                            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), collapsing_id, false)
-                                .show_header(ui, |ui| {
-                                    let res = ui.selectable_label(
-                                        is_selected,
-                                        curr_path.file_name().unwrap().to_str().unwrap()
-                                    );
+                            egui::collapsing_header::CollapsingState::load_with_default_open(
+                                ui.ctx(),
+                                collapsing_id,
+                                false,
+                            )
+                            .show_header(ui, |ui| {
+                                let res = ui.selectable_label(
+                                    is_selected,
+                                    curr_path.file_name().unwrap().to_str().unwrap(),
+                                );
 
-                                    if res.clicked() {
-                                        self.selected_folder = path;
-                                    }
-                                })
-                                .body(|ui| self.render_directory(ui, &entry.path()));
+                                if res.clicked() {
+                                    self.selected_folder = path;
+                                }
+                            })
+                            .body(|ui| self.render_directory(ui, &entry.path()));
                         }
                     }
                 }
-            },
+            }
             Err(e) => {
                 ui.label(format!("Failed to read directory: {}", e));
             }
@@ -65,9 +65,7 @@ impl Panel for PanelContentBrowser {
                     ui.heading("Assets");
                 });
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    self.render_directory(
-                        ui,
-                        Path::new(AssetRegistry::get().root_path()));
+                    self.render_directory(ui, Path::new(AssetRegistry::get().root_path()));
                 });
             });
 
@@ -82,26 +80,25 @@ impl Panel for PanelContentBrowser {
             }
         }
 
-        egui::CentralPanel::default()
-            .show_inside(ui, |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.heading("Content");
-                });
-                egui::Grid::new("content_browser")
-                    .striped(true)
-                    .show(ui, |ui| {
-                        for node in nodes {
-                            ui.label(node);
-                        }
-                    });
+        egui::CentralPanel::default().show_inside(ui, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.heading("Content");
             });
+            egui::Grid::new("content_browser")
+                .striped(true)
+                .show(ui, |ui| {
+                    for node in nodes {
+                        ui.label(node);
+                    }
+                });
+        });
     }
 }
 
 impl Default for PanelContentBrowser {
     fn default() -> Self {
         PanelContentBrowser {
-            selected_folder: AssetRegistry::get().root_path().to_string()
+            selected_folder: AssetRegistry::get().root_path().to_string(),
         }
     }
 }

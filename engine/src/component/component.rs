@@ -1,9 +1,9 @@
+use crate::render::Gizmos;
+use crate::scene::Scene;
 use indextree::NodeId;
 use legion::storage::ComponentTypeId;
 use legion::world::{Entry, EntryRef};
-use reflect::{Reflect, reflect_trait};
-use crate::render::Gizmos;
-use crate::scene::Scene;
+use reflect::{reflect_trait, Reflect};
 
 pub trait TypeUUID {
     fn type_uuid(&self) -> uuid::Uuid;
@@ -25,26 +25,24 @@ pub trait Component: TypeUUID + Reflect + ComponentInstance {
 
 #[cfg(test)]
 mod tests {
+    use sha1::{Digest, Sha1};
     use utils::utils_derive::Component;
     use uuid::Uuid;
-    use sha1::{Sha1, Digest};
 
     #[test]
     pub fn create_component() {
         #[derive(Component)]
         pub struct ComponentTest {
-            test_visible: i32
+            test_visible: i32,
         }
-        
+
         let expected_uuid = {
             let mut hasher = Sha1::new();
             hasher.update(b"ComponentTest");
             let hash = hasher.finalize();
             let uuid_bytes = [
-                hash[0], hash[1], hash[2], hash[3],
-                hash[4], hash[5], hash[6], hash[7],
-                hash[8], hash[9], hash[10], hash[11],
-                hash[12], hash[13], hash[14], hash[15]
+                hash[0], hash[1], hash[2], hash[3], hash[4], hash[5], hash[6], hash[7], hash[8],
+                hash[9], hash[10], hash[11], hash[12], hash[13], hash[14], hash[15],
             ];
 
             Uuid::from_bytes(uuid_bytes)

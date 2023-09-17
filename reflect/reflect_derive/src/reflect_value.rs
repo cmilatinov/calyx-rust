@@ -1,11 +1,11 @@
+use crate::fq::{FQAny, FQBox, FQReflect, FQReflectedType};
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::quote;
-use syn::{Ident, parenthesized, Token, parse_macro_input, Path, Type};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::token::Comma;
-use crate::fq::{FQBox, FQAny, FQReflect, FQReflectedType};
+use syn::{parenthesized, parse_macro_input, Ident, Path, Token, Type};
 
 struct ReflectValueDef {
     type_name: Type,
@@ -18,10 +18,7 @@ impl Parse for ReflectValueDef {
         let content;
         parenthesized!(content in input);
         let traits = content.parse_terminated(Path::parse, Token![,])?;
-        Ok(Self {
-            type_name,
-            traits,
-        })
+        Ok(Self { type_name, traits })
     }
 }
 

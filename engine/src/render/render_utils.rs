@@ -1,15 +1,14 @@
-use std::ops::Range;
+use crate::assets::mesh::Mesh;
 use egui_wgpu::wgpu;
 use glm::Vec4;
-use crate::assets::mesh::Mesh;
+use std::ops::Range;
 
 pub struct RenderUtils;
 
 impl RenderUtils {
-
     pub fn color_attachment<'a>(
         view: &'a wgpu::TextureView,
-        clear_color: &Vec4
+        clear_color: &Vec4,
     ) -> wgpu::RenderPassColorAttachment<'a> {
         wgpu::RenderPassColorAttachment {
             view,
@@ -28,15 +27,15 @@ impl RenderUtils {
 
     pub fn depth_stencil_attachment(
         view: &wgpu::TextureView,
-        clear_value: f32
+        clear_value: f32,
     ) -> wgpu::RenderPassDepthStencilAttachment {
         wgpu::RenderPassDepthStencilAttachment {
             view,
             depth_ops: Some(wgpu::Operations {
                 load: wgpu::LoadOp::Clear(clear_value),
-                store: true
+                store: true,
             }),
-            stencil_ops: None
+            stencil_ops: None,
         }
     }
 
@@ -44,14 +43,14 @@ impl RenderUtils {
         wgpu::ColorTargetState {
             format: render_state.target_format,
             blend: Some(wgpu::BlendState {
-                color: wgpu::BlendComponent{
+                color: wgpu::BlendComponent {
                     src_factor: wgpu::BlendFactor::SrcAlpha,
                     dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                    operation: wgpu::BlendOperation::Add
+                    operation: wgpu::BlendOperation::Add,
                 },
-                alpha: wgpu::BlendComponent::OVER
+                alpha: wgpu::BlendComponent::OVER,
             }),
-            write_mask: wgpu::ColorWrites::ALL
+            write_mask: wgpu::ColorWrites::ALL,
         }
     }
 
@@ -74,7 +73,7 @@ impl RenderUtils {
             depth_write_enabled: true,
             depth_compare: wgpu::CompareFunction::Less,
             stencil: wgpu::StencilState::default(),
-            bias: wgpu::DepthBiasState::default()
+            bias: wgpu::DepthBiasState::default(),
         }
     }
 
@@ -96,7 +95,7 @@ impl RenderUtils {
     pub fn bind_mesh_buffers<'a>(render_pass: &mut wgpu::RenderPass<'a>, mesh: &'a Mesh) {
         render_pass.set_index_buffer(
             mesh.index_buffer.as_ref().unwrap().slice(..),
-            wgpu::IndexFormat::Uint32
+            wgpu::IndexFormat::Uint32,
         );
         render_pass.set_vertex_buffer(0, mesh.vertex_buffer.as_ref().unwrap().slice(..));
         render_pass.set_vertex_buffer(1, mesh.instance_buffer.get_wgpu_buffer().slice(..));
@@ -106,14 +105,14 @@ impl RenderUtils {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         render_pass: &mut wgpu::RenderPass<'a>,
-        mesh: &'a mut Mesh
+        mesh: &'a mut Mesh,
     ) {
         Self::rebuild_mesh_data(device, queue, mesh);
         Self::bind_mesh_buffers(render_pass, mesh);
         render_pass.draw_indexed(
             0..(mesh.indices.len() as u32),
             0,
-            0..(mesh.instances.len() as u32)
+            0..(mesh.instances.len() as u32),
         );
     }
 
@@ -122,18 +121,14 @@ impl RenderUtils {
         queue: &wgpu::Queue,
         render_pass: &mut wgpu::RenderPass<'a>,
         mesh: &'a mut Mesh,
-        instances: Range<u32>
+        instances: Range<u32>,
     ) {
         Self::rebuild_mesh_data(device, queue, mesh);
         render_pass.set_index_buffer(
             mesh.index_buffer.as_ref().unwrap().slice(..),
-            wgpu::IndexFormat::Uint32
+            wgpu::IndexFormat::Uint32,
         );
         render_pass.set_vertex_buffer(0, mesh.vertex_buffer.as_ref().unwrap().slice(..));
-        render_pass.draw_indexed(
-            0..(mesh.indices.len() as u32),
-            0,
-            instances
-        );
+        render_pass.draw_indexed(0..(mesh.indices.len() as u32), 0, instances);
     }
 }

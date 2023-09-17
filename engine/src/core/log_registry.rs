@@ -2,7 +2,7 @@ use log::{Log, Metadata, Record};
 use utils::singleton_with_init;
 
 pub struct LogRegistry {
-    logs: Vec<String>
+    logs: Vec<String>,
 }
 
 impl LogRegistry {
@@ -14,11 +14,12 @@ impl LogRegistry {
 pub struct Logger;
 impl Log for Logger {
     fn enabled(&self, metadata: &Metadata) -> bool {
-        if metadata.target().starts_with("wgpu") ||
-            metadata.target().starts_with("eframe") ||
-            metadata.target().starts_with("naga") ||
-            metadata.target().starts_with("egui") ||
-            metadata.target().starts_with("winit"){
+        if metadata.target().starts_with("wgpu")
+            || metadata.target().starts_with("eframe")
+            || metadata.target().starts_with("naga")
+            || metadata.target().starts_with("egui")
+            || metadata.target().starts_with("winit")
+        {
             return false;
         }
         true
@@ -36,9 +37,7 @@ impl Log for Logger {
 
 impl Default for LogRegistry {
     fn default() -> Self {
-        LogRegistry {
-            logs: Vec::new()
-        }
+        LogRegistry { logs: Vec::new() }
     }
 }
 

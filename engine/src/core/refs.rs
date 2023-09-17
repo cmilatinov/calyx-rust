@@ -29,5 +29,4 @@ impl<T: ?Sized> Deref for Ref<T> {
     }
 }
 
-
 pub type OptionRef<T> = Option<Ref<T>>;

@@ -1,4 +1,4 @@
-use downcast_rs::{Downcast, impl_downcast};
+use downcast_rs::{impl_downcast, Downcast};
 
 /// Allows you to cast structs implementing the Reflect trait
 /// into a specific trait if they implement such a trait

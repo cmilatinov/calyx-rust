@@ -1,22 +1,22 @@
-use std::{fs, thread};
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::path::Path;
-use std::sync::{Arc};
+use std::sync::Arc;
 use std::thread::JoinHandle;
+use std::{fs, thread};
 
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 
-use crate::assets::{Asset, AssetRef};
 use crate::assets::error::AssetError;
+use crate::assets::{Asset, AssetRef};
 use crate::core::Ref;
-use utils::{Init, singleton};
+use utils::{singleton, Init};
 
 pub struct AssetRegistry {
     asset_paths: Vec<String>,
     asset_cache: HashMap<String, Ref<dyn Asset>>,
-    watcher_thread: Option<JoinHandle<()>>
+    watcher_thread: Option<JoinHandle<()>>,
 }
 
 singleton!(AssetRegistry);
@@ -84,7 +84,7 @@ impl Default for AssetRegistry {
         Self {
             asset_paths: Vec::new(),
             asset_cache: HashMap::new(),
-            watcher_thread: None
+            watcher_thread: None,
         }
     }
 }
@@ -94,7 +94,9 @@ impl Init for AssetRegistry {
         let watcher_thread = thread::spawn(|| {
             let (tx, rx) = std::sync::mpsc::channel();
             let mut watcher = RecommendedWatcher::new(tx, Config::default()).unwrap();
-            watcher.watch(Path::new("assets"), RecursiveMode::Recursive).unwrap();
+            watcher
+                .watch(Path::new("assets"), RecursiveMode::Recursive)
+                .unwrap();
             for res in rx {
                 match res {
                     Ok(event) => println!("FS Event: {:?}", event),

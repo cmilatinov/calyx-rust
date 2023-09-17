@@ -1,6 +1,6 @@
 use glm::{Mat4, Vec3};
-use serde::{Deserialize, Serialize};
 use reflect::Reflect;
+use serde::{Deserialize, Serialize};
 
 use super::{compose_transform, decompose_transform};
 
@@ -29,7 +29,7 @@ impl Default for Transform {
             rotation,
             scale,
             matrix,
-            inverse_matrix
+            inverse_matrix,
         }
     }
 }
@@ -42,7 +42,7 @@ impl Transform {
             rotation: Vec3::default(),
             scale: Vec3::identity(),
             matrix,
-            inverse_matrix
+            inverse_matrix,
         };
         transform.update_components();
         transform
@@ -54,7 +54,7 @@ impl Transform {
             rotation,
             scale,
             matrix: Mat4::default(),
-            inverse_matrix: Mat4::default()
+            inverse_matrix: Mat4::default(),
         };
         transform.update_matrix();
         transform
@@ -65,7 +65,7 @@ impl Transform {
         if glm::length(&diff) <= 0.000001f32 {
             return;
         }
-        let rotation = glm::quat_look_at(&glm::normalize(&diff), &glm::vec3(0f32,1f32,0f32));
+        let rotation = glm::quat_look_at(&glm::normalize(&diff), &glm::vec3(0f32, 1f32, 0f32));
         self.rotation = glm::quat_euler_angles(&rotation);
         self.update_matrix();
     }
@@ -81,7 +81,8 @@ impl Transform {
     }
 
     pub fn inverse_transform_position(&self, position: &Vec3) -> Vec3 {
-        let transformed = self.get_inverse_matrix() * glm::vec4(position.x, position.y, position.z, 1.0);
+        let transformed =
+            self.get_inverse_matrix() * glm::vec4(position.x, position.y, position.z, 1.0);
         glm::vec3(transformed.x, transformed.y, transformed.z)
     }
 
@@ -115,7 +116,7 @@ impl Transform {
         self.transform_direction(&glm::vec3(0.0, 0.0, 1.0))
     }
 
-    pub fn right(&self) -> Vec3  {
+    pub fn right(&self) -> Vec3 {
         self.transform_direction(&glm::vec3(1.0, 0.0, 0.0))
     }
 
@@ -129,10 +130,17 @@ impl Transform {
     }
 
     pub fn update_components(&mut self) {
-        decompose_transform(&self.matrix, &mut self.position, &mut self.rotation, &mut self.scale);
+        decompose_transform(
+            &self.matrix,
+            &mut self.position,
+            &mut self.rotation,
+            &mut self.scale,
+        );
     }
 
-    pub fn get_inverse_matrix(&self) -> Mat4 { glm::inverse(&self.matrix) }
+    pub fn get_inverse_matrix(&self) -> Mat4 {
+        glm::inverse(&self.matrix)
+    }
 }
 
 #[cfg(test)]
@@ -144,7 +152,10 @@ mod tests {
         let transform = Transform::default();
 
         assert_eq!(transform.forward(), glm::vec3(0f32, 0f32, 1f32));
-        assert_eq!(transform.forward().scale(-1f32), glm::vec3(0f32, 0f32, -1f32));
+        assert_eq!(
+            transform.forward().scale(-1f32),
+            glm::vec3(0f32, 0f32, -1f32)
+        );
 
         assert_eq!(transform.right(), glm::vec3(1f32, 0f32, 0f32));
         assert_eq!(transform.right().scale(-1f32), glm::vec3(-1f32, 0f32, 0f32));

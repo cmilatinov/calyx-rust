@@ -1,19 +1,19 @@
-use std::default::Default;
 use eframe::NativeOptions;
+use std::default::Default;
 
-use log::{LevelFilter};
+use log::LevelFilter;
 
 use editor::*;
-use engine::*;
 use engine::assets::AssetRegistry;
-use engine::core::{Logger, LogRegistry, Time};
+use engine::core::{LogRegistry, Logger, Time};
+use engine::*;
 
-use std::env;
-use std::path::PathBuf;
-use std::sync::Arc;
 use engine::class_registry::ClassRegistry;
 use engine::eframe::wgpu;
 use reflect::type_registry::TypeRegistry;
+use std::env;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 fn main() -> eframe::Result<()> {
     // LOAD PROJECT
@@ -42,7 +42,7 @@ fn main() -> eframe::Result<()> {
                 .assets_directory()
                 .into_os_string()
                 .into_string()
-                .unwrap()
+                .unwrap(),
         );
     }
 
@@ -78,6 +78,6 @@ fn main() -> eframe::Result<()> {
             app_state.viewport_height = 0.0;
             app_state.scene_renderer = Some(app.scene_renderer.clone());
             Box::new(app)
-        })
+        }),
     )
 }

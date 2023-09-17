@@ -25,7 +25,7 @@ macro_rules! impl_generic_int {
                 *self = value as $t;
             }
         }
-    }
+    };
 }
 
 impl_generic_int!(u8);

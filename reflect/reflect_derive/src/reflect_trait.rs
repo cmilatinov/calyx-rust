@@ -1,9 +1,9 @@
-use proc_macro2::{Ident, Span};
+use crate::fq::{FQBox, FQClone, FQOption, FQReflect, FQResult, FQTraitMeta, FQTraitMetaFrom};
 use proc_macro::TokenStream;
+use proc_macro2::{Ident, Span};
 use quote::quote;
-use syn::{Attribute, ItemTrait, parse_macro_input, Token};
 use syn::parse::Parse;
-use crate::fq::{FQClone, FQOption, FQBox, FQResult, FQReflect, FQTraitMeta, FQTraitMetaFrom};
+use syn::{parse_macro_input, Attribute, ItemTrait, Token};
 
 #[derive(Debug)]
 pub(crate) struct TraitInfo {
@@ -29,7 +29,8 @@ pub(crate) fn reflect_trait(_args: TokenStream, input: TokenStream) -> TokenStre
     let item_trait = &trait_info.item_trait;
     let trait_ident = &item_trait.ident;
     let trait_vis = &item_trait.vis;
-    let reflect_trait_ident = Ident::new(&format!("Reflect{}", item_trait.ident), Span::call_site());
+    let reflect_trait_ident =
+        Ident::new(&format!("Reflect{}", item_trait.ident), Span::call_site());
     TokenStream::from(quote! {
         #item_trait
 

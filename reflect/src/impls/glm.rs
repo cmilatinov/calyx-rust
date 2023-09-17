@@ -1,7 +1,7 @@
-use reflect_derive::impl_reflect_value;
-use nalgebra_glm as glm;
-use glm::{Vec2, Vec3, Vec4, Mat3, Mat4};
 use crate as reflect;
+use glm::{Mat3, Mat4, Vec2, Vec3, Vec4};
+use nalgebra_glm as glm;
+use reflect_derive::impl_reflect_value;
 
 impl_reflect_value!(Vec2());
 impl_reflect_value!(Vec3());

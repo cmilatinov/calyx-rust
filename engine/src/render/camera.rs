@@ -1,12 +1,12 @@
-use glm::Mat4;
 use crate::math;
+use glm::Mat4;
 
 pub struct Camera {
     pub projection: Mat4,
     pub aspect: f32,
     pub fov_x: f32,
     pub near_plane: f32,
-    pub far_plane: f32
+    pub far_plane: f32,
 }
 
 impl Default for Camera {
@@ -22,7 +22,7 @@ impl Camera {
             aspect,
             fov_x,
             near_plane,
-            far_plane
+            far_plane,
         };
         camera.update_projection();
         camera

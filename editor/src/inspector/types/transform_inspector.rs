@@ -1,4 +1,5 @@
-use std::any::TypeId;
+use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
+use crate::inspector::widgets::Widgets;
 use engine::component::ComponentTransform;
 use engine::egui::{Align, Layout, Ui};
 use engine::egui_extras;
@@ -6,9 +7,8 @@ use engine::egui_extras::Column;
 use engine::math::Transform;
 use reflect::Reflect;
 use reflect::ReflectDefault;
+use std::any::TypeId;
 use utils::type_ids;
-use crate::inspector::type_inspector::{TypeInspector, ReflectTypeInspector, InspectorContext};
-use crate::inspector::widgets::Widgets;
 
 #[derive(Default, Reflect)]
 #[reflect(Default, TypeInspector)]
@@ -27,7 +27,9 @@ impl TypeInspector for TransformInspector {
                 .cell_layout(Layout::left_to_right(Align::Center))
                 .body(|mut body| {
                     let mut changed = false;
-                    let parent_transform = ctx.parent_node.map(|parent| ctx.scene.get_world_transform(parent))
+                    let parent_transform = ctx
+                        .parent_node
+                        .map(|parent| ctx.scene.get_world_transform(parent))
                         .unwrap_or(Transform::default());
                     let mut transform = ctx.scene.get_world_transform(ctx.node);
                     body.row(18.0, |mut row| {
@@ -56,25 +58,33 @@ impl TypeInspector for TransformInspector {
                     });
                     if changed {
                         transform.update_matrix();
-                        t_comp.transform.set_local_matrix(&(parent_transform.inverse_matrix * transform.matrix));
+                        t_comp.transform.set_local_matrix(
+                            &(parent_transform.inverse_matrix * transform.matrix),
+                        );
                     }
                 });
             t_comp.transform.update_matrix();
         }
     }
 
-    fn show_inspector_context(&self, ui: &mut Ui, ctx: &InspectorContext, instance: &mut dyn Reflect) {
+    fn show_inspector_context(
+        &self,
+        ui: &mut Ui,
+        ctx: &InspectorContext,
+        instance: &mut dyn Reflect,
+    ) {
         if let Some(t_comp) = instance.downcast_mut::<ComponentTransform>() {
             if ui.button("Reset").clicked() {
-                let parent_transform = ctx.parent_node
+                let parent_transform = ctx
+                    .parent_node
                     .map(|parent| ctx.scene.get_world_transform(parent))
                     .unwrap_or(Transform::default());
-                t_comp.transform.set_local_matrix(&parent_transform.inverse_matrix);
+                t_comp
+                    .transform
+                    .set_local_matrix(&parent_transform.inverse_matrix);
             }
         }
     }
 }
 
-impl TransformInspector {
-
-}
+impl TransformInspector {}

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use utils::{singleton_with_init};
+use utils::singleton_with_init;
 
 pub type TimeType = f32;
 
@@ -23,7 +23,7 @@ macro_rules! time_member_getter {
             let instance = Self::get();
             instance.$member
         }
-    }
+    };
 }
 
 impl Time {
@@ -63,7 +63,7 @@ impl Default for Time {
             static_time: 0.0,
             delta_time: 0.0,
             static_delta_time: 0.0,
-            time_scale: 1.0
+            time_scale: 1.0,
         }
     }
 }

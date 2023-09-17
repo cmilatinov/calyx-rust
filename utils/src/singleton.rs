@@ -5,9 +5,9 @@ pub trait Init {
 #[macro_export]
 macro_rules! singleton {
     ($t:tt) => {
+        use lazy_static::lazy_static;
         use std::ops::DerefMut;
         use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
-        use lazy_static::lazy_static;
 
         lazy_static! {
             static ref INSTANCE: RwLock<$t> = RwLock::new($t::default());
@@ -28,7 +28,7 @@ macro_rules! singleton {
                 instance.initialize();
             }
         }
-    }
+    };
 }
 
 #[macro_export]
@@ -38,7 +38,7 @@ macro_rules! singleton_with_init {
         ::utils::singleton!($t);
 
         impl Init for $t {}
-    }
+    };
 }
 
 pub use singleton;

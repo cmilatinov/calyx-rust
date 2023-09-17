@@ -25,7 +25,7 @@ macro_rules! impl_generic_float {
                 *self = value as $t;
             }
         }
-    }
+    };
 }
 
 impl_generic_float!(f32);

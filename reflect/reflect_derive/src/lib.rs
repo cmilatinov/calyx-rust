@@ -1,9 +1,9 @@
 use proc_macro::TokenStream;
 
-mod reflect_type;
-mod reflect_trait;
-mod reflect_value;
 mod fq;
+mod reflect_trait;
+mod reflect_type;
+mod reflect_value;
 
 #[proc_macro_derive(Reflect, attributes(reflect))]
 pub fn derive_reflect(input: TokenStream) -> TokenStream {

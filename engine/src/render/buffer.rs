@@ -2,22 +2,25 @@ use egui_wgpu::wgpu;
 
 pub fn wgpu_buffer_init_desc<T: bytemuck::Pod>(
     usage: wgpu::BufferUsages,
-    contents: &[T]
+    contents: &[T],
 ) -> wgpu::util::BufferInitDescriptor {
     wgpu::util::BufferInitDescriptor {
         label: None,
         usage,
-        contents: bytemuck::cast_slice(contents)
+        contents: bytemuck::cast_slice(contents),
     }
 }
 
 pub trait BufferLayout {
     const ATTRIBS: &'static [wgpu::VertexAttribute];
-    fn layout(step_mode: wgpu::VertexStepMode) -> wgpu::VertexBufferLayout<'static> where Self: Sized {
+    fn layout(step_mode: wgpu::VertexStepMode) -> wgpu::VertexBufferLayout<'static>
+    where
+        Self: Sized,
+    {
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
             step_mode,
-            attributes: Self::ATTRIBS
+            attributes: Self::ATTRIBS,
         }
     }
 }
@@ -25,7 +28,7 @@ pub trait BufferLayout {
 pub struct ResizableBuffer {
     usage: wgpu::BufferUsages,
     size: u64,
-    buffer: Option<wgpu::Buffer>
+    buffer: Option<wgpu::Buffer>,
 }
 
 impl ResizableBuffer {
@@ -33,7 +36,7 @@ impl ResizableBuffer {
         Self {
             usage,
             size: 0,
-            buffer: None
+            buffer: None,
         }
     }
 
@@ -58,9 +61,18 @@ impl ResizableBuffer {
         }));
     }
 
-    pub fn write_buffer<T: bytemuck::Pod>(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, value: &[T]) {
+    pub fn write_buffer<T: bytemuck::Pod>(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        value: &[T],
+    ) {
         self.resize(device, std::mem::size_of_val(value) as u64);
-        queue.write_buffer(self.buffer.as_ref().unwrap(), 0, bytemuck::cast_slice(value));
+        queue.write_buffer(
+            self.buffer.as_ref().unwrap(),
+            0,
+            bytemuck::cast_slice(value),
+        );
     }
 
     pub fn get_wgpu_buffer(&self) -> &wgpu::Buffer {

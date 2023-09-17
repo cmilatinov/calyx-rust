@@ -1,18 +1,18 @@
-use std::collections::HashSet;
 use egui::Ui;
+use std::collections::HashSet;
 
-use engine::*;
-use engine::assets::AssetRegistry;
+use crate::panel::Panel;
+use crate::{EditorAppState, EditorSelection};
 use engine::assets::mesh::Mesh;
+use engine::assets::AssetRegistry;
 use engine::component::ComponentMesh;
 use engine::indextree::NodeId;
 use engine::scene::Scene;
-use crate::{EditorAppState, EditorSelection};
-use crate::panel::Panel;
+use engine::*;
 
 #[derive(Default)]
 pub struct PanelSceneHierarchy {
-    search: String
+    search: String,
 }
 
 impl Panel for PanelSceneHierarchy {
@@ -27,7 +27,9 @@ impl Panel for PanelSceneHierarchy {
 
         ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
             if ui.button("+").clicked() {
-                let mesh = AssetRegistry::get_mut().load::<Mesh>("meshes/cube").unwrap();
+                let mesh = AssetRegistry::get_mut()
+                    .load::<Mesh>("meshes/cube")
+                    .unwrap();
                 let mut parent: Option<NodeId> = None;
                 if let Some(selected) = selection.clone() {
                     match selected {
@@ -41,7 +43,10 @@ impl Panel for PanelSceneHierarchy {
                 }
 
                 let new_entity = app_state.scene.create_entity(None, parent);
-                app_state.scene.bind_component(new_entity, ComponentMesh { mesh: mesh.clone() }).unwrap();
+                app_state
+                    .scene
+                    .bind_component(new_entity, ComponentMesh { mesh: mesh.clone() })
+                    .unwrap();
             }
             ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("Search Here"));
         });
@@ -52,7 +57,7 @@ impl Panel for PanelSceneHierarchy {
                 &app_state.selection,
                 &mut selection,
                 ui,
-                root_node
+                root_node,
             );
         }
         app_state.selection = selection;
@@ -66,12 +71,9 @@ impl PanelSceneHierarchy {
         selected: &Option<EditorSelection>,
         selection: &mut Option<EditorSelection>,
         ui: &mut Ui,
-        node_id: NodeId
+        node_id: NodeId,
     ) {
-        let children: Vec<NodeId> =
-            scene.get_children(node_id)
-                .into_iter()
-                .collect();
+        let children: Vec<NodeId> = scene.get_children(node_id).into_iter().collect();
 
         let is_selected = if let Some(editor_selection) = selected {
             if let EditorSelection::Entity(set) = editor_selection {
@@ -79,19 +81,25 @@ impl PanelSceneHierarchy {
             } else {
                 false
             }
-        } else { false };
+        } else {
+            false
+        };
 
         if children.len() > 0 {
             let collapsing_id = ui.make_persistent_id(node_id);
-            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), collapsing_id, false)
-                .show_header(ui, |ui| {
-                    self.show_selectable_label(scene, is_selected, selection, ui, node_id);
-                })
-                .body(|ui| {
-                    for child_node in children {
-                        self.render_scene_node(scene, selected, selection, ui, child_node)
-                    }
-                });
+            egui::collapsing_header::CollapsingState::load_with_default_open(
+                ui.ctx(),
+                collapsing_id,
+                false,
+            )
+            .show_header(ui, |ui| {
+                self.show_selectable_label(scene, is_selected, selection, ui, node_id);
+            })
+            .body(|ui| {
+                for child_node in children {
+                    self.render_scene_node(scene, selected, selection, ui, child_node)
+                }
+            });
         } else {
             self.show_selectable_label(scene, is_selected, selection, ui, node_id);
         }
@@ -103,19 +111,18 @@ impl PanelSceneHierarchy {
         is_selected: bool,
         selection: &mut Option<EditorSelection>,
         ui: &mut Ui,
-        node_id: NodeId
+        node_id: NodeId,
     ) {
-        let res = ui.selectable_label(
-            is_selected,
-            scene.get_entity_name(node_id)
-        );
+        let res = ui.selectable_label(is_selected, scene.get_entity_name(node_id));
 
         if res.clicked() {
             let mut set = HashSet::new();
             set.insert(node_id);
-            *selection =
-                if is_selected { None }
-                else { Some(EditorSelection::Entity(set)) };
+            *selection = if is_selected {
+                None
+            } else {
+                Some(EditorSelection::Entity(set))
+            };
         }
     }
 }

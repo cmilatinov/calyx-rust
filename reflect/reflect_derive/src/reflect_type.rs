@@ -1,10 +1,10 @@
+use crate::fq::{FQAny, FQBox, FQReflect, FQReflectedType};
+use proc_macro::TokenStream;
 use proc_macro2::{Ident, Span};
-use proc_macro::{TokenStream};
 use quote::quote;
-use syn::{DeriveInput, Fields, Path, Token};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use crate::fq::{FQBox, FQAny, FQReflect, FQReflectedType};
+use syn::{DeriveInput, Fields, Path, Token};
 
 struct ReflectAttribute {
     traits: Punctuated<Path, Token![,]>,
@@ -37,10 +37,9 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
                     field_info.push((ident, ty));
                 }
             }
-        },
+        }
         _ => {}
     }
-
 
     let add_field_calls = field_info.iter().map(|(ident, ty)| {
         quote! {
@@ -80,15 +79,16 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
         }
     }
 
-    let mut register_traits_impl = quote!{};
+    let mut register_traits_impl = quote! {};
     if let Some(paths) = trait_paths {
         for trait_path in paths {
             let trait_ident = trait_path.segments.last().unwrap().ident.clone();
-            let reflect_trait_ident = Ident::new(&format!("Reflect{}", trait_ident), Span::call_site());
-            let register_trait_impl = quote!{
+            let reflect_trait_ident =
+                Ident::new(&format!("Reflect{}", trait_ident), Span::call_site());
+            let register_trait_impl = quote! {
                 registry.meta_impls::<#name, #reflect_trait_ident>();
             };
-            register_traits_impl = quote!{
+            register_traits_impl = quote! {
                 #register_traits_impl
                 #register_trait_impl
             };

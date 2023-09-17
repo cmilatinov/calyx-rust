@@ -1,20 +1,20 @@
 use egui::Ui;
-use egui_gizmo::{DEFAULT_SNAP_ANGLE, GizmoMode, GizmoResult, GizmoVisuals};
+use egui_gizmo::{GizmoMode, GizmoResult, GizmoVisuals, DEFAULT_SNAP_ANGLE};
 
-use engine::*;
 use engine::egui::{Align2, Color32, Image, Key, Margin, Pos2, Sense, TextStyle};
 use engine::egui_dock::TabStyle;
 use engine::glm::{Mat4, Vec3};
 use engine::render::CameraLike;
+use engine::*;
 
-use crate::EditorAppState;
 use crate::panel::Panel;
+use crate::EditorAppState;
 
 #[derive(Default)]
 pub struct PanelViewport;
 
 const GIZMO_VISUALS: GizmoVisuals = GizmoVisuals {
-    x_color: Color32::from_rgb(255, 0,  148),
+    x_color: Color32::from_rgb(255, 0, 148),
     y_color: Color32::from_rgb(148, 255, 0),
     z_color: Color32::from_rgb(0, 148, 255),
     s_color: Color32::from_rgb(255, 255, 255),
@@ -51,7 +51,6 @@ impl Panel for PanelViewport {
 }
 
 impl PanelViewport {
-
     fn action_bar(&self, ui: &mut Ui, app_state: &mut EditorAppState) {
         let padding = 3.0;
         ui.add_space(padding);
@@ -63,7 +62,7 @@ impl PanelViewport {
                 egui::DragValue::new(&mut degrees)
                     .speed(1.0)
                     .suffix("°")
-                    .clamp_range(30..=160)
+                    .clamp_range(30..=160),
             );
             ui.label("FOV");
             if degrees != radians.to_degrees() {
@@ -73,13 +72,20 @@ impl PanelViewport {
     }
 
     fn viewport(&self, ui: &mut Ui, app_state: &mut EditorAppState) -> egui::Response {
-        let res = ui.add(Image::new(
-            app_state.scene_renderer.as_ref()
-                .unwrap()
-                .read()
-                .unwrap().scene_texture_handle().id(),
-            egui::Vec2::new(ui.available_width(), ui.available_height())
-        ).sense(Sense::drag()));
+        let res = ui.add(
+            Image::new(
+                app_state
+                    .scene_renderer
+                    .as_ref()
+                    .unwrap()
+                    .read()
+                    .unwrap()
+                    .scene_texture_handle()
+                    .id(),
+                egui::Vec2::new(ui.available_width(), ui.available_height()),
+            )
+            .sense(Sense::drag()),
+        );
         app_state.camera.update(ui, &res);
         let screen_rect = ui.ctx().screen_rect();
         app_state.viewport_width = res.rect.width() / screen_rect.width();
@@ -92,7 +98,11 @@ impl PanelViewport {
         let snap = ui.input(|input| input.modifiers.ctrl);
         let snap_coarse = ui.input(|input| input.modifiers.shift);
         let snap_distance = if snap_coarse { 10.0 } else { 1.0 };
-        let snap_angle = if snap_coarse { DEFAULT_SNAP_ANGLE } else { DEFAULT_SNAP_ANGLE / 2.0 };
+        let snap_angle = if snap_coarse {
+            DEFAULT_SNAP_ANGLE
+        } else {
+            DEFAULT_SNAP_ANGLE / 2.0
+        };
 
         if let Some(selection) = app_state.selection.clone() {
             if let Some(node_id) = selection.first_entity() {
@@ -110,10 +120,9 @@ impl PanelViewport {
                     .snap_scale(snap_distance);
                 if let Some(gizmo_response) = gizmo.interact(ui) {
                     let transform = gizmo_response.transform();
-                    app_state.scene.set_world_transform(
-                        node_id,
-                        Mat4::from(transform.to_cols_array_2d())
-                    );
+                    app_state
+                        .scene
+                        .set_world_transform(node_id, Mat4::from(transform.to_cols_array_2d()));
                     self.gizmo_status(ui, &gizmo_response);
                 }
             }
@@ -136,15 +145,19 @@ impl PanelViewport {
             GizmoMode::Translate | GizmoMode::Scale => format!(
                 "dX: {:.2}, dY: {:.2}, dZ: {:.2}",
                 response.value[0], response.value[1], response.value[2]
-            )
+            ),
         };
         let rect = ui.clip_rect();
         ui.painter().text(
             Pos2::new(rect.left() + 5.0, rect.bottom()),
             Align2::LEFT_BOTTOM,
             text,
-            ui.style().text_styles.get(&TextStyle::Body).unwrap().clone(),
-            Color32::WHITE
+            ui.style()
+                .text_styles
+                .get(&TextStyle::Body)
+                .unwrap()
+                .clone(),
+            Color32::WHITE,
         );
     }
 }

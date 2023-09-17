@@ -1,11 +1,11 @@
-use reflect::type_registry::TypeRegistry;
-use utils::{Init, singleton, type_ids};
 use crate::component::{Component, ReflectComponent};
-use reflect::{ReflectDefault};
+use reflect::type_registry::TypeRegistry;
+use reflect::ReflectDefault;
+use utils::{singleton, type_ids, Init};
 
 #[derive(Default)]
 pub struct ClassRegistry {
-    components: Vec<Box<dyn Component>>
+    components: Vec<Box<dyn Component>>,
 }
 
 impl Init for ClassRegistry {

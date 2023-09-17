@@ -1,9 +1,9 @@
-use std::any::TypeId;
+use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 use engine::egui::Ui;
 use engine::uuid::Uuid;
 use reflect::{Reflect, ReflectDefault};
+use std::any::TypeId;
 use utils::type_ids;
-use crate::inspector::type_inspector::{TypeInspector, ReflectTypeInspector, InspectorContext};
 
 #[derive(Default, Reflect)]
 #[reflect(Default, TypeInspector)]

@@ -11,6 +11,7 @@ fn main() {
     eframe::run_native(
         "Calyx Launcher",
         native_options,
-        Box::new(|cc| Box::new(LauncherApp::new(cc))))
-        .expect("Unable to open application.");
+        Box::new(|cc| Box::new(LauncherApp::new(cc))),
+    )
+    .expect("Unable to open application.");
 }
