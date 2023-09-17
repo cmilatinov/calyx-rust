@@ -9,13 +9,13 @@ use egui::text::LayoutJob;
 use egui::TextFormat;
 use egui_modal::Modal;
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct NewProjectForm {
     name: String,
     root_directory: String
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct LauncherApp {
     search: String,
     projects: Vec<Project>,
@@ -24,6 +24,7 @@ pub struct LauncherApp {
 
 impl LauncherApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        cc.egui_ctx.set_pixels_per_point(1.2);
         let mut app = LauncherApp::default();
         app.load_projects();
         app
@@ -31,9 +32,9 @@ impl LauncherApp {
 }
 
 impl eframe::App for LauncherApp {
-    fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            let modal = Modal::new(ctx, "my_modal");
+            let modal = Modal::new(ctx, "project_creation_modal");
 
             modal.show(|ui| {
                 modal.frame(ui, |ui| {
@@ -90,7 +91,6 @@ impl eframe::App for LauncherApp {
                     }
                 });
             });
-            ui.add_space(10.0);
             
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
@@ -98,6 +98,7 @@ impl eframe::App for LauncherApp {
                         if !self.search.is_empty() && !project.name().contains(&self.search) {
                             continue;
                         }
+                        ui.add_space(5.0);
 
                         let mut layout_job = LayoutJob::default();
                         layout_job.append(&*(project.name().to_string() + "\n"),
@@ -144,8 +145,7 @@ impl LauncherApp {
                 let mut contents = String::new();
                 file.read_to_string(&mut contents).unwrap();
                 self.projects = serde_json::from_str(&contents).unwrap();
-                // TODO: validate project is good
-                self.projects.retain(|p| p.root_directory().exists());
+                self.projects.retain(|p| p.is_valid());
             }
         }
     }

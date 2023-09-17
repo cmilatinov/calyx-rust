@@ -6,20 +6,21 @@ use chrono::Utc;
 use serde::{Serialize, Deserialize};
 use tinytemplate::TinyTemplate;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Project {
     name: String,
     creation_date: String,
     root_directory: PathBuf
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct CargoTemplateCtx {
     project_name: String
 }
 
 impl Project {
     pub fn generate(name: String, folder: Option<String>) -> Self {
+        // Check first that the template exists so the function fails before creating any folders
         let mut tt = TinyTemplate::new();
         tt.add_template("cargo template", include_str!("../assets/cargo_template.txt"))
             .expect("Unable to extract cargo template.");
@@ -29,9 +30,9 @@ impl Project {
             None => Path::new(".").to_path_buf(),
         };
 
+        // Create folders if they're missing
         let project_directory = base_directory.join(&name);
         let assets_directory = project_directory.join("assets");
-
         fs::create_dir_all(&assets_directory).expect("Unable to create assets directory.");
 
         let project = Project {
@@ -78,6 +79,14 @@ impl Project {
         };
 
         Ok(project)
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.root_directory.exists() &&
+        self.assets_directory().exists() &&
+            self.root_directory.join("project.toml").exists() &&
+            self.root_directory.join("Cargo.toml").exists() &&
+            self.assets_directory().join("lib.rs").exists()
     }
 }
 
