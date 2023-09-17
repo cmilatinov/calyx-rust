@@ -62,6 +62,17 @@ impl TypeInspector for TransformInspector {
             t_comp.transform.update_matrix();
         }
     }
+
+    fn show_inspector_context(&self, ui: &mut Ui, ctx: &InspectorContext, instance: &mut dyn Reflect) {
+        if let Some(t_comp) = instance.downcast_mut::<ComponentTransform>() {
+            if ui.button("Reset").clicked() {
+                let parent_transform = ctx.parent_node
+                    .map(|parent| ctx.scene.get_world_transform(parent))
+                    .unwrap_or(Transform::default());
+                t_comp.transform.set_local_matrix(&parent_transform.inverse_matrix);
+            }
+        }
+    }
 }
 
 impl TransformInspector {

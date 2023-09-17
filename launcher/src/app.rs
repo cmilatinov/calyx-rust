@@ -24,7 +24,6 @@ pub struct LauncherApp {
 
 impl LauncherApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        cc.egui_ctx.set_pixels_per_point(1.5);
         let mut app = LauncherApp::default();
         app.load_projects();
         app

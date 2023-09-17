@@ -85,7 +85,9 @@ impl PanelInspector {
         match self.inspector_lookup(instance.as_any().type_id()) {
             Some(inspector) => {
                 ui.collapsing(instance.type_name_short(), |ui| {
-                   inspector.show_inspector(ui, ctx, instance);
+                    inspector.show_inspector(ui, ctx, instance);
+                }).header_response.context_menu(|ui| {
+                    inspector.show_inspector_context(ui, ctx, instance);
                 });
                 ui.separator();
             },

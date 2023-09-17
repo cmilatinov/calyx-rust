@@ -17,6 +17,7 @@ pub trait TypeInspector {
     );
     fn show_inspector_context(
         &self,
+        _ui: &mut Ui,
         _ctx: &InspectorContext,
         _instance: &mut dyn Reflect
     ) {}
