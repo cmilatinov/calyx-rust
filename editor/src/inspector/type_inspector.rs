@@ -1,8 +1,6 @@
 use std::any::TypeId;
-use engine::egui::mutex::RwLockWriteGuard;
 use engine::egui::Ui;
 use engine::indextree::NodeId;
-use engine::legion::World;
 use engine::scene::Scene;
 use reflect::Reflect;
 use reflect::reflect_trait;
@@ -17,6 +15,11 @@ pub trait TypeInspector {
         ctx: &InspectorContext,
         instance: &mut dyn Reflect
     );
+    fn show_inspector_context(
+        &self,
+        _ctx: &InspectorContext,
+        _instance: &mut dyn Reflect
+    ) {}
 }
 
 pub struct InspectorContext<'a> {

@@ -2,16 +2,16 @@ mod camera;
 mod panel;
 mod inspector;
 mod project_manager;
+mod selection;
 
-use std::collections::HashSet;
+use selection::EditorSelection;
 use eframe::egui;
 use egui_dock::{DockArea, NodeIndex, Style, Tree};
+use egui_gizmo::GizmoMode;
 use engine::*;
 use engine::core::{OptionRef, Ref, Time};
 use engine::render::SceneRenderer;
 use engine::scene::Scene;
-use engine::indextree::{NodeId};
-use engine::uuid::Uuid;
 use utils::{Init, singleton};
 use crate::camera::EditorCamera;
 
@@ -25,7 +25,6 @@ pub struct EditorApp {
     pub scene_renderer: Ref<SceneRenderer>,
 }
 
-#[derive(Default)]
 pub struct EditorAppState {
     pub scene: Scene,
     pub camera: EditorCamera,
@@ -33,13 +32,21 @@ pub struct EditorAppState {
     pub selection: Option<EditorSelection>,
     pub viewport_width: f32,
     pub viewport_height: f32,
-    pub gizmo_mode: Option<egui_gizmo::GizmoMode>
+    pub gizmo_mode: GizmoMode
 }
 
-#[derive(Clone, PartialEq, Debug)]
-pub enum EditorSelection {
-    Entity(HashSet<NodeId>),
-    Asset(HashSet<Uuid>)
+impl Default for EditorAppState {
+    fn default() -> Self {
+        Self {
+            scene: Scene::default(),
+            camera: EditorCamera::default(),
+            scene_renderer: None,
+            selection: None,
+            viewport_width: 0.0,
+            viewport_height: 0.0,
+            gizmo_mode: GizmoMode::Translate
+        }
+    }
 }
 
 impl Init for EditorAppState {

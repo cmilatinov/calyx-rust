@@ -1,8 +1,8 @@
 use egui::Ui;
-use egui_gizmo::GizmoMode;
+use egui_gizmo::{GizmoMode, GizmoVisuals};
 
 use engine::*;
-use engine::egui::{Image, Margin, Sense};
+use engine::egui::{Color32, Image, Key, Margin, Sense};
 use engine::egui_dock::TabStyle;
 use engine::glm::Mat4;
 use engine::render::CameraLike;
@@ -13,6 +13,18 @@ use crate::panel::Panel;
 #[derive(Default)]
 pub struct PanelViewport;
 
+const GIZMO_VISUALS: GizmoVisuals = GizmoVisuals {
+    x_color: Color32::from_rgb(255, 0,  148),
+    y_color: Color32::from_rgb(148, 255, 0),
+    z_color: Color32::from_rgb(0, 148, 255),
+    s_color: Color32::from_rgb(255, 255, 255),
+    inactive_alpha: 0.5,
+    highlight_alpha: 1.0,
+    highlight_color: Some(Color32::from_rgb(255, 215, 0)),
+    stroke_width: 5.0,
+    gizmo_size: 75.0,
+};
+
 impl Panel for PanelViewport {
     fn name() -> &'static str {
         "Viewport"
@@ -22,7 +34,7 @@ impl Panel for PanelViewport {
         let mut app_state = EditorAppState::get_mut();
         self.action_bar(ui, &mut app_state);
         let res = self.viewport(ui, &mut app_state);
-        self.gizmo(ui, &app_state, &res.rect);
+        self.gizmo(ui, &mut app_state, &res.rect);
     }
 
     fn tab_style_override(&self, global_style: &TabStyle) -> Option<TabStyle> {
@@ -75,17 +87,34 @@ impl PanelViewport {
         res
     }
 
-    fn gizmo(&self, ui: &mut Ui, app_state: &EditorAppState, viewport: &egui::Rect) {
-        // app_state.scene
-
-        let gizmo = egui_gizmo::Gizmo::new("test")
-            .projection_matrix(app_state.camera.camera.projection)
-            .view_matrix(app_state.camera.transform.get_inverse_matrix())
-            .model_matrix(Mat4::identity())
-            .mode(app_state.gizmo_mode.unwrap_or(GizmoMode::Translate))
-            .viewport(*viewport);
-        if let Some(gizmo_response) = gizmo.interact(ui) {
-            // gizmo_response.transform()
+    fn gizmo(&self, ui: &mut Ui, app_state: &mut EditorAppState, viewport: &egui::Rect) {
+        if let Some(selection) = app_state.selection.clone() {
+            if let Some(node_id) = selection.first_entity() {
+                let transform = app_state.scene.get_world_transform(node_id);
+                let gizmo = egui_gizmo::Gizmo::new("test")
+                    .projection_matrix(app_state.camera.camera.projection)
+                    .view_matrix(app_state.camera.transform.get_inverse_matrix())
+                    .model_matrix(transform.matrix)
+                    .mode(app_state.gizmo_mode)
+                    .viewport(*viewport)
+                    .visuals(GIZMO_VISUALS);
+                if let Some(gizmo_response) = gizmo.interact(ui) {
+                    let transform = gizmo_response.transform();
+                    app_state.scene.set_world_transform(
+                        node_id,
+                        Mat4::from(transform.to_cols_array_2d())
+                    );
+                }
+            }
+        }
+        if ui.input(|input| input.key_pressed(Key::Q)) {
+            app_state.gizmo_mode = GizmoMode::Translate;
+        }
+        if ui.input(|input| input.key_pressed(Key::E)) {
+            app_state.gizmo_mode = GizmoMode::Rotate;
+        }
+        if ui.input(|input| input.key_pressed(Key::R)) {
+            app_state.gizmo_mode = GizmoMode::Scale;
         }
     }
 }

@@ -1,4 +1,4 @@
-use engine::egui::{DragValue, Ui, vec2};
+use engine::egui::{DragValue, Ui};
 use engine::glm::Vec3;
 
 pub struct Widgets;

@@ -15,15 +15,12 @@ macro_rules! impl_generic_int {
             fn as_u64(&self) -> u64 {
                 *self as u64
             }
-
             fn as_i64(&self) -> i64 {
                 *self as i64
             }
-
             fn set_from_u64(&mut self, value: u64) {
                 *self = value as $t;
             }
-
             fn set_from_i64(&mut self, value: i64) {
                 *self = value as $t;
             }

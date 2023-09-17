@@ -1,6 +1,6 @@
 use std::any::TypeId;
 use engine::component::ComponentTransform;
-use engine::egui::{Align, DragValue, Layout, Ui, vec2};
+use engine::egui::{Align, Layout, Ui};
 use engine::egui_extras;
 use engine::egui_extras::Column;
 use engine::math::Transform;

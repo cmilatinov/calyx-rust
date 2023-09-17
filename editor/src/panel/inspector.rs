@@ -5,7 +5,7 @@ use engine::egui::Ui;
 use reflect::{Reflect, ReflectDefault, TypeInfo};
 use reflect::type_registry::TypeRegistry;
 use utils::type_ids;
-use crate::{EditorAppState, EditorSelection};
+use crate::EditorAppState;
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 use crate::panel::Panel;
 use engine::egui_extras;
@@ -45,20 +45,18 @@ impl Panel for PanelInspector {
     }
 
     fn ui(&mut self, ui: &mut Ui) {
-        let mut app_state = EditorAppState::get_mut();
+        let app_state = EditorAppState::get();
         let registry = TypeRegistry::get();
-
         if let Some(selection) = app_state.selection.clone() {
-            if let EditorSelection::Entity(entities) = selection {
-                let node_id = entities.iter().next().unwrap();
+            if let Some(node) = selection.first_entity() {
                 let ctx = InspectorContext {
                     registry: &registry,
                     scene: &app_state.scene,
-                    node: *node_id,
-                    parent_node: app_state.scene.get_parent_node(*node_id)
+                    node,
+                    parent_node: app_state.scene.get_parent_node(node)
                 };
                 let mut world = app_state.scene.world_mut();
-                let mut entry = world.entry(app_state.scene.get_entity(*node_id)).unwrap();
+                let mut entry = world.entry(app_state.scene.get_entity(node)).unwrap();
                 for component in ClassRegistry::get().components().iter() {
                     if let Some(instance) = component.get_instance_mut(&mut entry) {
                         self.show_inspector(ui, &ctx, instance.as_reflect_mut());

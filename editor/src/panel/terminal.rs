@@ -4,14 +4,14 @@ use engine::egui;
 use crate::panel::Panel;
 
 pub struct PanelTerminal {
-    input: String,
+    // input: String,
     history: Vec<String>,
 }
 
 impl Default for PanelTerminal {
     fn default() -> Self {
         PanelTerminal {
-            input: String::new(),
+            // input: String::new(),
             history: Vec::new(),
         }
     }
