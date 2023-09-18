@@ -4,7 +4,7 @@ use std::ops::Deref;
 use std::path::{PathBuf};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::{fs, thread};
+use std::{thread};
 
 use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use notify::event::CreateKind;
@@ -14,40 +14,42 @@ use crate::assets::{Asset, AssetRef};
 use crate::core::Ref;
 use utils::{singleton_with_init};
 
+#[derive(Default)]
 pub struct AssetRegistry {
-    asset_paths: Vec<String>,
-    asset_cache: HashMap<String, Ref<dyn Asset>>,
+    asset_paths: Vec<PathBuf>,
+    asset_cache: HashMap<PathBuf, Ref<dyn Asset>>,
     watcher_thread: Option<JoinHandle<()>>,
 }
 
 singleton_with_init!(AssetRegistry);
 
 impl AssetRegistry {
-    pub fn root_path(&self) -> &str {
-        self.asset_paths[0].as_str()
+    pub fn root_path(&self) -> &PathBuf {
+        &self.asset_paths[0]
     }
 
-    pub fn filename<A: Asset>(&self, id: &str, instance: &A) -> String {
+    pub fn filename<A: Asset>(&self, id: impl Into<PathBuf> + Clone, instance: &A) -> PathBuf {
+        let id: PathBuf = id.into();
         let extensions = instance.get_file_extensions();
         for path in self.asset_paths.iter() {
             for ext in extensions.iter() {
-                let full_path = format!("{}/{}.{}", path, id, ext);
-                let meta = fs::metadata(full_path.as_str());
-                if let Ok(_) = meta {
-                    return full_path;
-                }
+                let mut new_path = path.clone();
+                new_path.push(id.clone());
+                new_path.set_extension(ext);
+                if new_path.exists() { return new_path }
             }
         }
-        String::from(id)
+        id
     }
 
-    pub fn add_assets_path(&mut self, path: String) {
+    pub fn add_assets_path(&mut self, path: PathBuf) {
         self.asset_paths.push(path);
     }
 
-    pub fn load<A: Asset + Default>(&mut self, id: &str) -> Result<Ref<A>, AssetError> {
+    pub fn load<A: Asset + Default>(&mut self, id: impl Into<PathBuf> + Clone) -> Result<Ref<A>, AssetError> {
+        let id: PathBuf = id.into();
         // Asset already loaded
-        if let Some(asset) = self.asset_cache.get(id) {
+        if let Some(asset) = self.asset_cache.get(&id) {
             if asset.read().unwrap().deref().type_id() == TypeId::of::<A>() {
                 return Ok(Ref::from_arc(unsafe {
                     Arc::from_raw(Arc::into_raw(asset.deref().clone()) as *const RwLock<A>)
@@ -57,42 +59,34 @@ impl AssetRegistry {
 
         // Load from file
         let mut instance = A::default();
-        let path = self.filename::<A>(id, &instance);
-        instance.load(path.as_str())?;
+        let path = self.filename::<A>(&id, &instance);
+        instance.load(path)?;
 
         // Create ref
         let asset = Ref::new(instance);
-        self.asset_cache.insert(String::from(id), asset.as_asset());
+        self.asset_cache.insert(id, asset.as_asset());
         Ok(asset)
     }
 
-    pub fn create<A: Asset>(&mut self, id: &str, value: A) -> Result<Ref<A>, AssetError> {
-        if self.asset_cache.contains_key(id) {
+    pub fn create<A: Asset>(&mut self, id: impl Into<PathBuf>, value: A) -> Result<Ref<A>, AssetError> {
+        let id: PathBuf = id.into();
+
+        if self.asset_cache.contains_key(&id) {
             return Err(AssetError::AssetAlreadyExists);
         }
         let asset = Ref::new(value);
-        self.asset_cache.insert(String::from(id), asset.as_asset());
+        self.asset_cache.insert(id, asset.as_asset());
         Ok(asset)
     }
 
-    pub fn assets(&self) -> &Vec<String> {
+    pub fn assets(&self) -> &Vec<PathBuf> {
         &self.asset_paths
-    }
-}
-
-impl Default for AssetRegistry {
-    fn default() -> Self {
-        Self {
-            asset_paths: Vec::new(),
-            asset_cache: HashMap::new(),
-            watcher_thread: None,
-        }
     }
 }
 
 impl AssetRegistry {
     pub fn set_root(&mut self, path: PathBuf) {
-        self.asset_paths = vec![String::from(path.to_str().unwrap()), String::from("assets")];
+        self.asset_paths = vec![path.clone(), "assets".into()];
 
         let watcher_thread = thread::spawn(move|| {
             let (tx, rx) = std::sync::mpsc::channel();
@@ -100,16 +94,14 @@ impl AssetRegistry {
             watcher
                 .watch(path.as_path(), RecursiveMode::Recursive)
                 .unwrap();
-            for res in rx {
-                if let Ok(event) = res {
-                    match event.kind {
-                        EventKind::Create(CreateKind::File) |
-                        EventKind::Modify(_)                |
-                        EventKind::Remove(_) => {
-                            println!("Rebuilding");
-                        }
-                        _ => {}
+            for event in rx.into_iter().flatten() {
+                match event.kind {
+                    EventKind::Create(CreateKind::File) |
+                    EventKind::Modify(_)                |
+                    EventKind::Remove(_) => {
+                        println!("Rebuilding");
                     }
+                    _ => {}
                 }
             }
         });

@@ -29,16 +29,13 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
     };
 
     let mut field_info = Vec::new();
-    match &fields {
-        Fields::Named(named) => {
-            for field in &named.named {
-                if let Some(ident) = &field.ident {
-                    let ty = &field.ty;
-                    field_info.push((ident, ty));
-                }
+    if let Fields::Named(named) = &fields {
+        for field in &named.named {
+            if let Some(ident) = &field.ident {
+                let ty = &field.ty;
+                field_info.push((ident, ty));
             }
         }
-        _ => {}
     }
 
     let add_field_calls = field_info.iter().map(|(ident, ty)| {

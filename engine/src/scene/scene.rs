@@ -48,7 +48,7 @@ impl Default for Scene {
             Some(cube),
         );
         scene
-            .bind_component(cube2, ComponentMesh { mesh: mesh.clone() })
+            .bind_component(cube2, ComponentMesh { mesh })
             .unwrap();
 
         {
@@ -158,7 +158,7 @@ impl Scene {
     }
 
     pub fn get_children_count(&self, node_id: NodeId) -> usize {
-        node_id.children(&self.entity_arena).into_iter().count()
+        node_id.children(&self.entity_arena).count()
     }
 
     pub fn set_world_transform(&self, node_id: NodeId, matrix: Mat4) {
@@ -167,7 +167,7 @@ impl Scene {
         });
         let mut world = self.world_mut();
         if let Some(mut entry) = world.entry(self.get_entity(node_id)) {
-            if let Some(tc) = entry.get_component_mut::<ComponentTransform>().ok() {
+            if let Ok(tc) = entry.get_component_mut::<ComponentTransform>() {
                 tc.transform.set_local_matrix(&(parent_transform * matrix));
             }
         }

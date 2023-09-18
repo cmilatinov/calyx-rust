@@ -98,7 +98,7 @@ impl Panel for PanelContentBrowser {
 impl Default for PanelContentBrowser {
     fn default() -> Self {
         PanelContentBrowser {
-            selected_folder: AssetRegistry::get().root_path().to_string(),
+            selected_folder: String::from(AssetRegistry::get().root_path().to_str().unwrap()),
         }
     }
 }

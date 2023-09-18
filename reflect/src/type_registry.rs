@@ -90,7 +90,7 @@ impl TypeRegistry {
     pub fn type_info_by_id(&self, id: TypeId) -> Option<&TypeInfo> {
         self.types
             .get(&id)
-            .and_then(|registration| Some(&registration.type_info))
+            .map(|registration| &registration.type_info)
     }
 
     pub fn type_registration<T: 'static>(&self) -> Option<&TypeRegistration> {

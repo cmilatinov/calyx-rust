@@ -1,5 +1,5 @@
 use std::cmp::min;
-use std::path::Path;
+use std::path::{PathBuf};
 
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
@@ -74,7 +74,7 @@ pub struct Mesh {
 impl Default for Mesh {
     fn default() -> Self {
         Self {
-            name: String::from(""),
+            name: String::new(),
             indices: Vec::new(),
             vertices: Vec::new(),
             normals: Vec::new(),
@@ -94,16 +94,15 @@ impl Asset for Mesh {
     fn get_file_extensions(&self) -> &'static [&'static str] {
         &["obj"]
     }
-
-    fn load(&mut self, path: &str) -> Result<(), AssetError> {
+    fn load(&mut self, path: PathBuf) -> Result<(), AssetError> {
         self.load(path)
     }
 }
 
 impl Mesh {
-    pub fn load(&mut self, path: &str) -> Result<(), AssetError> {
+    pub fn load(&mut self, path: PathBuf) -> Result<(), AssetError> {
         let scene = Scene::from_file(
-            path,
+            path.to_str().unwrap(),
             vec![
                 PostProcess::Triangulate,
                 PostProcess::GenerateSmoothNormals,
@@ -116,12 +115,7 @@ impl Mesh {
         let mesh = scene.meshes.get(0).ok_or(AssetError::NotFound)?;
 
         self.dirty = true;
-        self.name = Path::new(path)
-            .file_stem()
-            .unwrap()
-            .to_os_string()
-            .into_string()
-            .unwrap();
+        self.name = String::from(path.file_stem().unwrap().to_str().unwrap());
         self.indices = mesh
             .faces
             .iter()
@@ -173,13 +167,13 @@ impl Mesh {
         let vertex_count = self.vertices.len();
         let mut vertices: Vec<Vertex> = Vec::new();
         vertices.resize(vertex_count, Vertex::default());
-        for i in 0..vertex_count {
-            vertices[i].position = self.vertices[i].into();
-            vertices[i].normal = self.normals[i].into();
-            vertices[i].uv0 = self.uvs[0][i].into();
-            vertices[i].uv1 = self.uvs[1][i].into();
-            vertices[i].uv2 = self.uvs[2][i].into();
-            vertices[i].uv3 = self.uvs[3][i].into();
+        for (i, vertex) in vertices.iter_mut().enumerate().take(vertex_count) {
+            vertex.position = self.vertices[i].into();
+            vertex.normal = self.normals[i].into();
+            vertex.uv0 = self.uvs[0][i].into();
+            vertex.uv1 = self.uvs[1][i].into();
+            vertex.uv2 = self.uvs[2][i].into();
+            vertex.uv3 = self.uvs[3][i].into();
         }
         self.vertex_buffer = Some(device.create_buffer_init(&wgpu_buffer_init_desc(
             wgpu::BufferUsages::VERTEX,

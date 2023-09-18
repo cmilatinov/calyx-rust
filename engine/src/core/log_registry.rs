@@ -1,6 +1,7 @@
 use log::{Log, Metadata, Record};
 use utils::singleton_with_init;
 
+#[derive(Default)]
 pub struct LogRegistry {
     logs: Vec<String>,
 }
@@ -33,12 +34,6 @@ impl Log for Logger {
     }
 
     fn flush(&self) {}
-}
-
-impl Default for LogRegistry {
-    fn default() -> Self {
-        LogRegistry { logs: Vec::new() }
-    }
 }
 
 singleton_with_init!(LogRegistry);

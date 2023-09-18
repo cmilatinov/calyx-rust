@@ -180,9 +180,9 @@ impl GizmoRenderer {
         let device = &render_state.device;
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(name),
-            layout: Some(&layout),
+            layout: Some(layout),
             vertex: wgpu::VertexState {
-                module: &shader,
+                module: shader,
                 entry_point: "vs_main",
                 buffers: &[
                     mesh::Vertex::layout(wgpu::VertexStepMode::Vertex),
@@ -191,7 +191,7 @@ impl GizmoRenderer {
                 ],
             },
             fragment: Some(wgpu::FragmentState {
-                module: &shader,
+                module: shader,
                 entry_point: "fs_main",
                 targets: &[Some(RenderUtils::color_alpha_blending(render_state))],
             }),
@@ -262,7 +262,7 @@ impl GizmoRenderer {
     }
 
     pub fn render_gizmos<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
-        if self.wire_circle_mesh.instances.len() > 0 {
+        if !self.wire_circle_mesh.instances.is_empty() {
             render_pass.set_pipeline(&self.gizmo_pipeline_line_strip);
             render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
 
@@ -275,7 +275,7 @@ impl GizmoRenderer {
             );
         }
 
-        if self.wire_cube_mesh.instances.len() > 0 {
+        if !self.wire_cube_mesh.instances.is_empty() {
             render_pass.set_pipeline(&self.gizmo_pipeline_line_list);
             render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
 
@@ -288,7 +288,7 @@ impl GizmoRenderer {
             );
         }
 
-        if self.lines_mesh.vertices.len() > 0 {
+        if !self.lines_mesh.vertices.is_empty() {
             render_pass.set_pipeline(&self.gizmo_pipeline_line_list);
             render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
 
@@ -297,7 +297,7 @@ impl GizmoRenderer {
             render_pass.draw(0..(self.lines_mesh.vertices.len() as u32), 0..1);
         }
 
-        if self.points_mesh.vertices.len() > 0 {
+        if !self.points_mesh.vertices.is_empty() {
             render_pass.set_pipeline(&self.gizmo_pipeline_point_list);
             render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
 

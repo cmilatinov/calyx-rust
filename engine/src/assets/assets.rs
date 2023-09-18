@@ -10,29 +10,31 @@ pub struct Assets;
 impl Assets {
     pub fn screen_space_quad() -> OptionRef<Mesh> {
         let mut registry = AssetRegistry::get_mut();
-        if let Some(mesh) = registry.load::<Mesh>(SCREEN_SPACE_QUAD).ok() {
+        if let Ok(mesh) = registry.load::<Mesh>(SCREEN_SPACE_QUAD) {
             return Some(mesh);
         }
-        let mut quad = Mesh::default();
-        quad.indices = vec![0, 1, 2, 1, 0, 3];
-        quad.vertices = vec![
-            vec3(-1.0, -1.0, 0.0),
-            vec3(1.0, 1.0, 0.0),
-            vec3(-1.0, 1.0, 0.0),
-            vec3(1.0, -1.0, 0.0),
-        ];
-        quad.normals = vec![
-            vec3(0.0, 0.0, 1.0),
-            vec3(0.0, 0.0, 1.0),
-            vec3(0.0, 0.0, 1.0),
-            vec3(0.0, 0.0, 1.0),
-        ];
-        quad.uvs[0] = vec![
-            vec2(0.0, 0.0),
-            vec2(1.0, 1.0),
-            vec2(0.0, 1.0),
-            vec2(1.0, 0.0),
-        ];
+        let mut quad = Mesh {
+            indices: vec![0, 1, 2, 1, 0, 3],
+            vertices: vec![
+                vec3(-1.0, -1.0, 0.0),
+                vec3(1.0, 1.0, 0.0),
+                vec3(-1.0, 1.0, 0.0),
+                vec3(1.0, -1.0, 0.0),
+            ],
+            normals: vec![
+                vec3(0.0, 0.0, 1.0),
+                vec3(0.0, 0.0, 1.0),
+                vec3(0.0, 0.0, 1.0),
+                vec3(0.0, 0.0, 1.0),
+            ],
+            uvs: [vec![
+                vec2(0.0, 0.0),
+                vec2(1.0, 1.0),
+                vec2(0.0, 1.0),
+                vec2(1.0, 0.0),
+            ], vec![], vec![], vec![]],
+            .. Default::default()
+        };
 
         quad.mark_dirty();
         registry.create(SCREEN_SPACE_QUAD, quad).ok()
@@ -56,30 +58,32 @@ impl Assets {
     }
 
     pub fn wire_cube() -> Mesh {
-        let mut cube = Mesh::default();
-        cube.indices = vec![
-            0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7,
-        ];
-        cube.vertices = vec![
-            vec3(-0.5, -0.5, -0.5),
-            vec3(-0.5, 0.5, -0.5),
-            vec3(0.5, 0.5, -0.5),
-            vec3(0.5, -0.5, -0.5),
-            vec3(-0.5, -0.5, 0.5),
-            vec3(-0.5, 0.5, 0.5),
-            vec3(0.5, 0.5, 0.5),
-            vec3(0.5, -0.5, 0.5),
-        ];
-        cube.normals = vec![
-            vec3(0.0, 0.0, 0.0),
-            vec3(0.0, 0.0, 0.0),
-            vec3(0.0, 0.0, 0.0),
-            vec3(0.0, 0.0, 0.0),
-            vec3(0.0, 0.0, 0.0),
-            vec3(0.0, 0.0, 0.0),
-            vec3(0.0, 0.0, 0.0),
-            vec3(0.0, 0.0, 0.0),
-        ];
+        let mut cube = Mesh {
+            indices: vec![
+                0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7,
+            ],
+            vertices: vec![
+                vec3(-0.5, -0.5, -0.5),
+                vec3(-0.5, 0.5, -0.5),
+                vec3(0.5, 0.5, -0.5),
+                vec3(0.5, -0.5, -0.5),
+                vec3(-0.5, -0.5, 0.5),
+                vec3(-0.5, 0.5, 0.5),
+                vec3(0.5, 0.5, 0.5),
+                vec3(0.5, -0.5, 0.5),
+            ],
+            normals: vec![
+                vec3(0.0, 0.0, 0.0),
+                vec3(0.0, 0.0, 0.0),
+                vec3(0.0, 0.0, 0.0),
+                vec3(0.0, 0.0, 0.0),
+                vec3(0.0, 0.0, 0.0),
+                vec3(0.0, 0.0, 0.0),
+                vec3(0.0, 0.0, 0.0),
+                vec3(0.0, 0.0, 0.0),
+            ],
+            .. Default::default()
+        };
         cube.mark_dirty();
         cube
     }
