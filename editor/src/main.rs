@@ -34,23 +34,11 @@ fn main() -> eframe::Result<()> {
     AssetRegistry::init();
 
     {
-        AssetRegistry::get_mut().set_root(ProjectManager::get().current_project().assets_directory());
+        AssetRegistry::get_mut().set_root(ProjectManager::get().current_project().root_directory().clone());
     }
 
     TypeRegistry::init();
     ClassRegistry::init();
-
-    {
-        let pm = ProjectManager::get();
-        AssetRegistry::get_mut().add_assets_path(
-            pm.current_project()
-                .assets_directory()
-                .into_os_string()
-                .into_string()
-                .unwrap(),
-        );
-    }
-
     LogRegistry::init();
 
     log::set_boxed_logger(Box::new(Logger)).expect("Unable to setup logger");
