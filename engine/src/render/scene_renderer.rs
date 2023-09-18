@@ -69,7 +69,7 @@ impl SceneRenderer {
         let device = &render_state.device;
         let width = 1280;
         let height = 720;
-        let samples = 8;
+        let samples = 1; // TODO: figure out why GTX 970 isn't supporting anti-aliasing
 
         // Textures
         let (scene_texture, scene_texture_msaa, scene_depth_texture) =
