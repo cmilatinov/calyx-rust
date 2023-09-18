@@ -72,7 +72,7 @@ impl EditorApp {
                 PanelTerminal::name().to_owned(),
             ],
         );
-        cc.egui_ctx.set_pixels_per_point(1.5);
+        cc.egui_ctx.set_pixels_per_point(1.2);
         Self {
             fps: 0,
             tree,

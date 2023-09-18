@@ -1,17 +1,18 @@
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::ops::Deref;
-use std::path::Path;
+use std::path::{PathBuf};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::{fs, thread};
 
-use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::event::CreateKind;
 
 use crate::assets::error::AssetError;
 use crate::assets::{Asset, AssetRef};
 use crate::core::Ref;
-use utils::{singleton, Init};
+use utils::{singleton_with_init};
 
 pub struct AssetRegistry {
     asset_paths: Vec<String>,
@@ -19,7 +20,7 @@ pub struct AssetRegistry {
     watcher_thread: Option<JoinHandle<()>>,
 }
 
-singleton!(AssetRegistry);
+singleton_with_init!(AssetRegistry);
 
 impl AssetRegistry {
     pub fn root_path(&self) -> &str {
@@ -89,22 +90,29 @@ impl Default for AssetRegistry {
     }
 }
 
-impl Init for AssetRegistry {
-    fn initialize(&mut self) {
-        let watcher_thread = thread::spawn(|| {
+impl AssetRegistry {
+    pub fn set_root(&mut self, path: PathBuf) {
+        self.asset_paths = vec![String::from(path.to_str().unwrap()), String::from("assets")];
+
+        let watcher_thread = thread::spawn(move|| {
             let (tx, rx) = std::sync::mpsc::channel();
             let mut watcher = RecommendedWatcher::new(tx, Config::default()).unwrap();
             watcher
-                .watch(Path::new("assets"), RecursiveMode::Recursive)
+                .watch(path.as_path(), RecursiveMode::Recursive)
                 .unwrap();
             for res in rx {
-                match res {
-                    Ok(event) => println!("FS Event: {:?}", event),
-                    _ => {}
+                if let Ok(event) = res {
+                    match event.kind {
+                        EventKind::Create(CreateKind::File) |
+                        EventKind::Modify(_)                |
+                        EventKind::Remove(_) => {
+                            println!("Rebuilding");
+                        }
+                        _ => {}
+                    }
                 }
             }
         });
-        self.asset_paths = vec!["assets".to_string()];
         self.asset_cache = HashMap::new();
         self.watcher_thread = Some(watcher_thread);
     }

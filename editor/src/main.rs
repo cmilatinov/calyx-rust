@@ -32,6 +32,11 @@ fn main() -> eframe::Result<()> {
 
     Time::init();
     AssetRegistry::init();
+
+    {
+        AssetRegistry::get_mut().set_root(ProjectManager::get().current_project().assets_directory());
+    }
+
     TypeRegistry::init();
     ClassRegistry::init();
 

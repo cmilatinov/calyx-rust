@@ -33,6 +33,7 @@ impl Assets {
             vec2(0.0, 1.0),
             vec2(1.0, 0.0),
         ];
+
         quad.mark_dirty();
         registry.create(SCREEN_SPACE_QUAD, quad).ok()
     }
