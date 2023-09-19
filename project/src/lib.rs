@@ -24,7 +24,7 @@ impl Project {
         let mut tt = TinyTemplate::new();
         tt.add_template(
             "cargo template",
-            include_str!("../assets/cargo_template.txt"),
+            include_str!("../assets/cargo.template"),
         )
         .expect("Unable to extract cargo template.");
 

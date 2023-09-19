@@ -5,6 +5,7 @@ edition = "2021"
 
 [lib]
 path = "assets/lib.rs"
+crate-type = ["cdylib"]
 
 [dependencies]
 engine = \{ git = "https://github.com/cmilatinov/calyx-rust", package = "engine" }

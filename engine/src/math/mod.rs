@@ -1,4 +1,5 @@
 use glm::{vec3, Mat4, Vec3};
+use nalgebra::Rotation3;
 
 mod transform;
 pub use transform::*;
@@ -24,8 +25,8 @@ pub fn decompose_transform(
     let sy = glm::length(&vec3(matrix.m12, matrix.m22, matrix.m32));
     let sz = glm::length(&vec3(matrix.m13, matrix.m23, matrix.m33));
     *scale = vec3(sx, sy, sz);
-    let rotation_matrix = glm::mat4_to_mat3(matrix);
-    *rotation = glm::quat_euler_angles(&glm::mat3_to_quat(&rotation_matrix)).zyx();
+    let (x, y, z) = Rotation3::from_matrix(&glm::mat4_to_mat3(matrix)).euler_angles();
+    *rotation = vec3(x, y, z);
 }
 
 pub fn to_fov_x(aspect: f32, fov_y: f32) -> f32 {

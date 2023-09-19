@@ -11,6 +11,8 @@ pub extern crate nalgebra_glm as glm;
 pub extern crate russimp;
 pub extern crate serde;
 pub extern crate uuid;
+pub extern crate utils;
+pub extern crate reflect;
 
 pub mod assets;
 pub mod class_registry;
