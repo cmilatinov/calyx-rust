@@ -3,6 +3,7 @@ use reflect::Reflect;
 use serde::{Deserialize, Serialize};
 
 use super::{compose_transform, decompose_transform};
+use crate as engine;
 
 #[derive(Copy, Clone, Serialize, Deserialize, Reflect)]
 pub struct Transform {
