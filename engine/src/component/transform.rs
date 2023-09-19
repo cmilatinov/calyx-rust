@@ -7,7 +7,7 @@ use glm::vec3;
 use indextree::NodeId;
 use reflect::Reflect;
 use reflect::ReflectDefault;
-use utils::utils_derive::Component;
+use utils::Component;
 
 #[derive(Default, Component, Reflect)]
 #[reflect(Default, Component)]

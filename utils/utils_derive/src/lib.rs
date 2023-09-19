@@ -25,13 +25,13 @@ pub fn component_derive(input: TokenStream) -> TokenStream {
     let expanded = quote! {
         impl engine::component::TypeUUID for #name {
             fn type_uuid(&self) -> uuid::Uuid {
-                uuid::Uuid::parse_str(#type_uuid).unwrap()
+                engine::uuid::Uuid::parse_str(#type_uuid).unwrap()
             }
         }
 
         impl engine::component::ComponentInstance for #name {
             fn component_type_id(&self) -> legion::storage::ComponentTypeId {
-                legion::storage::ComponentTypeId::of::<#name>()
+                engine::legion::storage::ComponentTypeId::of::<#name>()
             }
             fn get_instance<'a>(
                 &self, entry: &'a legion::world::EntryRef

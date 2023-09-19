@@ -4,7 +4,7 @@ use crate::component::{Component, ReflectComponent};
 use crate::core::Ref;
 use reflect::Reflect;
 use reflect::ReflectDefault;
-use utils::utils_derive::Component;
+use utils::Component;
 
 #[derive(Default, Component, Reflect)]
 #[reflect(Default, Component)]
