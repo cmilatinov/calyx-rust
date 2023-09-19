@@ -24,23 +24,23 @@ pub fn component_derive(input: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         impl engine::component::TypeUUID for #name {
-            fn type_uuid(&self) -> uuid::Uuid {
+            fn type_uuid(&self) -> engine::uuid::Uuid {
                 engine::uuid::Uuid::parse_str(#type_uuid).unwrap()
             }
         }
 
         impl engine::component::ComponentInstance for #name {
-            fn component_type_id(&self) -> legion::storage::ComponentTypeId {
+            fn component_type_id(&self) -> engine::legion::storage::ComponentTypeId {
                 engine::legion::storage::ComponentTypeId::of::<#name>()
             }
             fn get_instance<'a>(
-                &self, entry: &'a legion::world::EntryRef
+                &self, entry: &'a engine::legion::world::EntryRef
             ) -> std::option::Option<&'a dyn engine::component::Component> {
                 let instance = entry.get_component::<#name>().ok()?;
                 Some(instance)
             }
             fn get_instance_mut<'a>(
-                &self, entry: &'a mut legion::world::Entry
+                &self, entry: &'a mut engine::legion::world::Entry
             ) -> std::option::Option<&'a mut dyn engine::component::Component> {
                 let instance = entry.get_component_mut::<#name>().ok()?;
                 Some(instance)
