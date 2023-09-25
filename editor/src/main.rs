@@ -14,6 +14,7 @@ use reflect::type_registry::TypeRegistry;
 use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
+use engine::background::Background;
 
 fn main() -> eframe::Result<()> {
     // LOAD PROJECT
@@ -27,10 +28,20 @@ fn main() -> eframe::Result<()> {
     // START ACTUAL EDITOR
     ProjectManager::init();
     ProjectManager::get_mut().load(PathBuf::from(&args[1]));
+    Background::get().thread_pool().execute(move || {
+        ProjectManager::get().clean_assemblies().await_complete();
+        ProjectManager::get_mut().build_assemblies().await_complete();
+        ProjectManager::get_mut().load_assemblies();
+    });
 
     Time::init();
     AssetRegistry::init();
-    AssetRegistry::get_mut().set_root(ProjectManager::get().current_project().root_directory().clone());
+    AssetRegistry::get_mut()
+        .set_root_path(
+            ProjectManager::get()
+                .current_project()
+                .assets_directory()
+        );
 
     TypeRegistry::init();
     ClassRegistry::init();

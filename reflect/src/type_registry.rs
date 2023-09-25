@@ -10,8 +10,8 @@ pub struct TypeRegistrationFn(pub fn(&mut TypeRegistry));
 collect!(TypeRegistrationFn);
 
 pub struct TypeRegistration {
-    trait_meta: HashMap<TypeId, Box<dyn TraitMeta>>,
-    type_info: TypeInfo,
+    pub trait_meta: HashMap<TypeId, Box<dyn TraitMeta>>,
+    pub type_info: TypeInfo,
 }
 
 #[derive(Default)]
@@ -59,7 +59,7 @@ impl TypeRegistry {
             TypeRegistration {
                 trait_meta: HashMap::new(),
                 type_info: TypeInfo::Struct(StructInfo {
-                    type_name: "",
+                    type_name: std::any::type_name::<T>(),
                     type_id,
                     fields: HashMap::new(),
                 }),

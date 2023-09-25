@@ -3,18 +3,10 @@ use egui::{ScrollArea, Ui};
 use engine::core::LogRegistry;
 use engine::egui;
 
+#[derive(Default)]
 pub struct PanelTerminal {
     // input: String,
     history: Vec<String>,
-}
-
-impl Default for PanelTerminal {
-    fn default() -> Self {
-        PanelTerminal {
-            // input: String::new(),
-            history: Vec::new(),
-        }
-    }
 }
 
 impl Panel for PanelTerminal {

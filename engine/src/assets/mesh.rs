@@ -1,5 +1,5 @@
 use std::cmp::min;
-use std::path::{PathBuf};
+use std::path::Path;
 
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
@@ -94,13 +94,13 @@ impl Asset for Mesh {
     fn get_file_extensions(&self) -> &'static [&'static str] {
         &["obj"]
     }
-    fn load(&mut self, path: PathBuf) -> Result<(), AssetError> {
+    fn load(&mut self, path: &Path) -> Result<(), AssetError> {
         self.load(path)
     }
 }
 
 impl Mesh {
-    pub fn load(&mut self, path: PathBuf) -> Result<(), AssetError> {
+    pub fn load(&mut self, path: &Path) -> Result<(), AssetError> {
         let scene = Scene::from_file(
             path.to_str().unwrap(),
             vec![

@@ -85,7 +85,7 @@ impl PanelSceneHierarchy {
             false
         };
 
-        if children.len() > 0 {
+        if !children.is_empty() {
             let collapsing_id = ui.make_persistent_id(node_id);
             egui::collapsing_header::CollapsingState::load_with_default_open(
                 ui.ctx(),

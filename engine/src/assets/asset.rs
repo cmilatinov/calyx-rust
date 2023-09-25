@@ -1,7 +1,7 @@
 use reflect::{impl_reflect_value, reflect_trait};
 use std::any::{Any, TypeId};
 use std::ops::Deref;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 use crate::assets::error::AssetError;
@@ -13,7 +13,7 @@ pub trait Asset: Any + Send + Sync {
         &[""]
     }
 
-    fn load(&mut self, path: PathBuf) -> Result<(), AssetError>;
+    fn load(&mut self, path: &Path) -> Result<(), AssetError>;
 }
 
 #[reflect_trait]

@@ -2,23 +2,29 @@ mod camera;
 mod inspector;
 mod panel;
 mod project_manager;
+mod task_id;
 mod selection;
 
 use crate::camera::EditorCamera;
 use eframe::egui;
 use egui_dock::{DockArea, NodeIndex, Style, Tree};
 use egui_gizmo::GizmoMode;
+use num_traits::FromPrimitive;
 use engine::core::{OptionRef, Ref, Time};
 use engine::render::SceneRenderer;
 use engine::scene::Scene;
 use engine::*;
+use engine::background::Background;
+use engine::egui::{Align, Layout};
 use selection::EditorSelection;
-use utils::{singleton, Init};
+use utils::{Init, singleton};
+use crate::task_id::TaskId;
 
 use self::panel::*;
 pub use self::project_manager::*;
 
 pub struct EditorApp {
+    count: i32,
     fps: i32,
     tree: Tree<String>,
     panel_manager: PanelManager,
@@ -74,6 +80,7 @@ impl EditorApp {
         );
         cc.egui_ctx.set_pixels_per_point(1.25);
         Self {
+            count: 0,
             fps: 0,
             tree,
             panel_manager: PanelManager::default(),
@@ -110,16 +117,24 @@ impl eframe::App for EditorApp {
             );
         }
 
+        self.menu_bar(ctx);
+
         DockArea::new(&mut self.tree)
             .style(Style::from_egui(ctx.style().as_ref()))
             .show_close_buttons(false)
             .show(ctx, &mut self.panel_manager);
+
+        self.status_bar(ctx);
 
         self.fps += 1;
         if Time::timer("fps") >= 1.0 {
             println!("{} fps", self.fps);
             self.fps = 0;
             Time::reset_timer("fps");
+        }
+        if Time::timer("count") >= 0.5 {
+            self.count = (self.count + 1) % 3;
+            Time::reset_timer("count");
         }
 
         ctx.request_repaint();
@@ -138,5 +153,51 @@ impl EditorApp {
         let width = window_size.x * viewport_width * pixels_per_point;
         let height = window_size.y * viewport_height * pixels_per_point;
         (width as u32, height as u32)
+    }
+}
+
+impl EditorApp {
+    fn menu_bar(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
+            egui::menu::bar(ui, |ui| {
+                ui.menu_button("File", |ui| {
+                    if ui.button("New").clicked() {}
+                    if ui.button("Open").clicked() {}
+                    if ui.button("Save").clicked() {}
+                    if ui.button("Save As").clicked() {}
+                });
+                ui.menu_button("Build", |ui| {
+                    if ui.button("Clean").clicked() {}
+                    if ui.button("Build").clicked() {}
+                    if ui.button("Rebuild").clicked() {}
+                });
+            });
+        });
+    }
+
+    fn status_bar(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
+            egui::menu::bar(ui, |ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let background = Background::get();
+                    let task_list = background.task_list();
+                    if !task_list.is_empty() {
+                        ui.add(egui::Spinner::new().size(15.0));
+                    }
+                    match task_list.len() {
+                        0 => {},
+                        1 => {
+                            let id = task_list.iter().next().unwrap();
+                            if let Some(task_id) = TaskId::from_isize(*id) {
+                                ui.label(task_id.message());
+                            }
+                        }
+                        len => {
+                            ui.label(format!("{} tasks", len));
+                        }
+                    }
+                });
+            });
+        });
     }
 }
