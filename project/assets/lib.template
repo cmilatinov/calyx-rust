@@ -1,0 +1,6 @@
+#[no_mangle]
+pub extern "C" fn plugin_main(registry: &mut TypeRegistry) {
+    for f in engine::inventory::iter::<TypeRegistrationFn>() {
+        (f.0)(registry);
+    }
+}
