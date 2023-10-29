@@ -1,8 +1,9 @@
 use glm::{vec3, Mat4, Vec3};
 use nalgebra::Rotation3;
 
-mod transform;
 pub use transform::*;
+
+mod transform;
 
 pub fn compose_transform(translation: &Vec3, rotation: &Vec3, scale: &Vec3) -> Mat4 {
     let mut matrix = glm::identity();

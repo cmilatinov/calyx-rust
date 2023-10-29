@@ -1,5 +1,6 @@
-use crate::math;
 use glm::Mat4;
+
+use crate::math;
 
 pub struct Camera {
     pub projection: Mat4,

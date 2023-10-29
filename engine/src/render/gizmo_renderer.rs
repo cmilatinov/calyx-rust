@@ -1,3 +1,13 @@
+use std::default::Default;
+use std::num::NonZeroU64;
+use std::ops::Deref;
+
+use egui_wgpu::wgpu;
+use egui_wgpu::wgpu::util::DeviceExt;
+use egui_wgpu::wgpu::BufferUsages;
+use glm::{vec4, Mat4, Vec4};
+use legion::{Entity, EntityStore, IntoQuery};
+
 use crate::assets::mesh::Mesh;
 use crate::assets::{mesh, Assets};
 use crate::class_registry::ClassRegistry;
@@ -7,14 +17,6 @@ use crate::render::gizmos::Gizmos;
 use crate::render::render_utils::RenderUtils;
 use crate::render::CameraUniform;
 use crate::scene::Scene;
-use egui_wgpu::wgpu;
-use egui_wgpu::wgpu::util::DeviceExt;
-use egui_wgpu::wgpu::BufferUsages;
-use glm::{vec4, Mat4, Vec4};
-use legion::{Entity, EntityStore, IntoQuery};
-use std::default::Default;
-use std::num::NonZeroU64;
-use std::ops::Deref;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -193,7 +195,9 @@ impl GizmoRenderer {
             fragment: Some(wgpu::FragmentState {
                 module: shader,
                 entry_point: "fs_main",
-                targets: &[Some(RenderUtils::color_alpha_blending(render_state))],
+                targets: &[Some(RenderUtils::color_alpha_blending(
+                    render_state.target_format,
+                ))],
             }),
             primitive: RenderUtils::primitive_default(topology),
             depth_stencil: Some(RenderUtils::depth_default()),

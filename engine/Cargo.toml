@@ -4,27 +4,27 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bytemuck = "1.13.1"
-eframe = { version = "0.22.0", features = ["wgpu"] }
-egui = "0.22.0"
-egui-wgpu = "0.22.0"
-egui_dock = "0.6.3"
-enum-map = "2.5.0"
+bytemuck = "1.14.0"
+eframe = { version = "0.23.0", features = ["wgpu"] }
+egui = "0.23.0"
+egui-wgpu = "0.23.0"
+egui_dock = "0.8.1"
+enum-map = "2.7.0"
 lazy_static = "1.4.0"
-log = "0.4.19"
-serde = "1.0.164"
-uuid = { version = "1.4.0", features = ["v4", "serde"] }
+log = "0.4.20"
+serde = "1.0.189"
+uuid = { version = "1.5.0", features = ["v4", "serde"] }
 nalgebra-glm = { version = "0.18.0", features = ["serde-serialize"] }
 indextree = "4.6.0"
 reflect = { path = "../reflect" }
-russimp = "2.0.5"
-notify = "6.0.1"
-inventory = "0.3.6"
-sha-1 = "0.9"
+russimp = "2.0.6"
+notify = "6.1.1"
+inventory = "0.3.12"
+sha-1 = "0.10.1"
 utils = { path = "../utils" }
 impls = "1.0.3"
 legion = "0.4.0"
-egui_extras = "0.22.0"
+egui_extras = { version = "0.23.0", features = ["all_loaders"] }
 wgsl_preprocessor = "1.1.3"
 nalgebra = "0.32.3"
 serde_json = "1.0.107"

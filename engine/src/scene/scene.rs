@@ -1,17 +1,18 @@
+use std::collections::HashMap;
+
 use egui::mutex::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use glm::Mat4;
 use indextree::{Arena, Children, NodeId};
 use legion::{Entity, EntityStore, World};
-use std::collections::HashMap;
 use uuid::Uuid;
-
-use super::error::SceneError;
 
 use crate::assets::mesh::Mesh;
 use crate::assets::AssetRegistry;
 use crate::component::ComponentTransform;
 use crate::component::{ComponentID, ComponentMesh};
 use crate::math::Transform;
+
+use super::error::SceneError;
 
 pub struct Scene {
     pub world: RwLock<World>,
@@ -47,9 +48,7 @@ impl Default for Scene {
             }),
             Some(cube),
         );
-        scene
-            .bind_component(cube2, ComponentMesh { mesh })
-            .unwrap();
+        scene.bind_component(cube2, ComponentMesh { mesh }).unwrap();
 
         {
             let mut world = scene.world_mut();

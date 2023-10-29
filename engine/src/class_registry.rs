@@ -1,7 +1,8 @@
-use crate::component::{Component, ReflectComponent};
 use reflect::type_registry::TypeRegistry;
 use reflect::ReflectDefault;
 use utils::{singleton, type_ids, Init};
+
+use crate::component::{Component, ReflectComponent};
 
 #[derive(Default)]
 pub struct ClassRegistry {

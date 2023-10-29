@@ -1,5 +1,6 @@
-use crate as reflect;
 use reflect_derive::reflect_trait;
+
+use crate as reflect;
 
 #[reflect_trait]
 pub trait GenericInt {

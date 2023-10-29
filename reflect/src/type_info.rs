@@ -1,6 +1,7 @@
-use crate::reflect::Reflect;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
+
+use crate::reflect::Reflect;
 
 pub type FieldGetter = fn(&dyn Any) -> Option<&dyn Reflect>;
 pub type FieldGetterMut = fn(&mut dyn Any) -> Option<&mut dyn Reflect>;

@@ -1,5 +1,5 @@
-use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
-use crate::inspector::widgets::Widgets;
+use std::any::TypeId;
+
 use engine::component::ComponentTransform;
 use engine::egui::{Align, Layout, Ui};
 use engine::egui_extras;
@@ -7,8 +7,10 @@ use engine::egui_extras::Column;
 use engine::math::Transform;
 use reflect::Reflect;
 use reflect::ReflectDefault;
-use std::any::TypeId;
 use utils::type_ids;
+
+use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
+use crate::inspector::widgets::Widgets;
 
 #[derive(Default, Reflect)]
 #[reflect(Default, TypeInspector)]
@@ -82,6 +84,7 @@ impl TypeInspector for TransformInspector {
                 t_comp
                     .transform
                     .set_local_matrix(&parent_transform.inverse_matrix);
+                ui.close_menu()
             }
         }
     }

@@ -1,4 +1,5 @@
 use log::{Log, Metadata, Record};
+
 use utils::singleton_with_init;
 
 #[derive(Default)]
@@ -13,6 +14,7 @@ impl LogRegistry {
 }
 
 pub struct Logger;
+
 impl Log for Logger {
     fn enabled(&self, metadata: &Metadata) -> bool {
         if metadata.target().starts_with("wgpu")

@@ -1,7 +1,9 @@
-use crate::panel::Panel;
 use egui::{ScrollArea, Ui};
+
 use engine::core::LogRegistry;
 use engine::egui;
+
+use crate::panel::Panel;
 
 #[derive(Default)]
 pub struct PanelTerminal {

@@ -4,20 +4,19 @@ use std::default::Default;
 use std::ops::Deref;
 use std::sync::{RwLock, RwLockWriteGuard};
 
-use crate::assets::mesh::Mesh;
-use crate::assets::{mesh, Assets};
-use crate::component::ComponentMesh;
-use crate::component::ComponentTransform;
-use crate::math::Transform;
-use crate::render::buffer::BufferLayout;
-use egui_wgpu::wgpu::include_wgsl;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::{wgpu, RenderState};
 use glm::{vec4, Mat4, Vec4};
 use legion::{Entity, IntoQuery};
 
+use crate::assets::mesh::Mesh;
+use crate::assets::{AssetRegistry, Assets};
+use crate::component::ComponentMesh;
+use crate::component::ComponentTransform;
+use crate::core::Ref;
+use crate::math::Transform;
 use crate::render::render_utils::RenderUtils;
-use crate::render::{Camera, GizmoRenderer};
+use crate::render::{Camera, GizmoRenderer, Shader};
 use crate::scene::Scene;
 
 #[repr(C)]
@@ -56,8 +55,8 @@ pub struct SceneRenderer {
     scene_texture_view_msaa: wgpu::TextureView,
     scene_depth_texture_view: wgpu::TextureView,
     scene_bind_group: wgpu::BindGroup,
-    scene_pipeline: wgpu::RenderPipeline,
-    grid_pipeline: wgpu::RenderPipeline,
+    scene_shader: Ref<Shader>,
+    grid_shader: Ref<Shader>,
     camera_uniform_buffer: wgpu::Buffer,
     gizmo_renderer: GizmoRenderer,
     clear_color: Vec4,
@@ -88,10 +87,13 @@ impl SceneRenderer {
             egui::TextureHandle::new(cc.egui_ctx.tex_manager(), scene_texture_id);
 
         // Shaders
-        let scene_shader =
-            device.create_shader_module(include_wgsl!("../../../assets/shaders/basic.wgsl"));
-        let grid_shader =
-            device.create_shader_module(include_wgsl!("../../../assets/shaders/grid.wgsl"));
+        let scene_shader;
+        let grid_shader;
+        {
+            let mut registry = AssetRegistry::get_mut();
+            scene_shader = registry.load::<Shader>("shaders/basic").unwrap();
+            grid_shader = registry.load::<Shader>("shaders/grid").unwrap();
+        }
 
         let camera_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("camera_uniform_buffer"),
@@ -99,77 +101,18 @@ impl SceneRenderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let scene_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("scene_bind_group_layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-
         let scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("scene_bind_group"),
-            layout: &scene_bind_group_layout,
+            layout: &scene_shader.read().unwrap().bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: camera_uniform_buffer.as_entire_binding(),
             }],
         });
 
-        let scene_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("scene_pipeline_layout"),
-                bind_group_layouts: &[&scene_bind_group_layout],
-                push_constant_ranges: &[],
-            });
-
-        let scene_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("scene_pipeline"),
-            layout: Some(&scene_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &scene_shader,
-                entry_point: "vs_main",
-                buffers: &[
-                    mesh::Vertex::layout(wgpu::VertexStepMode::Vertex),
-                    mesh::Instance::layout(wgpu::VertexStepMode::Instance),
-                ],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &scene_shader,
-                entry_point: "fs_main",
-                targets: &[Some(RenderUtils::color_default(render_state))],
-            }),
-            primitive: RenderUtils::primitive_default(wgpu::PrimitiveTopology::TriangleList),
-            depth_stencil: Some(RenderUtils::depth_default()),
-            multisample: RenderUtils::multisample_default(samples),
-            multiview: None,
-        });
-
-        let grid_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("grid_pipeline"),
-            layout: Some(&scene_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &grid_shader,
-                entry_point: "vs_main",
-                buffers: &[mesh::Vertex::layout(wgpu::VertexStepMode::Vertex)],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &grid_shader,
-                entry_point: "fs_main",
-                targets: &[Some(RenderUtils::color_alpha_blending(render_state))],
-            }),
-            primitive: RenderUtils::primitive_default(wgpu::PrimitiveTopology::TriangleList),
-            depth_stencil: Some(RenderUtils::depth_default()),
-            multisample: RenderUtils::multisample_default(samples),
-            multiview: None,
-        });
+        grid_shader.write().unwrap().set_fragment_targets(&[Some(
+            RenderUtils::color_alpha_blending(render_state.target_format),
+        )]);
 
         let gizmo_renderer = GizmoRenderer::new(cc, &camera_uniform_buffer, samples);
 
@@ -181,9 +124,9 @@ impl SceneRenderer {
             scene_texture_handle,
             scene_depth_texture,
             scene_depth_texture_view,
-            scene_pipeline,
             scene_bind_group,
-            grid_pipeline,
+            scene_shader,
+            grid_shader,
             camera_uniform_buffer,
             gizmo_renderer,
             clear_color: vec4(0.03, 0.03, 0.03, 1.0),
@@ -209,6 +152,8 @@ impl SceneRenderer {
             let mut mesh_list: Vec<RwLockWriteGuard<Mesh>> = Vec::new();
             let quad_binding = Assets::screen_space_quad().unwrap();
             let mut quad_mesh = quad_binding.write().unwrap();
+            let scene_shader = self.scene_shader.read().unwrap();
+            let grid_shader = self.grid_shader.read().unwrap();
             {
                 let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("Viewport Scene"),
@@ -247,7 +192,7 @@ impl SceneRenderer {
                 mesh_list = mesh_map.iter().map(|i| i.1.write().unwrap()).collect();
 
                 // Render scene meshes
-                render_pass.set_pipeline(&self.scene_pipeline);
+                render_pass.set_pipeline(&scene_shader.pipeline);
                 render_pass.set_bind_group(0, &self.scene_bind_group, &[]);
                 for mesh in mesh_list.iter_mut() {
                     RenderUtils::render_mesh(device, queue, &mut render_pass, mesh.borrow_mut());
@@ -257,7 +202,7 @@ impl SceneRenderer {
                 self.gizmo_renderer.render_gizmos(&mut render_pass);
 
                 // Render grid
-                render_pass.set_pipeline(&self.grid_pipeline);
+                render_pass.set_pipeline(&grid_shader.pipeline);
                 render_pass.set_bind_group(0, &self.scene_bind_group, &[]);
                 RenderUtils::render_mesh_instanced(
                     device,

@@ -1,9 +1,11 @@
-use crate::fq::{FQBox, FQClone, FQOption, FQReflect, FQResult, FQTraitMeta, FQTraitMetaFrom};
 use proc_macro::TokenStream;
+
 use proc_macro2::{Ident, Span};
 use quote::quote;
 use syn::parse::Parse;
 use syn::{parse_macro_input, Attribute, ItemTrait, Token};
+
+use crate::fq::{FQBox, FQClone, FQOption, FQReflect, FQResult, FQTraitMeta, FQTraitMetaFrom};
 
 #[derive(Debug)]
 pub(crate) struct TraitInfo {

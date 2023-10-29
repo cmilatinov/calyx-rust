@@ -1,10 +1,12 @@
-use crate::fq::{FQAny, FQBox, FQReflect, FQReflectedType};
 use proc_macro::TokenStream;
+
 use proc_macro2::{Ident, Span};
 use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{DeriveInput, Fields, Path, Token};
+
+use crate::fq::{FQAny, FQBox, FQReflect, FQReflectedType};
 
 struct ReflectAttribute {
     traits: Punctuated<Path, Token![,]>,

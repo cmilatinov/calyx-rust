@@ -1,19 +1,22 @@
 use std::io::{BufRead, BufReader};
-use project::Project;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+
 use sharedlib::{Func, Lib, Symbol};
+
 use engine::background::Background;
 use engine::rusty_pool::JoinHandle;
+use project::Project;
 use reflect::type_registry::TypeRegistry;
 use reflect::TypeInfo;
 use utils::singleton_with_init;
+
 use crate::task_id::TaskId;
 
 #[derive(Default)]
 pub struct ProjectManager {
     current_project: Option<Project>,
-    assembly: Option<Lib>
+    assembly: Option<Lib>,
 }
 
 impl ProjectManager {
@@ -33,7 +36,11 @@ impl ProjectManager {
     }
 
     fn root_project_dir(&self) -> PathBuf {
-        self.current_project.as_ref().unwrap().root_directory().clone()
+        self.current_project
+            .as_ref()
+            .unwrap()
+            .root_directory()
+            .clone()
     }
 
     pub fn build_assemblies(&mut self) -> JoinHandle<()> {
@@ -64,7 +71,7 @@ impl ProjectManager {
         Background::get_mut().execute(TaskId::Clean, move || {
             let mut child = Command::new("cargo")
                 .current_dir(root)
-                .args(&["clean", "-p", name.as_str()])
+                .args(["clean", "-p", name.as_str()])
                 .stdout(Stdio::piped())
                 .spawn()
                 .unwrap();
@@ -89,7 +96,8 @@ impl ProjectManager {
         println!("{:?}", root);
         unsafe {
             let lib = Lib::new(root).unwrap();
-            let load_fn: Func<extern "C" fn(&mut TypeRegistry)> = lib.find_func("plugin_main").unwrap();
+            let load_fn: Func<extern "C" fn(&mut TypeRegistry)> =
+                lib.find_func("plugin_main").unwrap();
             let mut registry = TypeRegistry::get_mut();
             load_fn.get()(&mut registry);
             self.assembly = Some(lib);

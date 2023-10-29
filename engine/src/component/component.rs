@@ -1,9 +1,11 @@
-use crate::render::Gizmos;
-use crate::scene::Scene;
 use indextree::NodeId;
 use legion::storage::ComponentTypeId;
 use legion::world::{Entry, EntryRef};
+
 use reflect::{reflect_trait, Reflect};
+
+use crate::render::Gizmos;
+use crate::scene::Scene;
 
 pub trait TypeUUID {
     fn type_uuid(&self) -> uuid::Uuid;
@@ -26,8 +28,9 @@ pub trait Component: TypeUUID + Reflect + ComponentInstance {
 #[cfg(test)]
 mod tests {
     use sha1::{Digest, Sha1};
-    use utils::utils_derive::Component;
     use uuid::Uuid;
+
+    use utils::utils_derive::Component;
 
     #[test]
     pub fn create_component() {

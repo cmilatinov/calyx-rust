@@ -1,7 +1,8 @@
+use glm::{vec2, vec3};
+
 use crate::assets::mesh::Mesh;
 use crate::assets::AssetRegistry;
 use crate::core::OptionRef;
-use glm::{vec2, vec3};
 
 const SCREEN_SPACE_QUAD: &str = "screen_space_quad";
 
@@ -27,13 +28,18 @@ impl Assets {
                 vec3(0.0, 0.0, 1.0),
                 vec3(0.0, 0.0, 1.0),
             ],
-            uvs: [vec![
-                vec2(0.0, 0.0),
-                vec2(1.0, 1.0),
-                vec2(0.0, 1.0),
-                vec2(1.0, 0.0),
-            ], vec![], vec![], vec![]],
-            .. Default::default()
+            uvs: [
+                vec![
+                    vec2(0.0, 0.0),
+                    vec2(1.0, 1.0),
+                    vec2(0.0, 1.0),
+                    vec2(1.0, 0.0),
+                ],
+                vec![],
+                vec![],
+                vec![],
+            ],
+            ..Default::default()
         };
 
         quad.mark_dirty();
@@ -82,7 +88,7 @@ impl Assets {
                 vec3(0.0, 0.0, 0.0),
                 vec3(0.0, 0.0, 0.0),
             ],
-            .. Default::default()
+            ..Default::default()
         };
         cube.mark_dirty();
         cube

@@ -1,11 +1,13 @@
-use crate::fq::{FQAny, FQBox, FQReflect, FQReflectedType};
 use proc_macro::TokenStream;
+
 use proc_macro2::Span;
 use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::token::Comma;
 use syn::{parenthesized, parse_macro_input, Ident, Path, Token, Type};
+
+use crate::fq::{FQAny, FQBox, FQReflect, FQReflectedType};
 
 struct ReflectValueDef {
     type_name: Type,

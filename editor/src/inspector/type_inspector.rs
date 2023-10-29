@@ -1,9 +1,8 @@
 use engine::egui::Ui;
 use engine::indextree::NodeId;
 use engine::scene::Scene;
-use reflect::reflect_trait;
 use reflect::type_registry::TypeRegistry;
-use reflect::Reflect;
+use reflect::{reflect_trait, Reflect};
 use std::any::TypeId;
 
 #[reflect_trait]

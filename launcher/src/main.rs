@@ -1,5 +1,6 @@
-mod app;
 use app::LauncherApp;
+
+mod app;
 
 fn main() {
     let native_options = eframe::NativeOptions {

@@ -1,7 +1,9 @@
-use crate::assets::mesh::Mesh;
+use std::ops::Range;
+
 use egui_wgpu::wgpu;
 use glm::Vec4;
-use std::ops::Range;
+
+use crate::assets::mesh::Mesh;
 
 pub struct RenderUtils;
 
@@ -39,9 +41,9 @@ impl RenderUtils {
         }
     }
 
-    pub fn color_alpha_blending(render_state: &egui_wgpu::RenderState) -> wgpu::ColorTargetState {
+    pub fn color_alpha_blending(format: wgpu::TextureFormat) -> wgpu::ColorTargetState {
         wgpu::ColorTargetState {
-            format: render_state.target_format,
+            format,
             blend: Some(wgpu::BlendState {
                 color: wgpu::BlendComponent {
                     src_factor: wgpu::BlendFactor::SrcAlpha,
@@ -54,8 +56,8 @@ impl RenderUtils {
         }
     }
 
-    pub fn color_default(render_state: &egui_wgpu::RenderState) -> wgpu::ColorTargetState {
-        render_state.target_format.into()
+    pub fn color_default(texture_format: wgpu::TextureFormat) -> wgpu::ColorTargetState {
+        texture_format.into()
     }
 
     pub fn primitive_default(topology: wgpu::PrimitiveTopology) -> wgpu::PrimitiveState {

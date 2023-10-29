@@ -1,10 +1,13 @@
+use std::any::TypeId;
+use std::collections::HashMap;
+
+use inventory::collect;
+
+use utils::{singleton, Init};
+
 use crate::trait_meta::TraitMeta;
 use crate::type_info::{FieldGetter, FieldSetter, NamedField, StructInfo, TypeInfo};
 use crate::{FieldGetterMut, Reflect, ReflectedType, TraitMetaFrom};
-use inventory::collect;
-use std::any::TypeId;
-use std::collections::HashMap;
-use utils::{singleton, Init};
 
 pub struct TypeRegistrationFn(pub fn(&mut TypeRegistry));
 collect!(TypeRegistrationFn);

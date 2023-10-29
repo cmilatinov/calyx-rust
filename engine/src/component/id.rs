@@ -1,9 +1,11 @@
-use crate as engine;
-use crate::component::{Component, ReflectComponent};
+use uuid::Uuid;
+
 use reflect::Reflect;
 use reflect::ReflectDefault;
 use utils::Component;
-use uuid::Uuid;
+
+use crate as engine;
+use crate::component::{Component, ReflectComponent};
 
 #[derive(Component, Reflect)]
 #[reflect(Default, Component)]

@@ -1,9 +1,3 @@
-mod impls;
-mod reflect;
-mod trait_meta;
-mod type_info;
-pub mod type_registry;
-
 extern crate inventory;
 extern crate reflect_derive;
 
@@ -13,13 +7,20 @@ pub use self::reflect_derive::*;
 pub use self::trait_meta::*;
 pub use self::type_info::*;
 
+mod impls;
+mod reflect;
+mod trait_meta;
+mod type_info;
+pub mod type_registry;
+
 #[cfg(test)]
 mod tests {
-    use crate as reflect;
     use reflect::reflect_trait;
     use reflect::type_registry::TypeRegistry;
     use reflect::Reflect;
     use reflect::TypeInfo;
+
+    use crate as reflect;
 
     #[test]
     fn test_reflection() {

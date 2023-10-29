@@ -1,13 +1,15 @@
-use dirs::config_dir;
-use egui::text::LayoutJob;
-use egui::TextFormat;
-use egui_modal::Modal;
-use project::Project;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::Command;
 use std::vec::Vec;
+
+use dirs::config_dir;
+use egui::text::LayoutJob;
+use egui::TextFormat;
+use egui_modal::Modal;
+
+use project::Project;
 
 #[derive(Default, Debug)]
 pub struct NewProjectForm {
@@ -24,7 +26,7 @@ pub struct LauncherApp {
 
 impl LauncherApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        cc.egui_ctx.set_pixels_per_point(1.2);
+        cc.egui_ctx.set_pixels_per_point(1.25);
         let mut app = LauncherApp::default();
         app.load_projects();
         app.save_projects();

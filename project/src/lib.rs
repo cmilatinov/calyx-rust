@@ -1,9 +1,10 @@
-use chrono::Utc;
-use serde::{Deserialize, Serialize};
 use std::fs;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use tinytemplate::TinyTemplate;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -22,11 +23,8 @@ impl Project {
     pub fn generate(name: String, folder: Option<String>) -> Self {
         // Check first that the template exists so the function fails before creating any folders
         let mut tt = TinyTemplate::new();
-        tt.add_template(
-            "cargo template",
-            include_str!("../assets/cargo.template"),
-        )
-        .expect("Unable to extract cargo template.");
+        tt.add_template("cargo template", include_str!("../assets/cargo.template"))
+            .expect("Unable to extract cargo template.");
 
         let base_directory = match folder {
             Some(curr_folder) => Path::new(&curr_folder).to_path_buf(),
@@ -91,7 +89,7 @@ impl Project {
                 return Err(format!(
                     "Failed to deserialize project file 'project.toml': {}",
                     e
-                ))
+                ));
             }
         };
 
@@ -127,9 +125,10 @@ impl Project {
 
 #[cfg(test)]
 mod tests {
-    use super::Project;
     use std::fs;
     use std::path::Path;
+
+    use super::Project;
 
     #[test]
     fn project_generate_and_load() {

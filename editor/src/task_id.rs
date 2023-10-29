@@ -3,12 +3,12 @@ use num_derive::{FromPrimitive, ToPrimitive};
 #[derive(FromPrimitive, ToPrimitive)]
 pub enum TaskId {
     Build,
-    Clean
+    Clean,
 }
 
-impl Into<isize> for TaskId {
-    fn into(self) -> isize {
-        self as isize
+impl From<TaskId> for isize {
+    fn from(value: TaskId) -> Self {
+        value as isize
     }
 }
 

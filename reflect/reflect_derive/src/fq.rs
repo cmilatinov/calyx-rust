@@ -2,16 +2,27 @@ use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
 
 pub(crate) struct FQAny;
+
 pub(crate) struct FQBox;
+
 pub(crate) struct FQClone;
+
 pub(crate) struct FQDefault;
+
 pub(crate) struct FQOption;
+
 pub(crate) struct FQResult;
+
 pub(crate) struct FQSend;
+
 pub(crate) struct FQSync;
+
 pub(crate) struct FQReflect;
+
 pub(crate) struct FQReflectedType;
+
 pub(crate) struct FQTraitMeta;
+
 pub(crate) struct FQTraitMetaFrom;
 
 impl ToTokens for FQAny {

@@ -36,23 +36,23 @@ impl Default for PanelManager {
         let mut panels: HashMap<String, Box<dyn Panel>> = HashMap::new();
         panels.insert(
             PanelContentBrowser::name().to_string(),
-            Box::new(PanelContentBrowser::default()),
+            Box::<PanelContentBrowser>::default(),
         );
         panels.insert(
             PanelInspector::name().to_string(),
-            Box::new(PanelInspector::default()),
+            Box::<PanelInspector>::default(),
         );
         panels.insert(
             PanelSceneHierarchy::name().to_string(),
-            Box::new(PanelSceneHierarchy::default()),
+            Box::<PanelSceneHierarchy>::default(),
         );
         panels.insert(
             PanelTerminal::name().to_string(),
-            Box::new(PanelTerminal::default()),
+            Box::<PanelTerminal>::default(),
         );
         panels.insert(
             PanelViewport::name().to_string(),
-            Box::new(PanelViewport::default()),
+            Box::<PanelViewport>::default(),
         );
         PanelManager { panels }
     }
@@ -61,14 +61,14 @@ impl Default for PanelManager {
 impl egui_dock::TabViewer for PanelManager {
     type Tab = String;
 
+    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
+        tab.as_str().into()
+    }
+
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
         if let Some(panel) = self.panels.get_mut(tab) {
             panel.ui(ui);
         };
-    }
-
-    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
-        tab.as_str().into()
     }
 
     fn tab_style_override(&self, tab: &Self::Tab, global_style: &TabStyle) -> Option<TabStyle> {

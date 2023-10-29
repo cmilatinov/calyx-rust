@@ -1,32 +1,41 @@
-mod camera;
-mod inspector;
-mod panel;
-mod project_manager;
-mod task_id;
-mod selection;
-
-use crate::camera::EditorCamera;
 use eframe::egui;
-use egui_dock::{DockArea, NodeIndex, Style, Tree};
+use egui_dock::{DockArea, NodeIndex, Style};
 use egui_gizmo::GizmoMode;
 use num_traits::FromPrimitive;
+
+use engine::background::Background;
 use engine::core::{OptionRef, Ref, Time};
-use engine::render::SceneRenderer;
+use engine::egui::FontFamily;
+use engine::egui::TextStyle;
+use engine::egui::{Align, FontId, Layout};
+use engine::egui_dock::DockState;
+use engine::render::{RenderContext, SceneRenderer};
 use engine::scene::Scene;
 use engine::*;
-use engine::background::Background;
-use engine::egui::{Align, Layout};
 use selection::EditorSelection;
-use utils::{Init, singleton};
+use utils::singleton_with_init;
+
+use crate::camera::EditorCamera;
 use crate::task_id::TaskId;
 
 use self::panel::*;
 pub use self::project_manager::*;
 
+mod camera;
+mod inspector;
+mod panel;
+mod project_manager;
+mod selection;
+mod task_id;
+mod widgets;
+
+pub const BASE_FONT_SIZE: f32 = 16.0;
+
 pub struct EditorApp {
-    count: i32,
+    fps_counter: i32,
     fps: i32,
-    tree: Tree<String>,
+    dock_state: DockState<String>,
+    dock_style: Style,
     panel_manager: PanelManager,
     pub scene_renderer: Ref<SceneRenderer>,
 }
@@ -55,22 +64,21 @@ impl Default for EditorAppState {
     }
 }
 
-impl Init for EditorAppState {
-    fn initialize(&mut self) {}
-}
-
-singleton!(EditorAppState);
+singleton_with_init!(EditorAppState);
 
 impl EditorApp {
     pub fn new(cc: &eframe::CreationContext) -> Self {
-        let mut tree = Tree::new(vec![PanelSceneHierarchy::name().to_owned()]);
-        let [_, b] = tree.split_right(
+        let mut dock_style = Style::from_egui(&cc.egui_ctx.style());
+        dock_style.tab_bar.bg_fill = egui::Color32::from_rgb(18, 18, 18);
+        let mut dock_state = DockState::new(vec![PanelSceneHierarchy::name().to_owned()]);
+        let surface = dock_state.main_surface_mut();
+        let [_, b] = surface.split_right(
             NodeIndex::root(),
             0.2,
             vec![PanelViewport::name().to_owned()],
         );
-        let [c, _] = tree.split_right(b, 0.7, vec![PanelInspector::name().to_owned()]);
-        let [_, _] = tree.split_below(
+        let [c, _] = surface.split_right(b, 0.7, vec![PanelInspector::name().to_owned()]);
+        let [_, _] = surface.split_below(
             c,
             0.7,
             vec![
@@ -78,14 +86,23 @@ impl EditorApp {
                 PanelTerminal::name().to_owned(),
             ],
         );
-        cc.egui_ctx.set_pixels_per_point(1.25);
+        Self::configure_styles(&cc.egui_ctx);
+        RenderContext::get_mut().init_from_eframe(cc);
+        egui_extras::install_image_loaders(&cc.egui_ctx);
         Self {
-            count: 0,
             fps: 0,
-            tree,
+            fps_counter: 0,
+            dock_state,
+            dock_style,
             panel_manager: PanelManager::default(),
             scene_renderer: Ref::new(SceneRenderer::new(cc)),
         }
+    }
+}
+
+impl Drop for EditorApp {
+    fn drop(&mut self) {
+        RenderContext::get_mut().destroy();
     }
 }
 
@@ -119,22 +136,20 @@ impl eframe::App for EditorApp {
 
         self.menu_bar(ctx);
 
-        DockArea::new(&mut self.tree)
-            .style(Style::from_egui(ctx.style().as_ref()))
-            .show_close_buttons(false)
-            .show(ctx, &mut self.panel_manager);
+        egui::CentralPanel::default().show(ctx, |ui| {
+            DockArea::new(&mut self.dock_state)
+                .style(self.dock_style.clone())
+                .show_close_buttons(false)
+                .show(ui.ctx(), &mut self.panel_manager);
+        });
 
         self.status_bar(ctx);
 
-        self.fps += 1;
+        self.fps_counter += 1;
         if Time::timer("fps") >= 1.0 {
-            println!("{} fps", self.fps);
-            self.fps = 0;
+            self.fps = self.fps_counter;
+            self.fps_counter = 0;
             Time::reset_timer("fps");
-        }
-        if Time::timer("count") >= 0.5 {
-            self.count = (self.count + 1) % 3;
-            Time::reset_timer("count");
         }
 
         ctx.request_repaint();
@@ -154,6 +169,39 @@ impl EditorApp {
         let height = window_size.y * viewport_height * pixels_per_point;
         (width as u32, height as u32)
     }
+
+    fn configure_styles(ctx: &egui::Context) {
+        // ctx.set_pixels_per_point(1.25);
+        let mut style = (*ctx.style()).clone();
+        style.spacing.scroll_bar_width = 5.0;
+        style.spacing.scroll_bar_inner_margin = 0.0;
+        style.spacing.scroll_bar_outer_margin = 2.0;
+        style.visuals.indent_has_left_vline = false;
+        style.text_styles = [
+            (
+                TextStyle::Small,
+                FontId::new(BASE_FONT_SIZE * 5.0 / 7.0, FontFamily::Proportional),
+            ),
+            (
+                TextStyle::Body,
+                FontId::new(BASE_FONT_SIZE, FontFamily::Proportional),
+            ),
+            (
+                TextStyle::Monospace,
+                FontId::new(BASE_FONT_SIZE, FontFamily::Monospace),
+            ),
+            (
+                TextStyle::Button,
+                FontId::new(BASE_FONT_SIZE, FontFamily::Proportional),
+            ),
+            (
+                TextStyle::Heading,
+                FontId::new(BASE_FONT_SIZE * 10.0 / 7.0, FontFamily::Proportional),
+            ),
+        ]
+        .into();
+        ctx.set_style(style);
+    }
 }
 
 impl EditorApp {
@@ -161,43 +209,64 @@ impl EditorApp {
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
-                    if ui.button("New").clicked() {}
-                    if ui.button("Open").clicked() {}
-                    if ui.button("Save").clicked() {}
-                    if ui.button("Save As").clicked() {}
+                    if ui.button("New").clicked() {
+                        ui.close_menu();
+                    }
+                    if ui.button("Open").clicked() {
+                        ui.close_menu();
+                    }
+                    if ui.button("Save").clicked() {
+                        ui.close_menu();
+                    }
+                    if ui.button("Save As").clicked() {
+                        ui.close_menu();
+                    }
                 });
                 ui.menu_button("Build", |ui| {
-                    if ui.button("Clean").clicked() {}
-                    if ui.button("Build").clicked() {}
-                    if ui.button("Rebuild").clicked() {}
+                    if ui.button("Clean").clicked() {
+                        ui.close_menu();
+                    }
+                    if ui.button("Build").clicked() {
+                        ui.close_menu();
+                    }
+                    if ui.button("Rebuild").clicked() {
+                        ui.close_menu();
+                    }
                 });
             });
         });
     }
 
     fn status_bar(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
-            egui::menu::bar(ui, |ui| {
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let background = Background::get();
-                    let task_list = background.task_list();
-                    if !task_list.is_empty() {
-                        ui.add(egui::Spinner::new().size(15.0));
-                    }
-                    match task_list.len() {
-                        0 => {},
-                        1 => {
-                            let id = task_list.iter().next().unwrap();
-                            if let Some(task_id) = TaskId::from_isize(*id) {
-                                ui.label(task_id.message());
+        egui::TopBottomPanel::bottom("bottom_panel")
+            .exact_height(24.0)
+            .show(ctx, |ui| {
+                egui::menu::bar(ui, |ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if self.fps > 0 {
+                            ui.label(format!("{}", self.fps));
+                        }
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            let background = Background::get();
+                            let task_list = background.task_list();
+                            if !task_list.is_empty() {
+                                ui.add(egui::Spinner::new().size(15.0));
                             }
-                        }
-                        len => {
-                            ui.label(format!("{} tasks", len));
-                        }
-                    }
+                            match task_list.len() {
+                                0 => {}
+                                1 => {
+                                    let id = task_list.iter().next().unwrap();
+                                    if let Some(task_id) = TaskId::from_isize(*id) {
+                                        ui.label(task_id.message());
+                                    }
+                                }
+                                len => {
+                                    ui.label(format!("{} tasks", len));
+                                }
+                            }
+                        });
+                    });
                 });
             });
-        });
     }
 }

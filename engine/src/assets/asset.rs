@@ -1,19 +1,24 @@
-use reflect::{impl_reflect_value, reflect_trait};
 use std::any::{Any, TypeId};
 use std::ops::Deref;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
+
+use reflect::{impl_reflect_value, reflect_trait};
 
 use crate::assets::error::AssetError;
 use crate::assets::mesh::Mesh;
 use crate::core::Ref;
 
 pub trait Asset: Any + Send + Sync {
-    fn get_file_extensions(&self) -> &'static [&'static str] {
+    fn get_file_extensions() -> &'static [&'static str]
+    where
+        Self: Sized,
+    {
         &[""]
     }
-
-    fn load(&mut self, path: &Path) -> Result<(), AssetError>;
+    fn from_file(path: &Path) -> Result<Self, AssetError>
+    where
+        Self: Sized;
 }
 
 #[reflect_trait]
@@ -30,6 +35,18 @@ impl<T: Asset> AssetRef for Ref<T> {
         Ref::from_arc(unsafe {
             Arc::from_raw(Arc::into_raw(self.deref().clone()) as *const RwLock<dyn Asset>)
         })
+    }
+}
+
+impl Ref<dyn Asset> {
+    pub fn try_downcast<A: Asset>(&self) -> Option<Ref<A>> {
+        if self.read().unwrap().deref().type_id() == TypeId::of::<A>() {
+            Some(Ref::from_arc(unsafe {
+                Arc::from_raw(Arc::into_raw(self.deref().clone()) as *const RwLock<A>)
+            }))
+        } else {
+            None
+        }
     }
 }
 

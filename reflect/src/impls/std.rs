@@ -1,7 +1,9 @@
+use reflect_derive::impl_reflect_value;
+
+use crate as reflect;
+
 use super::std_float::ReflectGenericFloat;
 use super::std_int::ReflectGenericInt;
-use crate as reflect;
-use reflect_derive::impl_reflect_value;
 
 impl_reflect_value!(u8(GenericInt));
 impl_reflect_value!(u16(GenericInt));

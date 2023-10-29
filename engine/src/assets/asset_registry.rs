@@ -1,17 +1,14 @@
-use std::any::TypeId;
-use std::collections::HashMap;
-use std::ops::Deref;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::thread::JoinHandle;
-use std::{thread};
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
-use glob::glob;
+use std::path::{Path, PathBuf};
+use std::thread;
+use std::thread::JoinHandle;
 
-use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use glob::glob;
 use notify::event::CreateKind;
+use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use path_absolutize::Absolutize;
 use relative_path::{PathExt, RelativePathBuf};
 use serde::{Deserialize, Serialize};
@@ -19,8 +16,8 @@ use uuid::Uuid;
 
 use crate::assets::error::AssetError;
 use crate::assets::{Asset, AssetRef};
-use crate::core::{Ref};
-use crate::utils::{singleton_with_init};
+use crate::core::Ref;
+use crate::utils::singleton_with_init;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AssetMeta {
@@ -28,7 +25,7 @@ pub struct AssetMeta {
     pub name: String,
     pub display_name: String,
     pub path: Option<PathBuf>,
-    dirty: bool
+    dirty: bool,
 }
 
 #[derive(Default)]
@@ -47,23 +44,23 @@ impl AssetRegistry {
         &self.asset_paths[0]
     }
 
-    pub fn load<A: Asset + Default>(&mut self, name: &str) -> Result<Ref<A>, AssetError> {
+    pub fn load<A: Asset>(&mut self, name: &str) -> Result<Ref<A>, AssetError> {
         let id = self.asset_id(name).ok_or(AssetError::NotFound)?;
 
         // Asset already loaded
-        if let Some(asset) = self.asset_cache.get(&id) {
-            if asset.read().unwrap().type_id().eq(&TypeId::of::<A>()) {
-                return Ok(Ref::from_arc(unsafe {
-                    Arc::from_raw(Arc::into_raw(asset.deref().clone()) as *const RwLock<A>)
-                }));
-            }
+        if let Some(asset_ref) = self
+            .asset_cache
+            .get(&id)
+            .and_then(|a| a.try_downcast::<A>())
+        {
+            return Ok(asset_ref);
         }
 
         // Load from file
-        let mut instance = A::default();
-        let path = self.asset_path(id, instance.get_file_extensions())
+        let path = self
+            .asset_path(id, A::get_file_extensions())
             .ok_or(AssetError::NotFound)?;
-        instance.load(path)?;
+        let instance = A::from_file(path)?;
 
         // Create ref
         let asset = Ref::new(instance);
@@ -77,15 +74,19 @@ impl AssetRegistry {
         }
         let id = Uuid::new_v4();
         let asset = Ref::new(value);
-        self.asset_names.insert(RelativePathBuf::from(name).normalize().into(), id);
+        self.asset_names
+            .insert(RelativePathBuf::from(name).normalize(), id);
         self.asset_cache.insert(id, asset.as_asset());
-        self.asset_meta.insert(id, AssetMeta {
+        self.asset_meta.insert(
             id,
-            name: name.to_string(),
-            display_name: name.to_string(),
-            path: None,
-            dirty: false
-        });
+            AssetMeta {
+                id,
+                name: name.to_string(),
+                display_name: name.to_string(),
+                path: None,
+                dirty: false,
+            },
+        );
         Ok(asset)
     }
 }
@@ -95,7 +96,7 @@ impl AssetRegistry {
         let path = path.into();
         self.asset_paths = vec![path.clone(), "assets".into()];
 
-        let watcher_thread = thread::spawn(move|| {
+        let watcher_thread = thread::spawn(move || {
             let (tx, rx) = std::sync::mpsc::channel();
             let mut watcher = RecommendedWatcher::new(tx, Config::default()).unwrap();
             watcher
@@ -103,9 +104,9 @@ impl AssetRegistry {
                 .unwrap();
             for event in rx.into_iter().flatten() {
                 match event.kind {
-                    EventKind::Create(CreateKind::File) |
-                    EventKind::Modify(_)                |
-                    EventKind::Remove(_) => {
+                    EventKind::Create(CreateKind::File)
+                    | EventKind::Modify(_)
+                    | EventKind::Remove(_) => {
                         println!("Rebuilding");
                     }
                     _ => {}
@@ -121,7 +122,7 @@ impl AssetRegistry {
 impl AssetRegistry {
     pub fn asset_id(&self, name: &str) -> Option<Uuid> {
         let path = RelativePathBuf::from(name).normalize();
-        self.asset_names.get(&path).map(|id| *id)
+        self.asset_names.get(&path).copied()
     }
 
     pub fn asset_meta(&self, name: &str) -> Option<&AssetMeta> {
@@ -132,7 +133,9 @@ impl AssetRegistry {
     pub fn asset_path(&self, id: Uuid, extensions: &[&str]) -> Option<&Path> {
         let meta = self.asset_meta.get(&id)?;
         let path = meta.path.as_ref()?;
-        let ext = path.extension().map_or("", |ext| ext.to_str().unwrap_or(""));
+        let ext = path
+            .extension()
+            .map_or("", |ext| ext.to_str().unwrap_or(""));
         if extensions.contains(&ext) {
             Some(path)
         } else {
@@ -142,16 +145,16 @@ impl AssetRegistry {
 }
 
 impl AssetRegistry {
-
     pub fn build_asset_meta(&mut self) {
         for asset_path in self.asset_paths.iter() {
             for path in glob(format!("{}/**/*", asset_path.to_str().unwrap()).as_str())
-                .unwrap().into_iter()
+                .unwrap()
                 .map(|r| r.unwrap())
                 .filter(|p| {
                     let ext = p.extension().map_or("", |ext| ext.to_str().unwrap_or(""));
-                    ext != "" && ext != "meta" && ext != "rs"
-                }) {
+                    !ext.is_empty() && ext != "meta" && ext != "rs"
+                })
+            {
                 let meta_path = path.with_extension("meta");
                 let mut meta = if meta_path.exists() {
                     let file = File::open(meta_path.as_path()).unwrap();
@@ -173,7 +176,7 @@ impl AssetRegistry {
                 };
                 meta.path = Some(match path.absolutize().unwrap() {
                     Cow::Borrowed(p) => p.to_path_buf(),
-                    Cow::Owned(p) => p
+                    Cow::Owned(p) => p,
                 });
                 let id = meta.id;
                 self.asset_meta.insert(id, meta);

@@ -9,20 +9,20 @@ syntax_highlighting = ["syntect"]
 
 [dependencies]
 assets_manager = "0.10.2"
-bytemuck = "1.13.1"
+bytemuck = "1.14.0"
 engine = { path = "../engine" }
 project = { path = "../project" }
-enum-map = "2.6.1"
+enum-map = "2.7.0"
 lazy_static = "1.4.0"
-serde = "1.0.182"
+serde = "1.0.189"
 syntect = { version = "5", optional = true, default-features = false, features = [
     "default-fancy",
 ] }
 utils = { path = "../utils" }
 reflect = { path = "../reflect" }
-inventory = "0.3.11"
-egui-gizmo = "0.11.0"
+inventory = "0.3.12"
+egui-gizmo = "0.12.0"
 num = "0.4.1"
-num-derive = "0.4.0"
-num-traits = "0.2.16"
+num-derive = "0.4.1"
+num-traits = "0.2.17"
 sharedlib = "7.0.0"

@@ -5,6 +5,7 @@ pub enum AssetError {
     NotFound,
     LoadError,
     AssetAlreadyExists,
+    TypeMismatch,
 }
 
 impl From<RussimpError> for AssetError {

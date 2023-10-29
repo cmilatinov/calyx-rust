@@ -1,6 +1,7 @@
-use crate::type_registry::TypeRegistry;
 use std::any::{Any, TypeId};
 use std::fmt::{Debug, Formatter};
+
+use crate::type_registry::TypeRegistry;
 
 pub trait Reflect: Any + Send + Sync {
     fn type_name(&self) -> &'static str;

@@ -91,16 +91,10 @@ impl Default for Mesh {
 }
 
 impl Asset for Mesh {
-    fn get_file_extensions(&self) -> &'static [&'static str] {
+    fn get_file_extensions() -> &'static [&'static str] {
         &["obj"]
     }
-    fn load(&mut self, path: &Path) -> Result<(), AssetError> {
-        self.load(path)
-    }
-}
-
-impl Mesh {
-    pub fn load(&mut self, path: &Path) -> Result<(), AssetError> {
+    fn from_file(path: &Path) -> Result<Self, AssetError> {
         let scene = Scene::from_file(
             path.to_str().unwrap(),
             vec![
@@ -114,18 +108,17 @@ impl Mesh {
         // Assuming you want to load the first mesh in the scene
         let mesh = scene.meshes.get(0).ok_or(AssetError::NotFound)?;
 
-        self.dirty = true;
-        self.name = String::from(path.file_stem().unwrap().to_str().unwrap());
-        self.indices = mesh
+        let name = String::from(path.file_stem().unwrap().to_str().unwrap());
+        let indices = mesh
             .faces
             .iter()
             .flat_map(|face| face.0.iter().cloned())
             .collect();
-        self.vertices = vec![Vec3::zeros(); mesh.vertices.len()];
-        self.normals = vec![Vec3::zeros(); mesh.vertices.len()];
+        let mut vertices = vec![Vec3::zeros(); mesh.vertices.len()];
+        let mut normals = vec![Vec3::zeros(); mesh.vertices.len()];
 
         let num_uvs: usize = min(mesh.uv_components.len(), CX_MESH_NUM_UV_CHANNELS);
-        self.uvs = [
+        let mut uvs = [
             vec![Vec2::zeros(); mesh.vertices.len()],
             vec![Vec2::zeros(); mesh.vertices.len()],
             vec![Vec2::zeros(); mesh.vertices.len()],
@@ -133,19 +126,28 @@ impl Mesh {
         ];
 
         for (i, vertex) in mesh.vertices.iter().enumerate() {
-            self.vertices[i] = vec3(vertex.x, vertex.y, vertex.z);
-            self.normals[i] = vec3(mesh.normals[i].x, mesh.normals[i].y, mesh.normals[i].z);
-
-            for j in 0..num_uvs {
+            vertices[i] = vec3(vertex.x, vertex.y, vertex.z);
+            normals[i] = vec3(mesh.normals[i].x, mesh.normals[i].y, mesh.normals[i].z);
+            for (j, coord) in uvs.iter_mut().enumerate().take(num_uvs) {
                 if let Some(tex_coord) = mesh.texture_coords[j].as_ref() {
-                    self.uvs[j][i] = vec2(tex_coord[i].x, tex_coord[i].y);
+                    coord[i] = vec2(tex_coord[i].x, tex_coord[i].y);
                 }
             }
         }
 
-        Ok(())
+        Ok(Self {
+            name,
+            indices,
+            vertices,
+            normals,
+            uvs,
+            dirty: true,
+            ..Default::default()
+        })
     }
+}
 
+impl Mesh {
     pub fn clear(&mut self) {
         self.indices.clear();
         self.vertices.clear();

@@ -1,14 +1,18 @@
-use egui::Ui;
 use std::collections::HashSet;
 
-use crate::panel::Panel;
-use crate::{EditorAppState, EditorSelection};
+use egui::Ui;
+use egui::Vec2;
+
 use engine::assets::mesh::Mesh;
 use engine::assets::AssetRegistry;
 use engine::component::ComponentMesh;
+use engine::egui::{include_image, Button, Color32, Rounding, Sense};
 use engine::indextree::NodeId;
 use engine::scene::Scene;
 use engine::*;
+
+use crate::panel::Panel;
+use crate::{EditorAppState, EditorSelection, BASE_FONT_SIZE};
 
 #[derive(Default)]
 pub struct PanelSceneHierarchy {
@@ -34,8 +38,8 @@ impl Panel for PanelSceneHierarchy {
                 if let Some(selected) = selection.clone() {
                     match selected {
                         EditorSelection::Entity(set) => {
-                            for x in set.iter() {
-                                parent = Some(*x);
+                            if let Some(s) = set.iter().last() {
+                                parent = Some(*s);
                             }
                         }
                         EditorSelection::Asset(_) => {}
@@ -45,10 +49,10 @@ impl Panel for PanelSceneHierarchy {
                 let new_entity = app_state.scene.create_entity(None, parent);
                 app_state
                     .scene
-                    .bind_component(new_entity, ComponentMesh { mesh: mesh.clone() })
+                    .bind_component(new_entity, ComponentMesh { mesh })
                     .unwrap();
             }
-            ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("Search Here"));
+            ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("Filter by name"));
         });
 
         for root_node in entities {
@@ -73,14 +77,10 @@ impl PanelSceneHierarchy {
         ui: &mut Ui,
         node_id: NodeId,
     ) {
-        let children: Vec<NodeId> = scene.get_children(node_id).into_iter().collect();
+        let children: Vec<NodeId> = scene.get_children(node_id).collect();
 
-        let is_selected = if let Some(editor_selection) = selected {
-            if let EditorSelection::Entity(set) = editor_selection {
-                set.contains(&node_id)
-            } else {
-                false
-            }
+        let is_selected = if let Some(EditorSelection::Entity(set)) = selected {
+            set.contains(&node_id)
         } else {
             false
         };
@@ -101,7 +101,10 @@ impl PanelSceneHierarchy {
                 }
             });
         } else {
-            self.show_selectable_label(scene, is_selected, selection, ui, node_id);
+            ui.horizontal(|ui| {
+                ui.add_space(BASE_FONT_SIZE + 2.0);
+                self.show_selectable_label(scene, is_selected, selection, ui, node_id);
+            });
         }
     }
 
@@ -113,7 +116,20 @@ impl PanelSceneHierarchy {
         ui: &mut Ui,
         node_id: NodeId,
     ) {
-        let res = ui.selectable_label(is_selected, scene.get_entity_name(node_id));
+        let svg = include_image!("../../../resources/icons/body_dark.png");
+        let image =
+            egui::Image::new(svg).fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
+        let res = ui.add(
+            Button::image_and_text(image, scene.get_entity_name(node_id))
+                .selected(is_selected)
+                .fill(if is_selected {
+                    ui.visuals().selection.bg_fill
+                } else {
+                    Color32::TRANSPARENT
+                })
+                .rounding(Rounding::ZERO)
+                .sense(Sense::click()),
+        );
 
         if res.clicked() {
             let mut set = HashSet::new();

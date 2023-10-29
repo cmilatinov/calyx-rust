@@ -1,8 +1,9 @@
 use egui::Ui;
 use egui_gizmo::{GizmoMode, GizmoResult, GizmoVisuals, DEFAULT_SNAP_ANGLE};
 
-use engine::egui::{Align2, Color32, Image, Key, Margin, Pos2, Sense, TextStyle};
-use engine::egui_dock::TabStyle;
+use engine::egui::load::SizedTexture;
+use engine::egui::{Align2, Color32, Image, ImageSource, Key, Margin, Pos2, Sense, TextStyle};
+use engine::egui_dock::{TabBodyStyle, TabStyle};
 use engine::glm::{Mat4, Vec3};
 use engine::render::CameraLike;
 use engine::*;
@@ -39,13 +40,16 @@ impl Panel for PanelViewport {
 
     fn tab_style_override(&self, global_style: &TabStyle) -> Option<TabStyle> {
         Some(TabStyle {
-            inner_margin: Margin {
-                left: 0.0,
-                right: 0.0,
-                top: 0.0,
-                bottom: 0.0,
+            tab_body: TabBodyStyle {
+                inner_margin: Margin {
+                    left: 0.0,
+                    right: 0.0,
+                    top: 0.0,
+                    bottom: 0.0,
+                },
+                ..global_style.tab_body
             },
-            ..*global_style
+            ..global_style.clone()
         })
     }
 }
@@ -73,8 +77,8 @@ impl PanelViewport {
 
     fn viewport(&self, ui: &mut Ui, app_state: &mut EditorAppState) -> egui::Response {
         let res = ui.add(
-            Image::new(
-                app_state
+            Image::new(ImageSource::Texture(SizedTexture {
+                id: app_state
                     .scene_renderer
                     .as_ref()
                     .unwrap()
@@ -82,8 +86,8 @@ impl PanelViewport {
                     .unwrap()
                     .scene_texture_handle()
                     .id(),
-                egui::Vec2::new(ui.available_width(), ui.available_height()),
-            )
+                size: egui::Vec2::new(ui.available_width(), ui.available_height()),
+            }))
             .sense(Sense::drag()),
         );
         app_state.camera.update(ui, &res);

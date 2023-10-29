@@ -1,20 +1,19 @@
-use eframe::NativeOptions;
 use std::default::Default;
+use std::env;
+use std::path::PathBuf;
+use std::sync::Arc;
 
+use eframe::NativeOptions;
 use log::LevelFilter;
 
 use editor::*;
 use engine::assets::AssetRegistry;
-use engine::core::{LogRegistry, Logger, Time};
-use engine::*;
-
-use engine::class_registry::ClassRegistry;
-use engine::eframe::wgpu;
-use reflect::type_registry::TypeRegistry;
-use std::env;
-use std::path::PathBuf;
-use std::sync::Arc;
 use engine::background::Background;
+use engine::class_registry::ClassRegistry;
+use engine::core::{LogRegistry, Logger, Time};
+use engine::eframe::wgpu;
+use engine::*;
+use reflect::type_registry::TypeRegistry;
 
 fn main() -> eframe::Result<()> {
     // LOAD PROJECT
@@ -30,18 +29,16 @@ fn main() -> eframe::Result<()> {
     ProjectManager::get_mut().load(PathBuf::from(&args[1]));
     Background::get().thread_pool().execute(move || {
         ProjectManager::get().clean_assemblies().await_complete();
-        ProjectManager::get_mut().build_assemblies().await_complete();
+        ProjectManager::get_mut()
+            .build_assemblies()
+            .await_complete();
         ProjectManager::get_mut().load_assemblies();
     });
 
     Time::init();
     AssetRegistry::init();
     AssetRegistry::get_mut()
-        .set_root_path(
-            ProjectManager::get()
-                .current_project()
-                .assets_directory()
-        );
+        .set_root_path(ProjectManager::get().current_project().assets_directory());
 
     TypeRegistry::init();
     ClassRegistry::init();

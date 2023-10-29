@@ -1,15 +1,17 @@
-use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
-use crate::panel::Panel;
-use crate::EditorAppState;
+use std::any::TypeId;
+use std::collections::HashMap;
+
 use engine::class_registry::ClassRegistry;
 use engine::egui::Ui;
 use engine::egui_extras;
 use engine::egui_extras::{Column, TableBody};
 use reflect::type_registry::TypeRegistry;
 use reflect::{Reflect, ReflectDefault, TypeInfo};
-use std::any::TypeId;
-use std::collections::HashMap;
 use utils::type_ids;
+
+use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
+use crate::panel::Panel;
+use crate::EditorAppState;
 
 pub struct PanelInspector {
     inspectors: HashMap<TypeId, Box<dyn TypeInspector>>,
@@ -71,7 +73,7 @@ impl Panel for PanelInspector {
 impl PanelInspector {
     fn inspector_lookup(&self, type_id: TypeId) -> Option<&dyn TypeInspector> {
         match self.type_association.get(&type_id) {
-            Some(inspector_id) => match self.inspectors.get(&inspector_id) {
+            Some(inspector_id) => match self.inspectors.get(inspector_id) {
                 Some(inspector) => Some(inspector.as_ref()),
                 None => None,
             },
@@ -83,7 +85,7 @@ impl PanelInspector {
     }
 
     fn show_inspector(&self, ui: &mut Ui, ctx: &InspectorContext, instance: &mut dyn Reflect) {
-        match self.inspector_lookup(instance.as_any().type_id()) {
+        match self.inspector_lookup(instance.type_id()) {
             Some(inspector) => {
                 ui.collapsing(instance.type_name_short(), |ui| {
                     inspector.show_inspector(ui, ctx, instance);
@@ -109,9 +111,7 @@ impl PanelInspector {
         ctx: &InspectorContext,
         instance: &mut dyn Reflect,
     ) {
-        if let Some(TypeInfo::Struct(info)) =
-            ctx.registry.type_info_by_id(instance.as_any().type_id())
-        {
+        if let Some(TypeInfo::Struct(info)) = ctx.registry.type_info_by_id(instance.type_id()) {
             egui_extras::TableBuilder::new(ui)
                 .column(Column::auto().clip(true).resizable(true))
                 .column(Column::remainder().clip(true))
@@ -132,7 +132,7 @@ impl PanelInspector {
         field_name: &str,
         instance: &mut dyn Reflect,
     ) {
-        if let Some(inspector) = self.inspector_lookup(instance.as_any().type_id()) {
+        if let Some(inspector) = self.inspector_lookup(instance.type_id()) {
             body.row(16.0, |mut row| {
                 row.col(|ui| {
                     ui.label(format!("{} ", field_name));
