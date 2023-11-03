@@ -1,7 +1,8 @@
+use std::fmt::Debug;
 use std::ops::Deref;
 use std::sync::{Arc, RwLock};
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Ref<T: ?Sized>(pub(crate) Arc<RwLock<T>>);
 
 impl<T: ?Sized> Ref<T> {

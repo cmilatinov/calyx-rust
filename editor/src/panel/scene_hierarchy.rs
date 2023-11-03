@@ -49,7 +49,7 @@ impl Panel for PanelSceneHierarchy {
                 let new_entity = app_state.scene.create_entity(None, parent);
                 app_state
                     .scene
-                    .bind_component(new_entity, ComponentMesh { mesh })
+                    .bind_component(new_entity, ComponentMesh { mesh: Some(mesh) })
                     .unwrap();
             }
             ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("Filter by name"));

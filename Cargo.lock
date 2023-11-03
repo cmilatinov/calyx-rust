@@ -3361,6 +3361,7 @@ name = "reflect"
 version = "0.1.0"
 dependencies = [
  "downcast-rs",
+ "egui",
  "impls",
  "inventory",
  "lazy_static 1.4.0",

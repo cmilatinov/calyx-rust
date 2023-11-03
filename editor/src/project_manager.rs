@@ -8,7 +8,6 @@ use engine::background::Background;
 use engine::rusty_pool::JoinHandle;
 use project::Project;
 use reflect::type_registry::TypeRegistry;
-use reflect::TypeInfo;
 use utils::singleton_with_init;
 
 use crate::task_id::TaskId;
@@ -101,12 +100,6 @@ impl ProjectManager {
             let mut registry = TypeRegistry::get_mut();
             load_fn.get()(&mut registry);
             self.assembly = Some(lib);
-        }
-
-        for (_, t) in TypeRegistry::get().types.iter() {
-            if let TypeInfo::Struct(ref s) = t.type_info {
-                println!("{}", s.type_name);
-            }
         }
     }
 }

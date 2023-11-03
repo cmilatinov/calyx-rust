@@ -148,12 +148,8 @@ impl SceneRenderer {
         let world = scene.world();
         {
             let mut mesh_map: HashMap<*const RwLock<Mesh>, &RwLock<Mesh>> = HashMap::new();
-            #[allow(unused_assignments)]
-            let mut mesh_list: Vec<RwLockWriteGuard<Mesh>> = Vec::new();
-            let quad_binding = Assets::screen_space_quad().unwrap();
-            let mut quad_mesh = quad_binding.write().unwrap();
+            let mut mesh_list: Vec<RwLockWriteGuard<Mesh>>;
             let scene_shader = self.scene_shader.read().unwrap();
-            let grid_shader = self.grid_shader.read().unwrap();
             {
                 let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("Viewport Scene"),
@@ -171,12 +167,12 @@ impl SceneRenderer {
                 self.gizmo_renderer
                     .draw_gizmos(device, queue, camera_transform, scene);
 
-                {
-                    let mut query = <(Entity, &ComponentTransform, &ComponentMesh)>::query();
-                    for (entity, _, m_comp) in query.iter(world.deref()) {
+                let mut query = <(Entity, &ComponentTransform, &ComponentMesh)>::query();
+                for (entity, _, m_comp) in query.iter(world.deref()) {
+                    if let Some(mesh_ref) = m_comp.mesh.as_ref() {
                         {
-                            let mut mesh = m_comp.mesh.write().unwrap();
-                            let ptr: *const RwLock<Mesh> = m_comp.mesh.deref().deref();
+                            let mut mesh = mesh_ref.write().unwrap();
+                            let ptr: *const RwLock<Mesh> = mesh_ref.deref().deref();
                             if !mesh_map.contains_key(&ptr) {
                                 mesh.instances.clear();
                             }
@@ -184,12 +180,15 @@ impl SceneRenderer {
                             mesh.instances
                                 .push(scene.get_world_transform(node).matrix.into());
                         }
-                        mesh_map.insert(&**m_comp.mesh as *const _, &**m_comp.mesh);
+                        mesh_map.insert(&***mesh_ref as *const _, &***mesh_ref);
                     }
                 }
 
                 // Lock all meshes for writing at once
-                mesh_list = mesh_map.iter().map(|i| i.1.write().unwrap()).collect();
+                mesh_list = mesh_map
+                    .values()
+                    .map(|mesh| mesh.write().unwrap())
+                    .collect();
 
                 // Render scene meshes
                 render_pass.set_pipeline(&scene_shader.pipeline);
@@ -200,17 +199,39 @@ impl SceneRenderer {
 
                 // Render gizmos
                 self.gizmo_renderer.render_gizmos(&mut render_pass);
+            }
+        }
+
+        {
+            let quad_binding = Assets::screen_space_quad().unwrap();
+            let mut quad_mesh = quad_binding.write().unwrap();
+            let grid_shader = self.grid_shader.read().unwrap();
+            {
+                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Scene Grid"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &self.scene_texture_view_msaa,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: true,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.scene_depth_texture_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: true,
+                        }),
+                        stencil_ops: None,
+                    }),
+                });
 
                 // Render grid
                 render_pass.set_pipeline(&grid_shader.pipeline);
                 render_pass.set_bind_group(0, &self.scene_bind_group, &[]);
-                RenderUtils::render_mesh_instanced(
-                    device,
-                    queue,
-                    &mut render_pass,
-                    quad_mesh.borrow_mut(),
-                    0..1,
-                );
+                quad_mesh.instances.resize(1, *Mat4::identity().as_ref());
+                RenderUtils::render_mesh(device, queue, &mut render_pass, quad_mesh.borrow_mut());
             }
         }
 

@@ -1,5 +1,3 @@
-use std::ops::Range;
-
 use egui_wgpu::wgpu;
 use glm::Vec4;
 
@@ -116,21 +114,5 @@ impl RenderUtils {
             0,
             0..(mesh.instances.len() as u32),
         );
-    }
-
-    pub fn render_mesh_instanced<'a>(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        render_pass: &mut wgpu::RenderPass<'a>,
-        mesh: &'a mut Mesh,
-        instances: Range<u32>,
-    ) {
-        Self::rebuild_mesh_data(device, queue, mesh);
-        render_pass.set_index_buffer(
-            mesh.index_buffer.as_ref().unwrap().slice(..),
-            wgpu::IndexFormat::Uint32,
-        );
-        render_pass.set_vertex_buffer(0, mesh.vertex_buffer.as_ref().unwrap().slice(..));
-        render_pass.draw_indexed(0..(mesh.indices.len() as u32), 0, instances);
     }
 }

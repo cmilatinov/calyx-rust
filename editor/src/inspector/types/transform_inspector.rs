@@ -1,5 +1,6 @@
 use std::any::TypeId;
 
+use crate::BASE_FONT_SIZE;
 use engine::component::ComponentTransform;
 use engine::egui::{Align, Layout, Ui};
 use engine::egui_extras;
@@ -34,7 +35,7 @@ impl TypeInspector for TransformInspector {
                         .map(|parent| ctx.scene.get_world_transform(parent))
                         .unwrap_or(Transform::default());
                     let mut transform = ctx.scene.get_world_transform(ctx.node);
-                    body.row(18.0, |mut row| {
+                    body.row(BASE_FONT_SIZE + 6.0, |mut row| {
                         row.col(|ui| {
                             ui.label("Position ");
                         });
@@ -42,7 +43,7 @@ impl TypeInspector for TransformInspector {
                             changed |= Widgets::drag_float3(ui, 0.1, &mut transform.position);
                         });
                     });
-                    body.row(18.0, |mut row| {
+                    body.row(BASE_FONT_SIZE + 6.0, |mut row| {
                         row.col(|ui| {
                             ui.label("Rotation ");
                         });
@@ -50,7 +51,7 @@ impl TypeInspector for TransformInspector {
                             changed |= Widgets::drag_angle3(ui, &mut transform.rotation);
                         });
                     });
-                    body.row(18.0, |mut row| {
+                    body.row(BASE_FONT_SIZE + 6.0, |mut row| {
                         row.col(|ui| {
                             ui.label("Scale ");
                         });

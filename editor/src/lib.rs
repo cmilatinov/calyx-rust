@@ -136,11 +136,11 @@ impl eframe::App for EditorApp {
 
         self.menu_bar(ctx);
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(ctx, |_| {
             DockArea::new(&mut self.dock_state)
                 .style(self.dock_style.clone())
                 .show_close_buttons(false)
-                .show(ui.ctx(), &mut self.panel_manager);
+                .show(ctx, &mut self.panel_manager);
         });
 
         self.status_bar(ctx);

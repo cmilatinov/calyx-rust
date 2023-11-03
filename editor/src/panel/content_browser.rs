@@ -30,7 +30,7 @@ impl PanelContentBrowser {
 
         let curr_path = entry.path();
         let path = curr_path.to_str().unwrap().to_string();
-        let collapsing_id = ui.make_persistent_id(path.clone());
+        let collapsing_id = ui.make_persistent_id(path);
         let is_selected = self.selected_folder == curr_path;
         let render_node = |ui: &mut Ui| {
             let svg = include_image!("../../../resources/icons/folder_dark.png");
@@ -65,8 +65,7 @@ impl PanelContentBrowser {
                     .collect()
             })
             .unwrap_or(vec![]);
-        let has_child_dir = child_entries.len() > 0;
-        if has_child_dir {
+        if !child_entries.is_empty() {
             egui::collapsing_header::CollapsingState::load_with_default_open(
                 ui.ctx(),
                 collapsing_id,
@@ -118,6 +117,16 @@ impl PanelContentBrowser {
         };
         ui.add(button)
     }
+    fn set_selected_folder(&mut self, path: PathBuf) {
+        if path != self.selected_folder {
+            self.selected_file = None;
+            self.selected_folder = path;
+        }
+    }
+
+    fn set_selected_file(&mut self, path: PathBuf) {
+        self.selected_file = Some(path);
+    }
 }
 
 impl Panel for PanelContentBrowser {
@@ -145,6 +154,13 @@ impl Panel for PanelContentBrowser {
         if let Ok(entries) = fs {
             for entry in entries.flatten() {
                 let curr_path = entry.path();
+                if curr_path.is_file() {
+                    if let Some(ext) = curr_path.extension().and_then(|e| e.to_str()) {
+                        if ext == "meta" {
+                            continue;
+                        }
+                    }
+                }
                 nodes.push(curr_path);
             }
         }
@@ -155,21 +171,24 @@ impl Panel for PanelContentBrowser {
                 ui.horizontal_centered(|ui| {
                     let mut root = AssetRegistry::get().root_path().clone();
                     let path = self.selected_folder.relative_to(root.clone()).unwrap();
-                    let mut count = 0;
-                    for (i, component) in path.components().enumerate() {
-                        root.push(component.as_str());
-                        if i == 0 {}
-                        ui.label(">");
-                        if ui.button(component.as_str()).clicked() {
-                            if self.selected_folder != root {
-                                self.selected_file = None;
-                            }
-                            self.selected_folder = root.clone();
-                        }
-                        count += 1;
+                    if ui.button(">").clicked() {
+                        self.set_selected_folder(AssetRegistry::get().root_path().clone());
                     }
-                    if count == 0 {
-                        ui.label(">");
+                    let mut iterator = path.components();
+                    let mut component = iterator.next();
+                    loop {
+                        if component.is_none() {
+                            break;
+                        }
+                        let name = component.unwrap();
+                        root.push(name.as_str());
+                        if ui.button(name.as_str()).clicked() {
+                            self.set_selected_folder(root.clone());
+                        }
+                        component = iterator.next();
+                        if component.is_some() {
+                            ui.label(">");
+                        }
                     }
                 });
             });
@@ -210,11 +229,10 @@ impl Panel for PanelContentBrowser {
                             is_selected,
                         );
                         if res.clicked() {
-                            self.selected_file = Some(node.clone());
+                            self.set_selected_file(node.clone());
                         }
-                        if res.double_clicked() && is_dir {
-                            self.selected_folder = node.clone();
-                            self.selected_file = None;
+                        if is_selected && is_dir && res.double_clicked() {
+                            self.set_selected_folder(node.clone());
                         }
                         if (i + 1) % num_nodes_per_row == 0 {
                             ui.add_space(ui.available_width());

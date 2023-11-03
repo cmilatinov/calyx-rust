@@ -1,8 +1,10 @@
+use std::any::TypeId;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::thread;
 use std::thread::JoinHandle;
 
@@ -14,14 +16,19 @@ use relative_path::{PathExt, RelativePathBuf};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use utils::{singleton, Init};
+
 use crate::assets::error::AssetError;
+use crate::assets::mesh::Mesh;
 use crate::assets::{Asset, AssetRef};
 use crate::core::Ref;
-use crate::utils::singleton_with_init;
+use crate::render::Shader;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetMeta {
     pub id: Uuid,
+    #[serde(skip_serializing, skip_deserializing)]
+    pub type_id: Option<TypeId>,
     pub name: String,
     pub display_name: String,
     pub path: Option<PathBuf>,
@@ -34,10 +41,18 @@ pub struct AssetRegistry {
     asset_cache: HashMap<Uuid, Ref<dyn Asset>>,
     asset_meta: HashMap<Uuid, AssetMeta>,
     asset_names: HashMap<RelativePathBuf, Uuid>,
+    asset_extensions: HashMap<String, TypeId>,
     watcher_thread: Option<JoinHandle<()>>,
 }
 
-singleton_with_init!(AssetRegistry);
+singleton!(AssetRegistry);
+
+impl Init for AssetRegistry {
+    fn initialize(&mut self) {
+        self.register_asset_type::<Mesh>();
+        self.register_asset_type::<Shader>();
+    }
+}
 
 impl AssetRegistry {
     pub fn root_path(&self) -> &PathBuf {
@@ -46,7 +61,10 @@ impl AssetRegistry {
 
     pub fn load<A: Asset>(&mut self, name: &str) -> Result<Ref<A>, AssetError> {
         let id = self.asset_id(name).ok_or(AssetError::NotFound)?;
+        self.load_by_id(id)
+    }
 
+    pub fn load_by_id<A: Asset>(&mut self, id: Uuid) -> Result<Ref<A>, AssetError> {
         // Asset already loaded
         if let Some(asset_ref) = self
             .asset_cache
@@ -81,6 +99,7 @@ impl AssetRegistry {
             id,
             AssetMeta {
                 id,
+                type_id: Some(TypeId::of::<A>()),
                 name: name.to_string(),
                 display_name: name.to_string(),
                 path: None,
@@ -88,6 +107,13 @@ impl AssetRegistry {
             },
         );
         Ok(asset)
+    }
+
+    pub fn register_asset_type<A: Asset>(&mut self) {
+        let type_id = TypeId::of::<A>();
+        for ext in A::get_file_extensions() {
+            self.asset_extensions.insert(String::from(*ext), type_id);
+        }
     }
 }
 
@@ -130,6 +156,10 @@ impl AssetRegistry {
         self.asset_meta.get(&id)
     }
 
+    pub fn asset_meta_from_id(&self, id: Uuid) -> Option<&AssetMeta> {
+        self.asset_meta.get(&id)
+    }
+
     pub fn asset_path(&self, id: Uuid, extensions: &[&str]) -> Option<&Path> {
         let meta = self.asset_meta.get(&id)?;
         let path = meta.path.as_ref()?;
@@ -141,6 +171,19 @@ impl AssetRegistry {
         } else {
             None
         }
+    }
+
+    pub fn asset_type_from_ext(&self, ext: &str) -> Option<TypeId> {
+        self.asset_extensions.get(ext).copied()
+    }
+
+    pub fn asset_id_from_ref(&self, reference: &Ref<dyn Asset>) -> Option<Uuid> {
+        for (id, asset_ref) in self.asset_cache.iter() {
+            if Arc::ptr_eq(asset_ref, reference) {
+                return Some(*id);
+            }
+        }
+        None
     }
 }
 
@@ -164,6 +207,7 @@ impl AssetRegistry {
                     let name = path.file_stem().unwrap().to_str().unwrap();
                     let meta = AssetMeta {
                         id: Uuid::new_v4(),
+                        type_id: None,
                         name: name.to_string(),
                         display_name: name.to_string(),
                         path: None,
@@ -174,6 +218,8 @@ impl AssetRegistry {
                     serde_json::to_writer(writer, &meta).unwrap();
                     meta
                 };
+                meta.type_id =
+                    self.asset_type_from_ext(path.extension().unwrap().to_str().unwrap());
                 meta.path = Some(match path.absolutize().unwrap() {
                     Cow::Borrowed(p) => p.to_path_buf(),
                     Cow::Owned(p) => p,
@@ -182,6 +228,29 @@ impl AssetRegistry {
                 self.asset_meta.insert(id, meta);
                 let relative_path = path.relative_to(asset_path).unwrap().with_extension("");
                 self.asset_names.insert(relative_path, id);
+            }
+        }
+    }
+}
+
+impl AssetRegistry {
+    pub fn search_assets(
+        &self,
+        search_term: &str,
+        asset_type: Option<TypeId>,
+        list: &mut Vec<AssetMeta>,
+    ) {
+        list.clear();
+        let search_term = search_term.to_lowercase();
+        // TODO: Case insensitive and word by word filter
+        for (_, meta) in self.asset_meta.iter() {
+            if (asset_type.is_none() || meta.type_id == asset_type)
+                && meta
+                    .display_name
+                    .to_lowercase()
+                    .contains(search_term.as_str())
+            {
+                list.push((*meta).clone());
             }
         }
     }

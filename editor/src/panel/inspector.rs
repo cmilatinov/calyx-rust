@@ -11,7 +11,7 @@ use utils::type_ids;
 
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 use crate::panel::Panel;
-use crate::EditorAppState;
+use crate::{EditorAppState, BASE_FONT_SIZE};
 
 pub struct PanelInspector {
     inspectors: HashMap<TypeId, Box<dyn TypeInspector>>,
@@ -50,22 +50,21 @@ impl Panel for PanelInspector {
     fn ui(&mut self, ui: &mut Ui) {
         let app_state = EditorAppState::get();
         let registry = TypeRegistry::get();
-        if let Some(selection) = app_state.selection.clone() {
-            if let Some(node) = selection.first_entity() {
-                let ctx = InspectorContext {
-                    registry: &registry,
-                    scene: &app_state.scene,
-                    node,
-                    parent_node: app_state.scene.get_parent_node(node),
-                };
-                let mut world = app_state.scene.world_mut();
-                let mut entry = world.entry(app_state.scene.get_entity(node)).unwrap();
-                for component in ClassRegistry::get().components().iter() {
-                    if let Some(instance) = component.get_instance_mut(&mut entry) {
-                        self.show_inspector(ui, &ctx, instance.as_reflect_mut());
-                    }
+        if let Some(node) = app_state.selection.clone().and_then(|s| s.first_entity()) {
+            let ctx = InspectorContext {
+                registry: &registry,
+                scene: &app_state.scene,
+                node,
+                parent_node: app_state.scene.get_parent_node(node),
+            };
+            let mut world = app_state.scene.world_mut();
+            let mut entry = world.entry(app_state.scene.get_entity(node)).unwrap();
+            for component in ClassRegistry::get().components().iter() {
+                if let Some(instance) = component.get_instance_mut(&mut entry) {
+                    self.show_inspector(ui, &ctx, instance.as_reflect_mut());
                 }
             }
+            if ui.button("Add Component").clicked() {}
         }
     }
 }
@@ -133,7 +132,7 @@ impl PanelInspector {
         instance: &mut dyn Reflect,
     ) {
         if let Some(inspector) = self.inspector_lookup(instance.type_id()) {
-            body.row(16.0, |mut row| {
+            body.row(BASE_FONT_SIZE + 6.0, |mut row| {
                 row.col(|ui| {
                     ui.label(format!("{} ", field_name));
                 });

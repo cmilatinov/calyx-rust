@@ -27,6 +27,12 @@ pub trait AssetRef {
     fn as_asset(&self) -> Ref<dyn Asset>;
 }
 
+#[reflect_trait]
+pub trait AssetOptionRef {
+    fn asset_type_id(&self) -> TypeId;
+    fn as_asset_option(&self) -> Option<Ref<dyn Asset>>;
+}
+
 impl<T: Asset> AssetRef for Ref<T> {
     fn asset_type_id(&self) -> TypeId {
         TypeId::of::<T>()
@@ -34,6 +40,20 @@ impl<T: Asset> AssetRef for Ref<T> {
     fn as_asset(&self) -> Ref<dyn Asset> {
         Ref::from_arc(unsafe {
             Arc::from_raw(Arc::into_raw(self.deref().clone()) as *const RwLock<dyn Asset>)
+        })
+    }
+}
+
+impl<T: Asset> AssetOptionRef for Option<Ref<T>> {
+    fn asset_type_id(&self) -> TypeId {
+        TypeId::of::<T>()
+    }
+
+    fn as_asset_option(&self) -> Option<Ref<dyn Asset>> {
+        self.clone().map(|r| {
+            Ref::from_arc(unsafe {
+                Arc::from_raw(Arc::into_raw(r.deref().clone()) as *const RwLock<dyn Asset>)
+            })
         })
     }
 }

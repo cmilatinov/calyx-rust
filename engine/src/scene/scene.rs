@@ -8,8 +8,8 @@ use uuid::Uuid;
 
 use crate::assets::mesh::Mesh;
 use crate::assets::AssetRegistry;
-use crate::component::ComponentTransform;
 use crate::component::{ComponentID, ComponentMesh};
+use crate::component::{ComponentPointLight, ComponentTransform};
 use crate::math::Transform;
 
 use super::error::SceneError;
@@ -38,7 +38,15 @@ impl Default for Scene {
 
         let cube = scene.create_entity(None, None);
         scene
-            .bind_component(cube, ComponentMesh { mesh: mesh.clone() })
+            .bind_component(
+                cube,
+                ComponentMesh {
+                    mesh: Some(mesh.clone()),
+                },
+            )
+            .unwrap();
+        scene
+            .bind_component(cube, ComponentPointLight::default())
             .unwrap();
 
         let cube2 = scene.create_entity(
@@ -48,7 +56,9 @@ impl Default for Scene {
             }),
             Some(cube),
         );
-        scene.bind_component(cube2, ComponentMesh { mesh }).unwrap();
+        scene
+            .bind_component(cube2, ComponentMesh { mesh: Some(mesh) })
+            .unwrap();
 
         {
             let mut world = scene.world_mut();
