@@ -1,4 +1,5 @@
 mod asset_inspector;
+mod bool_inspector;
 mod color_inspector;
 mod float_inspector;
 mod integer_inspector;

@@ -5,6 +5,7 @@ pub extern crate egui;
 pub extern crate egui_dock;
 pub extern crate egui_extras;
 pub extern crate egui_wgpu;
+pub extern crate image;
 pub extern crate indextree;
 pub extern crate inventory;
 pub extern crate legion;

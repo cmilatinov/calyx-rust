@@ -1,13 +1,13 @@
 use std::any::TypeId;
 
-use engine::egui::Ui;
+use engine::egui::{TextEdit, Ui};
 use reflect::Reflect;
 use reflect::ReflectDefault;
 use utils::type_ids;
 
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 
-#[derive(Default, Reflect)]
+#[derive(Default, Clone, Reflect)]
 #[reflect(Default, TypeInspector)]
 pub struct StringInspector;
 
@@ -16,6 +16,8 @@ impl TypeInspector for StringInspector {
         type_ids!(String)
     }
     fn show_inspector(&self, ui: &mut Ui, _ctx: &InspectorContext, instance: &mut dyn Reflect) {
-        ui.text_edit_singleline(instance.downcast_mut::<String>().unwrap());
+        TextEdit::singleline(instance.downcast_mut::<String>().unwrap())
+            .desired_width(ui.available_width())
+            .show(ui);
     }
 }

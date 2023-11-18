@@ -1,15 +1,16 @@
 use std::collections::HashMap;
 
-use egui::mutex::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use glm::Mat4;
 use indextree::{Arena, Children, NodeId};
 use legion::{Entity, EntityStore, World};
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use uuid::Uuid;
 
 use crate::assets::mesh::Mesh;
 use crate::assets::AssetRegistry;
-use crate::component::{ComponentID, ComponentMesh};
+use crate::component::{ComponentCamera, ComponentID, ComponentMesh};
 use crate::component::{ComponentPointLight, ComponentTransform};
+use crate::core::OptionRef;
 use crate::math::Transform;
 
 use super::error::SceneError;
@@ -41,12 +42,15 @@ impl Default for Scene {
             .bind_component(
                 cube,
                 ComponentMesh {
-                    mesh: Some(mesh.clone()),
+                    mesh: OptionRef::from_ref(mesh.clone()),
                 },
             )
             .unwrap();
         scene
             .bind_component(cube, ComponentPointLight::default())
+            .unwrap();
+        scene
+            .bind_component(cube, ComponentCamera::default())
             .unwrap();
 
         let cube2 = scene.create_entity(
@@ -54,10 +58,15 @@ impl Default for Scene {
                 id: Uuid::new_v4(),
                 name: "Bing bong".to_string(),
             }),
-            Some(cube),
+            None,
         );
         scene
-            .bind_component(cube2, ComponentMesh { mesh: Some(mesh) })
+            .bind_component(
+                cube2,
+                ComponentMesh {
+                    mesh: OptionRef::from_ref(mesh),
+                },
+            )
             .unwrap();
 
         {
@@ -92,7 +101,7 @@ impl Scene {
         } else {
             ComponentID::default()
         };
-        let entity = self.world.write().push((id, ComponentTransform::default()));
+        let entity = self.world_mut().push((id, ComponentTransform::default()));
         let new_node = self.entity_arena.new_node(entity);
         self.node_map.insert(entity, new_node);
 
@@ -106,11 +115,19 @@ impl Scene {
     }
 
     pub fn world(&self) -> RwLockReadGuard<World> {
-        self.world.read()
+        self.world.read().unwrap()
     }
 
     pub fn world_mut(&self) -> RwLockWriteGuard<World> {
-        self.world.write()
+        self.world.write().unwrap()
+    }
+
+    fn transform_cache(&self) -> RwLockReadGuard<HashMap<NodeId, Transform>> {
+        self.transform_cache.read().unwrap()
+    }
+
+    fn transform_cache_mut(&self) -> RwLockWriteGuard<HashMap<NodeId, Transform>> {
+        self.transform_cache.write().unwrap()
     }
 
     pub fn bind_component<T: Send + Sync + 'static>(
@@ -183,7 +200,7 @@ impl Scene {
     }
 
     pub fn get_world_transform(&self, node_id: NodeId) -> Transform {
-        if let Some(transform) = self.transform_cache.read().get(&node_id) {
+        if let Some(transform) = self.transform_cache().get(&node_id) {
             return *transform;
         }
         let world = self.world();
@@ -198,11 +215,11 @@ impl Scene {
             matrix = self.get_world_transform(parent_node).matrix * matrix;
         }
         let transform = Transform::from_matrix(matrix);
-        self.transform_cache.write().insert(node_id, transform);
+        self.transform_cache_mut().insert(node_id, transform);
         transform
     }
 
     pub fn clear_transform_cache(&mut self) {
-        self.transform_cache.write().clear();
+        self.transform_cache_mut().clear();
     }
 }

@@ -55,7 +55,7 @@ impl Default for EditorAppState {
         Self {
             scene: Scene::default(),
             camera: EditorCamera::default(),
-            scene_renderer: None,
+            scene_renderer: OptionRef::default(),
             selection: None,
             viewport_width: 0.0,
             viewport_height: 0.0,
@@ -176,6 +176,7 @@ impl EditorApp {
         style.spacing.scroll_bar_width = 5.0;
         style.spacing.scroll_bar_inner_margin = 0.0;
         style.spacing.scroll_bar_outer_margin = 2.0;
+        style.spacing.interact_size.x = 56.0;
         style.visuals.indent_has_left_vline = false;
         style.text_styles = [
             (
@@ -223,13 +224,12 @@ impl EditorApp {
                     }
                 });
                 ui.menu_button("Build", |ui| {
-                    if ui.button("Clean").clicked() {
-                        ui.close_menu();
-                    }
                     if ui.button("Build").clicked() {
+                        ProjectManager::get().build_assemblies();
                         ui.close_menu();
                     }
                     if ui.button("Rebuild").clicked() {
+                        ProjectManager::get().rebuild_assemblies();
                         ui.close_menu();
                     }
                 });

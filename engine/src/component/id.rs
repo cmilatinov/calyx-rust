@@ -7,7 +7,7 @@ use utils::Component;
 use crate as engine;
 use crate::component::{Component, ReflectComponent};
 
-#[derive(Component, Reflect)]
+#[derive(Clone, Component, Reflect)]
 #[reflect(Default, Component)]
 pub struct ComponentID {
     pub name: String,

@@ -1,6 +1,6 @@
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 
 use sharedlib::{Func, Lib, Symbol};
 
@@ -42,7 +42,20 @@ impl ProjectManager {
             .clone()
     }
 
-    pub fn build_assemblies(&mut self) -> JoinHandle<()> {
+    fn pipe_stdout(child: &mut Child) {
+        let stdout = child.stdout.as_mut().unwrap();
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        loop {
+            match reader.read_line(&mut line) {
+                Ok(0) | Err(_) => break,
+                _ => {}
+            }
+        }
+        child.wait().expect("TODO: panic message");
+    }
+
+    pub fn build_assemblies(&self) -> JoinHandle<()> {
         let root = self.root_project_dir();
         Background::get_mut().execute(TaskId::Build, move || {
             let mut child = Command::new("cargo")
@@ -51,38 +64,31 @@ impl ProjectManager {
                 .stdout(Stdio::piped())
                 .spawn()
                 .unwrap();
-            let stdout = child.stdout.as_mut().unwrap();
-            let mut reader = BufReader::new(stdout);
-            let mut line = String::new();
-            loop {
-                match reader.read_line(&mut line) {
-                    Ok(0) | Err(_) => break,
-                    _ => {}
-                }
-            }
+            Self::pipe_stdout(&mut child);
+            ProjectManager::get_mut().load_assemblies();
         })
     }
 
-    pub fn clean_assemblies(&self) -> JoinHandle<()> {
+    pub fn rebuild_assemblies(&self) -> JoinHandle<()> {
         let project = self.current_project.as_ref().unwrap();
         let root = project.root_directory().clone();
         let name = project.name().clone();
-        Background::get_mut().execute(TaskId::Clean, move || {
-            let mut child = Command::new("cargo")
-                .current_dir(root)
+        Background::get_mut().execute(TaskId::Build, move || {
+            let mut clean = Command::new("cargo")
+                .current_dir(root.clone())
                 .args(["clean", "-p", name.as_str()])
                 .stdout(Stdio::piped())
                 .spawn()
                 .unwrap();
-            let stdout = child.stdout.as_mut().unwrap();
-            let mut reader = BufReader::new(stdout);
-            let mut line = String::new();
-            loop {
-                match reader.read_line(&mut line) {
-                    Ok(0) | Err(_) => break,
-                    _ => {}
-                }
-            }
+            Self::pipe_stdout(&mut clean);
+            let mut build = Command::new("cargo")
+                .current_dir(root)
+                .arg("build")
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+            Self::pipe_stdout(&mut build);
+            ProjectManager::get_mut().load_assemblies();
         })
     }
 

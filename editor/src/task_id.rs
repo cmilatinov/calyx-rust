@@ -3,7 +3,7 @@ use num_derive::{FromPrimitive, ToPrimitive};
 #[derive(FromPrimitive, ToPrimitive)]
 pub enum TaskId {
     Build,
-    Clean,
+    Rebuild,
 }
 
 impl From<TaskId> for isize {
@@ -16,7 +16,7 @@ impl TaskId {
     pub fn message(&self) -> &'static str {
         match self {
             TaskId::Build => "Building assemblies",
-            TaskId::Clean => "Cleaning build files",
+            TaskId::Rebuild => "Rebuilding assemblies",
         }
     }
 }

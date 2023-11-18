@@ -1,4 +1,4 @@
-use engine::assets::{Asset, AssetRef, AssetRegistry};
+use engine::assets::{Asset, AssetRegistry};
 use engine::core::OptionRef;
 use engine::egui;
 use engine::egui::{DragValue, Id, Ui};
@@ -6,70 +6,76 @@ use engine::glm::{Vec2, Vec3, Vec4};
 use engine::uuid::Uuid;
 use lazy_static::lazy_static;
 use std::any::TypeId;
-use std::ops::DerefMut;
 use std::sync::RwLock;
 
 pub struct Widgets;
 
-const DRAG_SIZE: f32 = 56.0;
+struct AssetSelectState {
+    search: String,
+    should_request_focus: bool,
+}
 
 impl Widgets {
-    pub fn asset_select<A: Asset>(
+    pub fn asset_select(
         ui: &mut Ui,
         id: impl std::hash::Hash,
         type_id: Option<TypeId>,
-        value: &mut OptionRef<A>,
+        value: &mut OptionRef<dyn Asset>,
     ) -> bool {
         lazy_static! {
-            static ref SEARCH: RwLock<String> = RwLock::new(String::from(""));
+            static ref STATE: RwLock<AssetSelectState> = RwLock::new(AssetSelectState {
+                search: String::from(""),
+                should_request_focus: false
+            });
         }
-        let mut search = SEARCH.write().unwrap();
+        let mut state = STATE.write().unwrap();
         let mut registry = AssetRegistry::get_mut();
         let mut asset_id = value
             .as_ref()
-            .and_then(|r| registry.asset_id_from_ref(&r.as_asset()))
+            .and_then(|r| registry.asset_id_from_ref(r))
             .unwrap_or(Uuid::nil());
         let asset_meta = registry.asset_meta_from_id(asset_id);
+        let mut changed = false;
 
-        egui::ComboBox::from_id_source(id)
+        if egui::ComboBox::from_id_source(id)
             .wrap(false)
+            .width(ui.available_width())
             .selected_text(
                 asset_meta
                     .map(|meta| meta.display_name.as_str())
                     .unwrap_or("None"),
             )
             .show_ui(ui, |ui| {
-                ui.memory_mut(|m| m.request_focus(Id::from("asset_select")));
-                egui::TextEdit::singleline(search.deref_mut())
+                if state.should_request_focus {
+                    ui.memory_mut(|m| m.request_focus(Id::from("asset_select")));
+                    state.should_request_focus = false;
+                }
+                egui::TextEdit::singleline(&mut state.search)
                     .id(Id::from("asset_select"))
                     .hint_text("Filter by name")
                     .show(ui)
                     .response
                     .changed();
                 let mut assets = Vec::new();
-                registry.search_assets(search.as_str(), type_id, &mut assets);
-                if ui
+                registry.search_assets(state.search.as_str(), type_id, &mut assets);
+                ui.add_space(6.0);
+                changed |= ui
                     .selectable_value(&mut asset_id, Uuid::nil(), "None")
-                    .clicked()
-                {
-                    println!("{}", asset_id);
-                }
+                    .changed();
                 for asset in assets {
-                    if ui
+                    changed |= ui
                         .selectable_value(&mut asset_id, asset.id, asset.display_name)
-                        .clicked()
-                    {
-                        println!("{}", asset_id);
-                    }
+                        .changed();
                 }
-            });
-        if let Ok(asset_ref) = registry.load_by_id::<A>(asset_id) {
-            *value = Some(asset_ref);
-            true
-        } else {
-            *value = None;
-            false
+            })
+            .response
+            .clicked()
+        {
+            state.search.clear();
+            state.should_request_focus = true;
         }
+        *value = OptionRef::from_opt_ref(registry.load_dyn_by_id(asset_id).ok());
+        changed
     }
     pub fn drag_float4(ui: &mut Ui, speed: f32, value: &mut Vec4) -> bool {
         Self::drag_floatn(ui, speed, &mut value.data.as_mut_slice()[0..4])
@@ -87,12 +93,7 @@ impl Widgets {
         let mut changed = false;
         ui.horizontal_centered(|ui| {
             for value in value.iter_mut() {
-                changed |= ui
-                    .add_sized(
-                        [DRAG_SIZE, ui.available_height()],
-                        DragValue::new(value).speed(speed),
-                    )
-                    .changed();
+                changed |= ui.add(DragValue::new(value).speed(speed)).changed();
             }
         });
         changed
@@ -100,10 +101,7 @@ impl Widgets {
 
     pub fn drag_angle(ui: &mut Ui, value: &mut f32) -> bool {
         let mut degrees = value.to_degrees();
-        let res = ui.add_sized(
-            [DRAG_SIZE, ui.available_height()],
-            DragValue::new(&mut degrees).speed(1.0).suffix("°"),
-        );
+        let res = ui.add(DragValue::new(&mut degrees).speed(1.0).suffix("°"));
         let changed = res.changed();
         if changed {
             *value = degrees.to_radians();

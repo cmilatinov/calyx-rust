@@ -1,5 +1,4 @@
 use std::default::Default;
-use std::num::NonZeroU64;
 use std::ops::Deref;
 
 use egui_wgpu::wgpu;
@@ -15,7 +14,6 @@ use crate::math::Transform;
 use crate::render::buffer::{wgpu_buffer_init_desc, BufferLayout, ResizableBuffer};
 use crate::render::gizmos::Gizmos;
 use crate::render::render_utils::RenderUtils;
-use crate::render::CameraUniform;
 use crate::scene::Scene;
 
 #[repr(C)]
@@ -94,9 +92,7 @@ impl GizmoRenderer {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: NonZeroU64::new(
-                            std::mem::size_of::<CameraUniform>() as u64
-                        ),
+                        min_binding_size: None,
                     },
                     count: None,
                 }],
@@ -217,9 +213,9 @@ impl GizmoRenderer {
 
     fn load_buffers(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         self.circle_instance_buffer
-            .write_buffer(device, queue, self.circle_list.as_slice());
+            .write_buffer(device, queue, self.circle_list.as_slice(), None);
         self.cube_instance_buffer
-            .write_buffer(device, queue, self.cube_list.as_slice());
+            .write_buffer(device, queue, self.cube_list.as_slice(), None);
         RenderUtils::rebuild_mesh_data(device, queue, &mut self.wire_circle_mesh);
         RenderUtils::rebuild_mesh_data(device, queue, &mut self.wire_cube_mesh);
         self.lines_mesh.rebuild_mesh_data(device);

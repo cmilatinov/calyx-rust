@@ -26,7 +26,13 @@ pub fn decompose_transform(
     let sy = glm::length(&vec3(matrix.m12, matrix.m22, matrix.m32));
     let sz = glm::length(&vec3(matrix.m13, matrix.m23, matrix.m33));
     *scale = vec3(sx, sy, sz);
-    let (x, y, z) = Rotation3::from_matrix(&glm::mat4_to_mat3(matrix)).euler_angles();
+    let (x, y, z) = Rotation3::from_matrix_eps(
+        &glm::mat4_to_mat3(matrix),
+        f32::EPSILON,
+        1000,
+        Rotation3::identity(),
+    )
+    .euler_angles();
     *rotation = vec3(x, y, z);
 }
 

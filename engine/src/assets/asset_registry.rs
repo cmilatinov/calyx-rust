@@ -12,6 +12,8 @@ use glob::glob;
 use notify::event::CreateKind;
 use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use path_absolutize::Absolutize;
+use reflect::type_registry::TypeRegistry;
+use reflect::{AttributeValue, TypeInfo};
 use relative_path::{PathExt, RelativePathBuf};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -20,6 +22,7 @@ use utils::{singleton, Init};
 
 use crate::assets::error::AssetError;
 use crate::assets::mesh::Mesh;
+use crate::assets::texture::Texture2D;
 use crate::assets::{Asset, AssetRef};
 use crate::core::Ref;
 use crate::render::Shader;
@@ -31,7 +34,9 @@ pub struct AssetMeta {
     pub type_id: Option<TypeId>,
     pub name: String,
     pub display_name: String,
+    #[serde(skip_serializing, skip_deserializing)]
     pub path: Option<PathBuf>,
+    #[serde(skip_serializing, skip_deserializing)]
     dirty: bool,
 }
 
@@ -42,6 +47,8 @@ pub struct AssetRegistry {
     asset_meta: HashMap<Uuid, AssetMeta>,
     asset_names: HashMap<RelativePathBuf, Uuid>,
     asset_extensions: HashMap<String, TypeId>,
+    asset_ctors:
+        HashMap<TypeId, Box<dyn Fn(&Path) -> Result<Ref<dyn Asset>, AssetError> + Send + Sync>>,
     watcher_thread: Option<JoinHandle<()>>,
 }
 
@@ -51,6 +58,7 @@ impl Init for AssetRegistry {
     fn initialize(&mut self) {
         self.register_asset_type::<Mesh>();
         self.register_asset_type::<Shader>();
+        self.register_asset_type::<Texture2D>();
     }
 }
 
@@ -86,12 +94,41 @@ impl AssetRegistry {
         Ok(asset)
     }
 
+    pub fn load_dyn_by_id(&mut self, id: Uuid) -> Result<Ref<dyn Asset>, AssetError> {
+        // Asset already loaded
+        if let Some(asset_ref) = self.asset_cache.get(&id) {
+            return Ok(Ref::from_arc((*asset_ref).clone()));
+        }
+
+        // Find constructor & file path
+        let meta = self.asset_meta_from_id(id).ok_or(AssetError::NotFound)?;
+        let type_id = meta.type_id.as_ref().ok_or(AssetError::NotFound)?;
+        let ctor = self.asset_ctors.get(type_id).ok_or(AssetError::NotFound)?;
+        let path = meta.path.as_ref().ok_or(AssetError::NotFound)?;
+
+        // Load from file
+        let asset = ctor(path.as_path())?;
+        self.asset_cache.insert(id, Ref::from(&asset));
+        Ok(asset)
+    }
+
     pub fn create<A: Asset>(&mut self, name: &str, value: A) -> Result<Ref<A>, AssetError> {
         if self.asset_id(name).is_some() {
-            return Err(AssetError::AssetAlreadyExists);
+            return Err(AssetError::AlreadyExists);
         }
         let id = Uuid::new_v4();
         let asset = Ref::new(value);
+        let registry = TypeRegistry::get();
+        let display_name = registry
+            .type_info_by_id(TypeId::of::<A>())
+            .and_then(|info| {
+                if let TypeInfo::Struct(info) = info {
+                    if let Some(AttributeValue::String(str)) = info.attr("name") {
+                        return Some(str.to_string());
+                    }
+                }
+                None
+            });
         self.asset_names
             .insert(RelativePathBuf::from(name).normalize(), id);
         self.asset_cache.insert(id, asset.as_asset());
@@ -101,7 +138,7 @@ impl AssetRegistry {
                 id,
                 type_id: Some(TypeId::of::<A>()),
                 name: name.to_string(),
-                display_name: name.to_string(),
+                display_name: display_name.unwrap_or(name.to_string()),
                 path: None,
                 dirty: false,
             },
@@ -114,6 +151,13 @@ impl AssetRegistry {
         for ext in A::get_file_extensions() {
             self.asset_extensions.insert(String::from(*ext), type_id);
         }
+        self.asset_ctors.insert(
+            type_id,
+            Box::new(|path| {
+                let asset = A::from_file(path)?;
+                Ok(Ref::new(asset).as_asset())
+            }),
+        );
     }
 }
 
@@ -215,7 +259,7 @@ impl AssetRegistry {
                     };
                     let file = File::create(meta_path.as_path()).unwrap();
                     let writer = BufWriter::new(file);
-                    serde_json::to_writer(writer, &meta).unwrap();
+                    serde_json::to_writer_pretty(writer, &meta).unwrap();
                     meta
                 };
                 meta.type_id =

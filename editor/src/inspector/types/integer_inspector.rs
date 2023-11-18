@@ -8,7 +8,7 @@ use utils::type_ids;
 
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 
-#[derive(Default, Reflect)]
+#[derive(Default, Clone, Reflect)]
 #[reflect(Default, TypeInspector)]
 pub struct IntegerInspector;
 

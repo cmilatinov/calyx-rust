@@ -6,6 +6,7 @@ use egui::Vec2;
 use engine::assets::mesh::Mesh;
 use engine::assets::AssetRegistry;
 use engine::component::ComponentMesh;
+use engine::core::OptionRef;
 use engine::egui::{include_image, Button, Color32, Rounding, Sense};
 use engine::indextree::NodeId;
 use engine::scene::Scene;
@@ -49,7 +50,12 @@ impl Panel for PanelSceneHierarchy {
                 let new_entity = app_state.scene.create_entity(None, parent);
                 app_state
                     .scene
-                    .bind_component(new_entity, ComponentMesh { mesh: Some(mesh) })
+                    .bind_component(
+                        new_entity,
+                        ComponentMesh {
+                            mesh: OptionRef::from_ref(mesh),
+                        },
+                    )
                     .unwrap();
             }
             ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("Filter by name"));

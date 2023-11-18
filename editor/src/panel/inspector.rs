@@ -5,8 +5,9 @@ use engine::class_registry::ClassRegistry;
 use engine::egui::Ui;
 use engine::egui_extras;
 use engine::egui_extras::{Column, TableBody};
+use engine::legion::EntityStore;
 use reflect::type_registry::TypeRegistry;
-use reflect::{Reflect, ReflectDefault, TypeInfo};
+use reflect::{AttributeValue, Reflect, ReflectDefault, TypeInfo};
 use utils::type_ids;
 
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
@@ -51,25 +52,60 @@ impl Panel for PanelInspector {
         let app_state = EditorAppState::get();
         let registry = TypeRegistry::get();
         if let Some(node) = app_state.selection.clone().and_then(|s| s.first_entity()) {
-            let ctx = InspectorContext {
-                registry: &registry,
-                scene: &app_state.scene,
-                node,
-                parent_node: app_state.scene.get_parent_node(node),
-            };
-            let mut world = app_state.scene.world_mut();
-            let mut entry = world.entry(app_state.scene.get_entity(node)).unwrap();
-            for component in ClassRegistry::get().components().iter() {
-                if let Some(instance) = component.get_instance_mut(&mut entry) {
-                    self.show_inspector(ui, &ctx, instance.as_reflect_mut());
+            let entity = app_state.scene.get_entity(node);
+            let mut changes = HashMap::new();
+            {
+                let world = app_state.scene.world();
+                if let Ok(entry) = world.entry_ref(entity) {
+                    for component in ClassRegistry::get().components().iter() {
+                        let ctx = InspectorContext {
+                            registry: &registry,
+                            scene: &app_state.scene,
+                            node,
+                            parent_node: app_state.scene.get_parent_node(node),
+                            world: &world,
+                        };
+                        if let Some(instance) = component.get_instance(&entry) {
+                            let mut copy = instance.cloned();
+                            self.show_inspector(ui, &ctx, &mut *copy);
+                            changes.insert(component.as_any().type_id(), copy);
+                        }
+                    }
                 }
             }
+
+            let mut world = app_state.scene.world_mut();
+            for component in ClassRegistry::get().components().iter() {
+                if let Some(value) = changes.remove(&component.as_any().type_id()) {
+                    if let Some(mut entry) = world.entry(entity) {
+                        if let Some(instance) = component.get_instance_mut(&mut entry) {
+                            instance.assign(value);
+                        }
+                    }
+                }
+            }
+
             if ui.button("Add Component").clicked() {}
         }
     }
 }
 
 impl PanelInspector {
+    fn display_name(instance: &dyn Reflect) -> &'static str {
+        let registry = TypeRegistry::get();
+        registry
+            .type_info_by_id(instance.type_id())
+            .and_then(|info| {
+                if let TypeInfo::Struct(info) = info {
+                    if let Some(AttributeValue::String(str)) = info.attr("name") {
+                        return Some(str);
+                    }
+                }
+                None
+            })
+            .unwrap_or(instance.type_name_short())
+    }
+
     fn inspector_lookup(&self, type_id: TypeId) -> Option<&dyn TypeInspector> {
         match self.type_association.get(&type_id) {
             Some(inspector_id) => match self.inspectors.get(inspector_id) {
@@ -84,9 +120,10 @@ impl PanelInspector {
     }
 
     fn show_inspector(&self, ui: &mut Ui, ctx: &InspectorContext, instance: &mut dyn Reflect) {
-        match self.inspector_lookup(instance.type_id()) {
+        let name = Self::display_name(instance);
+        match self.inspector_lookup(instance.as_any().type_id()) {
             Some(inspector) => {
-                ui.collapsing(instance.type_name_short(), |ui| {
+                ui.collapsing(name, |ui| {
                     inspector.show_inspector(ui, ctx, instance);
                 })
                 .header_response
@@ -96,7 +133,7 @@ impl PanelInspector {
                 ui.separator();
             }
             None => {
-                ui.collapsing(instance.type_name_short(), |ui| {
+                ui.collapsing(name, |ui| {
                     self.show_default_inspector(ui, ctx, instance);
                 });
                 ui.separator();
@@ -110,7 +147,9 @@ impl PanelInspector {
         ctx: &InspectorContext,
         instance: &mut dyn Reflect,
     ) {
-        if let Some(TypeInfo::Struct(info)) = ctx.registry.type_info_by_id(instance.type_id()) {
+        if let Some(TypeInfo::Struct(info)) =
+            ctx.registry.type_info_by_id(instance.as_any().type_id())
+        {
             egui_extras::TableBuilder::new(ui)
                 .column(Column::auto().clip(true).resizable(true))
                 .column(Column::remainder().clip(true))
@@ -131,7 +170,7 @@ impl PanelInspector {
         field_name: &str,
         instance: &mut dyn Reflect,
     ) {
-        if let Some(inspector) = self.inspector_lookup(instance.type_id()) {
+        if let Some(inspector) = self.inspector_lookup(instance.as_any().type_id()) {
             body.row(BASE_FONT_SIZE + 6.0, |mut row| {
                 row.col(|ui| {
                     ui.label(format!("{} ", field_name));

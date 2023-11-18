@@ -58,6 +58,16 @@ pub(crate) fn impl_reflect_value(input: TokenStream) -> TokenStream {
             fn as_reflect_mut(&mut self) -> &mut dyn #FQReflect { self }
             #[inline]
             fn into_any(self: #FQBox<Self>) -> #FQBox<dyn #FQAny> { self }
+            #[inline]
+            fn cloned(&self) -> #FQBox<dyn #FQReflect> { Box::new(self.clone()) }
+            fn assign(&mut self, value: #FQBox<dyn #FQReflect>) -> bool {
+                if let Ok(value) = value.downcast::<#name>() {
+                    *self = *value;
+                    true
+                } else {
+                    false
+                }
+            }
         }
 
         impl #FQReflectedType for #name {

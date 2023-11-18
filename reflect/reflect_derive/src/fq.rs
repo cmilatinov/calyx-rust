@@ -25,6 +25,8 @@ pub(crate) struct FQTraitMeta;
 
 pub(crate) struct FQTraitMetaFrom;
 
+pub(crate) struct FQAttributeValue;
+
 impl ToTokens for FQAny {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         quote!(::core::any::Any).to_tokens(tokens);
@@ -94,5 +96,11 @@ impl ToTokens for FQTraitMeta {
 impl ToTokens for FQTraitMetaFrom {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         quote!(reflect::TraitMetaFrom).to_tokens(tokens)
+    }
+}
+
+impl ToTokens for FQAttributeValue {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        quote!(reflect::AttributeValue).to_tokens(tokens)
     }
 }

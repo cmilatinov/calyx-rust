@@ -9,9 +9,10 @@ use crate::component::{Component, ReflectComponent};
 use crate::render::Gizmos;
 use crate::scene::Scene;
 
-#[derive(Component, Reflect)]
+#[derive(Clone, Component, Reflect)]
 #[reflect(Default, Component)]
 pub struct ComponentPointLight {
+    pub active: bool,
     pub radius: f32,
     pub color: Color32,
 }
@@ -19,6 +20,7 @@ pub struct ComponentPointLight {
 impl Default for ComponentPointLight {
     fn default() -> Self {
         Self {
+            active: true,
             radius: 10.0,
             color: Color32::WHITE,
         }

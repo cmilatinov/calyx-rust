@@ -7,7 +7,7 @@ use utils::{singleton, Init};
 
 use crate::trait_meta::TraitMeta;
 use crate::type_info::{FieldGetter, FieldSetter, NamedField, StructInfo, TypeInfo};
-use crate::{FieldGetterMut, Reflect, ReflectedType, TraitMetaFrom};
+use crate::{AttributeMap, FieldGetterMut, Reflect, ReflectedType, TraitMetaFrom};
 
 pub struct TypeRegistrationFn(pub fn(&mut TypeRegistry));
 collect!(TypeRegistrationFn);
@@ -55,7 +55,7 @@ impl TypeRegistry {
         );
     }
 
-    pub fn meta_struct<T: 'static>(&mut self) -> StructInfoBuilder {
+    pub fn meta_struct<T: 'static>(&mut self, attrs: AttributeMap) -> StructInfoBuilder {
         let type_id = TypeId::of::<T>();
         self.types.insert(
             type_id,
@@ -64,6 +64,7 @@ impl TypeRegistry {
                 type_info: TypeInfo::Struct(StructInfo {
                     type_name: std::any::type_name::<T>(),
                     type_id,
+                    attrs,
                     fields: HashMap::new(),
                 }),
             },
@@ -139,6 +140,8 @@ impl<'a> StructInfoBuilder<'a> {
     pub fn field<T: 'static>(
         &mut self,
         name: &'static str,
+        attrs: AttributeMap,
+        doc: Option<&'static str>,
         getter: FieldGetter,
         getter_mut: FieldGetterMut,
         setter: FieldSetter,
@@ -149,6 +152,8 @@ impl<'a> StructInfoBuilder<'a> {
                 name,
                 type_name: std::any::type_name::<T>(),
                 type_id: TypeId::of::<T>(),
+                attrs,
+                doc,
                 getter,
                 getter_mut,
                 setter,

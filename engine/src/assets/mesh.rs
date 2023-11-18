@@ -101,6 +101,7 @@ impl Asset for Mesh {
                 PostProcess::Triangulate,
                 PostProcess::GenerateSmoothNormals,
                 PostProcess::FlipUVs,
+                PostProcess::FlipWindingOrder,
                 PostProcess::JoinIdenticalVertices,
             ],
         )?;
@@ -185,7 +186,7 @@ impl Mesh {
 
     fn rebuild_instance_buffer(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         self.instance_buffer
-            .write_buffer(device, queue, self.instances.as_slice());
+            .write_buffer(device, queue, self.instances.as_slice(), None);
     }
 
     fn normalize_mesh_data(&mut self) {

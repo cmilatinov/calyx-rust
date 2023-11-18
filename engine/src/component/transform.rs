@@ -6,7 +6,7 @@ use crate as engine;
 use crate::component::{Component, ReflectComponent};
 use crate::math::Transform;
 
-#[derive(Default, Component, Reflect)]
+#[derive(Default, Clone, Component, Reflect)]
 #[reflect(Default, Component)]
 pub struct ComponentTransform {
     pub transform: Transform,

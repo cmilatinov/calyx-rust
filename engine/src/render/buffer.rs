@@ -40,8 +40,8 @@ impl ResizableBuffer {
         }
     }
 
-    fn resize(&mut self, device: &wgpu::Device, size: u64) {
-        if self.buffer.is_some() && self.size >= size {
+    pub fn resize(&mut self, device: &wgpu::Device, size: u64) {
+        if self.size >= size {
             return;
         }
         let new_size = if self.size == 0 {
@@ -59,6 +59,7 @@ impl ResizableBuffer {
             usage: self.usage,
             mapped_at_creation: false,
         }));
+        self.size = new_size;
     }
 
     pub fn write_buffer<T: bytemuck::Pod>(
@@ -66,13 +67,29 @@ impl ResizableBuffer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         value: &[T],
+        offset: Option<wgpu::BufferAddress>,
     ) {
-        self.resize(device, std::mem::size_of_val(value) as u64);
-        queue.write_buffer(
-            self.buffer.as_ref().unwrap(),
-            0,
-            bytemuck::cast_slice(value),
-        );
+        let offset = offset.unwrap_or(0);
+        let size = std::mem::size_of_val(value) as u64;
+        self.resize(device, size + offset);
+        if size > 0 {
+            queue.write_buffer(self.get_wgpu_buffer(), offset, bytemuck::cast_slice(value));
+        }
+    }
+
+    pub fn write_buffer_bytes(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        value: &[u8],
+        offset: Option<wgpu::BufferAddress>,
+    ) {
+        let offset = offset.unwrap_or(0);
+        let size = std::mem::size_of_val(value) as u64;
+        self.resize(device, size + offset);
+        if size > 0 {
+            queue.write_buffer(self.get_wgpu_buffer(), offset, value);
+        }
     }
 
     pub fn get_wgpu_buffer(&self) -> &wgpu::Buffer {

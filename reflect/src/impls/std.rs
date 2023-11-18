@@ -4,27 +4,30 @@ use std::any::Any;
 use crate as reflect;
 use crate::{Reflect, ReflectedType};
 
+use super::std_default::ReflectDefault;
 use super::std_float::ReflectGenericFloat;
 use super::std_int::ReflectGenericInt;
 
-impl_reflect_value!(u8(GenericInt));
-impl_reflect_value!(u16(GenericInt));
-impl_reflect_value!(u32(GenericInt));
-impl_reflect_value!(u64(GenericInt));
-impl_reflect_value!(u128(GenericInt));
+impl_reflect_value!(bool(Default));
 
-impl_reflect_value!(i8(GenericInt));
-impl_reflect_value!(i16(GenericInt));
-impl_reflect_value!(i32(GenericInt));
-impl_reflect_value!(i64(GenericInt));
-impl_reflect_value!(i128(GenericInt));
+impl_reflect_value!(u8(Default, GenericInt));
+impl_reflect_value!(u16(Default, GenericInt));
+impl_reflect_value!(u32(Default, GenericInt));
+impl_reflect_value!(u64(Default, GenericInt));
+impl_reflect_value!(u128(Default, GenericInt));
 
-impl_reflect_value!(f32(GenericFloat));
-impl_reflect_value!(f64(GenericFloat));
+impl_reflect_value!(i8(Default, GenericInt));
+impl_reflect_value!(i16(Default, GenericInt));
+impl_reflect_value!(i32(Default, GenericInt));
+impl_reflect_value!(i64(Default, GenericInt));
+impl_reflect_value!(i128(Default, GenericInt));
 
-impl_reflect_value!(String());
+impl_reflect_value!(f32(Default, GenericFloat));
+impl_reflect_value!(f64(Default, GenericFloat));
 
-impl<T: Reflect + ReflectedType> Reflect for Option<T> {
+impl_reflect_value!(String(Default));
+
+impl<T: Reflect + ReflectedType + Clone> Reflect for Option<T> {
     fn type_name(&self) -> &'static str {
         if let Some(inner) = self.as_ref() {
             inner.type_name()
@@ -59,5 +62,18 @@ impl<T: Reflect + ReflectedType> Reflect for Option<T> {
 
     fn into_any(self: Box<Self>) -> Box<dyn Any> {
         self
+    }
+
+    fn cloned(&self) -> Box<dyn Reflect> {
+        Box::new(self.clone())
+    }
+
+    fn assign(&mut self, value: Box<dyn Reflect>) -> bool {
+        if let Ok(value) = value.downcast::<Option<T>>() {
+            *self = *value;
+            true
+        } else {
+            false
+        }
     }
 }

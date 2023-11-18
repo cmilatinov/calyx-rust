@@ -1,4 +1,3 @@
-use std::borrow::BorrowMut;
 use std::collections::HashMap;
 use std::default::Default;
 use std::ops::Deref;
@@ -6,22 +5,24 @@ use std::sync::{RwLock, RwLockWriteGuard};
 
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::{wgpu, RenderState};
-use glm::{vec4, Mat4, Vec4};
+use glm::{vec4, Mat4, Vec3, Vec4};
 use legion::{Entity, IntoQuery};
 
 use crate::assets::mesh::Mesh;
+use crate::assets::texture::Texture2D;
 use crate::assets::{AssetRegistry, Assets};
-use crate::component::ComponentMesh;
 use crate::component::ComponentTransform;
+use crate::component::{ComponentMesh, ComponentPointLight};
 use crate::core::Ref;
 use crate::math::Transform;
+use crate::render::buffer::ResizableBuffer;
 use crate::render::render_utils::RenderUtils;
-use crate::render::{Camera, GizmoRenderer, Shader};
+use crate::render::{Camera, GizmoRenderer, PipelineOptionsBuilder, Shader};
 use crate::scene::Scene;
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct CameraUniform {
+struct CameraUniform {
     pub projection: [[f32; 4]; 4],
     pub view: [[f32; 4]; 4],
     pub inverse_projection: [[f32; 4]; 4],
@@ -45,6 +46,15 @@ impl Default for CameraUniform {
     }
 }
 
+#[repr(C)]
+#[derive(Default, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct PointLight {
+    position: [f32; 3],
+    radius: f32,
+    color: [f32; 3],
+    _padding2: f32,
+}
+
 #[allow(dead_code)]
 pub struct SceneRenderer {
     scene_samples: u32,
@@ -55,9 +65,11 @@ pub struct SceneRenderer {
     scene_texture_view_msaa: wgpu::TextureView,
     scene_depth_texture_view: wgpu::TextureView,
     scene_bind_group: wgpu::BindGroup,
+    missing_texture: Ref<Texture2D>,
     scene_shader: Ref<Shader>,
     grid_shader: Ref<Shader>,
     camera_uniform_buffer: wgpu::Buffer,
+    light_storage_buffer: ResizableBuffer,
     gizmo_renderer: GizmoRenderer,
     clear_color: Vec4,
 }
@@ -68,7 +80,7 @@ impl SceneRenderer {
         let device = &render_state.device;
         let width = 1280;
         let height = 720;
-        let samples = 1; // TODO: figure out why GTX 970 isn't supporting anti-aliasing
+        let samples = 8; // TODO: figure out why GTX 970 isn't supporting anti-aliasing
 
         // Textures
         let (scene_texture, scene_texture_msaa, scene_depth_texture) =
@@ -89,10 +101,18 @@ impl SceneRenderer {
         // Shaders
         let scene_shader;
         let grid_shader;
+        let missing_texture;
         {
             let mut registry = AssetRegistry::get_mut();
             scene_shader = registry.load::<Shader>("shaders/basic").unwrap();
             grid_shader = registry.load::<Shader>("shaders/grid").unwrap();
+            missing_texture = registry.load::<Texture2D>("textures/white").unwrap();
+        }
+
+        {
+            let mut shader = grid_shader.write().unwrap();
+            shader.bind_group_layouts.drain(1..);
+            shader.rebuild_pipeline_layout();
         }
 
         let camera_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -101,18 +121,17 @@ impl SceneRenderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
+        let light_storage_buffer =
+            ResizableBuffer::new(wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
+
         let scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("scene_bind_group"),
-            layout: &scene_shader.read().unwrap().bind_group_layout,
+            layout: &scene_shader.read().unwrap().bind_group_layouts[0],
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: camera_uniform_buffer.as_entire_binding(),
             }],
         });
-
-        grid_shader.write().unwrap().set_fragment_targets(&[Some(
-            RenderUtils::color_alpha_blending(render_state.target_format),
-        )]);
 
         let gizmo_renderer = GizmoRenderer::new(cc, &camera_uniform_buffer, samples);
 
@@ -125,9 +144,11 @@ impl SceneRenderer {
             scene_depth_texture,
             scene_depth_texture_view,
             scene_bind_group,
+            missing_texture,
             scene_shader,
             grid_shader,
             camera_uniform_buffer,
+            light_storage_buffer,
             gizmo_renderer,
             clear_color: vec4(0.03, 0.03, 0.03, 1.0),
         }
@@ -142,14 +163,31 @@ impl SceneRenderer {
     ) {
         let queue = &render_state.queue;
         let device = &render_state.device;
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Scene Encoder"),
-        });
         let world = scene.world();
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("encoder"),
+        });
         {
             let mut mesh_map: HashMap<*const RwLock<Mesh>, &RwLock<Mesh>> = HashMap::new();
             let mut mesh_list: Vec<RwLockWriteGuard<Mesh>>;
-            let scene_shader = self.scene_shader.read().unwrap();
+            let mut scene_shader = self.scene_shader.write().unwrap();
+            let texture = self.missing_texture.read().unwrap();
+            let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("texture_bind_group"),
+                layout: &scene_shader.bind_group_layouts[2],
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&texture.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&texture.sampler),
+                    },
+                ],
+            });
+            let light_storage_bind_group;
             {
                 let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("Viewport Scene"),
@@ -169,7 +207,7 @@ impl SceneRenderer {
 
                 let mut query = <(Entity, &ComponentTransform, &ComponentMesh)>::query();
                 for (entity, _, m_comp) in query.iter(world.deref()) {
-                    if let Some(mesh_ref) = m_comp.mesh.as_ref() {
+                    if let Some(mesh_ref) = (*m_comp.mesh).as_ref() {
                         {
                             let mut mesh = mesh_ref.write().unwrap();
                             let ptr: *const RwLock<Mesh> = mesh_ref.deref().deref();
@@ -184,6 +222,46 @@ impl SceneRenderer {
                     }
                 }
 
+                let mut lights = Vec::new();
+                let mut query = <(Entity, &ComponentPointLight)>::query();
+                for (entity, light) in query.iter(world.deref()) {
+                    let mut color = Vec3::default();
+                    color.copy_from_slice(&light.color.to_normalized_gamma_f32()[0..3]);
+                    lights.push(PointLight {
+                        color: color.into(),
+                        radius: light.radius,
+                        position: scene
+                            .get_world_transform(scene.get_node(*entity))
+                            .position
+                            .into(),
+                        ..Default::default()
+                    });
+                }
+                let size = (16 + std::cmp::max(lights.len(), 1) * std::mem::size_of::<PointLight>())
+                    as u64;
+                self.light_storage_buffer.resize(device, size);
+                self.light_storage_buffer
+                    .write_buffer(device, queue, &[lights.len() as u32], None);
+                if !lights.is_empty() {
+                    self.light_storage_buffer.write_buffer(
+                        device,
+                        queue,
+                        lights.as_slice(),
+                        Some(16),
+                    );
+                }
+                light_storage_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("light_storage_bind_group"),
+                    layout: &scene_shader.bind_group_layouts[1],
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self
+                            .light_storage_buffer
+                            .get_wgpu_buffer()
+                            .as_entire_binding(),
+                    }],
+                });
+
                 // Lock all meshes for writing at once
                 mesh_list = mesh_map
                     .values()
@@ -191,10 +269,18 @@ impl SceneRenderer {
                     .collect();
 
                 // Render scene meshes
-                render_pass.set_pipeline(&scene_shader.pipeline);
-                render_pass.set_bind_group(0, &self.scene_bind_group, &[]);
-                for mesh in mesh_list.iter_mut() {
-                    RenderUtils::render_mesh(device, queue, &mut render_pass, mesh.borrow_mut());
+                let options = PipelineOptionsBuilder::default()
+                    .samples(self.scene_samples)
+                    .build();
+                scene_shader.build_pipeline(&options);
+                if let Some(pipeline) = scene_shader.get_pipeline(&options) {
+                    render_pass.set_pipeline(pipeline);
+                    render_pass.set_bind_group(0, &self.scene_bind_group, &[]);
+                    render_pass.set_bind_group(1, &light_storage_bind_group, &[]);
+                    render_pass.set_bind_group(2, &texture_bind_group, &[]);
+                    for mesh in mesh_list.iter_mut() {
+                        RenderUtils::render_mesh(device, queue, &mut render_pass, &mut *mesh);
+                    }
                 }
 
                 // Render gizmos
@@ -203,9 +289,9 @@ impl SceneRenderer {
         }
 
         {
-            let quad_binding = Assets::screen_space_quad().unwrap();
+            let quad_binding = Assets::screen_space_quad().0.unwrap();
             let mut quad_mesh = quad_binding.write().unwrap();
-            let grid_shader = self.grid_shader.read().unwrap();
+            let mut grid_shader = self.grid_shader.write().unwrap();
             {
                 let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("Scene Grid"),
@@ -228,10 +314,19 @@ impl SceneRenderer {
                 });
 
                 // Render grid
-                render_pass.set_pipeline(&grid_shader.pipeline);
-                render_pass.set_bind_group(0, &self.scene_bind_group, &[]);
-                quad_mesh.instances.resize(1, *Mat4::identity().as_ref());
-                RenderUtils::render_mesh(device, queue, &mut render_pass, quad_mesh.borrow_mut());
+                let options = PipelineOptionsBuilder::default()
+                    .samples(self.scene_samples)
+                    .fragment_targets(vec![Some(RenderUtils::color_alpha_blending(
+                        render_state.target_format,
+                    ))])
+                    .build();
+                grid_shader.build_pipeline(&options);
+                if let Some(pipeline) = grid_shader.get_pipeline(&options) {
+                    render_pass.set_pipeline(pipeline);
+                    render_pass.set_bind_group(0, &self.scene_bind_group, &[]);
+                    quad_mesh.instances.resize(1, *Mat4::identity().as_ref());
+                    RenderUtils::render_mesh(device, queue, &mut render_pass, &mut quad_mesh);
+                }
             }
         }
 

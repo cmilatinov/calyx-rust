@@ -1,13 +1,13 @@
 use std::any::TypeId;
 
-use engine::egui::Ui;
+use engine::egui::{TextEdit, Ui};
 use engine::uuid::Uuid;
 use reflect::{Reflect, ReflectDefault};
 use utils::type_ids;
 
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 
-#[derive(Default, Reflect)]
+#[derive(Default, Clone, Reflect)]
 #[reflect(Default, TypeInspector)]
 pub struct UuidInspector;
 
@@ -20,7 +20,9 @@ impl TypeInspector for UuidInspector {
         if let Some(uuid) = instance.downcast_mut::<Uuid>() {
             let value = uuid.to_string();
             let mut str = value.as_str();
-            ui.text_edit_singleline(&mut str);
+            TextEdit::singleline(&mut str)
+                .desired_width(ui.available_width())
+                .show(ui);
         }
     }
 }

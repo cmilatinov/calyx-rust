@@ -8,9 +8,8 @@ use log::LevelFilter;
 
 use editor::*;
 use engine::assets::AssetRegistry;
-use engine::background::Background;
 use engine::class_registry::ClassRegistry;
-use engine::core::{LogRegistry, Logger, Time};
+use engine::core::{LogRegistry, Logger, OptionRef, Time};
 use engine::eframe::wgpu;
 use engine::*;
 use reflect::type_registry::TypeRegistry;
@@ -27,13 +26,7 @@ fn main() -> eframe::Result<()> {
     // START ACTUAL EDITOR
     ProjectManager::init();
     ProjectManager::get_mut().load(PathBuf::from(&args[1]));
-    Background::get().thread_pool().execute(move || {
-        ProjectManager::get().clean_assemblies().await_complete();
-        ProjectManager::get_mut()
-            .build_assemblies()
-            .await_complete();
-        ProjectManager::get_mut().load_assemblies();
-    });
+    ProjectManager::get().build_assemblies();
 
     Time::init();
     AssetRegistry::init();
@@ -53,11 +46,12 @@ fn main() -> eframe::Result<()> {
         transparent: true,
         min_window_size: Some(egui::vec2(1280.0, 720.0)),
         initial_window_size: Some(egui::vec2(1280.0, 720.0)),
+        persist_window: true,
         renderer: eframe::Renderer::Wgpu,
         wgpu_options: egui_wgpu::WgpuConfiguration {
             device_descriptor: Arc::new(|_adapter| wgpu::DeviceDescriptor {
-                label: Some("Beans"),
-                features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
+                features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+                    | wgpu::Features::POLYGON_MODE_LINE,
                 ..Default::default()
             }),
             ..Default::default()
@@ -72,7 +66,7 @@ fn main() -> eframe::Result<()> {
             let app = EditorApp::new(cc);
             app_state.viewport_width = 0.0;
             app_state.viewport_height = 0.0;
-            app_state.scene_renderer = Some(app.scene_renderer.clone());
+            app_state.scene_renderer = OptionRef::from_ref(app.scene_renderer.clone());
             Box::new(app)
         }),
     )

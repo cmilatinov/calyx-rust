@@ -1,9 +1,11 @@
+pub use camera::*;
 pub use component::*;
 pub use id::*;
 pub use mesh::*;
 pub use point_light::*;
 pub use transform::*;
 
+mod camera;
 mod component;
 mod id;
 mod mesh;

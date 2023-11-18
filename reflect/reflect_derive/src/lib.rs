@@ -5,7 +5,7 @@ mod reflect_trait;
 mod reflect_type;
 mod reflect_value;
 
-#[proc_macro_derive(Reflect, attributes(reflect))]
+#[proc_macro_derive(Reflect, attributes(reflect, reflect_attr))]
 pub fn derive_reflect(input: TokenStream) -> TokenStream {
     reflect_type::derive_reflect(input)
 }

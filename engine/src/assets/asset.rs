@@ -7,7 +7,7 @@ use reflect::{impl_reflect_value, reflect_trait};
 
 use crate::assets::error::AssetError;
 use crate::assets::mesh::Mesh;
-use crate::core::Ref;
+use crate::core::{OptionRef, Ref};
 
 pub trait Asset: Any + Send + Sync {
     fn get_file_extensions() -> &'static [&'static str]
@@ -30,7 +30,8 @@ pub trait AssetRef {
 #[reflect_trait]
 pub trait AssetOptionRef {
     fn asset_type_id(&self) -> TypeId;
-    fn as_asset_option(&self) -> Option<Ref<dyn Asset>>;
+    fn as_asset_option(&self) -> OptionRef<dyn Asset>;
+    fn set(&mut self, asset_ref: OptionRef<dyn Asset>);
 }
 
 impl<T: Asset> AssetRef for Ref<T> {
@@ -44,17 +45,15 @@ impl<T: Asset> AssetRef for Ref<T> {
     }
 }
 
-impl<T: Asset> AssetOptionRef for Option<Ref<T>> {
+impl<T: Asset> AssetOptionRef for OptionRef<T> {
     fn asset_type_id(&self) -> TypeId {
         TypeId::of::<T>()
     }
-
-    fn as_asset_option(&self) -> Option<Ref<dyn Asset>> {
-        self.clone().map(|r| {
-            Ref::from_arc(unsafe {
-                Arc::from_raw(Arc::into_raw(r.deref().clone()) as *const RwLock<dyn Asset>)
-            })
-        })
+    fn as_asset_option(&self) -> OptionRef<dyn Asset> {
+        OptionRef::from_opt_ref(self.0.clone().map(|r| r.as_asset()))
+    }
+    fn set(&mut self, asset_ref: OptionRef<dyn Asset>) {
+        *self = OptionRef::from_opt_ref(asset_ref.0.and_then(|r| r.try_downcast::<T>()))
     }
 }
 
@@ -71,3 +70,4 @@ impl Ref<dyn Asset> {
 }
 
 impl_reflect_value!(Ref<Mesh>(AssetRef));
+impl_reflect_value!(OptionRef<Mesh>(AssetOptionRef));

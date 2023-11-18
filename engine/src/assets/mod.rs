@@ -7,3 +7,4 @@ mod asset_registry;
 mod assets;
 pub mod error;
 pub mod mesh;
+pub mod texture;

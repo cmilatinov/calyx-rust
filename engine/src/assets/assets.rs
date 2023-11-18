@@ -12,7 +12,7 @@ impl Assets {
     pub fn screen_space_quad() -> OptionRef<Mesh> {
         let mut registry = AssetRegistry::get_mut();
         if let Ok(mesh) = registry.load::<Mesh>(SCREEN_SPACE_QUAD) {
-            return Some(mesh);
+            return OptionRef::from_ref(mesh);
         }
         let mut quad = Mesh {
             indices: vec![0, 1, 2, 1, 0, 3],
@@ -23,10 +23,10 @@ impl Assets {
                 vec3(1.0, -1.0, 0.0),
             ],
             normals: vec![
-                vec3(0.0, 0.0, 1.0),
-                vec3(0.0, 0.0, 1.0),
-                vec3(0.0, 0.0, 1.0),
-                vec3(0.0, 0.0, 1.0),
+                vec3(0.0, 0.0, -1.0),
+                vec3(0.0, 0.0, -1.0),
+                vec3(0.0, 0.0, -1.0),
+                vec3(0.0, 0.0, -1.0),
             ],
             uvs: [
                 vec![
@@ -43,7 +43,7 @@ impl Assets {
         };
 
         quad.mark_dirty();
-        registry.create(SCREEN_SPACE_QUAD, quad).ok()
+        OptionRef::from_opt_ref(registry.create(SCREEN_SPACE_QUAD, quad).ok())
     }
 
     pub fn wire_circle() -> Mesh {

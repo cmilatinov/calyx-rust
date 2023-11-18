@@ -1,5 +1,6 @@
 use engine::egui::Ui;
 use engine::indextree::NodeId;
+use engine::legion::World;
 use engine::scene::Scene;
 use reflect::type_registry::TypeRegistry;
 use reflect::{reflect_trait, Reflect};
@@ -23,4 +24,5 @@ pub struct InspectorContext<'a> {
     pub scene: &'a Scene,
     pub node: NodeId,
     pub parent_node: Option<NodeId>,
+    pub world: &'a World,
 }

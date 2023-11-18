@@ -4,7 +4,7 @@ use russimp::RussimpError;
 pub enum AssetError {
     NotFound,
     LoadError,
-    AssetAlreadyExists,
+    AlreadyExists,
     TypeMismatch,
 }
 

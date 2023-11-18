@@ -4,7 +4,7 @@ use glm::{vec2, vec3, Mat4, Vec3, Vec4};
 
 use crate::assets::mesh::Mesh;
 use crate::math::{compose_transform, Transform};
-use crate::render::GizmoInstance;
+use crate::render::{Camera, GizmoInstance};
 
 pub struct Gizmos<'a> {
     pub(crate) camera_transform: &'a Transform,
@@ -53,6 +53,46 @@ impl<'a> Gizmos<'a> {
             .instances
             .push(compose_transform(position, &vec3(0.0, 0.0, 0.0), size).into());
         self.cube_list.push(self.gizmo_instance(false));
+    }
+
+    pub fn wire_frustum(
+        &mut self,
+        transform: &Transform,
+        aspect: f32,
+        fov: f32,
+        near_plane: f32,
+        far_plane: f32,
+    ) {
+        let camera = Camera::new(aspect, fov, near_plane, far_plane);
+        let matrix = glm::inverse(&(camera.projection * transform.inverse_matrix));
+        let _n1 = matrix * Vec4::new(-1.0, -1.0, -1.0, 1.0);
+        let n1 = (_n1 / _n1.w).xyz();
+        let _n2 = matrix * Vec4::new(-1.0, 1.0, -1.0, 1.0);
+        let n2 = (_n2 / _n2.w).xyz();
+        let _n3 = matrix * Vec4::new(1.0, 1.0, -1.0, 1.0);
+        let n3 = (_n3 / _n3.w).xyz();
+        let _n4 = matrix * Vec4::new(1.0, -1.0, -1.0, 1.0);
+        let n4 = (_n4 / _n4.w).xyz();
+        let _f1 = matrix * Vec4::new(-1.0, -1.0, 1.0, 1.0);
+        let f1 = (_f1 / _f1.w).xyz();
+        let _f2 = matrix * Vec4::new(-1.0, 1.0, 1.0, 1.0);
+        let f2 = (_f2 / _f2.w).xyz();
+        let _f3 = matrix * Vec4::new(1.0, 1.0, 1.0, 1.0);
+        let f3 = (_f3 / _f3.w).xyz();
+        let _f4 = matrix * Vec4::new(1.0, -1.0, 1.0, 1.0);
+        let f4 = (_f4 / _f4.w).xyz();
+        self.line(&n1, &n2);
+        self.line(&n2, &n3);
+        self.line(&n3, &n4);
+        self.line(&n4, &n1);
+        self.line(&f1, &f2);
+        self.line(&f2, &f3);
+        self.line(&f3, &f4);
+        self.line(&f4, &f1);
+        self.line(&f1, &n1);
+        self.line(&f2, &n2);
+        self.line(&f3, &n3);
+        self.line(&f4, &n4);
     }
 
     pub fn line(&mut self, start: &Vec3, end: &Vec3) {
