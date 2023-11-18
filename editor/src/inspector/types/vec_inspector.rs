@@ -1,7 +1,8 @@
 use std::any::TypeId;
 
 use engine::egui::Ui;
-use reflect::{Reflect, ReflectDefault};
+use engine::reflect;
+use engine::reflect::{Reflect, ReflectDefault};
 use utils::type_ids;
 
 use crate::glm::{Vec2, Vec3, Vec4};

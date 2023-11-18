@@ -11,6 +11,7 @@ pub extern crate inventory;
 pub extern crate legion;
 pub extern crate log;
 pub extern crate nalgebra_glm as glm;
+pub extern crate reflect;
 pub extern crate relative_path;
 pub extern crate russimp;
 pub extern crate rusty_pool;

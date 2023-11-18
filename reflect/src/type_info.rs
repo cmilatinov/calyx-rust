@@ -10,7 +10,7 @@ pub type FieldSetter = fn(&mut dyn Any, Box<dyn Any>) -> Option<()>;
 #[derive(Copy, Clone)]
 pub enum AttributeValue {
     None,
-    Float(f32),
+    Float(f64),
     Integer(isize),
     String(&'static str),
 }

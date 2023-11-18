@@ -6,8 +6,9 @@ use engine::egui::{Align, Layout, Ui};
 use engine::egui_extras;
 use engine::egui_extras::Column;
 use engine::math::Transform;
-use reflect::Reflect;
-use reflect::ReflectDefault;
+use engine::reflect;
+use engine::reflect::Reflect;
+use engine::reflect::ReflectDefault;
 use utils::type_ids;
 
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};

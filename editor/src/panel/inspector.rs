@@ -1,13 +1,15 @@
+use convert_case::{Case, Casing};
 use std::any::TypeId;
 use std::collections::HashMap;
 
 use engine::class_registry::ClassRegistry;
 use engine::egui::Ui;
-use engine::egui_extras;
 use engine::egui_extras::{Column, TableBody};
 use engine::legion::EntityStore;
-use reflect::type_registry::TypeRegistry;
-use reflect::{AttributeValue, Reflect, ReflectDefault, TypeInfo};
+use engine::reflect;
+use engine::reflect::type_registry::TypeRegistry;
+use engine::reflect::{AttributeValue, Reflect, ReflectDefault, TypeInfo};
+use engine::{egui, egui_extras};
 use utils::type_ids;
 
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
@@ -58,17 +60,24 @@ impl Panel for PanelInspector {
                 let world = app_state.scene.world();
                 if let Ok(entry) = world.entry_ref(entity) {
                     for component in ClassRegistry::get().components().iter() {
-                        let ctx = InspectorContext {
-                            registry: &registry,
-                            scene: &app_state.scene,
-                            node,
-                            parent_node: app_state.scene.get_parent_node(node),
-                            world: &world,
-                        };
-                        if let Some(instance) = component.get_instance(&entry) {
-                            let mut copy = instance.cloned();
-                            self.show_inspector(ui, &ctx, &mut *copy);
-                            changes.insert(component.as_any().type_id(), copy);
+                        let info = registry
+                            .type_info_by_id((*component).as_any().type_id())
+                            .unwrap();
+                        if let TypeInfo::Struct(type_info) = info {
+                            let ctx = InspectorContext {
+                                registry: &registry,
+                                scene: &app_state.scene,
+                                node,
+                                parent_node: app_state.scene.get_parent_node(node),
+                                world: &world,
+                                type_info,
+                                field_name: None,
+                            };
+                            if let Some(instance) = component.get_instance(&entry) {
+                                let mut copy = instance.cloned();
+                                self.show_inspector(ui, &ctx, &mut *copy);
+                                changes.insert(component.as_any().type_id(), copy);
+                            }
                         }
                     }
                 }
@@ -151,12 +160,18 @@ impl PanelInspector {
             ctx.registry.type_info_by_id(instance.as_any().type_id())
         {
             egui_extras::TableBuilder::new(ui)
-                .column(Column::auto().clip(true).resizable(true))
+                .column(
+                    Column::auto_with_initial_suggestion(200.0)
+                        .clip(true)
+                        .resizable(true),
+                )
                 .column(Column::remainder().clip(true))
                 .body(|mut body| {
                     for (_, field) in info.fields.iter() {
+                        let mut ctx = ctx.clone();
+                        ctx.field_name = Some(field.name);
                         if let Some(value) = field.get_reflect_mut(instance.as_reflect_mut()) {
-                            self.show_default_inspector_field(&mut body, ctx, field.name, value);
+                            self.show_default_inspector_field(&mut body, &ctx, field.name, value);
                         }
                     }
                 });
@@ -170,10 +185,12 @@ impl PanelInspector {
         field_name: &str,
         instance: &mut dyn Reflect,
     ) {
+        let mut name = field_name.from_case(Case::Snake).to_case(Case::Title);
+        name.push_str(" ");
         if let Some(inspector) = self.inspector_lookup(instance.as_any().type_id()) {
             body.row(BASE_FONT_SIZE + 6.0, |mut row| {
                 row.col(|ui| {
-                    ui.label(format!("{} ", field_name));
+                    ui.add(egui::Label::new(name.as_str()).wrap(false));
                 });
                 row.col(|ui| {
                     inspector.show_inspector(ui, ctx, instance);

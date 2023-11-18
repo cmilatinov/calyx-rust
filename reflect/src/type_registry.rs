@@ -81,9 +81,13 @@ impl TypeRegistry {
         self.types
             .get_mut(&TypeId::of::<T>())
             .and_then(|registration| {
+                let type_name = std::any::type_name::<T>();
+                let type_id = TypeId::of::<T>();
+                let trait_name = std::any::type_name::<M>();
+                let type_id = TypeId::of::<M>();
                 registration
                     .trait_meta
-                    .insert(TypeId::of::<M>(), Box::new(M::trait_meta()))
+                    .insert(type_id, Box::new(M::trait_meta()))
             });
     }
 

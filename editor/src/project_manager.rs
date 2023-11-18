@@ -5,9 +5,10 @@ use std::process::{Child, Command, Stdio};
 use sharedlib::{Func, Lib, Symbol};
 
 use engine::background::Background;
+use engine::reflect;
+use engine::reflect::type_registry::TypeRegistry;
 use engine::rusty_pool::JoinHandle;
 use project::Project;
-use reflect::type_registry::TypeRegistry;
 use utils::singleton_with_init;
 
 use crate::task_id::TaskId;

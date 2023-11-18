@@ -1,2 +1,3 @@
 [workspace]
 members = ["engine", "editor", "project", "reflect", "launcher", "utils"]
+resolver = "2"

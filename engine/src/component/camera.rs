@@ -14,6 +14,7 @@ use crate::scene::Scene;
 #[reflect(Default, Component)]
 #[reflect_attr(name = "Camera")]
 pub struct ComponentCamera {
+    #[reflect_attr(angle)]
     pub fov: f32,
     pub near_plane: f32,
     pub far_plane: f32,
@@ -23,7 +24,7 @@ pub struct ComponentCamera {
 impl Default for ComponentCamera {
     fn default() -> Self {
         Self {
-            fov: 70.0,
+            fov: 70.0f32.to_radians(),
             near_plane: 0.1,
             far_plane: 100.0,
             clear_color: Color32::BLACK,

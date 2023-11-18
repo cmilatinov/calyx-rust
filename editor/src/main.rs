@@ -13,6 +13,7 @@ use engine::core::{LogRegistry, Logger, OptionRef, Time};
 use engine::eframe::wgpu;
 use engine::*;
 use reflect::type_registry::TypeRegistry;
+use reflect::ReflectDefault;
 
 fn main() -> eframe::Result<()> {
     // LOAD PROJECT
@@ -33,6 +34,7 @@ fn main() -> eframe::Result<()> {
     AssetRegistry::get_mut()
         .set_root_path(ProjectManager::get().current_project().assets_directory());
 
+    let type_id = std::any::TypeId::of::<ReflectDefault>();
     TypeRegistry::init();
     ClassRegistry::init();
     LogRegistry::init();
