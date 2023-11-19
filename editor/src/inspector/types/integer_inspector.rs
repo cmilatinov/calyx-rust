@@ -2,9 +2,9 @@ use std::any::TypeId;
 
 use engine::egui;
 use engine::egui::Ui;
-use engine::reflect;
-use engine::reflect::ReflectDefault;
-use engine::reflect::{Reflect, ReflectGenericInt};
+use reflect;
+use reflect::ReflectDefault;
+use reflect::{Reflect, ReflectGenericInt};
 use utils::type_ids;
 
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};

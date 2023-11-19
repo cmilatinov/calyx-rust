@@ -32,14 +32,6 @@ impl Init for TypeRegistry {
 }
 
 impl TypeRegistry {
-    pub fn new() -> Self {
-        let mut registry = TypeRegistry::default();
-        for f in inventory::iter::<TypeRegistrationFn> {
-            (f.0)(&mut registry);
-        }
-        registry
-    }
-
     pub fn register<T: ReflectedType + 'static>(&mut self) {
         T::register(self)
     }
@@ -81,13 +73,9 @@ impl TypeRegistry {
         self.types
             .get_mut(&TypeId::of::<T>())
             .and_then(|registration| {
-                let type_name = std::any::type_name::<T>();
-                let type_id = TypeId::of::<T>();
-                let trait_name = std::any::type_name::<M>();
-                let type_id = TypeId::of::<M>();
                 registration
                     .trait_meta
-                    .insert(type_id, Box::new(M::trait_meta()))
+                    .insert(TypeId::of::<M>(), Box::new(M::trait_meta()))
             });
     }
 

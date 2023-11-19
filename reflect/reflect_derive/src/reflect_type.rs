@@ -208,6 +208,8 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
             }
         }
 
-        engine::inventory::submit!(reflect::type_registry::TypeRegistrationFn(<#name as #FQReflectedType>::register));
+        engine::inventory::submit!(
+            crate::ReflectRegistrationFn(<#name as #FQReflectedType>::register)
+        );
     })
 }

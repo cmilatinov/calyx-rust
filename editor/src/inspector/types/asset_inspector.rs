@@ -4,9 +4,9 @@ use engine::assets::mesh::Mesh;
 use engine::assets::ReflectAssetOptionRef;
 use engine::core::OptionRef;
 use engine::egui::Ui;
-use engine::reflect;
-use engine::reflect::Reflect;
-use engine::reflect::ReflectDefault;
+use reflect;
+use reflect::Reflect;
+use reflect::ReflectDefault;
 use utils::type_ids;
 
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};

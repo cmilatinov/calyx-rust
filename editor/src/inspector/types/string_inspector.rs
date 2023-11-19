@@ -1,9 +1,9 @@
 use std::any::TypeId;
 
 use engine::egui::{TextEdit, Ui};
-use engine::reflect;
-use engine::reflect::Reflect;
-use engine::reflect::ReflectDefault;
+use reflect;
+use reflect::Reflect;
+use reflect::ReflectDefault;
 use utils::type_ids;
 
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};

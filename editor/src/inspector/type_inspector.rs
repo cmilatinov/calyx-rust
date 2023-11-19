@@ -1,10 +1,10 @@
 use engine::egui::Ui;
 use engine::indextree::NodeId;
 use engine::legion::World;
-use engine::reflect;
-use engine::reflect::type_registry::TypeRegistry;
-use engine::reflect::{reflect_trait, Reflect, StructInfo};
 use engine::scene::Scene;
+use reflect;
+use reflect::type_registry::TypeRegistry;
+use reflect::{reflect_trait, Reflect, StructInfo};
 use std::any::TypeId;
 
 #[reflect_trait]

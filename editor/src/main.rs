@@ -35,7 +35,14 @@ fn main() -> eframe::Result<()> {
         .set_root_path(ProjectManager::get().current_project().assets_directory());
 
     let type_id = std::any::TypeId::of::<ReflectDefault>();
+    println!("{:?}", type_id);
     TypeRegistry::init();
+    {
+        let mut registry = TypeRegistry::get_mut();
+        for f in inventory::iter::<ReflectRegistrationFn>() {
+            (f.0)(&mut registry);
+        }
+    }
     ClassRegistry::init();
     LogRegistry::init();
 
