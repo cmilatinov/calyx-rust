@@ -11,8 +11,10 @@ use crate::scene::Scene;
 
 #[derive(Clone, Component, Reflect)]
 #[reflect(Default, Component)]
+#[reflect_attr(name = "Point Light")]
 pub struct ComponentPointLight {
     pub active: bool,
+    #[reflect_attr(min = 0.0)]
     pub radius: f32,
     pub color: Color32,
 }

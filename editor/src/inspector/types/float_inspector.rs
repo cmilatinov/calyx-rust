@@ -33,7 +33,7 @@ impl TypeInspector for FloatInspector {
         };
         let angle_attr = attrs.get("angle").copied();
         let min_attr = attrs.get("min").copied();
-        let max_attr = attrs.get("min").copied();
+        let max_attr = attrs.get("max").copied();
         let speed_attr = attrs.get("speed").copied();
         let meta = ctx
             .registry

@@ -225,6 +225,9 @@ impl SceneRenderer {
                 let mut lights = Vec::new();
                 let mut query = <(Entity, &ComponentPointLight)>::query();
                 for (entity, light) in query.iter(world.deref()) {
+                    if !light.active {
+                        continue;
+                    }
                     let mut color = Vec3::default();
                     color.copy_from_slice(&light.color.to_normalized_gamma_f32()[0..3]);
                     lights.push(PointLight {

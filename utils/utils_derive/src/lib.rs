@@ -46,6 +46,20 @@ pub fn component_derive(input: TokenStream) -> TokenStream {
                 let instance = entry.get_component_mut::<#name>().ok()?;
                 Some(instance)
             }
+            fn bind_instance(
+                &self,
+                entry: &mut engine::legion::world::Entry,
+                instance: std::boxed::Box<dyn reflect::Reflect>
+            ) {
+                if let Ok(instance) = instance.downcast::<#name>() {
+                    entry.add_component(*instance);
+                }
+            }
+            fn remove_instance(
+                &self, entry: &mut engine::legion::world::Entry
+            ) {
+                entry.remove_component::<#name>();
+            }
         }
     };
 

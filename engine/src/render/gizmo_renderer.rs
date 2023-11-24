@@ -249,7 +249,7 @@ impl GizmoRenderer {
             let world = scene.world();
             for entity in query.iter(world.deref()) {
                 let node = scene.get_node(*entity);
-                for comp in ClassRegistry::get().components().iter() {
+                for (_, comp) in ClassRegistry::get().components() {
                     if let Ok(entry) = world.entry_ref(*entity) {
                         if let Some(instance) = comp.get_instance(&entry) {
                             instance.draw_gizmos(scene, node, &mut gizmos);

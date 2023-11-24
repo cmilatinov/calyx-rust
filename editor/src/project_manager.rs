@@ -5,6 +5,7 @@ use std::process::{Child, Command, Stdio};
 use sharedlib::{Func, Lib, Symbol};
 
 use engine::background::Background;
+use engine::class_registry::ClassRegistry;
 use engine::rusty_pool::JoinHandle;
 use project::Project;
 use reflect::type_registry::TypeRegistry;
@@ -103,9 +104,12 @@ impl ProjectManager {
             let lib = Lib::new(root).unwrap();
             let load_fn: Func<extern "C" fn(&mut TypeRegistry)> =
                 lib.find_func("plugin_main").unwrap();
-            let mut registry = TypeRegistry::get_mut();
-            load_fn.get()(&mut registry);
+            {
+                let mut registry = TypeRegistry::get_mut();
+                load_fn.get()(&mut registry);
+            }
             self.assembly = Some(lib);
+            ClassRegistry::get_mut().refresh_class_lists();
         }
     }
 }

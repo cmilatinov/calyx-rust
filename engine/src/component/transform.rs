@@ -8,6 +8,7 @@ use crate::math::Transform;
 
 #[derive(Default, Clone, Component, Reflect)]
 #[reflect(Default, Component)]
+#[reflect_attr(name = "Transform")]
 pub struct ComponentTransform {
     pub transform: Transform,
 }

@@ -14,9 +14,11 @@ use crate::scene::Scene;
 #[reflect(Default, Component)]
 #[reflect_attr(name = "Camera")]
 pub struct ComponentCamera {
-    #[reflect_attr(angle)]
+    #[reflect_attr(angle, min = 30.0, max = 160.0, speed = 0.1)]
     pub fov: f32,
+    #[reflect_attr(min = 0.01, speed = 0.01)]
     pub near_plane: f32,
+    #[reflect_attr(min = 20.0, max = 1000.0, speed = 1.0)]
     pub far_plane: f32,
     pub clear_color: Color32,
 }

@@ -15,6 +15,8 @@ pub trait ComponentInstance {
     fn component_type_id(&self) -> ComponentTypeId;
     fn get_instance<'a>(&self, entry: &'a EntryRef) -> Option<&'a dyn Component>;
     fn get_instance_mut<'a>(&self, entry: &'a mut Entry) -> Option<&'a mut dyn Component>;
+    fn bind_instance(&self, entry: &mut Entry, instance: Box<dyn Reflect>);
+    fn remove_instance(&self, entry: &mut Entry);
 }
 
 #[reflect_trait]

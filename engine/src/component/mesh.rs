@@ -9,6 +9,7 @@ use crate::core::OptionRef;
 
 #[derive(Default, Clone, Component, Reflect)]
 #[reflect(Default, Component)]
+#[reflect_attr(name = "Mesh Renderer")]
 pub struct ComponentMesh {
     pub mesh: OptionRef<Mesh>,
 }

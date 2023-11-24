@@ -9,6 +9,7 @@ use crate::component::{Component, ReflectComponent};
 
 #[derive(Clone, Component, Reflect)]
 #[reflect(Default, Component)]
+#[reflect_attr(name = "Game Object")]
 pub struct ComponentID {
     pub name: String,
     pub id: Uuid,

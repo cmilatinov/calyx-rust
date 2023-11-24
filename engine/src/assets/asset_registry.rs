@@ -176,9 +176,7 @@ impl AssetRegistry {
                 match event.kind {
                     EventKind::Create(CreateKind::File)
                     | EventKind::Modify(_)
-                    | EventKind::Remove(_) => {
-                        println!("Rebuilding");
-                    }
+                    | EventKind::Remove(_) => {}
                     _ => {}
                 }
             }
