@@ -1,3 +1,5 @@
+use std::ops::DerefMut;
+
 use eframe::egui;
 use egui_dock::{DockArea, NodeIndex, Style};
 use egui_gizmo::GizmoMode;

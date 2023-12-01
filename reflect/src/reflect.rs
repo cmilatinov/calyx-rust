@@ -11,7 +11,6 @@ pub trait Reflect: Any + Send + Sync {
     fn as_reflect(&self) -> &dyn Reflect;
     fn as_reflect_mut(&mut self) -> &mut dyn Reflect;
     fn into_any(self: Box<Self>) -> Box<dyn Any>;
-    fn cloned(&self) -> Box<dyn Reflect>;
     fn assign(&mut self, value: Box<dyn Reflect>) -> bool;
 }
 

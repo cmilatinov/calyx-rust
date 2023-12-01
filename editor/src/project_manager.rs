@@ -1,4 +1,5 @@
 use std::io::{BufRead, BufReader};
+use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 
@@ -7,9 +8,9 @@ use sharedlib::{Func, Lib, Symbol};
 use engine::background::Background;
 use engine::class_registry::ClassRegistry;
 use engine::rusty_pool::JoinHandle;
+use engine::type_registry::TypeRegistry;
+use engine::utils::singleton_with_init;
 use project::Project;
-use reflect::type_registry::TypeRegistry;
-use utils::singleton_with_init;
 
 use crate::task_id::TaskId;
 

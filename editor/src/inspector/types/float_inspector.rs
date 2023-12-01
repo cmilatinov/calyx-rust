@@ -4,10 +4,10 @@ use std::ops::RangeInclusive;
 
 use engine::egui;
 use engine::egui::Ui;
+use engine::utils::type_ids;
 use reflect;
 use reflect::{AttributeValue, ReflectDefault};
 use reflect::{Reflect, ReflectGenericFloat};
-use utils::type_ids;
 
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 

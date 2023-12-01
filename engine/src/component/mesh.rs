@@ -1,13 +1,13 @@
+use engine_derive::Component;
 use reflect::Reflect;
 use reflect::ReflectDefault;
-use utils::Component;
 
 use crate as engine;
 use crate::assets::mesh::Mesh;
 use crate::component::{Component, ReflectComponent};
 use crate::core::OptionRef;
 
-#[derive(Default, Clone, Component, Reflect)]
+#[derive(Default, Component, Reflect)]
 #[reflect(Default, Component)]
 #[reflect_attr(name = "Mesh Renderer")]
 pub struct ComponentMesh {

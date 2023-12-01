@@ -26,33 +26,3 @@ pub trait Component: TypeUUID + Reflect + ComponentInstance {
     fn destroy(&mut self, _scene: &Scene) {}
     fn draw_gizmos(&self, _scene: &Scene, _node: NodeId, _gizmos: &mut Gizmos) {}
 }
-
-#[cfg(test)]
-mod tests {
-    use sha1::{Digest, Sha1};
-    use uuid::Uuid;
-
-    use utils::utils_derive::Component;
-
-    #[test]
-    pub fn create_component() {
-        #[derive(Component)]
-        pub struct ComponentTest {
-            test_visible: i32,
-        }
-
-        let expected_uuid = {
-            let mut hasher = Sha1::new();
-            hasher.update(b"ComponentTest");
-            let hash = hasher.finalize();
-            let uuid_bytes = [
-                hash[0], hash[1], hash[2], hash[3], hash[4], hash[5], hash[6], hash[7], hash[8],
-                hash[9], hash[10], hash[11], hash[12], hash[13], hash[14], hash[15],
-            ];
-
-            Uuid::from_bytes(uuid_bytes)
-        };
-
-        assert_eq!(ComponentTest::type_uuid(), expected_uuid);
-    }
-}

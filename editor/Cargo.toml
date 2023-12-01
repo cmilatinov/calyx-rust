@@ -22,7 +22,6 @@ serde = "1.0.189"
 syntect = { version = "5", optional = true, default-features = false, features = [
     "default-fancy",
 ] }
-utils = { path = "../utils" }
 reflect = { path = "../reflect" }
 inventory = "0.3.12"
 egui-gizmo = "0.12.0"

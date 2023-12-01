@@ -6,10 +6,10 @@ use engine::class_registry::ClassRegistry;
 use engine::component::Component;
 use engine::egui::Ui;
 use engine::egui_extras::{Column, TableBody};
+use engine::type_registry::TypeRegistry;
+use engine::utils::type_ids;
 use engine::{egui, egui_extras};
-use reflect::type_registry::TypeRegistry;
 use reflect::{AttributeValue, Reflect, ReflectDefault, TypeInfo};
-use utils::type_ids;
 
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 use crate::panel::Panel;

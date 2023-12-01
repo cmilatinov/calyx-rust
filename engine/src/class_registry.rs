@@ -1,11 +1,13 @@
-use reflect::type_registry::TypeRegistry;
-use reflect::ReflectDefault;
 use std::any::TypeId;
 use std::collections::hash_map::Iter;
 use std::collections::HashMap;
-use utils::{singleton, type_ids, Init};
+use std::ops::DerefMut;
+
+use reflect::ReflectDefault;
 
 use crate::component::{Component, ReflectComponent};
+use crate::type_registry::TypeRegistry;
+use crate::utils::{singleton, type_ids, Init};
 
 #[derive(Default)]
 pub struct ClassRegistry {

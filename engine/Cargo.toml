@@ -21,7 +21,7 @@ russimp = "2.0.6"
 notify = "6.1.1"
 inventory = "0.3.12"
 sha-1 = "0.10.1"
-utils = { path = "../utils" }
+engine_derive = { path = "./engine_derive" }
 impls = "1.0.3"
 legion = "0.4.0"
 egui_extras = { version = "0.23.0", features = ["all_loaders"] }

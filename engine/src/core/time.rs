@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use std::ops::DerefMut;
 use std::time::Instant;
 
-use utils::singleton_with_init;
+use crate as engine;
+use crate::utils::singleton_with_init;
 
 pub type TimeType = f32;
 

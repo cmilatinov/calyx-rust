@@ -3,8 +3,6 @@ use std::collections::HashMap;
 
 use inventory::collect;
 
-use utils::{singleton, Init};
-
 use crate::trait_meta::TraitMeta;
 use crate::type_info::{FieldGetter, FieldSetter, NamedField, StructInfo, TypeInfo};
 use crate::{AttributeMap, FieldGetterMut, Reflect, ReflectedType, TraitMetaFrom};
@@ -20,15 +18,6 @@ pub struct TypeRegistration {
 #[derive(Default)]
 pub struct TypeRegistry {
     pub types: HashMap<TypeId, TypeRegistration>,
-}
-singleton!(TypeRegistry);
-
-impl Init for TypeRegistry {
-    fn initialize(&mut self) {
-        for f in inventory::iter::<TypeRegistrationFn> {
-            (f.0)(self);
-        }
-    }
 }
 
 impl TypeRegistry {

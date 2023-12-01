@@ -1,13 +1,13 @@
 use uuid::Uuid;
 
+use engine_derive::Component;
 use reflect::Reflect;
 use reflect::ReflectDefault;
-use utils::Component;
 
 use crate as engine;
 use crate::component::{Component, ReflectComponent};
 
-#[derive(Clone, Component, Reflect)]
+#[derive(Component, Reflect)]
 #[reflect(Default, Component)]
 #[reflect_attr(name = "Game Object")]
 pub struct ComponentID {

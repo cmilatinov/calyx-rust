@@ -1,10 +1,10 @@
 use std::any::TypeId;
 
 use engine::egui::Ui;
+use engine::utils::type_ids;
 use reflect;
 use reflect::Reflect;
 use reflect::ReflectDefault;
-use utils::type_ids;
 
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 

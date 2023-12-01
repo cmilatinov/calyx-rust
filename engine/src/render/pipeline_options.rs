@@ -1,7 +1,7 @@
 use crate::render::render_utils::RenderUtils;
 use crate::render::RenderContext;
+use crate::utils::impl_builder_fn;
 use egui_wgpu::wgpu;
-use utils::impl_builder_fn;
 
 pub struct PipelineOptionsBuilder {
     primitive_topology: wgpu::PrimitiveTopology,

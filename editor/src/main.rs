@@ -11,8 +11,8 @@ use engine::assets::AssetRegistry;
 use engine::class_registry::ClassRegistry;
 use engine::core::{LogRegistry, Logger, OptionRef, Time};
 use engine::eframe::wgpu;
+use engine::type_registry::TypeRegistry;
 use engine::*;
-use reflect::type_registry::TypeRegistry;
 
 fn main() -> eframe::Result<()> {
     // LOAD PROJECT

@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
+use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
@@ -12,13 +13,11 @@ use glob::glob;
 use notify::event::CreateKind;
 use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use path_absolutize::Absolutize;
-use reflect::type_registry::TypeRegistry;
-use reflect::{AttributeValue, TypeInfo};
 use relative_path::{PathExt, RelativePathBuf};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use utils::{singleton, Init};
+use reflect::{AttributeValue, TypeInfo};
 
 use crate::assets::error::AssetError;
 use crate::assets::mesh::Mesh;
@@ -26,6 +25,8 @@ use crate::assets::texture::Texture2D;
 use crate::assets::{Asset, AssetRef};
 use crate::core::Ref;
 use crate::render::Shader;
+use crate::type_registry::TypeRegistry;
+use crate::utils::{singleton, Init};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetMeta {

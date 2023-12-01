@@ -5,20 +5,16 @@ pub trait Init {
 #[macro_export]
 macro_rules! singleton {
     ($t:tt) => {
-        use lazy_static::lazy_static;
-        use std::ops::DerefMut;
-        use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
-
-        lazy_static! {
-            static ref INSTANCE: RwLock<$t> = RwLock::new($t::default());
+        lazy_static::lazy_static! {
+            static ref INSTANCE: std::sync::RwLock<$t> = std::sync::RwLock::new($t::default());
         }
 
         impl $t {
-            pub fn get() -> RwLockReadGuard<'static, $t> {
+            pub fn get() -> std::sync::RwLockReadGuard<'static, $t> {
                 INSTANCE.read().unwrap()
             }
 
-            pub fn get_mut() -> RwLockWriteGuard<'static, $t> {
+            pub fn get_mut() -> std::sync::RwLockWriteGuard<'static, $t> {
                 INSTANCE.write().unwrap()
             }
 
@@ -34,8 +30,8 @@ macro_rules! singleton {
 #[macro_export]
 macro_rules! singleton_with_init {
     ($t:tt) => {
-        use ::utils::Init;
-        ::utils::singleton!($t);
+        use engine::utils::Init;
+        engine::utils::singleton!($t);
 
         impl Init for $t {}
     };

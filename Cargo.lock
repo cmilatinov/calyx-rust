@@ -1147,7 +1147,6 @@ dependencies = [
  "serde",
  "sharedlib",
  "syntect",
- "utils",
 ]
 
 [[package]]
@@ -1337,6 +1336,7 @@ dependencies = [
  "egui-wgpu",
  "egui_dock",
  "egui_extras",
+ "engine_derive",
  "enum-map",
  "glob",
  "image",
@@ -1357,9 +1357,19 @@ dependencies = [
  "serde",
  "serde_json",
  "sha-1",
- "utils",
  "uuid 1.5.0",
  "wgsl_preprocessor",
+]
+
+[[package]]
+name = "engine_derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "sha-1",
+ "syn 2.0.38",
+ "uuid 1.5.0",
 ]
 
 [[package]]
@@ -3530,7 +3540,6 @@ dependencies = [
  "quote",
  "reflect_derive",
  "syn 2.0.38",
- "utils",
  "uuid 1.5.0",
 ]
 
@@ -4551,24 +4560,6 @@ dependencies = [
  "siphasher",
  "strict-num",
  "svgtypes",
-]
-
-[[package]]
-name = "utils"
-version = "0.1.0"
-dependencies = [
- "utils_derive",
-]
-
-[[package]]
-name = "utils_derive"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "sha-1",
- "syn 2.0.38",
- "uuid 1.5.0",
 ]
 
 [[package]]

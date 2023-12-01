@@ -1,6 +1,8 @@
-use utils::singleton_with_init;
+use std::ops::DerefMut;
+
+use crate as engine;
+use crate::utils::singleton_with_init;
 
 #[derive(Default)]
-pub struct SceneManager {}
-
+pub struct SceneManager;
 singleton_with_init!(SceneManager);

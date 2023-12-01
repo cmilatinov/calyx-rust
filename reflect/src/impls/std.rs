@@ -64,10 +64,6 @@ impl<T: Reflect + ReflectedType + Clone> Reflect for Option<T> {
         self
     }
 
-    fn cloned(&self) -> Box<dyn Reflect> {
-        Box::new(self.clone())
-    }
-
     fn assign(&mut self, value: Box<dyn Reflect>) -> bool {
         if let Ok(value) = value.downcast::<Option<T>>() {
             *self = *value;

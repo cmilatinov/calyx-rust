@@ -15,10 +15,10 @@ pub extern crate relative_path;
 pub extern crate russimp;
 pub extern crate rusty_pool;
 pub extern crate serde;
-pub extern crate utils;
 pub extern crate uuid;
 
 use inventory::collect;
+
 use reflect::type_registry::TypeRegistry;
 
 pub mod assets;
@@ -29,6 +29,8 @@ pub mod core;
 pub mod math;
 pub mod render;
 pub mod scene;
+pub mod type_registry;
+pub mod utils;
 
 pub struct ReflectRegistrationFn(pub fn(&mut TypeRegistry));
 collect!(ReflectRegistrationFn);

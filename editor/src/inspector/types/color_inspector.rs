@@ -3,9 +3,9 @@ use std::any::TypeId;
 
 use engine::egui::color_picker::Alpha;
 use engine::egui::{Color32, Ui};
+use engine::utils::type_ids;
 use reflect;
 use reflect::{Reflect, ReflectDefault};
-use utils::type_ids;
 
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 

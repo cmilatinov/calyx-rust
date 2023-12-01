@@ -1,9 +1,11 @@
 use std::collections::HashSet;
+use std::ops::DerefMut;
 use std::time::Duration;
 
 use rusty_pool::{JoinHandle, ThreadPool};
 
-use utils::singleton_with_init;
+use crate as engine;
+use crate::utils::singleton_with_init;
 
 pub struct Background {
     thread_pool: ThreadPool,

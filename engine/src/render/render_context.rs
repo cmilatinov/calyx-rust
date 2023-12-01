@@ -1,9 +1,11 @@
-use egui::epaint;
+use std::ops::DerefMut;
 use std::sync::Arc;
 
+use egui::epaint;
 use egui_wgpu::{wgpu, Renderer};
 
-use utils::singleton_with_init;
+use crate as engine;
+use crate::utils::singleton_with_init;
 
 #[derive(Default)]
 pub struct RenderContext {

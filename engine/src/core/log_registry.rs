@@ -1,6 +1,9 @@
+use std::ops::DerefMut;
+
 use log::{Log, Metadata, Record};
 
-use utils::singleton_with_init;
+use crate as engine;
+use crate::utils::singleton_with_init;
 
 #[derive(Default)]
 pub struct LogRegistry {
