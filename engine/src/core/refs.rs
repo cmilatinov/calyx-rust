@@ -1,5 +1,5 @@
 use std::fmt::{Debug, Formatter};
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, RwLock};
 
 pub struct Ref<T: ?Sized>(Arc<RwLock<T>>);
@@ -48,10 +48,22 @@ impl<T> OptionRef<T> {
 
 impl<T: ?Sized> OptionRef<T> {
     pub fn from_ref(reference: Ref<T>) -> Self {
-        Self(Some(reference))
+        reference.into()
     }
     pub fn from_opt_ref(opt: Option<Ref<T>>) -> Self {
-        Self(opt)
+        opt.into()
+    }
+}
+
+impl<T: ?Sized> From<Option<Ref<T>>> for OptionRef<T> {
+    fn from(value: Option<Ref<T>>) -> Self {
+        Self(value)
+    }
+}
+
+impl<T: ?Sized> From<Ref<T>> for OptionRef<T> {
+    fn from(value: Ref<T>) -> Self {
+        Self(Some(value))
     }
 }
 
@@ -76,5 +88,11 @@ impl<T: ?Sized> Deref for OptionRef<T> {
     type Target = Option<Ref<T>>;
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl<T: ?Sized> DerefMut for OptionRef<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }

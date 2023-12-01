@@ -10,7 +10,6 @@ use crate::assets::mesh::Mesh;
 use crate::assets::AssetRegistry;
 use crate::component::{ComponentCamera, ComponentID, ComponentMesh};
 use crate::component::{ComponentPointLight, ComponentTransform};
-use crate::core::OptionRef;
 use crate::math::Transform;
 
 use super::error::SceneError;
@@ -42,7 +41,7 @@ impl Default for Scene {
             .bind_component(
                 cube,
                 ComponentMesh {
-                    mesh: OptionRef::from_ref(mesh.clone()),
+                    mesh: mesh.clone().into(),
                 },
             )
             .unwrap();
@@ -61,12 +60,7 @@ impl Default for Scene {
             None,
         );
         scene
-            .bind_component(
-                cube2,
-                ComponentMesh {
-                    mesh: OptionRef::from_ref(mesh),
-                },
-            )
+            .bind_component(cube2, ComponentMesh { mesh: mesh.into() })
             .unwrap();
 
         {

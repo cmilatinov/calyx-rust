@@ -50,10 +50,10 @@ impl<T: Asset> AssetOptionRef for OptionRef<T> {
         TypeId::of::<T>()
     }
     fn as_asset_option(&self) -> OptionRef<dyn Asset> {
-        OptionRef::from_opt_ref(self.0.clone().map(|r| r.as_asset()))
+        self.0.clone().map(|r| r.as_asset()).into()
     }
     fn set(&mut self, asset_ref: OptionRef<dyn Asset>) {
-        *self = OptionRef::from_opt_ref(asset_ref.0.and_then(|r| r.try_downcast::<T>()))
+        *self = asset_ref.0.and_then(|r| r.try_downcast::<T>()).into()
     }
 }
 

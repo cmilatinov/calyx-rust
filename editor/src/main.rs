@@ -9,7 +9,7 @@ use log::LevelFilter;
 use editor::*;
 use engine::assets::AssetRegistry;
 use engine::class_registry::ClassRegistry;
-use engine::core::{LogRegistry, Logger, OptionRef, Time};
+use engine::core::{LogRegistry, Logger, Time};
 use engine::eframe::wgpu;
 use engine::type_registry::TypeRegistry;
 use engine::*;
@@ -33,10 +33,6 @@ fn main() -> eframe::Result<()> {
     AssetRegistry::get_mut()
         .set_root_path(ProjectManager::get().current_project().assets_directory());
 
-    println!(
-        "ReflectDefault - {:?}",
-        std::any::TypeId::of::<reflect::ReflectDefault>()
-    );
     TypeRegistry::init();
     {
         let mut registry = TypeRegistry::get_mut();
@@ -76,7 +72,7 @@ fn main() -> eframe::Result<()> {
             let app = EditorApp::new(cc);
             app_state.viewport_width = 0.0;
             app_state.viewport_height = 0.0;
-            app_state.scene_renderer = OptionRef::from_ref(app.scene_renderer.clone());
+            app_state.scene_renderer = app.scene_renderer.clone().into();
             Box::new(app)
         }),
     )

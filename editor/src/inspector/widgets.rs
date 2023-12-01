@@ -74,7 +74,7 @@ impl Widgets {
             state.search.clear();
             state.should_request_focus = true;
         }
-        *value = OptionRef::from_opt_ref(registry.load_dyn_by_id(asset_id).ok());
+        *value = registry.load_dyn_by_id(asset_id).ok().into();
         changed
     }
     pub fn drag_float4(ui: &mut Ui, speed: f32, value: &mut Vec4) -> bool {
