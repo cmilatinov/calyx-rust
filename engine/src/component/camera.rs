@@ -1,7 +1,6 @@
 use egui::Color32;
 use indextree::NodeId;
 
-use engine_derive::Component;
 use reflect::Reflect;
 use reflect::ReflectDefault;
 
