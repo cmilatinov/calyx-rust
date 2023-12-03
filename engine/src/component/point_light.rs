@@ -2,6 +2,7 @@ use egui::Color32;
 use glm::Vec4;
 use indextree::NodeId;
 
+use engine_derive::TypeUuid;
 use reflect::{Reflect, ReflectDefault};
 
 use crate as engine;
@@ -9,7 +10,8 @@ use crate::component::{Component, ReflectComponent};
 use crate::render::Gizmos;
 use crate::scene::Scene;
 
-#[derive(Component, Reflect)]
+#[derive(TypeUuid, Component, Reflect)]
+#[uuid = "5fd24d64-6661-40ba-94a5-4fca0d06ead1"]
 #[reflect(Default, Component)]
 #[reflect_attr(name = "Point Light")]
 pub struct ComponentPointLight {

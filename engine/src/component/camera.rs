@@ -1,6 +1,7 @@
 use egui::Color32;
 use indextree::NodeId;
 
+use engine_derive::TypeUuid;
 use reflect::Reflect;
 use reflect::ReflectDefault;
 
@@ -9,7 +10,8 @@ use crate::component::{Component, ReflectComponent};
 use crate::render::Gizmos;
 use crate::scene::Scene;
 
-#[derive(Component, Reflect)]
+#[derive(TypeUuid, Component, Reflect)]
+#[uuid = "a85867d2-3e68-42b2-b943-ea78c7c6ddb5"]
 #[reflect(Default, Component)]
 #[reflect_attr(name = "Camera")]
 pub struct ComponentCamera {

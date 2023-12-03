@@ -7,10 +7,7 @@ use reflect::{reflect_trait, Reflect};
 
 use crate::render::Gizmos;
 use crate::scene::Scene;
-
-pub trait TypeUUID {
-    fn type_uuid(&self) -> uuid::Uuid;
-}
+use crate::utils::TypeUuidDynamic;
 
 pub trait ComponentInstance {
     fn component_type_id(&self) -> ComponentTypeId;
@@ -21,7 +18,7 @@ pub trait ComponentInstance {
 }
 
 #[reflect_trait]
-pub trait Component: TypeUUID + Reflect + ComponentInstance {
+pub trait Component: TypeUuidDynamic + Reflect + ComponentInstance {
     fn start(&mut self, _scene: &Scene) {}
     fn update(&mut self, _scene: &Scene) {}
     fn destroy(&mut self, _scene: &Scene) {}
