@@ -2,6 +2,7 @@ use indextree::NodeId;
 use legion::storage::ComponentTypeId;
 use legion::world::{Entry, EntryRef};
 
+pub use engine_derive::Component;
 use reflect::{reflect_trait, Reflect};
 
 use crate::render::Gizmos;
