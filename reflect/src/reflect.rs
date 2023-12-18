@@ -2,8 +2,9 @@ use std::any::{Any, TypeId};
 use std::fmt::{Debug, Formatter};
 
 use crate::type_registry::TypeRegistry;
+use crate::type_uuid::TypeUuidDynamic;
 
-pub trait Reflect: Any + Send + Sync {
+pub trait Reflect: TypeUuidDynamic + Any + Send + Sync {
     fn type_name(&self) -> &'static str;
     fn type_name_short(&self) -> &'static str;
     fn as_any(&self) -> &dyn Any;

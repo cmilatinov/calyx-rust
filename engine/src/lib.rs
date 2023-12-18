@@ -21,6 +21,8 @@ use inventory::collect;
 
 use reflect::type_registry::TypeRegistry;
 
+use reflect::TypeUuid;
+
 pub mod assets;
 pub mod background;
 pub mod class_registry;

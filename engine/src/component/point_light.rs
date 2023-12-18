@@ -2,8 +2,7 @@ use egui::Color32;
 use glm::Vec4;
 use indextree::NodeId;
 
-use engine_derive::TypeUuid;
-use reflect::{Reflect, ReflectDefault};
+use reflect::{Reflect, ReflectDefault, TypeUuid};
 
 use crate as engine;
 use crate::component::{Component, ReflectComponent};

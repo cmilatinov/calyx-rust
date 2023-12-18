@@ -6,12 +6,12 @@ use engine::egui;
 use engine::egui::Ui;
 use engine::utils::type_ids;
 use reflect;
-use reflect::{AttributeValue, ReflectDefault};
+use reflect::{AttributeValue, ReflectDefault, TypeUuid};
 use reflect::{Reflect, ReflectGenericFloat};
 
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 
-#[derive(Default, Clone, Reflect)]
+#[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, TypeInspector)]
 pub struct FloatInspector;
 

@@ -6,12 +6,14 @@ pub use self::reflect::*;
 pub use self::reflect_derive::*;
 pub use self::trait_meta::*;
 pub use self::type_info::*;
+pub use self::type_uuid::*;
 
 mod impls;
 mod reflect;
 mod trait_meta;
 mod type_info;
 pub mod type_registry;
+pub mod type_uuid;
 
 #[cfg(test)]
 mod tests {

@@ -1,13 +1,13 @@
 use glm::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 
-use reflect::Reflect;
+use reflect::{Reflect, TypeUuid};
 
 use crate as engine;
 
 use super::{compose_transform, decompose_transform};
 
-#[derive(Copy, Clone, Serialize, Deserialize, Reflect)]
+#[derive(Copy, Clone, Serialize, Deserialize, TypeUuid, Reflect)]
 pub struct Transform {
     #[serde(skip)]
     pub position: Vec3,

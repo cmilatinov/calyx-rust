@@ -5,14 +5,14 @@ use engine::assets::ReflectAssetOptionRef;
 use engine::core::OptionRef;
 use engine::egui::Ui;
 use engine::utils::type_ids;
-use reflect;
 use reflect::Reflect;
 use reflect::ReflectDefault;
+use reflect::TypeUuid;
 
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 use crate::inspector::widgets::Widgets;
 
-#[derive(Default, Clone, Reflect)]
+#[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, TypeInspector)]
 pub struct AssetInspector;
 

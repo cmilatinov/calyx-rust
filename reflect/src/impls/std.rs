@@ -1,75 +1,45 @@
-use reflect_derive::impl_reflect_value;
-use std::any::Any;
+use reflect_derive::{impl_extern_type_uuid, impl_reflect_value};
 
 use crate as reflect;
-use crate::{Reflect, ReflectedType};
 
 use super::std_default::ReflectDefault;
 use super::std_float::ReflectGenericFloat;
 use super::std_int::ReflectGenericInt;
 
+impl_extern_type_uuid!(bool, "011e2cb3-4db1-4745-aea6-bc4d813b266c");
 impl_reflect_value!(bool(Default));
 
+impl_extern_type_uuid!(u8, "b15efc01-71d9-48a1-af13-e29c97709d91");
 impl_reflect_value!(u8(Default, GenericInt));
+impl_extern_type_uuid!(u16, "73fd2550-b985-43a0-b531-2da557413920");
 impl_reflect_value!(u16(Default, GenericInt));
+impl_extern_type_uuid!(u32, "b002c3ec-393b-4536-a7dd-cb63d49f817a");
 impl_reflect_value!(u32(Default, GenericInt));
+impl_extern_type_uuid!(u64, "342b5009-fa3e-419c-8816-d0227c01eda7");
 impl_reflect_value!(u64(Default, GenericInt));
+impl_extern_type_uuid!(u128, "c95caaf5-2669-4497-ba25-582c2cd1e746");
 impl_reflect_value!(u128(Default, GenericInt));
 
+impl_extern_type_uuid!(i8, "9a44fd4c-d2a0-4349-ad11-d2382e362ffe");
 impl_reflect_value!(i8(Default, GenericInt));
+impl_extern_type_uuid!(i16, "4e47c476-2053-4eb3-a96b-2f6e5b703908");
 impl_reflect_value!(i16(Default, GenericInt));
+impl_extern_type_uuid!(i32, "e204c3c3-672d-4928-9efa-b76d5b3ea4a5");
 impl_reflect_value!(i32(Default, GenericInt));
+impl_extern_type_uuid!(i64, "8047457b-6f15-40f2-a773-2d043fe0df92");
 impl_reflect_value!(i64(Default, GenericInt));
+impl_extern_type_uuid!(i128, "59f2c247-dd41-43a0-bb1b-a9add287efcb");
 impl_reflect_value!(i128(Default, GenericInt));
 
+impl_extern_type_uuid!(usize, "14317c1e-9974-457c-ae7b-fb91d56247de");
+impl_reflect_value!(usize(Default, GenericInt));
+impl_extern_type_uuid!(isize, "cf4b886c-1ec9-4892-8c12-9eea9dcfca8b");
+impl_reflect_value!(isize(Default, GenericInt));
+
+impl_extern_type_uuid!(f32, "accb9256-833e-4b7e-9b93-4b5d90aafd6c");
 impl_reflect_value!(f32(Default, GenericFloat));
+impl_extern_type_uuid!(f64, "b097ab57-bde8-4007-8181-268f8d90a4b0");
 impl_reflect_value!(f64(Default, GenericFloat));
 
+impl_extern_type_uuid!(String, "e6fe8a72-0495-4877-88e4-6d9f8062b8f2");
 impl_reflect_value!(String(Default));
-
-impl<T: Reflect + ReflectedType + Clone> Reflect for Option<T> {
-    fn type_name(&self) -> &'static str {
-        if let Some(inner) = self.as_ref() {
-            inner.type_name()
-        } else {
-            "None"
-        }
-    }
-
-    fn type_name_short(&self) -> &'static str {
-        if let Some(inner) = self.as_ref() {
-            inner.type_name_short()
-        } else {
-            "None"
-        }
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn as_reflect(&self) -> &dyn Reflect {
-        self
-    }
-
-    fn as_reflect_mut(&mut self) -> &mut dyn Reflect {
-        self
-    }
-
-    fn into_any(self: Box<Self>) -> Box<dyn Any> {
-        self
-    }
-
-    fn assign(&mut self, value: Box<dyn Reflect>) -> bool {
-        if let Ok(value) = value.downcast::<Option<T>>() {
-            *self = *value;
-            true
-        } else {
-            false
-        }
-    }
-}

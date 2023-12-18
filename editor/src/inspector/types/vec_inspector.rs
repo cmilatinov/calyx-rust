@@ -3,13 +3,13 @@ use std::any::TypeId;
 use engine::egui::Ui;
 use engine::utils::type_ids;
 use reflect;
-use reflect::{Reflect, ReflectDefault};
+use reflect::{Reflect, ReflectDefault, TypeUuid};
 
 use crate::glm::{Vec2, Vec3, Vec4};
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 use crate::inspector::widgets::Widgets;
 
-#[derive(Default, Clone, Reflect)]
+#[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, TypeInspector)]
 pub struct VecInspector;
 

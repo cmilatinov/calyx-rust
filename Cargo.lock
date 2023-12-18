@@ -1140,7 +1140,7 @@ dependencies = [
  "inventory",
  "lazy_static 1.4.0",
  "num",
- "num-derive",
+ "num-derive 0.4.1",
  "num-traits",
  "project",
  "reflect",
@@ -1357,7 +1357,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha-1",
- "uuid 1.5.0",
+ "uuid 1.6.1",
  "wgsl_preprocessor",
 ]
 
@@ -1369,7 +1369,7 @@ dependencies = [
  "quote",
  "sha-1",
  "syn 2.0.38",
- "uuid 1.5.0",
+ "uuid 1.6.1",
 ]
 
 [[package]]
@@ -2887,6 +2887,17 @@ dependencies = [
 
 [[package]]
 name = "num-derive"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "876a53fff98e03a936a674b29568b0e605f06b29372c2489ff4de23f1949743d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
+name = "num-derive"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfb77679af88f8b125209d354a202862602672222e7f2313fdd6dc349bad4712"
@@ -3540,7 +3551,7 @@ dependencies = [
  "quote",
  "reflect_derive",
  "syn 2.0.38",
- "uuid 1.5.0",
+ "uuid 1.6.1",
 ]
 
 [[package]]
@@ -3549,7 +3560,9 @@ version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
+ "sha-1",
  "syn 2.0.38",
+ "uuid 1.6.1",
 ]
 
 [[package]]
@@ -3683,12 +3696,12 @@ dependencies = [
 
 [[package]]
 name = "russimp"
-version = "2.0.6"
+version = "2.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "092eac409a1374888bb0b57089126beaa6a5ce4e620d1727074477d581a0d874"
+checksum = "ab29f4cd231e9411d0b42c1ff68013d1ea97d029ea0c5e71f3e4a1e78632141e"
 dependencies = [
  "derivative",
- "num-derive",
+ "num-derive 0.3.3",
  "num-traits",
  "num_enum 0.6.1",
  "russimp-sys",
@@ -4114,21 +4127,21 @@ checksum = "8ea5119cdb4c55b55d432abb513a0429384878c15dde60cc77b1c99de1a95a6a"
 
 [[package]]
 name = "strum"
-version = "0.25.0"
+version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "290d54ea6f91c969195bdbcd7442c8c2a2ba87da8bf60a7ee86a235d4bc1e125"
+checksum = "063e6045c0e62079840579a7e47a355ae92f60eb74daaf156fb1e84ba164e63f"
 
 [[package]]
 name = "strum_macros"
-version = "0.25.3"
+version = "0.24.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23dc1fa9ac9c169a78ba62f0b841814b7abae11bdd047b9c58f893439e309ea0"
+checksum = "1e385be0d24f186b4ce2f9982191e7101bb737312ad61c1f2f984f34bcf85d59"
 dependencies = [
  "heck",
  "proc-macro2",
  "quote",
  "rustversion",
- "syn 2.0.38",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -4574,9 +4587,9 @@ dependencies = [
 
 [[package]]
 name = "uuid"
-version = "1.5.0"
+version = "1.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88ad59a7560b41a70d191093a945f0b87bc1deeda46fb237479708a1d6b6cdfc"
+checksum = "5e395fcf16a7a3d8127ec99782007af141946b4795001f876d54fb0d55978560"
 dependencies = [
  "getrandom",
  "serde",

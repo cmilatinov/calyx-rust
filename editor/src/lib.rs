@@ -14,6 +14,7 @@ use engine::egui_dock::DockState;
 use engine::render::{RenderContext, SceneRenderer};
 use engine::scene::Scene;
 use engine::*;
+use reflect::TypeUuid;
 use selection::EditorSelection;
 use utils::singleton_with_init;
 

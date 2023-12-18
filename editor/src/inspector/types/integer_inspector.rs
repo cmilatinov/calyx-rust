@@ -4,12 +4,12 @@ use engine::egui;
 use engine::egui::Ui;
 use engine::utils::type_ids;
 use reflect;
-use reflect::ReflectDefault;
+use reflect::{ReflectDefault, TypeUuid};
 use reflect::{Reflect, ReflectGenericInt};
 
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 
-#[derive(Default, Clone, Reflect)]
+#[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, TypeInspector)]
 pub struct IntegerInspector;
 

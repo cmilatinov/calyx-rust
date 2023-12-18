@@ -3,7 +3,7 @@ use std::ops::Deref;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 
-use reflect::{impl_reflect_value, reflect_trait};
+use reflect::{impl_extern_type_uuid, impl_reflect_value, reflect_trait};
 
 use crate::assets::error::AssetError;
 use crate::assets::mesh::Mesh;
@@ -69,5 +69,7 @@ impl Ref<dyn Asset> {
     }
 }
 
+impl_extern_type_uuid!(Ref<Mesh>, "fe0cede5-078e-453e-a680-1ff55bb582fc");
 impl_reflect_value!(Ref<Mesh>(AssetRef));
+impl_extern_type_uuid!(OptionRef<Mesh>, "ccee7bcc-744a-4eee-b1c2-af08dd4f481b");
 impl_reflect_value!(OptionRef<Mesh>(AssetOptionRef));

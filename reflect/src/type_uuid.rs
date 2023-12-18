@@ -1,6 +1,6 @@
 use uuid::Uuid;
 
-pub use engine_derive::TypeUuid;
+pub use reflect_derive::TypeUuid;
 
 pub trait TypeUuid {
     const UUID: &'static [u8; 16];

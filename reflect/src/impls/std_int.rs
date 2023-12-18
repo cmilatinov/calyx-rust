@@ -40,3 +40,6 @@ impl_generic_int!(i16);
 impl_generic_int!(i32);
 impl_generic_int!(i64);
 impl_generic_int!(i128);
+
+impl_generic_int!(usize);
+impl_generic_int!(isize);

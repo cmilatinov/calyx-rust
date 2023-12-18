@@ -2,13 +2,12 @@ use std::any::TypeId;
 
 use engine::egui::Ui;
 use engine::utils::type_ids;
-use reflect;
-use reflect::Reflect;
 use reflect::ReflectDefault;
+use reflect::{Reflect, TypeUuid};
 
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 
-#[derive(Default, Clone, Reflect)]
+#[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, TypeInspector)]
 pub struct BoolInspector;
 

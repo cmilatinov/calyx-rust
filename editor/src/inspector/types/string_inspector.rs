@@ -3,12 +3,12 @@ use std::any::TypeId;
 use engine::egui::{TextEdit, Ui};
 use engine::utils::type_ids;
 use reflect;
-use reflect::Reflect;
+use reflect::{Reflect, TypeUuid};
 use reflect::ReflectDefault;
 
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 
-#[derive(Default, Clone, Reflect)]
+#[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, TypeInspector)]
 pub struct StringInspector;
 

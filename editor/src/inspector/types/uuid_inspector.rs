@@ -4,11 +4,11 @@ use engine::egui::{TextEdit, Ui};
 use engine::utils::type_ids;
 use engine::uuid::Uuid;
 use reflect;
-use reflect::{Reflect, ReflectDefault};
+use reflect::{Reflect, ReflectDefault, TypeUuid};
 
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 
-#[derive(Default, Clone, Reflect)]
+#[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, TypeInspector)]
 pub struct UuidInspector;
 

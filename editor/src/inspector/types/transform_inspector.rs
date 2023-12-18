@@ -8,13 +8,13 @@ use engine::egui_extras::Column;
 use engine::math::Transform;
 use engine::utils::type_ids;
 use reflect;
-use reflect::Reflect;
+use reflect::{Reflect, TypeUuid};
 use reflect::ReflectDefault;
 
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 use crate::inspector::widgets::Widgets;
 
-#[derive(Default, Clone, Reflect)]
+#[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, TypeInspector)]
 pub struct TransformInspector;
 

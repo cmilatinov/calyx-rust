@@ -3,11 +3,10 @@ use legion::storage::ComponentTypeId;
 use legion::world::{Entry, EntryRef};
 
 pub use engine_derive::Component;
-use reflect::{reflect_trait, Reflect};
+use reflect::{reflect_trait, Reflect, TypeUuidDynamic};
 
 use crate::render::Gizmos;
 use crate::scene::Scene;
-use crate::utils::TypeUuidDynamic;
 
 pub trait ComponentInstance {
     fn component_type_id(&self) -> ComponentTypeId;
