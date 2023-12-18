@@ -4,6 +4,7 @@ use std::path::Path;
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use glm::{vec2, vec3, Vec2, Vec3};
+use reflect::TypeUuid;
 use russimp::scene::{PostProcess, Scene};
 
 use crate::assets::error::AssetError;
@@ -57,6 +58,8 @@ impl BufferLayout for Instance {
     const ATTRIBS: &'static [wgpu::VertexAttribute] = &Instance::ATTRIBUTES;
 }
 
+#[derive(TypeUuid)]
+#[uuid = "792d264b-de6f-4431-b59f-76f18fdb3bfe"]
 pub struct Mesh {
     pub name: String,
     pub indices: Vec<u32>,

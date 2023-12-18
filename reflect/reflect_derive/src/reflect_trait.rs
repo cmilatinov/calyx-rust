@@ -5,7 +5,9 @@ use quote::quote;
 use syn::parse::Parse;
 use syn::{parse_macro_input, Attribute, ItemTrait, Token};
 
-use crate::fq::{FQBox, FQClone, FQOption, FQReflect, FQResult, FQTraitMeta, FQTraitMetaFrom};
+use crate::fq::{
+    FQBox, FQClone, FQOption, FQReflect, FQResult, FQTraitMeta, FQTraitMetaFrom, FQTypeUuid,
+};
 
 #[derive(Debug)]
 pub(crate) struct TraitInfo {
@@ -36,7 +38,7 @@ pub(crate) fn reflect_trait(_args: TokenStream, input: TokenStream) -> TokenStre
     TokenStream::from(quote! {
         #item_trait
 
-        #[derive(#FQClone)]
+        #[derive(#FQClone, #FQTypeUuid)]
         #trait_vis struct #reflect_trait_ident {
             get_func: fn(&dyn #FQReflect) -> #FQOption<&dyn #trait_ident>,
             get_mut_func: fn(&mut dyn #FQReflect) -> #FQOption<&mut dyn #trait_ident>,

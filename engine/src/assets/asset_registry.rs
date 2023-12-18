@@ -17,7 +17,7 @@ use relative_path::{PathExt, RelativePathBuf};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use reflect::{AttributeValue, TypeInfo};
+use reflect::{AttributeValue, TypeInfo, TypeUuid};
 
 use crate::assets::error::AssetError;
 use crate::assets::mesh::Mesh;
@@ -113,23 +113,25 @@ impl AssetRegistry {
         Ok(asset)
     }
 
-    pub fn create<A: Asset>(&mut self, name: &str, value: A) -> Result<Ref<A>, AssetError> {
+    pub fn create<A: Asset + TypeUuid>(
+        &mut self,
+        name: &str,
+        value: A,
+    ) -> Result<Ref<A>, AssetError> {
         if self.asset_id(name).is_some() {
             return Err(AssetError::AlreadyExists);
         }
         let id = Uuid::new_v4();
         let asset = Ref::new(value);
         let registry = TypeRegistry::get();
-        let display_name = registry
-            .type_info_by_id(TypeId::of::<A>())
-            .and_then(|info| {
-                if let TypeInfo::Struct(info) = info {
-                    if let Some(AttributeValue::String(str)) = info.attr("name") {
-                        return Some(str.to_string());
-                    }
+        let display_name = registry.type_info_by_uuid(A::type_uuid()).and_then(|info| {
+            if let TypeInfo::Struct(info) = info {
+                if let Some(AttributeValue::String(str)) = info.attr("name") {
+                    return Some(str.to_string());
                 }
-                None
-            });
+            }
+            None
+        });
         self.asset_names
             .insert(RelativePathBuf::from(name).normalize(), id);
         self.asset_cache.insert(id, asset.as_asset());

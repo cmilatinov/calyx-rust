@@ -1,26 +1,24 @@
-use std::any::TypeId;
-
-use crate::BASE_FONT_SIZE;
 use engine::component::ComponentTransform;
 use engine::egui::{Align, Layout, Ui};
 use engine::egui_extras;
 use engine::egui_extras::Column;
 use engine::math::Transform;
-use engine::utils::type_ids;
-use reflect;
-use reflect::{Reflect, TypeUuid};
+use engine::utils::type_uuids;
+use engine::uuid::Uuid;
 use reflect::ReflectDefault;
+use reflect::{Reflect, TypeUuid};
 
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 use crate::inspector::widgets::Widgets;
+use crate::BASE_FONT_SIZE;
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, TypeInspector)]
 pub struct TransformInspector;
 
 impl TypeInspector for TransformInspector {
-    fn target_type_ids(&self) -> Vec<TypeId> {
-        type_ids!(ComponentTransform)
+    fn target_type_uuids(&self) -> Vec<Uuid> {
+        type_uuids!(ComponentTransform)
     }
 
     fn show_inspector(&self, ui: &mut Ui, ctx: &InspectorContext, instance: &mut dyn Reflect) {

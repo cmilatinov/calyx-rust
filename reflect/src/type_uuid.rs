@@ -4,6 +4,9 @@ pub use reflect_derive::TypeUuid;
 
 pub trait TypeUuid {
     const UUID: &'static [u8; 16];
+    fn type_uuid() -> Uuid {
+        Uuid::from_bytes(*Self::UUID)
+    }
 }
 
 pub trait TypeUuidDynamic {

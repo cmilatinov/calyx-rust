@@ -1,9 +1,6 @@
-use std::any::TypeId;
-
 use engine::egui::{TextEdit, Ui};
-use engine::utils::type_ids;
+use engine::utils::type_uuids;
 use engine::uuid::Uuid;
-use reflect;
 use reflect::{Reflect, ReflectDefault, TypeUuid};
 
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
@@ -13,8 +10,8 @@ use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, T
 pub struct UuidInspector;
 
 impl TypeInspector for UuidInspector {
-    fn target_type_ids(&self) -> Vec<TypeId> {
-        type_ids!(Uuid)
+    fn target_type_uuids(&self) -> Vec<Uuid> {
+        type_uuids!(Uuid)
     }
 
     fn show_inspector(&self, ui: &mut Ui, _ctx: &InspectorContext, instance: &mut dyn Reflect) {

@@ -1,10 +1,8 @@
 use engine::egui;
-use std::any::TypeId;
-
 use engine::egui::color_picker::Alpha;
 use engine::egui::{Color32, Ui};
-use engine::utils::type_ids;
-use reflect;
+use engine::utils::type_uuids;
+use engine::uuid::Uuid;
 use reflect::{Reflect, ReflectDefault, TypeUuid};
 
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
@@ -14,8 +12,8 @@ use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, T
 pub struct ColorInspector;
 
 impl TypeInspector for ColorInspector {
-    fn target_type_ids(&self) -> Vec<TypeId> {
-        type_ids!(Color32)
+    fn target_type_uuids(&self) -> Vec<Uuid> {
+        type_uuids!(Color32)
     }
 
     fn show_inspector(&self, ui: &mut Ui, _ctx: &InspectorContext, instance: &mut dyn Reflect) {

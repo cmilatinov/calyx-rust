@@ -1,8 +1,6 @@
-use std::any::TypeId;
-
 use engine::egui::Ui;
-use engine::utils::type_ids;
-use reflect;
+use engine::utils::type_uuids;
+use engine::uuid::Uuid;
 use reflect::{Reflect, ReflectDefault, TypeUuid};
 
 use crate::glm::{Vec2, Vec3, Vec4};
@@ -14,8 +12,8 @@ use crate::inspector::widgets::Widgets;
 pub struct VecInspector;
 
 impl TypeInspector for VecInspector {
-    fn target_type_ids(&self) -> Vec<TypeId> {
-        type_ids!(Vec2, Vec3, Vec4)
+    fn target_type_uuids(&self) -> Vec<Uuid> {
+        type_uuids!(Vec2, Vec3, Vec4)
     }
 
     fn show_inspector(&self, ui: &mut Ui, _ctx: &InspectorContext, instance: &mut dyn Reflect) {
