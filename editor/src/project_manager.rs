@@ -98,8 +98,9 @@ impl ProjectManager {
         let mut root = self.root_project_dir();
         root.push("target");
         root.push("debug");
-        root.push(format!("lib{}", self.current_project().name()));
-        root.set_extension("so");
+        root.push(engine::utils::lib_file_name(
+            self.current_project().name().as_str(),
+        ));
         println!("{:?}", root);
         unsafe {
             let lib = Lib::new(root).unwrap();
