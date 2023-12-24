@@ -1,3 +1,4 @@
+use crate as reflect;
 use crate::{Reflect, TraitMeta, TraitMetaFrom};
 use reflect_derive::TypeUuid;
 

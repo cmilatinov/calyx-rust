@@ -1,3 +1,4 @@
 /target
 /.fleet
-assets/**/*.meta
+**/*.meta
+sandbox/assets

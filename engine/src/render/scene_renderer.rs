@@ -199,6 +199,8 @@ impl SceneRenderer {
                         &self.scene_depth_texture_view,
                         1.0,
                     )),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
                 });
 
                 self.load_camera_uniforms(queue, camera, camera_transform);
@@ -303,17 +305,19 @@ impl SceneRenderer {
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Load,
-                            store: true,
+                            store: wgpu::StoreOp::Store,
                         },
                     })],
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                         view: &self.scene_depth_texture_view,
                         depth_ops: Some(wgpu::Operations {
                             load: wgpu::LoadOp::Load,
-                            store: true,
+                            store: wgpu::StoreOp::Store,
                         }),
                         stencil_ops: None,
                     }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
                 });
 
                 // Render grid

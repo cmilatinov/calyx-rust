@@ -1,20 +1,27 @@
+use std::env;
 use std::ops::DerefMut;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use eframe::egui;
 use egui_dock::{DockArea, NodeIndex, Style};
 use egui_gizmo::GizmoMode;
 use num_traits::FromPrimitive;
 
+use engine::assets::AssetRegistry;
 use engine::background::Background;
-use engine::core::{OptionRef, Ref, Time};
+use engine::class_registry::ClassRegistry;
+use engine::core::{LogRegistry, Logger, OptionRef, Ref, Time};
+use engine::eframe::{wgpu, NativeOptions};
 use engine::egui::FontFamily;
 use engine::egui::TextStyle;
 use engine::egui::{Align, FontId, Layout};
 use engine::egui_dock::DockState;
+use engine::log::LevelFilter;
 use engine::render::{RenderContext, SceneRenderer};
 use engine::scene::Scene;
+use engine::type_registry::TypeRegistry;
 use engine::*;
-use reflect::TypeUuid;
 use selection::EditorSelection;
 use utils::singleton_with_init;
 
@@ -120,7 +127,6 @@ impl eframe::App for EditorApp {
             let mut renderer = self.scene_renderer.write().unwrap();
             let (width, height) = EditorApp::get_physical_size(
                 ctx,
-                frame,
                 app_state.viewport_width,
                 app_state.viewport_height,
             );
@@ -162,23 +168,21 @@ impl eframe::App for EditorApp {
 impl EditorApp {
     fn get_physical_size(
         ctx: &egui::Context,
-        frame: &eframe::Frame,
         viewport_width: f32,
         viewport_height: f32,
     ) -> (u32, u32) {
-        let window_size = frame.info().window_info.size;
+        let window_size = ctx.input(|i| i.viewport().inner_rect.unwrap());
         let pixels_per_point = ctx.pixels_per_point();
-        let width = window_size.x * viewport_width * pixels_per_point;
-        let height = window_size.y * viewport_height * pixels_per_point;
+        let width = window_size.width() * viewport_width * pixels_per_point;
+        let height = window_size.height() * viewport_height * pixels_per_point;
         (width as u32, height as u32)
     }
 
     fn configure_styles(ctx: &egui::Context) {
-        // ctx.set_pixels_per_point(1.25);
         let mut style = (*ctx.style()).clone();
-        style.spacing.scroll_bar_width = 5.0;
-        style.spacing.scroll_bar_inner_margin = 0.0;
-        style.spacing.scroll_bar_outer_margin = 2.0;
+        style.spacing.scroll.bar_width = 5.0;
+        style.spacing.scroll.bar_inner_margin = 0.0;
+        style.spacing.scroll.bar_outer_margin = 2.0;
         style.spacing.interact_size.x = 56.0;
         style.visuals.indent_has_left_vline = false;
         style.text_styles = [
@@ -271,5 +275,73 @@ impl EditorApp {
                     });
                 });
             });
+    }
+}
+
+impl EditorApp {
+    pub fn run() -> eframe::Result<()> {
+        // LOAD PROJECT
+        let args: Vec<String> = env::args().collect();
+        if args.len() != 2 {
+            println!("Expected 2 arguments, got {}", args.len());
+            std::process::exit(1);
+        }
+
+        // START ACTUAL EDITOR
+        ProjectManager::init();
+        ProjectManager::get_mut().load(PathBuf::from(&args[1]));
+        ProjectManager::get().build_assemblies();
+
+        Time::init();
+        AssetRegistry::init();
+        AssetRegistry::get_mut()
+            .set_root_path(ProjectManager::get().current_project().assets_directory());
+
+        TypeRegistry::init();
+        {
+            let mut registry = TypeRegistry::get_mut();
+            for f in inventory::iter::<ReflectRegistrationFn>() {
+                (f.0)(&mut registry);
+            }
+        }
+        ClassRegistry::init();
+        LogRegistry::init();
+
+        log::set_boxed_logger(Box::new(Logger)).expect("Unable to setup logger");
+        log::set_max_level(LevelFilter::Debug);
+
+        let options = NativeOptions {
+            viewport: egui::ViewportBuilder {
+                inner_size: Some(egui::vec2(1280.0, 720.0)),
+                min_inner_size: Some(egui::vec2(1280.0, 720.0)),
+                maximized: Some(true),
+                transparent: Some(true),
+                decorations: Some(true),
+                ..Default::default()
+            },
+            persist_window: true,
+            renderer: eframe::Renderer::Wgpu,
+            wgpu_options: egui_wgpu::WgpuConfiguration {
+                device_descriptor: Arc::new(|_adapter| wgpu::DeviceDescriptor {
+                    features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+                        | wgpu::Features::POLYGON_MODE_LINE,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        eframe::run_native(
+            "Calyx",
+            options,
+            Box::new(|cc| {
+                let mut app_state = EditorAppState::get_mut();
+                let app = EditorApp::new(cc);
+                app_state.viewport_width = 0.0;
+                app_state.viewport_height = 0.0;
+                app_state.scene_renderer = app.scene_renderer.clone().into();
+                Box::new(app)
+            }),
+        )
     }
 }

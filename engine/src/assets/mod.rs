@@ -6,5 +6,6 @@ mod asset;
 mod asset_registry;
 mod assets;
 pub mod error;
+mod material;
 pub mod mesh;
 pub mod texture;

@@ -20,7 +20,7 @@ impl RenderUtils {
                     b: clear_color.z as f64,
                     a: clear_color.w as f64,
                 }),
-                store: true,
+                store: wgpu::StoreOp::Store,
             },
         }
     }
@@ -33,7 +33,7 @@ impl RenderUtils {
             view,
             depth_ops: Some(wgpu::Operations {
                 load: wgpu::LoadOp::Clear(clear_value),
-                store: true,
+                store: wgpu::StoreOp::Store,
             }),
             stencil_ops: None,
         }

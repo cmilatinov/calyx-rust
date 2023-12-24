@@ -1,79 +1,9 @@
-use std::default::Default;
-use std::env;
-use std::path::PathBuf;
-use std::sync::Arc;
-
-use eframe::NativeOptions;
-use log::LevelFilter;
-
-use editor::*;
-use engine::assets::AssetRegistry;
-use engine::class_registry::ClassRegistry;
-use engine::core::{LogRegistry, Logger, Time};
-use engine::eframe::wgpu;
-use engine::type_registry::TypeRegistry;
-use engine::*;
+use editor::EditorApp;
+use engine::eframe;
+use reflect::ReflectDefault;
+use std::any::TypeId;
 
 fn main() -> eframe::Result<()> {
-    // LOAD PROJECT
-    let args: Vec<String> = env::args().collect();
-
-    if args.len() != 2 {
-        println!("Expected 2 arguments, got {}", args.len());
-        std::process::exit(1);
-    }
-
-    // START ACTUAL EDITOR
-    ProjectManager::init();
-    ProjectManager::get_mut().load(PathBuf::from(&args[1]));
-    ProjectManager::get().build_assemblies();
-
-    Time::init();
-    AssetRegistry::init();
-    AssetRegistry::get_mut()
-        .set_root_path(ProjectManager::get().current_project().assets_directory());
-
-    TypeRegistry::init();
-    {
-        let mut registry = TypeRegistry::get_mut();
-        for f in inventory::iter::<ReflectRegistrationFn>() {
-            (f.0)(&mut registry);
-        }
-    }
-    ClassRegistry::init();
-    LogRegistry::init();
-
-    log::set_boxed_logger(Box::new(Logger)).expect("Unable to setup logger");
-    log::set_max_level(LevelFilter::Debug);
-
-    let options = NativeOptions {
-        maximized: true,
-        decorated: true,
-        transparent: true,
-        min_window_size: Some(egui::vec2(1280.0, 720.0)),
-        initial_window_size: Some(egui::vec2(1280.0, 720.0)),
-        persist_window: true,
-        renderer: eframe::Renderer::Wgpu,
-        wgpu_options: egui_wgpu::WgpuConfiguration {
-            device_descriptor: Arc::new(|_adapter| wgpu::DeviceDescriptor {
-                features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
-                    | wgpu::Features::POLYGON_MODE_LINE,
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    eframe::run_native(
-        "Calyx",
-        options,
-        Box::new(|cc| {
-            let mut app_state = EditorAppState::get_mut();
-            let app = EditorApp::new(cc);
-            app_state.viewport_width = 0.0;
-            app_state.viewport_height = 0.0;
-            app_state.scene_renderer = app.scene_renderer.clone().into();
-            Box::new(app)
-        }),
-    )
+    println!("ReflectDefault - {:?}", TypeId::of::<ReflectDefault>());
+    EditorApp::run()
 }

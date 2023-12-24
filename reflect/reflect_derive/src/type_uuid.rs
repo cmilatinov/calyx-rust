@@ -42,7 +42,7 @@ pub fn derive_type_uuid(input: TokenStream) -> TokenStream {
         .map(|byte| format!("{:#X}", byte))
         .map(|byte_str| syn::parse_str::<LitInt>(&byte_str).unwrap());
     (quote! {
-        impl crate::TypeUuid for #name {
+        impl reflect::TypeUuid for #name {
             const UUID: &'static [u8; 16] = &[
                 #( #bytes ),*
             ];

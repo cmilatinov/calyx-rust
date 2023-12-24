@@ -1,0 +1,17 @@
+[package]
+name = "sandbox"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "sandbox"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+reflect = { path = "../reflect" }
+engine = { path = "../engine" }
+editor = { path = "../editor" }
+
+[build-dependencies]
+fs_extra = "1.3.0"

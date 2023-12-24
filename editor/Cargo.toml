@@ -9,7 +9,6 @@ path = "src/main.rs"
 
 [features]
 default = []
-syntax_highlighting = ["syntect"]
 
 [dependencies]
 assets_manager = "0.10.2"
@@ -19,12 +18,9 @@ project = { path = "../project" }
 enum-map = "2.7.0"
 lazy_static = "1.4.0"
 serde = "1.0.189"
-syntect = { version = "5", optional = true, default-features = false, features = [
-    "default-fancy",
-] }
 reflect = { path = "../reflect" }
 inventory = "0.3.12"
-egui-gizmo = "0.12.0"
+egui-gizmo = "0.13.0"
 num = "0.4.1"
 num-derive = "0.4.1"
 num-traits = "0.2.17"

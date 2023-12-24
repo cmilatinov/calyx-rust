@@ -8,6 +8,7 @@ use sharedlib::{Func, Lib, Symbol};
 use engine::background::Background;
 use engine::class_registry::ClassRegistry;
 use engine::rusty_pool::JoinHandle;
+use engine::serde_json::Value;
 use engine::type_registry::TypeRegistry;
 use engine::utils::singleton_with_init;
 use project::Project;
@@ -62,7 +63,7 @@ impl ProjectManager {
         Background::get_mut().execute(TaskId::Build, move || {
             let mut child = Command::new("cargo")
                 .current_dir(root)
-                .arg("build")
+                .args(["build", "--lib"])
                 .stdout(Stdio::piped())
                 .spawn()
                 .unwrap();
@@ -85,7 +86,7 @@ impl ProjectManager {
             Self::pipe_stdout(&mut clean);
             let mut build = Command::new("cargo")
                 .current_dir(root)
-                .arg("build")
+                .args(["build", "--lib"])
                 .stdout(Stdio::piped())
                 .spawn()
                 .unwrap();
@@ -95,15 +96,21 @@ impl ProjectManager {
     }
 
     pub fn load_assemblies(&mut self) {
-        let mut root = self.root_project_dir();
-        root.push("target");
-        root.push("debug");
-        root.push(engine::utils::lib_file_name(
+        let root = self.root_project_dir();
+        let meta_output = Command::new("cargo")
+            .current_dir(root)
+            .arg("metadata")
+            .output()
+            .expect("");
+        let json: Value = engine::serde_json::from_slice(&meta_output.stdout).unwrap();
+        let mut target = PathBuf::from(json["target_directory"].as_str().unwrap());
+        target.push("debug");
+        target.push(engine::utils::lib_file_name(
             self.current_project().name().as_str(),
         ));
-        println!("{:?}", root);
+        println!("{:?}", target);
         unsafe {
-            let lib = Lib::new(root).unwrap();
+            let lib = Lib::new(target).unwrap();
             let load_fn: Func<extern "C" fn(&mut TypeRegistry)> =
                 lib.find_func("plugin_main").unwrap();
             {

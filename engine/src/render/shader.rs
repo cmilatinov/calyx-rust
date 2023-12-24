@@ -100,6 +100,8 @@ impl Asset for Shader {
             push_constant_ranges: &[],
         });
 
+        naga::front::wgsl::parse_str("");
+
         Ok(Self {
             shader,
             bind_group_layouts,

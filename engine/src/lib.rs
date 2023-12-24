@@ -15,6 +15,7 @@ pub extern crate relative_path;
 pub extern crate russimp;
 pub extern crate rusty_pool;
 pub extern crate serde;
+pub extern crate serde_json;
 pub extern crate uuid;
 
 use inventory::collect;

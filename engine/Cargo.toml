@@ -5,16 +5,16 @@ edition = "2021"
 
 [dependencies]
 bytemuck = "1.14.0"
-eframe = { version = "0.23.0", features = ["wgpu", "persistence"] }
-egui = { version = "0.23.0", features = ["persistence"] }
-egui-wgpu = "0.23.0"
-egui_dock = "0.8.1"
+eframe = { version = "0.24.1", features = ["wgpu", "persistence"] }
+egui = { version = "0.24.1", features = ["persistence"] }
+egui-wgpu = "0.24.1"
+egui_dock = "0.9.1"
 enum-map = "2.7.0"
 lazy_static = "1.4.0"
 log = "0.4.20"
 serde = "1.0.189"
 uuid = { version = "1.5.0", features = ["v4", "serde"] }
-nalgebra-glm = { version = "0.18.0", features = ["serde-serialize"] }
+nalgebra-glm = { version = "0.18.0", features = ["serde-serialize", "convert-mint"] }
 indextree = "4.6.0"
 reflect = { path = "../reflect" }
 russimp = { version = "=2.0.5", features = ["prebuilt"] }
@@ -24,7 +24,7 @@ sha-1 = "0.10.1"
 engine_derive = { path = "./engine_derive" }
 impls = "1.0.3"
 legion = "0.4.0"
-egui_extras = { version = "0.23.0", features = ["all_loaders"] }
+egui_extras = { version = "0.24.2", features = ["all_loaders"] }
 wgsl_preprocessor = "1.1.3"
 nalgebra = "0.32.3"
 serde_json = "1.0.107"
@@ -33,3 +33,4 @@ relative-path = "1.9.0"
 path-absolutize = "3.1.1"
 rusty_pool = "0.7.0"
 image = "0.24.7"
+naga = { version = "0.14.2", features = ["wgsl-in"] }

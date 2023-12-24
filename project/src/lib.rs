@@ -11,6 +11,7 @@ use tinytemplate::TinyTemplate;
 pub struct Project {
     name: String,
     creation_date: String,
+    #[serde(skip_serializing, skip_deserializing)]
     root_directory: PathBuf,
 }
 
@@ -83,7 +84,7 @@ impl Project {
             return Err(format!("Failed to read project file 'project.toml': {}", e));
         }
 
-        let project: Project = match toml::from_str(&toml_string) {
+        let mut project: Project = match toml::from_str(&toml_string) {
             Ok(project) => project,
             Err(e) => {
                 return Err(format!(
@@ -92,6 +93,7 @@ impl Project {
                 ));
             }
         };
+        project.root_directory = directory;
 
         Ok(project)
     }

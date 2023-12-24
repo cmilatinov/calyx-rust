@@ -112,9 +112,9 @@ impl PanelViewport {
             if let Some(node_id) = selection.first_entity() {
                 let transform = app_state.scene.get_world_transform(node_id);
                 let gizmo = egui_gizmo::Gizmo::new("test")
-                    .projection_matrix(app_state.camera.camera.projection)
-                    .view_matrix(app_state.camera.transform.get_inverse_matrix())
-                    .model_matrix(transform.matrix)
+                    .projection_matrix(app_state.camera.camera.projection.into())
+                    .view_matrix(app_state.camera.transform.get_inverse_matrix().into())
+                    .model_matrix(transform.matrix.into())
                     .mode(app_state.gizmo_mode)
                     .viewport(*viewport)
                     .visuals(GIZMO_VISUALS)
@@ -126,7 +126,7 @@ impl PanelViewport {
                     let transform = gizmo_response.transform();
                     app_state
                         .scene
-                        .set_world_transform(node_id, Mat4::from(transform.to_cols_array_2d()));
+                        .set_world_transform(node_id, Mat4::from(transform));
                     self.gizmo_status(ui, &gizmo_response);
                 }
             }
