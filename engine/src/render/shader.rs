@@ -16,6 +16,7 @@ pub struct Shader {
     pub bind_group_layouts: Vec<wgpu::BindGroupLayout>,
     pub pipeline_layout: wgpu::PipelineLayout,
     pub pipelines: HashMap<PipelineOptions, wgpu::RenderPipeline>,
+    pub module: naga::Module
 }
 
 impl Asset for Shader {
@@ -28,11 +29,10 @@ impl Asset for Shader {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(
                 path.file_stem()
-                    .ok_or(AssetError::LoadError)?
-                    .to_str()
+                    .and_then(|f| f.to_str())
                     .ok_or(AssetError::LoadError)?,
             ),
-            source: ShaderSource::Wgsl(shader_src.into()),
+            source: ShaderSource::Wgsl(shader_src.clone().into()),
         });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -96,17 +96,19 @@ impl Asset for Shader {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("pipeline_layout"),
-            bind_group_layouts: &layouts.as_slice(),
+            bind_group_layouts: layouts.as_slice(),
             push_constant_ranges: &[],
         });
 
-        naga::front::wgsl::parse_str("");
+        let module = naga::front::wgsl::parse_str(shader_src.as_str())
+            .map_err(|_| AssetError::LoadError)?;
 
         Ok(Self {
             shader,
             bind_group_layouts,
             pipeline_layout,
             pipelines: HashMap::new(),
+            module
         })
     }
 }
@@ -117,7 +119,7 @@ impl Shader {
         let layouts: Vec<&wgpu::BindGroupLayout> = self.bind_group_layouts.iter().collect();
         self.pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("pipeline_layout"),
-            bind_group_layouts: &layouts.as_slice(),
+            bind_group_layouts: layouts.as_slice(),
             push_constant_ranges: &[],
         });
         self.pipelines.clear();

@@ -64,7 +64,7 @@ impl PanelContentBrowser {
                     .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
                     .collect()
             })
-            .unwrap_or(vec![]);
+            .unwrap_or_default();
         if !child_entries.is_empty() {
             egui::collapsing_header::CollapsingState::load_with_default_open(
                 ui.ctx(),

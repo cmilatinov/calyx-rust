@@ -114,7 +114,7 @@ impl Panel for PanelInspector {
             });
 
             for (type_id, component) in ClassRegistry::get().components() {
-                if !components_to_remove.contains(&type_id) {
+                if !components_to_remove.contains(type_id) {
                     continue;
                 }
                 let mut world = app_state.scene.world_mut();
@@ -211,7 +211,7 @@ impl PanelInspector {
                 .column(Column::remainder().clip(true))
                 .body(|mut body| {
                     for (_, field) in info.fields.iter() {
-                        let mut ctx = ctx.clone();
+                        let mut ctx = *ctx;
                         ctx.field_name = Some(field.name);
                         if let Some(value) = field.get_reflect_mut(instance.as_reflect_mut()) {
                             self.show_default_inspector_field(&mut body, &ctx, field.name, value);
@@ -229,7 +229,7 @@ impl PanelInspector {
         instance: &mut dyn Reflect,
     ) {
         let mut name = field_name.from_case(Case::Snake).to_case(Case::Title);
-        name.push_str(" ");
+        name.push(' ');
         if let Some(inspector) = self.inspector_lookup(instance.uuid()) {
             body.row(BASE_FONT_SIZE + 6.0, |mut row| {
                 row.col(|ui| {

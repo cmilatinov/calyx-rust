@@ -14,7 +14,7 @@ pub trait Asset: Any + Send + Sync {
     where
         Self: Sized,
     {
-        &[""]
+        &[]
     }
     fn from_file(path: &Path) -> Result<Self, AssetError>
     where

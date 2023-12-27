@@ -138,22 +138,17 @@ impl Scene {
     pub fn get_entity_name(&self, node_id: NodeId) -> String {
         self.world()
             .entry_ref(self.get_entity(node_id))
-            .map(|e| {
-                e.get_component::<ComponentID>()
-                    .ok()
-                    .map(|c| c.name.clone())
-            })
-            .map(|n| n.unwrap_or(String::default()))
-            .unwrap_or(String::default())
+            .ok()
+            .and_then(|e| e.get_component::<ComponentID>().ok().map(|c| c.name.clone()))
+            .unwrap_or_default()
     }
 
     pub fn get_entity_uuid(&self, node_id: NodeId) -> Uuid {
-        let default = Uuid::default();
         self.world()
             .entry_ref(self.get_entity(node_id))
-            .map(|e| e.get_component::<ComponentID>().ok().map(|c| c.id))
-            .map(|id| id.unwrap_or(default))
-            .unwrap_or(default)
+            .ok()
+            .and_then(|e| e.get_component::<ComponentID>().ok().map(|id| id.id))
+            .unwrap_or_default()
     }
 
     pub fn get_parent_entity(&self, node_id: NodeId) -> Option<Entity> {

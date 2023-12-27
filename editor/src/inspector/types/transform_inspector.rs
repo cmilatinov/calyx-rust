@@ -2,7 +2,6 @@ use engine::component::ComponentTransform;
 use engine::egui::{Align, Layout, Ui};
 use engine::egui_extras;
 use engine::egui_extras::Column;
-use engine::math::Transform;
 use engine::utils::type_uuids;
 use engine::uuid::Uuid;
 use reflect::ReflectDefault;
@@ -32,7 +31,7 @@ impl TypeInspector for TransformInspector {
                     let parent_transform = ctx
                         .parent_node
                         .map(|parent| ctx.scene.get_world_transform(parent))
-                        .unwrap_or(Transform::default());
+                        .unwrap_or_default();
                     let mut transform = ctx.scene.get_world_transform(ctx.node);
                     body.row(BASE_FONT_SIZE + 6.0, |mut row| {
                         row.col(|ui| {
@@ -80,7 +79,7 @@ impl TypeInspector for TransformInspector {
                 let parent_transform = ctx
                     .parent_node
                     .map(|parent| ctx.scene.get_world_transform(parent))
-                    .unwrap_or(Transform::default());
+                    .unwrap_or_default();
                 t_comp
                     .transform
                     .set_local_matrix(&parent_transform.inverse_matrix);

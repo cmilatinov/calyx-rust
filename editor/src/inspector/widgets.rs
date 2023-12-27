@@ -33,11 +33,11 @@ impl Widgets {
         let mut asset_id = value
             .as_ref()
             .and_then(|r| registry.asset_id_from_ref(r))
-            .unwrap_or(Uuid::nil());
+            .unwrap_or_default();
         let asset_meta = registry.asset_meta_from_id(asset_id);
         let mut changed = false;
 
-        if egui::ComboBox::from_id_source(id)
+        let res = egui::ComboBox::from_id_source(id)
             .wrap(false)
             .width(ui.available_width())
             .selected_text(
@@ -68,9 +68,8 @@ impl Widgets {
                         .changed();
                 }
             })
-            .response
-            .clicked()
-        {
+            .response;
+        if res.clicked() {
             state.search.clear();
             state.should_request_focus = true;
         }
