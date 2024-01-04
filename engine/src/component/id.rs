@@ -10,8 +10,9 @@ use crate::component::{Component, ReflectComponent};
 #[reflect(Default, Component)]
 #[reflect_attr(name = "Game Object")]
 pub struct ComponentID {
-    pub name: String,
+    #[reflect_attr(name = "ID")]
     pub id: Uuid,
+    pub name: String,
 }
 
 impl Default for ComponentID {

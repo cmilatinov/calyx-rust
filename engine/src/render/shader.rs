@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
 
@@ -11,12 +11,16 @@ use crate::render::buffer::BufferLayout;
 use crate::render::render_utils::RenderUtils;
 use crate::render::{PipelineOptions, RenderContext};
 
+pub type BindGroupEntries = BTreeMap<u32, Vec<wgpu::BindGroupLayoutEntry>>;
+pub type BindGroupLayouts = Vec<wgpu::BindGroupLayout>;
+
 pub struct Shader {
     pub shader: wgpu::ShaderModule,
-    pub bind_group_layouts: Vec<wgpu::BindGroupLayout>,
+    pub bind_group_layouts: BindGroupLayouts,
+    pub bind_group_entries: BindGroupEntries,
     pub pipeline_layout: wgpu::PipelineLayout,
     pub pipelines: HashMap<PipelineOptions, wgpu::RenderPipeline>,
-    pub module: naga::Module
+    pub module: naga::Module,
 }
 
 impl Asset for Shader {
@@ -35,91 +39,129 @@ impl Asset for Shader {
             source: ShaderSource::Wgsl(shader_src.clone().into()),
         });
 
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("bind_group_layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        let module =
+            naga::front::wgsl::parse_str(shader_src.as_str()).map_err(|_| AssetError::LoadError)?;
 
-        let lighting_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("lighting_bind_group_layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-
-        let texture_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("texture_bind_group_layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
-
-        let bind_group_layouts = vec![
-            bind_group_layout,
-            lighting_bind_group_layout,
-            texture_bind_group_layout,
-        ];
-        let layouts = bind_group_layouts.iter().collect::<Vec<_>>();
+        let bind_group_entries = Self::bind_group_entries(&module);
+        let bind_group_layouts = Self::bind_group_layouts(&device, &bind_group_entries);
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("pipeline_layout"),
-            bind_group_layouts: layouts.as_slice(),
+            bind_group_layouts: bind_group_layouts.iter().collect::<Vec<_>>().as_slice(),
             push_constant_ranges: &[],
         });
-
-        let module = naga::front::wgsl::parse_str(shader_src.as_str())
-            .map_err(|_| AssetError::LoadError)?;
 
         Ok(Self {
             shader,
             bind_group_layouts,
+            bind_group_entries,
             pipeline_layout,
             pipelines: HashMap::new(),
-            module
+            module,
         })
     }
 }
 
 impl Shader {
+    fn binding_type(variable: &naga::GlobalVariable, ty: &naga::Type) -> wgpu::BindingType {
+        match &ty.inner {
+            naga::TypeInner::Image { dim, class, .. } => wgpu::BindingType::Texture {
+                sample_type: match class {
+                    naga::ImageClass::Sampled { kind, .. } => match kind {
+                        naga::ScalarKind::Uint => wgpu::TextureSampleType::Uint,
+                        naga::ScalarKind::Sint => wgpu::TextureSampleType::Sint,
+                        naga::ScalarKind::Float => {
+                            wgpu::TextureSampleType::Float { filterable: true }
+                        }
+                        _ => wgpu::TextureSampleType::Uint,
+                    },
+                    naga::ImageClass::Depth { .. } => wgpu::TextureSampleType::Depth,
+                    _ => wgpu::TextureSampleType::Uint,
+                },
+                view_dimension: match dim {
+                    naga::ImageDimension::D1 => wgpu::TextureViewDimension::D1,
+                    naga::ImageDimension::D2 => wgpu::TextureViewDimension::D2,
+                    naga::ImageDimension::D3 => wgpu::TextureViewDimension::D3,
+                    naga::ImageDimension::Cube => wgpu::TextureViewDimension::Cube,
+                },
+                multisampled: match class {
+                    naga::ImageClass::Sampled { multi, .. } => *multi,
+                    naga::ImageClass::Depth { multi, .. } => *multi,
+                    _ => false,
+                },
+            },
+            naga::TypeInner::Sampler { comparison } => wgpu::BindingType::Sampler(if *comparison {
+                wgpu::SamplerBindingType::Comparison
+            } else {
+                wgpu::SamplerBindingType::Filtering
+            }),
+            _ => wgpu::BindingType::Buffer {
+                ty: match variable.space {
+                    naga::AddressSpace::Uniform => wgpu::BufferBindingType::Uniform,
+                    naga::AddressSpace::Storage { access } => wgpu::BufferBindingType::Storage {
+                        read_only: access == naga::StorageAccess::LOAD,
+                    },
+                    _ => wgpu::BufferBindingType::Uniform,
+                },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+        }
+    }
+    fn bind_group_layout_entry(
+        variable: &naga::GlobalVariable,
+        ty: &naga::Type,
+        binding: u32,
+    ) -> wgpu::BindGroupLayoutEntry {
+        wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: Self::binding_type(variable, ty),
+            count: None,
+        }
+    }
+
+    fn bind_group_layout(
+        module: &naga::Module,
+        variable: &naga::GlobalVariable,
+        groups: &mut BindGroupEntries,
+    ) {
+        let ty = &module.types[variable.ty];
+        if let Some(binding) = &variable.binding {
+            let entries = groups.entry(binding.group).or_default();
+            entries.push(Self::bind_group_layout_entry(variable, ty, binding.binding));
+        }
+    }
+
+    fn bind_group_entries(module: &naga::Module) -> BindGroupEntries {
+        let mut groups = Default::default();
+        for (_, variable) in module.global_variables.iter() {
+            Self::bind_group_layout(module, variable, &mut groups);
+        }
+        groups
+    }
+
+    fn bind_group_layouts(device: &wgpu::Device, groups: &BindGroupEntries) -> BindGroupLayouts {
+        groups
+            .iter()
+            .map(|(_, entries)| {
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: None,
+                    entries: entries.as_slice(),
+                })
+            })
+            .collect()
+    }
+
     pub fn rebuild_pipeline_layout(&mut self) {
         let device = RenderContext::device().unwrap();
-        let layouts: Vec<&wgpu::BindGroupLayout> = self.bind_group_layouts.iter().collect();
         self.pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("pipeline_layout"),
-            bind_group_layouts: layouts.as_slice(),
+            bind_group_layouts: self
+                .bind_group_layouts
+                .iter()
+                .collect::<Vec<_>>()
+                .as_slice(),
             push_constant_ranges: &[],
         });
         self.pipelines.clear();

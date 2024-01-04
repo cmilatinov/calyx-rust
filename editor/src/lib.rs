@@ -171,7 +171,9 @@ impl EditorApp {
         viewport_width: f32,
         viewport_height: f32,
     ) -> (u32, u32) {
-        let window_size = ctx.input(|i| i.viewport().inner_rect.unwrap());
+        let window_size = ctx
+            .input(|i| i.viewport().inner_rect)
+            .unwrap_or(egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::ZERO));
         let pixels_per_point = ctx.pixels_per_point();
         let width = window_size.width() * viewport_width * pixels_per_point;
         let height = window_size.height() * viewport_height * pixels_per_point;

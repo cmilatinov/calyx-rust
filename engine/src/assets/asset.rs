@@ -1,12 +1,19 @@
 use std::any::{Any, TypeId};
+use std::fmt::Formatter;
+use std::marker::PhantomData;
 use std::ops::Deref;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
+
+use serde::de::{Error, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use uuid::Uuid;
 
 use reflect::{impl_extern_type_uuid, impl_reflect_value, reflect_trait};
 
 use crate::assets::error::AssetError;
 use crate::assets::mesh::Mesh;
+use crate::assets::AssetRegistry;
 use crate::core::{OptionRef, Ref};
 
 pub trait Asset: Any + Send + Sync {
@@ -66,6 +73,83 @@ impl Ref<dyn Asset> {
         } else {
             None
         }
+    }
+}
+
+impl<T: Asset> Serialize for Ref<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let id = AssetRegistry::get()
+            .asset_id_from_ref(&self.as_asset())
+            .unwrap_or_default();
+        id.serialize(serializer)
+    }
+}
+
+impl<'de, T: Asset> Deserialize<'de> for Ref<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let id = Uuid::deserialize(deserializer)?;
+        Ok(AssetRegistry::get_mut().load_by_id(id).unwrap())
+    }
+}
+
+impl<T: Asset> Serialize for OptionRef<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match &self.0 {
+            Some(ref inner) => serializer.serialize_some(inner),
+            None => serializer.serialize_none(),
+        }
+    }
+}
+
+struct OptionRefVisitor<T> {
+    phantom: PhantomData<T>,
+}
+
+impl<T> OptionRefVisitor<T> {
+    pub fn new() -> Self {
+        Self {
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<'de, T: Asset> Visitor<'de> for OptionRefVisitor<T> {
+    type Value = OptionRef<T>;
+
+    fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
+        formatter.write_str("a valid uuid encoded as a 128-bit unsigned integer")
+    }
+
+    fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(OptionRef::from_ref(Ref::<T>::deserialize(deserializer)?))
+    }
+
+    fn visit_none<E>(self) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        Ok(OptionRef::default())
+    }
+}
+
+impl<'de, T: Asset> Deserialize<'de> for OptionRef<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(OptionRefVisitor::new())
     }
 }
 

@@ -86,9 +86,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let nDotL = max(dot(normal, dir), 0.0);
 
         // Accumulate light contribution to the surface color.
-        color = vec3f(diffuse_color.rgb * radiance * nDotL);
+        color += vec3f(diffuse_color.rgb * radiance * nDotL);
     }
 
+    // Gamma correction
     let gamma = 2.2;
     color = pow(color, vec3f(1.0 / gamma));
 
