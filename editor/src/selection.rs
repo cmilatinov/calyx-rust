@@ -12,8 +12,16 @@ pub enum EditorSelection {
 impl EditorSelection {
     pub fn first_entity(&self) -> Option<NodeId> {
         if let EditorSelection::Entity(selection) = self {
-            return selection.iter().next().copied();
+            selection.iter().next().copied()
+        } else {
+            None
         }
-        None
+    }
+    pub fn first_asset(&self) -> Option<Uuid> {
+        if let EditorSelection::Asset(selection) = self {
+            selection.iter().next().copied()
+        } else {
+            None
+        }
     }
 }

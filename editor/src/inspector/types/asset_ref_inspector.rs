@@ -1,5 +1,3 @@
-use std::any::TypeId;
-
 use engine::assets::mesh::Mesh;
 use engine::assets::ReflectAssetOptionRef;
 use engine::core::OptionRef;
@@ -15,9 +13,9 @@ use crate::inspector::widgets::Widgets;
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, TypeInspector)]
-pub struct AssetInspector;
+pub struct AssetRefInspector;
 
-impl TypeInspector for AssetInspector {
+impl TypeInspector for AssetRefInspector {
     fn target_type_uuids(&self) -> Vec<Uuid> {
         type_uuids!(OptionRef<Mesh>)
     }
@@ -32,7 +30,7 @@ impl TypeInspector for AssetInspector {
                 if Widgets::asset_select(
                     ui,
                     ctx.node,
-                    Some(TypeId::of::<Mesh>()),
+                    Some(asset_ref.asset_type_uuid()),
                     &mut asset_opt_ref,
                 ) {
                     asset_ref.set(asset_opt_ref);

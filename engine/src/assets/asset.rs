@@ -9,7 +9,7 @@ use serde::de::{Error, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
 
-use reflect::{impl_extern_type_uuid, impl_reflect_value, reflect_trait};
+use reflect::{impl_extern_type_uuid, impl_reflect_value, reflect_trait, TypeUuid};
 
 use crate::assets::error::AssetError;
 use crate::assets::mesh::Mesh;
@@ -30,20 +30,20 @@ pub trait Asset: Any + Send + Sync {
 
 #[reflect_trait]
 pub trait AssetRef {
-    fn asset_type_id(&self) -> TypeId;
+    fn asset_type_uuid(&self) -> Uuid;
     fn as_asset(&self) -> Ref<dyn Asset>;
 }
 
 #[reflect_trait]
 pub trait AssetOptionRef {
-    fn asset_type_id(&self) -> TypeId;
+    fn asset_type_uuid(&self) -> Uuid;
     fn as_asset_option(&self) -> OptionRef<dyn Asset>;
     fn set(&mut self, asset_ref: OptionRef<dyn Asset>);
 }
 
-impl<T: Asset> AssetRef for Ref<T> {
-    fn asset_type_id(&self) -> TypeId {
-        TypeId::of::<T>()
+impl<T: Asset + TypeUuid> AssetRef for Ref<T> {
+    fn asset_type_uuid(&self) -> Uuid {
+        T::type_uuid()
     }
     fn as_asset(&self) -> Ref<dyn Asset> {
         Ref::from_arc(unsafe {
@@ -52,9 +52,9 @@ impl<T: Asset> AssetRef for Ref<T> {
     }
 }
 
-impl<T: Asset> AssetOptionRef for OptionRef<T> {
-    fn asset_type_id(&self) -> TypeId {
-        TypeId::of::<T>()
+impl<T: Asset + TypeUuid> AssetOptionRef for OptionRef<T> {
+    fn asset_type_uuid(&self) -> Uuid {
+        T::type_uuid()
     }
     fn as_asset_option(&self) -> OptionRef<dyn Asset> {
         self.0.clone().map(|r| r.as_asset()).into()
@@ -76,7 +76,7 @@ impl Ref<dyn Asset> {
     }
 }
 
-impl<T: Asset> Serialize for Ref<T> {
+impl<T: Asset + TypeUuid> Serialize for Ref<T> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -88,7 +88,7 @@ impl<T: Asset> Serialize for Ref<T> {
     }
 }
 
-impl<'de, T: Asset> Deserialize<'de> for Ref<T> {
+impl<'de, T: Asset + TypeUuid> Deserialize<'de> for Ref<T> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -98,7 +98,7 @@ impl<'de, T: Asset> Deserialize<'de> for Ref<T> {
     }
 }
 
-impl<T: Asset> Serialize for OptionRef<T> {
+impl<T: Asset + TypeUuid> Serialize for OptionRef<T> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -122,7 +122,7 @@ impl<T> OptionRefVisitor<T> {
     }
 }
 
-impl<'de, T: Asset> Visitor<'de> for OptionRefVisitor<T> {
+impl<'de, T: Asset + TypeUuid> Visitor<'de> for OptionRefVisitor<T> {
     type Value = OptionRef<T>;
 
     fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
@@ -144,7 +144,7 @@ impl<'de, T: Asset> Visitor<'de> for OptionRefVisitor<T> {
     }
 }
 
-impl<'de, T: Asset> Deserialize<'de> for OptionRef<T> {
+impl<'de, T: Asset + TypeUuid> Deserialize<'de> for OptionRef<T> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,

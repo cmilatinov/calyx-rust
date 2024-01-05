@@ -4,6 +4,7 @@ use std::path::Path;
 
 use eframe::wgpu::ShaderSource;
 use egui_wgpu::wgpu;
+use reflect::TypeUuid;
 
 use crate::assets::error::AssetError;
 use crate::assets::{mesh, Asset};
@@ -14,6 +15,8 @@ use crate::render::{PipelineOptions, RenderContext};
 pub type BindGroupEntries = BTreeMap<u32, Vec<wgpu::BindGroupLayoutEntry>>;
 pub type BindGroupLayouts = Vec<wgpu::BindGroupLayout>;
 
+#[derive(TypeUuid)]
+#[uuid = "00415831-a64c-4dc2-b573-5e112f99b674"]
 pub struct Shader {
     pub shader: wgpu::ShaderModule,
     pub bind_group_layouts: BindGroupLayouts,

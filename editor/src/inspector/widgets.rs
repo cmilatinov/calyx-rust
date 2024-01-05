@@ -5,7 +5,6 @@ use engine::egui::{DragValue, Id, Ui};
 use engine::glm::{Vec2, Vec3, Vec4};
 use engine::uuid::Uuid;
 use lazy_static::lazy_static;
-use std::any::TypeId;
 use std::sync::RwLock;
 
 pub struct Widgets;
@@ -19,7 +18,7 @@ impl Widgets {
     pub fn asset_select(
         ui: &mut Ui,
         id: impl std::hash::Hash,
-        type_id: Option<TypeId>,
+        type_uuid: Option<Uuid>,
         value: &mut OptionRef<dyn Asset>,
     ) -> bool {
         lazy_static! {
@@ -53,11 +52,9 @@ impl Widgets {
                 egui::TextEdit::singleline(&mut state.search)
                     .id(Id::from("asset_select"))
                     .hint_text("Filter by name")
-                    .show(ui)
-                    .response
-                    .changed();
+                    .show(ui);
                 let mut assets = Vec::new();
-                registry.search_assets(state.search.as_str(), type_id, &mut assets);
+                registry.search_assets(state.search.as_str(), type_uuid, &mut assets);
                 ui.add_space(6.0);
                 changed |= ui
                     .selectable_value(&mut asset_id, Uuid::nil(), "None")

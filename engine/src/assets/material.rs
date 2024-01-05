@@ -6,6 +6,7 @@ use std::path::Path;
 use egui::Color32;
 use glm::{Mat4, Vec2, Vec3, Vec4};
 use naga::{ImageDimension, ScalarKind, TypeInner, VectorSize};
+use reflect::TypeUuid;
 use serde::{Deserialize, Serialize};
 
 use crate::assets::error::AssetError;
@@ -68,7 +69,8 @@ pub enum ShaderVariable {
     Array(Vec<ShaderVariable>),
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, TypeUuid)]
+#[uuid = "f98a7f41-84d4-482d-b7af-a670b07035ae"]
 pub struct Material {
     shader: Ref<Shader>,
     variables: MaterialVariables,
@@ -104,16 +106,16 @@ impl Material {
             for (_, variable) in shader.module.global_variables.iter() {
                 if let Some(binding) = &variable.binding {
                     let ty = &shader.module.types[variable.ty];
-                    // if binding.group >= 2 {
-                    Self::shader_variable(
-                        &shader.module,
-                        ty,
-                        binding,
-                        variable.name.clone(),
-                        None,
-                        &mut material.variables,
-                    );
-                    // }
+                    if binding.group >= 2 {
+                        Self::shader_variable(
+                            &shader.module,
+                            ty,
+                            binding,
+                            variable.name.clone(),
+                            None,
+                            &mut material.variables,
+                        );
+                    }
                 }
             }
         }
@@ -161,13 +163,13 @@ impl Material {
             }
             TypeInner::Scalar { kind, width } => {
                 if let Some((span, var)) = match kind {
-                    ScalarKind::Uint if *width == std::mem::size_of::<u32>() => {
+                    ScalarKind::Uint if *width as usize == std::mem::size_of::<u32>() => {
                         Some((*width, ShaderVariable::Uint(Default::default())))
                     }
-                    ScalarKind::Sint if *width == std::mem::size_of::<i32>() => {
+                    ScalarKind::Sint if *width as usize == std::mem::size_of::<i32>() => {
                         Some((*width, ShaderVariable::Int(Default::default())))
                     }
-                    ScalarKind::Float if *width == std::mem::size_of::<f32>() => {
+                    ScalarKind::Float if *width as usize == std::mem::size_of::<f32>() => {
                         Some((*width, ShaderVariable::Float(Default::default())))
                     }
                     ScalarKind::Bool => Some((*width, ShaderVariable::Bool(Default::default()))),

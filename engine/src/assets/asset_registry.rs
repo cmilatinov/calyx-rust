@@ -1,4 +1,3 @@
-use std::any::TypeId;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::File;
@@ -28,11 +27,13 @@ use crate::render::Shader;
 use crate::type_registry::TypeRegistry;
 use crate::utils::{singleton, Init};
 
+type AssetConstructor = Box<dyn Fn(&Path) -> Result<Ref<dyn Asset>, AssetError> + Send + Sync>;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetMeta {
     pub id: Uuid,
     #[serde(skip_serializing, skip_deserializing)]
-    pub type_id: Option<TypeId>,
+    pub type_uuid: Option<Uuid>,
     pub name: String,
     pub display_name: String,
     #[serde(skip_serializing, skip_deserializing)]
@@ -47,9 +48,8 @@ pub struct AssetRegistry {
     asset_cache: HashMap<Uuid, Ref<dyn Asset>>,
     asset_meta: HashMap<Uuid, AssetMeta>,
     asset_names: HashMap<RelativePathBuf, Uuid>,
-    asset_extensions: HashMap<String, TypeId>,
-    asset_ctors:
-        HashMap<TypeId, Box<dyn Fn(&Path) -> Result<Ref<dyn Asset>, AssetError> + Send + Sync>>,
+    asset_extensions: HashMap<String, Uuid>,
+    asset_ctors: HashMap<Uuid, AssetConstructor>,
     watcher_thread: Option<JoinHandle<()>>,
 }
 
@@ -68,12 +68,12 @@ impl AssetRegistry {
         &self.asset_paths[0]
     }
 
-    pub fn load<A: Asset>(&mut self, name: &str) -> Result<Ref<A>, AssetError> {
+    pub fn load<A: Asset + TypeUuid>(&mut self, name: &str) -> Result<Ref<A>, AssetError> {
         let id = self.asset_id(name).ok_or(AssetError::NotFound)?;
         self.load_by_id(id)
     }
 
-    pub fn load_by_id<A: Asset>(&mut self, id: Uuid) -> Result<Ref<A>, AssetError> {
+    pub fn load_by_id<A: Asset + TypeUuid>(&mut self, id: Uuid) -> Result<Ref<A>, AssetError> {
         // Asset already loaded
         if let Some(asset_ref) = self
             .asset_cache
@@ -103,8 +103,11 @@ impl AssetRegistry {
 
         // Find constructor & file path
         let meta = self.asset_meta_from_id(id).ok_or(AssetError::NotFound)?;
-        let type_id = meta.type_id.as_ref().ok_or(AssetError::NotFound)?;
-        let ctor = self.asset_ctors.get(type_id).ok_or(AssetError::NotFound)?;
+        let type_uuid = meta.type_uuid.as_ref().ok_or(AssetError::NotFound)?;
+        let ctor = self
+            .asset_ctors
+            .get(type_uuid)
+            .ok_or(AssetError::NotFound)?;
         let path = meta.path.as_ref().ok_or(AssetError::NotFound)?;
 
         // Load from file
@@ -139,7 +142,7 @@ impl AssetRegistry {
             id,
             AssetMeta {
                 id,
-                type_id: Some(TypeId::of::<A>()),
+                type_uuid: Some(A::type_uuid()),
                 name: name.to_string(),
                 display_name: display_name.unwrap_or(name.to_string()),
                 path: None,
@@ -149,13 +152,13 @@ impl AssetRegistry {
         Ok(asset)
     }
 
-    pub fn register_asset_type<A: Asset>(&mut self) {
-        let type_id = TypeId::of::<A>();
+    pub fn register_asset_type<A: Asset + TypeUuid>(&mut self) {
+        let type_uuid = A::type_uuid();
         for ext in A::get_file_extensions() {
-            self.asset_extensions.insert(String::from(*ext), type_id);
+            self.asset_extensions.insert(String::from(*ext), type_uuid);
         }
         self.asset_ctors.insert(
-            type_id,
+            type_uuid,
             Box::new(|path| {
                 let asset = A::from_file(path)?;
                 Ok(Ref::new(asset).as_asset())
@@ -218,7 +221,7 @@ impl AssetRegistry {
         }
     }
 
-    pub fn asset_type_from_ext(&self, ext: &str) -> Option<TypeId> {
+    pub fn asset_type_from_ext(&self, ext: &str) -> Option<Uuid> {
         self.asset_extensions.get(ext).copied()
     }
 
@@ -252,7 +255,7 @@ impl AssetRegistry {
                     let name = path.file_stem().unwrap().to_str().unwrap();
                     let meta = AssetMeta {
                         id: Uuid::new_v4(),
-                        type_id: None,
+                        type_uuid: None,
                         name: name.to_string(),
                         display_name: name.to_string(),
                         path: None,
@@ -263,7 +266,7 @@ impl AssetRegistry {
                     serde_json::to_writer_pretty(writer, &meta).unwrap();
                     meta
                 };
-                meta.type_id =
+                meta.type_uuid =
                     self.asset_type_from_ext(path.extension().unwrap().to_str().unwrap());
                 meta.path = Some(match path.absolutize().unwrap() {
                     Cow::Borrowed(p) => p.to_path_buf(),
@@ -282,14 +285,14 @@ impl AssetRegistry {
     pub fn search_assets(
         &self,
         search_term: &str,
-        asset_type: Option<TypeId>,
+        asset_type: Option<Uuid>,
         list: &mut Vec<AssetMeta>,
     ) {
         list.clear();
         let search_term = search_term.to_lowercase();
         // TODO: Case insensitive and word by word filter
         for (_, meta) in self.asset_meta.iter() {
-            if (asset_type.is_none() || meta.type_id == asset_type)
+            if (asset_type.is_none() || meta.type_uuid == asset_type)
                 && meta
                     .display_name
                     .to_lowercase()

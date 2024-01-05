@@ -1,11 +1,14 @@
 use std::path::Path;
 
 use egui_wgpu::wgpu;
+use reflect::TypeUuid;
 
 use crate::assets::error::AssetError;
 use crate::assets::Asset;
 use crate::render::RenderContext;
 
+#[derive(TypeUuid)]
+#[uuid = "8ba4ccec-85ab-45f5-b4ee-2e803ef548a2"]
 pub struct Texture2D {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,

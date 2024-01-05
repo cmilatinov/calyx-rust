@@ -1,3 +1,5 @@
+pub mod asset_inspector;
+mod assets;
 pub mod type_inspector;
 mod types;
 pub mod widgets;
