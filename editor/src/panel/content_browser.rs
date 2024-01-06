@@ -13,8 +13,9 @@ use engine::egui_dock::{TabBodyStyle, TabStyle};
 use engine::relative_path::PathExt;
 
 use crate::panel::Panel;
+use crate::selection::EditorSelection;
 use crate::widgets::FileButton;
-use crate::BASE_FONT_SIZE;
+use crate::{EditorAppState, BASE_FONT_SIZE};
 
 pub struct PanelContentBrowser {
     selected_folder: PathBuf,
@@ -54,6 +55,7 @@ impl PanelContentBrowser {
                     curr_path
                 };
                 self.selected_file = None;
+                EditorAppState::get_mut().selection = None;
             }
         };
 
@@ -119,13 +121,40 @@ impl PanelContentBrowser {
     }
     fn set_selected_folder(&mut self, path: PathBuf) {
         if path != self.selected_folder {
-            self.selected_file = None;
             self.selected_folder = path;
+            self.selected_file = None;
+            EditorAppState::get_mut().selection = None;
         }
     }
 
     fn set_selected_file(&mut self, path: PathBuf) {
+        EditorAppState::get_mut().selection = AssetRegistry::get()
+            .asset_id_from_path(&path)
+            .map(|id| EditorSelection::Asset([id].into()));
         self.selected_file = Some(path);
+    }
+
+    fn is_selected(&self, path: &PathBuf, is_dir: bool) -> bool {
+        if is_dir {
+            if let Some(selection) = self.selected_file.as_ref() {
+                *selection == *path
+            } else {
+                false
+            }
+        } else {
+            AssetRegistry::get()
+                .asset_id_from_path(path)
+                .map(|id| {
+                    if let Some(EditorSelection::Asset(selection)) =
+                        EditorAppState::get().selection.as_ref()
+                    {
+                        selection.contains(&id)
+                    } else {
+                        false
+                    }
+                })
+                .unwrap_or_default()
+        }
     }
 }
 
@@ -210,11 +239,7 @@ impl Panel for PanelContentBrowser {
                 egui::Grid::new("content_browser").show(ui, |ui| {
                     for (i, node) in nodes.iter().enumerate() {
                         let is_dir = node.is_dir();
-                        let is_selected = if let Some(selection) = self.selected_file.as_ref() {
-                            *selection == *node
-                        } else {
-                            false
-                        };
+                        let is_selected = self.is_selected(node, is_dir);
                         let res = PanelContentBrowser::render_file_button(
                             ui,
                             node.file_name().unwrap().to_str().unwrap(),

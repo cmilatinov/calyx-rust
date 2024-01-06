@@ -1,5 +1,4 @@
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
 
@@ -15,26 +14,25 @@ use crate::assets::Asset;
 use crate::core::{OptionRef, Ref};
 use crate::render::Shader;
 
-pub type MaterialVariables = BTreeMap<ShaderVariableParams, ShaderVariable>;
-
 #[derive(Serialize, Deserialize)]
-pub struct ShaderVariableParams {
-    group: u32,
-    binding: u32,
-    offset: Option<u32>,
-    name: Option<String>,
-    span: Option<u32>,
+pub struct ShaderVariable {
+    pub group: u32,
+    pub binding: u32,
+    pub offset: Option<u32>,
+    pub name: String,
+    pub span: Option<u32>,
+    pub value: ShaderVariableValue,
 }
 
-impl PartialEq for ShaderVariableParams {
+impl PartialEq for ShaderVariable {
     fn eq(&self, other: &Self) -> bool {
         self.group == other.group && self.binding == other.group && self.offset == other.offset
     }
 }
 
-impl Eq for ShaderVariableParams {}
+impl Eq for ShaderVariable {}
 
-impl PartialOrd for ShaderVariableParams {
+impl PartialOrd for ShaderVariable {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.group
             .partial_cmp(&other.group)
@@ -43,7 +41,7 @@ impl PartialOrd for ShaderVariableParams {
     }
 }
 
-impl Ord for ShaderVariableParams {
+impl Ord for ShaderVariable {
     fn cmp(&self, other: &Self) -> Ordering {
         self.group
             .cmp(&other.group)
@@ -53,7 +51,7 @@ impl Ord for ShaderVariableParams {
 }
 
 #[derive(Serialize, Deserialize)]
-pub enum ShaderVariable {
+pub enum ShaderVariableValue {
     Int(i32),
     Uint(u32),
     Float(f32),
@@ -65,15 +63,13 @@ pub enum ShaderVariable {
     Mat4(Mat4),
     Texture2D(OptionRef<Texture2D>),
     Sampler,
-    Struct(HashMap<String, ShaderVariable>),
-    Array(Vec<ShaderVariable>),
 }
 
 #[derive(Serialize, Deserialize, TypeUuid)]
 #[uuid = "f98a7f41-84d4-482d-b7af-a670b07035ae"]
 pub struct Material {
-    shader: Ref<Shader>,
-    variables: MaterialVariables,
+    pub shader: Ref<Shader>,
+    pub variables: Vec<ShaderVariable>,
 }
 
 impl Asset for Material {
@@ -89,8 +85,7 @@ impl Asset for Material {
         Self: Sized,
     {
         let material_str = fs::read_to_string(path).map_err(|_| AssetError::LoadError)?;
-        let material =
-            serde_json::from_str(material_str.as_str()).map_err(|_| AssetError::LoadError)?;
+        let material = serde_json::from_str(material_str.as_str()).unwrap();
         Ok(material)
     }
 }
@@ -111,7 +106,7 @@ impl Material {
                             &shader.module,
                             ty,
                             binding,
-                            variable.name.clone(),
+                            variable.name.clone().unwrap_or_default(),
                             None,
                             &mut material.variables,
                         );
@@ -126,16 +121,17 @@ impl Material {
         module: &naga::Module,
         ty: &naga::Type,
         binding: &naga::ResourceBinding,
-        name: Option<String>,
+        name: String,
         offset: Option<u32>,
-        variables: &mut MaterialVariables,
+        variables: &mut Vec<ShaderVariable>,
     ) {
-        let mut params = ShaderVariableParams {
+        let mut var = ShaderVariable {
             group: binding.group,
             binding: binding.binding,
             name,
             span: None,
             offset,
+            value: ShaderVariableValue::Sampler,
         };
         match &ty.inner {
             TypeInner::Matrix {
@@ -144,48 +140,52 @@ impl Material {
                 width,
             } => {
                 if (*rows, *columns, *width) == (VectorSize::Quad, VectorSize::Quad, 4) {
-                    params.span = Some(*rows as u32 * *columns as u32 * *width as u32);
-                    variables.insert(params, ShaderVariable::Mat4(Default::default()));
+                    var.span = Some(*rows as u32 * *columns as u32 * *width as u32);
+                    var.value = ShaderVariableValue::Mat4(Default::default());
+                    variables.push(var);
                 }
             }
             TypeInner::Vector { size, kind, width } => {
                 if (*kind, *width) == (ScalarKind::Float, 4) {
-                    params.span = Some(*size as u32 * *width as u32);
-                    variables.insert(
-                        params,
-                        match size {
-                            VectorSize::Bi => ShaderVariable::Vec2(Default::default()),
-                            VectorSize::Tri => ShaderVariable::Vec3(Default::default()),
-                            VectorSize::Quad => ShaderVariable::Vec4(Default::default()),
-                        },
-                    );
+                    var.span = Some(*size as u32 * *width as u32);
+                    var.value = match size {
+                        VectorSize::Bi => ShaderVariableValue::Vec2(Default::default()),
+                        VectorSize::Tri => ShaderVariableValue::Vec3(Default::default()),
+                        VectorSize::Quad => ShaderVariableValue::Vec4(Default::default()),
+                    };
+                    variables.push(var);
                 }
             }
             TypeInner::Scalar { kind, width } => {
-                if let Some((span, var)) = match kind {
+                if let Some((span, value)) = match kind {
                     ScalarKind::Uint if *width as usize == std::mem::size_of::<u32>() => {
-                        Some((*width, ShaderVariable::Uint(Default::default())))
+                        Some((*width, ShaderVariableValue::Uint(Default::default())))
                     }
                     ScalarKind::Sint if *width as usize == std::mem::size_of::<i32>() => {
-                        Some((*width, ShaderVariable::Int(Default::default())))
+                        Some((*width, ShaderVariableValue::Int(Default::default())))
                     }
                     ScalarKind::Float if *width as usize == std::mem::size_of::<f32>() => {
-                        Some((*width, ShaderVariable::Float(Default::default())))
+                        Some((*width, ShaderVariableValue::Float(Default::default())))
                     }
-                    ScalarKind::Bool => Some((*width, ShaderVariable::Bool(Default::default()))),
+                    ScalarKind::Bool => {
+                        Some((*width, ShaderVariableValue::Bool(Default::default())))
+                    }
                     _ => None,
                 } {
-                    params.span = Some(span as u32);
-                    variables.insert(params, var);
+                    var.span = Some(span as u32);
+                    var.value = value;
+                    variables.push(var);
                 }
             }
             TypeInner::Image { dim, arrayed, .. } => {
                 if (*dim, *arrayed) == (ImageDimension::D2, false) {
-                    variables.insert(params, ShaderVariable::Texture2D(OptionRef::default()));
+                    var.value = ShaderVariableValue::Texture2D(OptionRef::default());
+                    variables.push(var);
                 }
             }
             TypeInner::Sampler { .. } => {
-                variables.insert(params, ShaderVariable::Sampler);
+                var.value = ShaderVariableValue::Sampler;
+                variables.push(var);
             }
             TypeInner::Struct { members, .. } => {
                 for member in members.iter() {
@@ -194,7 +194,7 @@ impl Material {
                         module,
                         ty,
                         binding,
-                        member.name.clone(),
+                        member.name.clone().unwrap_or_default(),
                         Some(member.offset),
                         variables,
                     );

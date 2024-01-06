@@ -13,7 +13,7 @@ use engine::uuid::Uuid;
 use engine::{egui, egui_extras};
 use reflect::{AttributeValue, Reflect, ReflectDefault, TypeInfo, TypeUuid};
 
-use crate::inspector::asset_inspector::AssetInspector;
+use crate::inspector::asset_inspector::{AssetInspector, ReflectAssetInspector};
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 use crate::panel::Panel;
 use crate::{EditorAppState, BASE_FONT_SIZE};
@@ -45,10 +45,22 @@ impl Default for PanelInspector {
             }
             type_inspectors.insert(type_id, inspector);
         }
+
+        let mut asset_inspectors = HashMap::new();
+        for type_id in registry.all_of(type_uuids!(ReflectDefault, ReflectAssetInspector)) {
+            let meta_default = registry.trait_meta::<ReflectDefault>(type_id).unwrap();
+            let meta_inspector = registry
+                .trait_meta::<ReflectAssetInspector>(type_id)
+                .unwrap();
+            let instance = meta_default.default();
+            let inspector = meta_inspector.get_boxed(instance).unwrap();
+            asset_inspectors.insert(inspector.target_type_uuid(), inspector);
+        }
+
         Self {
             type_inspectors,
             type_association,
-            asset_inspectors: HashMap::new(),
+            asset_inspectors,
         }
     }
 }
@@ -61,7 +73,8 @@ impl Panel for PanelInspector {
     fn ui(&mut self, ui: &mut Ui) {
         let app_state = EditorAppState::get();
         let registry = TypeRegistry::get();
-        if let Some(node) = app_state.selection.clone().and_then(|s| s.first_entity()) {
+        let selection = app_state.selection.clone();
+        if let Some(node) = selection.as_ref().and_then(|s| s.first_entity()) {
             let entity = app_state.scene.get_entity(node);
             let mut entity_components = HashSet::new();
             let mut components_to_remove = HashSet::new();
@@ -130,9 +143,18 @@ impl Panel for PanelInspector {
                     component.remove_instance(&mut entry);
                 }
             }
-        } else if let Some(id) = app_state.selection.clone().and_then(|s| s.first_asset()) {
-            if let Some(meta) = AssetRegistry::get().asset_meta_from_id(id) {
-                // meta.t
+        } else if let Some(id) = selection.as_ref().and_then(|s| s.first_asset()) {
+            let registry = AssetRegistry::get();
+            let asset = registry.load_dyn_by_id(id).unwrap();
+            if let Some(meta) = registry.asset_meta_from_id(id) {
+                if let Some(type_uuid) = meta.type_uuid {
+                    if let Some(inspector) = self.asset_inspector_lookup(type_uuid) {
+                        ui.collapsing(registry.asset_name(id), |ui| {
+                            inspector.show_inspector(ui, asset);
+                            ui.separator();
+                        });
+                    }
+                }
             }
         }
     }

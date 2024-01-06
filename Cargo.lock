@@ -184,7 +184,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91429305e9f0a25f6205c5b8e0d2db09e0708a7a6df0f42212bb56c32c8ac97a"
 dependencies = [
  "cfg-if",
- "getrandom",
  "once_cell",
  "serde",
  "version_check",
@@ -299,17 +298,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39e9c3835d686b0a6084ab4234fcd1b07dbf6e4767dce60874b12356a25ecd4a"
 dependencies = [
  "libloading 0.7.4",
-]
-
-[[package]]
-name = "assets_manager"
-version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f00425f4c1f3349b35daf0a73477249f6574fe89f4b9d76aca0b2a1356886b3b"
-dependencies = [
- "ahash",
- "log",
- "parking_lot 0.12.1",
 ]
 
 [[package]]
@@ -1290,12 +1278,10 @@ dependencies = [
 name = "editor"
 version = "0.1.0"
 dependencies = [
- "assets_manager",
  "bytemuck",
  "convert_case",
  "egui-gizmo",
  "engine",
- "enum-map",
  "inventory",
  "lazy_static 1.4.0",
  "num",
@@ -1620,6 +1606,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha-1",
+ "toml",
  "uuid 1.6.1",
  "wgsl_preprocessor",
 ]

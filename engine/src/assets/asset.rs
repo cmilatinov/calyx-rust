@@ -1,11 +1,8 @@
 use std::any::{Any, TypeId};
-use std::fmt::Formatter;
-use std::marker::PhantomData;
 use std::ops::Deref;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 
-use serde::de::{Error, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
 
@@ -94,7 +91,7 @@ impl<'de, T: Asset + TypeUuid> Deserialize<'de> for Ref<T> {
         D: Deserializer<'de>,
     {
         let id = Uuid::deserialize(deserializer)?;
-        Ok(AssetRegistry::get_mut().load_by_id(id).unwrap())
+        Ok(AssetRegistry::get().load_by_id(id).unwrap())
     }
 }
 
@@ -104,43 +101,9 @@ impl<T: Asset + TypeUuid> Serialize for OptionRef<T> {
         S: Serializer,
     {
         match &self.0 {
-            Some(ref inner) => serializer.serialize_some(inner),
-            None => serializer.serialize_none(),
+            Some(ref inner) => inner.serialize(serializer),
+            None => Uuid::default().serialize(serializer),
         }
-    }
-}
-
-struct OptionRefVisitor<T> {
-    phantom: PhantomData<T>,
-}
-
-impl<T> OptionRefVisitor<T> {
-    pub fn new() -> Self {
-        Self {
-            phantom: PhantomData,
-        }
-    }
-}
-
-impl<'de, T: Asset + TypeUuid> Visitor<'de> for OptionRefVisitor<T> {
-    type Value = OptionRef<T>;
-
-    fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
-        formatter.write_str("a valid uuid encoded as a 128-bit unsigned integer")
-    }
-
-    fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Ok(OptionRef::from_ref(Ref::<T>::deserialize(deserializer)?))
-    }
-
-    fn visit_none<E>(self) -> Result<Self::Value, E>
-    where
-        E: Error,
-    {
-        Ok(OptionRef::default())
     }
 }
 
@@ -149,7 +112,12 @@ impl<'de, T: Asset + TypeUuid> Deserialize<'de> for OptionRef<T> {
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_any(OptionRefVisitor::new())
+        let id = Uuid::deserialize(deserializer)?;
+        Ok(if id.is_nil() {
+            OptionRef::default()
+        } else {
+            OptionRef::from_ref(AssetRegistry::get().load_by_id(id).unwrap())
+        })
     }
 }
 
