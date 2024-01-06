@@ -60,30 +60,9 @@ impl ProjectManager {
 
     pub fn build_assemblies(&self) -> JoinHandle<()> {
         let root = self.root_project_dir();
-        Background::get_mut().execute(TaskId::Build, move || {
-            let mut child = Command::new("cargo")
-                .current_dir(root)
-                .args(["build", "--lib"])
-                .stdout(Stdio::piped())
-                .spawn()
-                .unwrap();
-            Self::pipe_stdout(&mut child);
-            ProjectManager::get_mut().load_assemblies();
-        })
-    }
+        let name = self.current_project.as_ref().unwrap().name().clone();
 
-    pub fn rebuild_assemblies(&self) -> JoinHandle<()> {
-        let project = self.current_project.as_ref().unwrap();
-        let root = project.root_directory().clone();
-        let name = project.name().clone();
         Background::get_mut().execute(TaskId::Build, move || {
-            let mut clean = Command::new("cargo")
-                .current_dir(root.clone())
-                .args(["clean", "-p", name.as_str()])
-                .stdout(Stdio::piped())
-                .spawn()
-                .unwrap();
-            Self::pipe_stdout(&mut clean);
             let mut build = Command::new("cargo")
                 .current_dir(root)
                 .args(["build", "--lib"])

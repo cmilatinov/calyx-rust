@@ -1,13 +1,15 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use glm::Mat4;
 use indextree::{Arena, Children, NodeId};
 use legion::{Entity, EntityStore, World};
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use egui::Ui;
 use uuid::Uuid;
 
 use crate::assets::mesh::Mesh;
 use crate::assets::AssetRegistry;
+use crate::class_registry::ClassRegistry;
 use crate::component::{ComponentCamera, ComponentID, ComponentMesh};
 use crate::component::{ComponentPointLight, ComponentTransform};
 use crate::math::Transform;
@@ -133,6 +135,32 @@ impl Scene {
             .entry(self.get_entity(node_id))
             .map(|mut e| e.add_component(component))
             .ok_or(SceneError::InvalidNodeId)
+    }
+
+    pub fn update(&self, ui: &mut Ui) {
+        for node_id in self.root_entities() {
+             self._update(ui, node_id.clone());
+        }
+    }
+
+    pub fn _update(&self, ui: &mut Ui, node_id: NodeId) {
+        // Call update on every component
+        let entity = self.get_entity(node_id);
+
+        for (_, component) in ClassRegistry::get().components() {
+            if let Some(mut entry) = self.world_mut().entry(entity) {
+                if let Some(instance) = component.get_instance_mut(&mut entry) {
+                    instance.update(self);
+                }
+            }
+        }
+
+        // Recursive call for all children nodes
+        let children: Vec<NodeId> = self.get_children(node_id).collect();
+
+        for child_id in children {
+            self._update(ui, child_id);
+        }
     }
 
     pub fn get_entity_name(&self, node_id: NodeId) -> String {

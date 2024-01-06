@@ -1,4 +1,5 @@
 use engine::component::{Component, ReflectComponent};
+use engine::scene::Scene;
 use reflect::{Reflect, TypeUuid, ReflectDefault};
 
 #[derive(Default, TypeUuid, Component, Reflect)]
@@ -9,4 +10,8 @@ struct ComponentTest {
     value: f32
 }
 
-impl Component for ComponentTest {}
+impl Component for ComponentTest {
+    fn update(&mut self, _scene: &Scene) {
+        println!("Testing");
+    }
+}
