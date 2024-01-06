@@ -4,6 +4,7 @@ use glm::Mat4;
 use indextree::{Arena, Children, NodeId};
 use legion::{Entity, EntityStore, World};
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::ops::Deref;
 use egui::Ui;
 use uuid::Uuid;
 
@@ -15,6 +16,16 @@ use crate::component::{ComponentPointLight, ComponentTransform};
 use crate::math::Transform;
 
 use super::error::SceneError;
+
+use serde::{Serialize, Serializer, Deserialize};
+use legion::IntoQuery;
+
+#[derive(Serialize, Deserialize)]
+pub struct SerializedScene {
+    entities: Vec<Uuid>,
+    hierarchy: HashMap<Uuid, Uuid>,
+//    components: HashMap<Uuid, Vec<json::Value>>
+}
 
 pub struct Scene {
     pub world: RwLock<World>,
@@ -84,6 +95,27 @@ impl Default for Scene {
         scene
     }
 }
+
+impl Serialize for Scene {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let world = self.world();
+        let mut query = <&ComponentID>::query();
+        let serialized_scene = SerializedScene {
+            entities: query.iter(world.deref()).map(|id| id.id).collect::<Vec<_>>(),
+            hierarchy: Default::default()
+        };
+        serialized_scene.serialize(serializer)
+    }
+}
+
+//impl Clone for Scene {
+//    fn clone(&self) -> Self {
+//
+//    }
+//}
 
 #[allow(dead_code)]
 impl Scene {

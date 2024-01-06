@@ -234,6 +234,24 @@ impl EditorApp {
                         ui.close_menu();
                     }
                 });
+
+                {
+                    let png = include_image!("../../resources/icons/save.png");
+                    let image = egui::Image::new(png).fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
+                    if ui
+                        .add(
+                            Button::image(image)
+                                .rounding(Rounding::ZERO)
+                                .sense(Sense::click()),
+                        )
+                        .clicked()
+                    {
+                        let app_state = EditorAppState::get();
+                        let str = serde_json::to_string_pretty(&app_state.scene).unwrap();
+                        println!("{}", str);
+                    }
+                }
+
                 {
                     let png = include_image!("../../resources/icons/compile.png");
                     let image = egui::Image::new(png).fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
