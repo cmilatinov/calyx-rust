@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::thread;
 use std::thread::JoinHandle;
 
@@ -19,6 +19,7 @@ use uuid::Uuid;
 use reflect::{AttributeValue, TypeInfo, TypeUuid};
 
 use crate::assets::error::AssetError;
+use crate::assets::material::Material;
 use crate::assets::mesh::Mesh;
 use crate::assets::texture::Texture2D;
 use crate::assets::{Asset, AssetRef};
@@ -28,6 +29,7 @@ use crate::type_registry::TypeRegistry;
 use crate::utils::{singleton, Init};
 
 type AssetConstructor = Box<dyn Fn(&Path) -> Result<Ref<dyn Asset>, AssetError> + Send + Sync>;
+type AssetCache = HashMap<Uuid, Ref<dyn Asset>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetMeta {
@@ -45,7 +47,7 @@ pub struct AssetMeta {
 #[derive(Default)]
 pub struct AssetRegistry {
     asset_paths: Vec<PathBuf>,
-    asset_cache: HashMap<Uuid, Ref<dyn Asset>>,
+    asset_cache: RwLock<AssetCache>,
     asset_meta: HashMap<Uuid, AssetMeta>,
     asset_names: HashMap<RelativePathBuf, Uuid>,
     asset_extensions: HashMap<String, Uuid>,
@@ -60,6 +62,7 @@ impl Init for AssetRegistry {
         self.register_asset_type::<Mesh>();
         self.register_asset_type::<Shader>();
         self.register_asset_type::<Texture2D>();
+        self.register_asset_type::<Material>();
     }
 }
 
@@ -68,15 +71,15 @@ impl AssetRegistry {
         &self.asset_paths[0]
     }
 
-    pub fn load<A: Asset + TypeUuid>(&mut self, name: &str) -> Result<Ref<A>, AssetError> {
+    pub fn load<A: Asset + TypeUuid>(&self, name: &str) -> Result<Ref<A>, AssetError> {
         let id = self.asset_id(name).ok_or(AssetError::NotFound)?;
         self.load_by_id(id)
     }
 
-    pub fn load_by_id<A: Asset + TypeUuid>(&mut self, id: Uuid) -> Result<Ref<A>, AssetError> {
+    pub fn load_by_id<A: Asset + TypeUuid>(&self, id: Uuid) -> Result<Ref<A>, AssetError> {
         // Asset already loaded
         if let Some(asset_ref) = self
-            .asset_cache
+            .asset_cache()
             .get(&id)
             .and_then(|a| a.try_downcast::<A>())
         {
@@ -91,13 +94,13 @@ impl AssetRegistry {
 
         // Create ref
         let asset = Ref::new(instance);
-        self.asset_cache.insert(id, asset.as_asset());
+        self.asset_cache_mut().insert(id, asset.as_asset());
         Ok(asset)
     }
 
-    pub fn load_dyn_by_id(&mut self, id: Uuid) -> Result<Ref<dyn Asset>, AssetError> {
+    pub fn load_dyn_by_id(&self, id: Uuid) -> Result<Ref<dyn Asset>, AssetError> {
         // Asset already loaded
-        if let Some(asset_ref) = self.asset_cache.get(&id) {
+        if let Some(asset_ref) = self.asset_cache().get(&id) {
             return Ok(Ref::from_arc((*asset_ref).clone()));
         }
 
@@ -112,7 +115,7 @@ impl AssetRegistry {
 
         // Load from file
         let asset = ctor(path.as_path())?;
-        self.asset_cache.insert(id, Ref::from(&asset));
+        self.asset_cache_mut().insert(id, Ref::from(&asset));
         Ok(asset)
     }
 
@@ -137,7 +140,7 @@ impl AssetRegistry {
         });
         self.asset_names
             .insert(RelativePathBuf::from(name).normalize(), id);
-        self.asset_cache.insert(id, asset.as_asset());
+        self.asset_cache_mut().insert(id, asset.as_asset());
         self.asset_meta.insert(
             id,
             AssetMeta {
@@ -187,16 +190,38 @@ impl AssetRegistry {
                 }
             }
         });
-        self.asset_cache = HashMap::new();
+        self.asset_cache = RwLock::new(HashMap::new());
         self.watcher_thread = Some(watcher_thread);
         self.build_asset_meta();
     }
 }
 
 impl AssetRegistry {
+    fn asset_cache(&self) -> RwLockReadGuard<AssetCache> {
+        self.asset_cache.read().unwrap()
+    }
+
+    fn asset_cache_mut(&self) -> RwLockWriteGuard<AssetCache> {
+        self.asset_cache.write().unwrap()
+    }
+
     pub fn asset_id(&self, name: &str) -> Option<Uuid> {
         let path = RelativePathBuf::from(name).normalize();
         self.asset_names.get(&path).copied()
+    }
+
+    pub fn asset_name(&self, id: Uuid) -> &str {
+        self.asset_meta
+            .get(&id)
+            .map(|meta| meta.name.as_str())
+            .unwrap_or_default()
+    }
+
+    pub fn asset_id_from_path(&self, path: &PathBuf) -> Option<Uuid> {
+        path.relative_to(self.root_path()).ok().and_then(|p| {
+            let p = p.with_extension("");
+            self.asset_names.get(&p).copied()
+        })
     }
 
     pub fn asset_meta(&self, name: &str) -> Option<&AssetMeta> {
@@ -206,6 +231,11 @@ impl AssetRegistry {
 
     pub fn asset_meta_from_id(&self, id: Uuid) -> Option<&AssetMeta> {
         self.asset_meta.get(&id)
+    }
+
+    pub fn asset_meta_from_ref(&self, reference: &Ref<dyn Asset>) -> Option<&AssetMeta> {
+        self.asset_id_from_ref(reference)
+            .and_then(|id| self.asset_meta_from_id(id))
     }
 
     pub fn asset_path(&self, id: Uuid, extensions: &[&str]) -> Option<&Path> {
@@ -226,7 +256,7 @@ impl AssetRegistry {
     }
 
     pub fn asset_id_from_ref(&self, reference: &Ref<dyn Asset>) -> Option<Uuid> {
-        for (id, asset_ref) in self.asset_cache.iter() {
+        for (id, asset_ref) in self.asset_cache().iter() {
             if Arc::ptr_eq(asset_ref, reference) {
                 return Some(*id);
             }
@@ -252,12 +282,17 @@ impl AssetRegistry {
                     let reader = BufReader::new(file);
                     serde_json::from_reader(reader).unwrap()
                 } else {
-                    let name = path.file_stem().unwrap().to_str().unwrap();
+                    let display_name = path
+                        .file_stem()
+                        .and_then(|f| f.to_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_default();
+                    let name = path.relative_to(asset_path).unwrap().to_string();
                     let meta = AssetMeta {
                         id: Uuid::new_v4(),
                         type_uuid: None,
-                        name: name.to_string(),
-                        display_name: name.to_string(),
+                        name,
+                        display_name,
                         path: None,
                         dirty: false,
                     };

@@ -45,7 +45,7 @@ impl Default for Scene {
             transform_cache: RwLock::new(HashMap::new()),
         };
 
-        let mesh = AssetRegistry::get_mut()
+        let mesh = AssetRegistry::get()
             .load::<Mesh>("meshes/cube")
             .unwrap();
 

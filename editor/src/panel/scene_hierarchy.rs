@@ -31,7 +31,7 @@ impl Panel for PanelSceneHierarchy {
 
         ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
             if ui.button("+").clicked() {
-                let mesh = AssetRegistry::get_mut()
+                let mesh = AssetRegistry::get()
                     .load::<Mesh>("meshes/cube")
                     .unwrap();
                 let mut parent: Option<NodeId> = None;

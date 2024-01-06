@@ -8,7 +8,6 @@ use egui_wgpu::{wgpu, RenderState};
 use glm::{vec4, Mat4, Vec3, Vec4};
 use legion::{Entity, IntoQuery};
 
-use crate::assets::material::Material;
 use crate::assets::mesh::Mesh;
 use crate::assets::texture::Texture2D;
 use crate::assets::{AssetRegistry, Assets};
@@ -104,11 +103,10 @@ impl SceneRenderer {
         let grid_shader;
         let missing_texture;
         {
-            let mut registry = AssetRegistry::get_mut();
+            let registry = AssetRegistry::get();
             scene_shader = registry.load::<Shader>("shaders/basic").unwrap();
             grid_shader = registry.load::<Shader>("shaders/grid").unwrap();
             missing_texture = registry.load::<Texture2D>("textures/white").unwrap();
-            let _mat = Material::from_shader(scene_shader.clone());
         }
 
         let camera_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
