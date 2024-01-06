@@ -48,6 +48,7 @@ pub struct EditorApp {
     dock_style: Style,
     panel_manager: PanelManager,
     pub scene_renderer: Ref<SceneRenderer>,
+    is_simulating: bool
 }
 
 pub struct EditorAppState {
@@ -106,6 +107,7 @@ impl EditorApp {
             dock_style,
             panel_manager: PanelManager::default(),
             scene_renderer: Ref::new(SceneRenderer::new(cc)),
+            is_simulating: false
         }
     }
 }
@@ -254,9 +256,26 @@ impl EditorApp {
                             .rounding(Rounding::ZERO)
                             .sense(Sense::click()),
                     );
+
                     if res.clicked() {
-                        let mut app_state = EditorAppState::get_mut();
-                        app_state.scene.update(ui);
+                        self.is_simulating = true;
+                    }
+                }
+
+                if self.is_simulating {
+                    let app_state = EditorAppState::get();
+                    app_state.scene.update(ui);
+
+                    let png = include_image!("../../resources/icons/stop.png");
+                    let image = egui::Image::new(png).fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
+                    let res = ui.add(
+                        Button::image(image)
+                            .rounding(Rounding::ZERO)
+                            .sense(Sense::click()),
+                    );
+
+                    if res.clicked() {
+                        self.is_simulating = false;
                     }
                 }
 
