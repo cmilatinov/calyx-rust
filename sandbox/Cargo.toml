@@ -12,6 +12,7 @@ crate-type = ["cdylib"]
 reflect = { path = "../reflect" }
 engine = { path = "../engine" }
 editor = { path = "../editor" }
+serde = "1.0.195"
 
 [build-dependencies]
 fs_extra = "1.3.0"

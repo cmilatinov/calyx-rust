@@ -9,9 +9,12 @@ use uuid::Uuid;
 use reflect::{impl_extern_type_uuid, impl_reflect_value, reflect_trait, TypeUuid};
 
 use crate::assets::error::AssetError;
+use crate::assets::material::Material;
 use crate::assets::mesh::Mesh;
+use crate::assets::texture::Texture2D;
 use crate::assets::AssetRegistry;
 use crate::core::{OptionRef, Ref};
+use crate::render::Shader;
 
 pub trait Asset: Any + Send + Sync {
     fn get_file_extensions() -> &'static [&'static str]
@@ -123,5 +126,18 @@ impl<'de, T: Asset + TypeUuid> Deserialize<'de> for OptionRef<T> {
 
 impl_extern_type_uuid!(Ref<Mesh>, "fe0cede5-078e-453e-a680-1ff55bb582fc");
 impl_reflect_value!(Ref<Mesh>(AssetRef));
+impl_extern_type_uuid!(Ref<Shader>, "d07ea11e-60d8-4e51-a4d5-7099b50c0a12");
+impl_reflect_value!(Ref<Shader>(AssetRef));
+impl_extern_type_uuid!(Ref<Texture2D>, "731cd634-75a5-4550-9df8-0cc59cfbbd06");
+impl_reflect_value!(Ref<Texture2D>(AssetRef));
+impl_extern_type_uuid!(Ref<Material>, "86d2370f-aecd-462f-a1f3-9b8068627cd8");
+impl_reflect_value!(Ref<Material>(AssetRef));
+
 impl_extern_type_uuid!(OptionRef<Mesh>, "ccee7bcc-744a-4eee-b1c2-af08dd4f481b");
 impl_reflect_value!(OptionRef<Mesh>(AssetOptionRef));
+impl_extern_type_uuid!(OptionRef<Shader>, "6f9f1e5a-8f39-4595-98cf-410777321105");
+impl_reflect_value!(OptionRef<Shader>(AssetOptionRef));
+impl_extern_type_uuid!(OptionRef<Texture2D>, "b1c1260e-4c2e-4eff-8d6a-ae53308a6cb0");
+impl_reflect_value!(OptionRef<Texture2D>(AssetOptionRef));
+impl_extern_type_uuid!(OptionRef<Material>, "8c13be0d-18ee-4add-99a6-368d8adf0440");
+impl_reflect_value!(OptionRef<Material>(AssetOptionRef));

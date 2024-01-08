@@ -3,9 +3,6 @@ use std::collections::HashSet;
 use egui::Ui;
 use egui::Vec2;
 
-use engine::assets::mesh::Mesh;
-use engine::assets::AssetRegistry;
-use engine::component::ComponentMesh;
 use engine::egui::{include_image, Button, Color32, Rounding, Sense};
 use engine::indextree::NodeId;
 use engine::scene::Scene;
@@ -26,14 +23,10 @@ impl Panel for PanelSceneHierarchy {
 
     fn ui(&mut self, ui: &mut Ui) {
         let mut app_state = EditorAppState::get_mut();
-        let entities = app_state.scene.root_entities().clone();
         let mut selection = app_state.selection.clone();
 
         ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
             if ui.button("+").clicked() {
-                let mesh = AssetRegistry::get()
-                    .load::<Mesh>("meshes/cube")
-                    .unwrap();
                 let mut parent: Option<NodeId> = None;
                 if let Some(selected) = selection.clone() {
                     match selected {
@@ -45,23 +38,18 @@ impl Panel for PanelSceneHierarchy {
                         EditorSelection::Asset(_) => {}
                     }
                 }
-
-                let new_entity = app_state.scene.create_entity(None, parent);
-                app_state
-                    .scene
-                    .bind_component(new_entity, ComponentMesh { mesh: mesh.into() })
-                    .unwrap();
+                app_state.scene.create_entity(None, parent);
             }
             ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("Filter by name"));
         });
 
-        for root_node in entities {
+        for root_node in app_state.scene.root_entities() {
             self.render_scene_node(
                 &app_state.scene,
                 &app_state.selection,
                 &mut selection,
                 ui,
-                root_node,
+                *root_node,
             );
         }
         app_state.selection = selection;

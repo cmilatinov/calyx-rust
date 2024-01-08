@@ -30,15 +30,27 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
                 &self,
                 entry: &mut engine::legion::world::Entry,
                 instance: std::boxed::Box<dyn reflect::Reflect>
-            ) {
+            ) -> bool {
                 if let Ok(instance) = instance.downcast::<#name>() {
                     entry.add_component(*instance);
+                    true
+                } else {
+                    false
                 }
             }
             fn remove_instance(
                 &self, entry: &mut engine::legion::world::Entry
             ) {
                 entry.remove_component::<#name>();
+            }
+            fn serialize(&self) -> Option<serde_json::Value> {
+                serde_json::to_value(self).ok()
+            }
+            fn deserialize(&self, value: serde_json::Value) -> Option<Box<dyn Reflect>> {
+                serde_json::from_value::<#name>(value).ok().map(|v| {
+                    let value: Box<dyn Reflect> = Box::new(v);
+                    value
+                })
             }
         }
     };

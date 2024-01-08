@@ -1,7 +1,10 @@
+use engine::assets::material::Material;
 use engine::assets::mesh::Mesh;
-use engine::assets::ReflectAssetOptionRef;
-use engine::core::OptionRef;
+use engine::assets::texture::Texture2D;
+use engine::assets::{ReflectAssetOptionRef, ReflectAssetRef};
+use engine::core::{OptionRef, Ref};
 use engine::egui::Ui;
+use engine::render::Shader;
 use engine::utils::type_uuids;
 use engine::uuid::Uuid;
 use reflect::Reflect;
@@ -17,7 +20,16 @@ pub struct AssetRefInspector;
 
 impl TypeInspector for AssetRefInspector {
     fn target_type_uuids(&self) -> Vec<Uuid> {
-        type_uuids!(OptionRef<Mesh>)
+        type_uuids!(
+            Ref<Mesh>,
+            Ref<Shader>,
+            Ref<Texture2D>,
+            Ref<Material>,
+            OptionRef<Mesh>,
+            OptionRef<Shader>,
+            OptionRef<Texture2D>,
+            OptionRef<Material>
+        )
     }
 
     fn show_inspector(&self, ui: &mut Ui, ctx: &InspectorContext, instance: &mut dyn Reflect) {
@@ -35,6 +47,11 @@ impl TypeInspector for AssetRefInspector {
                 ) {
                     asset_ref.set(asset_opt_ref);
                 }
+            }
+        } else if let Some(meta) = ctx.registry.trait_meta::<ReflectAssetRef>(instance.uuid()) {
+            if let Some(asset_ref) = meta.get_mut(instance) {
+                let mut asset = asset_ref.as_asset();
+                // TODO
             }
         }
     }

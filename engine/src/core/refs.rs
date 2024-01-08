@@ -96,3 +96,43 @@ impl<T: ?Sized> DerefMut for OptionRef<T> {
         &mut self.0
     }
 }
+
+pub struct VecRef<T: ?Sized>(pub Vec<Ref<T>>);
+
+impl<T: ?Sized> From<Vec<Ref<T>>> for VecRef<T> {
+    fn from(value: Vec<Ref<T>>) -> Self {
+        Self(value)
+    }
+}
+
+impl<T> Default for VecRef<T> {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
+
+impl<T: Clone> Clone for VecRef<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<T: Debug> Debug for VecRef<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.0)
+    }
+}
+
+impl<T: ?Sized> Deref for VecRef<T> {
+    type Target = Vec<Ref<T>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T: ?Sized> DerefMut for VecRef<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}

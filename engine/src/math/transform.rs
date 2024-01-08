@@ -7,7 +7,8 @@ use crate as engine;
 
 use super::{compose_transform, decompose_transform};
 
-#[derive(Copy, Clone, Serialize, Deserialize, TypeUuid, Reflect)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, TypeUuid, Reflect)]
+#[serde(from = "TransformShadow")]
 pub struct Transform {
     #[serde(skip)]
     pub position: Vec3,
@@ -143,6 +144,24 @@ impl Transform {
 
     pub fn get_inverse_matrix(&self) -> Mat4 {
         glm::inverse(&self.matrix)
+    }
+}
+
+#[derive(Deserialize)]
+struct TransformShadow {
+    matrix: Mat4,
+}
+
+impl From<TransformShadow> for Transform {
+    fn from(value: TransformShadow) -> Self {
+        let TransformShadow { matrix } = value;
+        let mut transform = Transform {
+            inverse_matrix: glm::inverse(&matrix),
+            matrix,
+            ..Default::default()
+        };
+        transform.update_components();
+        transform
     }
 }
 

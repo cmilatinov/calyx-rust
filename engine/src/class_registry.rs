@@ -1,6 +1,6 @@
 use std::collections::hash_map::Iter;
 use std::collections::HashMap;
-use std::ops::DerefMut;
+use std::ops::{Deref, DerefMut};
 use uuid::Uuid;
 
 use reflect::{ReflectDefault, TypeUuid};
@@ -23,6 +23,10 @@ impl Init for ClassRegistry {
 singleton!(ClassRegistry);
 
 impl ClassRegistry {
+    pub fn component(&self, id: Uuid) -> Option<&dyn Component> {
+        self.components.get(&id).map(|b| b.deref())
+    }
+
     pub fn components(&self) -> Iter<Uuid, Box<dyn Component>> {
         self.components.iter()
     }

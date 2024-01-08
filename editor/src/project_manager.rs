@@ -60,8 +60,6 @@ impl ProjectManager {
 
     pub fn build_assemblies(&self) -> JoinHandle<()> {
         let root = self.root_project_dir();
-        let name = self.current_project.as_ref().unwrap().name().clone();
-
         Background::get_mut().execute(TaskId::Build, move || {
             let mut build = Command::new("cargo")
                 .current_dir(root)

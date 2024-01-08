@@ -1,4 +1,5 @@
 use std::env;
+use std::io::{BufReader, BufWriter};
 use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -13,8 +14,8 @@ use engine::background::Background;
 use engine::class_registry::ClassRegistry;
 use engine::core::{LogRegistry, Logger, OptionRef, Ref, Time};
 use engine::eframe::{wgpu, NativeOptions};
-use engine::egui::{Button, Color32, FontFamily, include_image, Rounding, Sense, Vec2};
 use engine::egui::TextStyle;
+use engine::egui::{include_image, Button, FontFamily, Rounding, Sense, Vec2};
 use engine::egui::{Align, FontId, Layout};
 use engine::egui_dock::DockState;
 use engine::log::LevelFilter;
@@ -48,7 +49,7 @@ pub struct EditorApp {
     dock_style: Style,
     panel_manager: PanelManager,
     pub scene_renderer: Ref<SceneRenderer>,
-    is_simulating: bool
+    is_simulating: bool,
 }
 
 pub struct EditorAppState {
@@ -107,7 +108,7 @@ impl EditorApp {
             dock_style,
             panel_manager: PanelManager::default(),
             scene_renderer: Ref::new(SceneRenderer::new(cc)),
-            is_simulating: false
+            is_simulating: false,
         }
     }
 }
@@ -225,9 +226,28 @@ impl EditorApp {
                         ui.close_menu();
                     }
                     if ui.button("Open").clicked() {
+                        if let Ok(file) = std::fs::OpenOptions::new()
+                            .read(true)
+                            .open("C:\\Users\\Cristian\\Documents\\git\\calyx-rust\\sandbox\\assets\\scene.cxscene")
+                        {
+                            let reader = BufReader::new(file);
+                            EditorAppState::get_mut().scene =
+                                serde_json::from_reader(reader).unwrap();
+                        }
                         ui.close_menu();
                     }
                     if ui.button("Save").clicked() {
+                        let app_state = EditorAppState::get();
+                        let res = std::fs::OpenOptions::new()
+                            .create(true)
+                            .write(true)
+                            .truncate(true)
+                            .open("C:\\Users\\Cristian\\Documents\\git\\calyx-rust\\sandbox\\assets\\scene.cxscene");
+                        println!("{:?}", res);
+                        if let Ok(file) = res {
+                            let writer = BufWriter::new(file);
+                            serde_json::to_writer_pretty(writer, &app_state.scene).unwrap();
+                        }
                         ui.close_menu();
                     }
                     if ui.button("Save As").clicked() {
@@ -236,8 +256,9 @@ impl EditorApp {
                 });
 
                 {
-                    let png = include_image!("../../resources/icons/save.png");
-                    let image = egui::Image::new(png).fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
+                    let png = include_image!("../../resources/icons/compile.png");
+                    let image = egui::Image::new(png)
+                        .fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
                     if ui
                         .add(
                             Button::image(image)
@@ -246,21 +267,6 @@ impl EditorApp {
                         )
                         .clicked()
                     {
-                        let app_state = EditorAppState::get();
-                        let str = serde_json::to_string_pretty(&app_state.scene).unwrap();
-                        println!("{}", str);
-                    }
-                }
-
-                {
-                    let png = include_image!("../../resources/icons/compile.png");
-                    let image = egui::Image::new(png).fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
-                    let res = ui.add(
-                        Button::image(image)
-                            .rounding(Rounding::ZERO)
-                            .sense(Sense::click()),
-                    );
-                    if res.clicked() {
                         ProjectManager::get().build_assemblies();
                         ui.close_menu();
                     }
@@ -268,35 +274,34 @@ impl EditorApp {
 
                 {
                     let png = include_image!("../../resources/icons/execute.png");
-                    let image = egui::Image::new(png).fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
-                    let res = ui.add(
-                        Button::image(image)
-                            .rounding(Rounding::ZERO)
-                            .sense(Sense::click()),
-                    );
-
-                    if res.clicked() {
+                    let image = egui::Image::new(png)
+                        .fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
+                    if ui
+                        .add(
+                            Button::image(image)
+                                .rounding(Rounding::ZERO)
+                                .sense(Sense::click()),
+                        )
+                        .clicked()
+                    {
                         self.is_simulating = true;
                     }
                 }
 
-                if self.is_simulating {
-                    let app_state = EditorAppState::get();
-                    app_state.scene.update(ui);
-
-                    let png = include_image!("../../resources/icons/stop.png");
-                    let image = egui::Image::new(png).fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
-                    let res = ui.add(
+                let png = include_image!("../../resources/icons/stop.png");
+                let image = egui::Image::new(png)
+                    .fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
+                if ui
+                    .add_enabled(
+                        self.is_simulating,
                         Button::image(image)
                             .rounding(Rounding::ZERO)
                             .sense(Sense::click()),
-                    );
-
-                    if res.clicked() {
-                        self.is_simulating = false;
-                    }
+                    )
+                    .clicked()
+                {
+                    self.is_simulating = false;
                 }
-
             });
         });
     }

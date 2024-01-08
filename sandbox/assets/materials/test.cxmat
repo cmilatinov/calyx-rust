@@ -1,0 +1,23 @@
+{
+  "shader": "346a272e-ddef-48b6-acc9-073e452db2d3",
+  "variables": [
+    {
+      "group": 2,
+      "binding": 0,
+      "offset": null,
+      "name": "texture_diffuse",
+      "span": null,
+      "value": {
+        "Texture2D": "35820bd8-d798-48cb-86d0-c2492a3f742c"
+      }
+    },
+    {
+      "group": 2,
+      "binding": 1,
+      "offset": null,
+      "name": "sampler_diffuse",
+      "span": null,
+      "value": "Sampler"
+    }
+  ]
+}

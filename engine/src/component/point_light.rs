@@ -1,6 +1,7 @@
 use egui::Color32;
 use glm::Vec4;
 use indextree::NodeId;
+use serde::{Deserialize, Serialize};
 
 use reflect::{Reflect, ReflectDefault, TypeUuid};
 
@@ -9,7 +10,7 @@ use crate::component::{Component, ReflectComponent};
 use crate::render::Gizmos;
 use crate::scene::Scene;
 
-#[derive(TypeUuid, Component, Reflect)]
+#[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "5fd24d64-6661-40ba-94a5-4fca0d06ead1"]
 #[reflect(Default, Component)]
 #[reflect_attr(name = "Point Light")]

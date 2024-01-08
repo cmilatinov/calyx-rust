@@ -1,13 +1,15 @@
 use engine::component::{Component, ReflectComponent};
 use engine::scene::Scene;
-use reflect::{Reflect, TypeUuid, ReflectDefault};
+use engine::serde::{Deserialize, Serialize};
+use engine::serde_json;
+use reflect::{Reflect, ReflectDefault, TypeUuid};
 
-#[derive(Default, TypeUuid, Component, Reflect)]
+#[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[reflect(Default, Component)]
 #[reflect_attr(name = "Test Component")]
 struct ComponentTest {
     cool: String,
-    value: f32
+    value: f32,
 }
 
 impl Component for ComponentTest {

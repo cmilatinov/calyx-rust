@@ -1,99 +1,34 @@
 use std::collections::{HashMap, HashSet};
+use std::ops::Deref;
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
+use egui::Ui;
 use glm::Mat4;
 use indextree::{Arena, Children, NodeId};
-use legion::{Entity, EntityStore, World};
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
-use std::ops::Deref;
-use egui::Ui;
+use legion::{Entity, EntityStore, IntoQuery, World};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
 
-use crate::assets::mesh::Mesh;
-use crate::assets::AssetRegistry;
 use crate::class_registry::ClassRegistry;
-use crate::component::{ComponentCamera, ComponentID, ComponentMesh};
-use crate::component::{ComponentPointLight, ComponentTransform};
+use crate::component::ComponentID;
+use crate::component::ComponentTransform;
 use crate::math::Transform;
 
 use super::error::SceneError;
 
-use serde::{Serialize, Serializer, Deserialize};
-use legion::IntoQuery;
-
 #[derive(Serialize, Deserialize)]
-pub struct SerializedScene {
-    entities: Vec<Uuid>,
+pub struct SceneData {
+    components: HashMap<Uuid, HashMap<Uuid, serde_json::Value>>,
     hierarchy: HashMap<Uuid, Uuid>,
-//    components: HashMap<Uuid, Vec<json::Value>>
 }
 
+#[derive(Default, Debug)]
 pub struct Scene {
     pub world: RwLock<World>,
-    pub entity_hierarchy: Vec<NodeId>,
+    pub entity_hierarchy: HashSet<NodeId>,
     node_map: HashMap<Entity, NodeId>,
     entity_arena: Arena<Entity>,
     transform_cache: RwLock<HashMap<NodeId, Transform>>,
-}
-
-impl Default for Scene {
-    fn default() -> Self {
-        let mut scene = Scene {
-            world: RwLock::new(World::default()),
-            entity_hierarchy: Vec::new(),
-            entity_arena: Arena::new(),
-            node_map: HashMap::new(),
-            transform_cache: RwLock::new(HashMap::new()),
-        };
-
-        let mesh = AssetRegistry::get()
-            .load::<Mesh>("meshes/cube")
-            .unwrap();
-
-        let cube = scene.create_entity(None, None);
-        scene
-            .bind_component(
-                cube,
-                ComponentMesh {
-                    mesh: mesh.clone().into(),
-                },
-            )
-            .unwrap();
-        scene
-            .bind_component(cube, ComponentPointLight::default())
-            .unwrap();
-        scene
-            .bind_component(cube, ComponentCamera::default())
-            .unwrap();
-
-        let cube2 = scene.create_entity(
-            Some(ComponentID {
-                id: Uuid::new_v4(),
-                name: "Bing bong".to_string(),
-            }),
-            None,
-        );
-        scene
-            .bind_component(cube2, ComponentMesh { mesh: mesh.into() })
-            .unwrap();
-
-        {
-            let mut world = scene.world_mut();
-            let mut e_cube = world.entry(scene.get_entity(cube)).unwrap();
-            e_cube
-                .get_component_mut::<ComponentTransform>()
-                .unwrap()
-                .transform
-                .translate(&glm::vec3(0.0, 0.0, 10.0));
-            let mut e_cube2 = world.entry(scene.get_entity(cube2)).unwrap();
-            e_cube2
-                .get_component_mut::<ComponentTransform>()
-                .unwrap()
-                .transform
-                .translate(&glm::vec3(0.0, 5.0, 0.0));
-        }
-
-        scene
-    }
 }
 
 impl Serialize for Scene {
@@ -101,25 +36,91 @@ impl Serialize for Scene {
     where
         S: Serializer,
     {
-        let world = self.world();
-        let mut query = <&ComponentID>::query();
-        let serialized_scene = SerializedScene {
-            entities: query.iter(world.deref()).map(|id| id.id).collect::<Vec<_>>(),
-            hierarchy: Default::default()
-        };
-        serialized_scene.serialize(serializer)
+        let data: SceneData = self.into();
+        data.serialize(serializer)
     }
 }
 
-//impl Clone for Scene {
-//    fn clone(&self) -> Self {
-//
-//    }
-//}
+impl<'de> Deserialize<'de> for Scene {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(Scene::from(SceneData::deserialize(deserializer)?))
+    }
+}
+
+impl Clone for Scene {
+    fn clone(&self) -> Self {
+        let data: SceneData = self.into();
+        data.into()
+    }
+}
+
+impl From<SceneData> for Scene {
+    fn from(value: SceneData) -> Self {
+        let mut scene = Self::default();
+        for (_, components) in value.components {
+            let node = scene.new_entity(None);
+            for (component_id, data) in components {
+                if let Some(component) = ClassRegistry::get().component(component_id) {
+                    if let Some(instance) = component.deserialize(data) {
+                        if let Some(mut entry) = scene.world_mut().entry(scene.get_entity(node)) {
+                            let res = component.bind_instance(&mut entry, instance);
+                        }
+                    }
+                }
+            }
+        }
+        for (id, parent) in value.hierarchy {
+            if let Some(entity) = scene.get_node_by_uuid(id) {
+                if let Some(parent) = scene.get_node_by_uuid(parent) {
+                    scene.set_parent(entity, Some(parent));
+                }
+            }
+        }
+        scene
+    }
+}
+
+impl From<&Scene> for SceneData {
+    fn from(scene: &Scene) -> Self {
+        let world = scene.world();
+        let mut query = <(Entity, &ComponentID)>::query();
+        let mut hierarchy = HashMap::new();
+        let mut components: HashMap<Uuid, HashMap<Uuid, serde_json::Value>> = HashMap::new();
+        for (entity, id) in query.iter(world.deref()) {
+            if let Some(parent) = scene.get_parent_entity(scene.get_node(*entity)) {
+                if let Ok(parent_id) = world
+                    .entry_ref(parent)
+                    .unwrap()
+                    .get_component::<ComponentID>()
+                {
+                    hierarchy.insert(id.id, parent_id.id);
+                }
+            }
+            for (component_id, component) in ClassRegistry::get().components() {
+                let entry = world.entry_ref(*entity).unwrap();
+                if let Some(instance) = component.get_instance(&entry) {
+                    if let Some(value) = instance.serialize() {
+                        components
+                            .entry(id.id)
+                            .or_default()
+                            .insert(*component_id, value);
+                    }
+                }
+            }
+        }
+        SceneData {
+            hierarchy,
+            components,
+        }
+    }
+}
 
 #[allow(dead_code)]
 impl Scene {
-    pub fn root_entities(&self) -> &Vec<NodeId> {
+    pub fn root_entities(&self) -> &HashSet<NodeId> {
         &self.entity_hierarchy
     }
 
@@ -135,8 +136,12 @@ impl Scene {
 
         // push into root otherwise push under parent specified
         match parent {
-            None => self.entity_hierarchy.push(new_node),
-            Some(parent_id) => parent_id.append(new_node, &mut self.entity_arena),
+            None => {
+                self.entity_hierarchy.insert(new_node);
+            }
+            Some(parent_id) => {
+                parent_id.append(new_node, &mut self.entity_arena);
+            }
         };
 
         new_node
@@ -148,6 +153,33 @@ impl Scene {
 
     pub fn world_mut(&self) -> RwLockWriteGuard<World> {
         self.world.write().unwrap()
+    }
+
+    pub fn set_parent(&mut self, node: NodeId, parent: Option<NodeId>) {
+        if let Some(_) = self.get_parent_node(node) {
+            node.detach(&mut self.entity_arena);
+        }
+        if let Some(parent) = parent {
+            parent.append(node, &mut self.entity_arena);
+            self.entity_hierarchy.remove(&node);
+        } else {
+            self.entity_hierarchy.insert(node);
+        }
+    }
+
+    fn new_entity(&mut self, parent: Option<NodeId>) -> NodeId {
+        let entity = self.world_mut().push(());
+        let node = self.entity_arena.new_node(entity);
+        self.node_map.insert(entity, node);
+        match parent {
+            None => {
+                self.entity_hierarchy.insert(node);
+            }
+            Some(parent_id) => {
+                parent_id.append(node, &mut self.entity_arena);
+            }
+        };
+        node
     }
 
     fn transform_cache(&self) -> RwLockReadGuard<HashMap<NodeId, Transform>> {
@@ -171,26 +203,26 @@ impl Scene {
 
     pub fn update(&self, ui: &mut Ui) {
         for node_id in self.root_entities() {
-             self._update(ui, node_id.clone());
+            self._update(ui, node_id.clone());
         }
     }
 
     pub fn _update(&self, ui: &mut Ui, node_id: NodeId) {
         // Call update on every component
-        let entity = self.get_entity(node_id);
-
-        for (_, component) in ClassRegistry::get().components() {
-            if let Some(mut entry) = self.world_mut().entry(entity) {
-                if let Some(instance) = component.get_instance_mut(&mut entry) {
-                    instance.update(self);
+        {
+            let entity = self.get_entity(node_id);
+            let mut world = self.world_mut();
+            for (_, component) in ClassRegistry::get().components() {
+                if let Some(mut entry) = world.entry(entity) {
+                    if let Some(instance) = component.get_instance_mut(&mut entry) {
+                        instance.update(self);
+                    }
                 }
             }
         }
 
         // Recursive call for all children nodes
-        let children: Vec<NodeId> = self.get_children(node_id).collect();
-
-        for child_id in children {
+        for child_id in self.get_children(node_id) {
             self._update(ui, child_id);
         }
     }
@@ -199,7 +231,11 @@ impl Scene {
         self.world()
             .entry_ref(self.get_entity(node_id))
             .ok()
-            .and_then(|e| e.get_component::<ComponentID>().ok().map(|c| c.name.clone()))
+            .and_then(|e| {
+                e.get_component::<ComponentID>()
+                    .ok()
+                    .map(|c| c.name.clone())
+            })
             .unwrap_or_default()
     }
 
@@ -209,6 +245,19 @@ impl Scene {
             .ok()
             .and_then(|e| e.get_component::<ComponentID>().ok().map(|id| id.id))
             .unwrap_or_default()
+    }
+
+    pub fn get_entity_by_uuid(&self, id: Uuid) -> Option<Entity> {
+        let world = self.world();
+        <(Entity, &ComponentID)>::query()
+            .iter(world.deref())
+            .find(|(_, cid)| cid.id == id)
+            .map(|(entity, _)| *entity)
+    }
+
+    pub fn get_node_by_uuid(&self, id: Uuid) -> Option<NodeId> {
+        self.get_entity_by_uuid(id)
+            .map(|entity| self.get_node(entity))
     }
 
     pub fn get_parent_entity(&self, node_id: NodeId) -> Option<Entity> {

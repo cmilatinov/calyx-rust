@@ -77,7 +77,7 @@ impl Asset for Material {
     where
         Self: Sized,
     {
-        &["mat"]
+        &["cxmat"]
     }
 
     fn from_file(path: &Path) -> Result<Self, AssetError>
