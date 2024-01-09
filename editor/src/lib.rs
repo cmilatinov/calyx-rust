@@ -20,7 +20,7 @@ use engine::egui::{Align, FontId, Layout};
 use engine::egui_dock::DockState;
 use engine::log::LevelFilter;
 use engine::render::{RenderContext, SceneRenderer};
-use engine::scene::Scene;
+use engine::scene::{Scene, SceneManager};
 use engine::type_registry::TypeRegistry;
 use engine::*;
 use selection::EditorSelection;
@@ -356,8 +356,9 @@ impl EditorApp {
 
         Time::init();
         AssetRegistry::init();
-        AssetRegistry::get_mut()
-            .set_root_path(ProjectManager::get().current_project().assets_directory());
+        AssetRegistry::get_mut().set_root_path(ProjectManager::get().current_project().assets_directory());
+
+        SceneManager::init();
 
         TypeRegistry::init();
         {
