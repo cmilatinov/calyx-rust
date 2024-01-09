@@ -21,7 +21,7 @@ use engine::egui_dock::DockState;
 use engine::log::LevelFilter;
 use engine::reflect::type_registry::TypeRegistry;
 use engine::render::{RenderContext, SceneRenderer};
-use engine::scene::Scene;
+use engine::scene::{Scene, SceneManager};
 use engine::*;
 use selection::EditorSelection;
 use utils::singleton_with_init;
@@ -358,6 +358,8 @@ impl EditorApp {
         AssetRegistry::init();
         AssetRegistry::get_mut()
             .set_root_path(ProjectManager::get().current_project().assets_directory());
+
+        SceneManager::init();
 
         TypeRegistry::init();
         {

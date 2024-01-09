@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
+use std::path::Path;
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::io::BufReader;
 
 use egui::Ui;
 use glm::Mat4;
@@ -9,6 +11,8 @@ use legion::{Entity, EntityStore, IntoQuery, World};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
 
+use crate::assets::Asset;
+use crate::assets::error::AssetError;
 use crate::class_registry::ClassRegistry;
 use crate::component::ComponentID;
 use crate::component::ComponentTransform;
@@ -29,6 +33,27 @@ pub struct Scene {
     node_map: HashMap<Entity, NodeId>,
     entity_arena: Arena<Entity>,
     transform_cache: RwLock<HashMap<NodeId, Transform>>,
+}
+
+impl Asset for Scene {
+    fn get_file_extensions() -> &'static [&'static str]
+    where
+        Self: Sized,
+    {
+        &["cxscene"]
+    }
+
+    fn from_file(path: &Path) -> Result<Self, AssetError>
+    where
+        Self: Sized
+    {
+        let file = std::fs::OpenOptions::new()
+                            .read(true)
+                            .open(path).map_err(|_| AssetError::LoadError)?;
+
+        let reader = BufReader::new(file);
+        serde_json::from_reader(reader).map_err(|_| AssetError::LoadError)
+    }
 }
 
 impl Serialize for Scene {
