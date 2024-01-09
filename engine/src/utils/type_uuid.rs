@@ -1,6 +1,7 @@
+use crate as engine;
 use uuid::Uuid;
 
-pub use reflect_derive::TypeUuid;
+pub use engine_derive::{reflect_trait, TypeUuid};
 
 pub trait TypeUuid {
     const UUID: &'static [u8; 16];
@@ -9,6 +10,7 @@ pub trait TypeUuid {
     }
 }
 
+#[reflect_trait]
 pub trait TypeUuidDynamic {
     fn uuid_bytes(&self) -> &'static [u8; 16];
     fn uuid(&self) -> Uuid;

@@ -2,16 +2,16 @@ use egui::Color32;
 use indextree::NodeId;
 use serde::{Deserialize, Serialize};
 
-use reflect::{Reflect, ReflectDefault, TypeUuid};
-
 use crate as engine;
 use crate::component::{Component, ReflectComponent};
+use crate::reflect::{Reflect, ReflectDefault};
 use crate::render::Gizmos;
 use crate::scene::Scene;
+use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 
 #[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "a85867d2-3e68-42b2-b943-ea78c7c6ddb5"]
-#[reflect(Default, Component)]
+#[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Camera")]
 pub struct ComponentCamera {
     #[reflect_attr(angle, min = 30.0, max = 160.0, speed = 0.1)]

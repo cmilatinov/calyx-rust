@@ -7,11 +7,11 @@ use engine::assets::{Asset, AssetRegistry};
 use engine::core::Ref;
 use engine::egui::Ui;
 use engine::egui_extras::{Column, TableBody};
+use engine::reflect::{Reflect, ReflectDefault};
 use engine::serde_json;
+use engine::utils::TypeUuid;
 use engine::uuid::Uuid;
 use engine::{egui, egui_extras};
-use reflect::ReflectDefault;
-use reflect::{Reflect, TypeUuid};
 use std::io::BufWriter;
 use std::ops::Deref;
 

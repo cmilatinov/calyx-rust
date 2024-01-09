@@ -63,10 +63,10 @@ impl From<SceneData> for Scene {
         for (_, components) in value.components {
             let node = scene.new_entity(None);
             for (component_id, data) in components {
-                if let Some(component) = ClassRegistry::get().component(component_id) {
+                if let Some(component) = ClassRegistry::get().component_by_uuid(component_id) {
                     if let Some(instance) = component.deserialize(data) {
                         if let Some(mut entry) = scene.world_mut().entry(scene.get_entity(node)) {
-                            let res = component.bind_instance(&mut entry, instance);
+                            let _ = component.bind_instance(&mut entry, instance);
                         }
                     }
                 }
@@ -99,7 +99,7 @@ impl From<&Scene> for SceneData {
                     hierarchy.insert(id.id, parent_id.id);
                 }
             }
-            for (component_id, component) in ClassRegistry::get().components() {
+            for (component_id, component) in ClassRegistry::get().components_uuid() {
                 let entry = world.entry_ref(*entity).unwrap();
                 if let Some(instance) = component.get_instance(&entry) {
                     if let Some(value) = instance.serialize() {

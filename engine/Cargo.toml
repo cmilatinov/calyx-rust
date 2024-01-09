@@ -16,7 +16,6 @@ serde = "1.0.189"
 uuid = { version = "1.5.0", features = ["v4", "serde"] }
 nalgebra-glm = { version = "0.18.0", features = ["serde-serialize", "convert-mint"] }
 indextree = "4.6.0"
-reflect = { path = "../reflect" }
 russimp = { version = "=2.0.5", features = ["prebuilt"] }
 notify = "6.1.1"
 inventory = "0.3.12"
@@ -35,3 +34,4 @@ rusty_pool = "0.7.0"
 image = "0.24.7"
 naga = { version = "0.14.2", features = ["wgsl-in"] }
 toml = "0.8.1"
+downcast-rs = "1.2.0"

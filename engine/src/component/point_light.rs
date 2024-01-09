@@ -3,16 +3,16 @@ use glm::Vec4;
 use indextree::NodeId;
 use serde::{Deserialize, Serialize};
 
-use reflect::{Reflect, ReflectDefault, TypeUuid};
-
 use crate as engine;
 use crate::component::{Component, ReflectComponent};
+use crate::reflect::{Reflect, ReflectDefault};
 use crate::render::Gizmos;
 use crate::scene::Scene;
+use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 
 #[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "5fd24d64-6661-40ba-94a5-4fca0d06ead1"]
-#[reflect(Default, Component)]
+#[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Point Light")]
 pub struct ComponentPointLight {
     pub active: bool,

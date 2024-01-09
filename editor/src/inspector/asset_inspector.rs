@@ -1,8 +1,8 @@
 use engine::assets::Asset;
 use engine::core::Ref;
 use engine::egui::Ui;
+use engine::reflect_trait;
 use engine::uuid::Uuid;
-use reflect::reflect_trait;
 
 #[reflect_trait]
 pub trait AssetInspector {

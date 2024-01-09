@@ -4,12 +4,13 @@ use std::path::Path;
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use glm::{vec2, vec3, Vec2, Vec3};
-use reflect::TypeUuid;
 use russimp::scene::{PostProcess, Scene};
 
+use crate as engine;
 use crate::assets::error::AssetError;
 use crate::assets::Asset;
 use crate::render::buffer::{wgpu_buffer_init_desc, BufferLayout, ResizableBuffer};
+use crate::utils::TypeUuid;
 
 const CX_MESH_NUM_UV_CHANNELS: usize = 4;
 

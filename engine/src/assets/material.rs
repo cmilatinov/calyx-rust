@@ -5,14 +5,15 @@ use std::path::Path;
 use egui::Color32;
 use glm::{Mat4, Vec2, Vec3, Vec4};
 use naga::{ImageDimension, ScalarKind, TypeInner, VectorSize};
-use reflect::TypeUuid;
 use serde::{Deserialize, Serialize};
 
+use crate as engine;
 use crate::assets::error::AssetError;
 use crate::assets::texture::Texture2D;
 use crate::assets::Asset;
-use crate::core::{OptionRef, Ref};
+use crate::core::Ref;
 use crate::render::Shader;
+use crate::utils::TypeUuid;
 
 #[derive(Serialize, Deserialize)]
 pub struct ShaderVariable {
@@ -61,7 +62,7 @@ pub enum ShaderVariableValue {
     Vec3(Vec3),
     Vec4(Vec4),
     Mat4(Mat4),
-    Texture2D(OptionRef<Texture2D>),
+    Texture2D(Option<Ref<Texture2D>>),
     Sampler,
 }
 
@@ -179,7 +180,7 @@ impl Material {
             }
             TypeInner::Image { dim, arrayed, .. } => {
                 if (*dim, *arrayed) == (ImageDimension::D2, false) {
-                    var.value = ShaderVariableValue::Texture2D(OptionRef::default());
+                    var.value = ShaderVariableValue::Texture2D(Option::<Ref<_>>::default());
                     variables.push(var);
                 }
             }

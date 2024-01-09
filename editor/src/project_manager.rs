@@ -7,9 +7,9 @@ use sharedlib::{Func, Lib, Symbol};
 
 use engine::background::Background;
 use engine::class_registry::ClassRegistry;
+use engine::reflect::type_registry::TypeRegistry;
 use engine::rusty_pool::JoinHandle;
 use engine::serde_json::Value;
-use engine::type_registry::TypeRegistry;
 use engine::utils::singleton_with_init;
 use project::Project;
 

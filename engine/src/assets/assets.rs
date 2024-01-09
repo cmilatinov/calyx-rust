@@ -2,14 +2,14 @@ use glm::{vec2, vec3};
 
 use crate::assets::mesh::Mesh;
 use crate::assets::AssetRegistry;
-use crate::core::OptionRef;
+use crate::core::Ref;
 
 const SCREEN_SPACE_QUAD: &str = "screen_space_quad";
 
 pub struct Assets;
 
 impl Assets {
-    pub fn screen_space_quad() -> OptionRef<Mesh> {
+    pub fn screen_space_quad() -> Option<Ref<Mesh>> {
         let mut registry = AssetRegistry::get_mut();
         if let Ok(mesh) = registry.load::<Mesh>(SCREEN_SPACE_QUAD) {
             return mesh.into();
@@ -42,7 +42,7 @@ impl Assets {
             ..Default::default()
         };
         quad.mark_dirty();
-        registry.create(SCREEN_SPACE_QUAD, quad).ok().into()
+        registry.create(SCREEN_SPACE_QUAD, quad).ok()
     }
 
     pub fn wire_circle() -> Mesh {

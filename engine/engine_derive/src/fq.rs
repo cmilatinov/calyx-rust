@@ -27,7 +27,7 @@ pub(crate) struct FQTraitMetaFrom;
 
 pub(crate) struct FQAttributeValue;
 
-pub(crate) struct FQTypeUuid;
+pub(crate) struct FQTypeName;
 
 impl ToTokens for FQAny {
     fn to_tokens(&self, tokens: &mut TokenStream) {
@@ -79,36 +79,36 @@ impl ToTokens for FQSync {
 
 impl ToTokens for FQReflect {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        quote!(reflect::Reflect).to_tokens(tokens)
+        quote!(engine::reflect::Reflect).to_tokens(tokens)
     }
 }
 
 impl ToTokens for FQReflectedType {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        quote!(reflect::ReflectedType).to_tokens(tokens)
+        quote!(engine::reflect::ReflectedType).to_tokens(tokens)
     }
 }
 
 impl ToTokens for FQTraitMeta {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        quote!(reflect::TraitMeta).to_tokens(tokens)
+        quote!(engine::reflect::TraitMeta).to_tokens(tokens)
     }
 }
 
 impl ToTokens for FQTraitMetaFrom {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        quote!(reflect::TraitMetaFrom).to_tokens(tokens)
+        quote!(engine::reflect::TraitMetaFrom).to_tokens(tokens)
     }
 }
 
 impl ToTokens for FQAttributeValue {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        quote!(reflect::AttributeValue).to_tokens(tokens)
+        quote!(engine::reflect::AttributeValue).to_tokens(tokens)
     }
 }
 
-impl ToTokens for FQTypeUuid {
+impl ToTokens for FQTypeName {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        quote!(reflect::TypeUuid).to_tokens(tokens)
+        quote!(engine::reflect::TypeName).to_tokens(tokens)
     }
 }

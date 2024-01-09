@@ -1,17 +1,20 @@
-use std::collections::hash_map::Iter;
+use std::any::TypeId;
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
+
 use uuid::Uuid;
 
-use reflect::{ReflectDefault, TypeUuid};
-
 use crate::component::{Component, ReflectComponent};
-use crate::type_registry::TypeRegistry;
-use crate::utils::{singleton, type_uuids, Init};
+use crate::reflect::type_registry::TypeRegistry;
+use crate::reflect::ReflectDefault;
+use crate::type_ids;
+use crate::utils::{singleton, Init, ReflectTypeUuidDynamic};
 
 #[derive(Default)]
 pub struct ClassRegistry {
-    components: HashMap<Uuid, Box<dyn Component>>,
+    component_ids: HashMap<Uuid, TypeId>,
+    component_uuids: HashMap<TypeId, Uuid>,
+    components: HashMap<TypeId, Box<dyn Component>>,
 }
 
 impl Init for ClassRegistry {
@@ -23,22 +26,44 @@ impl Init for ClassRegistry {
 singleton!(ClassRegistry);
 
 impl ClassRegistry {
-    pub fn component(&self, id: Uuid) -> Option<&dyn Component> {
+    pub fn component(&self, id: TypeId) -> Option<&dyn Component> {
         self.components.get(&id).map(|b| b.deref())
     }
 
-    pub fn components(&self) -> Iter<Uuid, Box<dyn Component>> {
+    pub fn component_by_uuid(&self, uuid: Uuid) -> Option<&dyn Component> {
+        self.component_ids
+            .get(&uuid)
+            .and_then(|id| self.component(*id))
+    }
+
+    pub fn components(&self) -> impl Iterator<Item = (&TypeId, &Box<(dyn Component)>)> {
         self.components.iter()
+    }
+
+    pub fn components_uuid(&self) -> impl Iterator<Item = (&Uuid, &Box<(dyn Component)>)> {
+        self.components
+            .iter()
+            .map(move |(id, comp)| (self.component_uuids.get(id).unwrap(), comp))
     }
 
     pub fn refresh_class_lists(&mut self) {
         self.components.clear();
         let registry = TypeRegistry::get();
-        for type_id in registry.all_of(type_uuids!(ReflectDefault, ReflectComponent)) {
+        for type_id in registry.all_of(type_ids!(
+            ReflectDefault,
+            ReflectComponent,
+            ReflectTypeUuidDynamic
+        )) {
             let meta_default = registry.trait_meta::<ReflectDefault>(type_id).unwrap();
             let meta_component = registry.trait_meta::<ReflectComponent>(type_id).unwrap();
+            let meta_type_uuid = registry
+                .trait_meta::<ReflectTypeUuidDynamic>(type_id)
+                .unwrap();
             let instance = meta_default.default();
             let component = meta_component.get_boxed(instance).unwrap();
+            let type_uuid = meta_type_uuid.get(component.as_reflect()).unwrap().uuid();
+            self.component_ids.insert(type_uuid, type_id);
+            self.component_uuids.insert(type_id, type_uuid);
             self.components.insert(type_id, component);
         }
     }

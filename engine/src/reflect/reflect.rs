@@ -1,12 +1,30 @@
 use std::any::{Any, TypeId};
 use std::fmt::{Debug, Formatter};
 
-use crate::type_registry::TypeRegistry;
-use crate::type_uuid::TypeUuidDynamic;
+use crate::reflect::type_registry::TypeRegistry;
 
-pub trait Reflect: TypeUuidDynamic + Any + Send + Sync {
+pub use engine_derive::Reflect;
+
+pub trait TypeName {
+    fn type_name() -> &'static str;
+    fn type_name_short() -> &'static str;
+}
+
+pub trait TypeNameDynamic {
     fn type_name(&self) -> &'static str;
     fn type_name_short(&self) -> &'static str;
+}
+
+impl<T: TypeName> TypeNameDynamic for T {
+    fn type_name(&self) -> &'static str {
+        Self::type_name()
+    }
+    fn type_name_short(&self) -> &'static str {
+        Self::type_name_short()
+    }
+}
+
+pub trait Reflect: TypeNameDynamic + Any + Send + Sync {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn as_reflect(&self) -> &dyn Reflect;

@@ -203,7 +203,7 @@ impl SceneRenderer {
 
                 let mut query = <(Entity, &ComponentTransform, &ComponentMesh)>::query();
                 for (entity, _, m_comp) in query.iter(world.deref()) {
-                    if let Some(mesh_ref) = (*m_comp.mesh).as_ref() {
+                    if let Some(mesh_ref) = m_comp.mesh.as_ref() {
                         {
                             let mut mesh = mesh_ref.write().unwrap();
                             let ptr: *const RwLock<Mesh> = mesh_ref.deref().deref();
@@ -288,7 +288,7 @@ impl SceneRenderer {
         }
 
         {
-            let quad_binding = Assets::screen_space_quad().0.unwrap();
+            let quad_binding = Assets::screen_space_quad().unwrap();
             let mut quad_mesh = quad_binding.write().unwrap();
             let mut grid_shader = self.grid_shader.write().unwrap();
             {

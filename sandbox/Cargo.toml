@@ -9,7 +9,6 @@ path = "src/lib.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-reflect = { path = "../reflect" }
 engine = { path = "../engine" }
 editor = { path = "../editor" }
 serde = "1.0.195"

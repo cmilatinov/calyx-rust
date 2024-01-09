@@ -16,17 +16,16 @@ use relative_path::{PathExt, RelativePathBuf};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use reflect::{AttributeValue, TypeInfo, TypeUuid};
-
 use crate::assets::error::AssetError;
 use crate::assets::material::Material;
 use crate::assets::mesh::Mesh;
 use crate::assets::texture::Texture2D;
 use crate::assets::{Asset, AssetRef};
 use crate::core::Ref;
+use crate::reflect::type_registry::TypeRegistry;
+use crate::reflect::{AttributeValue, TypeInfo};
 use crate::render::Shader;
-use crate::type_registry::TypeRegistry;
-use crate::utils::{singleton, Init};
+use crate::utils::{singleton, Init, TypeUuid};
 
 type AssetConstructor = Box<dyn Fn(&Path) -> Result<Ref<dyn Asset>, AssetError> + Send + Sync>;
 type AssetCache = HashMap<Uuid, Ref<dyn Asset>>;
@@ -130,7 +129,7 @@ impl AssetRegistry {
         let id = Uuid::new_v4();
         let asset = Ref::new(value);
         let registry = TypeRegistry::get();
-        let display_name = registry.type_info_by_uuid(A::type_uuid()).and_then(|info| {
+        let display_name = registry.type_info::<A>().and_then(|info| {
             if let TypeInfo::Struct(info) = info {
                 if let Some(AttributeValue::String(str)) = info.attr("name") {
                     return Some(str.to_string());

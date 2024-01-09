@@ -18,22 +18,20 @@ pub extern crate serde;
 pub extern crate serde_json;
 pub extern crate uuid;
 
-use inventory::collect;
-
-use reflect::type_registry::TypeRegistry;
-
-use reflect::TypeUuid;
-
 pub mod assets;
 pub mod background;
 pub mod class_registry;
 pub mod component;
 pub mod core;
 pub mod math;
+pub mod reflect;
 pub mod render;
 pub mod scene;
-pub mod type_registry;
 pub mod utils;
+
+pub use engine_derive::*;
+use inventory::collect;
+use reflect::type_registry::TypeRegistry;
 
 pub struct ReflectRegistrationFn(pub fn(&mut TypeRegistry));
 collect!(ReflectRegistrationFn);

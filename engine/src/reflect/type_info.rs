@@ -1,7 +1,5 @@
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::collections::HashMap;
-
-use uuid::Uuid;
 
 use crate::reflect::Reflect;
 
@@ -27,7 +25,7 @@ pub enum TypeInfo {
 
 pub struct StructInfo {
     pub type_name: &'static str,
-    pub type_uuid: Uuid,
+    pub type_id: TypeId,
     pub attrs: AttributeMap,
     pub fields: HashMap<&'static str, NamedField>,
 }
@@ -44,7 +42,7 @@ impl StructInfo {
 
 pub struct NamedField {
     pub name: &'static str,
-    pub type_uuid: Uuid,
+    pub type_id: TypeId,
     pub type_name: &'static str,
     pub attrs: AttributeMap,
     pub doc: Option<&'static str>,

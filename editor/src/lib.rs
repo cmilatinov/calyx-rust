@@ -12,16 +12,16 @@ use num_traits::FromPrimitive;
 use engine::assets::AssetRegistry;
 use engine::background::Background;
 use engine::class_registry::ClassRegistry;
-use engine::core::{LogRegistry, Logger, OptionRef, Ref, Time};
+use engine::core::{LogRegistry, Logger, Ref, Time};
 use engine::eframe::{wgpu, NativeOptions};
 use engine::egui::TextStyle;
 use engine::egui::{include_image, Button, FontFamily, Rounding, Sense, Vec2};
 use engine::egui::{Align, FontId, Layout};
 use engine::egui_dock::DockState;
 use engine::log::LevelFilter;
+use engine::reflect::type_registry::TypeRegistry;
 use engine::render::{RenderContext, SceneRenderer};
 use engine::scene::Scene;
-use engine::type_registry::TypeRegistry;
 use engine::*;
 use selection::EditorSelection;
 use utils::singleton_with_init;
@@ -55,7 +55,7 @@ pub struct EditorApp {
 pub struct EditorAppState {
     pub scene: Scene,
     pub camera: EditorCamera,
-    pub scene_renderer: OptionRef<SceneRenderer>,
+    pub scene_renderer: Option<Ref<SceneRenderer>>,
     pub selection: Option<EditorSelection>,
     pub viewport_width: f32,
     pub viewport_height: f32,
@@ -65,9 +65,9 @@ pub struct EditorAppState {
 impl Default for EditorAppState {
     fn default() -> Self {
         Self {
-            scene: Scene::default(),
-            camera: EditorCamera::default(),
-            scene_renderer: OptionRef::default(),
+            scene: Default::default(),
+            camera: Default::default(),
+            scene_renderer: Default::default(),
             selection: None,
             viewport_width: 0.0,
             viewport_height: 0.0,

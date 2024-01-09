@@ -4,13 +4,14 @@ use std::path::Path;
 
 use eframe::wgpu::ShaderSource;
 use egui_wgpu::wgpu;
-use reflect::TypeUuid;
 
+use crate as engine;
+use crate::assets::{Asset, mesh};
 use crate::assets::error::AssetError;
-use crate::assets::{mesh, Asset};
+use crate::render::{PipelineOptions, RenderContext};
 use crate::render::buffer::BufferLayout;
 use crate::render::render_utils::RenderUtils;
-use crate::render::{PipelineOptions, RenderContext};
+use crate::utils::TypeUuid;
 
 pub type BindGroupEntries = BTreeMap<u32, Vec<wgpu::BindGroupLayoutEntry>>;
 pub type BindGroupLayouts = Vec<wgpu::BindGroupLayout>;

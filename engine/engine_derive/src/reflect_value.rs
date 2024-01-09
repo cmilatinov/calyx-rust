@@ -7,7 +7,7 @@ use syn::punctuated::Punctuated;
 use syn::token::Comma;
 use syn::{parenthesized, parse_macro_input, Ident, Path, Token, Type};
 
-use crate::fq::{FQAny, FQBox, FQReflect, FQReflectedType};
+use crate::fq::{FQAny, FQBox, FQReflect, FQReflectedType, FQTypeName};
 
 struct ReflectValueDef {
     type_name: Type,
@@ -43,11 +43,14 @@ pub(crate) fn impl_reflect_value(input: TokenStream) -> TokenStream {
     }
 
     TokenStream::from(quote! {
+        impl #FQTypeName for #name {
+            #[inline]
+            fn type_name() -> &'static str { std::any::type_name::<Self>() }
+            #[inline]
+            fn type_name_short() -> &'static str { stringify!(#name) }
+        }
+
         impl #FQReflect for #name {
-            #[inline]
-            fn type_name(&self) -> &'static str { std::any::type_name::<Self>() }
-            #[inline]
-            fn type_name_short(&self) -> &'static str { stringify!(#name) }
             #[inline]
             fn as_any(&self) -> &dyn #FQAny { self }
             #[inline]
@@ -70,12 +73,12 @@ pub(crate) fn impl_reflect_value(input: TokenStream) -> TokenStream {
         }
 
         impl #FQReflectedType for #name {
-            fn register(registry: &mut reflect::type_registry::TypeRegistry) {
+            fn register(registry: &mut engine::reflect::type_registry::TypeRegistry) {
                 registry.meta::<#name>();
                 #register_traits_impl
             }
         }
 
-        inventory::submit!(reflect::type_registry::TypeRegistrationFn(<#name as #FQReflectedType>::register));
+        inventory::submit!(engine::reflect::type_registry::TypeRegistrationFn(<#name as #FQReflectedType>::register));
     })
 }

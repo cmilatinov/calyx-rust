@@ -13,7 +13,6 @@ default = []
 [dependencies]
 engine = { path = "../engine" }
 project = { path = "../project" }
-reflect = { path = "../reflect" }
 bytemuck = "1.14.0"
 lazy_static = "1.4.0"
 serde = "1.0.189"

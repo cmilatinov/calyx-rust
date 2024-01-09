@@ -7,7 +7,7 @@ use syn::punctuated::Punctuated;
 use syn::token::Comma;
 use syn::{DeriveInput, Expr, ExprLit, Fields, Lit, LitStr, Meta, MetaNameValue, Path, Token};
 
-use crate::fq::{FQAny, FQAttributeValue, FQBox, FQReflect, FQReflectedType};
+use crate::fq::{FQAny, FQAttributeValue, FQBox, FQReflect, FQReflectedType, FQTypeName};
 
 #[derive(Debug)]
 struct ReflectAttribute {
@@ -78,7 +78,7 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
                 Some(value) => quote! { Some(#value) },
                 None => quote! { None },
             };
-            let reflect_attrs = match field
+            let reflect_attrs = field
                 .attrs
                 .iter()
                 .filter_map(|attr| {
@@ -96,10 +96,7 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
                     }
                 })
                 .next()
-            {
-                Some(value) => value,
-                None => quote! { [].into() },
-            };
+                .unwrap_or_else(|| quote! { [].into() });
             if let Some(ident) = &field.ident {
                 let ty = &field.ty;
                 field_info.push((ident, ty, doc, reflect_attrs));
@@ -173,11 +170,14 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
     }
 
     TokenStream::from(quote! {
+        impl #FQTypeName for #name {
+            #[inline]
+            fn type_name() -> &'static str { std::any::type_name::<Self>() }
+            #[inline]
+            fn type_name_short() -> &'static str { stringify!(#name) }
+        }
+
         impl #FQReflect for #name {
-            #[inline]
-            fn type_name(&self) -> &'static str { std::any::type_name::<Self>() }
-            #[inline]
-            fn type_name_short(&self) -> &'static str { stringify!(#name) }
             #[inline]
             fn as_any(&self) -> &dyn #FQAny { self }
             #[inline]
@@ -200,7 +200,7 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
         }
 
         impl #FQReflectedType for #name {
-            fn register(registry: &mut reflect::type_registry::TypeRegistry) {
+            fn register(registry: &mut engine::reflect::type_registry::TypeRegistry) {
                 registry.meta_struct::<#name>(#reflect_attrs)
                     #(#add_field_calls)*;
                 #register_traits_impl

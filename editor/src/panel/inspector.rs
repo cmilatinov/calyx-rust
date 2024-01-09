@@ -1,3 +1,4 @@
+use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 
 use convert_case::{Case, Casing};
@@ -7,11 +8,10 @@ use engine::class_registry::ClassRegistry;
 use engine::component::Component;
 use engine::egui::Ui;
 use engine::egui_extras::{Column, TableBody};
-use engine::type_registry::TypeRegistry;
-use engine::utils::type_uuids;
+use engine::reflect::type_registry::TypeRegistry;
+use engine::reflect::{AttributeValue, Reflect, ReflectDefault, TypeInfo};
 use engine::uuid::Uuid;
-use engine::{egui, egui_extras};
-use reflect::{AttributeValue, Reflect, ReflectDefault, TypeInfo, TypeUuid};
+use engine::{egui, egui_extras, type_ids};
 
 use crate::inspector::asset_inspector::{AssetInspector, ReflectAssetInspector};
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
@@ -23,8 +23,8 @@ use crate::{EditorAppState, BASE_FONT_SIZE};
 // grab its data from the TypeRegistry when ClassRegistry's
 // refresh_class_lists is called
 pub struct PanelInspector {
-    type_inspectors: HashMap<Uuid, Box<dyn TypeInspector>>,
-    type_association: HashMap<Uuid, Uuid>,
+    type_inspectors: HashMap<TypeId, Box<dyn TypeInspector>>,
+    type_association: HashMap<TypeId, TypeId>,
     asset_inspectors: HashMap<Uuid, Box<dyn AssetInspector>>,
 }
 
@@ -33,21 +33,21 @@ impl Default for PanelInspector {
         let registry = TypeRegistry::get();
         let mut type_inspectors = HashMap::new();
         let mut type_association = HashMap::new();
-        for type_id in registry.all_of(type_uuids!(ReflectDefault, ReflectTypeInspector)) {
+        for type_id in registry.all_of(type_ids!(ReflectDefault, ReflectTypeInspector)) {
             let meta_default = registry.trait_meta::<ReflectDefault>(type_id).unwrap();
             let meta_inspector = registry
                 .trait_meta::<ReflectTypeInspector>(type_id)
                 .unwrap();
             let instance = meta_default.default();
             let inspector = meta_inspector.get_boxed(instance).unwrap();
-            for target_type_id in inspector.target_type_uuids() {
+            for target_type_id in inspector.target_type_ids() {
                 type_association.insert(target_type_id, type_id);
             }
             type_inspectors.insert(type_id, inspector);
         }
 
         let mut asset_inspectors = HashMap::new();
-        for type_id in registry.all_of(type_uuids!(ReflectDefault, ReflectAssetInspector)) {
+        for type_id in registry.all_of(type_ids!(ReflectDefault, ReflectAssetInspector)) {
             let meta_default = registry.trait_meta::<ReflectDefault>(type_id).unwrap();
             let meta_inspector = registry
                 .trait_meta::<ReflectAssetInspector>(type_id)
@@ -89,7 +89,7 @@ impl Panel for PanelInspector {
                 if let Some(ptr) = ptr {
                     let world = app_state.scene.world();
                     let instance: &mut dyn Component = unsafe { &mut *ptr };
-                    let info = registry.type_info_by_uuid(*type_id).unwrap();
+                    let info = registry.type_info_by_id(*type_id).unwrap();
                     if let TypeInfo::Struct(type_info) = info {
                         let ctx = InspectorContext {
                             registry: &registry,
@@ -164,7 +164,7 @@ impl PanelInspector {
     fn display_name(instance: &dyn Reflect) -> &'static str {
         let registry = TypeRegistry::get();
         registry
-            .type_info_by_uuid(instance.uuid())
+            .type_info_by_id(instance.type_id())
             .and_then(|info| {
                 if let TypeInfo::Struct(info) = info {
                     if let Some(AttributeValue::String(str)) = info.attr("name") {
@@ -176,7 +176,7 @@ impl PanelInspector {
             .unwrap_or(instance.type_name_short())
     }
 
-    fn type_inspector_lookup(&self, type_id: Uuid) -> Option<&dyn TypeInspector> {
+    fn type_inspector_lookup(&self, type_id: TypeId) -> Option<&dyn TypeInspector> {
         self.type_association
             .get(&type_id)
             .and_then(|id| self.type_inspectors.get(id))
@@ -202,7 +202,7 @@ impl PanelInspector {
     ) -> bool {
         let name = Self::display_name(instance);
         let mut remove = false;
-        match self.type_inspector_lookup(instance.uuid()) {
+        match self.type_inspector_lookup(instance.as_any().type_id()) {
             Some(inspector) => {
                 ui.collapsing(name, |ui| {
                     inspector.show_inspector(ui, ctx, instance);
@@ -240,7 +240,9 @@ impl PanelInspector {
         ctx: &InspectorContext,
         instance: &mut dyn Reflect,
     ) {
-        if let Some(TypeInfo::Struct(info)) = ctx.registry.type_info_by_uuid(instance.uuid()) {
+        if let Some(TypeInfo::Struct(info)) =
+            ctx.registry.type_info_by_id(instance.as_any().type_id())
+        {
             egui_extras::TableBuilder::new(ui)
                 .column(
                     Column::auto_with_initial_suggestion(200.0)
@@ -269,7 +271,7 @@ impl PanelInspector {
     ) {
         let mut name = field_name.from_case(Case::Snake).to_case(Case::Title);
         name.push(' ');
-        if let Some(inspector) = self.type_inspector_lookup(instance.uuid()) {
+        if let Some(inspector) = self.type_inspector_lookup(instance.as_any().type_id()) {
             body.row(BASE_FONT_SIZE + 6.0, |mut row| {
                 row.col(|ui| {
                     ui.add(egui::Label::new(name.as_str()).wrap(false));

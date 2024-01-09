@@ -1288,7 +1288,6 @@ dependencies = [
  "num-derive 0.4.1",
  "num-traits",
  "project",
- "reflect",
  "serde",
  "sharedlib",
 ]
@@ -1579,6 +1578,7 @@ name = "engine"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "downcast-rs",
  "eframe 0.24.1",
  "egui 0.24.1",
  "egui-wgpu 0.24.1",
@@ -1599,7 +1599,6 @@ dependencies = [
  "nalgebra-glm",
  "notify",
  "path-absolutize",
- "reflect",
  "relative-path",
  "russimp",
  "rusty_pool",
@@ -3896,34 +3895,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "reflect"
-version = "0.1.0"
-dependencies = [
- "downcast-rs",
- "egui 0.24.1",
- "impls",
- "inventory",
- "lazy_static 1.4.0",
- "nalgebra-glm",
- "num-traits",
- "quote",
- "reflect_derive",
- "syn 2.0.48",
- "uuid 1.6.1",
-]
-
-[[package]]
-name = "reflect_derive"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "sha-1",
- "syn 2.0.48",
- "uuid 1.6.1",
-]
-
-[[package]]
 name = "regex"
 version = "1.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4187,7 +4158,6 @@ dependencies = [
  "editor",
  "engine",
  "fs_extra",
- "reflect",
  "serde",
 ]
 

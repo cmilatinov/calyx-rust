@@ -1,9 +1,10 @@
 use glm::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 
-use reflect::{Reflect, TypeUuid};
-
 use crate as engine;
+use crate::reflect::Reflect;
+
+use crate::utils::TypeUuid;
 
 use super::{compose_transform, decompose_transform};
 

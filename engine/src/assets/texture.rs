@@ -1,11 +1,12 @@
 use std::path::Path;
 
 use egui_wgpu::wgpu;
-use reflect::TypeUuid;
 
+use crate as engine;
 use crate::assets::error::AssetError;
 use crate::assets::Asset;
 use crate::render::RenderContext;
+use crate::utils::TypeUuid;
 
 #[derive(TypeUuid)]
 #[uuid = "8ba4ccec-85ab-45f5-b4ee-2e803ef548a2"]

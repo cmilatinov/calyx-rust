@@ -1,11 +1,11 @@
 use engine::assets::{Asset, AssetOptionRef, AssetRegistry};
-use engine::core::OptionRef;
+use engine::core::Ref;
 use engine::egui;
 use engine::egui::{DragValue, Id, Ui};
 use engine::glm::{Vec2, Vec3, Vec4};
+use engine::utils::TypeUuid;
 use engine::uuid::Uuid;
 use lazy_static::lazy_static;
-use reflect::TypeUuid;
 use std::sync::RwLock;
 
 pub struct Widgets;
@@ -20,7 +20,7 @@ impl Widgets {
         ui: &mut Ui,
         id: impl std::hash::Hash,
         type_uuid: Option<Uuid>,
-        value: &mut OptionRef<T>,
+        value: &mut Option<Ref<T>>,
     ) -> bool {
         let mut asset_ref = value.as_asset_option();
         let changed = Self::asset_select(ui, id, type_uuid, &mut asset_ref);
@@ -34,7 +34,7 @@ impl Widgets {
         ui: &mut Ui,
         id: impl std::hash::Hash,
         type_uuid: Option<Uuid>,
-        value: &mut OptionRef<dyn Asset>,
+        value: &mut Option<Ref<dyn Asset>>,
     ) -> bool {
         lazy_static! {
             static ref STATE: RwLock<AssetSelectState> = RwLock::new(AssetSelectState {
