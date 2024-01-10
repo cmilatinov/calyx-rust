@@ -15,14 +15,14 @@ pub struct SceneManager {
 }
 
 impl SceneManager {
-    fn load_scene(&mut self, scene_file: PathBuf) {
+    pub fn load_scene(&mut self, scene_file: PathBuf) {
         self.stop_simulation();
         if let Ok(loaded_scene) = Scene::from_file(&scene_file) {
             self.current_scene = loaded_scene;
         }
     }
 
-    fn unload_current_scene(&mut self) {
+    pub fn unload_current_scene(&mut self) {
         self.simulation_scene = None;
     }
 

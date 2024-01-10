@@ -1,8 +1,10 @@
 use std::cmp::Ordering;
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
 use egui::Color32;
+use egui_wgpu::wgpu;
 use glm::{Mat4, Vec2, Vec3, Vec4};
 use naga::{ImageDimension, ScalarKind, TypeInner, VectorSize};
 use serde::{Deserialize, Serialize};
@@ -68,8 +70,13 @@ pub enum ShaderVariableValue {
 
 #[derive(Serialize, Deserialize, TypeUuid)]
 #[uuid = "f98a7f41-84d4-482d-b7af-a670b07035ae"]
+#[serde(from = "MaterialShadow")]
 pub struct Material {
     pub shader: Ref<Shader>,
+    #[serde(skip_serializing, skip_deserializing)]
+    pub bind_groups: HashSet<u32>,
+    #[serde(skip_serializing, skip_deserializing)]
+    pub bind_group_entries: HashSet<(u32, u32)>,
     pub variables: Vec<ShaderVariable>,
 }
 
@@ -95,10 +102,12 @@ impl Material {
     pub fn from_shader(shader_ref: Ref<Shader>) -> Self {
         let mut material = Self {
             shader: shader_ref,
+            bind_groups: Default::default(),
+            bind_group_entries: Default::default(),
             variables: Default::default(),
         };
         {
-            let shader = material.shader.read().unwrap();
+            let shader = material.shader.read();
             for (_, variable) in shader.module.global_variables.iter() {
                 if let Some(binding) = &variable.binding {
                     let ty = &shader.module.types[variable.ty];
@@ -113,6 +122,10 @@ impl Material {
                         );
                     }
                 }
+            }
+            for var in material.variables.iter() {
+                material.bind_group_entries.insert((var.group, var.binding));
+                material.bind_groups.insert(var.group);
             }
         }
         material
@@ -203,5 +216,32 @@ impl Material {
             }
             _ => {}
         }
+    }
+
+    pub fn bind(&self, render_pass: &mut wgpu::RenderPass) {
+        let shader = self.shader.read();
+        for group in self.bind_groups.iter() {}
+    }
+}
+
+#[derive(Deserialize)]
+struct MaterialShadow {
+    shader: Ref<Shader>,
+    variables: Vec<ShaderVariable>,
+}
+
+impl From<MaterialShadow> for Material {
+    fn from(value: MaterialShadow) -> Self {
+        let mut value = Self {
+            shader: value.shader,
+            bind_groups: Default::default(),
+            bind_group_entries: Default::default(),
+            variables: value.variables,
+        };
+        for var in value.variables.iter() {
+            value.bind_groups.insert(var.group);
+            value.bind_group_entries.insert((var.group, var.binding));
+        }
+        value
     }
 }

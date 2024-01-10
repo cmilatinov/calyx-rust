@@ -49,7 +49,7 @@ impl<T: Asset + TypeUuid> AssetRef for Ref<T> {
         T::type_uuid()
     }
     fn as_asset(&self) -> Ref<dyn Asset> {
-        Ref::from_arc(unsafe {
+        Ref::from(unsafe {
             Arc::from_raw(Arc::into_raw(self.deref().clone()) as *const RwLock<dyn Asset>)
         })
     }
@@ -60,7 +60,7 @@ impl<T: Asset + TypeUuid> AssetOptionRef for Option<Ref<T>> {
         T::type_uuid()
     }
     fn as_asset_option(&self) -> Option<Ref<dyn Asset>> {
-        self.clone().map(|r| r.as_asset()).into()
+        (*self).clone().map(|r| r.as_asset()).into()
     }
     fn set(&mut self, asset_ref: Option<Ref<dyn Asset>>) {
         *self = asset_ref.and_then(|r| r.try_downcast::<T>()).into()
@@ -69,8 +69,8 @@ impl<T: Asset + TypeUuid> AssetOptionRef for Option<Ref<T>> {
 
 impl Ref<dyn Asset> {
     pub fn try_downcast<A: Asset>(&self) -> Option<Ref<A>> {
-        if self.read().unwrap().deref().type_id() == TypeId::of::<A>() {
-            Some(Ref::from_arc(unsafe {
+        if self.read().deref().type_id() == TypeId::of::<A>() {
+            Some(Ref::from(unsafe {
                 Arc::from_raw(Arc::into_raw(self.deref().clone()) as *const RwLock<A>)
             }))
         } else {

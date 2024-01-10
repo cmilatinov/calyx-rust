@@ -1,5 +1,5 @@
 {
-  "shader": "346a272e-ddef-48b6-acc9-073e452db2d3",
+  "shader": "9363517f-d5ce-5511-2a89-2e3eaf0a6235",
   "variables": [
     {
       "group": 2,
@@ -8,7 +8,7 @@
       "name": "texture_diffuse",
       "span": null,
       "value": {
-        "Texture2D": "35820bd8-d798-48cb-86d0-c2492a3f742c"
+        "Texture2D": "d2863902-8a4c-8f5b-2fef-8df1e3cf693e"
       }
     },
     {

@@ -1,20 +1,32 @@
 use std::fmt::{Debug, Formatter};
 use std::ops::Deref;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::reflect::TypeName;
 
 pub struct Ref<T: ?Sized>(Arc<RwLock<T>>);
 
 impl<T: ?Sized> Ref<T> {
-    pub fn from(reference: &Ref<T>) -> Self {
-        Ref::<T>(reference.0.clone())
+    pub fn read(&self) -> RwLockReadGuard<T> {
+        self.0.read().unwrap()
     }
-    pub fn from_arc(value: Arc<RwLock<T>>) -> Self {
-        Ref::<T>(value)
+
+    pub fn write(&self) -> RwLockWriteGuard<T> {
+        self.0.write().unwrap()
     }
 }
 
+impl<T: ?Sized> From<&Ref<T>> for Ref<T> {
+    fn from(value: &Ref<T>) -> Self {
+        Ref::<T>(value.0.clone())
+    }
+}
+
+impl<T: ?Sized> From<Arc<RwLock<T>>> for Ref<T> {
+    fn from(value: Arc<RwLock<T>>) -> Self {
+        Self(value)
+    }
+}
 impl<T> Ref<T> {
     pub fn new(value: T) -> Self {
         Ref::<T>(Arc::new(RwLock::new(value)))
@@ -23,7 +35,7 @@ impl<T> Ref<T> {
 
 impl<T> Clone for Ref<T> {
     fn clone(&self) -> Self {
-        Ref::from_arc(self.0.clone())
+        Ref::from(self)
     }
 }
 

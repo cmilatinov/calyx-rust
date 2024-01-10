@@ -125,7 +125,7 @@ impl eframe::App for EditorApp {
             let mut app_state = EditorAppState::get_mut();
             SceneManager::get_mut().get_scene_mut().clear_transform_cache();
             let render_state = frame.wgpu_render_state().unwrap();
-            let mut renderer = self.scene_renderer.write().unwrap();
+            let mut renderer = self.scene_renderer.write();
             let (width, height) = EditorApp::get_physical_size(
                 ctx,
                 app_state.viewport_width,
@@ -224,14 +224,7 @@ impl EditorApp {
                         ui.close_menu();
                     }
                     if ui.button("Open").clicked() {
-                        if let Ok(file) = std::fs::OpenOptions::new()
-                            .read(true)
-                            .open(ProjectManager::get().current_project().assets_directory().join("scene.cxscene"))
-                        {
-                            let reader = BufReader::new(file);
-                            EditorAppState::get_mut().scene =
-                                serde_json::from_reader(reader).unwrap();
-                        }
+                        SceneManager::get_mut().load_scene(ProjectManager::get().current_project().assets_directory().join("scene.cxscene"));
                         ui.close_menu();
                     }
                     if ui.button("Save").clicked() {

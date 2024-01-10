@@ -10,8 +10,7 @@ engine::inventory::collect!(ReflectRegistrationFn);
 #[no_mangle]
 pub extern "C" fn plugin_main(registry: &mut TypeRegistry) {
     println!("ReflectDefault - {:?}", TypeId::of::<ReflectDefault>());
-    for (i, f) in engine::inventory::iter::<ReflectRegistrationFn>().enumerate() {
-        println!("{}", i);
-        (f.0)(registry);
+    for f in engine::inventory::iter::<ReflectRegistrationFn>() {
+        f.0(registry);
     }
 }

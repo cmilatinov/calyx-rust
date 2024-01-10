@@ -25,6 +25,7 @@ use crate::core::Ref;
 use crate::reflect::type_registry::TypeRegistry;
 use crate::reflect::{AttributeValue, TypeInfo};
 use crate::render::Shader;
+use crate::utils;
 use crate::utils::{singleton, Init, TypeUuid};
 
 type AssetConstructor = Box<dyn Fn(&Path) -> Result<Ref<dyn Asset>, AssetError> + Send + Sync>;
@@ -100,7 +101,7 @@ impl AssetRegistry {
     pub fn load_dyn_by_id(&self, id: Uuid) -> Result<Ref<dyn Asset>, AssetError> {
         // Asset already loaded
         if let Some(asset_ref) = self.asset_cache().get(&id) {
-            return Ok(Ref::from_arc((*asset_ref).clone()));
+            return Ok(Ref::from((*asset_ref).clone()));
         }
 
         // Find constructor & file path
@@ -286,11 +287,11 @@ impl AssetRegistry {
                         .and_then(|f| f.to_str())
                         .map(|s| s.to_string())
                         .unwrap_or_default();
-                    let name = path.relative_to(asset_path).unwrap().to_string();
+                    let relative_path = path.relative_to(asset_path).unwrap();
                     let meta = AssetMeta {
-                        id: Uuid::new_v4(),
+                        id: utils::uuid_from_str(relative_path.as_str()),
                         type_uuid: None,
-                        name,
+                        name: relative_path.with_extension("").to_string(),
                         display_name,
                         path: None,
                         dirty: false,
