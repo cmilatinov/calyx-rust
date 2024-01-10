@@ -15,6 +15,6 @@ struct ComponentTest {
 
 impl Component for ComponentTest {
     fn update(&mut self, _scene: &Scene) {
-        println!("Testing");
+        self.value = self.value + 1.0;
     }
 }
