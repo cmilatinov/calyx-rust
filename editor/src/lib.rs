@@ -123,7 +123,9 @@ impl eframe::App for EditorApp {
 
         {
             let mut app_state = EditorAppState::get_mut();
-            SceneManager::get_mut().get_scene_mut().clear_transform_cache();
+            SceneManager::get_mut()
+                .get_scene_mut()
+                .clear_transform_cache();
             let render_state = frame.wgpu_render_state().unwrap();
             let mut renderer = self.scene_renderer.write();
             let (width, height) = EditorApp::get_physical_size(
@@ -224,7 +226,12 @@ impl EditorApp {
                         ui.close_menu();
                     }
                     if ui.button("Open").clicked() {
-                        SceneManager::get_mut().load_scene(ProjectManager::get().current_project().assets_directory().join("scene.cxscene"));
+                        SceneManager::get_mut().load_scene(
+                            ProjectManager::get()
+                                .current_project()
+                                .assets_directory()
+                                .join("scene.cxscene"),
+                        );
                         ui.close_menu();
                     }
                     if ui.button("Save").clicked() {
@@ -232,11 +239,17 @@ impl EditorApp {
                             .create(true)
                             .write(true)
                             .truncate(true)
-                            .open(ProjectManager::get().current_project().assets_directory().join("scene.cxscene"));
+                            .open(
+                                ProjectManager::get()
+                                    .current_project()
+                                    .assets_directory()
+                                    .join("scene.cxscene"),
+                            );
                         println!("{:?}", res);
                         if let Ok(file) = res {
                             let writer = BufWriter::new(file);
-                            serde_json::to_writer_pretty(writer, SceneManager::get().get_scene()).unwrap();
+                            serde_json::to_writer_pretty(writer, SceneManager::get().get_scene())
+                                .unwrap();
                         }
                         ui.close_menu();
                     }
@@ -277,15 +290,13 @@ impl EditorApp {
                         SceneManager::get_mut().start_simulation();
                     }
                 }
-
-                if SceneManager::get().is_simulating() {
-                    SceneManager::get_mut().update(ui);
-
+                {
                     let png = include_image!("../../resources/icons/stop.png");
                     let image = egui::Image::new(png)
                         .fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
                     if ui
-                        .add(
+                        .add_enabled(
+                            SceneManager::get().is_simulating(),
                             Button::image(image)
                                 .rounding(Rounding::ZERO)
                                 .sense(Sense::click()),
@@ -296,6 +307,9 @@ impl EditorApp {
                     }
                 }
 
+                if SceneManager::get().is_simulating() {
+                    SceneManager::get_mut().update(ui);
+                }
             });
         });
     }
