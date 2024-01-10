@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate as engine;
+use crate::assets::material::Material;
 use crate::assets::mesh::Mesh;
 use crate::component::{Component, ReflectComponent};
 use crate::core::Ref;
@@ -13,6 +14,7 @@ use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 #[reflect_attr(name = "Mesh Renderer")]
 pub struct ComponentMesh {
     pub mesh: Option<Ref<Mesh>>,
+    pub material: Option<Ref<Material>>,
 }
 
 impl Component for ComponentMesh {}

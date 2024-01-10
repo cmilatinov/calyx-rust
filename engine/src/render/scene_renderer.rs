@@ -120,7 +120,7 @@ impl SceneRenderer {
 
         let scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("scene_bind_group"),
-            layout: &scene_shader.read().unwrap().bind_group_layouts[0],
+            layout: &scene_shader.read().bind_group_layouts[0],
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: camera_uniform_buffer.as_entire_binding(),
@@ -165,8 +165,8 @@ impl SceneRenderer {
         {
             let mut mesh_map: HashMap<*const RwLock<Mesh>, &RwLock<Mesh>> = HashMap::new();
             let mut mesh_list: Vec<RwLockWriteGuard<Mesh>>;
-            let mut scene_shader = self.scene_shader.write().unwrap();
-            let texture = self.missing_texture.read().unwrap();
+            let mut scene_shader = self.scene_shader.write();
+            let texture = self.missing_texture.read();
             let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("texture_bind_group"),
                 layout: &scene_shader.bind_group_layouts[2],
@@ -205,7 +205,7 @@ impl SceneRenderer {
                 for (entity, _, m_comp) in query.iter(world.deref()) {
                     if let Some(mesh_ref) = m_comp.mesh.as_ref() {
                         {
-                            let mut mesh = mesh_ref.write().unwrap();
+                            let mut mesh = mesh_ref.write();
                             let ptr: *const RwLock<Mesh> = mesh_ref.deref().deref();
                             if !mesh_map.contains_key(&ptr) {
                                 mesh.instances.clear();
@@ -289,8 +289,8 @@ impl SceneRenderer {
 
         {
             let quad_binding = Assets::screen_space_quad().unwrap();
-            let mut quad_mesh = quad_binding.write().unwrap();
-            let mut grid_shader = self.grid_shader.write().unwrap();
+            let mut quad_mesh = quad_binding.write();
+            let mut grid_shader = self.grid_shader.write();
             {
                 let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("Scene Grid"),

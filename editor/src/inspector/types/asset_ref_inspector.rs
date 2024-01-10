@@ -40,7 +40,7 @@ impl TypeInspector for AssetRefInspector {
                 let mut asset_opt_ref = asset_ref.as_asset_option();
                 if Widgets::asset_select(
                     ui,
-                    ctx.node,
+                    ctx.field_name,
                     Some(asset_ref.asset_type_uuid()),
                     &mut asset_opt_ref,
                 ) {
@@ -52,7 +52,7 @@ impl TypeInspector for AssetRefInspector {
             .trait_meta::<ReflectAssetRef>(instance.as_any().type_id())
         {
             if let Some(asset_ref) = meta.get_mut(instance) {
-                let mut asset = asset_ref.as_asset();
+                let mut _asset = asset_ref.as_asset();
                 // TODO
             }
         }

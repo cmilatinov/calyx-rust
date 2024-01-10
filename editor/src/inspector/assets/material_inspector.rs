@@ -25,7 +25,7 @@ impl AssetInspector for MaterialInspector {
     }
     fn show_inspector(&self, ui: &mut Ui, asset: Ref<dyn Asset>) {
         if let Some(material_ref) = asset.try_downcast::<Material>() {
-            let mut material = material_ref.write().unwrap();
+            let mut material = material_ref.write();
             egui_extras::TableBuilder::new(ui)
                 .column(
                     Column::auto_with_initial_suggestion(200.0)

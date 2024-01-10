@@ -15,7 +15,7 @@ pub struct SceneManager {
 }
 
 impl SceneManager {
-    fn sload_scene(&mut self, scene_file: PathBuf) {
+    fn load_scene(&mut self, scene_file: PathBuf) {
         self.stop_simulation();
         if let Ok(loaded_scene) = Scene::from_file(&scene_file) {
             self.current_scene = loaded_scene;

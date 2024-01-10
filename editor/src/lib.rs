@@ -127,7 +127,7 @@ impl eframe::App for EditorApp {
             let mut app_state = EditorAppState::get_mut();
             app_state.scene.clear_transform_cache();
             let render_state = frame.wgpu_render_state().unwrap();
-            let mut renderer = self.scene_renderer.write().unwrap();
+            let mut renderer = self.scene_renderer.write();
             let (width, height) = EditorApp::get_physical_size(
                 ctx,
                 app_state.viewport_width,
@@ -238,13 +238,12 @@ impl EditorApp {
                     }
                     if ui.button("Save").clicked() {
                         let app_state = EditorAppState::get();
-                        let res = std::fs::OpenOptions::new()
+                        if let Ok(file) = std::fs::OpenOptions::new()
                             .create(true)
                             .write(true)
                             .truncate(true)
-                            .open("C:\\Users\\Cristian\\Documents\\git\\calyx-rust\\sandbox\\assets\\scene.cxscene");
-                        println!("{:?}", res);
-                        if let Ok(file) = res {
+                            .open("C:\\Users\\Cristian\\Documents\\git\\calyx-rust\\sandbox\\assets\\scene.cxscene")
+                        {
                             let writer = BufWriter::new(file);
                             serde_json::to_writer_pretty(writer, &app_state.scene).unwrap();
                         }

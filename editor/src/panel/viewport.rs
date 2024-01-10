@@ -83,7 +83,6 @@ impl PanelViewport {
                     .as_ref()
                     .unwrap()
                     .read()
-                    .unwrap()
                     .scene_texture_handle()
                     .id(),
                 size: egui::Vec2::new(ui.available_width(), ui.available_height()),
