@@ -12,6 +12,7 @@ use engine::reflect::type_registry::TypeRegistry;
 use engine::reflect::{AttributeValue, Reflect, ReflectDefault, TypeInfo};
 use engine::uuid::Uuid;
 use engine::{egui, egui_extras, type_ids};
+use engine::scene::SceneManager;
 
 use crate::inspector::asset_inspector::{AssetInspector, ReflectAssetInspector};
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
@@ -75,27 +76,29 @@ impl Panel for PanelInspector {
         let registry = TypeRegistry::get();
         let selection = app_state.selection.clone();
         if let Some(node) = selection.as_ref().and_then(|s| s.first_entity()) {
-            let entity = app_state.scene.get_entity(node);
+            let entity = SceneManager::get().get_scene().get_entity(node);
             let mut entity_components = HashSet::new();
             let mut components_to_remove = HashSet::new();
             for (type_id, component) in ClassRegistry::get().components() {
                 let mut ptr = None;
-                if let Some(mut entry) = app_state.scene.world_mut().entry(entity) {
+                if let Some(mut entry) = SceneManager::get().get_scene().world_mut().entry(entity) {
                     if let Some(instance) = component.get_instance_mut(&mut entry) {
                         ptr = Some(instance as *mut _);
                         entity_components.insert(*type_id);
                     }
                 }
                 if let Some(ptr) = ptr {
-                    let world = app_state.scene.world();
+                    let scene_state = SceneManager::get();
+                    let world = scene_state.get_scene().world();
                     let instance: &mut dyn Component = unsafe { &mut *ptr };
                     let info = registry.type_info_by_id(*type_id).unwrap();
                     if let TypeInfo::Struct(type_info) = info {
+                        let scene_state = SceneManager::get();
                         let ctx = InspectorContext {
                             registry: &registry,
-                            scene: &app_state.scene,
+                            scene: scene_state.get_scene(),
                             node,
-                            parent_node: app_state.scene.get_parent_node(node),
+                            parent_node: SceneManager::get().get_scene().get_parent_node(node),
                             world: &world,
                             type_info,
                             field_name: None,
@@ -122,7 +125,8 @@ impl Panel for PanelInspector {
                         let name = Self::display_name(component.as_reflect());
                         if ui.selectable_label(false, name).clicked() {
                             let meta = registry.trait_meta::<ReflectDefault>(*type_id).unwrap();
-                            let mut world = app_state.scene.world_mut();
+                            let scene_state = SceneManager::get();
+                            let mut world = scene_state.get_scene().world_mut();
                             if let Some(mut entry) = world.entry(entity) {
                                 component.bind_instance(&mut entry, meta.default());
                             }
@@ -138,7 +142,8 @@ impl Panel for PanelInspector {
                 if !components_to_remove.contains(type_id) {
                     continue;
                 }
-                let mut world = app_state.scene.world_mut();
+                let scene_state = SceneManager::get();
+                let mut world = scene_state.get_scene().world_mut();
                 if let Some(mut entry) = world.entry(entity) {
                     component.remove_instance(&mut entry);
                 }

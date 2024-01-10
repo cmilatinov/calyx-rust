@@ -49,7 +49,6 @@ pub struct EditorApp {
     dock_style: Style,
     panel_manager: PanelManager,
     pub scene_renderer: Ref<SceneRenderer>,
-    is_simulating: bool,
 }
 
 pub struct EditorAppState {
@@ -108,7 +107,6 @@ impl EditorApp {
             dock_style,
             panel_manager: PanelManager::default(),
             scene_renderer: Ref::new(SceneRenderer::new(cc)),
-            is_simulating: false,
         }
     }
 }
@@ -125,7 +123,7 @@ impl eframe::App for EditorApp {
 
         {
             let mut app_state = EditorAppState::get_mut();
-            app_state.scene.clear_transform_cache();
+            SceneManager::get_mut().get_scene_mut().clear_transform_cache();
             let render_state = frame.wgpu_render_state().unwrap();
             let mut renderer = self.scene_renderer.write().unwrap();
             let (width, height) = EditorApp::get_physical_size(
@@ -142,7 +140,7 @@ impl eframe::App for EditorApp {
                 render_state,
                 &app_state.camera.camera,
                 &app_state.camera.transform,
-                &app_state.scene,
+                SceneManager::get().get_scene(),
             );
         }
 
@@ -228,7 +226,7 @@ impl EditorApp {
                     if ui.button("Open").clicked() {
                         if let Ok(file) = std::fs::OpenOptions::new()
                             .read(true)
-                            .open("C:\\Users\\Cristian\\Documents\\git\\calyx-rust\\sandbox\\assets\\scene.cxscene")
+                            .open(ProjectManager::get().current_project().assets_directory().join("scene.cxscene"))
                         {
                             let reader = BufReader::new(file);
                             EditorAppState::get_mut().scene =
@@ -237,16 +235,15 @@ impl EditorApp {
                         ui.close_menu();
                     }
                     if ui.button("Save").clicked() {
-                        let app_state = EditorAppState::get();
                         let res = std::fs::OpenOptions::new()
                             .create(true)
                             .write(true)
                             .truncate(true)
-                            .open("C:\\Users\\Cristian\\Documents\\git\\calyx-rust\\sandbox\\assets\\scene.cxscene");
+                            .open(ProjectManager::get().current_project().assets_directory().join("scene.cxscene"));
                         println!("{:?}", res);
                         if let Ok(file) = res {
                             let writer = BufWriter::new(file);
-                            serde_json::to_writer_pretty(writer, &app_state.scene).unwrap();
+                            serde_json::to_writer_pretty(writer, SceneManager::get().get_scene()).unwrap();
                         }
                         ui.close_menu();
                     }
@@ -284,24 +281,28 @@ impl EditorApp {
                         )
                         .clicked()
                     {
-                        self.is_simulating = true;
+                        SceneManager::get_mut().start_simulation();
                     }
                 }
 
-                let png = include_image!("../../resources/icons/stop.png");
-                let image = egui::Image::new(png)
-                    .fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
-                if ui
-                    .add_enabled(
-                        self.is_simulating,
-                        Button::image(image)
-                            .rounding(Rounding::ZERO)
-                            .sense(Sense::click()),
-                    )
-                    .clicked()
-                {
-                    self.is_simulating = false;
+                if SceneManager::get().is_simulating() {
+                    SceneManager::get_mut().update(ui);
+
+                    let png = include_image!("../../resources/icons/stop.png");
+                    let image = egui::Image::new(png)
+                        .fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
+                    if ui
+                        .add(
+                            Button::image(image)
+                                .rounding(Rounding::ZERO)
+                                .sense(Sense::click()),
+                        )
+                        .clicked()
+                    {
+                        SceneManager::get_mut().stop_simulation();
+                    }
                 }
+
             });
         });
     }

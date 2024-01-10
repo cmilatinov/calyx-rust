@@ -7,6 +7,7 @@ use engine::egui_dock::{TabBodyStyle, TabStyle};
 use engine::glm::{Mat4, Vec3};
 use engine::render::CameraLike;
 use engine::*;
+use engine::scene::SceneManager;
 
 use crate::panel::Panel;
 use crate::EditorAppState;
@@ -110,7 +111,7 @@ impl PanelViewport {
 
         if let Some(selection) = app_state.selection.clone() {
             if let Some(node_id) = selection.first_entity() {
-                let transform = app_state.scene.get_world_transform(node_id);
+                let transform = SceneManager::get().get_scene().get_world_transform(node_id);
                 let gizmo = egui_gizmo::Gizmo::new("test")
                     .projection_matrix(app_state.camera.camera.projection.into())
                     .view_matrix(app_state.camera.transform.get_inverse_matrix().into())
@@ -124,8 +125,7 @@ impl PanelViewport {
                     .snap_scale(snap_distance);
                 if let Some(gizmo_response) = gizmo.interact(ui) {
                     let transform = gizmo_response.transform();
-                    app_state
-                        .scene
+                    SceneManager::get().get_scene()
                         .set_world_transform(node_id, Mat4::from(transform));
                     self.gizmo_status(ui, &gizmo_response);
                 }

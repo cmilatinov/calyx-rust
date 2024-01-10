@@ -5,7 +5,7 @@ use egui::Vec2;
 
 use engine::egui::{include_image, Button, Color32, Rounding, Sense};
 use engine::indextree::NodeId;
-use engine::scene::Scene;
+use engine::scene::{Scene, SceneManager};
 use engine::*;
 
 use crate::panel::Panel;
@@ -38,14 +38,14 @@ impl Panel for PanelSceneHierarchy {
                         EditorSelection::Asset(_) => {}
                     }
                 }
-                app_state.scene.create_entity(None, parent);
+                SceneManager::get_mut().get_scene_mut().create_entity(None, parent);
             }
             ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("Filter by name"));
         });
 
-        for root_node in app_state.scene.root_entities() {
+        for root_node in SceneManager::get().get_scene().root_entities() {
             self.render_scene_node(
-                &app_state.scene,
+                SceneManager::get().get_scene(),
                 &app_state.selection,
                 &mut selection,
                 ui,
