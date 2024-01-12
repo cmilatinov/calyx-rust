@@ -35,3 +35,4 @@ image = "0.24.7"
 naga = { version = "0.14.2", features = ["wgsl-in"] }
 toml = "0.8.1"
 downcast-rs = "1.2.0"
+rfd = "0.12.0"

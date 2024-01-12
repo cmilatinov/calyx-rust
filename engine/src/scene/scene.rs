@@ -192,7 +192,7 @@ impl Scene {
         }
     }
 
-    fn new_entity(&mut self, parent: Option<NodeId>) -> NodeId {
+    pub(crate) fn new_entity(&mut self, parent: Option<NodeId>) -> NodeId {
         let entity = self.world_mut().push(());
         let node = self.entity_arena.new_node(entity);
         self.node_map.insert(entity, node);
