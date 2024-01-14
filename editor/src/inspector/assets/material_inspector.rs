@@ -92,13 +92,13 @@ impl MaterialInspector {
                     ui.add(egui::DragValue::new(float).speed(0.1));
                 }
                 ShaderVariableValue::Vec2(ref mut vec) => {
-                    Widgets::drag_float2(ui, 0.1, vec);
+                    Widgets::drag_floatn(ui, 0.1, vec);
                 }
                 ShaderVariableValue::Vec3(ref mut vec) => {
-                    Widgets::drag_float3(ui, 0.1, vec);
+                    Widgets::drag_floatn(ui, 0.1, vec);
                 }
                 ShaderVariableValue::Vec4(ref mut vec) => {
-                    Widgets::drag_float4(ui, 0.1, vec);
+                    Widgets::drag_floatn(ui, 0.1, vec);
                 }
                 ShaderVariableValue::Texture2D(ref mut tex) => {
                     Widgets::asset_select_t(

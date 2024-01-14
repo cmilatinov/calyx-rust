@@ -1,6 +1,7 @@
 use glm::{vec2, vec3};
 
 use crate::assets::mesh::Mesh;
+use crate::assets::texture::Texture2D;
 use crate::assets::AssetRegistry;
 use crate::core::Ref;
 
@@ -9,6 +10,12 @@ const SCREEN_SPACE_QUAD: &str = "screen_space_quad";
 pub struct Assets;
 
 impl Assets {
+    pub fn missing_texture() -> Option<Ref<Texture2D>> {
+        AssetRegistry::get()
+            .load::<Texture2D>("textures/missing")
+            .ok()
+    }
+
     pub fn screen_space_quad() -> Option<Ref<Mesh>> {
         let mut registry = AssetRegistry::get_mut();
         if let Ok(mesh) = registry.load::<Mesh>(SCREEN_SPACE_QUAD) {

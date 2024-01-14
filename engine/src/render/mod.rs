@@ -1,3 +1,5 @@
+pub(crate) use asset_map::*;
+pub(crate) use asset_render_state::*;
 pub use camera::*;
 pub use gizmo_renderer::*;
 pub use gizmos::*;
@@ -6,6 +8,8 @@ pub use render_context::*;
 pub use scene_renderer::*;
 pub use shader::*;
 
+mod asset_map;
+mod asset_render_state;
 pub mod buffer;
 mod camera;
 mod gizmo_renderer;

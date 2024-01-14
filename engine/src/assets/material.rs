@@ -1,11 +1,10 @@
 use std::cmp::Ordering;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
 
 use egui::Color32;
-use egui_wgpu::wgpu;
-use glm::{Mat4, Vec2, Vec3, Vec4};
+use egui_wgpu::{wgpu, RenderState};
 use naga::{ImageDimension, ScalarKind, TypeInner, VectorSize};
 use serde::{Deserialize, Serialize};
 
@@ -14,8 +13,16 @@ use crate::assets::error::AssetError;
 use crate::assets::texture::Texture2D;
 use crate::assets::Asset;
 use crate::core::Ref;
-use crate::render::Shader;
+use crate::render::{AssetMap, LockedAssetRenderState, RenderContext, Shader};
 use crate::utils::TypeUuid;
+
+use super::Assets;
+
+pub enum BindingType {
+    Buffer,
+    Sampler,
+    Texture,
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct ShaderVariable {
@@ -60,12 +67,48 @@ pub enum ShaderVariableValue {
     Float(f32),
     Bool(bool),
     Color(Color32),
-    Vec2(Vec2),
-    Vec3(Vec3),
-    Vec4(Vec4),
-    Mat4(Mat4),
+    Vec2([f32; 2]),
+    Vec3([f32; 3]),
+    Vec4([f32; 4]),
+    Mat4([[f32; 4]; 4]),
     Texture2D(Option<Ref<Texture2D>>),
     Sampler,
+}
+
+impl ShaderVariableValue {
+    pub fn binding_type(&self) -> BindingType {
+        match self {
+            ShaderVariableValue::Sampler => BindingType::Sampler,
+            ShaderVariableValue::Texture2D(_) => BindingType::Texture,
+            _ => BindingType::Buffer,
+        }
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        match self {
+            ShaderVariableValue::Int(value) => bytemuck::cast_slice(std::slice::from_ref(value)),
+            ShaderVariableValue::Uint(value) => bytemuck::cast_slice(std::slice::from_ref(value)),
+            ShaderVariableValue::Float(value) => bytemuck::cast_slice(std::slice::from_ref(value)),
+            ShaderVariableValue::Bool(value) => bytemuck::cast_slice(std::slice::from_ref(value)),
+            ShaderVariableValue::Color(value) => bytemuck::cast_slice(std::slice::from_ref(value)),
+            ShaderVariableValue::Vec2(value) => bytemuck::cast_slice(std::slice::from_ref(value)),
+            ShaderVariableValue::Vec3(value) => bytemuck::cast_slice(std::slice::from_ref(value)),
+            ShaderVariableValue::Vec4(value) => bytemuck::cast_slice(std::slice::from_ref(value)),
+            ShaderVariableValue::Mat4(value) => bytemuck::cast_slice(std::slice::from_ref(value)),
+            ShaderVariableValue::Texture2D(_) => &[],
+            ShaderVariableValue::Sampler => &[],
+        }
+    }
+
+    pub fn as_texture(&self) -> Ref<Texture2D> {
+        if let ShaderVariableValue::Texture2D(texture) = self {
+            texture
+                .clone()
+                .unwrap_or(Assets::missing_texture().unwrap())
+        } else {
+            unreachable!()
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, TypeUuid)]
@@ -73,11 +116,16 @@ pub enum ShaderVariableValue {
 #[serde(from = "MaterialShadow")]
 pub struct Material {
     pub shader: Ref<Shader>,
-    #[serde(skip_serializing, skip_deserializing)]
-    pub bind_groups: HashSet<u32>,
-    #[serde(skip_serializing, skip_deserializing)]
-    pub bind_group_entries: HashSet<(u32, u32)>,
     pub variables: Vec<ShaderVariable>,
+    #[serde(skip_serializing, skip_deserializing)]
+    pub bind_group_entries: BTreeMap<u32, BTreeMap<u32, BindGroupEntry>>,
+    #[serde(skip_serializing, skip_deserializing)]
+    pub buffers: HashMap<(u32, u32), wgpu::Buffer>,
+}
+
+pub struct BindGroupEntry {
+    ty: BindingType,
+    size: Option<u32>,
 }
 
 impl Asset for Material {
@@ -93,7 +141,8 @@ impl Asset for Material {
         Self: Sized,
     {
         let material_str = fs::read_to_string(path).map_err(|_| AssetError::LoadError)?;
-        let material = serde_json::from_str(material_str.as_str()).unwrap();
+        let mut material: Material = serde_json::from_str(material_str.as_str()).unwrap();
+        material.init();
         Ok(material)
     }
 }
@@ -102,9 +151,9 @@ impl Material {
     pub fn from_shader(shader_ref: Ref<Shader>) -> Self {
         let mut material = Self {
             shader: shader_ref,
-            bind_groups: Default::default(),
-            bind_group_entries: Default::default(),
             variables: Default::default(),
+            bind_group_entries: Default::default(),
+            buffers: Default::default(),
         };
         {
             let shader = material.shader.read();
@@ -123,12 +172,98 @@ impl Material {
                     }
                 }
             }
-            for var in material.variables.iter() {
-                material.bind_group_entries.insert((var.group, var.binding));
-                material.bind_groups.insert(var.group);
+        }
+        material.init();
+        material
+    }
+
+    pub(crate) fn collect_textures(&self, textures: &mut AssetMap<Texture2D>) {
+        let missing_texture = Assets::missing_texture().unwrap();
+        for var in self.variables.iter() {
+            if let ShaderVariableValue::Texture2D(texture) = &var.value {
+                let texture = texture.clone().unwrap_or(missing_texture.clone());
+                textures.refs.insert(texture.id(), texture);
             }
         }
-        material
+    }
+
+    pub(crate) fn bind_groups(
+        &self,
+        device: &wgpu::Device,
+        assets: &LockedAssetRenderState,
+    ) -> HashMap<u32, wgpu::BindGroup> {
+        let shader = assets.shader(self.shader.id());
+        self.bind_group_entries
+            .iter()
+            .map(|(group, entries)| {
+                let entries = entries
+                    .iter()
+                    .map(|(binding, entry)| {
+                        let var = self.find_variable(*group, *binding);
+                        wgpu::BindGroupEntry {
+                            binding: *binding,
+                            resource: match &entry.ty {
+                                BindingType::Buffer => {
+                                    self.find_buffer(*group, *binding).as_entire_binding()
+                                }
+                                BindingType::Texture => {
+                                    let texture = var.value.as_texture();
+                                    wgpu::BindingResource::TextureView(
+                                        &assets.texture(texture.id()).view,
+                                    )
+                                }
+                                BindingType::Sampler => {
+                                    let texture =
+                                        self.find_closest_texture_in_group(*group, *binding);
+                                    wgpu::BindingResource::Sampler(
+                                        &assets.texture(texture.id()).sampler,
+                                    )
+                                }
+                            },
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                (
+                    *group,
+                    device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: None,
+                        layout: &shader.bind_group_layouts[*group as usize],
+                        entries: entries.as_slice(),
+                    }),
+                )
+            })
+            .collect()
+    }
+
+    fn find_variable(&self, group: u32, binding: u32) -> &ShaderVariable {
+        self.variables
+            .iter()
+            .find(|v| v.group == group && v.binding == binding)
+            .unwrap()
+    }
+
+    fn find_buffer(&self, group: u32, binding: u32) -> &wgpu::Buffer {
+        self.buffers.get(&(group, binding)).unwrap()
+    }
+
+    fn find_closest_texture_in_group(&self, group: u32, binding: u32) -> Ref<Texture2D> {
+        let mut closest = u32::MAX;
+        let mut closest_index: isize = -1;
+        for (i, var) in self
+            .variables
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| v.group == group)
+        {
+            if let BindingType::Texture = var.value.binding_type() {
+                let diff = (binding as i32 - var.binding as i32).abs() as u32;
+                if diff < closest {
+                    closest = diff;
+                    closest_index = i as isize;
+                }
+            }
+        }
+        self.variables[closest_index as usize].value.as_texture()
     }
 
     fn shader_variable(
@@ -218,9 +353,72 @@ impl Material {
         }
     }
 
-    pub fn bind(&self, render_pass: &mut wgpu::RenderPass) {
+    #[inline]
+    fn init(&mut self) {
+        self.update_entries();
+        self.create_buffers();
+    }
+
+    fn update_entries(&mut self) {
+        for var in self.variables.iter() {
+            self.bind_group_entries
+                .entry(var.group)
+                .or_default()
+                .insert(
+                    var.binding,
+                    BindGroupEntry {
+                        ty: var.value.binding_type(),
+                        size: None,
+                    },
+                );
+        }
         let shader = self.shader.read();
-        for group in self.bind_groups.iter() {}
+        for (_, var) in shader.module.global_variables.iter() {
+            if let Some(binding) = &var.binding {
+                let ty = &shader.module.types[var.ty];
+                if let Some(entry) = self
+                    .bind_group_entries
+                    .get_mut(&binding.group)
+                    .and_then(|e| e.get_mut(&binding.binding))
+                {
+                    if let TypeInner::Struct { span, .. } = &ty.inner {
+                        entry.size = Some(*span);
+                    }
+                }
+            }
+        }
+    }
+
+    fn create_buffers(&mut self) {
+        let device = RenderContext::device().unwrap();
+        for (group, entries) in self.bind_group_entries.iter() {
+            for (binding, entry) in entries {
+                if let BindingType::Buffer = entry.ty {
+                    self.buffers.insert(
+                        (*group, *binding),
+                        device.create_buffer(&wgpu::BufferDescriptor {
+                            label: None,
+                            size: entry.size.unwrap_or_default() as u64,
+                            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                            mapped_at_creation: false,
+                        }),
+                    );
+                }
+            }
+        }
+    }
+
+    pub(crate) fn load_buffers(&mut self, render_state: &RenderState) {
+        let queue = &render_state.queue;
+        for var in self.variables.iter() {
+            if let Some(buffer) = self.buffers.get(&(var.group, var.binding)) {
+                queue.write_buffer(
+                    buffer,
+                    var.offset.unwrap_or_default() as wgpu::BufferAddress,
+                    var.value.as_slice(),
+                );
+            }
+        }
     }
 }
 
@@ -234,14 +432,11 @@ impl From<MaterialShadow> for Material {
     fn from(value: MaterialShadow) -> Self {
         let mut value = Self {
             shader: value.shader,
-            bind_groups: Default::default(),
-            bind_group_entries: Default::default(),
             variables: value.variables,
+            bind_group_entries: Default::default(),
+            buffers: Default::default(),
         };
-        for var in value.variables.iter() {
-            value.bind_groups.insert(var.group);
-            value.bind_group_entries.insert((var.group, var.binding));
-        }
+        value.init();
         value
     }
 }

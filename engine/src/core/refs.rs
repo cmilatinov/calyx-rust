@@ -14,6 +14,10 @@ impl<T: ?Sized> Ref<T> {
     pub fn write(&self) -> RwLockWriteGuard<T> {
         self.0.write().unwrap()
     }
+
+    pub fn id(&self) -> usize {
+        &***self as *const _ as *const () as usize
+    }
 }
 
 impl<T: ?Sized> From<&Ref<T>> for Ref<T> {

@@ -1,5 +1,5 @@
 use std::env;
-use std::io::{BufReader, BufWriter};
+use std::io::BufWriter;
 use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -134,7 +134,7 @@ impl eframe::App for EditorApp {
                 app_state.viewport_height,
             );
             if width != 0 && height != 0 {
-                renderer.resize_textures(ctx, render_state, width, height);
+                renderer.resize_textures(width, height);
                 app_state.camera.camera.aspect = width as f32 / height as f32;
             }
             app_state.camera.camera.update_projection();
