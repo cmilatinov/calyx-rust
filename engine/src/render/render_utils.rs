@@ -1,7 +1,7 @@
 use std::ops::Range;
 
+use egui::Color32;
 use egui_wgpu::wgpu;
-use glm::Vec4;
 
 use crate::assets::mesh::Mesh;
 
@@ -10,17 +10,18 @@ pub struct RenderUtils;
 impl RenderUtils {
     pub fn color_attachment<'a>(
         view: &'a wgpu::TextureView,
-        clear_color: &Vec4,
+        clear_color: Color32,
     ) -> wgpu::RenderPassColorAttachment<'a> {
+        let [x, y, z, w] = clear_color.to_array();
         wgpu::RenderPassColorAttachment {
             view,
             resolve_target: None,
             ops: wgpu::Operations {
                 load: wgpu::LoadOp::Clear(wgpu::Color {
-                    r: clear_color.x as f64,
-                    g: clear_color.y as f64,
-                    b: clear_color.z as f64,
-                    a: clear_color.w as f64,
+                    r: x as f64 / 255.0,
+                    g: y as f64 / 255.0,
+                    b: z as f64 / 255.0,
+                    a: w as f64 / 255.0,
                 }),
                 store: wgpu::StoreOp::Store,
             },

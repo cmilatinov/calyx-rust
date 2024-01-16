@@ -16,6 +16,8 @@ use crate::render::gizmos::Gizmos;
 use crate::render::render_utils::RenderUtils;
 use crate::scene::Scene;
 
+use super::RenderContext;
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GizmoInstance {
@@ -57,12 +59,8 @@ pub struct GizmoRenderer {
 }
 
 impl GizmoRenderer {
-    pub fn new(
-        cc: &eframe::CreationContext,
-        camera_uniform_buffer: &wgpu::Buffer,
-        samples: u32,
-    ) -> Self {
-        let render_state = cc.wgpu_render_state.as_ref().unwrap();
+    pub fn new(camera_uniform_buffer: &wgpu::Buffer, samples: u32) -> Self {
+        let render_state = RenderContext::render_state().unwrap();
         let device = &render_state.device;
         let queue = &render_state.queue;
 
@@ -115,7 +113,7 @@ impl GizmoRenderer {
             });
 
         let gizmo_pipeline_line_list = Self::create_pipeline(
-            render_state,
+            &render_state,
             "gizmo_pipeline_line_list",
             &gizmo_pipeline_layout,
             &gizmo_shader,
@@ -124,7 +122,7 @@ impl GizmoRenderer {
         );
 
         let gizmo_pipeline_line_strip = Self::create_pipeline(
-            render_state,
+            &render_state,
             "gizmo_pipeline_line_strip",
             &gizmo_pipeline_layout,
             &gizmo_shader,
@@ -133,7 +131,7 @@ impl GizmoRenderer {
         );
 
         let gizmo_pipeline_point_list = Self::create_pipeline(
-            render_state,
+            &render_state,
             "gizmo_pipeline_point_list",
             &gizmo_pipeline_layout,
             &gizmo_shader,

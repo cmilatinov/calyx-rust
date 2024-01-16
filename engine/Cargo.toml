@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 bytemuck = "1.14.0"
 eframe = { version = "0.24.1", features = ["wgpu", "persistence"] }
-egui = { version = "0.24.1", features = ["persistence"] }
+egui = { version = "0.24.1", features = ["mint", "persistence"] }
 egui-wgpu = "0.24.1"
 egui_dock = "0.9.1"
 enum-map = "2.7.0"
@@ -36,3 +36,4 @@ naga = { version = "0.14.2", features = ["wgsl-in"] }
 toml = "0.8.1"
 downcast-rs = "1.2.0"
 rfd = "0.12.0"
+mint = "0.5.9"

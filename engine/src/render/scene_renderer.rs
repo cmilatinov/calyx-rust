@@ -2,9 +2,10 @@ use std::collections::HashMap;
 use std::default::Default;
 use std::ops::{Deref, Range};
 
+use egui::Color32;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::{wgpu, RenderState};
-use glm::{vec4, Mat4, Vec3, Vec4};
+use glm::{Mat4, Vec3};
 use legion::{Entity, IntoQuery};
 
 use crate::assets::texture::Texture2D;
@@ -18,7 +19,7 @@ use crate::render::render_utils::RenderUtils;
 use crate::render::{Camera, GizmoRenderer, PipelineOptions, PipelineOptionsBuilder, Shader};
 use crate::scene::Scene;
 
-use super::LockedAssetRenderState;
+use super::{LockedAssetRenderState, RenderContext};
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -55,45 +56,50 @@ struct PointLight {
     _padding2: f32,
 }
 
+#[derive(Default)]
+pub struct SceneRendererOptions {
+    pub grid: bool,
+    pub gizmos: bool,
+    pub clear_color: Color32,
+    // TODO: figure out why GTX 970 isn't supporting MSAA
+    pub samples: u32,
+}
+
 #[allow(dead_code)]
 pub struct SceneRenderer {
-    scene_samples: u32,
+    options: SceneRendererOptions,
     scene_texture: Texture2D,
     scene_depth_texture: Texture2D,
     scene_texture_msaa: Texture2D,
     scene_bind_group: wgpu::BindGroup,
-    missing_texture: Ref<Texture2D>,
     scene_shader: Ref<Shader>,
     grid_shader: Ref<Shader>,
     camera_uniform_buffer: wgpu::Buffer,
     light_storage_buffer: ResizableBuffer,
     gizmo_renderer: GizmoRenderer,
-    clear_color: Vec4,
     assets: AssetRenderState,
     draw_list: Vec<(usize, usize, usize, [[f32; 4]; 4])>,
 }
 
 impl SceneRenderer {
-    pub fn new(cc: &eframe::CreationContext) -> Self {
-        let render_state = cc.wgpu_render_state.as_ref().unwrap();
+    pub fn new(mut options: SceneRendererOptions) -> Self {
+        let render_state = RenderContext::render_state().unwrap();
         let device = &render_state.device;
         let width = 1280;
         let height = 720;
-        let samples = 8; // TODO: figure out why GTX 970 isn't supporting anti-aliasing
+        options.samples = options.samples.max(1);
 
         // Textures
         let (scene_texture, scene_texture_msaa, scene_depth_texture) =
-            Self::create_textures(width, height, samples);
+            Self::create_textures(width, height, options.samples);
 
         // Shaders
         let scene_shader;
         let grid_shader;
-        let missing_texture;
         {
             let registry = AssetRegistry::get();
             scene_shader = registry.load::<Shader>("shaders/basic").unwrap();
             grid_shader = registry.load::<Shader>("shaders/grid").unwrap();
-            missing_texture = registry.load::<Texture2D>("textures/white").unwrap();
         }
 
         let camera_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -114,24 +120,30 @@ impl SceneRenderer {
             }],
         });
 
-        let gizmo_renderer = GizmoRenderer::new(cc, &camera_uniform_buffer, samples);
+        let gizmo_renderer = GizmoRenderer::new(&camera_uniform_buffer, options.samples);
 
         Self {
-            scene_samples: samples,
+            options,
             scene_texture_msaa,
             scene_texture,
             scene_depth_texture,
             scene_bind_group,
-            missing_texture,
             scene_shader,
             grid_shader,
             camera_uniform_buffer,
             light_storage_buffer,
             gizmo_renderer,
-            clear_color: vec4(0.03, 0.03, 0.03, 1.0),
             assets: Default::default(),
             draw_list: Default::default(),
         }
+    }
+
+    pub fn options(&self) -> &SceneRendererOptions {
+        &self.options
+    }
+
+    pub fn options_mut(&mut self) -> &mut SceneRendererOptions {
+        &mut self.options
     }
 
     pub fn render_scene(
@@ -145,14 +157,18 @@ impl SceneRenderer {
         let device = &render_state.device;
 
         self.load_camera_uniforms(queue, camera, camera_transform);
-        self.gizmo_renderer
-            .draw_gizmos(device, queue, camera_transform, scene);
+        if self.options.gizmos {
+            self.gizmo_renderer
+                .draw_gizmos(device, queue, camera_transform, scene);
+        }
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("encoder"),
         });
         self.render_meshes(render_state, scene, &mut encoder);
-        self.render_grid(render_state, &mut encoder);
+        if self.options.grid {
+            self.render_grid(render_state, &mut encoder);
+        }
 
         // Resolve MSAA texture
         encoder.copy_texture_to_texture(
@@ -182,7 +198,7 @@ impl SceneRenderer {
     ) {
         let device = &render_state.device;
         let options = PipelineOptionsBuilder::default()
-            .samples(self.scene_samples)
+            .samples(self.options.samples)
             .build();
         self.build_asset_data(render_state, scene, &options);
         let draw_list = self.build_draw_list();
@@ -206,7 +222,7 @@ impl SceneRenderer {
                 label: Some("Viewport Scene"),
                 color_attachments: &[Some(RenderUtils::color_attachment(
                     &self.scene_texture_msaa.view,
-                    &self.clear_color,
+                    self.options.clear_color,
                 ))],
                 depth_stencil_attachment: Some(RenderUtils::depth_stencil_attachment(
                     &self.scene_depth_texture.view,
@@ -239,7 +255,9 @@ impl SceneRenderer {
             }
 
             // Render gizmos
-            self.gizmo_renderer.render_gizmos(&mut render_pass);
+            if self.options.gizmos {
+                self.gizmo_renderer.render_gizmos(&mut render_pass);
+            }
         }
     }
 
@@ -274,7 +292,7 @@ impl SceneRenderer {
 
             // Render grid
             let options = PipelineOptionsBuilder::default()
-                .samples(self.scene_samples)
+                .samples(self.options.samples)
                 .fragment_targets(vec![Some(RenderUtils::color_alpha_blending(
                     render_state.target_format,
                 ))])
@@ -417,6 +435,10 @@ impl SceneRenderer {
         }
     }
 
+    pub fn scene_texture(&self) -> &Texture2D {
+        &self.scene_texture
+    }
+
     pub fn scene_texture_handle(&self) -> &egui::TextureHandle {
         self.scene_texture.handle.as_ref().unwrap()
     }
@@ -517,6 +539,6 @@ impl SceneRenderer {
             self.scene_texture,
             self.scene_texture_msaa,
             self.scene_depth_texture,
-        ) = Self::create_textures(width, height, self.scene_samples);
+        ) = Self::create_textures(width, height, self.options.samples);
     }
 }

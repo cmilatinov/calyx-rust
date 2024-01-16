@@ -21,6 +21,7 @@ pub struct ComponentCamera {
     #[reflect_attr(min = 20.0, max = 1000.0, speed = 1.0)]
     pub far_plane: f32,
     pub clear_color: Color32,
+    pub enabled: bool,
 }
 
 impl Default for ComponentCamera {
@@ -30,6 +31,7 @@ impl Default for ComponentCamera {
             near_plane: 0.1,
             far_plane: 100.0,
             clear_color: Color32::BLACK,
+            enabled: true,
         }
     }
 }

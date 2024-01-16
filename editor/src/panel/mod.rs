@@ -6,12 +6,14 @@ use engine::egui_dock::TabStyle;
 use engine::*;
 
 pub use self::content_browser::*;
+pub use self::game::*;
 pub use self::inspector::*;
 pub use self::scene_hierarchy::*;
 pub use self::terminal::*;
 pub use self::viewport::*;
 
 mod content_browser;
+mod game;
 mod inspector;
 mod scene_hierarchy;
 mod terminal;
@@ -54,6 +56,7 @@ impl Default for PanelManager {
             PanelViewport::name().to_string(),
             Box::<PanelViewport>::default(),
         );
+        panels.insert(PanelGame::name().to_string(), Box::<PanelGame>::default());
         PanelManager { panels }
     }
 }

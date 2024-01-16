@@ -14,14 +14,14 @@ use engine::background::Background;
 use engine::class_registry::ClassRegistry;
 use engine::core::{LogRegistry, Logger, Ref, Time};
 use engine::eframe::{wgpu, NativeOptions};
-use engine::egui::TextStyle;
 use engine::egui::{include_image, Button, FontFamily, Rounding, Sense, Vec2};
 use engine::egui::{Align, FontId, Layout};
+use engine::egui::{Color32, TextStyle};
 use engine::egui_dock::DockState;
 use engine::log::LevelFilter;
 use engine::reflect::type_registry::TypeRegistry;
-use engine::render::{RenderContext, SceneRenderer};
-use engine::scene::{Scene, SceneManager};
+use engine::render::{Camera, RenderContext, SceneRenderer, SceneRendererOptions};
+use engine::scene::SceneManager;
 use engine::*;
 use selection::EditorSelection;
 use utils::singleton_with_init;
@@ -49,27 +49,30 @@ pub struct EditorApp {
     dock_style: Style,
     panel_manager: PanelManager,
     pub scene_renderer: Ref<SceneRenderer>,
+    pub game_renderer: Ref<SceneRenderer>,
 }
 
 pub struct EditorAppState {
-    pub scene: Scene,
     pub camera: EditorCamera,
     pub scene_renderer: Option<Ref<SceneRenderer>>,
+    pub game_renderer: Option<Ref<SceneRenderer>>,
+    pub game_aspect: Option<(u32, u32)>,
     pub selection: Option<EditorSelection>,
-    pub viewport_width: f32,
-    pub viewport_height: f32,
+    pub viewport_size: (f32, f32),
+    pub game_size: (f32, f32),
     pub gizmo_mode: GizmoMode,
 }
 
 impl Default for EditorAppState {
     fn default() -> Self {
         Self {
-            scene: Default::default(),
             camera: Default::default(),
             scene_renderer: Default::default(),
-            selection: None,
-            viewport_width: 0.0,
-            viewport_height: 0.0,
+            game_renderer: Default::default(),
+            game_aspect: None,
+            selection: Default::default(),
+            viewport_size: Default::default(),
+            game_size: Default::default(),
             gizmo_mode: GizmoMode::Translate,
         }
     }
@@ -86,7 +89,10 @@ impl EditorApp {
         let [_, b] = surface.split_right(
             NodeIndex::root(),
             0.2,
-            vec![PanelViewport::name().to_owned()],
+            vec![
+                PanelViewport::name().to_owned(),
+                PanelGame::name().to_owned(),
+            ],
         );
         let [c, _] = surface.split_right(b, 0.7, vec![PanelInspector::name().to_owned()]);
         let [_, _] = surface.split_below(
@@ -106,7 +112,16 @@ impl EditorApp {
             dock_state,
             dock_style,
             panel_manager: PanelManager::default(),
-            scene_renderer: Ref::new(SceneRenderer::new(cc)),
+            scene_renderer: Ref::new(SceneRenderer::new(SceneRendererOptions {
+                grid: true,
+                gizmos: true,
+                samples: 8,
+                clear_color: Color32::from_rgb(8, 8, 8),
+            })),
+            game_renderer: Ref::new(SceneRenderer::new(SceneRendererOptions {
+                clear_color: Color32::from_rgb(0, 0, 0),
+                ..Default::default()
+            })),
         }
     }
 }
@@ -128,22 +143,50 @@ impl eframe::App for EditorApp {
                 .clear_transform_cache();
             let render_state = frame.wgpu_render_state().unwrap();
             let mut renderer = self.scene_renderer.write();
-            let (width, height) = EditorApp::get_physical_size(
-                ctx,
-                app_state.viewport_width,
-                app_state.viewport_height,
-            );
+            let (width, height) = EditorApp::get_physical_size(ctx, app_state.viewport_size);
             if width != 0 && height != 0 {
                 renderer.resize_textures(width, height);
                 app_state.camera.camera.aspect = width as f32 / height as f32;
             }
             app_state.camera.camera.update_projection();
+            let scene_manager = SceneManager::get();
+            let scene = scene_manager.get_scene();
             renderer.render_scene(
                 render_state,
                 &app_state.camera.camera,
                 &app_state.camera.transform,
-                SceneManager::get().get_scene(),
+                scene,
             );
+
+            let world = scene.world();
+            if let Some((node, c)) = scene.get_main_camera(&world) {
+                let mut renderer = self.game_renderer.write();
+                {
+                    let options = renderer.options_mut();
+                    options.clear_color = c.clear_color;
+                }
+                let (width, height) = EditorApp::get_physical_size(ctx, app_state.game_size);
+                if width != 0 && height != 0 {
+                    renderer.resize_textures(width, height);
+                }
+                let transform = scene.get_world_transform(node);
+                let mut camera = Camera::new(
+                    width as f32 / height as f32,
+                    c.fov,
+                    c.near_plane,
+                    c.far_plane,
+                );
+                camera.update_projection();
+                renderer.render_scene(render_state, &camera, &transform, scene)
+            } else {
+                let device = &render_state.device;
+                let queue = &render_state.queue;
+                let renderer = self.game_renderer.read();
+                let mut encoder =
+                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+                encoder.clear_texture(&renderer.scene_texture().texture, &Default::default());
+                queue.submit(Some(encoder.finish()));
+            }
         }
 
         self.menu_bar(ctx);
@@ -169,17 +212,13 @@ impl eframe::App for EditorApp {
 }
 
 impl EditorApp {
-    fn get_physical_size(
-        ctx: &egui::Context,
-        viewport_width: f32,
-        viewport_height: f32,
-    ) -> (u32, u32) {
+    fn get_physical_size(ctx: &egui::Context, viewport_size: (f32, f32)) -> (u32, u32) {
         let window_size = ctx
             .input(|i| i.viewport().inner_rect)
             .unwrap_or(egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::ZERO));
         let pixels_per_point = ctx.pixels_per_point();
-        let width = window_size.width() * viewport_width * pixels_per_point;
-        let height = window_size.height() * viewport_height * pixels_per_point;
+        let width = window_size.width() * viewport_size.0 * pixels_per_point;
+        let height = window_size.height() * viewport_size.1 * pixels_per_point;
         (width as u32, height as u32)
     }
 
@@ -396,7 +435,8 @@ impl EditorApp {
             wgpu_options: egui_wgpu::WgpuConfiguration {
                 device_descriptor: Arc::new(|_adapter| wgpu::DeviceDescriptor {
                     features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
-                        | wgpu::Features::POLYGON_MODE_LINE,
+                        | wgpu::Features::POLYGON_MODE_LINE
+                        | wgpu::Features::CLEAR_TEXTURE,
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -409,9 +449,8 @@ impl EditorApp {
             Box::new(|cc| {
                 let mut app_state = EditorAppState::get_mut();
                 let app = EditorApp::new(cc);
-                app_state.viewport_width = 0.0;
-                app_state.viewport_height = 0.0;
                 app_state.scene_renderer = app.scene_renderer.clone().into();
+                app_state.game_renderer = app.game_renderer.clone().into();
                 Box::new(app)
             }),
         )

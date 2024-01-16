@@ -6,8 +6,8 @@ use engine::egui::{Align2, Color32, Image, ImageSource, Key, Margin, Pos2, Sense
 use engine::egui_dock::{TabBodyStyle, TabStyle};
 use engine::glm::{Mat4, Vec3};
 use engine::render::CameraLike;
-use engine::*;
 use engine::scene::SceneManager;
+use engine::*;
 
 use crate::panel::Panel;
 use crate::EditorAppState;
@@ -86,14 +86,16 @@ impl PanelViewport {
                     .read()
                     .scene_texture_handle()
                     .id(),
-                size: egui::Vec2::new(ui.available_width(), ui.available_height()),
+                size: ui.available_size() - egui::Vec2::new(0.0, 1.0),
             }))
             .sense(Sense::drag()),
         );
         app_state.camera.update(ui, &res);
         let screen_rect = ui.ctx().screen_rect();
-        app_state.viewport_width = res.rect.width() / screen_rect.width();
-        app_state.viewport_height = res.rect.height() / screen_rect.height();
+        app_state.viewport_size = (
+            res.rect.width() / screen_rect.width(),
+            res.rect.height() / screen_rect.height(),
+        );
         res
     }
 
@@ -124,7 +126,8 @@ impl PanelViewport {
                     .snap_scale(snap_distance);
                 if let Some(gizmo_response) = gizmo.interact(ui) {
                     let transform = gizmo_response.transform();
-                    SceneManager::get().get_scene()
+                    SceneManager::get()
+                        .get_scene()
                         .set_world_transform(node_id, Mat4::from(transform));
                     self.gizmo_status(ui, &gizmo_response);
                 }

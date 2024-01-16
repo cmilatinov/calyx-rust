@@ -1,4 +1,5 @@
 use glm::{vec3, Mat4, Vec3};
+use mint::Vector2;
 use nalgebra::Rotation3;
 
 pub use transform::*;
@@ -42,4 +43,20 @@ pub fn to_fov_x(aspect: f32, fov_y: f32) -> f32 {
 
 pub fn to_fov_y(aspect: f32, fov_x: f32) -> f32 {
     2.0 * ((fov_x * 0.5).tan() / aspect).atan()
+}
+
+pub fn fit_aspect(aspect: f32, available: impl Into<Vector2<f32>>) -> Vector2<f32> {
+    let available: Vector2<f32> = available.into();
+    let available_aspect = available.x / available.y;
+    if available_aspect > aspect {
+        Vector2 {
+            x: available.y * aspect,
+            y: available.y,
+        }
+    } else {
+        Vector2 {
+            x: available.x,
+            y: available.x / aspect,
+        }
+    }
 }

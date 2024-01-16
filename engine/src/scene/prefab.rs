@@ -1,15 +1,15 @@
+use crate::class_registry::ClassRegistry;
+use crate::component::ComponentID;
+use crate::scene::{Scene, SceneError};
+use indextree::NodeId;
+use legion::{Entity, EntityStore, IntoQuery};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::ops::Deref;
 use std::path::PathBuf;
-use indextree::NodeId;
-use legion::{Entity, EntityStore, IntoQuery};
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use crate::class_registry::ClassRegistry;
-use crate::component::ComponentID;
-use crate::scene::{Scene, SceneError};
 
 #[derive(Serialize)]
 pub struct Prefab {
@@ -20,7 +20,7 @@ pub struct Prefab {
     node_id: NodeId,
 
     #[serde(skip_serializing)]
-    path: PathBuf
+    path: PathBuf,
 }
 
 impl Prefab {
@@ -28,7 +28,8 @@ impl Prefab {
         if let Some(path) = rfd::FileDialog::new()
             .set_file_name("prefab.json")
             .add_filter("JSON", &["json"])
-            .save_file() {
+            .save_file()
+        {
             let world = scene.world();
             let mut query = <(Entity, &ComponentID)>::query();
             let mut components: HashMap<Uuid, serde_json::Value> = HashMap::new();
@@ -42,8 +43,7 @@ impl Prefab {
                     let entry = world.entry_ref(*entity).unwrap();
                     if let Some(instance) = component.get_instance(&entry) {
                         if let Some(value) = instance.serialize() {
-                            components
-                                .insert(*component_id, value);
+                            components.insert(*component_id, value);
                         }
                     }
                 }
@@ -59,7 +59,7 @@ impl Prefab {
                 let mut file = File::create(path.clone()).unwrap();
                 file.write_all(json_data.as_bytes()).unwrap();
 
-                return Ok(prefab)
+                return Ok(prefab);
             }
         }
 
@@ -70,7 +70,8 @@ impl Prefab {
             if let Some(path) = rfd::FileDialog::new()
                 .set_file_name("prefab.json")
                 .add_filter("JSON", &["json"])
-                .save_file() {
+                .save_file()
+            {
                 self.path = path;
             }
         }
@@ -79,7 +80,7 @@ impl Prefab {
         let mut query = <(Entity, &ComponentID)>::query();
         let mut components: HashMap<Uuid, serde_json::Value> = HashMap::new();
 
-        for (entity, id) in query.iter(world.deref()) {
+        for (entity, _id) in query.iter(world.deref()) {
             if scene.get_node(*entity) != self.node_id {
                 continue;
             }
@@ -88,8 +89,7 @@ impl Prefab {
                 let entry = world.entry_ref(*entity).unwrap();
                 if let Some(instance) = component.get_instance(&entry) {
                     if let Some(value) = instance.serialize() {
-                        components
-                            .insert(*component_id, value);
+                        components.insert(*component_id, value);
                     }
                 }
             }
@@ -100,7 +100,7 @@ impl Prefab {
             let mut file = File::create(self.path.clone()).unwrap();
             file.write_all(json_data.as_bytes()).unwrap();
 
-            return Ok(())
+            return Ok(());
         }
 
         Err(SceneError::UnableToCreatePrefab)
@@ -125,7 +125,7 @@ impl Prefab {
             components: tmp.components,
             id: tmp.id,
             node_id: node,
-            path
+            path,
         };
 
         for (component_id, data) in &prefab.components {

@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
+use std::io::BufReader;
 use std::ops::Deref;
 use std::path::Path;
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
-use std::io::BufReader;
 
 use egui::Ui;
 use glm::Mat4;
@@ -11,11 +11,11 @@ use legion::{Entity, EntityStore, IntoQuery, World};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
 
-use crate::assets::Asset;
 use crate::assets::error::AssetError;
+use crate::assets::Asset;
 use crate::class_registry::ClassRegistry;
-use crate::component::ComponentID;
 use crate::component::ComponentTransform;
+use crate::component::{ComponentCamera, ComponentID};
 use crate::math::Transform;
 
 use super::error::SceneError;
@@ -33,6 +33,7 @@ pub struct Scene {
     node_map: HashMap<Entity, NodeId>,
     entity_arena: Arena<Entity>,
     transform_cache: RwLock<HashMap<NodeId, Transform>>,
+    camera: Option<NodeId>,
 }
 
 impl Asset for Scene {
@@ -45,11 +46,12 @@ impl Asset for Scene {
 
     fn from_file(path: &Path) -> Result<Self, AssetError>
     where
-        Self: Sized
+        Self: Sized,
     {
         let file = std::fs::OpenOptions::new()
-                            .read(true)
-                            .open(path).map_err(|_| AssetError::LoadError)?;
+            .read(true)
+            .open(path)
+            .map_err(|_| AssetError::LoadError)?;
 
         let reader = BufReader::new(file);
         serde_json::from_reader(reader).map_err(|_| AssetError::LoadError)
@@ -190,6 +192,23 @@ impl Scene {
         } else {
             self.entity_hierarchy.insert(node);
         }
+    }
+
+    pub fn get_main_camera<'a>(
+        &'a self,
+        world: &'a World,
+    ) -> Option<(NodeId, &'a ComponentCamera)> {
+        let mut query = <(Entity, &ComponentTransform, &ComponentCamera)>::query();
+        query
+            .iter(world)
+            .find(|(e, _, c)| {
+                if let Some(node) = &self.camera {
+                    self.get_node(**e) == *node
+                } else {
+                    c.enabled
+                }
+            })
+            .map(|(e, _, c)| (self.get_node(*e), c))
     }
 
     pub(crate) fn new_entity(&mut self, parent: Option<NodeId>) -> NodeId {

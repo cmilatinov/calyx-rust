@@ -34,7 +34,7 @@ impl Default for PipelineOptionsBuilder {
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
             polygon_mode: wgpu::PolygonMode::Fill,
             cull_mode: Some(wgpu::Face::Back),
-            fragment_targets: vec![RenderContext::texture_format().map(RenderUtils::color_default)],
+            fragment_targets: vec![RenderContext::target_format().map(RenderUtils::color_default)],
             samples: 1,
         }
     }

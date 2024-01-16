@@ -1570,6 +1570,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a045c6c0b44b35e98513fc1e9d183ab42881ac27caccb9fa345465601f56cce4"
 dependencies = [
  "bytemuck",
+ "mint",
  "serde",
 ]
 
@@ -1594,6 +1595,7 @@ dependencies = [
  "lazy_static 1.4.0",
  "legion",
  "log",
+ "mint",
  "naga 0.14.2",
  "nalgebra",
  "nalgebra-glm",
