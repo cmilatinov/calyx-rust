@@ -25,6 +25,7 @@ use crate::core::Ref;
 use crate::reflect::type_registry::TypeRegistry;
 use crate::reflect::{AttributeValue, TypeInfo};
 use crate::render::Shader;
+use crate::scene::Prefab;
 use crate::utils;
 use crate::utils::{singleton, Init, TypeUuid};
 
@@ -63,6 +64,7 @@ impl Init for AssetRegistry {
         self.register_asset_type::<Shader>();
         self.register_asset_type::<Texture2D>();
         self.register_asset_type::<Material>();
+        self.register_asset_type::<Prefab>();
     }
 }
 

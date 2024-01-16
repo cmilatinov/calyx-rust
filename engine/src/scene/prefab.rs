@@ -1,11 +1,14 @@
+use crate as engine;
 use crate::scene::{Scene, SceneData};
 use serde::{Deserialize, Serialize};
 use std::io::{BufReader, Read};
 use std::path::{Path};
+use engine_derive::TypeUuid;
 use crate::assets::Asset;
 use crate::assets::error::AssetError;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, TypeUuid)]
+#[uuid="960f1d60-3ad4-4f1d-92d3-cceb0e0623d7"]
 #[serde(from = "PrefabShadow")]
 pub struct Prefab {
     #[serde(skip_serializing, skip_deserializing)]
