@@ -1,4 +1,6 @@
 use std::collections::HashSet;
+use std::fs::File;
+use std::io::BufWriter;
 
 use egui::Ui;
 use egui::Vec2;
@@ -9,7 +11,7 @@ use engine::scene::{Scene, SceneManager};
 use engine::*;
 
 use crate::panel::Panel;
-use crate::{EditorAppState, EditorSelection, BASE_FONT_SIZE};
+use crate::{EditorAppState, EditorSelection, BASE_FONT_SIZE, ProjectManager};
 
 #[derive(Default)]
 pub struct PanelSceneHierarchy {
@@ -119,7 +121,7 @@ impl PanelSceneHierarchy {
                 .sense(Sense::click()),
         );
 
-        if res.clicked() {
+        if res.clicked() || res.secondary_clicked() {
             let mut set = HashSet::new();
             set.insert(node_id);
             *selection = if is_selected {
@@ -128,5 +130,30 @@ impl PanelSceneHierarchy {
                 Some(EditorSelection::Entity(set))
             };
         }
+
+        res.context_menu(|ui| {
+            if ui.button("Save as prefab").clicked() {
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_file_name("file_name.cxprefab")
+                    .add_filter("cxprefab", &["cxprefab"])
+                    .save_file() {
+
+                    let res = std::fs::OpenOptions::new()
+                        .create(true)
+                        .write(true)
+                        .truncate(true)
+                        .open(path);
+
+                    if let Ok(file) = res {
+                        let prefab = scene.create_prefab(node_id);
+
+                        let writer = BufWriter::new(file);
+                        serde_json::to_writer_pretty(writer, &prefab).unwrap();
+                    }
+
+                    ui.close_menu();
+                }
+            }
+        });
     }
 }

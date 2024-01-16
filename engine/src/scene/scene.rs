@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
-use std::io::BufReader;
+use std::fs::File;
+use std::io::{BufReader, Write};
 use std::ops::Deref;
 use std::path::Path;
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -16,11 +17,13 @@ use crate::assets::Asset;
 use crate::class_registry::ClassRegistry;
 use crate::component::ComponentTransform;
 use crate::component::{ComponentCamera, ComponentID};
+use crate::core::Ref;
 use crate::math::Transform;
+use crate::scene::Prefab;
 
 use super::error::SceneError;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SceneData {
     components: HashMap<Uuid, HashMap<Uuid, serde_json::Value>>,
     hierarchy: HashMap<Uuid, Uuid>,
@@ -33,7 +36,7 @@ pub struct Scene {
     node_map: HashMap<Entity, NodeId>,
     entity_arena: Arena<Entity>,
     transform_cache: RwLock<HashMap<NodeId, Transform>>,
-    camera: Option<NodeId>,
+    camera: Option<NodeId>
 }
 
 impl Asset for Scene {
@@ -145,6 +148,47 @@ impl From<&Scene> for SceneData {
     }
 }
 
+impl From<(&Scene, NodeId)> for SceneData {
+    fn from((scene, node_id): (&Scene, NodeId)) -> Self {
+        let world = scene.world();
+        let mut hierarchy = HashMap::new();
+        let mut components: HashMap<Uuid, HashMap<Uuid, serde_json::Value>> = HashMap::new();
+
+        node_id.descendants(&scene.entity_arena).for_each(|child_id| {
+            let entity = scene.get_entity(child_id);
+            let entry = world.entry_ref(entity).unwrap();
+            let id = entry.get_component::<ComponentID>().unwrap();
+
+            if let Some(parent) = scene.get_parent_entity(child_id) {
+                if let Ok(parent_id) = world
+                    .entry_ref(parent)
+                    .unwrap()
+                    .get_component::<ComponentID>()
+                {
+                    hierarchy.insert(id.id, parent_id.id);
+                }
+            }
+
+            for (component_id, component) in ClassRegistry::get().components_uuid() {
+                let entry = world.entry_ref(entity).unwrap();
+                if let Some(instance) = component.get_instance(&entry) {
+                    if let Some(value) = instance.serialize() {
+                        components
+                            .entry(id.id)
+                            .or_default()
+                            .insert(*component_id, value);
+                    }
+                }
+            }
+        });
+
+        SceneData {
+            hierarchy,
+            components,
+        }
+    }
+}
+
 #[allow(dead_code)]
 impl Scene {
     pub fn root_entities(&self) -> &HashSet<NodeId> {
@@ -172,6 +216,51 @@ impl Scene {
         };
 
         new_node
+    }
+
+    pub fn create_prefab(&self, node_id: NodeId) -> Prefab {
+        let data: SceneData = (self, node_id).into();
+
+        Prefab {
+            data: data.clone(),
+            scene: data.into(),
+        }
+    }
+
+    pub fn instantiate_prefab(&mut self, prefab: &Prefab, parent_opt: Option<NodeId>) {
+        let root_node = prefab
+            .scene
+            .root_entities()
+            .iter()
+            .next()
+            .unwrap();
+
+
+        for (_, components) in prefab.data.components.iter() {
+            let node = self.new_entity(None);
+            for (component_id, data) in components {
+                if let Some(component) = ClassRegistry::get().component_by_uuid(*component_id) {
+                    if let Some(instance) = component.deserialize(data.clone()) {
+                        if let Some(mut entry) = self.world_mut().entry(self.get_entity(node)) {
+                            let _ = component.bind_instance(&mut entry, instance);
+                        }
+                    }
+                }
+            }
+        }
+        for (id, parent) in prefab.data.hierarchy.iter() {
+            if let Some(entity) = self.get_node_by_uuid(*id) {
+                if let Some(parent) = self.get_node_by_uuid(*parent) {
+                    self.set_parent(entity, Some(parent));
+                }
+            }
+        }
+
+        if let Some(parent) = parent_opt {
+            if let Some(entity) = self.get_node_by_uuid(prefab.scene.get_entity_uuid(*root_node)) {
+                self.set_parent(entity, Some(parent));
+            }
+        }
     }
 
     pub fn world(&self) -> RwLockReadGuard<World> {

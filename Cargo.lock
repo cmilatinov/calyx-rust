@@ -1288,6 +1288,7 @@ dependencies = [
  "num-derive 0.4.1",
  "num-traits",
  "project",
+ "rfd",
  "serde",
  "sharedlib",
 ]
@@ -1602,7 +1603,6 @@ dependencies = [
  "notify",
  "path-absolutize",
  "relative-path",
- "rfd",
  "russimp",
  "rusty_pool",
  "serde",
