@@ -11,6 +11,7 @@ use engine::egui::{
 };
 use engine::egui_dock::{TabBodyStyle, TabStyle};
 use engine::relative_path::PathExt;
+use engine::scene::{Prefab, SceneManager};
 
 use crate::panel::Panel;
 use crate::selection::EditorSelection;
@@ -263,6 +264,16 @@ impl Panel for PanelContentBrowser {
                             ui.add_space(ui.available_width());
                             ui.end_row();
                         }
+
+                        res.context_menu(|ui| {
+                            if ui.button("Import").clicked() {
+                                let asset = AssetRegistry::get().load_by_path::<Prefab>(node.clone()).unwrap();
+                                let prefab = asset.read();
+
+                                SceneManager::get_mut().get_scene_mut().instantiate_prefab(&prefab, None);
+                                ui.close_menu();
+                            }
+                        });
                     }
                 });
                 ui.add_space(15.0);

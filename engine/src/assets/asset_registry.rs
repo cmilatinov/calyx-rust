@@ -78,6 +78,15 @@ impl AssetRegistry {
         self.load_by_id(id)
     }
 
+    pub fn load_by_path<A: Asset + TypeUuid>(&self, path: PathBuf) -> Result<Ref<A>, AssetError> {
+        if let Some(stem) = path.file_stem() {
+            let id = self.asset_id(stem.to_str().unwrap()).ok_or(AssetError::NotFound)?;
+            self.load_by_id(id)
+        } else {
+            Err(AssetError::NotFound)
+        }
+    }
+
     pub fn load_by_id<A: Asset + TypeUuid>(&self, id: Uuid) -> Result<Ref<A>, AssetError> {
         // Asset already loaded
         if let Some(asset_ref) = self

@@ -238,21 +238,33 @@ impl Scene {
 
         for (_, components) in prefab.data.components.iter() {
             let node = self.new_entity(None);
+            let entity = self.get_entity(node);
             for (component_id, data) in components {
                 if let Some(component) = ClassRegistry::get().component_by_uuid(*component_id) {
                     if let Some(instance) = component.deserialize(data.clone()) {
-                        if let Some(mut entry) = self.world_mut().entry(self.get_entity(node)) {
+                        if let Some(mut entry) = self.world_mut().entry(entity) {
                             let _ = component.bind_instance(&mut entry, instance);
                         }
                     }
                 }
             }
         }
+
         for (id, parent) in prefab.data.hierarchy.iter() {
             if let Some(entity) = self.get_node_by_uuid(*id) {
                 if let Some(parent) = self.get_node_by_uuid(*parent) {
                     self.set_parent(entity, Some(parent));
                 }
+            }
+        }
+
+        for (id, _) in prefab.data.components.iter() {
+            if let Some(node) = self.get_node_by_uuid(*id) {
+                self.world_mut()
+                    .entry(self.get_entity(node))
+                    .unwrap()
+                    .get_component_mut::<ComponentID>()
+                    .unwrap().id = Uuid::new_v4();
             }
         }
 

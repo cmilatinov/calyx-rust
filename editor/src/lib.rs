@@ -115,7 +115,7 @@ impl EditorApp {
             scene_renderer: Ref::new(SceneRenderer::new(SceneRendererOptions {
                 grid: true,
                 gizmos: true,
-                samples: 8,
+                samples: 1,
                 clear_color: Color32::from_rgb(8, 8, 8),
             })),
             game_renderer: Ref::new(SceneRenderer::new(SceneRendererOptions {
