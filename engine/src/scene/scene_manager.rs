@@ -1,6 +1,6 @@
 use crate as engine;
 
-use crate::assets::Asset;
+use crate::assets::{Asset, LoadedAsset};
 use crate::scene::Scene;
 use crate::utils::singleton_with_init;
 use egui::Ui;
@@ -17,8 +17,8 @@ pub struct SceneManager {
 impl SceneManager {
     pub fn load_scene(&mut self, scene_file: PathBuf) {
         self.stop_simulation();
-        if let Ok(loaded_scene) = Scene::from_file(&scene_file) {
-            self.current_scene = loaded_scene;
+        if let Ok(LoadedAsset { asset: scene, .. }) = Scene::from_file(&scene_file) {
+            self.current_scene = scene;
         }
     }
 
@@ -59,14 +59,14 @@ impl SceneManager {
 
     pub fn get_scene(&self) -> &Scene {
         if let Some(scene) = &self.simulation_scene {
-            return scene
+            return scene;
         }
         &self.current_scene
     }
 
     pub fn get_scene_mut(&mut self) -> &mut Scene {
         if let Some(scene) = &mut self.simulation_scene {
-            return scene
+            return scene;
         }
         &mut self.current_scene
     }

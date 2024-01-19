@@ -12,6 +12,8 @@ use crate::assets::Asset;
 use crate::render::buffer::{wgpu_buffer_init_desc, BufferLayout, ResizableBuffer};
 use crate::utils::TypeUuid;
 
+use super::LoadedAsset;
+
 const CX_MESH_NUM_UV_CHANNELS: usize = 4;
 
 #[repr(C)]
@@ -98,7 +100,7 @@ impl Asset for Mesh {
     fn get_file_extensions() -> &'static [&'static str] {
         &["obj"]
     }
-    fn from_file(path: &Path) -> Result<Self, AssetError> {
+    fn from_file(path: &Path) -> Result<LoadedAsset<Self>, AssetError> {
         let scene = Scene::from_file(
             path.to_str().unwrap(),
             vec![
@@ -140,7 +142,7 @@ impl Asset for Mesh {
             }
         }
 
-        Ok(Self {
+        Ok(LoadedAsset::new(Self {
             name,
             indices,
             vertices,
@@ -148,7 +150,7 @@ impl Asset for Mesh {
             uvs,
             dirty: true,
             ..Default::default()
-        })
+        }))
     }
 }
 

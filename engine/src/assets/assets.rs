@@ -17,7 +17,7 @@ impl Assets {
     }
 
     pub fn screen_space_quad() -> Option<Ref<Mesh>> {
-        let mut registry = AssetRegistry::get_mut();
+        let registry = AssetRegistry::get();
         if let Ok(mesh) = registry.load::<Mesh>(SCREEN_SPACE_QUAD) {
             return mesh.into();
         }

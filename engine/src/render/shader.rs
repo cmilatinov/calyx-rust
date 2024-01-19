@@ -6,11 +6,11 @@ use eframe::wgpu::ShaderSource;
 use egui_wgpu::wgpu;
 
 use crate as engine;
-use crate::assets::{Asset, mesh};
 use crate::assets::error::AssetError;
-use crate::render::{PipelineOptions, RenderContext};
+use crate::assets::{mesh, Asset, LoadedAsset};
 use crate::render::buffer::BufferLayout;
 use crate::render::render_utils::RenderUtils;
+use crate::render::{PipelineOptions, RenderContext};
 use crate::utils::TypeUuid;
 
 pub type BindGroupEntries = BTreeMap<u32, Vec<wgpu::BindGroupLayoutEntry>>;
@@ -31,7 +31,7 @@ impl Asset for Shader {
     fn get_file_extensions() -> &'static [&'static str] {
         &["wgsl"]
     }
-    fn from_file(path: &Path) -> Result<Self, AssetError> {
+    fn from_file(path: &Path) -> Result<LoadedAsset<Self>, AssetError> {
         let device = RenderContext::device().unwrap();
         let shader_src = fs::read_to_string(path).map_err(|_| AssetError::LoadError)?;
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -55,14 +55,14 @@ impl Asset for Shader {
             push_constant_ranges: &[],
         });
 
-        Ok(Self {
+        Ok(LoadedAsset::new(Self {
             shader,
             bind_group_layouts,
             bind_group_entries,
             pipeline_layout,
             pipelines: HashMap::new(),
             module,
-        })
+        }))
     }
 }
 

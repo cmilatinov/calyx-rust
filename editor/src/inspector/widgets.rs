@@ -56,8 +56,8 @@ impl Widgets {
             .width(ui.available_width())
             .selected_text(
                 asset_meta
-                    .map(|meta| meta.display_name.as_str())
-                    .unwrap_or("None"),
+                    .map(|meta| meta.display_name.clone())
+                    .unwrap_or("None".into()),
             )
             .show_ui(ui, |ui| {
                 if state.should_request_focus {

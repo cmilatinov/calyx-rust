@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::fs::File;
 use std::io::BufWriter;
 
 use egui::Ui;
@@ -11,7 +10,7 @@ use engine::scene::{Scene, SceneManager};
 use engine::*;
 
 use crate::panel::Panel;
-use crate::{EditorAppState, EditorSelection, BASE_FONT_SIZE, ProjectManager};
+use crate::{EditorAppState, EditorSelection, BASE_FONT_SIZE};
 
 #[derive(Default)]
 pub struct PanelSceneHierarchy {
@@ -40,7 +39,9 @@ impl Panel for PanelSceneHierarchy {
                         EditorSelection::Asset(_) => {}
                     }
                 }
-                SceneManager::get_mut().get_scene_mut().create_entity(None, parent);
+                SceneManager::get_mut()
+                    .get_scene_mut()
+                    .create_entity(None, parent);
             }
             ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("Filter by name"));
         });
@@ -136,8 +137,8 @@ impl PanelSceneHierarchy {
                 if let Some(path) = rfd::FileDialog::new()
                     .set_file_name("file_name.cxprefab")
                     .add_filter("cxprefab", &["cxprefab"])
-                    .save_file() {
-
+                    .save_file()
+                {
                     let res = std::fs::OpenOptions::new()
                         .create(true)
                         .write(true)

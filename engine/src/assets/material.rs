@@ -16,7 +16,7 @@ use crate::core::Ref;
 use crate::render::{AssetMap, LockedAssetRenderState, RenderContext, Shader};
 use crate::utils::TypeUuid;
 
-use super::Assets;
+use super::{Assets, LoadedAsset};
 
 pub enum BindingType {
     Buffer,
@@ -136,14 +136,14 @@ impl Asset for Material {
         &["cxmat"]
     }
 
-    fn from_file(path: &Path) -> Result<Self, AssetError>
+    fn from_file(path: &Path) -> Result<LoadedAsset<Self>, AssetError>
     where
         Self: Sized,
     {
         let material_str = fs::read_to_string(path).map_err(|_| AssetError::LoadError)?;
         let mut material: Material = serde_json::from_str(material_str.as_str()).unwrap();
         material.init();
-        Ok(material)
+        Ok(LoadedAsset::new(material))
     }
 }
 

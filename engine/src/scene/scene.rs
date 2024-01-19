@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
-use std::io::{BufReader, Write};
+use std::io::BufReader;
 use std::ops::Deref;
 use std::path::Path;
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -13,11 +12,10 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
 
 use crate::assets::error::AssetError;
-use crate::assets::Asset;
+use crate::assets::{Asset, LoadedAsset};
 use crate::class_registry::ClassRegistry;
 use crate::component::ComponentTransform;
 use crate::component::{ComponentCamera, ComponentID};
-use crate::core::Ref;
 use crate::math::Transform;
 use crate::scene::Prefab;
 
@@ -36,7 +34,7 @@ pub struct Scene {
     node_map: HashMap<Entity, NodeId>,
     entity_arena: Arena<Entity>,
     transform_cache: RwLock<HashMap<NodeId, Transform>>,
-    camera: Option<NodeId>
+    camera: Option<NodeId>,
 }
 
 impl Asset for Scene {
@@ -47,7 +45,7 @@ impl Asset for Scene {
         &["cxscene"]
     }
 
-    fn from_file(path: &Path) -> Result<Self, AssetError>
+    fn from_file(path: &Path) -> Result<LoadedAsset<Self>, AssetError>
     where
         Self: Sized,
     {
@@ -57,7 +55,9 @@ impl Asset for Scene {
             .map_err(|_| AssetError::LoadError)?;
 
         let reader = BufReader::new(file);
-        serde_json::from_reader(reader).map_err(|_| AssetError::LoadError)
+        Ok(LoadedAsset::new(
+            serde_json::from_reader(reader).map_err(|_| AssetError::LoadError)?,
+        ))
     }
 }
 
@@ -154,33 +154,35 @@ impl From<(&Scene, NodeId)> for SceneData {
         let mut hierarchy = HashMap::new();
         let mut components: HashMap<Uuid, HashMap<Uuid, serde_json::Value>> = HashMap::new();
 
-        node_id.descendants(&scene.entity_arena).for_each(|child_id| {
-            let entity = scene.get_entity(child_id);
-            let entry = world.entry_ref(entity).unwrap();
-            let id = entry.get_component::<ComponentID>().unwrap();
-
-            if let Some(parent) = scene.get_parent_entity(child_id) {
-                if let Ok(parent_id) = world
-                    .entry_ref(parent)
-                    .unwrap()
-                    .get_component::<ComponentID>()
-                {
-                    hierarchy.insert(id.id, parent_id.id);
-                }
-            }
-
-            for (component_id, component) in ClassRegistry::get().components_uuid() {
+        node_id
+            .descendants(&scene.entity_arena)
+            .for_each(|child_id| {
+                let entity = scene.get_entity(child_id);
                 let entry = world.entry_ref(entity).unwrap();
-                if let Some(instance) = component.get_instance(&entry) {
-                    if let Some(value) = instance.serialize() {
-                        components
-                            .entry(id.id)
-                            .or_default()
-                            .insert(*component_id, value);
+                let id = entry.get_component::<ComponentID>().unwrap();
+
+                if let Some(parent) = scene.get_parent_entity(child_id) {
+                    if let Ok(parent_id) = world
+                        .entry_ref(parent)
+                        .unwrap()
+                        .get_component::<ComponentID>()
+                    {
+                        hierarchy.insert(id.id, parent_id.id);
                     }
                 }
-            }
-        });
+
+                for (component_id, component) in ClassRegistry::get().components_uuid() {
+                    let entry = world.entry_ref(entity).unwrap();
+                    if let Some(instance) = component.get_instance(&entry) {
+                        if let Some(value) = instance.serialize() {
+                            components
+                                .entry(id.id)
+                                .or_default()
+                                .insert(*component_id, value);
+                        }
+                    }
+                }
+            });
 
         SceneData {
             hierarchy,
@@ -228,13 +230,7 @@ impl Scene {
     }
 
     pub fn instantiate_prefab(&mut self, prefab: &Prefab, parent_opt: Option<NodeId>) {
-        let root_node = prefab
-            .scene
-            .root_entities()
-            .iter()
-            .next()
-            .unwrap();
-
+        let root_node = prefab.scene.root_entities().iter().next().unwrap();
 
         for (_, components) in prefab.data.components.iter() {
             let node = self.new_entity(None);
@@ -264,7 +260,8 @@ impl Scene {
                     .entry(self.get_entity(node))
                     .unwrap()
                     .get_component_mut::<ComponentID>()
-                    .unwrap().id = Uuid::new_v4();
+                    .unwrap()
+                    .id = Uuid::new_v4();
             }
         }
 

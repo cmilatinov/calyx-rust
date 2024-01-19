@@ -15,6 +15,7 @@ use crate::assets::material::Material;
 use crate::assets::mesh::Mesh;
 use crate::assets::texture::Texture2D;
 use crate::assets::AssetRegistry;
+use crate::assets::LoadedAsset;
 use crate::core::Ref;
 use crate::render::Shader;
 use crate::utils::TypeUuid;
@@ -26,7 +27,7 @@ pub trait Asset: Any + Send + Sync {
     {
         &[]
     }
-    fn from_file(path: &Path) -> Result<Self, AssetError>
+    fn from_file(path: &Path) -> Result<LoadedAsset<Self>, AssetError>
     where
         Self: Sized;
 }

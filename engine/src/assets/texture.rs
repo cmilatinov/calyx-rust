@@ -8,6 +8,8 @@ use crate::assets::Asset;
 use crate::render::RenderContext;
 use crate::utils::TypeUuid;
 
+use super::LoadedAsset;
+
 #[derive(TypeUuid)]
 #[uuid = "8ba4ccec-85ab-45f5-b4ee-2e803ef548a2"]
 pub struct Texture2D {
@@ -23,7 +25,7 @@ impl Asset for Texture2D {
         &["png", "jpg", "jpeg", "webp"]
     }
 
-    fn from_file(path: &Path) -> Result<Self, AssetError> {
+    fn from_file(path: &Path) -> Result<LoadedAsset<Self>, AssetError> {
         let reader = image::io::Reader::open(path).map_err(|_| AssetError::LoadError)?;
         let mut texture_data = reader
             .decode()
@@ -63,7 +65,7 @@ impl Asset for Texture2D {
                 mipmap_filter: wgpu::FilterMode::Linear,
                 ..Default::default()
             }),
-            true
+            true,
         );
         let queue = RenderContext::queue().unwrap();
         queue.write_texture(
@@ -81,7 +83,7 @@ impl Asset for Texture2D {
             },
             texture_size,
         );
-        Ok(texture)
+        Ok(LoadedAsset::new(texture))
     }
 }
 
