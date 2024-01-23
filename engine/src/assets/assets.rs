@@ -49,7 +49,7 @@ impl Assets {
             ..Default::default()
         };
         quad.mark_dirty();
-        registry.create(SCREEN_SPACE_QUAD, quad).ok()
+        registry.create(SCREEN_SPACE_QUAD.into(), quad).ok()
     }
 
     pub fn wire_circle() -> Mesh {

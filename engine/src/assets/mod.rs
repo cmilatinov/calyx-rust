@@ -3,6 +3,7 @@ pub use asset_registry::*;
 pub use assets::*;
 pub use loaded_asset::*;
 
+pub mod animation;
 mod asset;
 mod asset_registry;
 mod assets;

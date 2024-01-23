@@ -1,6 +1,6 @@
-pub use log_registry::*;
-pub use refs::*;
-pub use time::*;
+pub use self::log_registry::*;
+pub use self::refs::*;
+pub use self::time::*;
 
 mod log_registry;
 mod refs;

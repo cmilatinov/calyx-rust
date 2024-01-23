@@ -3,19 +3,22 @@ use serde::{Deserialize, Serialize};
 use crate as engine;
 use crate::assets::material::Material;
 use crate::assets::mesh::Mesh;
-use crate::component::{Component, ReflectComponent};
 use crate::core::Ref;
 use crate::reflect::{Reflect, ReflectDefault};
+use crate::scene::EntityRef;
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 
+use super::{Component, ReflectComponent};
+
 #[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
-#[uuid = "93fd32b1-7127-4c88-8e89-893512af58de"]
+#[uuid = "bb784426-a5ec-4995-a86a-c40e7e2cb3ab"]
 #[reflect(Default, TypeUuidDynamic, Component)]
-#[reflect_attr(name = "Mesh Renderer")]
+#[reflect_attr(name = "Skinned Mesh Renderer")]
 #[serde(default)]
-pub struct ComponentMesh {
-    pub mesh: Option<Ref<Mesh>>,
+pub struct ComponentSkinnedMesh {
     pub material: Option<Ref<Material>>,
+    pub mesh: Option<Ref<Mesh>>,
+    pub root_bone: Option<EntityRef>,
 }
 
-impl Component for ComponentMesh {}
+impl Component for ComponentSkinnedMesh {}

@@ -119,7 +119,7 @@ impl PanelSceneHierarchy {
                     Color32::TRANSPARENT
                 })
                 .rounding(Rounding::ZERO)
-                .sense(Sense::click()),
+                .sense(Sense::click_and_drag()),
         );
 
         if res.clicked() || res.secondary_clicked() {

@@ -10,6 +10,7 @@ use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 #[uuid = "c5b3b71f-1f14-4b5b-9881-436118684d29"]
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Transform")]
+#[serde(default)]
 pub struct ComponentTransform {
     pub transform: Transform,
 }

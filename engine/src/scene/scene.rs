@@ -21,10 +21,10 @@ use crate::scene::Prefab;
 
 use super::error::SceneError;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Default, Clone, Serialize, Deserialize)]
 pub struct SceneData {
-    components: HashMap<Uuid, HashMap<Uuid, serde_json::Value>>,
-    hierarchy: HashMap<Uuid, Uuid>,
+    pub components: HashMap<Uuid, HashMap<Uuid, serde_json::Value>>,
+    pub hierarchy: HashMap<Uuid, Uuid>,
 }
 
 #[derive(Default, Debug)]
@@ -454,7 +454,7 @@ impl Scene {
         if let Some(parent_node) = self.get_parent_node(node_id) {
             matrix = self.get_world_transform(parent_node).matrix * matrix;
         }
-        let transform = Transform::from_matrix(matrix);
+        let transform = matrix.into();
         self.transform_cache_mut().insert(node_id, transform);
         transform
     }

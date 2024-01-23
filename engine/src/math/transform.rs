@@ -39,20 +39,27 @@ impl Default for Transform {
     }
 }
 
-impl Transform {
-    pub fn from_matrix(matrix: Mat4) -> Self {
+impl From<Mat4> for Transform {
+    fn from(matrix: Mat4) -> Self {
         let inverse_matrix = glm::inverse(&matrix);
         let mut transform = Transform {
-            position: Vec3::default(),
-            rotation: Vec3::default(),
-            scale: Vec3::identity(),
             matrix,
             inverse_matrix,
+            ..Default::default()
         };
         transform.update_components();
         transform
     }
+}
 
+impl From<mint::ColumnMatrix4<f32>> for Transform {
+    fn from(matrix: mint::ColumnMatrix4<f32>) -> Self {
+        let matrix: Mat4 = matrix.into();
+        matrix.into()
+    }
+}
+
+impl Transform {
     pub fn from_components(position: Vec3, rotation: Vec3, scale: Vec3) -> Self {
         let mut transform = Transform {
             position,

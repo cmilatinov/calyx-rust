@@ -1,11 +1,21 @@
-use crate as engine;
+use crate::assets::animation::Animation;
 use crate::assets::error::AssetError;
-use crate::assets::{Asset, LoadedAsset};
+use crate::assets::mesh::Mesh;
+use crate::assets::{Asset, AssetRegistry, LoadedAsset};
+use crate::component::{ComponentID, ComponentMesh, ComponentTransform};
+use crate::math::Transform;
 use crate::scene::{Scene, SceneData};
-use engine_derive::TypeUuid;
+use crate::utils::TypeUuid;
+use crate::{self as engine, utils};
+use glm::Mat4;
+use russimp::scene::PostProcess;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::borrow::Borrow;
+use std::collections::HashSet;
 use std::io::BufReader;
 use std::path::Path;
+use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, TypeUuid)]
 #[uuid = "960f1d60-3ad4-4f1d-92d3-cceb0e0623d7"]
@@ -35,21 +45,156 @@ impl Asset for Prefab {
     where
         Self: Sized,
     {
-        &["cxprefab"]
+        &["cxprefab", "fbx"]
     }
 
     fn from_file(path: &Path) -> Result<LoadedAsset<Self>, AssetError>
     where
         Self: Sized,
     {
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .open(path)
-            .map_err(|_| AssetError::LoadError)?;
+        let ext = path.extension().and_then(|ext| ext.to_str()).unwrap();
+        let registry = AssetRegistry::get();
+        let meta = registry.asset_meta_from_path(path).unwrap();
+        if ext == "fbx" {
+            let scene = russimp::scene::Scene::from_file(
+                path.to_str().unwrap(),
+                vec![
+                    PostProcess::Triangulate,
+                    PostProcess::GenerateSmoothNormals,
+                    PostProcess::FlipUVs,
+                    PostProcess::FlipWindingOrder,
+                    PostProcess::JoinIdenticalVertices,
+                ],
+            )?;
 
-        let reader = BufReader::new(file);
-        Ok(LoadedAsset::new(
-            serde_json::from_reader(reader).map_err(|_| AssetError::LoadError)?,
-        ))
+            let mut meshes = Vec::new();
+            let mut bones = HashSet::new();
+            for mesh in &scene.meshes {
+                let name = format!("{}/{}", meta.name, mesh.name);
+                let mesh_ref = registry
+                    .create(name, Mesh::from_russimp_mesh(mesh))
+                    .unwrap();
+                meshes.push(registry.asset_id_from_ref_t(&mesh_ref).unwrap());
+                bones.extend(mesh_ref.read().bones.keys().cloned());
+            }
+
+            let mut animations = Vec::new();
+            for anim in &scene.animations {
+                println!("{} {} {}", anim.name, anim.duration, anim.channels.len());
+                let name = format!("{}/{}", meta.name, anim.name);
+                let anim_ref = registry
+                    .create(name, Animation::from_russimp_animation(anim))
+                    .unwrap();
+                animations.push(registry.asset_id_from_ref_t(&anim_ref).unwrap());
+            }
+
+            let mut data: SceneData = Default::default();
+            if let Some(root) = &scene.root {
+                Self::traverse(
+                    &meshes,
+                    &bones,
+                    &**root,
+                    true,
+                    None,
+                    Mat4::identity(),
+                    &mut data,
+                );
+            }
+
+            Ok(LoadedAsset {
+                asset: Self {
+                    data: data.clone(),
+                    scene: data.into(),
+                },
+                sub_assets: meshes.into_iter().chain(animations.into_iter()).collect(),
+            })
+        } else {
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .open(path)
+                .map_err(|_| AssetError::LoadError)?;
+            let reader = BufReader::new(file);
+            Ok(LoadedAsset::new(
+                serde_json::from_reader(reader).map_err(|_| AssetError::LoadError)?,
+            ))
+        }
+    }
+}
+
+impl Prefab {
+    fn traverse(
+        meshes: &Vec<Uuid>,
+        bones: &HashSet<String>,
+        node: &russimp::node::Node,
+        is_root: bool,
+        mut parent: Option<Uuid>,
+        mut transform: Mat4,
+        data: &mut SceneData,
+    ) {
+        let mut matrix: Mat4 = Default::default();
+        matrix.copy_from_slice(&[
+            node.transformation.a1,
+            node.transformation.b1,
+            node.transformation.c1,
+            node.transformation.d1,
+            node.transformation.a2,
+            node.transformation.b2,
+            node.transformation.c2,
+            node.transformation.d2,
+            node.transformation.a3,
+            node.transformation.b3,
+            node.transformation.c3,
+            node.transformation.d3,
+            node.transformation.a4,
+            node.transformation.b4,
+            node.transformation.c4,
+            node.transformation.d4,
+        ]);
+        if bones.contains(node.name.as_str()) || node.meshes.len() > 0 || is_root {
+            let id = utils::uuid_from_str(node.name.as_str());
+            if let Some(parent_id) = parent {
+                data.hierarchy.insert(id, parent_id);
+            }
+            parent = Some(id);
+            let entry = data.components.entry(id).or_default();
+            entry.insert(
+                ComponentID::type_uuid(),
+                json!({
+                    "id": id.to_string(),
+                    "name": node.name.clone()
+                }),
+            );
+            entry.insert(
+                ComponentTransform::type_uuid(),
+                json!({
+                    "transform": Transform::from(transform * matrix)
+                }),
+            );
+            if node.meshes.len() > 0 && node.meshes[0] < meshes.len() as u32 {
+                let mesh_id = meshes[node.meshes[0] as usize];
+                let material_id = AssetRegistry::get().asset_id("materials/default").unwrap();
+                entry.insert(
+                    ComponentMesh::type_uuid(),
+                    json!({
+                        "material": material_id.to_string(),
+                        "mesh": mesh_id.to_string()
+                    }),
+                );
+            }
+            transform = Mat4::identity();
+        } else {
+            transform = transform * matrix;
+        }
+        for child in &*node.children.borrow() {
+            Self::traverse(
+                meshes,
+                bones,
+                &*child.borrow(),
+                false,
+                parent,
+                transform,
+                data,
+            );
+        }
     }
 }

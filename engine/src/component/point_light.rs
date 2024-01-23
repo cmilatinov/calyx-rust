@@ -14,6 +14,7 @@ use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 #[uuid = "5fd24d64-6661-40ba-94a5-4fca0d06ead1"]
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Point Light")]
+#[serde(default)]
 pub struct ComponentPointLight {
     pub active: bool,
     #[reflect_attr(min = 0.0)]

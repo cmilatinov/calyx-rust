@@ -1,9 +1,10 @@
 use std::cmp::min;
+use std::collections::HashMap;
 use std::path::Path;
 
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
-use glm::{vec2, vec3, Vec2, Vec3};
+use glm::{vec2, vec3, vec4, IVec4, Vec2, Vec3, Vec4};
 use russimp::scene::{PostProcess, Scene};
 
 use crate as engine;
@@ -64,11 +65,13 @@ impl BufferLayout for Instance {
 #[derive(TypeUuid)]
 #[uuid = "792d264b-de6f-4431-b59f-76f18fdb3bfe"]
 pub struct Mesh {
-    pub name: String,
     pub indices: Vec<u32>,
     pub vertices: Vec<Vec3>,
     pub normals: Vec<Vec3>,
     pub uvs: [Vec<Vec2>; CX_MESH_NUM_UV_CHANNELS],
+    pub bones: HashMap<String, usize>,
+    pub bone_indices: Vec<IVec4>,
+    pub bone_weights: Vec<Vec4>,
 
     pub(crate) dirty: bool,
     pub(crate) instances: Vec<[[f32; 4]; 4]>,
@@ -77,16 +80,38 @@ pub struct Mesh {
     pub(crate) instance_buffer: ResizableBuffer,
 }
 
+impl Mesh {
+    // const ATTRIBUTE_VERTEX: u32 = 0;
+    // const ATTRIBUTE_NORMAL: u32 = 1;
+    // const ATTRIBUTE_UV0: u32 = 2;
+    // const ATTRIBUTE_UV1: u32 = 3;
+    // const ATTRIBUTE_UV2: u32 = 4;
+    // const ATTRIBUTE_UV3: u32 = 5;
+    // const ATTRIBUTE_BONE_INDICES: u32 = 6;
+    // const ATTRIBUTE_BONE_WEIGHTS: u32 = 7;
+    // const ATTRIBUTE_MODEL0: u32 = 6;
+    // const ATTRIBUTE_MODEL1: u32 = 7;
+    // const ATTRIBUTE_MODEL2: u32 = 8;
+    // const ATTRIBUTE_MODEL3: u32 = 9;
+}
+
 impl Default for Mesh {
     fn default() -> Self {
         Self {
-            name: String::new(),
-            indices: Vec::new(),
-            vertices: Vec::new(),
-            normals: Vec::new(),
-            uvs: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+            indices: Default::default(),
+            vertices: Default::default(),
+            normals: Default::default(),
+            uvs: [
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                Default::default(),
+            ],
+            bones: Default::default(),
+            bone_indices: Default::default(),
+            bone_weights: Default::default(),
             dirty: false,
-            instances: Vec::new(),
+            instances: Default::default(),
             index_buffer: None,
             vertex_buffer: None,
             instance_buffer: ResizableBuffer::new(
@@ -114,8 +139,12 @@ impl Asset for Mesh {
 
         // Assuming you want to load the first mesh in the scene
         let mesh = scene.meshes.get(0).ok_or(AssetError::NotFound)?;
+        Ok(LoadedAsset::new(Mesh::from_russimp_mesh(mesh)))
+    }
+}
 
-        let name = String::from(path.file_stem().unwrap().to_str().unwrap());
+impl Mesh {
+    pub fn from_russimp_mesh(mesh: &russimp::mesh::Mesh) -> Self {
         let indices = mesh
             .faces
             .iter()
@@ -142,15 +171,36 @@ impl Asset for Mesh {
             }
         }
 
-        Ok(LoadedAsset::new(Self {
-            name,
+        let mut bones = HashMap::new();
+        let mut bone_indices = vec![vec4::<i32>(-1, -1, -1, -1); mesh.vertices.len()];
+        let mut bone_weights = vec![vec4(0.0, 0.0, 0.0, 0.0); mesh.vertices.len()];
+
+        for (bone_index, bone) in mesh.bones.iter().enumerate() {
+            bones.insert(bone.name.clone(), bone_index);
+            for weight in &bone.weights {
+                let vertex_bone_ids = bone_indices[weight.vertex_id as usize].as_mut_slice();
+                if let Some((index, bone_id)) = vertex_bone_ids
+                    .iter_mut()
+                    .enumerate()
+                    .find(|(_, bone_id)| **bone_id != -1)
+                {
+                    *bone_id = bone_index as i32;
+                    bone_weights[weight.vertex_id as usize][index] = weight.weight;
+                }
+            }
+        }
+
+        Self {
             indices,
             vertices,
             normals,
             uvs,
+            bones,
+            bone_indices,
+            bone_weights,
             dirty: true,
             ..Default::default()
-        }))
+        }
     }
 }
 

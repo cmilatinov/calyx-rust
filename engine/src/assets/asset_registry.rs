@@ -141,11 +141,15 @@ impl AssetRegistry {
         Ok(asset)
     }
 
-    pub fn create<A: Asset + TypeUuid>(&self, name: &str, value: A) -> Result<Ref<A>, AssetError> {
-        if self.asset_id(name).is_some() {
+    pub fn create<A: Asset + TypeUuid>(
+        &self,
+        name: String,
+        value: A,
+    ) -> Result<Ref<A>, AssetError> {
+        if self.asset_id(name.as_str()).is_some() {
             return Err(AssetError::AlreadyExists);
         }
-        let id = Uuid::new_v4();
+        let id = utils::uuid_from_str(name.as_str());
         let asset = Ref::new(value);
         let registry = TypeRegistry::get();
         let display_name = registry.type_info::<A>().and_then(|info| {
@@ -158,14 +162,14 @@ impl AssetRegistry {
         });
         let mut data = self.asset_data_mut();
         data.names
-            .insert(RelativePathBuf::from(name).normalize(), id);
+            .insert(RelativePathBuf::from(name.as_str()).normalize(), id);
         data.meta.insert(
             id,
             AssetMeta {
                 id,
                 type_uuid: Some(A::type_uuid()),
-                name: name.to_string(),
-                display_name: display_name.unwrap_or(name.to_string()),
+                display_name: display_name.unwrap_or(name.clone()),
+                name,
                 parent: None,
                 children: Default::default(),
                 path: None,
@@ -294,7 +298,7 @@ impl AssetRegistry {
             .unwrap_or_default()
     }
 
-    pub fn asset_id_from_path(&self, path: &PathBuf) -> Option<Uuid> {
+    pub fn asset_id_from_path(&self, path: &Path) -> Option<Uuid> {
         path.relative_to(self.root_path()).ok().and_then(|p| {
             let p = p.with_extension("");
             self.asset_data().names.get(&p).copied()
@@ -304,6 +308,11 @@ impl AssetRegistry {
     pub fn asset_meta(&self, name: &str) -> Option<AssetMeta> {
         let id = self.asset_id(name)?;
         self.asset_meta_from_id(id)
+    }
+
+    pub fn asset_meta_from_path(&self, path: &Path) -> Option<AssetMeta> {
+        self.asset_id_from_path(path)
+            .and_then(|id| self.asset_meta_from_id(id))
     }
 
     pub fn asset_meta_from_id(&self, id: Uuid) -> Option<AssetMeta> {
@@ -339,6 +348,10 @@ impl AssetRegistry {
             }
         }
         None
+    }
+
+    pub fn asset_id_from_ref_t<A: Asset + TypeUuid>(&self, reference: &Ref<A>) -> Option<Uuid> {
+        self.asset_id_from_ref(&reference.as_asset())
     }
 }
 

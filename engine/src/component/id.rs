@@ -10,6 +10,7 @@ use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 #[uuid = "02289c92-3412-406e-a7e5-3bbb15d7041e"]
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Game Object")]
+#[serde(default)]
 pub struct ComponentID {
     #[reflect_attr(name = "ID")]
     pub id: Uuid,
