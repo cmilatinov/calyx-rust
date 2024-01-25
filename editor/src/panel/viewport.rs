@@ -126,8 +126,8 @@ impl PanelViewport {
                     .snap_scale(snap_distance);
                 if let Some(gizmo_response) = gizmo.interact(ui) {
                     let transform = gizmo_response.transform();
-                    SceneManager::get()
-                        .get_scene()
+                    SceneManager::get_mut()
+                        .get_scene_mut()
                         .set_world_transform(node_id, Mat4::from(transform));
                     self.gizmo_status(ui, &gizmo_response);
                 }

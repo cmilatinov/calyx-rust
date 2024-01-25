@@ -26,7 +26,7 @@ impl ProjectManager {
         match Project::load(path) {
             Ok(project) => self.current_project = Some(project),
             Err(e) => {
-                println!("Unable to load project: {}", e);
+                eprintln!("Unable to load project: {}", e);
             }
         }
     }
@@ -85,7 +85,6 @@ impl ProjectManager {
         target.push(engine::utils::lib_file_name(
             self.current_project().name().as_str(),
         ));
-        println!("{:?}", target);
         unsafe {
             let lib = Lib::new(target).unwrap();
             let load_fn: Func<extern "C" fn(&mut TypeRegistry)> =

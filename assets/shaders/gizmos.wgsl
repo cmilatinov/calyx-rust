@@ -1,17 +1,11 @@
 struct VertexIn {
+    @builtin(instance_index) instance: u32,
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) uv0: vec2<f32>,
     @location(3) uv1: vec2<f32>,
     @location(4) uv2: vec2<f32>,
     @location(5) uv3: vec2<f32>,
-    @location(6) model_0: vec4<f32>,
-    @location(7) model_1: vec4<f32>,
-    @location(8) model_2: vec4<f32>,
-    @location(9) model_3: vec4<f32>,
-    @location(10) color: vec4<f32>,
-    @location(11) enable_normals: i32,
-    @location(12) use_uv_colors: i32
 };
 
 struct VertexOut {
@@ -31,27 +25,34 @@ struct CameraUniforms {
     far_plane: f32
 };
 
+const MAX_INSTANCES = 30;
+
+struct Instance {
+    transform: mat4x4<f32>,
+    color: vec4<f32>,
+    enable_normals: i32,
+    use_uv_colors: i32,
+};
+
 @group(0) @binding(0)
 var<uniform> camera: CameraUniforms;
 
+@group(1) @binding(0)
+var<uniform> instances: array<Instance, MAX_INSTANCES>;
+
 @vertex
 fn vs_main(vertex: VertexIn) -> VertexOut {
-    let model = mat4x4<f32>(
-        vertex.model_0,
-        vertex.model_1,
-        vertex.model_2,
-        vertex.model_3
-    );
+    let instance = instances[vertex.instance];
     var out: VertexOut;
-    out.position = camera.projection * camera.view * model * vec4<f32>(vertex.position, 1.0);
-    out.world_position = (model * vec4<f32>(vertex.position, 1.0)).xyz;
-    out.world_normal = (model * vec4<f32>(vertex.normal, 0.0)).xyz;
-    if (vertex.use_uv_colors > 0) {
+    out.position = camera.projection * camera.view * instance.transform * vec4<f32>(vertex.position, 1.0);
+    out.world_position = (instance.transform * vec4<f32>(vertex.position, 1.0)).xyz;
+    out.world_normal = (instance.transform * vec4<f32>(vertex.normal, 0.0)).xyz;
+    if (instance.use_uv_colors > 0) {
         out.color = vec4<f32>(vertex.uv0, vertex.uv1);
     } else {
-        out.color = vertex.color;
+        out.color = instance.color;
     }
-    out.enable_normals = vertex.enable_normals;
+    out.enable_normals = instance.enable_normals;
     return out;
 }
 

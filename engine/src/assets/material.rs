@@ -160,7 +160,7 @@ impl Material {
             for (_, variable) in shader.module.global_variables.iter() {
                 if let Some(binding) = &variable.binding {
                     let ty = &shader.module.types[variable.ty];
-                    if binding.group >= 2 {
+                    if binding.group >= 3 {
                         Self::shader_variable(
                             &shader.module,
                             ty,

@@ -48,7 +48,7 @@ impl SceneManager {
             return;
         }
 
-        if let Some(scene) = &self.simulation_scene {
+        if let Some(scene) = &mut self.simulation_scene {
             scene.update(ui);
         }
     }

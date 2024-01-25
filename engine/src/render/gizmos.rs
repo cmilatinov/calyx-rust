@@ -11,22 +11,24 @@ pub struct Gizmos<'a> {
     pub(crate) color: Vec4,
     pub(crate) circle_list: &'a mut Vec<GizmoInstance>,
     pub(crate) cube_list: &'a mut Vec<GizmoInstance>,
-    pub(crate) wire_circle_mesh: &'a mut Mesh,
-    pub(crate) wire_cube_mesh: &'a mut Mesh,
     pub(crate) lines_mesh: &'a mut Mesh,
     pub(crate) points_mesh: &'a mut Mesh,
 }
 
 impl<'a> Gizmos<'a> {
     pub fn wire_sphere(&mut self, center: &Vec3, radius: f32) {
-        let instances = &mut self.wire_circle_mesh.instances;
         let translation = glm::translate(&Mat4::identity(), center);
         let scale = vec3(radius, radius, radius);
-        instances.push(glm::scale(&translation, &scale).into());
-        instances
-            .push(glm::scale(&glm::rotate_x(&translation, 90.0f32.to_radians()), &scale).into());
-        instances
-            .push(glm::scale(&glm::rotate_y(&translation, 90.0f32.to_radians()), &scale).into());
+        self.circle_list
+            .push(self.gizmo_instance(glm::scale(&translation, &scale), true));
+        self.circle_list.push(self.gizmo_instance(
+            glm::scale(&glm::rotate_x(&translation, 90.0f32.to_radians()), &scale),
+            true,
+        ));
+        self.circle_list.push(self.gizmo_instance(
+            glm::scale(&glm::rotate_y(&translation, 90.0f32.to_radians()), &scale),
+            true,
+        ));
 
         let to_camera = self.camera_transform.position - center;
         let to_camera_normal = glm::normalize(&to_camera);
@@ -42,17 +44,14 @@ impl<'a> Gizmos<'a> {
             )),
             &vec3(r, r, r),
         );
-        instances.push(t.into());
-        self.circle_list
-            .extend(iter::repeat(self.gizmo_instance(true)).take(3));
-        self.circle_list.push(self.gizmo_instance(false));
+        self.circle_list.push(self.gizmo_instance(t, false));
     }
 
     pub fn wire_cube(&mut self, position: &Vec3, size: &Vec3) {
-        self.wire_cube_mesh
-            .instances
-            .push(compose_transform(position, &vec3(0.0, 0.0, 0.0), size).into());
-        self.cube_list.push(self.gizmo_instance(false));
+        self.cube_list.push(self.gizmo_instance(
+            compose_transform(position, &vec3(0.0, 0.0, 0.0), size),
+            false,
+        ));
     }
 
     pub fn wire_frustum(
@@ -112,11 +111,13 @@ impl<'a> Gizmos<'a> {
         self.color = *color;
     }
 
-    fn gizmo_instance(&self, enable_normals: bool) -> GizmoInstance {
+    fn gizmo_instance(&self, transform: Mat4, enable_normals: bool) -> GizmoInstance {
         GizmoInstance {
+            transform: transform.into(),
             color: *self.color.as_ref(),
             enable_normals: enable_normals as i32,
             use_uv_colors: 0,
+            _padding: Default::default(),
         }
     }
 }

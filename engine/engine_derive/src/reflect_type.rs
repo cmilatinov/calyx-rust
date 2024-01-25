@@ -97,9 +97,15 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
                 })
                 .next()
                 .unwrap_or_else(|| quote! { [].into() });
-            if let Some(ident) = &field.ident {
-                let ty = &field.ty;
-                field_info.push((ident, ty, doc, reflect_attrs));
+            if field
+                .attrs
+                .iter()
+                .all(|attr| !attr.path().is_ident("reflect_skip"))
+            {
+                if let Some(ident) = &field.ident {
+                    let ty = &field.ty;
+                    field_info.push((ident, ty, doc, reflect_attrs));
+                }
             }
         }
     }

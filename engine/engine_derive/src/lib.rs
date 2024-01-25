@@ -1,9 +1,9 @@
 mod component;
-mod type_uuid;
 mod fq;
 mod reflect_trait;
 mod reflect_type;
 mod reflect_value;
+mod type_uuid;
 
 extern crate proc_macro;
 
@@ -24,7 +24,7 @@ pub fn impl_extern_type_uuid(input: TokenStream) -> TokenStream {
     type_uuid::extern_type_uuid(input)
 }
 
-#[proc_macro_derive(Reflect, attributes(reflect, reflect_attr))]
+#[proc_macro_derive(Reflect, attributes(reflect, reflect_attr, reflect_skip))]
 pub fn derive_reflect(input: TokenStream) -> TokenStream {
     reflect_type::derive_reflect(input)
 }

@@ -3,6 +3,7 @@ use crate::assets::error::AssetError;
 use crate::assets::mesh::Mesh;
 use crate::assets::{Asset, AssetRegistry, LoadedAsset};
 use crate::component::{ComponentID, ComponentMesh, ComponentTransform};
+use crate::core::Ref;
 use crate::math::Transform;
 use crate::scene::{Scene, SceneData};
 use crate::utils::TypeUuid;
@@ -74,13 +75,15 @@ impl Asset for Prefab {
                 let mesh_ref = registry
                     .create(name, Mesh::from_russimp_mesh(mesh))
                     .unwrap();
-                meshes.push(registry.asset_id_from_ref_t(&mesh_ref).unwrap());
+                meshes.push((
+                    mesh_ref.clone(),
+                    registry.asset_id_from_ref_t(&mesh_ref).unwrap(),
+                ));
                 bones.extend(mesh_ref.read().bones.keys().cloned());
             }
 
             let mut animations = Vec::new();
             for anim in &scene.animations {
-                println!("{} {} {}", anim.name, anim.duration, anim.channels.len());
                 let name = format!("{}/{}", meta.name, anim.name);
                 let anim_ref = registry
                     .create(name, Animation::from_russimp_animation(anim))
@@ -106,7 +109,11 @@ impl Asset for Prefab {
                     data: data.clone(),
                     scene: data.into(),
                 },
-                sub_assets: meshes.into_iter().chain(animations.into_iter()).collect(),
+                sub_assets: meshes
+                    .into_iter()
+                    .map(|(_, id)| id)
+                    .chain(animations.into_iter())
+                    .collect(),
             })
         } else {
             let file = std::fs::OpenOptions::new()
@@ -123,7 +130,7 @@ impl Asset for Prefab {
 
 impl Prefab {
     fn traverse(
-        meshes: &Vec<Uuid>,
+        meshes: &Vec<(Ref<Mesh>, Uuid)>,
         bones: &HashSet<String>,
         node: &russimp::node::Node,
         is_root: bool,
@@ -171,8 +178,12 @@ impl Prefab {
                 }),
             );
             if node.meshes.len() > 0 && node.meshes[0] < meshes.len() as u32 {
-                let mesh_id = meshes[node.meshes[0] as usize];
+                let (mesh_ref, mesh_id) = meshes[node.meshes[0] as usize].clone();
                 let material_id = AssetRegistry::get().asset_id("materials/default").unwrap();
+                let mut mesh = mesh_ref.write();
+                if let Some(bone_info) = mesh.bones.get_mut(node.name.as_str()) {
+                    bone_info.inverse_bind_transform = glm::inverse(&(transform * matrix));
+                }
                 entry.insert(
                     ComponentMesh::type_uuid(),
                     json!({

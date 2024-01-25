@@ -1,44 +1,35 @@
 use std::default::Default;
-use std::ops::Deref;
+use std::path::Path;
 
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::wgpu::BufferUsages;
-use glm::{vec4, Mat4, Vec4};
+use glm::{vec4, Mat4};
 use legion::{Entity, EntityStore, IntoQuery};
 
 use crate::assets::mesh::Mesh;
-use crate::assets::{mesh, Assets};
+use crate::assets::{Asset, Assets};
 use crate::class_registry::ClassRegistry;
 use crate::math::Transform;
-use crate::render::buffer::{wgpu_buffer_init_desc, BufferLayout, ResizableBuffer};
 use crate::render::gizmos::Gizmos;
 use crate::render::render_utils::RenderUtils;
 use crate::scene::Scene;
 
-use super::RenderContext;
+use super::buffer::wgpu_buffer_init_desc;
+use super::{PipelineOptionsBuilder, RenderContext, Shader};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GizmoInstance {
+    pub transform: [[f32; 4]; 4],
     pub color: [f32; 4],
     pub enable_normals: i32,
     pub use_uv_colors: i32,
-}
-
-impl GizmoInstance {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![
-        10 => Float32x4,
-        11 => Sint32,
-        12 => Sint32
-    ];
-}
-
-impl BufferLayout for GizmoInstance {
-    const ATTRIBS: &'static [wgpu::VertexAttribute] = &GizmoInstance::ATTRIBUTES;
+    pub _padding: [u32; 2],
 }
 
 pub struct GizmoRenderer {
+    samples: u32,
     circle_list: Vec<GizmoInstance>,
     cube_list: Vec<GizmoInstance>,
 
@@ -47,99 +38,123 @@ pub struct GizmoRenderer {
     lines_mesh: Mesh,
     points_mesh: Mesh,
 
+    shader: Shader,
     gizmo_bind_group: wgpu::BindGroup,
-    gizmo_pipeline_line_list: wgpu::RenderPipeline,
-    gizmo_pipeline_line_strip: wgpu::RenderPipeline,
-    gizmo_pipeline_point_list: wgpu::RenderPipeline,
+    circle_bind_group: wgpu::BindGroup,
+    cube_bind_group: wgpu::BindGroup,
+    lines_bind_group: wgpu::BindGroup,
+    points_bind_group: wgpu::BindGroup,
 
-    circle_instance_buffer: ResizableBuffer,
-    cube_instance_buffer: ResizableBuffer,
-    lines_instance_buffer: wgpu::Buffer,
-    points_instance_buffer: wgpu::Buffer,
+    circle_instance_buffer: wgpu::Buffer,
+    cube_instance_buffer: wgpu::Buffer,
 }
 
 impl GizmoRenderer {
     pub fn new(camera_uniform_buffer: &wgpu::Buffer, samples: u32) -> Self {
         let render_state = RenderContext::render_state().unwrap();
         let device = &render_state.device;
-        let queue = &render_state.queue;
 
-        let circle_instance_buffer =
-            ResizableBuffer::new(BufferUsages::VERTEX | BufferUsages::COPY_DST);
-        let cube_instance_buffer =
-            ResizableBuffer::new(BufferUsages::VERTEX | BufferUsages::COPY_DST);
-        let instance = GizmoInstance {
-            color: Vec4::default().into(),
-            enable_normals: 0,
-            use_uv_colors: 1,
-        };
-        let lines_instance_buffer =
-            device.create_buffer_init(&wgpu_buffer_init_desc(BufferUsages::VERTEX, &[instance]));
-        let points_instance_buffer =
-            device.create_buffer_init(&wgpu_buffer_init_desc(BufferUsages::VERTEX, &[instance]));
+        let circle_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("circle_instance_buffer"),
+            size: (std::mem::size_of::<GizmoInstance>() * Mesh::MAX_INSTANCES) as u64,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let cube_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("cube_instance_buffer"),
+            size: (std::mem::size_of::<GizmoInstance>() * Mesh::MAX_INSTANCES) as u64,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let single_instance_buffer = device.create_buffer_init(&wgpu_buffer_init_desc(
+            BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            &[GizmoInstance {
+                transform: Mat4::identity().into(),
+                color: [1.0; 4],
+                enable_normals: 0,
+                use_uv_colors: 1,
+                _padding: Default::default(),
+            }; Mesh::MAX_INSTANCES],
+        ));
 
-        let gizmo_shader =
-            device.create_shader_module(wgpu::include_wgsl!("../../../assets/shaders/gizmos.wgsl"));
-
-        let gizmo_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("gizmo_bind_group_layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
+        let mut shader = Shader::from_file(&Path::new("assets/shaders/gizmos.wgsl"))
+            .unwrap()
+            .asset;
+        shader.build_pipeline(
+            &PipelineOptionsBuilder::default()
+                .samples(samples)
+                .primitive_topology(wgpu::PrimitiveTopology::LineList)
+                .fragment_targets(vec![
+                    RenderContext::target_format().map(RenderUtils::color_alpha_blending)
+                ])
+                .build(),
+        );
+        shader.build_pipeline(
+            &PipelineOptionsBuilder::default()
+                .samples(samples)
+                .primitive_topology(wgpu::PrimitiveTopology::LineStrip)
+                .fragment_targets(vec![
+                    RenderContext::target_format().map(RenderUtils::color_alpha_blending)
+                ])
+                .build(),
+        );
+        shader.build_pipeline(
+            &PipelineOptionsBuilder::default()
+                .samples(samples)
+                .primitive_topology(wgpu::PrimitiveTopology::PointList)
+                .fragment_targets(vec![
+                    RenderContext::target_format().map(RenderUtils::color_alpha_blending)
+                ])
+                .build(),
+        );
 
         let gizmo_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("gizmo_bind_group"),
-            layout: &gizmo_bind_group_layout,
+            layout: &shader.bind_group_layouts[0],
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: camera_uniform_buffer.as_entire_binding(),
             }],
         });
 
-        let gizmo_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("gizmo_pipeline_layout"),
-                bind_group_layouts: &[&gizmo_bind_group_layout],
-                push_constant_ranges: &[],
-            });
+        let lines_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("lines_bind_group"),
+            layout: &shader.bind_group_layouts[1],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: single_instance_buffer.as_entire_binding(),
+            }],
+        });
 
-        let gizmo_pipeline_line_list = Self::create_pipeline(
-            &render_state,
-            "gizmo_pipeline_line_list",
-            &gizmo_pipeline_layout,
-            &gizmo_shader,
-            wgpu::PrimitiveTopology::LineList,
+        let points_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("points_bind_group"),
+            layout: &shader.bind_group_layouts[1],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: single_instance_buffer.as_entire_binding(),
+            }],
+        });
+
+        let circle_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("circle_bind_group"),
+            layout: &shader.bind_group_layouts[1],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: circle_instance_buffer.as_entire_binding(),
+            }],
+        });
+
+        let cube_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("cube_bind_group"),
+            layout: &shader.bind_group_layouts[1],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: cube_instance_buffer.as_entire_binding(),
+            }],
+        });
+
+        let renderer = Self {
             samples,
-        );
-
-        let gizmo_pipeline_line_strip = Self::create_pipeline(
-            &render_state,
-            "gizmo_pipeline_line_strip",
-            &gizmo_pipeline_layout,
-            &gizmo_shader,
-            wgpu::PrimitiveTopology::LineStrip,
-            samples,
-        );
-
-        let gizmo_pipeline_point_list = Self::create_pipeline(
-            &render_state,
-            "gizmo_pipeline_point_list",
-            &gizmo_pipeline_layout,
-            &gizmo_shader,
-            wgpu::PrimitiveTopology::PointList,
-            samples,
-        );
-
-        let mut renderer = Self {
             circle_list: Vec::new(),
             cube_list: Vec::new(),
 
@@ -148,72 +163,39 @@ impl GizmoRenderer {
             lines_mesh: Mesh::default(),
             points_mesh: Mesh::default(),
 
+            shader,
             gizmo_bind_group,
-            gizmo_pipeline_line_list,
-            gizmo_pipeline_line_strip,
-            gizmo_pipeline_point_list,
+            circle_bind_group,
+            cube_bind_group,
+            lines_bind_group,
+            points_bind_group,
 
             circle_instance_buffer,
             cube_instance_buffer,
-            lines_instance_buffer,
-            points_instance_buffer,
         };
-        renderer.lines_mesh.instances.push(Mat4::identity().into());
-        renderer.lines_mesh.rebuild_instance_data(device, queue);
-        renderer.points_mesh.instances.push(Mat4::identity().into());
-        renderer.points_mesh.rebuild_instance_data(device, queue);
         renderer
-    }
-
-    fn create_pipeline(
-        render_state: &egui_wgpu::RenderState,
-        name: &str,
-        layout: &wgpu::PipelineLayout,
-        shader: &wgpu::ShaderModule,
-        topology: wgpu::PrimitiveTopology,
-        samples: u32,
-    ) -> wgpu::RenderPipeline {
-        let device = &render_state.device;
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(name),
-            layout: Some(layout),
-            vertex: wgpu::VertexState {
-                module: shader,
-                entry_point: "vs_main",
-                buffers: &[
-                    mesh::Vertex::layout(wgpu::VertexStepMode::Vertex),
-                    mesh::Instance::layout(wgpu::VertexStepMode::Instance),
-                    GizmoInstance::layout(wgpu::VertexStepMode::Instance),
-                ],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: shader,
-                entry_point: "fs_main",
-                targets: &[Some(RenderUtils::color_alpha_blending(
-                    render_state.target_format,
-                ))],
-            }),
-            primitive: RenderUtils::primitive_default(topology),
-            depth_stencil: Some(RenderUtils::depth_default()),
-            multisample: RenderUtils::multisample_default(samples),
-            multiview: None,
-        })
     }
 
     fn clear(&mut self) {
         self.circle_list.clear();
         self.cube_list.clear();
-        self.wire_circle_mesh.instances.clear();
-        self.wire_cube_mesh.instances.clear();
         self.lines_mesh.clear();
         self.points_mesh.clear();
     }
 
     fn load_buffers(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        self.circle_instance_buffer
-            .write_buffer(device, queue, self.circle_list.as_slice(), None);
-        self.cube_instance_buffer
-            .write_buffer(device, queue, self.cube_list.as_slice(), None);
+        queue.write_buffer(
+            &self.circle_instance_buffer,
+            0 as wgpu::BufferAddress,
+            bytemuck::cast_slice(
+                &self.circle_list[..self.circle_list.len().min(Mesh::MAX_INSTANCES)],
+            ),
+        );
+        queue.write_buffer(
+            &self.cube_instance_buffer,
+            0 as wgpu::BufferAddress,
+            bytemuck::cast_slice(&self.cube_list[..self.cube_list.len().min(Mesh::MAX_INSTANCES)]),
+        );
         RenderUtils::rebuild_mesh_data(device, queue, &mut self.wire_circle_mesh);
         RenderUtils::rebuild_mesh_data(device, queue, &mut self.wire_cube_mesh);
         self.lines_mesh.rebuild_mesh_data(device);
@@ -227,8 +209,6 @@ impl GizmoRenderer {
             color: vec4(1.0, 1.0, 1.0, 1.0),
             circle_list: &mut self.circle_list,
             cube_list: &mut self.cube_list,
-            wire_circle_mesh: &mut self.wire_circle_mesh,
-            wire_cube_mesh: &mut self.wire_cube_mesh,
             lines_mesh: &mut self.lines_mesh,
             points_mesh: &mut self.points_mesh,
         }
@@ -244,8 +224,8 @@ impl GizmoRenderer {
         {
             let mut gizmos = self.gizmos(camera_transform);
             let mut query = <Entity>::query();
-            let world = scene.world();
-            for entity in query.iter(world.deref()) {
+            let world = &scene.world;
+            for entity in query.iter(world) {
                 let node = scene.get_node(*entity);
                 for (_, comp) in ClassRegistry::get().components() {
                     if let Ok(entry) = world.entry_ref(*entity) {
@@ -260,48 +240,83 @@ impl GizmoRenderer {
     }
 
     pub fn render_gizmos<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
-        if !self.wire_circle_mesh.instances.is_empty() {
-            render_pass.set_pipeline(&self.gizmo_pipeline_line_strip);
-            render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
+        if !self.circle_list.is_empty() {
+            let options = PipelineOptionsBuilder::default()
+                .samples(self.samples)
+                .primitive_topology(wgpu::PrimitiveTopology::LineStrip)
+                .fragment_targets(vec![
+                    RenderContext::target_format().map(RenderUtils::color_alpha_blending)
+                ])
+                .build();
+            if let Some(pipeline) = self.shader.get_pipeline(&options) {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
 
-            RenderUtils::bind_mesh_buffers(render_pass, &self.wire_circle_mesh);
-            render_pass
-                .set_vertex_buffer(2, self.circle_instance_buffer.get_wgpu_buffer().slice(..));
-            render_pass.draw(
-                0..(self.wire_circle_mesh.vertices.len() as u32),
-                0..(self.wire_circle_mesh.instances.len() as u32),
-            );
+                RenderUtils::bind_mesh_buffers(render_pass, &self.wire_circle_mesh);
+                render_pass.set_bind_group(1, &self.circle_bind_group, &[]);
+                render_pass.draw(
+                    0..(self.wire_circle_mesh.vertices.len() as u32),
+                    0..(self.circle_list.len() as u32),
+                );
+            }
         }
 
-        if !self.wire_cube_mesh.instances.is_empty() {
-            render_pass.set_pipeline(&self.gizmo_pipeline_line_list);
-            render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
+        if !self.cube_list.is_empty() {
+            let options = PipelineOptionsBuilder::default()
+                .samples(self.samples)
+                .primitive_topology(wgpu::PrimitiveTopology::LineList)
+                .fragment_targets(vec![
+                    RenderContext::target_format().map(RenderUtils::color_alpha_blending)
+                ])
+                .build();
+            if let Some(pipeline) = self.shader.get_pipeline(&options) {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
 
-            RenderUtils::bind_mesh_buffers(render_pass, &self.wire_cube_mesh);
-            render_pass.set_vertex_buffer(2, self.cube_instance_buffer.get_wgpu_buffer().slice(..));
-            render_pass.draw_indexed(
-                0..(self.wire_cube_mesh.indices.len() as u32),
-                0,
-                0..(self.wire_cube_mesh.instances.len() as u32),
-            );
+                RenderUtils::bind_mesh_buffers(render_pass, &self.wire_cube_mesh);
+                render_pass.set_bind_group(1, &self.cube_bind_group, &[]);
+                render_pass.draw_indexed(
+                    0..(self.wire_cube_mesh.indices.len() as u32),
+                    0,
+                    0..(self.cube_list.len() as u32),
+                );
+            }
         }
 
         if !self.lines_mesh.vertices.is_empty() {
-            render_pass.set_pipeline(&self.gizmo_pipeline_line_list);
-            render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
+            let options = PipelineOptionsBuilder::default()
+                .samples(self.samples)
+                .primitive_topology(wgpu::PrimitiveTopology::LineList)
+                .fragment_targets(vec![
+                    RenderContext::target_format().map(RenderUtils::color_alpha_blending)
+                ])
+                .build();
+            if let Some(pipeline) = self.shader.get_pipeline(&options) {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
 
-            RenderUtils::bind_mesh_buffers(render_pass, &self.lines_mesh);
-            render_pass.set_vertex_buffer(2, self.lines_instance_buffer.slice(..));
-            render_pass.draw(0..(self.lines_mesh.vertices.len() as u32), 0..1);
+                RenderUtils::bind_mesh_buffers(render_pass, &self.lines_mesh);
+                render_pass.set_bind_group(1, &self.lines_bind_group, &[]);
+                render_pass.draw(0..(self.lines_mesh.vertices.len() as u32), 0..1);
+            }
         }
 
         if !self.points_mesh.vertices.is_empty() {
-            render_pass.set_pipeline(&self.gizmo_pipeline_point_list);
-            render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
+            let options = PipelineOptionsBuilder::default()
+                .samples(self.samples)
+                .primitive_topology(wgpu::PrimitiveTopology::PointList)
+                .fragment_targets(vec![
+                    RenderContext::target_format().map(RenderUtils::color_alpha_blending)
+                ])
+                .build();
+            if let Some(pipeline) = self.shader.get_pipeline(&options) {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
 
-            RenderUtils::bind_mesh_buffers(render_pass, &self.points_mesh);
-            render_pass.set_vertex_buffer(2, self.points_instance_buffer.slice(..));
-            render_pass.draw(0..(self.points_mesh.vertices.len() as u32), 0..1);
+                RenderUtils::bind_mesh_buffers(render_pass, &self.points_mesh);
+                render_pass.set_bind_group(1, &self.points_bind_group, &[]);
+                render_pass.draw(0..(self.points_mesh.vertices.len() as u32), 0..1);
+            }
         }
     }
 }

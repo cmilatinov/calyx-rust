@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 use std::io::BufReader;
-use std::ops::Deref;
 use std::path::Path;
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -14,7 +13,7 @@ use uuid::Uuid;
 use crate::assets::error::AssetError;
 use crate::assets::{Asset, LoadedAsset};
 use crate::class_registry::ClassRegistry;
-use crate::component::ComponentTransform;
+use crate::component::{Component, ComponentTransform};
 use crate::component::{ComponentCamera, ComponentID};
 use crate::math::Transform;
 use crate::scene::Prefab;
@@ -29,7 +28,7 @@ pub struct SceneData {
 
 #[derive(Default, Debug)]
 pub struct Scene {
-    pub world: RwLock<World>,
+    pub world: World,
     pub entity_hierarchy: HashSet<NodeId>,
     node_map: HashMap<Entity, NodeId>,
     entity_arena: Arena<Entity>,
@@ -95,7 +94,7 @@ impl From<SceneData> for Scene {
             for (component_id, data) in components {
                 if let Some(component) = ClassRegistry::get().component_by_uuid(component_id) {
                     if let Some(instance) = component.deserialize(data) {
-                        if let Some(mut entry) = scene.world_mut().entry(scene.get_entity(node)) {
+                        if let Some(mut entry) = scene.world.entry(scene.get_entity(node)) {
                             let _ = component.bind_instance(&mut entry, instance);
                         }
                     }
@@ -115,11 +114,11 @@ impl From<SceneData> for Scene {
 
 impl From<&Scene> for SceneData {
     fn from(scene: &Scene) -> Self {
-        let world = scene.world();
+        let world = &scene.world;
         let mut query = <(Entity, &ComponentID)>::query();
         let mut hierarchy = HashMap::new();
         let mut components: HashMap<Uuid, HashMap<Uuid, serde_json::Value>> = HashMap::new();
-        for (entity, id) in query.iter(world.deref()) {
+        for (entity, id) in query.iter(world) {
             if let Some(parent) = scene.get_parent_entity(scene.get_node(*entity)) {
                 if let Ok(parent_id) = world
                     .entry_ref(parent)
@@ -150,7 +149,7 @@ impl From<&Scene> for SceneData {
 
 impl From<(&Scene, NodeId)> for SceneData {
     fn from((scene, node_id): (&Scene, NodeId)) -> Self {
-        let world = scene.world();
+        let world = &scene.world;
         let mut hierarchy = HashMap::new();
         let mut components: HashMap<Uuid, HashMap<Uuid, serde_json::Value>> = HashMap::new();
 
@@ -203,7 +202,7 @@ impl Scene {
         } else {
             ComponentID::default()
         };
-        let entity = self.world_mut().push((id, ComponentTransform::default()));
+        let entity = self.world.push((id, ComponentTransform::default()));
         let new_node = self.entity_arena.new_node(entity);
         self.node_map.insert(entity, new_node);
 
@@ -238,7 +237,7 @@ impl Scene {
             for (component_id, data) in components {
                 if let Some(component) = ClassRegistry::get().component_by_uuid(*component_id) {
                     if let Some(instance) = component.deserialize(data.clone()) {
-                        if let Some(mut entry) = self.world_mut().entry(entity) {
+                        if let Some(mut entry) = self.world.entry(entity) {
                             let _ = component.bind_instance(&mut entry, instance);
                         }
                     }
@@ -256,7 +255,7 @@ impl Scene {
 
         for (id, _) in prefab.data.components.iter() {
             if let Some(node) = self.get_node_by_uuid(*id) {
-                self.world_mut()
+                self.world
                     .entry(self.get_entity(node))
                     .unwrap()
                     .get_component_mut::<ComponentID>()
@@ -270,14 +269,6 @@ impl Scene {
                 self.set_parent(entity, Some(parent));
             }
         }
-    }
-
-    pub fn world(&self) -> RwLockReadGuard<World> {
-        self.world.read().unwrap()
-    }
-
-    pub fn world_mut(&self) -> RwLockWriteGuard<World> {
-        self.world.write().unwrap()
     }
 
     pub fn set_parent(&mut self, node: NodeId, parent: Option<NodeId>) {
@@ -310,7 +301,7 @@ impl Scene {
     }
 
     pub(crate) fn new_entity(&mut self, parent: Option<NodeId>) -> NodeId {
-        let entity = self.world_mut().push(());
+        let entity = self.world.push(());
         let node = self.entity_arena.new_node(entity);
         self.node_map.insert(entity, node);
         match parent {
@@ -337,40 +328,63 @@ impl Scene {
         node_id: NodeId,
         component: T,
     ) -> Result<(), SceneError> {
-        self.world_mut()
+        self.world
             .entry(self.get_entity(node_id))
             .map(|mut e| e.add_component(component))
             .ok_or(SceneError::InvalidNodeId)
     }
 
-    pub fn update(&self, ui: &mut Ui) {
-        for node_id in self.root_entities() {
-            self._update(ui, node_id.clone());
-        }
+    pub fn get_component_ptr(
+        &mut self,
+        entity: Entity,
+        component: &Box<dyn Component>,
+    ) -> Option<*mut dyn Component> {
+        self.world.entry(entity).and_then(|mut entry| {
+            if let Some(instance) = component.get_instance_mut(&mut entry) {
+                Some(instance as *mut dyn Component)
+            } else {
+                None
+            }
+        })
     }
 
-    pub fn _update(&self, ui: &mut Ui, node_id: NodeId) {
-        // Call update on every component
-        {
-            let entity = self.get_entity(node_id);
-            let mut world = self.world_mut();
-            for (_, component) in ClassRegistry::get().components() {
-                if let Some(mut entry) = world.entry(entity) {
+    unsafe fn world_mut<'a, 'b>(&'a mut self) -> &'b mut World {
+        &mut *(&mut self.world as *mut World)
+    }
+
+    pub fn update(&mut self, ui: &Ui) {
+        // for node_id in self.root_entities() {
+        //     self._update(ui, node_id.clone());
+        // }
+
+        for (_, component) in ClassRegistry::get().components() {
+            // No way around this, we want component's update method to take &mut self
+            // But there's no way to do that and provide an &mut Scene
+            // At worst, this is a race condition because we can guarantee that this reference
+            // Only lives until the end of this function
+            let scene = unsafe { &mut *(self as *mut Self) };
+
+            let entities = <Entity>::query()
+                .iter(&self.world)
+                .copied()
+                .collect::<Vec<_>>();
+            for entity in entities {
+                let node = self.get_node(entity);
+                if let Some(mut entry) = self.world.entry(entity) {
                     if let Some(instance) = component.get_instance_mut(&mut entry) {
-                        instance.update(self);
+                        instance.update(scene, node, ui);
                     }
                 }
             }
-        }
-
-        // Recursive call for all children nodes
-        for child_id in self.get_children(node_id) {
-            self._update(ui, child_id);
+            //
+            // query.iter()
+            // let instance = self.get_component_mut(entity, component);
+            // component.get_instance_mut(entry)
         }
     }
 
     pub fn get_entity_name(&self, node_id: NodeId) -> String {
-        self.world()
+        self.world
             .entry_ref(self.get_entity(node_id))
             .ok()
             .and_then(|e| {
@@ -382,7 +396,7 @@ impl Scene {
     }
 
     pub fn get_entity_uuid(&self, node_id: NodeId) -> Uuid {
-        self.world()
+        self.world
             .entry_ref(self.get_entity(node_id))
             .ok()
             .and_then(|e| e.get_component::<ComponentID>().ok().map(|id| id.id))
@@ -390,9 +404,8 @@ impl Scene {
     }
 
     pub fn get_entity_by_uuid(&self, id: Uuid) -> Option<Entity> {
-        let world = self.world();
         <(Entity, &ComponentID)>::query()
-            .iter(world.deref())
+            .iter(&self.world)
             .find(|(_, cid)| cid.id == id)
             .map(|(entity, _)| *entity)
     }
@@ -427,12 +440,11 @@ impl Scene {
         node_id.children(&self.entity_arena).count()
     }
 
-    pub fn set_world_transform(&self, node_id: NodeId, matrix: Mat4) {
+    pub fn set_world_transform(&mut self, node_id: NodeId, matrix: Mat4) {
         let parent_transform = self.get_parent_node(node_id).map_or(Mat4::identity(), |n| {
             self.get_world_transform(n).inverse_matrix
         });
-        let mut world = self.world_mut();
-        if let Some(mut entry) = world.entry(self.get_entity(node_id)) {
+        if let Some(mut entry) = self.world.entry(self.get_entity(node_id)) {
             if let Ok(tc) = entry.get_component_mut::<ComponentTransform>() {
                 tc.transform.set_local_matrix(&(parent_transform * matrix));
             }
@@ -443,8 +455,7 @@ impl Scene {
         if let Some(transform) = self.transform_cache().get(&node_id) {
             return *transform;
         }
-        let world = self.world();
-        let entry = world.entry_ref(self.get_entity(node_id));
+        let entry = self.world.entry_ref(self.get_entity(node_id));
         let mut matrix = entry
             .as_ref()
             .map(|e| e.get_component::<ComponentTransform>().ok())
@@ -459,7 +470,7 @@ impl Scene {
         transform
     }
 
-    pub fn clear_transform_cache(&mut self) {
+    pub fn clear_transform_cache(&self) {
         self.transform_cache_mut().clear();
     }
 }

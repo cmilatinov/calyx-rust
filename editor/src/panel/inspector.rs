@@ -5,14 +5,14 @@ use convert_case::{Case, Casing};
 
 use engine::assets::AssetRegistry;
 use engine::class_registry::ClassRegistry;
-use engine::component::Component;
+use engine::component::{ComponentID, ComponentTransform};
 use engine::egui::Ui;
 use engine::egui_extras::{Column, TableBody};
 use engine::reflect::type_registry::TypeRegistry;
 use engine::reflect::{AttributeValue, Reflect, ReflectDefault, TypeInfo};
+use engine::scene::SceneManager;
 use engine::uuid::Uuid;
 use engine::{egui, egui_extras, type_ids};
-use engine::scene::SceneManager;
 
 use crate::inspector::asset_inspector::{AssetInspector, ReflectAssetInspector};
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
@@ -80,17 +80,11 @@ impl Panel for PanelInspector {
             let mut entity_components = HashSet::new();
             let mut components_to_remove = HashSet::new();
             for (type_id, component) in ClassRegistry::get().components() {
-                let mut ptr = None;
-                if let Some(mut entry) = SceneManager::get().get_scene().world_mut().entry(entity) {
-                    if let Some(instance) = component.get_instance_mut(&mut entry) {
-                        ptr = Some(instance as *mut _);
-                        entity_components.insert(*type_id);
-                    }
-                }
-                if let Some(ptr) = ptr {
-                    let scene_state = SceneManager::get();
-                    let world = scene_state.get_scene().world();
-                    let instance: &mut dyn Component = unsafe { &mut *ptr };
+                let ptr = SceneManager::get_mut()
+                    .get_scene_mut()
+                    .get_component_ptr(entity, component);
+                if let Some(instance) = ptr.map(|ptr| unsafe { &mut *ptr }) {
+                    entity_components.insert(*type_id);
                     let info = registry.type_info_by_id(*type_id).unwrap();
                     if let TypeInfo::Struct(type_info) = info {
                         let scene_state = SceneManager::get();
@@ -99,7 +93,7 @@ impl Panel for PanelInspector {
                             scene: scene_state.get_scene(),
                             node,
                             parent_node: SceneManager::get().get_scene().get_parent_node(node),
-                            world: &world,
+                            world: &scene_state.get_scene().world,
                             type_info,
                             field_name: None,
                         };
@@ -125,9 +119,9 @@ impl Panel for PanelInspector {
                         let name = Self::display_name(component.as_reflect());
                         if ui.selectable_label(false, name).clicked() {
                             let meta = registry.trait_meta::<ReflectDefault>(*type_id).unwrap();
-                            let scene_state = SceneManager::get();
-                            let mut world = scene_state.get_scene().world_mut();
-                            if let Some(mut entry) = world.entry(entity) {
+                            if let Some(mut entry) =
+                                SceneManager::get_mut().get_scene_mut().world.entry(entity)
+                            {
                                 component.bind_instance(&mut entry, meta.default());
                             }
                         }
@@ -142,9 +136,8 @@ impl Panel for PanelInspector {
                 if !components_to_remove.contains(type_id) {
                     continue;
                 }
-                let scene_state = SceneManager::get();
-                let mut world = scene_state.get_scene().world_mut();
-                if let Some(mut entry) = world.entry(entity) {
+                if let Some(mut entry) = SceneManager::get_mut().get_scene_mut().world.entry(entity)
+                {
                     component.remove_instance(&mut entry);
                 }
             }
@@ -208,35 +201,29 @@ impl PanelInspector {
     ) -> bool {
         let name = Self::display_name(instance);
         let mut remove = false;
-        match self.type_inspector_lookup(instance.as_any().type_id()) {
-            Some(inspector) => {
-                ui.collapsing(name, |ui| {
+        let type_id = instance.as_any().type_id();
+        let inspector = self.type_inspector_lookup(type_id);
+        let res = ui
+            .collapsing(name, |ui| {
+                if let Some(inspector) = &inspector {
                     inspector.show_inspector(ui, ctx, instance);
-                })
-                .header_response
-                .context_menu(|ui| {
-                    if ui.button("Remove").clicked() {
-                        remove = true;
-                        ui.close_menu();
-                    }
-                    inspector.show_inspector_context(ui, ctx, instance);
-                });
-                ui.separator();
-            }
-            None => {
-                ui.collapsing(name, |ui| {
+                } else {
                     self.show_default_inspector(ui, ctx, instance);
-                })
-                .header_response
-                .context_menu(|ui| {
-                    if ui.button("Remove").clicked() {
-                        remove = true;
-                        ui.close_menu();
-                    }
-                });
-                ui.separator();
-            }
-        };
+                }
+            })
+            .header_response;
+        if type_id != TypeId::of::<ComponentID>() {
+            res.context_menu(|ui| {
+                if type_id != TypeId::of::<ComponentTransform>() && ui.button("Remove").clicked() {
+                    remove = true;
+                    ui.close_menu();
+                }
+                if let Some(inspector) = &inspector {
+                    inspector.show_inspector_context(ui, ctx, instance);
+                }
+            });
+        }
+        ui.separator();
         remove
     }
 

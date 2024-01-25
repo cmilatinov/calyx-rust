@@ -2,7 +2,7 @@
   "shader": "9363517f-d5ce-5511-2a89-2e3eaf0a6235",
   "variables": [
     {
-      "group": 2,
+      "group": 3,
       "binding": 0,
       "offset": null,
       "name": "texture_diffuse",
@@ -12,7 +12,7 @@
       }
     },
     {
-      "group": 2,
+      "group": 3,
       "binding": 1,
       "offset": null,
       "name": "sampler_diffuse",

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::default::Default;
-use std::ops::{Deref, Range};
+use std::ops::Range;
 
 use egui::Color32;
 use egui_wgpu::wgpu::util::DeviceExt;
@@ -8,6 +8,7 @@ use egui_wgpu::{wgpu, RenderState};
 use glm::{Mat4, Vec3};
 use legion::{Entity, IntoQuery};
 
+use crate::assets::mesh::Instance;
 use crate::assets::texture::Texture2D;
 use crate::assets::{AssetRegistry, Assets};
 use crate::component::{ComponentMesh, ComponentPointLight};
@@ -208,7 +209,7 @@ impl SceneRenderer {
         let material_bind_groups = self.build_material_bind_groups(device, &assets);
         let light_storage_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("light_storage_bind_group"),
-            layout: &self.scene_shader.read().bind_group_layouts[1],
+            layout: &self.scene_shader.read().bind_group_layouts[2],
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: self
@@ -239,7 +240,8 @@ impl SceneRenderer {
                     if let Some(pipeline) = shader.get_pipeline(&options) {
                         render_pass.set_pipeline(pipeline);
                         render_pass.set_bind_group(0, &self.scene_bind_group, &[]);
-                        render_pass.set_bind_group(1, &light_storage_bind_group, &[]);
+                        render_pass.set_bind_group(1, &mesh.instance_bind_group, &[]);
+                        render_pass.set_bind_group(2, &light_storage_bind_group, &[]);
                     }
                 }
                 if mat_id != last.1 {
@@ -301,7 +303,14 @@ impl SceneRenderer {
             if let Some(pipeline) = grid_shader.get_pipeline(&options) {
                 render_pass.set_pipeline(pipeline);
                 render_pass.set_bind_group(0, &self.scene_bind_group, &[]);
-                quad_mesh.instances.resize(1, *Mat4::identity().as_ref());
+                quad_mesh.instances.resize(
+                    1,
+                    Instance {
+                        bone_transform_index: -1,
+                        _padding: Default::default(),
+                        transform: Mat4::identity().into(),
+                    },
+                );
                 RenderUtils::render_mesh(device, queue, &mut render_pass, &mut quad_mesh);
             }
         }
@@ -328,7 +337,11 @@ impl SceneRenderer {
                 instance_count = 0;
             }
             if let Some(ref mut mesh) = &mut mesh {
-                mesh.instances.push(matrix);
+                mesh.instances.push(Instance {
+                    bone_transform_index: -1,
+                    _padding: Default::default(),
+                    transform: matrix.into(),
+                });
                 instance_count += 1;
             }
             last = (shader_id, mat_id, mesh_id);
@@ -343,10 +356,10 @@ impl SceneRenderer {
         scene: &Scene,
         render_options: &PipelineOptions,
     ) {
-        let world = scene.world();
+        let world = &scene.world;
         self.draw_list.clear();
         let mut query = <(Entity, &ComponentMesh)>::query();
-        for (entity, c_mesh) in query.iter(world.deref()) {
+        for (entity, c_mesh) in query.iter(world) {
             if let Some(mesh_ref) = c_mesh.mesh.as_ref() {
                 if let Some(mat_ref) = c_mesh.material.as_ref() {
                     let shader_ref = mat_ref.read().shader.clone();
@@ -406,10 +419,10 @@ impl SceneRenderer {
     fn build_light_data(&mut self, render_state: &RenderState, scene: &Scene) {
         let device = &render_state.device;
         let queue = &render_state.queue;
-        let world = scene.world();
+        let world = &scene.world;
         let mut lights = Vec::new();
         let mut query = <(Entity, &ComponentPointLight)>::query();
-        for (entity, light) in query.iter(world.deref()) {
+        for (entity, light) in query.iter(world) {
             if !light.active {
                 continue;
             }

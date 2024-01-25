@@ -138,9 +138,7 @@ impl eframe::App for EditorApp {
 
         {
             let mut app_state = EditorAppState::get_mut();
-            SceneManager::get_mut()
-                .get_scene_mut()
-                .clear_transform_cache();
+            SceneManager::get().get_scene().clear_transform_cache();
             let render_state = frame.wgpu_render_state().unwrap();
             let mut renderer = self.scene_renderer.write();
             let (width, height) = EditorApp::get_physical_size(ctx, app_state.viewport_size);
@@ -157,9 +155,7 @@ impl eframe::App for EditorApp {
                 &app_state.camera.transform,
                 scene,
             );
-
-            let world = scene.world();
-            if let Some((node, c)) = scene.get_main_camera(&world) {
+            if let Some((node, c)) = scene.get_main_camera(&scene.world) {
                 let mut renderer = self.game_renderer.write();
                 {
                     let options = renderer.options_mut();
@@ -284,7 +280,6 @@ impl EditorApp {
                                     .assets_directory()
                                     .join("scene.cxscene"),
                             );
-                        println!("{:?}", res);
                         if let Ok(file) = res {
                             let writer = BufWriter::new(file);
                             serde_json::to_writer_pretty(writer, SceneManager::get().get_scene())
@@ -392,7 +387,7 @@ impl EditorApp {
         // LOAD PROJECT
         let args: Vec<String> = env::args().collect();
         if args.len() != 2 {
-            println!("Expected 2 arguments, got {}", args.len());
+            eprintln!("Expected 2 arguments, got {}", args.len());
             std::process::exit(1);
         }
 

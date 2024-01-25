@@ -182,10 +182,7 @@ impl Shader {
             vertex: wgpu::VertexState {
                 module: &self.shader,
                 entry_point: "vs_main",
-                buffers: &[
-                    mesh::Vertex::layout(wgpu::VertexStepMode::Vertex),
-                    mesh::Instance::layout(wgpu::VertexStepMode::Instance),
-                ],
+                buffers: &[mesh::Vertex::layout(wgpu::VertexStepMode::Vertex)],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &self.shader,

@@ -3,6 +3,9 @@ name = "engine"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+crate-type = ["dylib", "rlib"]
+
 [dependencies]
 bytemuck = "1.14.0"
 eframe = { version = "0.24.1", features = ["wgpu", "persistence"] }

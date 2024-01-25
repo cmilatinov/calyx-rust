@@ -5,10 +5,23 @@ use engine::math::Transform;
 use engine::render::{Camera, CameraLike};
 use engine::{egui, glm};
 
-#[derive(Default)]
 pub struct EditorCamera {
     pub camera: Camera,
     pub transform: Transform,
+}
+
+impl Default for EditorCamera {
+    fn default() -> Self {
+        let transform = Transform::from_components(
+            Vec3::new(10.0, 10.0, 10.0),
+            Vec3::new(40.0f32.to_radians(), 225.0f32.to_radians(), 0.0),
+            Vec3::new(1.0, 1.0, 1.0),
+        );
+        Self {
+            camera: Default::default(),
+            transform,
+        }
+    }
 }
 
 impl CameraLike for EditorCamera {

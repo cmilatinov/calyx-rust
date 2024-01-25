@@ -20,6 +20,8 @@ use crate::core::Ref;
 use crate::render::Shader;
 use crate::utils::TypeUuid;
 
+use super::animation::Animation;
+
 pub trait Asset: Any + Send + Sync {
     fn get_file_extensions() -> &'static [&'static str]
     where
@@ -122,8 +124,13 @@ impl_extern_type_uuid!(
     Option<Ref<Material>>,
     "8c13be0d-18ee-4add-99a6-368d8adf0440"
 );
+impl_extern_type_uuid!(
+    Option<Ref<Animation>>,
+    "0583bce5-72b1-4157-8361-aa4255e097a6"
+);
 
 impl_reflect_value!(Option<Ref<Mesh>>(AssetOptionRef));
 impl_reflect_value!(Option<Ref<Shader>>(AssetOptionRef));
 impl_reflect_value!(Option<Ref<Texture2D>>(AssetOptionRef));
 impl_reflect_value!(Option<Ref<Material>>(AssetOptionRef));
+impl_reflect_value!(Option<Ref<Animation>>(AssetOptionRef));

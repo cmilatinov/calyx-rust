@@ -72,6 +72,18 @@ impl Transform {
         transform
     }
 
+    pub fn from_xyz(x: f32, y: f32, z: f32) -> Self {
+        let mut transform = Transform {
+            position: Vec3::new(x, y, z),
+            rotation: Vec3::zeros(),
+            scale: Vec3::new(1.0, 1.0, 1.0),
+            matrix: Default::default(),
+            inverse_matrix: Default::default(),
+        };
+        transform.update_matrix();
+        transform
+    }
+
     pub fn look_at(&mut self, position: &Vec3) {
         let diff = self.position - position;
         if glm::length(&diff) <= 0.000001f32 {

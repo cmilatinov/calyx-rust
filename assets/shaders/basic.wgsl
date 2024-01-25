@@ -1,14 +1,11 @@
 struct VertexIn {
+    @builtin(instance_index) instance: u32,
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) uv0: vec2<f32>,
 //    @location(3) uv1: vec2<f32>,
 //    @location(4) uv2: vec2<f32>,
 //    @location(5) uv3: vec2<f32>,
-    @location(6) model_0: vec4<f32>,
-    @location(7) model_1: vec4<f32>,
-    @location(8) model_2: vec4<f32>,
-    @location(9) model_3: vec4<f32>,
 };
 
 struct VertexOut {
@@ -27,6 +24,27 @@ struct CameraUniforms {
     far_plane: f32
 };
 
+const MAX_INSTANCES = 30;
+
+struct Instance {
+    bone_transform_index: i32,
+    transform: mat4x4<f32>,
+};
+
+struct MeshUniforms {
+    num_bones: u32,
+    instances: array<Instance, MAX_INSTANCES>
+};
+
+struct JointTransform {
+    transform: mat4x4<f32>,
+};
+
+struct JointStorage {
+    joints_size: u32,
+    joints: array<JointTransform>,
+};
+
 struct PointLight {
     position: vec3<f32>,
     radius: f32,
@@ -42,30 +60,31 @@ struct LightStorage {
 var<uniform> camera: CameraUniforms;
 
 @group(1) @binding(0)
-var<storage, read> lights: LightStorage;
+var<uniform> mesh: MeshUniforms;
+
+//@group(1) @binding(1)
+//var<storage, read> joints: JointStorage;
 
 @group(2) @binding(0)
+var<storage, read> lights: LightStorage;
+
+@group(3) @binding(0)
 var texture_diffuse: texture_2d<f32>;
 
-@group(2) @binding(1)
+@group(3) @binding(1)
 var sampler_diffuse: sampler;
 
 @vertex
 fn vs_main(vertex: VertexIn) -> VertexOut {
-    let model = mat4x4<f32>(
-        vertex.model_0,
-        vertex.model_1,
-        vertex.model_2,
-        vertex.model_3
-    );
+    let instance = mesh.instances[vertex.instance];
     var out: VertexOut;
-    out.world_position = (model * vec4<f32>(vertex.position, 1.0)).xyz;
+    out.world_position = (instance.transform * vec4<f32>(vertex.position, 1.0)).xyz;
     out.position =
         camera.projection *
         camera.view *
-        model *
+        instance.transform *
         vec4<f32>(vertex.position, 1.0);
-    out.normal = (model * vec4<f32>(vertex.normal, 0.0)).xyz;
+    out.normal = (instance.transform * vec4<f32>(vertex.normal, 0.0)).xyz;
     out.uv = vertex.uv0;
     return out;
 }

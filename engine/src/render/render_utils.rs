@@ -61,15 +61,6 @@ impl RenderUtils {
         texture_format.into()
     }
 
-    pub fn primitive_default(topology: wgpu::PrimitiveTopology) -> wgpu::PrimitiveState {
-        wgpu::PrimitiveState {
-            topology,
-            front_face: wgpu::FrontFace::Ccw,
-            cull_mode: Some(wgpu::Face::Back),
-            ..Default::default()
-        }
-    }
-
     pub fn depth_default() -> wgpu::DepthStencilState {
         wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth32Float,
@@ -92,7 +83,7 @@ impl RenderUtils {
             mesh.rebuild_mesh_data(device);
             mesh.dirty = false;
         }
-        mesh.rebuild_instance_data(device, queue);
+        mesh.rebuild_instance_data(queue);
     }
 
     pub fn bind_mesh_buffers<'a>(render_pass: &mut wgpu::RenderPass<'a>, mesh: &'a Mesh) {
@@ -101,7 +92,6 @@ impl RenderUtils {
             wgpu::IndexFormat::Uint32,
         );
         render_pass.set_vertex_buffer(0, mesh.vertex_buffer.as_ref().unwrap().slice(..));
-        render_pass.set_vertex_buffer(1, mesh.instance_buffer.get_wgpu_buffer().slice(..));
     }
 
     pub fn draw_mesh_instanced<'a>(

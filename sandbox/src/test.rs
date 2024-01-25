@@ -1,4 +1,5 @@
 use engine::component::{Component, ReflectComponent};
+use engine::core::Time;
 use engine::reflect::{Reflect, ReflectDefault};
 use engine::scene::Scene;
 use engine::serde::{Deserialize, Serialize};
@@ -14,7 +15,13 @@ struct ComponentTest {
 }
 
 impl Component for ComponentTest {
-    fn update(&mut self, _scene: &Scene) {
-        self.value = self.value + 1.0;
+    fn update(
+        &mut self,
+        _scene: &mut Scene,
+        _node: engine::indextree::NodeId,
+        _ui: &engine::egui::Ui,
+    ) {
+        println!("{}", Time::delta_time());
+        self.value = self.value + 1.0 * Time::delta_time();
     }
 }
