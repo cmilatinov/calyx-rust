@@ -1,3 +1,5 @@
+use egui_wgpu::wgpu;
+
 use crate::assets::material::Material;
 use crate::assets::mesh::Mesh;
 use crate::assets::texture::Texture2D;
@@ -17,9 +19,14 @@ pub(crate) struct AssetRenderState {
 
 #[allow(unused)]
 impl AssetRenderState {
-    pub fn lock(&self) -> LockedAssetRenderState {
+    pub fn lock(&self, device: &wgpu::Device) -> LockedAssetRenderState {
+        let meshes = self.meshes.lock_read();
         LockedAssetRenderState {
-            meshes: self.meshes.lock_read(),
+            mesh_instance_groups: meshes
+                .iter()
+                .map(|(id, m)| (*id, m.instance_bind_group(device)))
+                .collect(),
+            meshes,
             materials: self.materials.lock_read(),
             textures: self.textures.lock_read(),
             shaders: self.shaders.lock_read(),
@@ -41,6 +48,7 @@ impl AssetRenderState {
 
 pub(crate) struct LockedAssetRenderState<'a> {
     pub meshes: HashMap<usize, RwLockReadGuard<'a, Mesh>>,
+    pub mesh_instance_groups: HashMap<usize, wgpu::BindGroup>,
     pub materials: HashMap<usize, RwLockReadGuard<'a, Material>>,
     pub textures: HashMap<usize, RwLockReadGuard<'a, Texture2D>>,
     pub shaders: HashMap<usize, RwLockReadGuard<'a, Shader>>,
@@ -50,6 +58,9 @@ pub(crate) struct LockedAssetRenderState<'a> {
 impl LockedAssetRenderState<'_> {
     pub fn mesh(&self, id: usize) -> &RwLockReadGuard<Mesh> {
         self.meshes.get(&id).unwrap()
+    }
+    pub fn mesh_instance_group(&self, id: usize) -> &wgpu::BindGroup {
+        self.mesh_instance_groups.get(&id).unwrap()
     }
     pub fn material(&self, id: usize) -> &RwLockReadGuard<Material> {
         self.materials.get(&id).unwrap()

@@ -17,7 +17,7 @@ use crate::{
 #[serde(transparent)]
 #[repr(transparent)]
 pub struct EntityRef {
-    id: Uuid,
+    pub(crate) id: Uuid,
 }
 
 impl EntityRef {

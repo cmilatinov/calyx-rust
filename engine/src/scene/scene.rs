@@ -6,6 +6,7 @@ use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use egui::Ui;
 use glm::Mat4;
 use indextree::{Arena, Children, NodeId};
+use legion::world::{Entry, EntryRef};
 use legion::{Entity, EntityStore, IntoQuery, World};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
@@ -31,6 +32,7 @@ pub struct Scene {
     pub world: World,
     pub entity_hierarchy: HashSet<NodeId>,
     node_map: HashMap<Entity, NodeId>,
+    uuid_map: HashMap<Uuid, NodeId>,
     entity_arena: Arena<Entity>,
     transform_cache: RwLock<HashMap<NodeId, Transform>>,
     camera: Option<NodeId>,
@@ -91,6 +93,7 @@ impl From<SceneData> for Scene {
         let mut scene = Self::default();
         for (_, components) in value.components {
             let node = scene.new_entity(None);
+            let entity = scene.get_entity(node);
             for (component_id, data) in components {
                 if let Some(component) = ClassRegistry::get().component_by_uuid(component_id) {
                     if let Some(instance) = component.deserialize(data) {
@@ -99,6 +102,15 @@ impl From<SceneData> for Scene {
                         }
                     }
                 }
+            }
+            let mut id = None;
+            if let Some(entry) = scene.entry(entity) {
+                if let Ok(c_id) = entry.get_component::<ComponentID>() {
+                    id = Some(c_id.id);
+                }
+            }
+            if let Some(id) = id {
+                scene.uuid_map.insert(id, node);
             }
         }
         for (id, parent) in value.hierarchy {
@@ -197,14 +209,16 @@ impl Scene {
     }
 
     pub fn create_entity(&mut self, id: Option<ComponentID>, parent: Option<NodeId>) -> NodeId {
-        let id = if let Some(id_comp) = id {
+        let c_id = if let Some(id_comp) = id {
             id_comp
         } else {
             ComponentID::default()
         };
-        let entity = self.world.push((id, ComponentTransform::default()));
+        let id = c_id.id;
+        let entity = self.world.push((c_id, ComponentTransform::default()));
         let new_node = self.entity_arena.new_node(entity);
         self.node_map.insert(entity, new_node);
+        self.uuid_map.insert(id, new_node);
 
         // push into root otherwise push under parent specified
         match parent {
@@ -243,6 +257,15 @@ impl Scene {
                     }
                 }
             }
+            let mut id = None;
+            if let Some(entry) = self.entry(entity) {
+                if let Ok(c_id) = entry.get_component::<ComponentID>() {
+                    id = Some(c_id.id);
+                }
+            }
+            if let Some(id) = id {
+                self.uuid_map.insert(id, node);
+            }
         }
 
         for (id, parent) in prefab.data.hierarchy.iter() {
@@ -253,19 +276,19 @@ impl Scene {
             }
         }
 
-        for (id, _) in prefab.data.components.iter() {
-            if let Some(node) = self.get_node_by_uuid(*id) {
-                self.world
-                    .entry(self.get_entity(node))
-                    .unwrap()
-                    .get_component_mut::<ComponentID>()
-                    .unwrap()
-                    .id = Uuid::new_v4();
-            }
-        }
+        // for (id, _) in prefab.data.components.iter() {
+        //     if let Some(node) = self.get_node_by_uuid(*id) {
+        //         self.world
+        //             .entry(self.get_entity(node))
+        //             .unwrap()
+        //             .get_component_mut::<ComponentID>()
+        //             .unwrap()
+        //             .id = Uuid::new_v4();
+        //     }
+        // }
 
         if let Some(parent) = parent_opt {
-            if let Some(entity) = self.get_node_by_uuid(prefab.scene.get_entity_uuid(*root_node)) {
+            if let Some(entity) = self.get_node_by_uuid(prefab.scene.get_node_uuid(*root_node)) {
                 self.set_parent(entity, Some(parent));
             }
         }
@@ -348,22 +371,21 @@ impl Scene {
         })
     }
 
-    unsafe fn world_mut<'a, 'b>(&'a mut self) -> &'b mut World {
-        &mut *(&mut self.world as *mut World)
+    pub fn entry(&self, entity: Entity) -> Option<EntryRef> {
+        self.world.entry_ref(entity).ok()
+    }
+
+    pub fn entry_mut(&mut self, entity: Entity) -> Option<Entry> {
+        self.world.entry(entity)
     }
 
     pub fn update(&mut self, ui: &Ui) {
-        // for node_id in self.root_entities() {
-        //     self._update(ui, node_id.clone());
-        // }
-
-        for (_, component) in ClassRegistry::get().components() {
+        for (_, component) in ClassRegistry::get().components_update() {
             // No way around this, we want component's update method to take &mut self
-            // But there's no way to do that and provide an &mut Scene
-            // At worst, this is a race condition because we can guarantee that this reference
-            // Only lives until the end of this function
+            // but there's no way to do that and provide an &mut Scene
+            // At worst, this is a race condition because we can guarantee that
+            // this reference only lives until the end of this function
             let scene = unsafe { &mut *(self as *mut Self) };
-
             let entities = <Entity>::query()
                 .iter(&self.world)
                 .copied()
@@ -376,10 +398,6 @@ impl Scene {
                     }
                 }
             }
-            //
-            // query.iter()
-            // let instance = self.get_component_mut(entity, component);
-            // component.get_instance_mut(entry)
         }
     }
 
@@ -395,24 +413,20 @@ impl Scene {
             .unwrap_or_default()
     }
 
-    pub fn get_entity_uuid(&self, node_id: NodeId) -> Uuid {
+    pub fn get_node_uuid(&self, node: NodeId) -> Uuid {
         self.world
-            .entry_ref(self.get_entity(node_id))
+            .entry_ref(self.get_entity(node))
             .ok()
             .and_then(|e| e.get_component::<ComponentID>().ok().map(|id| id.id))
             .unwrap_or_default()
     }
 
     pub fn get_entity_by_uuid(&self, id: Uuid) -> Option<Entity> {
-        <(Entity, &ComponentID)>::query()
-            .iter(&self.world)
-            .find(|(_, cid)| cid.id == id)
-            .map(|(entity, _)| *entity)
+        self.get_node_by_uuid(id).map(|n| self.get_entity(n))
     }
 
     pub fn get_node_by_uuid(&self, id: Uuid) -> Option<NodeId> {
-        self.get_entity_by_uuid(id)
-            .map(|entity| self.get_node(entity))
+        self.uuid_map.get(&id).copied()
     }
 
     pub fn get_parent_entity(&self, node_id: NodeId) -> Option<Entity> {
@@ -438,6 +452,24 @@ impl Scene {
 
     pub fn get_children_count(&self, node_id: NodeId) -> usize {
         node_id.children(&self.entity_arena).count()
+    }
+
+    pub fn get_transform(&self, node: NodeId) -> Transform {
+        let entity = self.get_entity(node);
+        if let Ok(entry) = self.world.entry_ref(entity) {
+            if let Ok(c_transform) = entry.get_component::<ComponentTransform>() {
+                return c_transform.transform;
+            }
+        }
+        Transform::default()
+    }
+
+    pub fn set_transform(&mut self, node: NodeId, matrix: Mat4) {
+        if let Some(mut entry) = self.world.entry(self.get_entity(node)) {
+            if let Ok(tc) = entry.get_component_mut::<ComponentTransform>() {
+                tc.transform.set_local_matrix(&matrix);
+            }
+        }
     }
 
     pub fn set_world_transform(&mut self, node_id: NodeId, matrix: Mat4) {

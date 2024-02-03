@@ -1,12 +1,12 @@
 use std::any::TypeId;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::{Deref, DerefMut};
 
 use uuid::Uuid;
 
 use crate::component::{Component, ReflectComponent};
 use crate::reflect::type_registry::TypeRegistry;
-use crate::reflect::ReflectDefault;
+use crate::reflect::{ReflectDefault, TypeInfo};
 use crate::type_ids;
 use crate::utils::{singleton, Init, ReflectTypeUuidDynamic};
 
@@ -15,6 +15,7 @@ pub struct ClassRegistry {
     component_ids: HashMap<Uuid, TypeId>,
     component_uuids: HashMap<TypeId, Uuid>,
     components: HashMap<TypeId, Box<dyn Component>>,
+    components_update: HashSet<TypeId>,
 }
 
 impl Init for ClassRegistry {
@@ -28,6 +29,16 @@ singleton!(ClassRegistry);
 impl ClassRegistry {
     pub fn component(&self, id: TypeId) -> Option<&dyn Component> {
         self.components.get(&id).map(|b| b.deref())
+    }
+
+    pub fn components_update(&self) -> impl Iterator<Item = (&TypeId, &Box<(dyn Component)>)> {
+        self.components_update
+            .iter()
+            .filter_map(|id| if let Some(component) = self.components.get(id) {
+                Some((id, component))
+            } else {
+                None
+            })
     }
 
     pub fn component_by_uuid(&self, uuid: Uuid) -> Option<&dyn Component> {
@@ -48,6 +59,7 @@ impl ClassRegistry {
 
     pub fn refresh_class_lists(&mut self) {
         self.components.clear();
+        self.components_update.clear();
         let registry = TypeRegistry::get();
         for type_id in registry.all_of(type_ids!(
             ReflectDefault,
@@ -62,6 +74,12 @@ impl ClassRegistry {
             let instance = meta_default.default();
             let component = meta_component.get_boxed(instance).unwrap();
             let type_uuid = meta_type_uuid.get(component.as_reflect()).unwrap().uuid();
+            let type_info = registry.type_info_by_id(type_id).unwrap();
+            if let TypeInfo::Struct(struct_info) = type_info {
+                if let Some(_) = struct_info.attr("update") {
+                    self.components_update.insert(type_id);
+                }
+            }
             self.component_ids.insert(type_uuid, type_id);
             self.component_uuids.insert(type_id, type_uuid);
             self.components.insert(type_id, component);

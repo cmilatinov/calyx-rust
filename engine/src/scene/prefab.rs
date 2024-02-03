@@ -2,18 +2,19 @@ use crate::assets::animation::Animation;
 use crate::assets::error::AssetError;
 use crate::assets::mesh::Mesh;
 use crate::assets::{Asset, AssetRegistry, LoadedAsset};
-use crate::component::{ComponentID, ComponentMesh, ComponentTransform};
+use crate::component::{ComponentID, ComponentMesh, ComponentSkinnedMesh, ComponentTransform};
 use crate::core::Ref;
 use crate::math::Transform;
 use crate::scene::{Scene, SceneData};
 use crate::utils::TypeUuid;
 use crate::{self as engine, utils};
 use glm::Mat4;
+use russimp::property::{Property, PropertyStore};
 use russimp::scene::PostProcess;
+use russimp::sys::AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::borrow::Borrow;
-use std::collections::HashSet;
 use std::io::BufReader;
 use std::path::Path;
 use uuid::Uuid;
@@ -46,7 +47,7 @@ impl Asset for Prefab {
     where
         Self: Sized,
     {
-        &["cxprefab", "fbx"]
+        &["cxprefab", "fbx", "dae"]
     }
 
     fn from_file(path: &Path) -> Result<LoadedAsset<Self>, AssetError>
@@ -56,8 +57,14 @@ impl Asset for Prefab {
         let ext = path.extension().and_then(|ext| ext.to_str()).unwrap();
         let registry = AssetRegistry::get();
         let meta = registry.asset_meta_from_path(path).unwrap();
-        if ext == "fbx" {
-            let scene = russimp::scene::Scene::from_file(
+        if ext == "fbx" || ext == "dae" {
+            let props: PropertyStore = [(
+                AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS as &[u8],
+                Property::Integer(0),
+            )]
+            .into_iter()
+            .into();
+            let scene = russimp::scene::Scene::from_file_with_props(
                 path.to_str().unwrap(),
                 vec![
                     PostProcess::Triangulate,
@@ -66,10 +73,10 @@ impl Asset for Prefab {
                     PostProcess::FlipWindingOrder,
                     PostProcess::JoinIdenticalVertices,
                 ],
+                &props,
             )?;
 
             let mut meshes = Vec::new();
-            let mut bones = HashSet::new();
             for mesh in &scene.meshes {
                 let name = format!("{}/{}", meta.name, mesh.name);
                 let mesh_ref = registry
@@ -79,29 +86,28 @@ impl Asset for Prefab {
                     mesh_ref.clone(),
                     registry.asset_id_from_ref_t(&mesh_ref).unwrap(),
                 ));
-                bones.extend(mesh_ref.read().bones.keys().cloned());
-            }
-
-            let mut animations = Vec::new();
-            for anim in &scene.animations {
-                let name = format!("{}/{}", meta.name, anim.name);
-                let anim_ref = registry
-                    .create(name, Animation::from_russimp_animation(anim))
-                    .unwrap();
-                animations.push(registry.asset_id_from_ref_t(&anim_ref).unwrap());
             }
 
             let mut data: SceneData = Default::default();
             if let Some(root) = &scene.root {
-                Self::traverse(
-                    &meshes,
-                    &bones,
-                    &**root,
-                    true,
-                    None,
-                    Mat4::identity(),
-                    &mut data,
+                Self::traverse(&meshes, &**root, &**root, None, &mut data);
+            }
+
+            let mut animations = Vec::new();
+            for anim in &scene.animations {
+                let name = format!(
+                    "{}/{}",
+                    meta.name,
+                    if anim.name.is_empty() {
+                        "animation"
+                    } else {
+                        anim.name.as_str()
+                    }
                 );
+                let anim_ref = registry
+                    .create(name.clone(), Animation::from_russimp_animation(anim))
+                    .unwrap();
+                animations.push(registry.asset_id_from_ref_t(&anim_ref).unwrap());
             }
 
             Ok(LoadedAsset {
@@ -131,11 +137,9 @@ impl Asset for Prefab {
 impl Prefab {
     fn traverse(
         meshes: &Vec<(Ref<Mesh>, Uuid)>,
-        bones: &HashSet<String>,
+        root: &russimp::node::Node,
         node: &russimp::node::Node,
-        is_root: bool,
         mut parent: Option<Uuid>,
-        mut transform: Mat4,
         data: &mut SceneData,
     ) {
         let mut matrix: Mat4 = Default::default();
@@ -157,33 +161,39 @@ impl Prefab {
             node.transformation.c4,
             node.transformation.d4,
         ]);
-        if bones.contains(node.name.as_str()) || node.meshes.len() > 0 || is_root {
-            let id = utils::uuid_from_str(node.name.as_str());
-            if let Some(parent_id) = parent {
-                data.hierarchy.insert(id, parent_id);
-            }
-            parent = Some(id);
-            let entry = data.components.entry(id).or_default();
-            entry.insert(
-                ComponentID::type_uuid(),
-                json!({
-                    "id": id.to_string(),
-                    "name": node.name.clone()
-                }),
-            );
-            entry.insert(
-                ComponentTransform::type_uuid(),
-                json!({
-                    "transform": Transform::from(transform * matrix)
-                }),
-            );
-            if node.meshes.len() > 0 && node.meshes[0] < meshes.len() as u32 {
-                let (mesh_ref, mesh_id) = meshes[node.meshes[0] as usize].clone();
-                let material_id = AssetRegistry::get().asset_id("materials/default").unwrap();
-                let mut mesh = mesh_ref.write();
-                if let Some(bone_info) = mesh.bones.get_mut(node.name.as_str()) {
-                    bone_info.inverse_bind_transform = glm::inverse(&(transform * matrix));
-                }
+        let id = utils::uuid_from_str(node.name.as_str());
+        if let Some(parent_id) = parent {
+            data.hierarchy.insert(id, parent_id);
+        }
+        parent = Some(id);
+        let entry = data.components.entry(id).or_default();
+        entry.insert(
+            ComponentID::type_uuid(),
+            json!({
+                "id": id.to_string(),
+                "name": node.name.clone()
+            }),
+        );
+        entry.insert(
+            ComponentTransform::type_uuid(),
+            json!({
+                "transform": Transform::from(matrix)
+            }),
+        );
+        if node.meshes.len() > 0 && node.meshes[0] < meshes.len() as u32 {
+            let (mesh_ref, mesh_id) = meshes[node.meshes[0] as usize].clone();
+            let material_id = AssetRegistry::get().asset_id("materials/default").unwrap();
+            let mesh = mesh_ref.read();
+            if mesh.bones.len() > 0 {
+                entry.insert(
+                    ComponentSkinnedMesh::type_uuid(),
+                    json!({
+                        "material": material_id.to_string(),
+                        "mesh": mesh_id.to_string(),
+                        "root_bone": utils::uuid_from_str(root.name.as_str())
+                    }),
+                );
+            } else {
                 entry.insert(
                     ComponentMesh::type_uuid(),
                     json!({
@@ -192,20 +202,9 @@ impl Prefab {
                     }),
                 );
             }
-            transform = Mat4::identity();
-        } else {
-            transform = transform * matrix;
         }
         for child in &*node.children.borrow() {
-            Self::traverse(
-                meshes,
-                bones,
-                &*child.borrow(),
-                false,
-                parent,
-                transform,
-                data,
-            );
+            Self::traverse(meshes, root, &*child.borrow(), parent, data);
         }
     }
 }

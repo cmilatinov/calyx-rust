@@ -6,6 +6,8 @@ struct VertexIn {
 //    @location(3) uv1: vec2<f32>,
 //    @location(4) uv2: vec2<f32>,
 //    @location(5) uv3: vec2<f32>,
+    @location(6) bone_indices: vec4<i32>,
+    @location(7) bone_weights: vec4<f32>
 };
 
 struct VertexOut {
@@ -24,7 +26,8 @@ struct CameraUniforms {
     far_plane: f32
 };
 
-const MAX_INSTANCES = 30;
+const MAX_INSTANCES = 30u;
+const MAX_BONE_INFLUENCE = 4u;
 
 struct Instance {
     bone_transform_index: i32,
@@ -36,13 +39,13 @@ struct MeshUniforms {
     instances: array<Instance, MAX_INSTANCES>
 };
 
-struct JointTransform {
+struct BoneTransform {
     transform: mat4x4<f32>,
 };
 
-struct JointStorage {
-    joints_size: u32,
-    joints: array<JointTransform>,
+struct BoneStorage {
+    bones_size: u32,
+    bones: array<BoneTransform>,
 };
 
 struct PointLight {
@@ -62,8 +65,8 @@ var<uniform> camera: CameraUniforms;
 @group(1) @binding(0)
 var<uniform> mesh: MeshUniforms;
 
-//@group(1) @binding(1)
-//var<storage, read> joints: JointStorage;
+@group(1) @binding(1)
+var<storage, read> bones: BoneStorage;
 
 @group(2) @binding(0)
 var<storage, read> lights: LightStorage;
@@ -78,13 +81,35 @@ var sampler_diffuse: sampler;
 fn vs_main(vertex: VertexIn) -> VertexOut {
     let instance = mesh.instances[vertex.instance];
     var out: VertexOut;
-    out.world_position = (instance.transform * vec4<f32>(vertex.position, 1.0)).xyz;
+    if instance.bone_transform_index >= 0 {
+        var total_position: vec4<f32>;
+        var total_normal: vec4<f32>;
+        for (var i = 0u; i < MAX_BONE_INFLUENCE; i++) {
+            let bone_index = vertex.bone_indices[i];
+            let bone_weight = vertex.bone_weights[i];
+            if (bone_index < 0) {
+                continue;
+            }
+            let transform_index = u32(instance.bone_transform_index) * mesh.num_bones + u32(bone_index);
+            if (transform_index >= bones.bones_size) {
+                continue;
+            }
+            let bone_transform = bones.bones[transform_index].transform;
+            let local_position = bone_transform * vec4<f32>(vertex.position, 1.0);
+            total_position += local_position * bone_weight;
+            let local_normal = bone_transform * vec4<f32>(vertex.normal, 0.0);
+            total_normal += local_normal * bone_weight;
+        }
+        out.world_position = (instance.transform * total_position).xyz;
+        out.normal = (instance.transform * total_normal).xyz;
+    } else {
+        out.world_position = (instance.transform * vec4<f32>(vertex.position, 1.0)).xyz;
+        out.normal = (instance.transform * vec4<f32>(vertex.normal, 0.0)).xyz;
+    }
     out.position =
         camera.projection *
         camera.view *
-        instance.transform *
-        vec4<f32>(vertex.position, 1.0);
-    out.normal = (instance.transform * vec4<f32>(vertex.normal, 0.0)).xyz;
+        vec4<f32>(out.world_position, 1.0);
     out.uv = vertex.uv0;
     return out;
 }

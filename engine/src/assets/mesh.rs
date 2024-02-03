@@ -27,16 +27,20 @@ pub struct Vertex {
     uv1: [f32; 2],
     uv2: [f32; 2],
     uv3: [f32; 2],
+    bone_indices: [i32; 4],
+    bone_weights: [f32; 4],
 }
 
 impl Vertex {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
+    const ATTRIBUTES: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![
         0 => Float32x3,
         1 => Float32x3,
         2 => Float32x2,
         3 => Float32x2,
         4 => Float32x2,
-        5 => Float32x2
+        5 => Float32x2,
+        6 => Sint32x4,
+        7 => Float32x4
     ];
 }
 
@@ -62,10 +66,11 @@ pub struct Instance {
 
 #[repr(C)]
 #[derive(Default, Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct Bone {
+pub struct BoneTransform {
     pub transform: [[f32; 4]; 4],
 }
 
+#[derive(Debug)]
 pub struct BoneInfo {
     pub index: usize,
     pub inverse_bind_transform: Mat4,
@@ -84,12 +89,13 @@ pub struct Mesh {
 
     pub(crate) dirty: bool,
     pub(crate) instances: Vec<Instance>,
+    pub(crate) bone_transforms: Vec<BoneTransform>,
     pub(crate) index_buffer: Option<wgpu::Buffer>,
     pub(crate) vertex_buffer: Option<wgpu::Buffer>,
     pub(crate) instance_buffer: wgpu::Buffer,
     pub(crate) bone_buffer: ResizableBuffer,
 
-    pub(crate) instance_bind_group: wgpu::BindGroup,
+    pub(crate) instance_bind_group_layout: wgpu::BindGroupLayout,
 }
 
 impl Mesh {
@@ -134,27 +140,18 @@ impl Default for Mesh {
                         },
                         count: None,
                     },
-                    // wgpu::BindGroupLayoutEntry {
-                    //     binding: 1,
-                    //     visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    //     ty: wgpu::BindingType::Buffer {
-                    //         ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    //         has_dynamic_offset: false,
-                    //         min_binding_size: None,
-                    //     },
-                    //     count: None,
-                    // },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             });
-
-        let instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("instance_bind_group"),
-            layout: &instance_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: instance_buffer.as_entire_binding(),
-            }],
-        });
 
         Self {
             indices: Default::default(),
@@ -171,13 +168,14 @@ impl Default for Mesh {
             bones: Default::default(),
             dirty: false,
             instances: Default::default(),
+            bone_transforms: Default::default(),
             index_buffer: None,
             vertex_buffer: None,
             instance_buffer,
             bone_buffer: ResizableBuffer::new(
                 wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
             ),
-            instance_bind_group,
+            instance_bind_group_layout,
         }
     }
 }
@@ -237,11 +235,30 @@ impl Mesh {
         let mut bone_weights = vec![vec4(0.0, 0.0, 0.0, 0.0); mesh.vertices.len()];
 
         for (bone_index, bone) in mesh.bones.iter().enumerate() {
+            let mut inverse_bind_transform = Mat4::identity();
+            inverse_bind_transform.copy_from_slice(&[
+                bone.offset_matrix.a1,
+                bone.offset_matrix.b1,
+                bone.offset_matrix.c1,
+                bone.offset_matrix.d1,
+                bone.offset_matrix.a2,
+                bone.offset_matrix.b2,
+                bone.offset_matrix.c2,
+                bone.offset_matrix.d2,
+                bone.offset_matrix.a3,
+                bone.offset_matrix.b3,
+                bone.offset_matrix.c3,
+                bone.offset_matrix.d3,
+                bone.offset_matrix.a4,
+                bone.offset_matrix.b4,
+                bone.offset_matrix.c4,
+                bone.offset_matrix.d4,
+            ]);
             bones.insert(
                 bone.name.clone(),
                 BoneInfo {
                     index: bone_index,
-                    inverse_bind_transform: Mat4::identity(),
+                    inverse_bind_transform,
                 },
             );
             for weight in &bone.weights {
@@ -249,10 +266,28 @@ impl Mesh {
                 if let Some((index, bone_id)) = vertex_bone_ids
                     .iter_mut()
                     .enumerate()
-                    .find(|(_, bone_id)| **bone_id != -1)
+                    .find(|(_, bone_id)| **bone_id == -1)
                 {
                     *bone_id = bone_index as i32;
                     bone_weights[weight.vertex_id as usize][index] = weight.weight;
+                }
+            }
+            for (index, weight) in bone_weights.iter_mut().enumerate() {
+                let vertex_bone_ids = bone_indices[index];
+                let sum = vertex_bone_ids.as_slice().iter().enumerate().fold(
+                    0.0,
+                    |sum, (idx, bone_index)| {
+                        sum + if *bone_index >= 0 {
+                            weight.as_slice()[idx]
+                        } else {
+                            0.0
+                        }
+                    },
+                );
+                if sum > 0.00001 {
+                    for w in weight.as_mut_slice() {
+                        *w = *w / sum;
+                    }
                 }
             }
         }
@@ -300,6 +335,8 @@ impl Mesh {
             vertex.uv1 = self.uvs[1][i].into();
             vertex.uv2 = self.uvs[2][i].into();
             vertex.uv3 = self.uvs[3][i].into();
+            vertex.bone_indices = self.bone_indices[i].into();
+            vertex.bone_weights = self.bone_weights[i].into();
         }
         self.vertex_buffer = Some(device.create_buffer_init(&wgpu_buffer_init_desc(
             wgpu::BufferUsages::VERTEX,
@@ -313,7 +350,7 @@ impl Mesh {
             instances[i] = *instance;
         }
         let uniforms = MeshUniforms {
-            num_bones: 0,
+            num_bones: self.bones.len() as u32,
             _padding: Default::default(),
             instances,
         };
@@ -324,9 +361,17 @@ impl Mesh {
         );
     }
 
-    // fn rebuild_bone_buffer(&self, device: &wgpu::Device, queue: &wgpu::Queue) {
-    //     self.bone_buffer.resize(device, self.bones.len())
-    // }
+    fn rebuild_bone_buffer(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        self.bone_buffer.resize(
+            device,
+            16 + (self.bone_transforms.len() * std::mem::size_of::<BoneTransform>())
+                .max(std::mem::size_of::<BoneTransform>()) as u64,
+        );
+        self.bone_buffer
+            .write_buffer(device, queue, &[self.bone_transforms.len() as u32], None);
+        self.bone_buffer
+            .write_buffer(device, queue, &self.bone_transforms, Some(16));
+    }
 
     fn normalize_mesh_data(&mut self) {
         let vertex_count = self.vertices.len();
@@ -334,6 +379,9 @@ impl Mesh {
         for i in 0..CX_MESH_NUM_UV_CHANNELS {
             self.uvs[i].resize(vertex_count, Vec2::zeros());
         }
+        self.bone_indices
+            .resize(vertex_count, IVec4::new(-1, -1, -1, -1));
+        self.bone_weights.resize(vertex_count, Vec4::zeros());
     }
 
     pub(crate) fn rebuild_mesh_data(&mut self, device: &wgpu::Device) {
@@ -342,8 +390,26 @@ impl Mesh {
         self.rebuild_vertex_buffer(device);
     }
 
-    pub(crate) fn rebuild_instance_data(&self, queue: &wgpu::Queue) {
+    pub(crate) fn rebuild_instance_data(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         self.rebuild_instance_buffer(queue);
+        self.rebuild_bone_buffer(device, queue);
+    }
+
+    pub(crate) fn instance_bind_group(&self, device: &wgpu::Device) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("instance_bind_group"),
+            layout: &self.instance_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.instance_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.bone_buffer.get_wgpu_buffer().as_entire_binding(),
+                },
+            ],
+        })
     }
 
     pub fn mark_dirty(&mut self) {

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::default::Default;
 use std::ops::Range;
 
@@ -8,10 +8,11 @@ use egui_wgpu::{wgpu, RenderState};
 use glm::{Mat4, Vec3};
 use legion::{Entity, IntoQuery};
 
-use crate::assets::mesh::Instance;
+use crate::assets::material::Material;
+use crate::assets::mesh::{Instance, Mesh};
 use crate::assets::texture::Texture2D;
 use crate::assets::{AssetRegistry, Assets};
-use crate::component::{ComponentMesh, ComponentPointLight};
+use crate::component::{ComponentMesh, ComponentPointLight, ComponentSkinnedMesh};
 use crate::core::Ref;
 use crate::math::Transform;
 use crate::render::asset_render_state::AssetRenderState;
@@ -66,6 +67,14 @@ pub struct SceneRendererOptions {
     pub samples: u32,
 }
 
+pub struct DrawListElement {
+    shader_id: usize,
+    mat_id: usize,
+    mesh_id: usize,
+    bone_transform_index: i32,
+    transform: [[f32; 4]; 4],
+}
+
 #[allow(dead_code)]
 pub struct SceneRenderer {
     options: SceneRendererOptions,
@@ -79,7 +88,7 @@ pub struct SceneRenderer {
     light_storage_buffer: ResizableBuffer,
     gizmo_renderer: GizmoRenderer,
     assets: AssetRenderState,
-    draw_list: Vec<(usize, usize, usize, [[f32; 4]; 4])>,
+    draw_list: Vec<DrawListElement>,
 }
 
 impl SceneRenderer {
@@ -205,7 +214,7 @@ impl SceneRenderer {
         let draw_list = self.build_draw_list();
         self.build_mesh_data(render_state);
         self.build_light_data(render_state, scene);
-        let assets = self.assets.lock();
+        let assets = self.assets.lock(device);
         let material_bind_groups = self.build_material_bind_groups(device, &assets);
         let light_storage_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("light_storage_bind_group"),
@@ -240,7 +249,6 @@ impl SceneRenderer {
                     if let Some(pipeline) = shader.get_pipeline(&options) {
                         render_pass.set_pipeline(pipeline);
                         render_pass.set_bind_group(0, &self.scene_bind_group, &[]);
-                        render_pass.set_bind_group(1, &mesh.instance_bind_group, &[]);
                         render_pass.set_bind_group(2, &light_storage_bind_group, &[]);
                     }
                 }
@@ -250,6 +258,9 @@ impl SceneRenderer {
                             render_pass.set_bind_group(*index, group, &[]);
                         }
                     }
+                }
+                if mesh_id != last.2 {
+                    render_pass.set_bind_group(1, assets.mesh_instance_group(mesh_id), &[]);
                 }
                 RenderUtils::bind_mesh_buffers(&mut render_pass, &mesh);
                 RenderUtils::draw_mesh_instanced(&mut render_pass, mesh, instances);
@@ -330,7 +341,14 @@ impl SceneRenderer {
                 *entry += instance_count;
             }
         };
-        for (shader_id, mat_id, mesh_id, matrix) in self.draw_list.drain(0..) {
+        for DrawListElement {
+            shader_id,
+            mat_id,
+            mesh_id,
+            bone_transform_index,
+            transform,
+        } in self.draw_list.drain(0..)
+        {
             if (shader_id, mat_id, mesh_id) != last {
                 mesh = Some(self.assets.mesh(mesh_id).write());
                 insert_instance_list(last, instance_count);
@@ -338,9 +356,9 @@ impl SceneRenderer {
             }
             if let Some(ref mut mesh) = &mut mesh {
                 mesh.instances.push(Instance {
-                    bone_transform_index: -1,
+                    bone_transform_index,
                     _padding: Default::default(),
-                    transform: matrix.into(),
+                    transform,
                 });
                 instance_count += 1;
             }
@@ -348,6 +366,35 @@ impl SceneRenderer {
         }
         insert_instance_list(last, instance_count);
         draw_list
+    }
+
+    fn insert_draw_list_entry(
+        &mut self,
+        mesh_ref: &Ref<Mesh>,
+        mat_ref: &Ref<Material>,
+        bone_transform_index: Option<i32>,
+        transform: [[f32; 4]; 4],
+    ) {
+        let shader_ref = mat_ref.read().shader.clone();
+        self.draw_list.push(DrawListElement {
+            shader_id: shader_ref.id(),
+            mat_id: mat_ref.id(),
+            mesh_id: mesh_ref.id(),
+            bone_transform_index: bone_transform_index.unwrap_or(-1),
+            transform,
+        });
+        self.assets
+            .meshes
+            .entry(mesh_ref.id())
+            .or_insert(mesh_ref.clone());
+        self.assets
+            .materials
+            .entry(mat_ref.id())
+            .or_insert(mat_ref.clone());
+        self.assets
+            .shaders
+            .entry(shader_ref.id())
+            .or_insert(shader_ref);
     }
 
     fn build_asset_data(
@@ -362,26 +409,37 @@ impl SceneRenderer {
         for (entity, c_mesh) in query.iter(world) {
             if let Some(mesh_ref) = c_mesh.mesh.as_ref() {
                 if let Some(mat_ref) = c_mesh.material.as_ref() {
-                    let shader_ref = mat_ref.read().shader.clone();
                     let node = scene.get_node(*entity);
-                    self.draw_list.push((
-                        shader_ref.id(),
-                        mat_ref.id(),
-                        mesh_ref.id(),
-                        scene.get_world_transform(node).matrix.into(),
-                    ));
-                    self.assets
-                        .meshes
-                        .entry(mesh_ref.id())
-                        .or_insert(mesh_ref.clone());
-                    self.assets
-                        .materials
-                        .entry(mat_ref.id())
-                        .or_insert(mat_ref.clone());
-                    self.assets
-                        .shaders
-                        .entry(shader_ref.id())
-                        .or_insert(shader_ref);
+                    let transform = scene.get_world_transform(node);
+                    self.insert_draw_list_entry(mesh_ref, mat_ref, None, transform.matrix.into());
+                }
+            }
+        }
+        let mut skinned_meshes: HashSet<usize> = Default::default();
+        let mut query = <(Entity, &ComponentSkinnedMesh)>::query();
+        for (entity, c_skinned_mesh) in query.iter(world) {
+            if let Some(mesh_ref) = c_skinned_mesh.mesh.as_ref() {
+                if let Some(mat_ref) = c_skinned_mesh.material.as_ref() {
+                    let mesh_id = mesh_ref.id();
+                    let node = scene.get_node(*entity);
+                    let transform = scene.get_world_transform(node);
+                    let bone_transform_index;
+                    {
+                        let mut mesh = mesh_ref.write();
+                        if !skinned_meshes.contains(&mesh_id) {
+                            mesh.bone_transforms.clear();
+                        }
+                        skinned_meshes.insert(mesh_id);
+                        bone_transform_index = mesh.bone_transforms.len() / mesh.bones.len();
+                        mesh.bone_transforms
+                            .extend(c_skinned_mesh.bone_transforms.iter().copied());
+                    }
+                    self.insert_draw_list_entry(
+                        mesh_ref,
+                        mat_ref,
+                        Some(bone_transform_index as i32),
+                        transform.matrix.into(),
+                    );
                 }
             }
         }
@@ -395,7 +453,14 @@ impl SceneRenderer {
             material.load_buffers(render_state);
             material.collect_textures(&mut self.assets.textures);
         }
-        self.draw_list.sort_by_key(|(s, mat, m, _)| (*s, *mat, *m));
+        self.draw_list.sort_by_key(
+            |DrawListElement {
+                 shader_id,
+                 mat_id,
+                 mesh_id,
+                 ..
+             }| (*shader_id, *mat_id, *mesh_id),
+        );
     }
 
     fn build_material_bind_groups(

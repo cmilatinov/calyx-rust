@@ -9,27 +9,28 @@ use crate::utils::TypeUuid;
 use super::error::AssetError;
 use super::Asset;
 
-struct PositionKeyFrame {
-    position: Vec3,
-    time: f64,
+pub struct VectorKeyFrame {
+    pub value: Vec3,
+    pub time: f64,
 }
 
-struct RotationKeyFrame {
-    rotation: Quat,
-    time: f64,
+pub struct QuatKeyFrame {
+    pub value: Quat,
+    pub time: f64,
 }
 
-struct AnimationKeyFrames {
-    positions: Vec<PositionKeyFrame>,
-    rotations: Vec<RotationKeyFrame>,
+pub struct AnimationKeyFrames {
+    pub positions: Vec<VectorKeyFrame>,
+    pub rotations: Vec<QuatKeyFrame>,
+    pub scaling: Vec<VectorKeyFrame>,
 }
 
 #[derive(Default, TypeUuid)]
 #[uuid = "627dee5d-c2d6-4e3e-9b9e-80e3e601848d"]
 pub struct Animation {
-    node_keyframes: HashMap<String, AnimationKeyFrames>,
-    duration: f64,
-    ticks_per_second: f64,
+    pub node_keyframes: HashMap<String, AnimationKeyFrames>,
+    pub duration: f64,
+    pub ticks_per_second: f64,
 }
 
 impl Asset for Animation {
@@ -56,17 +57,25 @@ impl Animation {
                         positions: channel
                             .position_keys
                             .iter()
-                            .map(|p| PositionKeyFrame {
-                                position: Vec3::new(p.value.x, p.value.y, p.value.z),
+                            .map(|p| VectorKeyFrame {
+                                value: Vec3::new(p.value.x, p.value.y, p.value.z),
                                 time: p.time,
                             })
                             .collect(),
                         rotations: channel
                             .rotation_keys
                             .iter()
-                            .map(|r| RotationKeyFrame {
-                                rotation: Quat::new(r.value.x, r.value.y, r.value.z, r.value.w),
+                            .map(|r| QuatKeyFrame {
+                                value: Quat::new(r.value.w, r.value.x, r.value.y, r.value.z),
                                 time: r.time,
+                            })
+                            .collect(),
+                        scaling: channel
+                            .scaling_keys
+                            .iter()
+                            .map(|s| VectorKeyFrame {
+                                value: Vec3::new(s.value.x, s.value.y, s.value.z),
+                                time: s.time,
                             })
                             .collect(),
                     },

@@ -324,6 +324,23 @@ impl EditorApp {
                         SceneManager::get_mut().start_simulation();
                     }
                 }
+
+                {
+                    let png = include_image!("../../resources/icons/execute.png");
+                    let image = egui::Image::new(png)
+                        .fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
+                    if ui
+                        .add(
+                            Button::image(image)
+                                .rounding(Rounding::ZERO)
+                                .sense(Sense::click()),
+                        )
+                        .clicked()
+                    {
+                        SceneManager::get_mut().get_scene_mut().update(ui);
+                    }
+                }
+
                 {
                     let png = include_image!("../../resources/icons/stop.png");
                     let image = egui::Image::new(png)

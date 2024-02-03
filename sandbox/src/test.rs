@@ -21,7 +21,6 @@ impl Component for ComponentTest {
         _node: engine::indextree::NodeId,
         _ui: &engine::egui::Ui,
     ) {
-        println!("{}", Time::delta_time());
         self.value = self.value + 1.0 * Time::delta_time();
     }
 }

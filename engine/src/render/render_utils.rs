@@ -83,7 +83,7 @@ impl RenderUtils {
             mesh.rebuild_mesh_data(device);
             mesh.dirty = false;
         }
-        mesh.rebuild_instance_data(queue);
+        mesh.rebuild_instance_data(device, queue);
     }
 
     pub fn bind_mesh_buffers<'a>(render_pass: &mut wgpu::RenderPass<'a>, mesh: &'a Mesh) {
