@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::ops::DerefMut;
@@ -9,7 +9,6 @@ use std::thread;
 use std::thread::JoinHandle;
 
 use glob::glob;
-use notify::event::{CreateKind, ModifyKind, RemoveKind, RenameMode};
 use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use path_absolutize::Absolutize;
 use relative_path::{PathExt, RelativePathBuf};
@@ -30,8 +29,13 @@ use crate::scene::Prefab;
 use crate::utils;
 use crate::utils::{singleton, Init, TypeUuid};
 
+use super::LoadedAsset;
+
 type AssetConstructor =
     Box<dyn Fn(&Path) -> Result<LoadedAssetRef<dyn Asset>, AssetError> + Send + Sync>;
+type AssetReload = Box<
+    dyn Fn(&Ref<dyn Asset>, &Path) -> Result<LoadedAssetRef<dyn Asset>, AssetError> + Send + Sync,
+>;
 type AssetCache = HashMap<Uuid, Ref<dyn Asset>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,8 +51,6 @@ pub struct AssetMeta {
     pub type_uuid: Option<Uuid>,
     #[serde(skip_serializing, skip_deserializing)]
     pub path: Option<PathBuf>,
-    #[serde(skip_serializing, skip_deserializing)]
-    dirty: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -62,6 +64,12 @@ struct AssetData {
     meta: HashMap<Uuid, AssetMeta>,
     names: HashMap<RelativePathBuf, Uuid>,
     extensions: HashMap<String, Uuid>,
+    dirty: HashSet<Uuid>,
+}
+
+struct AssetConstructors {
+    create: AssetConstructor,
+    reload: AssetReload,
 }
 
 #[derive(Default)]
@@ -69,7 +77,7 @@ pub struct AssetRegistry {
     asset_paths: Vec<PathBuf>,
     asset_cache: RwLock<AssetCache>,
     asset_data: RwLock<AssetData>,
-    asset_constructors: RwLock<HashMap<Uuid, AssetConstructor>>,
+    asset_constructors: RwLock<HashMap<Uuid, AssetConstructors>>,
     watcher_thread: Option<JoinHandle<()>>,
 }
 
@@ -133,7 +141,7 @@ impl AssetRegistry {
         let path = meta.path.as_ref().ok_or(AssetError::NotFound)?;
         let ctors = self.asset_constructors();
         let ctor = ctors.get(type_uuid).ok_or(AssetError::NotFound)?;
-        let LoadedAssetRef { asset, sub_assets } = ctor(path.as_path())?;
+        let LoadedAssetRef { asset, sub_assets } = (ctor.create)(path.as_path())?;
 
         // Load from file
         self.load_sub_asset_meta(id, sub_assets);
@@ -173,7 +181,6 @@ impl AssetRegistry {
                 parent: None,
                 children: Default::default(),
                 path: None,
-                dirty: false,
             },
         );
         self.asset_cache_mut().insert(id, asset.as_asset());
@@ -188,13 +195,33 @@ impl AssetRegistry {
         }
         self.asset_constructors_mut().insert(
             type_uuid,
-            Box::new(|path| {
-                let LoadedAssetRef { asset, sub_assets } = A::from_file(path)?.into();
-                Ok(LoadedAssetRef {
-                    asset: asset.as_asset(),
-                    sub_assets,
-                })
-            }),
+            AssetConstructors {
+                create: Box::new(|path| {
+                    let LoadedAssetRef { asset, sub_assets } = A::from_file(path)?.into();
+                    Ok(LoadedAssetRef {
+                        asset: asset.as_asset(),
+                        sub_assets,
+                    })
+                }),
+                reload: Box::new(|asset_ref, path| {
+                    if let Some(asset_ref) = asset_ref.try_downcast::<A>() {
+                        let LoadedAsset {
+                            asset: loaded_asset,
+                            sub_assets,
+                        } = A::from_file(path)?;
+                        {
+                            let mut asset = asset_ref.write();
+                            *asset = loaded_asset;
+                        }
+                        Ok(LoadedAssetRef {
+                            asset: asset_ref.as_asset(),
+                            sub_assets,
+                        })
+                    } else {
+                        Err(AssetError::LoadError)
+                    }
+                }),
+            },
         );
     }
 
@@ -215,6 +242,10 @@ impl AssetRegistry {
         self.load_sub_asset_meta(id, sub_assets);
         Ok(asset)
     }
+
+    fn mark_asset_dirty(&self, id: Uuid) {
+        self.asset_data_mut().dirty.insert(id);
+    }
 }
 
 impl AssetRegistry {
@@ -228,36 +259,56 @@ impl AssetRegistry {
 
     pub fn set_root_path(&mut self, path: impl Into<PathBuf>) {
         let path = path.into();
-        self.asset_paths = vec![path.clone(), "assets".into()];
-
+        let mut assets_path = std::env::current_dir().unwrap();
+        assets_path.push("assets");
+        self.asset_paths = vec![path.clone(), assets_path];
+        let paths = self.asset_paths.clone();
         let watcher_thread = thread::spawn(move || {
             let (tx, rx) = std::sync::mpsc::channel();
             let mut watcher = RecommendedWatcher::new(tx, Config::default()).unwrap();
-            watcher
-                .watch(path.as_path(), RecursiveMode::Recursive)
-                .unwrap();
+            for path in paths {
+                watcher
+                    .watch(path.as_path(), RecursiveMode::Recursive)
+                    .unwrap();
+            }
             for event in rx.into_iter().flatten() {
+                let paths_iter = event
+                    .paths
+                    .iter()
+                    .filter(|f| {
+                        if let EventKind::Remove(_) = event.kind {
+                            true
+                        } else {
+                            f.is_file()
+                        }
+                    })
+                    .filter_map(|f| {
+                        f.extension()
+                            .and_then(|ext| ext.to_str())
+                            .map(|ext| (ext, f))
+                    })
+                    .filter_map(|(ext, f)| if ext != "meta" { Some(f) } else { None });
                 match event.kind {
-                    EventKind::Create(CreateKind::File) => {
-                        for file in &event.paths {
+                    EventKind::Create(_) => {
+                        for file in paths_iter {
                             AssetRegistry::get_mut().build_asset_meta(
                                 path.as_path(),
                                 file.as_path(),
                                 file.with_extension("meta").as_path(),
-                            )
+                            );
                         }
                     }
-                    EventKind::Modify(ModifyKind::Data(_)) => {}
-                    EventKind::Modify(ModifyKind::Name(RenameMode::Both)) => {
-                        println!("{:?}", event.paths);
-                    }
-                    EventKind::Remove(RemoveKind::File) => {
-                        for file in &event.paths {
-                            if let Some(ext) = file.extension().and_then(|ext| ext.to_str()) {
-                                if ext != "meta" {
-                                    let _ = std::fs::remove_file(file.with_extension("meta"));
-                                }
+                    EventKind::Modify(_) => {
+                        let registry = AssetRegistry::get();
+                        for file in paths_iter {
+                            if let Some(id) = registry.asset_id_from_path(file) {
+                                registry.mark_asset_dirty(id);
                             }
+                        }
+                    }
+                    EventKind::Remove(_) => {
+                        for file in paths_iter {
+                            std::fs::remove_file(file.with_extension("meta")).unwrap();
                         }
                     }
                     _ => {}
@@ -279,11 +330,11 @@ impl AssetRegistry {
         self.asset_cache.write().unwrap()
     }
 
-    fn asset_constructors(&self) -> RwLockReadGuard<HashMap<Uuid, AssetConstructor>> {
+    fn asset_constructors(&self) -> RwLockReadGuard<HashMap<Uuid, AssetConstructors>> {
         self.asset_constructors.read().unwrap()
     }
 
-    fn asset_constructors_mut(&self) -> RwLockWriteGuard<HashMap<Uuid, AssetConstructor>> {
+    fn asset_constructors_mut(&self) -> RwLockWriteGuard<HashMap<Uuid, AssetConstructors>> {
         self.asset_constructors.write().unwrap()
     }
 
@@ -299,10 +350,18 @@ impl AssetRegistry {
     }
 
     pub fn asset_id_from_path(&self, path: &Path) -> Option<Uuid> {
-        path.relative_to(self.root_path()).ok().and_then(|p| {
-            let p = p.with_extension("");
-            self.asset_data().names.get(&p).copied()
-        })
+        for root_path in &self.asset_paths {
+            if common_path::common_path(root_path, path)
+                .map(|prefix| prefix == *root_path)
+                .unwrap_or(false)
+            {
+                return path.relative_to(root_path).ok().and_then(|p| {
+                    let p = p.with_extension("");
+                    self.asset_data().names.get(&p).copied()
+                });
+            }
+        }
+        None
     }
 
     pub fn asset_meta(&self, name: &str) -> Option<AssetMeta> {
@@ -392,7 +451,6 @@ impl AssetRegistry {
                 parent: None,
                 children: Default::default(),
                 path: None,
-                dirty: false,
             };
             let file = File::create(meta_path).unwrap();
             let writer = BufWriter::new(file);
@@ -430,6 +488,24 @@ impl AssetRegistry {
                     .contains(search_term.as_str())
             {
                 list.push((*meta).clone());
+            }
+        }
+    }
+
+    pub fn reload_assets(&self) {
+        let cache = self.asset_cache();
+        let reload_ids = self.asset_data_mut().dirty.drain().collect::<Vec<_>>();
+        for id in reload_ids {
+            if let Some(path) = self.asset_meta_from_id(id).and_then(|meta| meta.path) {
+                if let Some(asset_ref) = cache.get(&id) {
+                    if let Some(meta) = self.asset_meta_from_id(id) {
+                        let type_uuid = meta.type_uuid.unwrap_or_default();
+                        let ctors = self.asset_constructors();
+                        if let Some(ctor) = ctors.get(&type_uuid) {
+                            let _ = (ctor.reload)(asset_ref, path.as_path());
+                        }
+                    }
+                }
             }
         }
     }

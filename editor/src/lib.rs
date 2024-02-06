@@ -203,6 +203,8 @@ impl eframe::App for EditorApp {
             Time::reset_timer("fps");
         }
 
+        AssetRegistry::get().reload_assets();
+
         ctx.request_repaint();
     }
 }

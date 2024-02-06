@@ -8,6 +8,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 bytemuck = "1.14.0"
+common-path = "1.0.0"
 eframe = { version = "0.24.1", features = ["wgpu", "persistence"] }
 egui = { version = "0.24.1", features = ["mint", "persistence"] }
 egui-wgpu = "0.24.1"
