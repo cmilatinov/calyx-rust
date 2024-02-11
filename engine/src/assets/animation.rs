@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use glm::{Quat, Vec3};
+use nalgebra::Unit;
 
 use crate as engine;
 use crate::utils::TypeUuid;
@@ -9,16 +10,19 @@ use crate::utils::TypeUuid;
 use super::error::AssetError;
 use super::Asset;
 
+#[derive(Debug)]
 pub struct VectorKeyFrame {
     pub value: Vec3,
     pub time: f64,
 }
 
+#[derive(Debug)]
 pub struct QuatKeyFrame {
-    pub value: Quat,
+    pub value: Unit<Quat>,
     pub time: f64,
 }
 
+#[derive(Debug)]
 pub struct AnimationKeyFrames {
     pub positions: Vec<VectorKeyFrame>,
     pub rotations: Vec<QuatKeyFrame>,
@@ -66,7 +70,9 @@ impl Animation {
                             .rotation_keys
                             .iter()
                             .map(|r| QuatKeyFrame {
-                                value: Quat::new(r.value.w, r.value.x, r.value.y, r.value.z),
+                                value: Unit::<Quat>::from_quaternion(Quat::new(
+                                    r.value.w, r.value.x, r.value.y, r.value.z,
+                                )),
                                 time: r.time,
                             })
                             .collect(),

@@ -7,12 +7,12 @@ use egui_wgpu::wgpu::util::DeviceExt;
 use glm::{vec2, vec3, vec4, IVec4, Mat4, Vec2, Vec3, Vec4};
 use russimp::scene::{PostProcess, Scene};
 
-use crate as engine;
 use crate::assets::error::AssetError;
 use crate::assets::Asset;
 use crate::render::buffer::{wgpu_buffer_init_desc, BufferLayout, ResizableBuffer};
 use crate::render::RenderContext;
 use crate::utils::TypeUuid;
+use crate::{self as engine, math};
 
 use super::LoadedAsset;
 
@@ -203,6 +203,27 @@ impl Asset for Mesh {
 }
 
 impl Mesh {
+    fn insert_bone_weight(
+        bone_index: i32,
+        weight: f32,
+        bone_ids: &mut [i32],
+        bone_weights: &mut [f32],
+    ) {
+        if let Some(index) = bone_weights
+            .iter()
+            .enumerate()
+            .find(|(i, w)| bone_ids[*i] == -1 || **w < weight)
+            .map(|(i, _)| i)
+        {
+            if bone_ids[index] != -1 {
+                bone_ids[index..].rotate_right(1);
+                bone_weights[index..].rotate_left(1);
+            }
+            bone_ids[index] = bone_index;
+            bone_weights[index] = weight;
+        }
+    }
+
     pub fn from_russimp_mesh(mesh: &russimp::mesh::Mesh) -> Self {
         let indices = mesh
             .faces
@@ -235,25 +256,7 @@ impl Mesh {
         let mut bone_weights = vec![vec4(0.0, 0.0, 0.0, 0.0); mesh.vertices.len()];
 
         for (bone_index, bone) in mesh.bones.iter().enumerate() {
-            let mut inverse_bind_transform = Mat4::identity();
-            inverse_bind_transform.copy_from_slice(&[
-                bone.offset_matrix.a1,
-                bone.offset_matrix.b1,
-                bone.offset_matrix.c1,
-                bone.offset_matrix.d1,
-                bone.offset_matrix.a2,
-                bone.offset_matrix.b2,
-                bone.offset_matrix.c2,
-                bone.offset_matrix.d2,
-                bone.offset_matrix.a3,
-                bone.offset_matrix.b3,
-                bone.offset_matrix.c3,
-                bone.offset_matrix.d3,
-                bone.offset_matrix.a4,
-                bone.offset_matrix.b4,
-                bone.offset_matrix.c4,
-                bone.offset_matrix.d4,
-            ]);
+            let inverse_bind_transform = math::mat4_from_russimp(&bone.offset_matrix);
             bones.insert(
                 bone.name.clone(),
                 BoneInfo {
@@ -263,14 +266,13 @@ impl Mesh {
             );
             for weight in &bone.weights {
                 let vertex_bone_ids = bone_indices[weight.vertex_id as usize].as_mut_slice();
-                if let Some((index, bone_id)) = vertex_bone_ids
-                    .iter_mut()
-                    .enumerate()
-                    .find(|(_, bone_id)| **bone_id == -1)
-                {
-                    *bone_id = bone_index as i32;
-                    bone_weights[weight.vertex_id as usize][index] = weight.weight;
-                }
+                let vertex_bone_weights = bone_weights[weight.vertex_id as usize].as_mut_slice();
+                Self::insert_bone_weight(
+                    bone_index as i32,
+                    weight.weight,
+                    vertex_bone_ids,
+                    vertex_bone_weights,
+                );
             }
             for (index, weight) in bone_weights.iter_mut().enumerate() {
                 let vertex_bone_ids = bone_indices[index];

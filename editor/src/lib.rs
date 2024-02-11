@@ -260,6 +260,7 @@ impl EditorApp {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("New").clicked() {
+                        SceneManager::get_mut().load_default_scene();
                         ui.close_menu();
                     }
                     if ui.button("Open").clicked() {

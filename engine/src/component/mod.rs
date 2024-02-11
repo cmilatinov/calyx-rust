@@ -1,4 +1,5 @@
 pub use animator::*;
+pub use bone::*;
 pub use camera::*;
 pub use component::*;
 pub use id::*;
@@ -8,6 +9,7 @@ pub use skinned_mesh::*;
 pub use transform::*;
 
 mod animator;
+mod bone;
 mod camera;
 mod component;
 mod id;

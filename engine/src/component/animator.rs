@@ -1,13 +1,12 @@
-use std::collections::HashMap;
-
 use egui::Ui;
 use glm::{Mat4, Quat, Vec3};
 use indextree::NodeId;
+use nalgebra::Unit;
 use serde::{Deserialize, Serialize};
 
 use crate as engine;
 use crate::assets::animation::{Animation, AnimationKeyFrames, QuatKeyFrame, VectorKeyFrame};
-use crate::assets::mesh::{BoneInfo, BoneTransform};
+use crate::assets::mesh::BoneTransform;
 use crate::core::{Ref, Time, TimeType};
 use crate::scene::Scene;
 use crate::{
@@ -15,7 +14,7 @@ use crate::{
     utils::{ReflectTypeUuidDynamic, TypeUuid},
 };
 
-use super::{Component, ComponentID, ComponentSkinnedMesh, ReflectComponent};
+use super::{Component, ComponentBone, ComponentSkinnedMesh, ReflectComponent};
 
 #[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "f24db81d-7054-40b8-8f3c-d9740c03948e"]
@@ -30,46 +29,50 @@ pub struct ComponentAnimator {
 impl Component for ComponentAnimator {
     fn update(&mut self, scene: &mut Scene, node: NodeId, _ui: &Ui) {
         let mut duration = None;
-        let entity = scene.get_entity(node);
-        let mut node_transforms: Vec<BoneTransform> = Default::default();
+        let skinned_meshes = scene
+            .get_children_with_component::<ComponentSkinnedMesh>(node)
+            .collect::<Vec<_>>();
         if let Some(animation) = &self.animation {
-            let mut mesh_bone = None;
-            if let Some(entry) = scene.entry(entity) {
-                if let Ok(c_skinned_mesh) = entry.get_component::<ComponentSkinnedMesh>() {
-                    if let Some(mesh) = &c_skinned_mesh.mesh {
-                        if let Some(root_bone) = &c_skinned_mesh.root_bone {
-                            mesh_bone = Some((mesh.clone(), *root_bone));
+            let animation = animation.read();
+            duration = Some((animation.duration / animation.ticks_per_second) as TimeType);
+            for skinned_mesh_node in skinned_meshes {
+                let entity = scene.get_entity(skinned_mesh_node);
+                let mut node_transforms: Vec<BoneTransform> = Default::default();
+                let mut mesh_bone = None;
+                if let Some(entry) = scene.entry(entity) {
+                    if let Ok(c_skinned_mesh) = entry.get_component::<ComponentSkinnedMesh>() {
+                        if let Some(mesh) = &c_skinned_mesh.mesh {
+                            if let Some(root_bone) = &c_skinned_mesh.root_bone {
+                                mesh_bone = Some((mesh.clone(), *root_bone));
+                            }
                         }
                     }
                 }
-            }
-            if let Some((mesh, root_bone)) = mesh_bone {
-                if let Some(root) = root_bone.node(scene) {
-                    let mesh = mesh.read();
-                    let animation = animation.read();
-                    duration = Some((animation.duration / animation.ticks_per_second) as TimeType);
-                    node_transforms.resize(
-                        mesh.bones.len(),
-                        BoneTransform {
-                            transform: Mat4::identity().into(),
-                        },
-                    );
-                    let transform = scene.get_transform(root);
-                    self.traverse_bone_hierarchy(
-                        scene,
-                        root,
-                        &animation,
-                        &mesh.bones,
-                        &transform.inverse_matrix,
-                        Mat4::identity(),
-                        &mut node_transforms,
-                    );
+                if let Some((mesh, root_bone)) = mesh_bone {
+                    if let Some(root) = root_bone.node(scene) {
+                        let mesh = mesh.read();
+                        node_transforms.resize(
+                            mesh.bones.len(),
+                            BoneTransform {
+                                transform: Mat4::identity().into(),
+                            },
+                        );
+                        let transform = scene.get_transform(root);
+                        self.traverse_bone_hierarchy(
+                            scene,
+                            root,
+                            &animation,
+                            &transform.inverse_matrix,
+                            Mat4::identity(),
+                            &mut node_transforms,
+                        );
+                    }
                 }
-            }
-        }
-        if let Some(mut entry) = scene.entry_mut(entity) {
-            if let Ok(c_skinned_mesh) = entry.get_component_mut::<ComponentSkinnedMesh>() {
-                c_skinned_mesh.bone_transforms = node_transforms;
+                if let Some(mut entry) = scene.entry_mut(entity) {
+                    if let Ok(c_skinned_mesh) = entry.get_component_mut::<ComponentSkinnedMesh>() {
+                        c_skinned_mesh.bone_transforms = node_transforms;
+                    }
+                }
             }
         }
         self.time += Time::delta_time();
@@ -85,28 +88,25 @@ impl ComponentAnimator {
         scene: &mut Scene,
         node: NodeId,
         animation: &Animation,
-        bones: &HashMap<String, BoneInfo>,
         global_inverse_transform: &Mat4,
         mut parent_transform: Mat4,
         node_transforms: &mut Vec<BoneTransform>,
     ) {
         let mut local_transform = scene.get_transform(node).matrix;
         if let Some(entry) = scene.entry(scene.get_entity(node)) {
-            if let Ok(c_id) = entry.get_component::<ComponentID>() {
-                if let Some(bone) = bones.get(&c_id.name) {
-                    if let Some(keyframes) = animation.node_keyframes.get(&c_id.name) {
-                        local_transform = self.local_animation_bone_transform(
-                            keyframes,
-                            self.time * animation.ticks_per_second as f32,
-                        );
-                        node_transforms[bone.index] = BoneTransform {
-                            transform: (global_inverse_transform
-                                * parent_transform
-                                * local_transform
-                                * bone.inverse_bind_transform)
-                                .into(),
-                        };
-                    }
+            if let Ok(c_bone) = entry.get_component::<ComponentBone>() {
+                if let Some(keyframes) = animation.node_keyframes.get(&c_bone.name) {
+                    local_transform = self.local_animation_bone_transform(
+                        keyframes,
+                        self.time * animation.ticks_per_second as f32,
+                    );
+                    node_transforms[c_bone.index] = BoneTransform {
+                        transform: (global_inverse_transform
+                            * parent_transform
+                            * local_transform
+                            * c_bone.offset_matrix)
+                            .into(),
+                    };
                 }
             }
         }
@@ -117,7 +117,6 @@ impl ComponentAnimator {
                 scene,
                 child,
                 animation,
-                bones,
                 global_inverse_transform,
                 parent_transform,
                 node_transforms,
@@ -175,9 +174,9 @@ impl ComponentAnimator {
         prev.value.lerp(&next.value, progression)
     }
 
-    fn interpolate_quat(prev: &QuatKeyFrame, next: &QuatKeyFrame, time: f32) -> Quat {
+    fn interpolate_quat(prev: &QuatKeyFrame, next: &QuatKeyFrame, time: f32) -> Unit<Quat> {
         let progression = Self::progression(prev.time as f32, next.time as f32, time);
-        prev.value.lerp(&next.value, progression)
+        prev.value.slerp(&next.value, progression)
     }
 
     fn local_animation_bone_transform(&self, keyframes: &AnimationKeyFrames, time: f32) -> Mat4 {

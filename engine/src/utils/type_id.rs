@@ -6,5 +6,3 @@ macro_rules! type_ids {
         ]
     };
 }
-
-pub use type_ids;

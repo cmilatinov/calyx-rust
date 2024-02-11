@@ -11,6 +11,7 @@ use legion::{Entity, EntityStore, IntoQuery, World};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
 
+use crate as engine;
 use crate::assets::error::AssetError;
 use crate::assets::{Asset, LoadedAsset};
 use crate::class_registry::ClassRegistry;
@@ -18,8 +19,15 @@ use crate::component::{Component, ComponentTransform};
 use crate::component::{ComponentCamera, ComponentID};
 use crate::math::Transform;
 use crate::scene::Prefab;
+use crate::utils::TypeUuid;
 
 use super::error::SceneError;
+
+#[derive(Clone, Copy)]
+pub struct GameObject {
+    pub node: NodeId,
+    pub entity: Entity,
+}
 
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct SceneData {
@@ -27,7 +35,8 @@ pub struct SceneData {
     pub hierarchy: HashMap<Uuid, Uuid>,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, TypeUuid)]
+#[uuid = "9946a2e7-e022-447e-8e60-528da548087f"]
 pub struct Scene {
     pub world: World,
     pub entity_hierarchy: HashSet<NodeId>,
@@ -504,5 +513,16 @@ impl Scene {
 
     pub fn clear_transform_cache(&self) {
         self.transform_cache_mut().clear();
+    }
+
+    pub fn get_children_with_component<'a, T: Component>(
+        &'a self,
+        node: NodeId,
+    ) -> impl Iterator<Item = NodeId> + 'a {
+        node.descendants(&self.entity_arena).filter(|c| {
+            self.entry(self.get_entity(*c))
+                .map(|e| e.get_component::<T>().is_ok())
+                .unwrap_or(false)
+        })
     }
 }

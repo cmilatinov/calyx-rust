@@ -203,8 +203,9 @@ impl PanelInspector {
         let mut remove = false;
         let type_id = instance.as_any().type_id();
         let inspector = self.type_inspector_lookup(type_id);
-        let res = ui
-            .collapsing(name, |ui| {
+        let res = egui::CollapsingHeader::new(name)
+            .default_open(true)
+            .show(ui, |ui| {
                 if let Some(inspector) = &inspector {
                     inspector.show_inspector(ui, ctx, instance);
                 } else {

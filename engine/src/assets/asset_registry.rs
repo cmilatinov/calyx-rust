@@ -25,7 +25,7 @@ use crate::core::Ref;
 use crate::reflect::type_registry::TypeRegistry;
 use crate::reflect::{AttributeValue, TypeInfo};
 use crate::render::Shader;
-use crate::scene::Prefab;
+use crate::scene::{Prefab, Scene};
 use crate::utils;
 use crate::utils::{singleton, Init, TypeUuid};
 
@@ -56,7 +56,7 @@ pub struct AssetMeta {
 #[derive(Serialize, Deserialize)]
 pub struct AssetMetaData {
     main: AssetMeta,
-    sub: Vec<AssetMeta>,
+    inner: Vec<AssetMeta>,
 }
 
 #[derive(Default)]
@@ -90,6 +90,7 @@ impl Init for AssetRegistry {
         self.register_asset_type::<Texture2D>();
         self.register_asset_type::<Material>();
         self.register_asset_type::<Prefab>();
+        self.register_asset_type::<Scene>();
     }
 }
 
@@ -109,6 +110,12 @@ impl AssetRegistry {
     }
 
     pub fn load_by_id<A: Asset + TypeUuid>(&self, id: Uuid) -> Result<Ref<A>, AssetError> {
+        // Load parent asset if any
+        let meta = self.asset_meta_from_id(id).ok_or(AssetError::NotFound)?;
+        if let Some(parent_id) = meta.parent {
+            self.load_dyn_by_id(parent_id)?;
+        }
+
         // Asset already loaded
         if let Some(asset_ref) = self
             .asset_cache()
@@ -130,13 +137,18 @@ impl AssetRegistry {
     }
 
     pub fn load_dyn_by_id(&self, id: Uuid) -> Result<Ref<dyn Asset>, AssetError> {
+        // Load parent asset if any
+        let meta = self.asset_meta_from_id(id).ok_or(AssetError::NotFound)?;
+        if let Some(parent_id) = meta.parent {
+            self.load_dyn_by_id(parent_id)?;
+        }
+
         // Asset already loaded
         if let Some(asset_ref) = self.asset_cache().get(&id) {
             return Ok(Ref::from(asset_ref));
         }
 
         // Find constructor & file path
-        let meta = self.asset_meta_from_id(id).ok_or(AssetError::NotFound)?;
         let type_uuid = meta.type_uuid.as_ref().ok_or(AssetError::NotFound)?;
         let path = meta.path.as_ref().ok_or(AssetError::NotFound)?;
         let ctors = self.asset_constructors();
@@ -227,6 +239,19 @@ impl AssetRegistry {
 
     fn load_sub_asset_meta(&self, id: Uuid, sub_assets: Vec<Uuid>) {
         let mut data = self.asset_data_mut();
+        if let Some(parent_meta) = data.meta.get(&id) {
+            if let Some(path) = &parent_meta.path {
+                let meta_path = path.with_extension("meta");
+                let meta = AssetMetaData {
+                    main: parent_meta.clone(),
+                    inner: sub_assets
+                        .iter()
+                        .filter_map(|id| data.meta.get(id).cloned())
+                        .collect(),
+                };
+                self.write_meta_file(meta_path.as_path(), &meta).unwrap();
+            }
+        }
         for child_id in &sub_assets {
             if let Some(child_meta) = data.meta.get_mut(child_id) {
                 child_meta.parent = Some(id);
@@ -433,9 +458,7 @@ impl AssetRegistry {
 
     fn build_asset_meta(&self, asset_path: &Path, path: &Path, meta_path: &Path) {
         let mut meta = if meta_path.exists() {
-            let file = File::open(meta_path).unwrap();
-            let reader = BufReader::new(file);
-            serde_json::from_reader(reader).unwrap()
+            self.load_meta_file(asset_path, meta_path).main
         } else {
             let display_name = path
                 .file_stem()
@@ -443,19 +466,20 @@ impl AssetRegistry {
                 .map(|s| s.to_string())
                 .unwrap_or_default();
             let relative_path = path.relative_to(asset_path).unwrap();
-            let meta = AssetMeta {
-                id: utils::uuid_from_str(relative_path.as_str()),
-                type_uuid: None,
-                name: relative_path.with_extension("").to_string(),
-                display_name,
-                parent: None,
-                children: Default::default(),
-                path: None,
+            let meta = AssetMetaData {
+                main: AssetMeta {
+                    id: utils::uuid_from_str(relative_path.as_str()),
+                    type_uuid: None,
+                    name: relative_path.with_extension("").to_string(),
+                    display_name,
+                    parent: None,
+                    children: Default::default(),
+                    path: None,
+                },
+                inner: Default::default(),
             };
-            let file = File::create(meta_path).unwrap();
-            let writer = BufWriter::new(file);
-            serde_json::to_writer_pretty(writer, &meta).unwrap();
-            meta
+            self.write_meta_file(meta_path, &meta).unwrap();
+            meta.main
         };
         meta.type_uuid = self.asset_type_from_ext(path.extension().unwrap().to_str().unwrap());
         meta.path = Some(match path.absolutize().unwrap() {
@@ -465,8 +489,42 @@ impl AssetRegistry {
         let id = meta.id;
         let mut data = self.asset_data_mut();
         data.meta.insert(id, meta);
-        let relative_path = path.relative_to(asset_path).unwrap().with_extension("");
-        data.names.insert(relative_path, id);
+        data.names
+            .insert(Self::relative_asset_path(asset_path, path), id);
+    }
+
+    fn relative_asset_path(asset_path: &Path, path: &Path) -> RelativePathBuf {
+        path.relative_to(asset_path).unwrap().with_extension("")
+    }
+
+    fn load_meta_file(&self, asset_path: &Path, meta_path: &Path) -> AssetMetaData {
+        let file = File::open(meta_path).unwrap();
+        let reader = BufReader::new(file);
+        let mut meta: AssetMetaData = serde_json::from_reader(reader).unwrap();
+        let mut data = self.asset_data_mut();
+        meta.main.children = meta.inner.iter().map(|m| m.id).collect();
+        data.meta.insert(meta.main.id, meta.main.clone());
+        data.names.insert(
+            Self::relative_asset_path(asset_path, meta_path),
+            meta.main.id,
+        );
+        for child in meta.inner.iter_mut() {
+            child.parent = Some(meta.main.id);
+            let mut path = meta_path.with_extension("");
+            path.push(child.name.as_str());
+            data.meta.insert(child.id, child.clone());
+            data.names.insert(
+                Self::relative_asset_path(asset_path, path.as_path()),
+                child.id,
+            );
+        }
+        meta
+    }
+
+    fn write_meta_file(&self, meta_path: &Path, meta: &AssetMetaData) -> serde_json::Result<()> {
+        let file = File::create(meta_path).unwrap();
+        let writer = BufWriter::new(file);
+        serde_json::to_writer_pretty(writer, meta)
     }
 }
 

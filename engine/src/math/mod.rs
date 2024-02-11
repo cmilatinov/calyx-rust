@@ -2,6 +2,7 @@ use glm::{vec3, Mat4, Vec3};
 use mint::Vector2;
 use nalgebra::Rotation3;
 
+use russimp::Matrix4x4;
 pub use transform::*;
 
 mod transform;
@@ -59,4 +60,13 @@ pub fn fit_aspect(aspect: f32, available: impl Into<Vector2<f32>>) -> Vector2<f3
             y: available.x / aspect,
         }
     }
+}
+
+pub fn mat4_from_russimp(matrix: &Matrix4x4) -> Mat4 {
+    let mut result = Mat4::default();
+    result.copy_from_slice(&[
+        matrix.a1, matrix.b1, matrix.c1, matrix.d1, matrix.a2, matrix.b2, matrix.c2, matrix.d2,
+        matrix.a3, matrix.b3, matrix.c3, matrix.d3, matrix.a4, matrix.b4, matrix.c4, matrix.d4,
+    ]);
+    result
 }

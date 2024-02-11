@@ -2,9 +2,11 @@ use crate::assets::animation::Animation;
 use crate::assets::error::AssetError;
 use crate::assets::mesh::Mesh;
 use crate::assets::{Asset, AssetRegistry, LoadedAsset};
-use crate::component::{ComponentID, ComponentMesh, ComponentSkinnedMesh, ComponentTransform};
+use crate::component::{
+    ComponentBone, ComponentID, ComponentMesh, ComponentSkinnedMesh, ComponentTransform,
+};
 use crate::core::Ref;
-use crate::math::Transform;
+use crate::math::{self, Transform};
 use crate::scene::{Scene, SceneData};
 use crate::utils::TypeUuid;
 use crate::{self as engine, utils};
@@ -15,6 +17,7 @@ use russimp::sys::AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::borrow::Borrow;
+use std::collections::HashMap;
 use std::io::BufReader;
 use std::path::Path;
 use uuid::Uuid;
@@ -76,6 +79,7 @@ impl Asset for Prefab {
                 &props,
             )?;
 
+            let mut bones = HashMap::new();
             let mut meshes = Vec::new();
             for mesh in &scene.meshes {
                 let name = format!("{}/{}", meta.name, mesh.name);
@@ -86,11 +90,15 @@ impl Asset for Prefab {
                     mesh_ref.clone(),
                     registry.asset_id_from_ref_t(&mesh_ref).unwrap(),
                 ));
+                bones.extend(mesh.bones.iter().enumerate().map(|(i, b)| {
+                    let offset_matrix = math::mat4_from_russimp(&b.offset_matrix);
+                    (b.name.clone(), (i, offset_matrix))
+                }));
             }
 
             let mut data: SceneData = Default::default();
             if let Some(root) = &scene.root {
-                Self::traverse(&meshes, &**root, &**root, None, &mut data);
+                Self::traverse(&bones, &meshes, &**root, &**root, None, &mut data);
             }
 
             let mut animations = Vec::new();
@@ -136,31 +144,14 @@ impl Asset for Prefab {
 
 impl Prefab {
     fn traverse(
+        bones: &HashMap<String, (usize, Mat4)>,
         meshes: &Vec<(Ref<Mesh>, Uuid)>,
         root: &russimp::node::Node,
         node: &russimp::node::Node,
         mut parent: Option<Uuid>,
         data: &mut SceneData,
     ) {
-        let mut matrix: Mat4 = Default::default();
-        matrix.copy_from_slice(&[
-            node.transformation.a1,
-            node.transformation.b1,
-            node.transformation.c1,
-            node.transformation.d1,
-            node.transformation.a2,
-            node.transformation.b2,
-            node.transformation.c2,
-            node.transformation.d2,
-            node.transformation.a3,
-            node.transformation.b3,
-            node.transformation.c3,
-            node.transformation.d3,
-            node.transformation.a4,
-            node.transformation.b4,
-            node.transformation.c4,
-            node.transformation.d4,
-        ]);
+        let matrix: Mat4 = math::mat4_from_russimp(&node.transformation);
         let id = utils::uuid_from_str(node.name.as_str());
         if let Some(parent_id) = parent {
             data.hierarchy.insert(id, parent_id);
@@ -203,8 +194,18 @@ impl Prefab {
                 );
             }
         }
+        if let Some((index, offset_matrix)) = bones.get(&node.name) {
+            entry.insert(
+                ComponentBone::type_uuid(),
+                json!({
+                    "name": node.name.clone(),
+                    "index": index,
+                    "offset_matrix": offset_matrix
+                }),
+            );
+        }
         for child in &*node.children.borrow() {
-            Self::traverse(meshes, root, &*child.borrow(), parent, data);
+            Self::traverse(bones, meshes, root, &*child.borrow(), parent, data);
         }
     }
 }
