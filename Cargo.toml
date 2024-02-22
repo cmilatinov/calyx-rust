@@ -1,3 +1,7 @@
 [workspace]
 members = ["engine", "editor", "project", "launcher", "sandbox"]
 resolver = "2"
+
+[profile.release-with-debug]
+inherits = "release"
+debug = true

@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use eframe::egui;
 use egui_dock::{DockArea, NodeIndex, Style};
-use egui_gizmo::GizmoMode;
+use egui_gizmo::{GizmoMode, GizmoOrientation};
+use inspector::inspector_registry::InspectorRegistry;
 use num_traits::FromPrimitive;
 
 use engine::assets::AssetRegistry;
@@ -61,6 +62,7 @@ pub struct EditorAppState {
     pub viewport_size: (f32, f32),
     pub game_size: (f32, f32),
     pub gizmo_mode: GizmoMode,
+    pub gizmo_orientation: GizmoOrientation,
 }
 
 impl Default for EditorAppState {
@@ -74,6 +76,7 @@ impl Default for EditorAppState {
             viewport_size: Default::default(),
             game_size: Default::default(),
             gizmo_mode: GizmoMode::Translate,
+            gizmo_orientation: GizmoOrientation::Global,
         }
     }
 }
@@ -138,7 +141,9 @@ impl eframe::App for EditorApp {
 
         {
             let mut app_state = EditorAppState::get_mut();
-            SceneManager::get().get_scene().clear_transform_cache();
+            SceneManager::get()
+                .simulation_scene()
+                .clear_transform_cache();
             let render_state = frame.wgpu_render_state().unwrap();
             let mut renderer = self.scene_renderer.write();
             let (width, height) = EditorApp::get_physical_size(ctx, app_state.viewport_size);
@@ -148,7 +153,7 @@ impl eframe::App for EditorApp {
             }
             app_state.camera.camera.update_projection();
             let scene_manager = SceneManager::get();
-            let scene = scene_manager.get_scene();
+            let scene = scene_manager.simulation_scene();
             renderer.render_scene(
                 render_state,
                 &app_state.camera.camera,
@@ -203,6 +208,9 @@ impl eframe::App for EditorApp {
             Time::reset_timer("fps");
         }
 
+        SceneManager::get_mut()
+            .current_scene_mut()
+            .delete_game_objects();
         AssetRegistry::get().reload_assets();
 
         ctx.request_repaint();
@@ -285,8 +293,11 @@ impl EditorApp {
                             );
                         if let Ok(file) = res {
                             let writer = BufWriter::new(file);
-                            serde_json::to_writer_pretty(writer, SceneManager::get().get_scene())
-                                .unwrap();
+                            serde_json::to_writer_pretty(
+                                writer,
+                                SceneManager::get().simulation_scene(),
+                            )
+                            .unwrap();
                         }
                         ui.close_menu();
                     }
@@ -340,7 +351,7 @@ impl EditorApp {
                         )
                         .clicked()
                     {
-                        SceneManager::get_mut().get_scene_mut().update(ui);
+                        SceneManager::get_mut().simulation_scene_mut().update(ui);
                     }
                 }
 
@@ -431,6 +442,7 @@ impl EditorApp {
             }
         }
         ClassRegistry::init();
+        InspectorRegistry::init();
         LogRegistry::init();
 
         log::set_boxed_logger(Box::new(Logger)).expect("Unable to setup logger");
@@ -449,7 +461,7 @@ impl EditorApp {
             renderer: eframe::Renderer::Wgpu,
             wgpu_options: egui_wgpu::WgpuConfiguration {
                 device_descriptor: Arc::new(|_adapter| wgpu::DeviceDescriptor {
-                    features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+                    required_features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
                         | wgpu::Features::POLYGON_MODE_LINE
                         | wgpu::Features::CLEAR_TEXTURE,
                     ..Default::default()

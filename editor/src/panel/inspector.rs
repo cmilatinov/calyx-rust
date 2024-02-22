@@ -1,5 +1,5 @@
 use std::any::TypeId;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use convert_case::{Case, Casing};
 
@@ -11,60 +11,16 @@ use engine::egui_extras::{Column, TableBody};
 use engine::reflect::type_registry::TypeRegistry;
 use engine::reflect::{AttributeValue, Reflect, ReflectDefault, TypeInfo};
 use engine::scene::SceneManager;
-use engine::uuid::Uuid;
-use engine::{egui, egui_extras, type_ids};
 
-use crate::inspector::asset_inspector::{AssetInspector, ReflectAssetInspector};
-use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
+use engine::{egui, egui_extras};
+
+use crate::inspector::inspector_registry::InspectorRegistry;
+use crate::inspector::type_inspector::InspectorContext;
 use crate::panel::Panel;
 use crate::{EditorAppState, BASE_FONT_SIZE};
 
-// TODO: Move this state into its own `InspectorRegistry`
-// singleton with a dynamically registered listener to
-// grab its data from the TypeRegistry when ClassRegistry's
-// refresh_class_lists is called
-pub struct PanelInspector {
-    type_inspectors: HashMap<TypeId, Box<dyn TypeInspector>>,
-    type_association: HashMap<TypeId, TypeId>,
-    asset_inspectors: HashMap<Uuid, Box<dyn AssetInspector>>,
-}
-
-impl Default for PanelInspector {
-    fn default() -> Self {
-        let registry = TypeRegistry::get();
-        let mut type_inspectors = HashMap::new();
-        let mut type_association = HashMap::new();
-        for type_id in registry.all_of(type_ids!(ReflectDefault, ReflectTypeInspector)) {
-            let meta_default = registry.trait_meta::<ReflectDefault>(type_id).unwrap();
-            let meta_inspector = registry
-                .trait_meta::<ReflectTypeInspector>(type_id)
-                .unwrap();
-            let instance = meta_default.default();
-            let inspector = meta_inspector.get_boxed(instance).unwrap();
-            for target_type_id in inspector.target_type_ids() {
-                type_association.insert(target_type_id, type_id);
-            }
-            type_inspectors.insert(type_id, inspector);
-        }
-
-        let mut asset_inspectors = HashMap::new();
-        for type_id in registry.all_of(type_ids!(ReflectDefault, ReflectAssetInspector)) {
-            let meta_default = registry.trait_meta::<ReflectDefault>(type_id).unwrap();
-            let meta_inspector = registry
-                .trait_meta::<ReflectAssetInspector>(type_id)
-                .unwrap();
-            let instance = meta_default.default();
-            let inspector = meta_inspector.get_boxed(instance).unwrap();
-            asset_inspectors.insert(inspector.target_type_uuid(), inspector);
-        }
-
-        Self {
-            type_inspectors,
-            type_association,
-            asset_inspectors,
-        }
-    }
-}
+#[derive(Default)]
+pub struct PanelInspector;
 
 impl Panel for PanelInspector {
     fn name() -> &'static str {
@@ -75,14 +31,22 @@ impl Panel for PanelInspector {
         let app_state = EditorAppState::get();
         let registry = TypeRegistry::get();
         let selection = app_state.selection.clone();
-        if let Some(node) = selection.as_ref().and_then(|s| s.first_entity()) {
-            let entity = SceneManager::get().get_scene().get_entity(node);
+        if let Some(game_object) =
+            selection
+                .as_ref()
+                .and_then(|s| s.first_entity())
+                .and_then(|id| {
+                    SceneManager::get()
+                        .simulation_scene()
+                        .get_game_object_by_uuid(id)
+                })
+        {
             let mut entity_components = HashSet::new();
             let mut components_to_remove = HashSet::new();
             for (type_id, component) in ClassRegistry::get().components() {
                 let ptr = SceneManager::get_mut()
-                    .get_scene_mut()
-                    .get_component_ptr(entity, component);
+                    .simulation_scene_mut()
+                    .get_component_ptr(game_object, component);
                 if let Some(instance) = ptr.map(|ptr| unsafe { &mut *ptr }) {
                     entity_components.insert(*type_id);
                     let info = registry.type_info_by_id(*type_id).unwrap();
@@ -90,10 +54,12 @@ impl Panel for PanelInspector {
                         let scene_state = SceneManager::get();
                         let ctx = InspectorContext {
                             registry: &registry,
-                            scene: scene_state.get_scene(),
-                            node,
-                            parent_node: SceneManager::get().get_scene().get_parent_node(node),
-                            world: &scene_state.get_scene().world,
+                            scene: scene_state.simulation_scene(),
+                            game_object,
+                            parent: SceneManager::get()
+                                .simulation_scene()
+                                .get_parent_game_object(game_object),
+                            world: &scene_state.simulation_scene().world,
                             type_info,
                             field_name: None,
                         };
@@ -119,8 +85,9 @@ impl Panel for PanelInspector {
                         let name = Self::display_name(component.as_reflect());
                         if ui.selectable_label(false, name).clicked() {
                             let meta = registry.trait_meta::<ReflectDefault>(*type_id).unwrap();
-                            if let Some(mut entry) =
-                                SceneManager::get_mut().get_scene_mut().world.entry(entity)
+                            if let Some(mut entry) = SceneManager::get_mut()
+                                .simulation_scene_mut()
+                                .entry_mut(game_object)
                             {
                                 component.bind_instance(&mut entry, meta.default());
                             }
@@ -136,7 +103,9 @@ impl Panel for PanelInspector {
                 if !components_to_remove.contains(type_id) {
                     continue;
                 }
-                if let Some(mut entry) = SceneManager::get_mut().get_scene_mut().world.entry(entity)
+                if let Some(mut entry) = SceneManager::get_mut()
+                    .simulation_scene_mut()
+                    .entry_mut(game_object)
                 {
                     component.remove_instance(&mut entry);
                 }
@@ -146,7 +115,9 @@ impl Panel for PanelInspector {
             if let Ok(asset) = registry.load_dyn_by_id(id) {
                 if let Some(meta) = registry.asset_meta_from_id(id) {
                     if let Some(type_uuid) = meta.type_uuid {
-                        if let Some(inspector) = self.asset_inspector_lookup(type_uuid) {
+                        if let Some(inspector) =
+                            InspectorRegistry::get().asset_inspector_lookup(type_uuid)
+                        {
                             ui.collapsing(registry.asset_name(id), |ui| {
                                 inspector.show_inspector(ui, asset);
                                 ui.separator();
@@ -175,24 +146,6 @@ impl PanelInspector {
             .unwrap_or(instance.type_name_short())
     }
 
-    fn type_inspector_lookup(&self, type_id: TypeId) -> Option<&dyn TypeInspector> {
-        self.type_association
-            .get(&type_id)
-            .and_then(|id| self.type_inspectors.get(id))
-            .and_then(|inspector| Some(inspector.as_ref()))
-            .or_else(|| {
-                self.type_inspectors
-                    .get(&type_id)
-                    .and_then(|inspector| Some(inspector.as_ref()))
-            })
-    }
-
-    fn asset_inspector_lookup(&self, type_id: Uuid) -> Option<&dyn AssetInspector> {
-        self.asset_inspectors
-            .get(&type_id)
-            .map(|inspector| inspector.as_ref())
-    }
-
     fn show_inspector(
         &self,
         ui: &mut Ui,
@@ -202,11 +155,10 @@ impl PanelInspector {
         let name = Self::display_name(instance);
         let mut remove = false;
         let type_id = instance.as_any().type_id();
-        let inspector = self.type_inspector_lookup(type_id);
         let res = egui::CollapsingHeader::new(name)
             .default_open(true)
             .show(ui, |ui| {
-                if let Some(inspector) = &inspector {
+                if let Some(inspector) = InspectorRegistry::get().type_inspector_lookup(type_id) {
                     inspector.show_inspector(ui, ctx, instance);
                 } else {
                     self.show_default_inspector(ui, ctx, instance);
@@ -219,7 +171,7 @@ impl PanelInspector {
                     remove = true;
                     ui.close_menu();
                 }
-                if let Some(inspector) = &inspector {
+                if let Some(inspector) = InspectorRegistry::get().type_inspector_lookup(type_id) {
                     inspector.show_inspector_context(ui, ctx, instance);
                 }
             });
@@ -265,7 +217,9 @@ impl PanelInspector {
     ) {
         let mut name = field_name.from_case(Case::Snake).to_case(Case::Title);
         name.push(' ');
-        if let Some(inspector) = self.type_inspector_lookup(instance.as_any().type_id()) {
+        if let Some(inspector) =
+            InspectorRegistry::get().type_inspector_lookup(instance.as_any().type_id())
+        {
             body.row(BASE_FONT_SIZE + 6.0, |mut row| {
                 row.col(|ui| {
                     ui.add(egui::Label::new(name.as_str()).wrap(false));

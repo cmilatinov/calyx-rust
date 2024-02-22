@@ -11,8 +11,8 @@ use engine::egui::{
 };
 use engine::egui_dock::{TabBodyStyle, TabStyle};
 use engine::relative_path::PathExt;
-use engine::scene::{Prefab, SceneManager};
 
+use crate::inspector::inspector_registry::InspectorRegistry;
 use crate::panel::Panel;
 use crate::selection::EditorSelection;
 use crate::widgets::FileButton;
@@ -95,6 +95,7 @@ impl PanelContentBrowser {
             });
         }
     }
+
     fn render_file_button<'a>(
         ui: &'a mut Ui,
         name: &'a str,
@@ -118,8 +119,9 @@ impl PanelContentBrowser {
             padding,
             selected,
         };
-        ui.add(button)
+        ui.add(button).on_hover_text_at_pointer(name)
     }
+
     fn set_selected_folder(&mut self, path: PathBuf) {
         if path != self.selected_folder {
             self.selected_folder = path;
@@ -254,7 +256,7 @@ impl Panel for PanelContentBrowser {
                             Vec2::new(ICON_PADDING_X, ICON_PADDING_Y),
                             is_selected,
                         );
-                        if res.clicked() {
+                        if res.clicked() || res.secondary_clicked() {
                             self.set_selected_file(node.clone());
                         }
                         if is_selected && is_dir && res.double_clicked() {
@@ -264,16 +266,24 @@ impl Panel for PanelContentBrowser {
                             ui.add_space(ui.available_width());
                             ui.end_row();
                         }
-
-                        res.context_menu(|ui| {
-                            if ui.button("Import").clicked() {
-                                let asset = AssetRegistry::get().load_by_path::<Prefab>(node.clone()).unwrap();
-                                let prefab = asset.read();
-
-                                SceneManager::get_mut().get_scene_mut().instantiate_prefab(&prefab, None);
-                                ui.close_menu();
+                        if !is_dir {
+                            let ext = node
+                                .extension()
+                                .and_then(|e| e.to_str())
+                                .unwrap_or_default();
+                            let registry = AssetRegistry::get();
+                            if let Some(type_id) = registry.asset_type_from_ext(ext) {
+                                if let Ok(asset) = registry.load_dyn_by_path(node) {
+                                    if let Some(inspector) =
+                                        InspectorRegistry::get().asset_inspector_lookup(type_id)
+                                    {
+                                        res.context_menu(|ui| {
+                                            inspector.show_context_menu(ui, asset);
+                                        });
+                                    }
+                                }
                             }
-                        });
+                        }
                     }
                 });
                 ui.add_space(15.0);

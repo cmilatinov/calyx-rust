@@ -5,7 +5,7 @@ use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::wgpu::BufferUsages;
 use glm::{vec4, Mat4};
-use legion::{Entity, EntityStore, IntoQuery};
+use legion::{Entity, IntoQuery};
 
 use crate::assets::mesh::Mesh;
 use crate::assets::{Asset, Assets};
@@ -226,11 +226,12 @@ impl GizmoRenderer {
             let mut query = <Entity>::query();
             let world = &scene.world;
             for entity in query.iter(world) {
-                let node = scene.get_node(*entity);
-                for (_, comp) in ClassRegistry::get().components() {
-                    if let Ok(entry) = world.entry_ref(*entity) {
-                        if let Some(instance) = comp.get_instance(&entry) {
-                            instance.draw_gizmos(scene, node, &mut gizmos);
+                if let Some(game_object) = scene.get_game_object_from_entity(*entity) {
+                    for (_, comp) in ClassRegistry::get().components() {
+                        if let Some(entry) = scene.entry(game_object) {
+                            if let Some(instance) = comp.get_instance(&entry) {
+                                instance.draw_gizmos(scene, game_object, &mut gizmos);
+                            }
                         }
                     }
                 }

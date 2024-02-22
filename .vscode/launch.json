@@ -20,6 +20,9 @@
                 }
             },
             "args": ["C:\\Users\\Cristian\\Documents\\git\\calyx-rust\\sandbox"],
+            "env": {
+                "Path": "C:\\Users\\Cristian\\Documents\\git\\calyx-rust\\target\\debug\\build\\russimp-sys-7dbd087f259bbe05\\out\\dylib\\bin\\;C:\\Users\\Cristian\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin"
+            },
             "cwd": "${workspaceFolder}"
         }
     ]

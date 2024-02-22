@@ -5,7 +5,7 @@ use egui::Ui;
 use egui::Vec2;
 
 use engine::egui::{include_image, Button, Color32, Rounding, Sense};
-use engine::indextree::NodeId;
+use engine::scene::GameObject;
 use engine::scene::{Scene, SceneManager};
 use engine::*;
 
@@ -28,63 +28,68 @@ impl Panel for PanelSceneHierarchy {
 
         ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
             if ui.button("+").clicked() {
-                let mut parent: Option<NodeId> = None;
+                let mut parent: Option<GameObject> = None;
                 if let Some(selected) = selection.clone() {
                     match selected {
                         EditorSelection::Entity(set) => {
-                            if let Some(s) = set.iter().last() {
-                                parent = Some(*s);
+                            if let Some(id) = set.iter().last().copied() {
+                                parent = SceneManager::get()
+                                    .simulation_scene()
+                                    .get_game_object_by_uuid(id);
                             }
                         }
                         EditorSelection::Asset(_) => {}
                     }
                 }
                 SceneManager::get_mut()
-                    .get_scene_mut()
-                    .create_entity(None, parent);
+                    .simulation_scene_mut()
+                    .create_game_object(None, parent);
             }
             ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("Filter by name"));
         });
 
-        for root_node in SceneManager::get().get_scene().root_entities() {
-            self.render_scene_node(
-                SceneManager::get().get_scene(),
-                &app_state.selection,
-                &mut selection,
-                ui,
-                *root_node,
-            );
+        let mut scene_manager = SceneManager::get_mut();
+        let scene = scene_manager.simulation_scene_mut();
+        for root_object in scene.root_objects().clone() {
+            self.render_scene_node(scene, &app_state.selection, &mut selection, ui, root_object);
         }
         app_state.selection = selection;
+    }
+
+    fn context_menu(&mut self, ui: &mut Ui) {
+        if ui.button("Test").clicked() {
+            ui.close_menu();
+        }
     }
 }
 
 impl PanelSceneHierarchy {
     fn render_scene_node(
         &self,
-        scene: &Scene,
+        scene: &mut Scene,
         selected: &Option<EditorSelection>,
         selection: &mut Option<EditorSelection>,
         ui: &mut Ui,
-        node_id: NodeId,
+        game_object: GameObject,
     ) {
-        let children: Vec<NodeId> = scene.get_children(node_id).collect();
+        let id = scene.get_game_object_uuid(game_object);
+        let children: Vec<GameObject> = scene.get_children(game_object).collect();
 
         let is_selected = if let Some(EditorSelection::Entity(set)) = selected {
-            set.contains(&node_id)
+            set.contains(&id)
         } else {
             false
         };
 
         if !children.is_empty() {
-            let collapsing_id = ui.make_persistent_id(node_id);
+            let collapsing_id = ui.make_persistent_id(id);
             egui::collapsing_header::CollapsingState::load_with_default_open(
                 ui.ctx(),
                 collapsing_id,
                 false,
             )
             .show_header(ui, |ui| {
-                self.show_selectable_label(scene, is_selected, selection, ui, node_id);
+                self.show_selectable_label(scene, is_selected, selection, ui, game_object)
             })
             .body(|ui| {
                 for child_node in children {
@@ -94,24 +99,24 @@ impl PanelSceneHierarchy {
         } else {
             ui.horizontal(|ui| {
                 ui.add_space(BASE_FONT_SIZE + 2.0);
-                self.show_selectable_label(scene, is_selected, selection, ui, node_id);
+                self.show_selectable_label(scene, is_selected, selection, ui, game_object);
             });
         }
     }
 
     fn show_selectable_label(
         &self,
-        scene: &Scene,
+        scene: &mut Scene,
         is_selected: bool,
         selection: &mut Option<EditorSelection>,
         ui: &mut Ui,
-        node_id: NodeId,
+        game_object: GameObject,
     ) {
         let svg = include_image!("../../../resources/icons/body_dark.png");
         let image =
             egui::Image::new(svg).fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
         let res = ui.add(
-            Button::image_and_text(image, scene.get_entity_name(node_id))
+            Button::image_and_text(image, scene.get_game_object_name(game_object))
                 .selected(is_selected)
                 .fill(if is_selected {
                     ui.visuals().selection.bg_fill
@@ -124,7 +129,7 @@ impl PanelSceneHierarchy {
 
         if res.clicked() || res.secondary_clicked() {
             let mut set = HashSet::new();
-            set.insert(node_id);
+            set.insert(scene.get_game_object_uuid(game_object));
             *selection = if is_selected {
                 None
             } else {
@@ -139,21 +144,26 @@ impl PanelSceneHierarchy {
                     .add_filter("cxprefab", &["cxprefab"])
                     .save_file()
                 {
-                    let res = std::fs::OpenOptions::new()
+                    if let Ok(file) = std::fs::OpenOptions::new()
                         .create(true)
                         .write(true)
                         .truncate(true)
-                        .open(path);
-
-                    if let Ok(file) = res {
-                        let prefab = scene.create_prefab(node_id);
-
+                        .open(path)
+                    {
+                        let prefab = scene.create_prefab(game_object);
                         let writer = BufWriter::new(file);
                         serde_json::to_writer_pretty(writer, &prefab).unwrap();
                     }
-
                     ui.close_menu();
                 }
+            }
+            if ui.button("Delete").clicked() {
+                scene.delete_game_object(game_object);
+                ui.close_menu();
+            }
+            if ui.button("New Game Object").clicked() {
+                scene.create_game_object(None, Some(game_object));
+                ui.close_menu();
             }
         });
     }

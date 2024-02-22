@@ -1,5 +1,4 @@
 use egui::Ui;
-use indextree::NodeId;
 use legion::storage::ComponentTypeId;
 use legion::world::{Entry, EntryRef};
 
@@ -9,7 +8,7 @@ pub use engine_derive::Component;
 use crate as engine;
 use crate::reflect::Reflect;
 use crate::render::Gizmos;
-use crate::scene::Scene;
+use crate::scene::{GameObject, Scene};
 use crate::utils::TypeUuidDynamic;
 
 pub trait ComponentInstance: Reflect {
@@ -31,8 +30,8 @@ pub trait ComponentInstance: Reflect {
 
 #[reflect_trait]
 pub trait Component: TypeUuidDynamic + ComponentInstance {
-    fn start(&mut self, _scene: &Scene, _node: NodeId) {}
-    fn update(&mut self, _scene: &mut Scene, _node: NodeId, _ui: &Ui) {}
-    fn destroy(&mut self, _scene: &Scene, _node: NodeId) {}
-    fn draw_gizmos(&self, _scene: &Scene, _node: NodeId, _gizmos: &mut Gizmos) {}
+    fn start(&mut self, _scene: &Scene, _game_object: GameObject) {}
+    fn update(&mut self, _scene: &mut Scene, _game_object: GameObject, _ui: &Ui) {}
+    fn destroy(&mut self, _scene: &Scene, _game_object: GameObject) {}
+    fn draw_gizmos(&self, _scene: &Scene, _game_object: GameObject, _gizmos: &mut Gizmos) {}
 }

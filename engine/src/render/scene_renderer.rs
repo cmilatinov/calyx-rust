@@ -12,7 +12,9 @@ use crate::assets::material::Material;
 use crate::assets::mesh::{Instance, Mesh};
 use crate::assets::texture::Texture2D;
 use crate::assets::{AssetRegistry, Assets};
-use crate::component::{ComponentMesh, ComponentPointLight, ComponentSkinnedMesh};
+use crate::component::{
+    ComponentDirectionalLight, ComponentMesh, ComponentPointLight, ComponentSkinnedMesh,
+};
 use crate::core::Ref;
 use crate::math::Transform;
 use crate::render::asset_render_state::AssetRenderState;
@@ -55,6 +57,15 @@ struct PointLight {
     position: [f32; 3],
     radius: f32,
     color: [f32; 3],
+    _padding: f32,
+}
+
+#[repr(C)]
+#[derive(Default, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct DirectionalLight {
+    direction: [f32; 3],
+    _padding: f32,
+    color: [f32; 3],
     _padding2: f32,
 }
 
@@ -85,7 +96,8 @@ pub struct SceneRenderer {
     scene_shader: Ref<Shader>,
     grid_shader: Ref<Shader>,
     camera_uniform_buffer: wgpu::Buffer,
-    light_storage_buffer: ResizableBuffer,
+    point_light_storage_buffer: ResizableBuffer,
+    directional_light_storage_buffer: ResizableBuffer,
     gizmo_renderer: GizmoRenderer,
     assets: AssetRenderState,
     draw_list: Vec<DrawListElement>,
@@ -118,7 +130,9 @@ impl SceneRenderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let light_storage_buffer =
+        let point_light_storage_buffer =
+            ResizableBuffer::new(wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
+        let directional_light_storage_buffer =
             ResizableBuffer::new(wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
 
         let scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -141,7 +155,8 @@ impl SceneRenderer {
             scene_shader,
             grid_shader,
             camera_uniform_buffer,
-            light_storage_buffer,
+            point_light_storage_buffer,
+            directional_light_storage_buffer,
             gizmo_renderer,
             assets: Default::default(),
             draw_list: Default::default(),
@@ -219,13 +234,22 @@ impl SceneRenderer {
         let light_storage_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("light_storage_bind_group"),
             layout: &self.scene_shader.read().bind_group_layouts[2],
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: self
-                    .light_storage_buffer
-                    .get_wgpu_buffer()
-                    .as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self
+                        .point_light_storage_buffer
+                        .get_wgpu_buffer()
+                        .as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self
+                        .directional_light_storage_buffer
+                        .get_wgpu_buffer()
+                        .as_entire_binding(),
+                },
+            ],
         });
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -407,39 +431,46 @@ impl SceneRenderer {
         self.draw_list.clear();
         let mut query = <(Entity, &ComponentMesh)>::query();
         for (entity, c_mesh) in query.iter(world) {
-            if let Some(mesh_ref) = c_mesh.mesh.as_ref() {
-                if let Some(mat_ref) = c_mesh.material.as_ref() {
-                    let node = scene.get_node(*entity);
-                    let transform = scene.get_world_transform(node);
-                    self.insert_draw_list_entry(mesh_ref, mat_ref, None, transform.matrix.into());
+            if let Some(game_object) = scene.get_game_object_from_entity(*entity) {
+                if let Some(mesh_ref) = c_mesh.mesh.as_ref() {
+                    if let Some(mat_ref) = c_mesh.material.as_ref() {
+                        let transform = scene.get_world_transform(game_object);
+                        self.insert_draw_list_entry(
+                            mesh_ref,
+                            mat_ref,
+                            None,
+                            transform.matrix.into(),
+                        );
+                    }
                 }
             }
         }
         let mut skinned_meshes: HashSet<usize> = Default::default();
         let mut query = <(Entity, &ComponentSkinnedMesh)>::query();
         for (entity, c_skinned_mesh) in query.iter(world) {
-            if let Some(mesh_ref) = c_skinned_mesh.mesh.as_ref() {
-                if let Some(mat_ref) = c_skinned_mesh.material.as_ref() {
-                    let mesh_id = mesh_ref.id();
-                    let node = scene.get_node(*entity);
-                    let transform = scene.get_world_transform(node);
-                    let bone_transform_index;
-                    {
-                        let mut mesh = mesh_ref.write();
-                        if !skinned_meshes.contains(&mesh_id) {
-                            mesh.bone_transforms.clear();
+            if let Some(game_object) = scene.get_game_object_from_entity(*entity) {
+                if let Some(mesh_ref) = c_skinned_mesh.mesh.as_ref() {
+                    if let Some(mat_ref) = c_skinned_mesh.material.as_ref() {
+                        let mesh_id = mesh_ref.id();
+                        let transform = scene.get_world_transform(game_object);
+                        let bone_transform_index;
+                        {
+                            let mut mesh = mesh_ref.write();
+                            if !skinned_meshes.contains(&mesh_id) {
+                                mesh.bone_transforms.clear();
+                            }
+                            skinned_meshes.insert(mesh_id);
+                            bone_transform_index = mesh.bone_transforms.len() / mesh.bones.len();
+                            mesh.bone_transforms
+                                .extend(c_skinned_mesh.bone_transforms.iter().copied());
                         }
-                        skinned_meshes.insert(mesh_id);
-                        bone_transform_index = mesh.bone_transforms.len() / mesh.bones.len();
-                        mesh.bone_transforms
-                            .extend(c_skinned_mesh.bone_transforms.iter().copied());
+                        self.insert_draw_list_entry(
+                            mesh_ref,
+                            mat_ref,
+                            Some(bone_transform_index as i32),
+                            transform.matrix.into(),
+                        );
                     }
-                    self.insert_draw_list_entry(
-                        mesh_ref,
-                        mat_ref,
-                        Some(bone_transform_index as i32),
-                        transform.matrix.into(),
-                    );
                 }
             }
         }
@@ -484,33 +515,93 @@ impl SceneRenderer {
     fn build_light_data(&mut self, render_state: &RenderState, scene: &Scene) {
         let device = &render_state.device;
         let queue = &render_state.queue;
-        let world = &scene.world;
-        let mut lights = Vec::new();
+
+        let point_lights = Self::collect_point_lights(scene);
+        let size =
+            (16 + std::cmp::max(point_lights.len(), 1) * std::mem::size_of::<PointLight>()) as u64;
+        self.point_light_storage_buffer.resize(device, size);
+        self.point_light_storage_buffer.write_buffer(
+            device,
+            queue,
+            &[point_lights.len() as u32],
+            None,
+        );
+        if !point_lights.is_empty() {
+            self.point_light_storage_buffer.write_buffer(
+                device,
+                queue,
+                point_lights.as_slice(),
+                Some(16),
+            );
+        }
+
+        let directional_lights = Self::collect_directional_lights(scene);
+        let size = (16
+            + std::cmp::max(directional_lights.len(), 1) * std::mem::size_of::<DirectionalLight>())
+            as u64;
+        self.directional_light_storage_buffer.resize(device, size);
+        self.directional_light_storage_buffer.write_buffer(
+            device,
+            queue,
+            &[directional_lights.len() as u32],
+            None,
+        );
+        if !directional_lights.is_empty() {
+            self.directional_light_storage_buffer.write_buffer(
+                device,
+                queue,
+                directional_lights.as_slice(),
+                Some(16),
+            );
+        }
+    }
+
+    fn collect_point_lights(scene: &Scene) -> Vec<PointLight> {
+        let mut point_lights = Vec::new();
         let mut query = <(Entity, &ComponentPointLight)>::query();
-        for (entity, light) in query.iter(world) {
-            if !light.active {
-                continue;
-            }
-            let mut color = Vec3::default();
-            color.copy_from_slice(&light.color.to_normalized_gamma_f32()[0..3]);
-            lights.push(PointLight {
-                color: color.into(),
+        for (game_object, light) in query
+            .iter(&scene.world)
+            .filter(|(_, light)| light.active)
+            .filter_map(|(entity, light)| {
+                scene
+                    .get_game_object_from_entity(*entity)
+                    .map(|go| (go, light))
+            })
+        {
+            let color = light.color.to_normalized_gamma_f32();
+            point_lights.push(PointLight {
+                color: [color[0], color[1], color[2]],
                 radius: light.radius,
-                position: scene
-                    .get_world_transform(scene.get_node(*entity))
-                    .position
-                    .into(),
+                position: scene.get_world_transform(game_object).position.into(),
                 ..Default::default()
             });
         }
-        let size = (16 + std::cmp::max(lights.len(), 1) * std::mem::size_of::<PointLight>()) as u64;
-        self.light_storage_buffer.resize(device, size);
-        self.light_storage_buffer
-            .write_buffer(device, queue, &[lights.len() as u32], None);
-        if !lights.is_empty() {
-            self.light_storage_buffer
-                .write_buffer(device, queue, lights.as_slice(), Some(16));
+        point_lights
+    }
+
+    fn collect_directional_lights(scene: &Scene) -> Vec<DirectionalLight> {
+        let mut directional_lights = Vec::new();
+        let mut query = <(Entity, &ComponentDirectionalLight)>::query();
+        for (game_object, light) in query
+            .iter(&scene.world)
+            .filter(|(_, light)| light.active)
+            .filter_map(|(entity, light)| {
+                scene
+                    .get_game_object_from_entity(*entity)
+                    .map(|go| (go, light))
+            })
+        {
+            let color = light.color.to_normalized_gamma_f32();
+            directional_lights.push(DirectionalLight {
+                color: [color[0], color[1], color[2]],
+                direction: scene
+                    .get_world_transform(game_object)
+                    .transform_direction(&Vec3::z_axis())
+                    .into(),
+                ..Default::default()
+            })
         }
+        directional_lights
     }
 
     pub fn scene_texture(&self) -> &Texture2D {

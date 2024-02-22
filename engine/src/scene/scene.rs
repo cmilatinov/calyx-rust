@@ -4,8 +4,8 @@ use std::path::Path;
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use egui::Ui;
+use generational_indextree::{Arena, NodeId};
 use glm::Mat4;
-use indextree::{Arena, Children, NodeId};
 use legion::world::{Entry, EntryRef};
 use legion::{Entity, EntityStore, IntoQuery, World};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -21,9 +21,7 @@ use crate::math::Transform;
 use crate::scene::Prefab;
 use crate::utils::TypeUuid;
 
-use super::error::SceneError;
-
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GameObject {
     pub node: NodeId,
     pub entity: Entity,
@@ -39,12 +37,13 @@ pub struct SceneData {
 #[uuid = "9946a2e7-e022-447e-8e60-528da548087f"]
 pub struct Scene {
     pub world: World,
-    pub entity_hierarchy: HashSet<NodeId>,
-    node_map: HashMap<Entity, NodeId>,
-    uuid_map: HashMap<Uuid, NodeId>,
+    root_objects: HashSet<GameObject>,
+    uuid_map: HashMap<Uuid, GameObject>,
+    entity_map: HashMap<Entity, NodeId>,
     entity_arena: Arena<Entity>,
     transform_cache: RwLock<HashMap<NodeId, Transform>>,
-    camera: Option<NodeId>,
+    camera: Option<GameObject>,
+    objects_to_delete: HashSet<GameObject>,
 }
 
 impl Asset for Scene {
@@ -101,31 +100,30 @@ impl From<SceneData> for Scene {
     fn from(value: SceneData) -> Self {
         let mut scene = Self::default();
         for (_, components) in value.components {
-            let node = scene.new_entity(None);
-            let entity = scene.get_entity(node);
+            let game_object = scene.new_game_object(None);
             for (component_id, data) in components {
                 if let Some(component) = ClassRegistry::get().component_by_uuid(component_id) {
                     if let Some(instance) = component.deserialize(data) {
-                        if let Some(mut entry) = scene.world.entry(scene.get_entity(node)) {
+                        if let Some(mut entry) = scene.entry_mut(game_object) {
                             let _ = component.bind_instance(&mut entry, instance);
                         }
                     }
                 }
             }
             let mut id = None;
-            if let Some(entry) = scene.entry(entity) {
+            if let Some(entry) = scene.entry(game_object) {
                 if let Ok(c_id) = entry.get_component::<ComponentID>() {
                     id = Some(c_id.id);
                 }
             }
             if let Some(id) = id {
-                scene.uuid_map.insert(id, node);
+                scene.uuid_map.insert(id, game_object);
             }
         }
         for (id, parent) in value.hierarchy {
-            if let Some(entity) = scene.get_node_by_uuid(id) {
-                if let Some(parent) = scene.get_node_by_uuid(parent) {
-                    scene.set_parent(entity, Some(parent));
+            if let Some(game_object) = scene.get_game_object_by_uuid(id) {
+                if let Some(parent) = scene.get_game_object_by_uuid(parent) {
+                    scene.set_parent(game_object, Some(parent));
                 }
             }
         }
@@ -140,23 +138,24 @@ impl From<&Scene> for SceneData {
         let mut hierarchy = HashMap::new();
         let mut components: HashMap<Uuid, HashMap<Uuid, serde_json::Value>> = HashMap::new();
         for (entity, id) in query.iter(world) {
-            if let Some(parent) = scene.get_parent_entity(scene.get_node(*entity)) {
-                if let Ok(parent_id) = world
-                    .entry_ref(parent)
-                    .unwrap()
-                    .get_component::<ComponentID>()
-                {
-                    hierarchy.insert(id.id, parent_id.id);
+            if let Some(game_object) = scene.get_game_object_from_entity(*entity) {
+                if let Some(parent) = scene.get_parent_game_object(game_object) {
+                    if let Some(entry) = scene.entry(parent) {
+                        if let Ok(parent_id) = entry.get_component::<ComponentID>() {
+                            hierarchy.insert(id.id, parent_id.id);
+                        }
+                    }
                 }
-            }
-            for (component_id, component) in ClassRegistry::get().components_uuid() {
-                let entry = world.entry_ref(*entity).unwrap();
-                if let Some(instance) = component.get_instance(&entry) {
-                    if let Some(value) = instance.serialize() {
-                        components
-                            .entry(id.id)
-                            .or_default()
-                            .insert(*component_id, value);
+                for (component_id, component) in ClassRegistry::get().components_uuid() {
+                    if let Some(entry) = scene.entry(game_object) {
+                        if let Some(instance) = component.get_instance(&entry) {
+                            if let Some(value) = instance.serialize() {
+                                components
+                                    .entry(id.id)
+                                    .or_default()
+                                    .insert(*component_id, value);
+                            }
+                        }
                     }
                 }
             }
@@ -168,37 +167,36 @@ impl From<&Scene> for SceneData {
     }
 }
 
-impl From<(&Scene, NodeId)> for SceneData {
-    fn from((scene, node_id): (&Scene, NodeId)) -> Self {
-        let world = &scene.world;
+impl From<(&Scene, GameObject)> for SceneData {
+    fn from((scene, game_object): (&Scene, GameObject)) -> Self {
         let mut hierarchy = HashMap::new();
         let mut components: HashMap<Uuid, HashMap<Uuid, serde_json::Value>> = HashMap::new();
 
-        node_id
+        game_object
+            .node
             .descendants(&scene.entity_arena)
-            .for_each(|child_id| {
-                let entity = scene.get_entity(child_id);
-                let entry = world.entry_ref(entity).unwrap();
-                let id = entry.get_component::<ComponentID>().unwrap();
-
-                if let Some(parent) = scene.get_parent_entity(child_id) {
-                    if let Ok(parent_id) = world
-                        .entry_ref(parent)
-                        .unwrap()
-                        .get_component::<ComponentID>()
-                    {
-                        hierarchy.insert(id.id, parent_id.id);
-                    }
-                }
-
-                for (component_id, component) in ClassRegistry::get().components_uuid() {
-                    let entry = world.entry_ref(entity).unwrap();
-                    if let Some(instance) = component.get_instance(&entry) {
-                        if let Some(value) = instance.serialize() {
-                            components
-                                .entry(id.id)
-                                .or_default()
-                                .insert(*component_id, value);
+            .filter_map(|c| scene.get_game_object_from_node(c))
+            .for_each(|game_object| {
+                if let Some(entry) = scene.entry(game_object) {
+                    if let Ok(id) = entry.get_component::<ComponentID>() {
+                        if let Some(parent) = scene.get_parent_game_object(game_object) {
+                            if let Some(entry) = scene.entry(parent) {
+                                if let Ok(parent_id) = entry.get_component::<ComponentID>() {
+                                    hierarchy.insert(id.id, parent_id.id);
+                                }
+                            }
+                        }
+                        for (component_id, component) in ClassRegistry::get().components_uuid() {
+                            if let Some(entry) = scene.entry(game_object) {
+                                if let Some(instance) = component.get_instance(&entry) {
+                                    if let Some(value) = instance.serialize() {
+                                        components
+                                            .entry(id.id)
+                                            .or_default()
+                                            .insert(*component_id, value);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -211,13 +209,33 @@ impl From<(&Scene, NodeId)> for SceneData {
     }
 }
 
-#[allow(dead_code)]
 impl Scene {
-    pub fn root_entities(&self) -> &HashSet<NodeId> {
-        &self.entity_hierarchy
+    pub(crate) fn get_game_object_from_node(&self, node: NodeId) -> Option<GameObject> {
+        self.entity_arena.get(node).map(|n| GameObject {
+            node,
+            entity: *n.get(),
+        })
     }
 
-    pub fn create_entity(&mut self, id: Option<ComponentID>, parent: Option<NodeId>) -> NodeId {
+    pub(crate) fn get_game_object_from_entity(&self, entity: Entity) -> Option<GameObject> {
+        self.entity_map.get(&entity).map(|node| GameObject {
+            node: *node,
+            entity,
+        })
+    }
+}
+
+#[allow(dead_code)]
+impl Scene {
+    pub fn root_objects(&self) -> &HashSet<GameObject> {
+        &self.root_objects
+    }
+
+    pub fn create_game_object(
+        &mut self,
+        id: Option<ComponentID>,
+        parent: Option<GameObject>,
+    ) -> GameObject {
         let c_id = if let Some(id_comp) = id {
             id_comp
         } else {
@@ -225,25 +243,30 @@ impl Scene {
         };
         let id = c_id.id;
         let entity = self.world.push((c_id, ComponentTransform::default()));
-        let new_node = self.entity_arena.new_node(entity);
-        self.node_map.insert(entity, new_node);
-        self.uuid_map.insert(id, new_node);
+        let node = self.entity_arena.new_node(entity);
+        let game_object = GameObject { node, entity };
+        self.entity_map.insert(entity, node);
+        self.uuid_map.insert(id, game_object);
 
         // push into root otherwise push under parent specified
         match parent {
             None => {
-                self.entity_hierarchy.insert(new_node);
+                self.root_objects.insert(game_object);
             }
-            Some(parent_id) => {
-                parent_id.append(new_node, &mut self.entity_arena);
+            Some(parent) => {
+                parent.node.append(game_object.node, &mut self.entity_arena);
             }
         };
 
-        new_node
+        game_object
     }
 
-    pub fn create_prefab(&self, node_id: NodeId) -> Prefab {
-        let data: SceneData = (self, node_id).into();
+    pub fn delete_game_object(&mut self, game_object: GameObject) {
+        self.objects_to_delete.insert(game_object);
+    }
+
+    pub fn create_prefab(&self, game_object: GameObject) -> Prefab {
+        let data: SceneData = (self, game_object).into();
 
         Prefab {
             data: data.clone(),
@@ -251,36 +274,35 @@ impl Scene {
         }
     }
 
-    pub fn instantiate_prefab(&mut self, prefab: &Prefab, parent_opt: Option<NodeId>) {
-        let root_node = prefab.scene.root_entities().iter().next().unwrap();
+    pub fn instantiate_prefab(&mut self, prefab: &Prefab, parent: Option<GameObject>) {
+        let root_node = prefab.scene.root_objects().iter().next().unwrap();
 
         for (_, components) in prefab.data.components.iter() {
-            let node = self.new_entity(None);
-            let entity = self.get_entity(node);
+            let game_object = self.new_game_object(None);
             for (component_id, data) in components {
                 if let Some(component) = ClassRegistry::get().component_by_uuid(*component_id) {
                     if let Some(instance) = component.deserialize(data.clone()) {
-                        if let Some(mut entry) = self.world.entry(entity) {
+                        if let Some(mut entry) = self.entry_mut(game_object) {
                             let _ = component.bind_instance(&mut entry, instance);
                         }
                     }
                 }
             }
             let mut id = None;
-            if let Some(entry) = self.entry(entity) {
+            if let Some(entry) = self.entry(game_object) {
                 if let Ok(c_id) = entry.get_component::<ComponentID>() {
                     id = Some(c_id.id);
                 }
             }
             if let Some(id) = id {
-                self.uuid_map.insert(id, node);
+                self.uuid_map.insert(id, game_object);
             }
         }
 
         for (id, parent) in prefab.data.hierarchy.iter() {
-            if let Some(entity) = self.get_node_by_uuid(*id) {
-                if let Some(parent) = self.get_node_by_uuid(*parent) {
-                    self.set_parent(entity, Some(parent));
+            if let Some(game_object) = self.get_game_object_by_uuid(*id) {
+                if let Some(parent) = self.get_game_object_by_uuid(*parent) {
+                    self.set_parent(game_object, Some(parent));
                 }
             }
         }
@@ -296,55 +318,59 @@ impl Scene {
         //     }
         // }
 
-        if let Some(parent) = parent_opt {
-            if let Some(entity) = self.get_node_by_uuid(prefab.scene.get_node_uuid(*root_node)) {
-                self.set_parent(entity, Some(parent));
+        if let Some(parent) = parent {
+            if let Some(game_object) =
+                self.get_game_object_by_uuid(prefab.scene.get_game_object_uuid(*root_node))
+            {
+                self.set_parent(game_object, Some(parent));
             }
         }
     }
 
-    pub fn set_parent(&mut self, node: NodeId, parent: Option<NodeId>) {
-        if let Some(_) = self.get_parent_node(node) {
-            node.detach(&mut self.entity_arena);
+    pub fn set_parent(&mut self, game_object: GameObject, parent: Option<GameObject>) {
+        if let Some(_) = self.get_parent_game_object(game_object) {
+            game_object.node.detach(&mut self.entity_arena);
         }
         if let Some(parent) = parent {
-            parent.append(node, &mut self.entity_arena);
-            self.entity_hierarchy.remove(&node);
+            parent.node.append(game_object.node, &mut self.entity_arena);
+            self.root_objects.remove(&game_object);
         } else {
-            self.entity_hierarchy.insert(node);
+            self.root_objects.insert(game_object);
         }
     }
 
     pub fn get_main_camera<'a>(
         &'a self,
         world: &'a World,
-    ) -> Option<(NodeId, &'a ComponentCamera)> {
+    ) -> Option<(GameObject, &'a ComponentCamera)> {
         let mut query = <(Entity, &ComponentTransform, &ComponentCamera)>::query();
         query
             .iter(world)
-            .find(|(e, _, c)| {
-                if let Some(node) = &self.camera {
-                    self.get_node(**e) == *node
+            .filter_map(|(e, t, c)| self.get_game_object_from_entity(*e).map(|go| (go, t, c)))
+            .find(|(go, _, c)| {
+                if let Some(camera) = &self.camera {
+                    go == camera
                 } else {
                     c.enabled
                 }
             })
-            .map(|(e, _, c)| (self.get_node(*e), c))
+            .map(|(go, _, c)| (go, c))
     }
 
-    pub(crate) fn new_entity(&mut self, parent: Option<NodeId>) -> NodeId {
+    pub(crate) fn new_game_object(&mut self, parent: Option<GameObject>) -> GameObject {
         let entity = self.world.push(());
         let node = self.entity_arena.new_node(entity);
-        self.node_map.insert(entity, node);
+        let game_object = GameObject { node, entity };
+        self.entity_map.insert(entity, node);
         match parent {
             None => {
-                self.entity_hierarchy.insert(node);
+                self.root_objects.insert(game_object);
             }
-            Some(parent_id) => {
-                parent_id.append(node, &mut self.entity_arena);
+            Some(parent) => {
+                parent.node.append(node, &mut self.entity_arena);
             }
         };
-        node
+        game_object
     }
 
     fn transform_cache(&self) -> RwLockReadGuard<HashMap<NodeId, Transform>> {
@@ -357,21 +383,19 @@ impl Scene {
 
     pub fn bind_component<T: Send + Sync + 'static>(
         &mut self,
-        node_id: NodeId,
+        game_object: GameObject,
         component: T,
-    ) -> Result<(), SceneError> {
-        self.world
-            .entry(self.get_entity(node_id))
+    ) -> Option<()> {
+        self.entry_mut(game_object)
             .map(|mut e| e.add_component(component))
-            .ok_or(SceneError::InvalidNodeId)
     }
 
     pub fn get_component_ptr(
         &mut self,
-        entity: Entity,
+        game_object: GameObject,
         component: &Box<dyn Component>,
     ) -> Option<*mut dyn Component> {
-        self.world.entry(entity).and_then(|mut entry| {
+        self.entry_mut(game_object).and_then(|mut entry| {
             if let Some(instance) = component.get_instance_mut(&mut entry) {
                 Some(instance as *mut dyn Component)
             } else {
@@ -380,12 +404,12 @@ impl Scene {
         })
     }
 
-    pub fn entry(&self, entity: Entity) -> Option<EntryRef> {
-        self.world.entry_ref(entity).ok()
+    pub fn entry(&self, game_object: GameObject) -> Option<EntryRef> {
+        self.world.entry_ref(game_object.entity).ok()
     }
 
-    pub fn entry_mut(&mut self, entity: Entity) -> Option<Entry> {
-        self.world.entry(entity)
+    pub fn entry_mut(&mut self, game_object: GameObject) -> Option<Entry> {
+        self.world.entry(game_object.entity)
     }
 
     pub fn update(&mut self, ui: &Ui) {
@@ -395,25 +419,39 @@ impl Scene {
             // At worst, this is a race condition because we can guarantee that
             // this reference only lives until the end of this function
             let scene = unsafe { &mut *(self as *mut Self) };
-            let entities = <Entity>::query()
+            let game_objects = <Entity>::query()
                 .iter(&self.world)
-                .copied()
+                .filter_map(|e| self.get_game_object_from_entity(*e))
                 .collect::<Vec<_>>();
-            for entity in entities {
-                let node = self.get_node(entity);
-                if let Some(mut entry) = self.world.entry(entity) {
+            for game_object in game_objects {
+                if let Some(mut entry) = self.entry_mut(game_object) {
                     if let Some(instance) = component.get_instance_mut(&mut entry) {
-                        instance.update(scene, node, ui);
+                        instance.update(scene, game_object, ui);
                     }
                 }
             }
         }
+        self.delete_game_objects();
     }
 
-    pub fn get_entity_name(&self, node_id: NodeId) -> String {
-        self.world
-            .entry_ref(self.get_entity(node_id))
-            .ok()
+    pub fn delete_game_objects(&mut self) {
+        let mut objects_to_delete = HashSet::new();
+        std::mem::swap(&mut objects_to_delete, &mut self.objects_to_delete);
+        for game_object in objects_to_delete {
+            if self.get_parent_game_object(game_object).is_none() {
+                self.root_objects.remove(&game_object);
+            }
+            for go in self.get_children(game_object).collect::<Vec<_>>() {
+                self.world.remove(go.entity);
+                self.entity_map.remove(&go.entity);
+                self.uuid_map.remove(&self.get_game_object_uuid(go));
+            }
+            game_object.node.remove_subtree(&mut self.entity_arena);
+        }
+    }
+
+    pub fn get_game_object_name(&self, game_object: GameObject) -> String {
+        self.entry(game_object)
             .and_then(|e| {
                 e.get_component::<ComponentID>()
                     .ok()
@@ -422,50 +460,39 @@ impl Scene {
             .unwrap_or_default()
     }
 
-    pub fn get_node_uuid(&self, node: NodeId) -> Uuid {
-        self.world
-            .entry_ref(self.get_entity(node))
-            .ok()
+    pub fn get_game_object_uuid(&self, game_object: GameObject) -> Uuid {
+        self.entry(game_object)
             .and_then(|e| e.get_component::<ComponentID>().ok().map(|id| id.id))
             .unwrap_or_default()
     }
 
-    pub fn get_entity_by_uuid(&self, id: Uuid) -> Option<Entity> {
-        self.get_node_by_uuid(id).map(|n| self.get_entity(n))
-    }
-
-    pub fn get_node_by_uuid(&self, id: Uuid) -> Option<NodeId> {
+    pub fn get_game_object_by_uuid(&self, id: Uuid) -> Option<GameObject> {
         self.uuid_map.get(&id).copied()
     }
 
-    pub fn get_parent_entity(&self, node_id: NodeId) -> Option<Entity> {
-        let parent_node_id = self.entity_arena.get(node_id)?.parent()?;
-        Some(*self.entity_arena.get(parent_node_id)?.get())
+    pub fn get_parent_game_object(&self, game_object: GameObject) -> Option<GameObject> {
+        self.entity_arena
+            .get(game_object.node)?
+            .parent()
+            .and_then(|node| self.get_game_object_from_node(node))
     }
 
-    pub fn get_parent_node(&self, node_id: NodeId) -> Option<NodeId> {
-        self.entity_arena.get(node_id)?.parent()
+    pub fn get_children<'a>(
+        &'a self,
+        game_object: GameObject,
+    ) -> impl Iterator<Item = GameObject> + 'a {
+        game_object
+            .node
+            .children(&self.entity_arena)
+            .filter_map(|node| self.get_game_object_from_node(node))
     }
 
-    pub fn get_node(&self, entity: Entity) -> NodeId {
-        *self.node_map.get(&entity).unwrap()
+    pub fn get_children_count(&self, game_object: GameObject) -> usize {
+        self.get_children(game_object).count()
     }
 
-    pub fn get_entity(&self, node_id: NodeId) -> Entity {
-        *self.entity_arena.get(node_id).unwrap().get()
-    }
-
-    pub fn get_children(&self, node_id: NodeId) -> Children<'_, Entity> {
-        node_id.children(&self.entity_arena)
-    }
-
-    pub fn get_children_count(&self, node_id: NodeId) -> usize {
-        node_id.children(&self.entity_arena).count()
-    }
-
-    pub fn get_transform(&self, node: NodeId) -> Transform {
-        let entity = self.get_entity(node);
-        if let Ok(entry) = self.world.entry_ref(entity) {
+    pub fn get_transform(&self, game_object: GameObject) -> Transform {
+        if let Some(entry) = self.entry(game_object) {
             if let Ok(c_transform) = entry.get_component::<ComponentTransform>() {
                 return c_transform.transform;
             }
@@ -473,41 +500,44 @@ impl Scene {
         Transform::default()
     }
 
-    pub fn set_transform(&mut self, node: NodeId, matrix: Mat4) {
-        if let Some(mut entry) = self.world.entry(self.get_entity(node)) {
+    pub fn set_transform(&mut self, game_object: GameObject, matrix: Mat4) {
+        if let Some(mut entry) = self.entry_mut(game_object) {
             if let Ok(tc) = entry.get_component_mut::<ComponentTransform>() {
                 tc.transform.set_local_matrix(&matrix);
             }
         }
     }
 
-    pub fn set_world_transform(&mut self, node_id: NodeId, matrix: Mat4) {
-        let parent_transform = self.get_parent_node(node_id).map_or(Mat4::identity(), |n| {
-            self.get_world_transform(n).inverse_matrix
-        });
-        if let Some(mut entry) = self.world.entry(self.get_entity(node_id)) {
+    pub fn set_world_transform(&mut self, game_object: GameObject, matrix: Mat4) {
+        let parent_transform = self
+            .get_parent_game_object(game_object)
+            .map_or(Mat4::identity(), |go| {
+                self.get_world_transform(go).inverse_matrix
+            });
+        if let Some(mut entry) = self.entry_mut(game_object) {
             if let Ok(tc) = entry.get_component_mut::<ComponentTransform>() {
                 tc.transform.set_local_matrix(&(parent_transform * matrix));
             }
         }
     }
 
-    pub fn get_world_transform(&self, node_id: NodeId) -> Transform {
-        if let Some(transform) = self.transform_cache().get(&node_id) {
+    pub fn get_world_transform(&self, game_object: GameObject) -> Transform {
+        if let Some(transform) = self.transform_cache().get(&game_object.node) {
             return *transform;
         }
-        let entry = self.world.entry_ref(self.get_entity(node_id));
+        let entry = self.entry(game_object);
         let mut matrix = entry
             .as_ref()
             .map(|e| e.get_component::<ComponentTransform>().ok())
             .map_or(Mat4::identity(), |co| {
                 co.map_or(Mat4::identity(), |c| c.transform.matrix)
             });
-        if let Some(parent_node) = self.get_parent_node(node_id) {
+        if let Some(parent_node) = self.get_parent_game_object(game_object) {
             matrix = self.get_world_transform(parent_node).matrix * matrix;
         }
         let transform = matrix.into();
-        self.transform_cache_mut().insert(node_id, transform);
+        self.transform_cache_mut()
+            .insert(game_object.node, transform);
         transform
     }
 
@@ -517,12 +547,20 @@ impl Scene {
 
     pub fn get_children_with_component<'a, T: Component>(
         &'a self,
-        node: NodeId,
-    ) -> impl Iterator<Item = NodeId> + 'a {
-        node.descendants(&self.entity_arena).filter(|c| {
-            self.entry(self.get_entity(*c))
-                .map(|e| e.get_component::<T>().is_ok())
-                .unwrap_or(false)
-        })
+        game_object: GameObject,
+    ) -> impl Iterator<Item = GameObject> + 'a {
+        game_object
+            .node
+            .descendants(&self.entity_arena)
+            .filter_map(|c| match self.get_game_object_from_node(c) {
+                Some(go) => self.entry(go).and_then(|e| {
+                    if e.get_component::<T>().is_ok() {
+                        Some(go)
+                    } else {
+                        None
+                    }
+                }),
+                None => None,
+            })
     }
 }

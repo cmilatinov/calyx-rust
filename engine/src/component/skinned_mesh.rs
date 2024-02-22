@@ -5,7 +5,7 @@ use crate::assets::material::Material;
 use crate::assets::mesh::{BoneTransform, Mesh};
 use crate::core::Ref;
 use crate::reflect::{Reflect, ReflectDefault};
-use crate::scene::EntityRef;
+use crate::scene::GameObjectRef;
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 
 use super::{Component, ReflectComponent};
@@ -18,7 +18,7 @@ use super::{Component, ReflectComponent};
 pub struct ComponentSkinnedMesh {
     pub material: Option<Ref<Material>>,
     pub mesh: Option<Ref<Mesh>>,
-    pub root_bone: Option<EntityRef>,
+    pub root_bone: Option<GameObjectRef>,
     #[reflect_skip]
     #[serde(skip_serializing, skip_deserializing)]
     pub bone_transforms: Vec<BoneTransform>,

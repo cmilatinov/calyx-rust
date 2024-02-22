@@ -74,7 +74,7 @@ impl Widget for FileButton<'_> {
             text_rect.set_bottom(rect.bottom());
             let mut text_pos = text_rect.center() - (text_size / 2.0);
             text_pos.y -= padding.y;
-            text.paint_with_visuals(ui.painter(), text_pos, visuals);
+            ui.painter().galley(text_pos, text, visuals.text_color());
         }
 
         response

@@ -25,10 +25,10 @@ impl SceneManager {
         self.stop_simulation();
         self.current_scene = Scene::default();
         let registry = AssetRegistry::get();
-        let node = self.current_scene.create_entity(None, None);
+        let game_object = self.current_scene.create_game_object(None, None);
         self.current_scene
             .bind_component(
-                node,
+                game_object,
                 ComponentMesh {
                     mesh: registry.load("meshes/cube").ok(),
                     material: registry.load("materials/default").ok(),
@@ -79,17 +79,25 @@ impl SceneManager {
         self.simulation_running
     }
 
-    pub fn get_scene(&self) -> &Scene {
+    pub fn simulation_scene(&self) -> &Scene {
         if let Some(scene) = &self.simulation_scene {
             return scene;
         }
         &self.current_scene
     }
 
-    pub fn get_scene_mut(&mut self) -> &mut Scene {
+    pub fn simulation_scene_mut(&mut self) -> &mut Scene {
         if let Some(scene) = &mut self.simulation_scene {
             return scene;
         }
+        &mut self.current_scene
+    }
+
+    pub fn current_scene(&self) -> &Scene {
+        &self.current_scene
+    }
+
+    pub fn current_scene_mut(&mut self) -> &mut Scene {
         &mut self.current_scene
     }
 }

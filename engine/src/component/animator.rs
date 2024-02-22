@@ -1,6 +1,5 @@
 use egui::Ui;
 use glm::{Mat4, Quat, Vec3};
-use indextree::NodeId;
 use nalgebra::Unit;
 use serde::{Deserialize, Serialize};
 
@@ -8,7 +7,7 @@ use crate as engine;
 use crate::assets::animation::{Animation, AnimationKeyFrames, QuatKeyFrame, VectorKeyFrame};
 use crate::assets::mesh::BoneTransform;
 use crate::core::{Ref, Time, TimeType};
-use crate::scene::Scene;
+use crate::scene::{GameObject, Scene};
 use crate::{
     reflect::{Reflect, ReflectDefault},
     utils::{ReflectTypeUuidDynamic, TypeUuid},
@@ -27,19 +26,18 @@ pub struct ComponentAnimator {
 }
 
 impl Component for ComponentAnimator {
-    fn update(&mut self, scene: &mut Scene, node: NodeId, _ui: &Ui) {
+    fn update(&mut self, scene: &mut Scene, game_object: GameObject, _ui: &Ui) {
         let mut duration = None;
         let skinned_meshes = scene
-            .get_children_with_component::<ComponentSkinnedMesh>(node)
+            .get_children_with_component::<ComponentSkinnedMesh>(game_object)
             .collect::<Vec<_>>();
         if let Some(animation) = &self.animation {
             let animation = animation.read();
             duration = Some((animation.duration / animation.ticks_per_second) as TimeType);
-            for skinned_mesh_node in skinned_meshes {
-                let entity = scene.get_entity(skinned_mesh_node);
+            for skinned_mesh_go in skinned_meshes {
                 let mut node_transforms: Vec<BoneTransform> = Default::default();
                 let mut mesh_bone = None;
-                if let Some(entry) = scene.entry(entity) {
+                if let Some(entry) = scene.entry(skinned_mesh_go) {
                     if let Ok(c_skinned_mesh) = entry.get_component::<ComponentSkinnedMesh>() {
                         if let Some(mesh) = &c_skinned_mesh.mesh {
                             if let Some(root_bone) = &c_skinned_mesh.root_bone {
@@ -49,7 +47,7 @@ impl Component for ComponentAnimator {
                     }
                 }
                 if let Some((mesh, root_bone)) = mesh_bone {
-                    if let Some(root) = root_bone.node(scene) {
+                    if let Some(root) = root_bone.game_object(scene) {
                         let mesh = mesh.read();
                         node_transforms.resize(
                             mesh.bones.len(),
@@ -68,7 +66,7 @@ impl Component for ComponentAnimator {
                         );
                     }
                 }
-                if let Some(mut entry) = scene.entry_mut(entity) {
+                if let Some(mut entry) = scene.entry_mut(skinned_mesh_go) {
                     if let Ok(c_skinned_mesh) = entry.get_component_mut::<ComponentSkinnedMesh>() {
                         c_skinned_mesh.bone_transforms = node_transforms;
                     }
@@ -86,14 +84,14 @@ impl ComponentAnimator {
     fn traverse_bone_hierarchy(
         &self,
         scene: &mut Scene,
-        node: NodeId,
+        game_object: GameObject,
         animation: &Animation,
         global_inverse_transform: &Mat4,
         mut parent_transform: Mat4,
         node_transforms: &mut Vec<BoneTransform>,
     ) {
-        let mut local_transform = scene.get_transform(node).matrix;
-        if let Some(entry) = scene.entry(scene.get_entity(node)) {
+        let mut local_transform = scene.get_transform(game_object).matrix;
+        if let Some(entry) = scene.entry(game_object) {
             if let Ok(c_bone) = entry.get_component::<ComponentBone>() {
                 if let Some(keyframes) = animation.node_keyframes.get(&c_bone.name) {
                     local_transform = self.local_animation_bone_transform(
@@ -111,8 +109,8 @@ impl ComponentAnimator {
             }
         }
         parent_transform = parent_transform * local_transform;
-        scene.set_transform(node, local_transform);
-        for child in scene.get_children(node).collect::<Vec<_>>() {
+        scene.set_transform(game_object, local_transform);
+        for child in scene.get_children(game_object).collect::<Vec<_>>() {
             self.traverse_bone_hierarchy(
                 scene,
                 child,

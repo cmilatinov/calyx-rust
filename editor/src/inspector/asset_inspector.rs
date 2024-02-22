@@ -5,7 +5,7 @@ use engine::reflect_trait;
 use engine::uuid::Uuid;
 
 #[reflect_trait]
-pub trait AssetInspector {
+pub trait AssetInspector: Send + Sync {
     fn target_type_uuid(&self) -> Uuid;
     fn show_inspector(&self, _ui: &mut Ui, _asset: Ref<dyn Asset>) {}
     fn show_context_menu(&self, _ui: &mut Ui, _asset: Ref<dyn Asset>) {}

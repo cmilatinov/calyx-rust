@@ -1,5 +1,5 @@
 use egui::Ui;
-use egui_gizmo::{GizmoMode, GizmoResult, GizmoVisuals, DEFAULT_SNAP_ANGLE};
+use egui_gizmo::{GizmoMode, GizmoOrientation, GizmoResult, GizmoVisuals, DEFAULT_SNAP_ANGLE};
 
 use engine::egui::load::SizedTexture;
 use engine::egui::{Align2, Color32, Image, ImageSource, Key, Margin, Pos2, Sense, TextStyle};
@@ -111,13 +111,20 @@ impl PanelViewport {
         };
 
         if let Some(selection) = app_state.selection.clone() {
-            if let Some(node_id) = selection.first_entity() {
-                let transform = SceneManager::get().get_scene().get_world_transform(node_id);
+            if let Some(game_object) = selection.first_entity().and_then(|id| {
+                SceneManager::get()
+                    .simulation_scene()
+                    .get_game_object_by_uuid(id)
+            }) {
+                let transform = SceneManager::get()
+                    .simulation_scene()
+                    .get_world_transform(game_object);
                 let gizmo = egui_gizmo::Gizmo::new("test")
                     .projection_matrix(app_state.camera.camera.projection.into())
                     .view_matrix(app_state.camera.transform.get_inverse_matrix().into())
                     .model_matrix(transform.matrix.into())
                     .mode(app_state.gizmo_mode)
+                    .orientation(app_state.gizmo_orientation)
                     .viewport(*viewport)
                     .visuals(GIZMO_VISUALS)
                     .snapping(snap)
@@ -127,8 +134,8 @@ impl PanelViewport {
                 if let Some(gizmo_response) = gizmo.interact(ui) {
                     let transform = gizmo_response.transform();
                     SceneManager::get_mut()
-                        .get_scene_mut()
-                        .set_world_transform(node_id, Mat4::from(transform));
+                        .simulation_scene_mut()
+                        .set_world_transform(game_object, Mat4::from(transform));
                     self.gizmo_status(ui, &gizmo_response);
                 }
             }
@@ -142,28 +149,38 @@ impl PanelViewport {
         if ui.input(|input| input.key_pressed(Key::R)) {
             app_state.gizmo_mode = GizmoMode::Scale;
         }
+        if ui.input(|input| input.key_pressed(Key::Z)) {
+            app_state.gizmo_orientation = if app_state.gizmo_orientation == GizmoOrientation::Global
+            {
+                GizmoOrientation::Local
+            } else {
+                GizmoOrientation::Global
+            };
+        }
     }
 
     fn gizmo_status(&self, ui: &Ui, response: &GizmoResult) {
-        let length = Vec3::from(response.value).magnitude();
-        let text = match response.mode {
-            GizmoMode::Rotate => format!("{:.1}°, {:.2} rad", length.to_degrees(), length),
-            GizmoMode::Translate | GizmoMode::Scale => format!(
-                "dX: {:.2}, dY: {:.2}, dZ: {:.2}",
-                response.value[0], response.value[1], response.value[2]
-            ),
-        };
-        let rect = ui.clip_rect();
-        ui.painter().text(
-            Pos2::new(rect.left() + 5.0, rect.bottom()),
-            Align2::LEFT_BOTTOM,
-            text,
-            ui.style()
-                .text_styles
-                .get(&TextStyle::Body)
-                .unwrap()
-                .clone(),
-            Color32::WHITE,
-        );
+        if let Some(value) = response.value {
+            let length = Vec3::from(value).magnitude();
+            let text = match response.mode {
+                GizmoMode::Rotate => format!("{:.1}°, {:.2} rad", length.to_degrees(), length),
+                GizmoMode::Translate | GizmoMode::Scale => format!(
+                    "dX: {:.2}, dY: {:.2}, dZ: {:.2}",
+                    value[0], value[1], value[2]
+                ),
+            };
+            let rect = ui.clip_rect();
+            ui.painter().text(
+                Pos2::new(rect.left() + 5.0, rect.bottom()),
+                Align2::LEFT_BOTTOM,
+                text,
+                ui.style()
+                    .text_styles
+                    .get(&TextStyle::Body)
+                    .unwrap()
+                    .clone(),
+                Color32::WHITE,
+            );
+        }
     }
 }

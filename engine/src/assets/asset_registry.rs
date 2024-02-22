@@ -104,9 +104,14 @@ impl AssetRegistry {
         self.load_by_id(id)
     }
 
-    pub fn load_by_path<A: Asset + TypeUuid>(&self, path: PathBuf) -> Result<Ref<A>, AssetError> {
-        let id = self.asset_id_from_path(&path).ok_or(AssetError::NotFound)?;
+    pub fn load_by_path<A: Asset + TypeUuid>(&self, path: &PathBuf) -> Result<Ref<A>, AssetError> {
+        let id = self.asset_id_from_path(path).ok_or(AssetError::NotFound)?;
         self.load_by_id(id)
+    }
+
+    pub fn load_dyn_by_path(&self, path: &PathBuf) -> Result<Ref<dyn Asset>, AssetError> {
+        let id = self.asset_id_from_path(path).ok_or(AssetError::NotFound)?;
+        self.load_dyn_by_id(id)
     }
 
     pub fn load_by_id<A: Asset + TypeUuid>(&self, id: Uuid) -> Result<Ref<A>, AssetError> {

@@ -1,12 +1,11 @@
 use egui::Color32;
-use indextree::NodeId;
 use serde::{Deserialize, Serialize};
 
 use crate as engine;
 use crate::component::{Component, ReflectComponent};
 use crate::reflect::{Reflect, ReflectDefault};
 use crate::render::Gizmos;
-use crate::scene::Scene;
+use crate::scene::{GameObject, Scene};
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 
 #[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
@@ -38,8 +37,8 @@ impl Default for ComponentCamera {
 }
 
 impl Component for ComponentCamera {
-    fn draw_gizmos(&self, scene: &Scene, node: NodeId, gizmos: &mut Gizmos) {
-        let transform = scene.get_world_transform(node);
+    fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {
+        let transform = scene.get_world_transform(game_object);
         gizmos.wire_frustum(
             &transform,
             16.0 / 9.0,

@@ -28,10 +28,10 @@ impl TypeInspector for TransformInspector {
                 .body(|mut body| {
                     let mut changed = false;
                     let parent_transform = ctx
-                        .parent_node
+                        .parent
                         .map(|parent| ctx.scene.get_world_transform(parent))
                         .unwrap_or_default();
-                    let mut transform = ctx.scene.get_world_transform(ctx.node);
+                    let mut transform = ctx.scene.get_world_transform(ctx.game_object);
                     body.row(BASE_FONT_SIZE + 6.0, |mut row| {
                         row.col(|ui| {
                             ui.label("Position ");
@@ -76,7 +76,7 @@ impl TypeInspector for TransformInspector {
         if let Some(t_comp) = instance.downcast_mut::<ComponentTransform>() {
             if ui.button("Reset").clicked() {
                 let parent_transform = ctx
-                    .parent_node
+                    .parent
                     .map(|parent| ctx.scene.get_world_transform(parent))
                     .unwrap_or_default();
                 t_comp

@@ -24,6 +24,7 @@ pub trait Panel {
     where
         Self: Sized;
     fn ui(&mut self, ui: &mut Ui);
+    fn context_menu(&mut self, _ui: &mut Ui) {}
     fn tab_style_override(&self, _global_style: &TabStyle) -> Option<TabStyle> {
         None
     }
@@ -79,6 +80,18 @@ impl egui_dock::TabViewer for PanelManager {
             panel.tab_style_override(global_style)
         } else {
             None
+        }
+    }
+
+    fn context_menu(
+        &mut self,
+        ui: &mut Ui,
+        tab: &mut Self::Tab,
+        _surface: egui_dock::SurfaceIndex,
+        _node: egui_dock::NodeIndex,
+    ) {
+        if let Some(panel) = self.panels.get_mut(tab) {
+            panel.context_menu(ui);
         }
     }
 }

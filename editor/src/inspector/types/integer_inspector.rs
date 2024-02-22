@@ -22,7 +22,7 @@ impl TypeInspector for IntegerInspector {
             .unwrap();
         let integer = meta.get_mut(instance).unwrap();
         let mut value = integer.as_i64();
-        let res = ui.add(egui::Slider::new(&mut value, 0..=360));
+        let res = ui.add(egui::DragValue::new(&mut value));
         if res.changed() {
             integer.set_from_i64(value);
         }

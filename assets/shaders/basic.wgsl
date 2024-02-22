@@ -48,15 +48,36 @@ struct BoneStorage {
     bones: array<BoneTransform>,
 };
 
+struct AmbientLight {
+    color: vec3<f32>,
+    intensity: f32,
+};
+
 struct PointLight {
     position: vec3<f32>,
     radius: f32,
     color: vec3<f32>,
 };
 
-struct LightStorage {
-    point_lights_size: u32,
-    point_lights: array<PointLight>,
+struct PointLightStorage {
+    size: u32,
+    lights: array<PointLight>,
+};
+
+struct DirectionalLight {
+    direction: vec3<f32>,
+    color: vec3<f32>,
+};
+
+struct DirectionalLightStorage {
+    size: u32,
+    lights: array<DirectionalLight>, 
+};
+
+struct SpotLight {
+    direction: vec3<f32>,
+    color: vec3<f32>,
+    angle: f32
 };
 
 @group(0) @binding(0)
@@ -69,7 +90,10 @@ var<uniform> mesh: MeshUniforms;
 var<storage, read> bones: BoneStorage;
 
 @group(2) @binding(0)
-var<storage, read> lights: LightStorage;
+var<storage, read> point_lights: PointLightStorage;
+
+@group(2) @binding(1)
+var<storage, read> directional_lights: DirectionalLightStorage;
 
 @group(3) @binding(0)
 var texture_diffuse: texture_2d<f32>;
@@ -114,28 +138,47 @@ fn vs_main(vertex: VertexIn) -> VertexOut {
     return out;
 }
 
+
+fn diffuse_lighting(
+    diffuse_color: vec3<f32>, 
+    light_color: vec3<f32>, 
+    light_direction: vec3<f32>, 
+    surface_normal: vec3<f32>,
+) -> vec3<f32> {
+    let radiance_factor = max(dot(surface_normal, -light_direction), 0.0);
+    return diffuse_color * light_color * radiance_factor;
+}
+
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let diffuse_color = textureSample(texture_diffuse, sampler_diffuse, in.uv);
     let normal = normalize(in.normal);
 
     var color = vec3f(0.0);
-    for (var i = 0u; i < lights.point_lights_size; i++) {
-        let worldToLight = lights.point_lights[i].position - in.world_position;
-        let dist = length(worldToLight);
-        let dir = normalize(worldToLight);
 
-        // Determine the contribution of this light to the surface color.
-        let radiance = lights.point_lights[i].color * (1.0 / (dist * dist));
-        let nDotL = max(dot(normal, dir), 0.0);
+    // Point lights
+    for (var i = 0u; i < point_lights.size; i++) {
+        let light = point_lights.lights[i];
+        let from_light = in.world_position - light.position;
+        let dist = length(from_light);
+        let dir = normalize(from_light);
 
-        // Accumulate light contribution to the surface color.
-        color += vec3f(diffuse_color.rgb * radiance * nDotL);
+        let r = light.radius;
+        let a = max((499.0 - r) / (r * r), 0.0);
+        let attenuation = 1.0 / ((a * dist * dist) + dist + 1);
+
+        color += diffuse_lighting(diffuse_color.rgb, light.color, dir, normal) * attenuation;
+    }
+
+    // Directional lights
+    for (var i = 0u; i < directional_lights.size; i++) {
+        let light = directional_lights.lights[i];
+        color += diffuse_lighting(diffuse_color.rgb, light.color, light.direction, normal);
     }
 
     // Gamma correction
-    let gamma = 2.2;
-    color = pow(color, vec3f(1.0 / gamma));
+    // let gamma = 2.2;
+    // color = pow(color, vec3f(1.0 / gamma));
 
     return vec4f(color.xyz, diffuse_color.a);
 }
