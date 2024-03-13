@@ -53,6 +53,10 @@ impl Panel for PanelViewport {
             ..global_style.clone()
         })
     }
+
+    fn scroll_bars(&self) -> [bool; 2] {
+        [false, false]
+    }
 }
 
 impl PanelViewport {

@@ -29,6 +29,7 @@ use crate::scene::{Prefab, Scene};
 use crate::utils;
 use crate::utils::{singleton, Init, TypeUuid};
 
+use super::skybox::Skybox;
 use super::LoadedAsset;
 
 type AssetConstructor =
@@ -91,6 +92,7 @@ impl Init for AssetRegistry {
         self.register_asset_type::<Material>();
         self.register_asset_type::<Prefab>();
         self.register_asset_type::<Scene>();
+        self.register_asset_type::<Skybox>();
     }
 }
 
@@ -202,6 +204,18 @@ impl AssetRegistry {
         );
         self.asset_cache_mut().insert(id, asset.as_asset());
         Ok(asset)
+    }
+
+    pub fn load_or_create<A: Asset + TypeUuid, F: FnOnce() -> A>(
+        &self,
+        name: &str,
+        create_fn: F,
+    ) -> Option<Ref<A>> {
+        if let Ok(asset) = self.load(name) {
+            return asset.into();
+        }
+        let asset = create_fn();
+        self.create(name.into(), asset).ok()
     }
 
     pub fn register_asset_type<A: Asset + TypeUuid>(&self) {
@@ -338,7 +352,7 @@ impl AssetRegistry {
                     }
                     EventKind::Remove(_) => {
                         for file in paths_iter {
-                            std::fs::remove_file(file.with_extension("meta")).unwrap();
+                            let _ = std::fs::remove_file(file.with_extension("meta"));
                         }
                     }
                     _ => {}

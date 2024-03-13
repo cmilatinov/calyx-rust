@@ -21,6 +21,7 @@ use crate::render::Shader;
 use crate::utils::TypeUuid;
 
 use super::animation::Animation;
+use super::skybox::Skybox;
 
 pub trait Asset: Any + Send + Sync {
     fn get_file_extensions() -> &'static [&'static str]
@@ -108,11 +109,13 @@ impl_extern_type_uuid!(Ref<Mesh>, "fe0cede5-078e-453e-a680-1ff55bb582fc");
 impl_extern_type_uuid!(Ref<Shader>, "d07ea11e-60d8-4e51-a4d5-7099b50c0a12");
 impl_extern_type_uuid!(Ref<Texture2D>, "731cd634-75a5-4550-9df8-0cc59cfbbd06");
 impl_extern_type_uuid!(Ref<Material>, "86d2370f-aecd-462f-a1f3-9b8068627cd8");
+impl_extern_type_uuid!(Ref<Skybox>, "913ec3d7-7078-4e65-a890-d540608eeb6b");
 
 impl_reflect_value!(Ref<Mesh>(AssetRef));
 impl_reflect_value!(Ref<Shader>(AssetRef));
 impl_reflect_value!(Ref<Texture2D>(AssetRef));
 impl_reflect_value!(Ref<Material>(AssetRef));
+impl_reflect_value!(Ref<Skybox>(AssetRef));
 
 impl_extern_type_uuid!(Option<Ref<Mesh>>, "ccee7bcc-744a-4eee-b1c2-af08dd4f481b");
 impl_extern_type_uuid!(Option<Ref<Shader>>, "6f9f1e5a-8f39-4595-98cf-410777321105");
@@ -128,9 +131,11 @@ impl_extern_type_uuid!(
     Option<Ref<Animation>>,
     "0583bce5-72b1-4157-8361-aa4255e097a6"
 );
+impl_extern_type_uuid!(Option<Ref<Skybox>>, "ee52ede4-a2ae-42d3-b872-c3c6516d53ef");
 
 impl_reflect_value!(Option<Ref<Mesh>>(AssetOptionRef));
 impl_reflect_value!(Option<Ref<Shader>>(AssetOptionRef));
 impl_reflect_value!(Option<Ref<Texture2D>>(AssetOptionRef));
 impl_reflect_value!(Option<Ref<Material>>(AssetOptionRef));
 impl_reflect_value!(Option<Ref<Animation>>(AssetOptionRef));
+impl_reflect_value!(Option<Ref<Skybox>>(AssetOptionRef));

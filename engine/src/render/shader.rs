@@ -196,7 +196,7 @@ impl Shader {
                 polygon_mode: options.polygon_mode,
                 ..Default::default()
             },
-            depth_stencil: Some(RenderUtils::depth_default()),
+            depth_stencil: options.depth_stencil.clone(),
             multisample: RenderUtils::multisample_default(options.samples),
             multiview: None,
         });

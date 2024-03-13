@@ -110,10 +110,6 @@ impl RenderUtils {
     ) {
         Self::rebuild_mesh_data(device, queue, mesh);
         Self::bind_mesh_buffers(render_pass, mesh);
-        render_pass.draw_indexed(
-            0..(mesh.indices.len() as u32),
-            0,
-            0..(mesh.instances.len() as u32),
-        );
+        Self::draw_mesh_instanced(render_pass, mesh, 0..(mesh.instances.len() as u32));
     }
 }

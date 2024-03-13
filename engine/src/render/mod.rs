@@ -5,6 +5,7 @@ pub use gizmo_renderer::*;
 pub use gizmos::*;
 pub use pipeline_options::*;
 pub use render_context::*;
+pub use render_utils::*;
 pub use scene_renderer::*;
 pub use shader::*;
 

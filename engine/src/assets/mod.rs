@@ -11,4 +11,5 @@ pub mod error;
 mod loaded_asset;
 pub mod material;
 pub mod mesh;
+pub mod skybox;
 pub mod texture;

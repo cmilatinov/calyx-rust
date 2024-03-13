@@ -28,6 +28,9 @@ pub trait Panel {
     fn tab_style_override(&self, _global_style: &TabStyle) -> Option<TabStyle> {
         None
     }
+    fn scroll_bars(&self) -> [bool; 2] {
+        [true, true]
+    }
 }
 
 pub struct PanelManager {
@@ -92,6 +95,14 @@ impl egui_dock::TabViewer for PanelManager {
     ) {
         if let Some(panel) = self.panels.get_mut(tab) {
             panel.context_menu(ui);
+        }
+    }
+
+    fn scroll_bars(&self, tab: &Self::Tab) -> [bool; 2] {
+        if let Some(panel) = self.panels.get(tab) {
+            panel.scroll_bars()
+        } else {
+            [true, true]
         }
     }
 }

@@ -1,6 +1,7 @@
 use engine::assets::animation::Animation;
 use engine::assets::material::Material;
 use engine::assets::mesh::Mesh;
+use engine::assets::skybox::Skybox;
 use engine::assets::texture::Texture2D;
 use engine::assets::{ReflectAssetOptionRef, ReflectAssetRef};
 use engine::core::Ref;
@@ -26,11 +27,13 @@ impl TypeInspector for AssetRefInspector {
             Ref<Texture2D>,
             Ref<Material>,
             Ref<Animation>,
+            Ref<Skybox>,
             Option<Ref<Mesh>>,
             Option<Ref<Shader>>,
             Option<Ref<Texture2D>>,
             Option<Ref<Material>>,
-            Option<Ref<Animation>>
+            Option<Ref<Animation>>,
+            Option<Ref<Skybox>>
         )
     }
 

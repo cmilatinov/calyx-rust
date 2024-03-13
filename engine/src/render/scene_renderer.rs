@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::default::Default;
+use std::ops::Deref;
 use std::ops::Range;
 
 use egui::Color32;
@@ -10,10 +11,12 @@ use legion::{Entity, IntoQuery};
 
 use crate::assets::material::Material;
 use crate::assets::mesh::{Instance, Mesh};
+use crate::assets::skybox::SkyboxShaders;
 use crate::assets::texture::Texture2D;
 use crate::assets::{AssetRegistry, Assets};
 use crate::component::{
     ComponentDirectionalLight, ComponentMesh, ComponentPointLight, ComponentSkinnedMesh,
+    ComponentSkyLight,
 };
 use crate::core::Ref;
 use crate::math::Transform;
@@ -86,15 +89,20 @@ pub struct DrawListElement {
     transform: [[f32; 4]; 4],
 }
 
-#[allow(dead_code)]
 pub struct SceneRenderer {
     options: SceneRendererOptions,
     scene_texture: Texture2D,
     scene_depth_texture: Texture2D,
     scene_texture_msaa: Texture2D,
-    scene_bind_group: wgpu::BindGroup,
     scene_shader: Ref<Shader>,
+    camera_bind_group: wgpu::BindGroup,
     grid_shader: Ref<Shader>,
+    skybox: Option<usize>,
+    skybox_shader: Ref<Shader>,
+    skybox_cubemap_shader: Ref<Shader>,
+    skybox_irradiance_cubemap_shader: Ref<Shader>,
+    skybox_prefilter_cubemap_shader: Ref<Shader>,
+    skybox_brdf_shader: Ref<Shader>,
     camera_uniform_buffer: wgpu::Buffer,
     point_light_storage_buffer: ResizableBuffer,
     directional_light_storage_buffer: ResizableBuffer,
@@ -118,10 +126,28 @@ impl SceneRenderer {
         // Shaders
         let scene_shader;
         let grid_shader;
+        let skybox_shader;
+        let skybox_cubemap_shader;
+        let skybox_irradiance_cubemap_shader;
+        let skybox_prefilter_cubemap_shader;
+        let skybox_brdf_shader;
         {
             let registry = AssetRegistry::get();
-            scene_shader = registry.load::<Shader>("shaders/basic").unwrap();
+            scene_shader = registry.load::<Shader>("shaders/pbr").unwrap();
             grid_shader = registry.load::<Shader>("shaders/grid").unwrap();
+            skybox_shader = registry
+                .load::<Shader>("shaders/environment/skybox")
+                .unwrap();
+            skybox_cubemap_shader = registry
+                .load::<Shader>("shaders/environment/cubemap")
+                .unwrap();
+            skybox_irradiance_cubemap_shader = registry
+                .load::<Shader>("shaders/environment/irradiance")
+                .unwrap();
+            skybox_prefilter_cubemap_shader = registry
+                .load::<Shader>("shaders/environment/prefilter")
+                .unwrap();
+            skybox_brdf_shader = registry.load::<Shader>("shaders/environment/brdf").unwrap();
         }
 
         let camera_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -130,19 +156,19 @@ impl SceneRenderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let point_light_storage_buffer =
-            ResizableBuffer::new(wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
-        let directional_light_storage_buffer =
-            ResizableBuffer::new(wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
-
-        let scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("scene_bind_group"),
-            layout: &scene_shader.read().bind_group_layouts[0],
+        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("camera_bind_group"),
+            layout: &grid_shader.read().bind_group_layouts[0],
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: camera_uniform_buffer.as_entire_binding(),
             }],
         });
+
+        let point_light_storage_buffer =
+            ResizableBuffer::new(wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
+        let directional_light_storage_buffer =
+            ResizableBuffer::new(wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
 
         let gizmo_renderer = GizmoRenderer::new(&camera_uniform_buffer, options.samples);
 
@@ -151,9 +177,15 @@ impl SceneRenderer {
             scene_texture_msaa,
             scene_texture,
             scene_depth_texture,
-            scene_bind_group,
             scene_shader,
+            camera_bind_group,
             grid_shader,
+            skybox: None,
+            skybox_shader,
+            skybox_cubemap_shader,
+            skybox_irradiance_cubemap_shader,
+            skybox_prefilter_cubemap_shader,
+            skybox_brdf_shader,
             camera_uniform_buffer,
             point_light_storage_buffer,
             directional_light_storage_buffer,
@@ -191,6 +223,7 @@ impl SceneRenderer {
             label: Some("encoder"),
         });
         self.render_meshes(render_state, scene, &mut encoder);
+        self.render_skybox(render_state, &mut encoder);
         if self.options.grid {
             self.render_grid(render_state, &mut encoder);
         }
@@ -215,23 +248,51 @@ impl SceneRenderer {
         queue.submit(Some(encoder.finish()));
     }
 
-    fn render_meshes(
-        &mut self,
-        render_state: &RenderState,
-        scene: &Scene,
-        encoder: &mut wgpu::CommandEncoder,
-    ) {
-        let device = &render_state.device;
-        let options = PipelineOptionsBuilder::default()
-            .samples(self.options.samples)
-            .build();
-        self.build_asset_data(render_state, scene, &options);
-        let draw_list = self.build_draw_list();
-        self.build_mesh_data(render_state);
-        self.build_light_data(render_state, scene);
-        let assets = self.assets.lock(device);
-        let material_bind_groups = self.build_material_bind_groups(device, &assets);
-        let light_storage_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    fn scene_bind_group(
+        &self,
+        device: &wgpu::Device,
+        irradiance_map: &Texture2D,
+        prefilter_map: &Texture2D,
+        brdf_map: &Texture2D,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("scene_bind_group"),
+            layout: &self.scene_shader.read().bind_group_layouts[0],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.camera_uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&irradiance_map.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&irradiance_map.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&prefilter_map.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(&prefilter_map.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(&brdf_map.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::Sampler(&brdf_map.sampler),
+                },
+            ],
+        })
+    }
+
+    fn light_storage_bind_group(&self, device: &wgpu::Device) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("light_storage_bind_group"),
             layout: &self.scene_shader.read().bind_group_layouts[2],
             entries: &[
@@ -250,7 +311,47 @@ impl SceneRenderer {
                         .as_entire_binding(),
                 },
             ],
-        });
+        })
+    }
+
+    fn render_meshes(
+        &mut self,
+        render_state: &RenderState,
+        scene: &Scene,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
+        let device = &render_state.device;
+        let options = PipelineOptionsBuilder::default()
+            .samples(self.options.samples)
+            .build();
+        self.build_asset_data(render_state, scene, &options);
+        let draw_list = self.build_draw_list();
+        self.build_mesh_data(render_state);
+        self.build_light_data(render_state, scene);
+        let assets = self.assets.lock(device);
+        let material_bind_groups = self.build_material_bind_groups(device, &assets);
+        let black_texture_cube_binding = Assets::black_texture_cube().unwrap();
+        let black_texture_cube = black_texture_cube_binding.read();
+        let black_texture_2d_binding = Assets::black_texture_2d().unwrap();
+        let black_texture_2d = black_texture_2d_binding.read();
+        let (irradiance_map, prefilter_map, brdf_map) = self
+            .skybox
+            .map(|id| {
+                let skybox = &assets.skybox(id);
+                (
+                    &skybox.irradiance_cubemap,
+                    &skybox.prefilter_cubemap,
+                    &skybox.brdf_map,
+                )
+            })
+            .unwrap_or((
+                black_texture_cube.deref(),
+                black_texture_cube.deref(),
+                black_texture_2d.deref(),
+            ));
+        let scene_bind_group =
+            self.scene_bind_group(device, irradiance_map, prefilter_map, brdf_map);
+        let light_storage_bind_group = self.light_storage_bind_group(device);
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Viewport Scene"),
@@ -272,7 +373,7 @@ impl SceneRenderer {
                 if shader_id != last.0 {
                     if let Some(pipeline) = shader.get_pipeline(&options) {
                         render_pass.set_pipeline(pipeline);
-                        render_pass.set_bind_group(0, &self.scene_bind_group, &[]);
+                        render_pass.set_bind_group(0, &scene_bind_group, &[]);
                         render_pass.set_bind_group(2, &light_storage_bind_group, &[]);
                     }
                 }
@@ -337,7 +438,7 @@ impl SceneRenderer {
             grid_shader.build_pipeline(&options);
             if let Some(pipeline) = grid_shader.get_pipeline(&options) {
                 render_pass.set_pipeline(pipeline);
-                render_pass.set_bind_group(0, &self.scene_bind_group, &[]);
+                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
                 quad_mesh.instances.resize(
                     1,
                     Instance {
@@ -347,6 +448,76 @@ impl SceneRenderer {
                     },
                 );
                 RenderUtils::render_mesh(device, queue, &mut render_pass, &mut quad_mesh);
+            }
+        }
+    }
+
+    fn render_skybox(&mut self, render_state: &RenderState, encoder: &mut wgpu::CommandEncoder) {
+        if let Some(skybox_ref) = self.skybox.map(|id| self.assets.skybox(id)) {
+            let mut skybox = skybox_ref.write();
+            skybox.prepare(
+                SkyboxShaders {
+                    cubemap_shader: &self.skybox_cubemap_shader,
+                    irradiance_cubemap_shader: &self.skybox_irradiance_cubemap_shader,
+                    prefilter_cubemap_shader: &self.skybox_prefilter_cubemap_shader,
+                    brdf_shader: &self.skybox_brdf_shader,
+                },
+                render_state,
+                encoder,
+            );
+
+            let device = &render_state.device;
+            let mut shader = self.skybox_shader.write();
+            let cube_binding = Assets::cube().unwrap();
+            let cube_mesh = cube_binding.read();
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &shader.bind_group_layouts[1],
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&skybox.cubemap.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&skybox.cubemap.sampler),
+                    },
+                ],
+            });
+            {
+                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Skybox"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &self.scene_texture_msaa.view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.scene_depth_texture.view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                let options = PipelineOptionsBuilder::default()
+                    .samples(self.options.samples)
+                    .cull_mode(Some(wgpu::Face::Front))
+                    .build();
+                shader.build_pipeline(&options);
+                if let Some(pipeline) = shader.get_pipeline(&options) {
+                    render_pass.set_pipeline(pipeline);
+                    render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    render_pass.set_bind_group(1, &bind_group, &[]);
+                    RenderUtils::bind_mesh_buffers(&mut render_pass, &cube_mesh);
+                    RenderUtils::draw_mesh_instanced(&mut render_pass, &cube_mesh, 0..1);
+                }
             }
         }
     }
@@ -474,6 +645,25 @@ impl SceneRenderer {
                 }
             }
         }
+        let mut query = <&ComponentSkyLight>::query();
+        let mut skybox = None;
+        for c_sky_light in query.iter(world).filter(|s| s.active) {
+            if let Some(skybox_ref) = &c_sky_light.skybox {
+                let skybox_id = skybox_ref.id();
+                self.assets
+                    .skyboxes
+                    .entry(skybox_id)
+                    .or_insert(skybox_ref.clone());
+                if let Some(cube) = Assets::cube() {
+                    self.assets.meshes.entry(cube.id()).or_insert(cube);
+                }
+                if let Some(quad) = Assets::screen_space_quad() {
+                    self.assets.meshes.entry(quad.id()).or_insert(quad);
+                }
+                skybox = Some(skybox_id);
+            }
+        }
+        self.skybox = skybox;
         for (_, mut mesh) in self.assets.meshes.lock_write() {
             mesh.instances.clear();
         }
@@ -629,6 +819,7 @@ impl SceneRenderer {
                 view_formats: &[],
             },
             None,
+            None,
             true,
         );
         let scene_texture_msaa = Texture2D::new(
@@ -649,6 +840,7 @@ impl SceneRenderer {
                 view_formats: &[],
             },
             None,
+            None,
             false,
         );
         let scene_depth_texture = Texture2D::new(
@@ -666,6 +858,7 @@ impl SceneRenderer {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                 view_formats: &[],
             },
+            None,
             None,
             false,
         );

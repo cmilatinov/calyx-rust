@@ -1,5 +1,5 @@
 {
-  "shader": "9363517f-d5ce-5511-2a89-2e3eaf0a6235",
+  "shader": "869cbd32-a789-f19d-3e24-5207f558d1c2",
   "variables": [
     {
       "group": 3,
@@ -18,6 +18,36 @@
       "name": "sampler_diffuse",
       "span": null,
       "value": "Sampler"
+    },
+    {
+      "group": 3,
+      "binding": 2,
+      "offset": 0,
+      "name": "metallic",
+      "span": 4,
+      "value": {
+        "Float": 1.0
+      }
+    },
+    {
+      "group": 3,
+      "binding": 2,
+      "offset": 4,
+      "name": "roughness",
+      "span": 4,
+      "value": {
+        "Float": 0.3
+      }
+    },
+    {
+      "group": 3,
+      "binding": 2,
+      "offset": 8,
+      "name": "ambient_occlusion",
+      "span": 4,
+      "value": {
+        "Float": 0.15
+      }
     }
   ]
 }

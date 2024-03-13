@@ -7,6 +7,7 @@ pub use id::*;
 pub use mesh::*;
 pub use point_light::*;
 pub use skinned_mesh::*;
+pub use sky_light::*;
 pub use transform::*;
 
 mod animator;
@@ -18,4 +19,5 @@ mod id;
 mod mesh;
 mod point_light;
 mod skinned_mesh;
+mod sky_light;
 mod transform;

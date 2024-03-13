@@ -463,7 +463,8 @@ impl EditorApp {
                 device_descriptor: Arc::new(|_adapter| wgpu::DeviceDescriptor {
                     required_features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
                         | wgpu::Features::POLYGON_MODE_LINE
-                        | wgpu::Features::CLEAR_TEXTURE,
+                        | wgpu::Features::CLEAR_TEXTURE
+                        | wgpu::Features::FLOAT32_FILTERABLE,
                     ..Default::default()
                 }),
                 ..Default::default()
