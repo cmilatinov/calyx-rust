@@ -4560,8 +4560,9 @@ checksum = "3cd14fd5e3b777a7422cca79358c57a8f6e3a703d9ac187448d0daf220c2407f"
 
 [[package]]
 name = "russimp"
-version = "3.1.1"
-source = "git+https://github.com/cmilatinov/russimp?branch=feature/property-store#392e11951013e47c0c7de385b7baa1966456d62e"
+version = "3.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "581bbd613b048d7eaf9a092a70b082835f02683c3a7215ea3038cd4ad6d7807b"
 dependencies = [
  "derivative",
  "num-derive",
