@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate as engine;
 use crate::assets::error::AssetError;
-use crate::assets::texture::Texture2D;
+use crate::assets::texture::Texture;
 use crate::assets::Asset;
 use crate::core::Ref;
 use crate::render::{AssetMap, LockedAssetRenderState, RenderContext, Shader};
@@ -71,7 +71,7 @@ pub enum ShaderVariableValue {
     Vec3([f32; 3]),
     Vec4([f32; 4]),
     Mat4([[f32; 4]; 4]),
-    Texture2D(Option<Ref<Texture2D>>),
+    Texture2D(Option<Ref<Texture>>),
     Sampler,
 }
 
@@ -100,7 +100,7 @@ impl ShaderVariableValue {
         }
     }
 
-    pub fn as_texture(&self) -> Ref<Texture2D> {
+    pub fn as_texture(&self) -> Ref<Texture> {
         if let ShaderVariableValue::Texture2D(texture) = self {
             texture
                 .clone()
@@ -177,7 +177,7 @@ impl Material {
         material
     }
 
-    pub(crate) fn collect_textures(&self, textures: &mut AssetMap<Texture2D>) {
+    pub(crate) fn collect_textures(&self, textures: &mut AssetMap<Texture>) {
         let missing_texture = Assets::missing_texture().unwrap();
         for var in self.variables.iter() {
             if let ShaderVariableValue::Texture2D(texture) = &var.value {
@@ -246,7 +246,7 @@ impl Material {
         self.buffers.get(&(group, binding)).unwrap()
     }
 
-    fn find_closest_texture_in_group(&self, group: u32, binding: u32) -> Ref<Texture2D> {
+    fn find_closest_texture_in_group(&self, group: u32, binding: u32) -> Ref<Texture> {
         let mut closest = u32::MAX;
         let mut closest_index: isize = -1;
         for (i, var) in self

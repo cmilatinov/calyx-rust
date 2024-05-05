@@ -2,7 +2,7 @@ use eframe::wgpu;
 use glm::{vec2, vec3};
 
 use crate::assets::mesh::Mesh;
-use crate::assets::texture::Texture2D;
+use crate::assets::texture::Texture;
 use crate::assets::AssetRegistry;
 use crate::core::Ref;
 
@@ -13,15 +13,15 @@ const BLACK_TEXTURE_CUBE: &str = "black_texture_sube";
 pub struct Assets;
 
 impl Assets {
-    pub fn missing_texture() -> Option<Ref<Texture2D>> {
+    pub fn missing_texture() -> Option<Ref<Texture>> {
         AssetRegistry::get()
-            .load::<Texture2D>("textures/missing")
+            .load::<Texture>("textures/missing")
             .ok()
     }
 
-    pub fn black_texture_2d() -> Option<Ref<Texture2D>> {
+    pub fn black_texture_2d() -> Option<Ref<Texture>> {
         AssetRegistry::get().load_or_create(BLACK_TEXTURE_2D, || {
-            Texture2D::new(
+            Texture::new(
                 &wgpu::TextureDescriptor {
                     label: Some(BLACK_TEXTURE_2D),
                     size: wgpu::Extent3d {
@@ -43,9 +43,9 @@ impl Assets {
         })
     }
 
-    pub fn black_texture_cube() -> Option<Ref<Texture2D>> {
+    pub fn black_texture_cube() -> Option<Ref<Texture>> {
         AssetRegistry::get().load_or_create(BLACK_TEXTURE_CUBE, || {
-            Texture2D::new(
+            Texture::new(
                 &wgpu::TextureDescriptor {
                     label: Some(BLACK_TEXTURE_CUBE),
                     size: wgpu::Extent3d {

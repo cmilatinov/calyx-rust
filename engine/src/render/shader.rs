@@ -1,5 +1,5 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
-use std::fs;
 use std::path::Path;
 
 use eframe::wgpu::ShaderSource;
@@ -13,12 +13,15 @@ use crate::render::render_utils::RenderUtils;
 use crate::render::{PipelineOptions, RenderContext};
 use crate::utils::TypeUuid;
 
+use super::shader_preprocessor::ShaderPreprocessor;
+
 pub type BindGroupEntries = BTreeMap<u32, Vec<wgpu::BindGroupLayoutEntry>>;
 pub type BindGroupLayouts = Vec<wgpu::BindGroupLayout>;
 
 #[derive(TypeUuid)]
 #[uuid = "00415831-a64c-4dc2-b573-5e112f99b674"]
 pub struct Shader {
+    pub source: String,
     pub shader: wgpu::ShaderModule,
     pub bind_group_layouts: BindGroupLayouts,
     pub bind_group_entries: BindGroupEntries,
@@ -33,18 +36,19 @@ impl Asset for Shader {
     }
     fn from_file(path: &Path) -> Result<LoadedAsset<Self>, AssetError> {
         let device = RenderContext::device().unwrap();
-        let shader_src = fs::read_to_string(path).map_err(|_| AssetError::LoadError)?;
+        let source =
+            ShaderPreprocessor::load_shader_source(path).map_err(|_| AssetError::LoadError)?;
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(
                 path.file_stem()
                     .and_then(|f| f.to_str())
                     .ok_or(AssetError::LoadError)?,
             ),
-            source: ShaderSource::Wgsl(shader_src.clone().into()),
+            source: ShaderSource::Wgsl(Cow::Borrowed(source.as_str())),
         });
 
         let module =
-            naga::front::wgsl::parse_str(shader_src.as_str()).map_err(|_| AssetError::LoadError)?;
+            naga::front::wgsl::parse_str(source.as_str()).map_err(|_| AssetError::LoadError)?;
 
         let bind_group_entries = Self::bind_group_entries(&module);
         let bind_group_layouts = Self::bind_group_layouts(&device, &bind_group_entries);
@@ -56,6 +60,7 @@ impl Asset for Shader {
         });
 
         Ok(LoadedAsset::new(Self {
+            source,
             shader,
             bind_group_layouts,
             bind_group_entries,

@@ -1,3 +1,5 @@
+//#include "shaders/camera.wgsl"
+
 struct VertexIn {
     @location(0) position: vec3f,
 };
@@ -11,18 +13,6 @@ struct FragmentOut {
     @builtin(frag_depth) depth: f32,
     @location(0) color: vec4f,
 };
-
-struct CameraUniforms {
-    projection: mat4x4<f32>,
-    view: mat4x4<f32>,
-    inverse_projection: mat4x4<f32>,
-    inverse_view: mat4x4<f32>,
-    near_plane: f32,
-    far_plane: f32
-};
-
-@group(0) @binding(0)
-var<uniform> camera: CameraUniforms;
 
 @group(1) @binding(0)
 var skybox_texture: texture_cube<f32>;

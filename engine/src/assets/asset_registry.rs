@@ -18,7 +18,7 @@ use uuid::Uuid;
 use crate::assets::error::AssetError;
 use crate::assets::material::Material;
 use crate::assets::mesh::Mesh;
-use crate::assets::texture::Texture2D;
+use crate::assets::texture::Texture;
 use crate::assets::LoadedAssetRef;
 use crate::assets::{Asset, AssetRef};
 use crate::core::Ref;
@@ -88,7 +88,7 @@ impl Init for AssetRegistry {
     fn initialize(&mut self) {
         self.register_asset_type::<Mesh>();
         self.register_asset_type::<Shader>();
-        self.register_asset_type::<Texture2D>();
+        self.register_asset_type::<Texture>();
         self.register_asset_type::<Material>();
         self.register_asset_type::<Prefab>();
         self.register_asset_type::<Scene>();
@@ -99,6 +99,10 @@ impl Init for AssetRegistry {
 impl AssetRegistry {
     pub fn root_path(&self) -> &PathBuf {
         &self.asset_paths[0]
+    }
+
+    pub fn asset_paths(&self) -> &Vec<PathBuf> {
+        &self.asset_paths
     }
 
     pub fn load<A: Asset + TypeUuid>(&self, name: &str) -> Result<Ref<A>, AssetError> {

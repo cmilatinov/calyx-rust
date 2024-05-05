@@ -31,6 +31,7 @@ impl RenderUtils {
     pub fn depth_stencil_attachment(
         view: &wgpu::TextureView,
         clear_value: f32,
+        stencil_ops: Option<wgpu::Operations<u32>>,
     ) -> wgpu::RenderPassDepthStencilAttachment {
         wgpu::RenderPassDepthStencilAttachment {
             view,
@@ -38,7 +39,7 @@ impl RenderUtils {
                 load: wgpu::LoadOp::Clear(clear_value),
                 store: wgpu::StoreOp::Store,
             }),
-            stencil_ops: None,
+            stencil_ops,
         }
     }
 
@@ -61,9 +62,9 @@ impl RenderUtils {
         texture_format.into()
     }
 
-    pub fn depth_default() -> wgpu::DepthStencilState {
+    pub fn depth_default(format: wgpu::TextureFormat) -> wgpu::DepthStencilState {
         wgpu::DepthStencilState {
-            format: wgpu::TextureFormat::Depth32Float,
+            format,
             depth_write_enabled: true,
             depth_compare: wgpu::CompareFunction::Less,
             stencil: wgpu::StencilState::default(),

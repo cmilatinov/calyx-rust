@@ -38,7 +38,9 @@ impl Default for PipelineOptionsBuilder {
             polygon_mode: wgpu::PolygonMode::Fill,
             cull_mode: Some(wgpu::Face::Back),
             fragment_targets: vec![RenderContext::target_format().map(RenderUtils::color_default)],
-            depth_stencil: Some(RenderUtils::depth_default()),
+            depth_stencil: Some(RenderUtils::depth_default(
+                wgpu::TextureFormat::Depth32Float,
+            )),
             samples: 1,
         }
     }

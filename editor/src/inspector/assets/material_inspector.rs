@@ -2,7 +2,7 @@ use crate::inspector::asset_inspector::{AssetInspector, ReflectAssetInspector};
 use crate::inspector::widgets::Widgets;
 use crate::BASE_FONT_SIZE;
 use engine::assets::material::{Material, ShaderVariable, ShaderVariableValue};
-use engine::assets::texture::Texture2D;
+use engine::assets::texture::Texture;
 use engine::assets::{Asset, AssetRegistry};
 use engine::core::Ref;
 use engine::egui::Ui;
@@ -104,7 +104,7 @@ impl MaterialInspector {
                     Widgets::asset_select_t(
                         ui,
                         (var.group, var.binding, var.offset),
-                        Some(Texture2D::type_uuid()),
+                        Some(Texture::type_uuid()),
                         tex,
                     );
                 }

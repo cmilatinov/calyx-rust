@@ -464,7 +464,8 @@ impl EditorApp {
                     required_features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
                         | wgpu::Features::POLYGON_MODE_LINE
                         | wgpu::Features::CLEAR_TEXTURE
-                        | wgpu::Features::FLOAT32_FILTERABLE,
+                        | wgpu::Features::FLOAT32_FILTERABLE
+                        | wgpu::Features::DEPTH32FLOAT_STENCIL8,
                     ..Default::default()
                 }),
                 ..Default::default()

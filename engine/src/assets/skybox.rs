@@ -4,7 +4,7 @@ use eframe::wgpu::{self, CommandEncoder};
 use egui_wgpu::RenderState;
 use engine_derive::TypeUuid;
 
-use super::{error::AssetError, texture::Texture2D, Asset, Assets, LoadedAsset};
+use super::{error::AssetError, texture::Texture, Asset, Assets, LoadedAsset};
 use crate::{
     self as engine,
     core::Ref,
@@ -14,11 +14,11 @@ use crate::{
 #[derive(TypeUuid)]
 #[uuid = "bdb5dd3a-cca4-453d-8260-ff2bdf2a05b2"]
 pub struct Skybox {
-    pub texture: Texture2D,
-    pub cubemap: Texture2D,
-    pub irradiance_cubemap: Texture2D,
-    pub prefilter_cubemap: Texture2D,
-    pub brdf_map: Texture2D,
+    pub texture: Texture,
+    pub cubemap: Texture,
+    pub irradiance_cubemap: Texture,
+    pub prefilter_cubemap: Texture,
+    pub brdf_map: Texture,
     pub dirty: bool,
 }
 
@@ -35,8 +35,8 @@ impl Asset for Skybox {
     }
 
     fn from_file(path: &Path) -> Result<LoadedAsset<Self>, AssetError> {
-        let LoadedAsset { asset: texture, .. } = Texture2D::from_file(path)?;
-        let cubemap = Texture2D::new(
+        let LoadedAsset { asset: texture, .. } = Texture::from_file(path)?;
+        let cubemap = Texture::new(
             &wgpu::TextureDescriptor {
                 label: None,
                 size: wgpu::Extent3d {
@@ -44,7 +44,7 @@ impl Asset for Skybox {
                     height: 1024,
                     depth_or_array_layers: 6,
                 },
-                mip_level_count: 1,
+                mip_level_count: 5,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Rg11b10Float,
@@ -59,7 +59,7 @@ impl Asset for Skybox {
             }),
             false,
         );
-        let irradiance_cubemap = Texture2D::new(
+        let irradiance_cubemap = Texture::new(
             &wgpu::TextureDescriptor {
                 label: None,
                 size: wgpu::Extent3d {
@@ -82,7 +82,7 @@ impl Asset for Skybox {
             }),
             false,
         );
-        let prefilter_cubemap = Texture2D::new(
+        let prefilter_cubemap = Texture::new(
             &wgpu::TextureDescriptor {
                 label: None,
                 size: wgpu::Extent3d {
@@ -105,7 +105,7 @@ impl Asset for Skybox {
             }),
             false,
         );
-        let brdf_map = Texture2D::new(
+        let brdf_map = Texture::new(
             &wgpu::TextureDescriptor {
                 label: None,
                 size: wgpu::Extent3d {
@@ -144,8 +144,8 @@ impl Skybox {
         shader_ref: &Ref<Shader>,
         render_state: &RenderState,
         encoder: &mut CommandEncoder,
-        src: Option<&Texture2D>,
-        dest: &Texture2D,
+        src: Option<&Texture>,
+        dest: &Texture,
         dest_cubemap: bool,
         dest_mip_level: Option<u32>,
         instances: Option<Range<u32>>,
@@ -187,7 +187,7 @@ impl Skybox {
             .iter()
             .map(|_| {
                 Some(wgpu::ColorTargetState {
-                    format: dest.format,
+                    format: dest.descriptor.format,
                     blend: None,
                     write_mask: Default::default(),
                 })
@@ -256,6 +256,7 @@ impl Skybox {
             None,
             None,
         );
+        self.cubemap.generate_mips(render_state, encoder);
         self.prepare_step(
             shaders.irradiance_cubemap_shader,
             render_state,

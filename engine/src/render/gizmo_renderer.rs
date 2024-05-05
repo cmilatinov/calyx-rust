@@ -16,7 +16,7 @@ use crate::render::render_utils::RenderUtils;
 use crate::scene::Scene;
 
 use super::buffer::wgpu_buffer_init_desc;
-use super::{PipelineOptionsBuilder, RenderContext, Shader};
+use super::{PipelineOptions, PipelineOptionsBuilder, RenderContext, Shader};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -77,36 +77,9 @@ impl GizmoRenderer {
             }; Mesh::MAX_INSTANCES],
         ));
 
-        let mut shader = Shader::from_file(&Path::new("assets/shaders/gizmos.wgsl"))
+        let shader = Shader::from_file(&Path::new("assets/shaders/gizmos.wgsl"))
             .unwrap()
             .asset;
-        shader.build_pipeline(
-            &PipelineOptionsBuilder::default()
-                .samples(samples)
-                .primitive_topology(wgpu::PrimitiveTopology::LineList)
-                .fragment_targets(vec![
-                    RenderContext::target_format().map(RenderUtils::color_alpha_blending)
-                ])
-                .build(),
-        );
-        shader.build_pipeline(
-            &PipelineOptionsBuilder::default()
-                .samples(samples)
-                .primitive_topology(wgpu::PrimitiveTopology::LineStrip)
-                .fragment_targets(vec![
-                    RenderContext::target_format().map(RenderUtils::color_alpha_blending)
-                ])
-                .build(),
-        );
-        shader.build_pipeline(
-            &PipelineOptionsBuilder::default()
-                .samples(samples)
-                .primitive_topology(wgpu::PrimitiveTopology::PointList)
-                .fragment_targets(vec![
-                    RenderContext::target_format().map(RenderUtils::color_alpha_blending)
-                ])
-                .build(),
-        );
 
         let gizmo_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("gizmo_bind_group"),
@@ -176,6 +149,18 @@ impl GizmoRenderer {
         renderer
     }
 
+    fn pipeline_options(
+        topology: wgpu::PrimitiveTopology,
+        target_format: wgpu::TextureFormat,
+        samples: u32,
+    ) -> PipelineOptions {
+        PipelineOptionsBuilder::default()
+            .samples(samples)
+            .primitive_topology(topology)
+            .fragment_targets(vec![Some(RenderUtils::color_alpha_blending(target_format))])
+            .build()
+    }
+
     fn clear(&mut self) {
         self.circle_list.clear();
         self.cube_list.clear();
@@ -240,16 +225,37 @@ impl GizmoRenderer {
         self.load_buffers(device, queue);
     }
 
-    pub fn render_gizmos<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+    pub fn render_gizmos<'a>(
+        &'a mut self,
+        target_format: wgpu::TextureFormat,
+        render_pass: &mut wgpu::RenderPass<'a>,
+    ) {
+        let circle_options = Self::pipeline_options(
+            wgpu::PrimitiveTopology::LineStrip,
+            target_format,
+            self.samples,
+        );
+        let cube_options = Self::pipeline_options(
+            wgpu::PrimitiveTopology::LineList,
+            target_format,
+            self.samples,
+        );
+        let line_options = Self::pipeline_options(
+            wgpu::PrimitiveTopology::LineList,
+            target_format,
+            self.samples,
+        );
+        let point_options = Self::pipeline_options(
+            wgpu::PrimitiveTopology::PointList,
+            target_format,
+            self.samples,
+        );
+        self.shader.build_pipeline(&circle_options);
+        self.shader.build_pipeline(&cube_options);
+        self.shader.build_pipeline(&line_options);
+        self.shader.build_pipeline(&point_options);
         if !self.circle_list.is_empty() {
-            let options = PipelineOptionsBuilder::default()
-                .samples(self.samples)
-                .primitive_topology(wgpu::PrimitiveTopology::LineStrip)
-                .fragment_targets(vec![
-                    RenderContext::target_format().map(RenderUtils::color_alpha_blending)
-                ])
-                .build();
-            if let Some(pipeline) = self.shader.get_pipeline(&options) {
+            if let Some(pipeline) = self.shader.get_pipeline(&circle_options) {
                 render_pass.set_pipeline(pipeline);
                 render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
 
@@ -263,14 +269,7 @@ impl GizmoRenderer {
         }
 
         if !self.cube_list.is_empty() {
-            let options = PipelineOptionsBuilder::default()
-                .samples(self.samples)
-                .primitive_topology(wgpu::PrimitiveTopology::LineList)
-                .fragment_targets(vec![
-                    RenderContext::target_format().map(RenderUtils::color_alpha_blending)
-                ])
-                .build();
-            if let Some(pipeline) = self.shader.get_pipeline(&options) {
+            if let Some(pipeline) = self.shader.get_pipeline(&cube_options) {
                 render_pass.set_pipeline(pipeline);
                 render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
 
@@ -285,14 +284,7 @@ impl GizmoRenderer {
         }
 
         if !self.lines_mesh.vertices.is_empty() {
-            let options = PipelineOptionsBuilder::default()
-                .samples(self.samples)
-                .primitive_topology(wgpu::PrimitiveTopology::LineList)
-                .fragment_targets(vec![
-                    RenderContext::target_format().map(RenderUtils::color_alpha_blending)
-                ])
-                .build();
-            if let Some(pipeline) = self.shader.get_pipeline(&options) {
+            if let Some(pipeline) = self.shader.get_pipeline(&line_options) {
                 render_pass.set_pipeline(pipeline);
                 render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
 
@@ -303,14 +295,7 @@ impl GizmoRenderer {
         }
 
         if !self.points_mesh.vertices.is_empty() {
-            let options = PipelineOptionsBuilder::default()
-                .samples(self.samples)
-                .primitive_topology(wgpu::PrimitiveTopology::PointList)
-                .fragment_targets(vec![
-                    RenderContext::target_format().map(RenderUtils::color_alpha_blending)
-                ])
-                .build();
-            if let Some(pipeline) = self.shader.get_pipeline(&options) {
+            if let Some(pipeline) = self.shader.get_pipeline(&point_options) {
                 render_pass.set_pipeline(pipeline);
                 render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
 

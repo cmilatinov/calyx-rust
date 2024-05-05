@@ -8,6 +8,7 @@ pub use render_context::*;
 pub use render_utils::*;
 pub use scene_renderer::*;
 pub use shader::*;
+pub use shader_preprocessor::*;
 
 mod asset_map;
 mod asset_render_state;
@@ -16,7 +17,9 @@ mod camera;
 mod gizmo_renderer;
 mod gizmos;
 mod pipeline_options;
+pub mod postprocess;
 mod render_context;
 mod render_utils;
 mod scene_renderer;
 mod shader;
+mod shader_preprocessor;

@@ -12,7 +12,7 @@ use legion::{Entity, IntoQuery};
 use crate::assets::material::Material;
 use crate::assets::mesh::{Instance, Mesh};
 use crate::assets::skybox::SkyboxShaders;
-use crate::assets::texture::Texture2D;
+use crate::assets::texture::Texture;
 use crate::assets::{AssetRegistry, Assets};
 use crate::component::{
     ComponentDirectionalLight, ComponentMesh, ComponentPointLight, ComponentSkinnedMesh,
@@ -91,9 +91,9 @@ pub struct DrawListElement {
 
 pub struct SceneRenderer {
     options: SceneRendererOptions,
-    scene_texture: Texture2D,
-    scene_depth_texture: Texture2D,
-    scene_texture_msaa: Texture2D,
+    scene_texture: Texture,
+    scene_depth_texture: Texture,
+    scene_texture_msaa: Texture,
     scene_shader: Ref<Shader>,
     camera_bind_group: wgpu::BindGroup,
     grid_shader: Ref<Shader>,
@@ -242,7 +242,7 @@ impl SceneRenderer {
                 origin: Default::default(),
                 aspect: Default::default(),
             },
-            self.scene_texture.size,
+            self.scene_texture.descriptor.size,
         );
 
         queue.submit(Some(encoder.finish()));
@@ -251,9 +251,9 @@ impl SceneRenderer {
     fn scene_bind_group(
         &self,
         device: &wgpu::Device,
-        irradiance_map: &Texture2D,
-        prefilter_map: &Texture2D,
-        brdf_map: &Texture2D,
+        irradiance_map: &Texture,
+        prefilter_map: &Texture,
+        brdf_map: &Texture,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("scene_bind_group"),
@@ -323,6 +323,11 @@ impl SceneRenderer {
         let device = &render_state.device;
         let options = PipelineOptionsBuilder::default()
             .samples(self.options.samples)
+            .fragment_targets(vec![Some(wgpu::ColorTargetState {
+                format: self.scene_texture_msaa.descriptor.format,
+                blend: None,
+                write_mask: Default::default(),
+            })])
             .build();
         self.build_asset_data(render_state, scene, &options);
         let draw_list = self.build_draw_list();
@@ -362,6 +367,10 @@ impl SceneRenderer {
                 depth_stencil_attachment: Some(RenderUtils::depth_stencil_attachment(
                     &self.scene_depth_texture.view,
                     1.0,
+                    Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0),
+                        store: wgpu::StoreOp::Store,
+                    }),
                 )),
                 timestamp_writes: None,
                 occlusion_query_set: None,
@@ -394,7 +403,8 @@ impl SceneRenderer {
 
             // Render gizmos
             if self.options.gizmos {
-                self.gizmo_renderer.render_gizmos(&mut render_pass);
+                self.gizmo_renderer
+                    .render_gizmos(self.scene_texture_msaa.descriptor.format, &mut render_pass);
             }
         }
     }
@@ -432,7 +442,7 @@ impl SceneRenderer {
             let options = PipelineOptionsBuilder::default()
                 .samples(self.options.samples)
                 .fragment_targets(vec![Some(RenderUtils::color_alpha_blending(
-                    render_state.target_format,
+                    self.scene_texture_msaa.descriptor.format,
                 ))])
                 .build();
             grid_shader.build_pipeline(&options);
@@ -507,6 +517,11 @@ impl SceneRenderer {
                     occlusion_query_set: None,
                 });
                 let options = PipelineOptionsBuilder::default()
+                    .fragment_targets(vec![Some(wgpu::ColorTargetState {
+                        format: self.scene_texture_msaa.descriptor.format,
+                        blend: None,
+                        write_mask: Default::default(),
+                    })])
                     .samples(self.options.samples)
                     .cull_mode(Some(wgpu::Face::Front))
                     .build();
@@ -794,7 +809,7 @@ impl SceneRenderer {
         directional_lights
     }
 
-    pub fn scene_texture(&self) -> &Texture2D {
+    pub fn scene_texture(&self) -> &Texture {
         &self.scene_texture
     }
 
@@ -802,8 +817,8 @@ impl SceneRenderer {
         self.scene_texture.handle.as_ref().unwrap()
     }
 
-    fn create_textures(width: u32, height: u32, samples: u32) -> (Texture2D, Texture2D, Texture2D) {
-        let scene_texture = Texture2D::new(
+    fn create_textures(width: u32, height: u32, samples: u32) -> (Texture, Texture, Texture) {
+        let scene_texture = Texture::new(
             &wgpu::TextureDescriptor {
                 label: Some("scene_texture"),
                 size: wgpu::Extent3d {
@@ -814,7 +829,7 @@ impl SceneRenderer {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Bgra8Unorm,
+                format: wgpu::TextureFormat::Rg11b10Float,
                 usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             },
@@ -822,7 +837,7 @@ impl SceneRenderer {
             None,
             true,
         );
-        let scene_texture_msaa = Texture2D::new(
+        let scene_texture_msaa = Texture::new(
             &wgpu::TextureDescriptor {
                 label: Some("scene_texture_msaa"),
                 size: wgpu::Extent3d {
@@ -833,7 +848,7 @@ impl SceneRenderer {
                 mip_level_count: 1,
                 sample_count: samples,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Bgra8Unorm,
+                format: wgpu::TextureFormat::Rg11b10Float,
                 usage: wgpu::TextureUsages::COPY_SRC
                     | wgpu::TextureUsages::RENDER_ATTACHMENT
                     | wgpu::TextureUsages::TEXTURE_BINDING,
@@ -843,7 +858,7 @@ impl SceneRenderer {
             None,
             false,
         );
-        let scene_depth_texture = Texture2D::new(
+        let scene_depth_texture = Texture::new(
             &wgpu::TextureDescriptor {
                 label: Some("scene_depth_texture"),
                 size: wgpu::Extent3d {
@@ -894,7 +909,9 @@ impl SceneRenderer {
     }
 
     pub fn resize_textures(&mut self, width: u32, height: u32) {
-        if self.scene_texture.size.width == width && self.scene_texture.size.height == height {
+        if self.scene_texture.descriptor.size.width == width
+            && self.scene_texture.descriptor.size.height == height
+        {
             return;
         }
         (

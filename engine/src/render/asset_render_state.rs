@@ -3,7 +3,7 @@ use egui_wgpu::wgpu;
 use crate::assets::material::Material;
 use crate::assets::mesh::Mesh;
 use crate::assets::skybox::Skybox;
-use crate::assets::texture::Texture2D;
+use crate::assets::texture::Texture;
 use crate::core::Ref;
 use crate::render::asset_map::AssetMap;
 use crate::render::Shader;
@@ -14,7 +14,7 @@ use std::sync::RwLockReadGuard;
 pub(crate) struct AssetRenderState {
     pub meshes: AssetMap<Mesh>,
     pub materials: AssetMap<Material>,
-    pub textures: AssetMap<Texture2D>,
+    pub textures: AssetMap<Texture>,
     pub shaders: AssetMap<Shader>,
     pub skyboxes: AssetMap<Skybox>,
 }
@@ -44,7 +44,7 @@ impl AssetRenderState {
     pub fn shader(&self, id: usize) -> &Ref<Shader> {
         self.shaders.get(id)
     }
-    pub fn texture(&self, id: usize) -> &Ref<Texture2D> {
+    pub fn texture(&self, id: usize) -> &Ref<Texture> {
         self.textures.get(id)
     }
     pub fn skybox(&self, id: usize) -> &Ref<Skybox> {
@@ -56,7 +56,7 @@ pub(crate) struct LockedAssetRenderState<'a> {
     pub meshes: HashMap<usize, RwLockReadGuard<'a, Mesh>>,
     pub mesh_instance_groups: HashMap<usize, wgpu::BindGroup>,
     pub materials: HashMap<usize, RwLockReadGuard<'a, Material>>,
-    pub textures: HashMap<usize, RwLockReadGuard<'a, Texture2D>>,
+    pub textures: HashMap<usize, RwLockReadGuard<'a, Texture>>,
     pub shaders: HashMap<usize, RwLockReadGuard<'a, Shader>>,
     pub skyboxes: HashMap<usize, RwLockReadGuard<'a, Skybox>>,
 }
@@ -72,7 +72,7 @@ impl LockedAssetRenderState<'_> {
     pub fn material(&self, id: usize) -> &RwLockReadGuard<Material> {
         self.materials.get(&id).unwrap()
     }
-    pub fn texture(&self, id: usize) -> &RwLockReadGuard<Texture2D> {
+    pub fn texture(&self, id: usize) -> &RwLockReadGuard<Texture> {
         self.textures.get(&id).unwrap()
     }
     pub fn shader(&self, id: usize) -> &RwLockReadGuard<Shader> {

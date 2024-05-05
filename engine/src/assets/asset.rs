@@ -13,7 +13,7 @@ use crate as engine;
 use crate::assets::error::AssetError;
 use crate::assets::material::Material;
 use crate::assets::mesh::Mesh;
-use crate::assets::texture::Texture2D;
+use crate::assets::texture::Texture;
 use crate::assets::AssetRegistry;
 use crate::assets::LoadedAsset;
 use crate::core::Ref;
@@ -107,22 +107,19 @@ impl<'de, T: Asset + TypeUuid> Deserialize<'de> for Ref<T> {
 
 impl_extern_type_uuid!(Ref<Mesh>, "fe0cede5-078e-453e-a680-1ff55bb582fc");
 impl_extern_type_uuid!(Ref<Shader>, "d07ea11e-60d8-4e51-a4d5-7099b50c0a12");
-impl_extern_type_uuid!(Ref<Texture2D>, "731cd634-75a5-4550-9df8-0cc59cfbbd06");
+impl_extern_type_uuid!(Ref<Texture>, "731cd634-75a5-4550-9df8-0cc59cfbbd06");
 impl_extern_type_uuid!(Ref<Material>, "86d2370f-aecd-462f-a1f3-9b8068627cd8");
 impl_extern_type_uuid!(Ref<Skybox>, "913ec3d7-7078-4e65-a890-d540608eeb6b");
 
 impl_reflect_value!(Ref<Mesh>(AssetRef));
 impl_reflect_value!(Ref<Shader>(AssetRef));
-impl_reflect_value!(Ref<Texture2D>(AssetRef));
+impl_reflect_value!(Ref<Texture>(AssetRef));
 impl_reflect_value!(Ref<Material>(AssetRef));
 impl_reflect_value!(Ref<Skybox>(AssetRef));
 
 impl_extern_type_uuid!(Option<Ref<Mesh>>, "ccee7bcc-744a-4eee-b1c2-af08dd4f481b");
 impl_extern_type_uuid!(Option<Ref<Shader>>, "6f9f1e5a-8f39-4595-98cf-410777321105");
-impl_extern_type_uuid!(
-    Option<Ref<Texture2D>>,
-    "b1c1260e-4c2e-4eff-8d6a-ae53308a6cb0"
-);
+impl_extern_type_uuid!(Option<Ref<Texture>>, "b1c1260e-4c2e-4eff-8d6a-ae53308a6cb0");
 impl_extern_type_uuid!(
     Option<Ref<Material>>,
     "8c13be0d-18ee-4add-99a6-368d8adf0440"
@@ -135,7 +132,7 @@ impl_extern_type_uuid!(Option<Ref<Skybox>>, "ee52ede4-a2ae-42d3-b872-c3c6516d53e
 
 impl_reflect_value!(Option<Ref<Mesh>>(AssetOptionRef));
 impl_reflect_value!(Option<Ref<Shader>>(AssetOptionRef));
-impl_reflect_value!(Option<Ref<Texture2D>>(AssetOptionRef));
+impl_reflect_value!(Option<Ref<Texture>>(AssetOptionRef));
 impl_reflect_value!(Option<Ref<Material>>(AssetOptionRef));
 impl_reflect_value!(Option<Ref<Animation>>(AssetOptionRef));
 impl_reflect_value!(Option<Ref<Skybox>>(AssetOptionRef));
