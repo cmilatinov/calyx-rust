@@ -483,8 +483,9 @@ impl EditorApp {
             },
             ..Default::default()
         };
+        let name = format!("Calyx — {}", ProjectManager::get().current_project().name());
         eframe::run_native(
-            "Calyx",
+            name.as_str(),
             options,
             Box::new(|cc| {
                 let mut app_state = EditorAppState::get_mut();

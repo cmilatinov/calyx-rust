@@ -3,7 +3,7 @@ use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 
-use sharedlib::{Func, Lib, Symbol};
+use sharedlib::{Lib, Symbol};
 
 use engine::background::Background;
 use engine::class_registry::ClassRegistry;
@@ -86,15 +86,19 @@ impl ProjectManager {
             self.current_project().name().as_str(),
         ));
         unsafe {
-            let lib = Lib::new(target).unwrap();
-            let load_fn: Func<extern "C" fn(&mut TypeRegistry)> =
-                lib.find_func("plugin_main").unwrap();
-            {
-                let mut registry = TypeRegistry::get_mut();
-                load_fn.get()(&mut registry);
+            match Lib::new(target) {
+                Ok(lib) => {
+                    if let Ok(load_fn) =
+                        lib.find_func::<extern "C" fn(&mut TypeRegistry), &str>("plugin_main")
+                    {
+                        let mut registry = TypeRegistry::get_mut();
+                        load_fn.get()(&mut registry);
+                    }
+                    self.assembly = Some(lib);
+                    ClassRegistry::get_mut().refresh_class_lists();
+                }
+                Err(err) => eprintln!("{}", err),
             }
-            self.assembly = Some(lib);
-            ClassRegistry::get_mut().refresh_class_lists();
         }
     }
 }
