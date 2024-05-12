@@ -1,10 +1,12 @@
+use crate::BASE_FONT_SIZE;
 use engine::assets::{Asset, AssetOptionRef, AssetRegistry};
 use engine::core::Ref;
-use engine::egui;
-use engine::egui::{DragValue, Id, Ui};
+use engine::egui::{Align, DragValue, Id, Layout, Ui, Widget, WidgetText};
+use engine::egui_extras::{Column, TableBody};
 use engine::glm::{Vec2, Vec3, Vec4};
 use engine::utils::TypeUuid;
 use engine::uuid::Uuid;
+use engine::{egui, egui_extras};
 use lazy_static::lazy_static;
 use std::sync::RwLock;
 
@@ -126,5 +128,34 @@ impl Widgets {
         changed |= Self::drag_angle(ui, &mut value.y);
         changed |= Self::drag_angle(ui, &mut value.z);
         changed
+    }
+
+    pub fn inspector_prop_table<F: FnOnce(TableBody)>(ui: &mut Ui, add_body_contents: F) {
+        egui_extras::TableBuilder::new(ui)
+            .column(Column::auto().clip(true).resizable(true))
+            .column(Column::remainder().clip(true))
+            .cell_layout(Layout::left_to_right(Align::Center))
+            .body(add_body_contents);
+    }
+
+    pub fn inspector_row<F: FnOnce(&mut Ui)>(
+        body: &mut TableBody,
+        text: impl Into<WidgetText>,
+        add_value_contents: F,
+    ) {
+        Self::inspector_row_label(body, egui::Label::new(text), add_value_contents);
+    }
+
+    pub fn inspector_row_label<F: FnOnce(&mut Ui)>(
+        body: &mut TableBody,
+        label_widget: impl Widget,
+        add_value_contents: F,
+    ) {
+        body.row(BASE_FONT_SIZE + 6.0, |mut row| {
+            row.col(|ui| {
+                ui.add(label_widget);
+            });
+            row.col(add_value_contents);
+        });
     }
 }

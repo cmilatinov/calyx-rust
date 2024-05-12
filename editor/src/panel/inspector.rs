@@ -9,13 +9,14 @@ use engine::component::{ComponentID, ComponentTransform};
 use engine::egui::Ui;
 use engine::egui_extras::{Column, TableBody};
 use engine::reflect::type_registry::TypeRegistry;
-use engine::reflect::{AttributeValue, Reflect, ReflectDefault, TypeInfo};
+use engine::reflect::{AttributeValue, NamedField, Reflect, ReflectDefault, TypeInfo};
 use engine::scene::SceneManager;
 
 use engine::{egui, egui_extras};
 
 use crate::inspector::inspector_registry::InspectorRegistry;
 use crate::inspector::type_inspector::InspectorContext;
+use crate::inspector::widgets::Widgets;
 use crate::panel::Panel;
 use crate::{EditorAppState, BASE_FONT_SIZE};
 
@@ -59,7 +60,6 @@ impl Panel for PanelInspector {
                             parent: SceneManager::get()
                                 .simulation_scene()
                                 .get_parent_game_object(game_object),
-                            world: &scene_state.simulation_scene().world,
                             type_info,
                             field_name: None,
                         };
@@ -146,6 +146,14 @@ impl PanelInspector {
             .unwrap_or(instance.type_name_short())
     }
 
+    fn field_display_name(field: &NamedField) -> String {
+        if let Some(AttributeValue::String(name)) = field.attrs.get("name") {
+            (*name).into()
+        } else {
+            field.name.from_case(Case::Snake).to_case(Case::Title)
+        }
+    }
+
     fn show_inspector(
         &self,
         ui: &mut Ui,
@@ -201,7 +209,7 @@ impl PanelInspector {
                         let mut ctx = *ctx;
                         ctx.field_name = Some(field.name);
                         if let Some(value) = field.get_reflect_mut(instance.as_reflect_mut()) {
-                            self.show_default_inspector_field(&mut body, &ctx, field.name, value);
+                            self.show_default_inspector_field(&mut body, &ctx, field, value);
                         }
                     }
                 });
@@ -212,21 +220,16 @@ impl PanelInspector {
         &self,
         body: &mut TableBody,
         ctx: &InspectorContext,
-        field_name: &str,
+        field: &NamedField,
         instance: &mut dyn Reflect,
     ) {
-        let mut name = field_name.from_case(Case::Snake).to_case(Case::Title);
+        let mut name = Self::field_display_name(field);
         name.push(' ');
         if let Some(inspector) =
             InspectorRegistry::get().type_inspector_lookup(instance.as_any().type_id())
         {
-            body.row(BASE_FONT_SIZE + 6.0, |mut row| {
-                row.col(|ui| {
-                    ui.add(egui::Label::new(name.as_str()).wrap(false));
-                });
-                row.col(|ui| {
-                    inspector.show_inspector(ui, ctx, instance);
-                });
+            Widgets::inspector_row_label(body, egui::Label::new(name.as_str()).wrap(false), |ui| {
+                inspector.show_inspector(ui, ctx, instance);
             });
         }
     }

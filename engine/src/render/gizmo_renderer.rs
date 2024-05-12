@@ -6,11 +6,13 @@ use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::wgpu::BufferUsages;
 use glm::{vec4, Mat4};
 use legion::{Entity, IntoQuery};
+use rapier3d::pipeline::DebugRenderPipeline;
 
 use crate::assets::mesh::Mesh;
 use crate::assets::{Asset, Assets};
 use crate::class_registry::ClassRegistry;
 use crate::math::Transform;
+use crate::physics::PhysicsDebugRenderer;
 use crate::render::gizmos::Gizmos;
 use crate::render::render_utils::RenderUtils;
 use crate::scene::Scene;
@@ -205,6 +207,7 @@ impl GizmoRenderer {
         queue: &wgpu::Queue,
         camera_transform: &Transform,
         scene: &Scene,
+        physics_debug_pipeline: Option<&mut DebugRenderPipeline>,
     ) {
         {
             let mut gizmos = self.gizmos(camera_transform);
@@ -220,6 +223,17 @@ impl GizmoRenderer {
                         }
                     }
                 }
+            }
+            if let Some(physics_debug_pipeline) = physics_debug_pipeline {
+                let mut physics_debug_render: PhysicsDebugRenderer = gizmos.into();
+                physics_debug_pipeline.render(
+                    &mut physics_debug_render,
+                    &scene.physics.bodies,
+                    &scene.physics.colliders,
+                    &scene.physics.impulse_joints,
+                    &scene.physics.multibody_joints,
+                    &scene.physics.narrow_phase,
+                );
             }
         }
         self.load_buffers(device, queue);

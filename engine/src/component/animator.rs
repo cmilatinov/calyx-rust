@@ -1,4 +1,4 @@
-use egui::Ui;
+use egui::Context;
 use glm::{Mat4, Quat, Vec3};
 use nalgebra::Unit;
 use serde::{Deserialize, Serialize};
@@ -26,7 +26,7 @@ pub struct ComponentAnimator {
 }
 
 impl Component for ComponentAnimator {
-    fn update(&mut self, scene: &mut Scene, game_object: GameObject, _ui: &Ui) {
+    fn update(&mut self, scene: &mut Scene, game_object: GameObject, _ctx: &Context) {
         let mut duration = None;
         let skinned_meshes = scene
             .get_children_with_component::<ComponentSkinnedMesh>(game_object)

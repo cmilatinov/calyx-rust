@@ -71,11 +71,10 @@ impl MaterialInspector {
         if !show_var {
             return;
         }
-        body.row(BASE_FONT_SIZE + 6.0, |mut row| {
-            row.col(|ui| {
-                ui.add(egui::Label::new(var.name.as_str()).wrap(false));
-            });
-            row.col(|ui| match &mut var.value {
+        Widgets::inspector_row_label(
+            body,
+            egui::Label::new(var.name.as_str()).wrap(false),
+            |ui| match &mut var.value {
                 ShaderVariableValue::Bool(ref mut bool) => {
                     ui.checkbox(bool, "");
                 }
@@ -109,7 +108,7 @@ impl MaterialInspector {
                     );
                 }
                 _ => {}
-            });
-        });
+            },
+        );
     }
 }

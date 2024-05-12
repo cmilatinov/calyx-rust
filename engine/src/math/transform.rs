@@ -59,6 +59,12 @@ impl From<mint::ColumnMatrix4<f32>> for Transform {
     }
 }
 
+impl From<Transform> for Mat4 {
+    fn from(value: Transform) -> Self {
+        value.matrix
+    }
+}
+
 impl Transform {
     pub fn from_components(position: Vec3, rotation: Vec3, scale: Vec3) -> Self {
         let mut transform = Transform {
@@ -129,6 +135,7 @@ impl Transform {
         self.rotation += rotation;
         self.update_matrix();
     }
+
     pub fn scale(&mut self, scale: &Vec3) {
         self.scale.x *= scale.x;
         self.scale.y *= scale.y;

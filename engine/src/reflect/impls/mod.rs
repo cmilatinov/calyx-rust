@@ -4,6 +4,7 @@ pub use std_int::ReflectGenericInt;
 
 mod color32;
 mod glm;
+mod rapier;
 mod std;
 mod std_default;
 mod std_float;

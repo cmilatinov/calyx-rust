@@ -3,11 +3,12 @@ use std::io::BufReader;
 use std::path::Path;
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use egui::Ui;
-use generational_indextree::{Arena, NodeId};
 use glm::Mat4;
 use legion::world::{Entry, EntryRef};
 use legion::{Entity, EntityStore, IntoQuery, World};
+use petgraph::graph::NodeIndex;
+use petgraph::visit::{Bfs, Walker};
+use petgraph::{Direction, Graph};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
 
@@ -17,13 +18,15 @@ use crate::assets::{Asset, LoadedAsset};
 use crate::class_registry::ClassRegistry;
 use crate::component::{Component, ComponentTransform};
 use crate::component::{ComponentCamera, ComponentID};
+use crate::core::Time;
 use crate::math::Transform;
+use crate::physics::{PhysicsConfiguration, PhysicsContext};
 use crate::scene::Prefab;
 use crate::utils::TypeUuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GameObject {
-    pub node: NodeId,
+    pub node: NodeIndex,
     pub entity: Entity,
 }
 
@@ -33,15 +36,16 @@ pub struct SceneData {
     pub hierarchy: HashMap<Uuid, Uuid>,
 }
 
-#[derive(Default, Debug, TypeUuid)]
+#[derive(Default, TypeUuid)]
 #[uuid = "9946a2e7-e022-447e-8e60-528da548087f"]
 pub struct Scene {
     pub world: World,
+    pub physics: PhysicsContext,
     root_objects: HashSet<GameObject>,
     uuid_map: HashMap<Uuid, GameObject>,
-    entity_map: HashMap<Entity, NodeId>,
-    entity_arena: Arena<Entity>,
-    transform_cache: RwLock<HashMap<NodeId, Transform>>,
+    entity_map: HashMap<Entity, NodeIndex>,
+    entity_arena: Graph<Entity, ()>,
+    transform_cache: RwLock<HashMap<NodeIndex, Transform>>,
     camera: Option<GameObject>,
     objects_to_delete: HashSet<GameObject>,
 }
@@ -172,9 +176,8 @@ impl From<(&Scene, GameObject)> for SceneData {
         let mut hierarchy = HashMap::new();
         let mut components: HashMap<Uuid, HashMap<Uuid, serde_json::Value>> = HashMap::new();
 
-        game_object
-            .node
-            .descendants(&scene.entity_arena)
+        std::iter::once(game_object.node)
+            .chain(Bfs::new(&scene.entity_arena, game_object.node).iter(&scene.entity_arena))
             .filter_map(|c| scene.get_game_object_from_node(c))
             .for_each(|game_object| {
                 if let Some(entry) = scene.entry(game_object) {
@@ -210,11 +213,10 @@ impl From<(&Scene, GameObject)> for SceneData {
 }
 
 impl Scene {
-    pub(crate) fn get_game_object_from_node(&self, node: NodeId) -> Option<GameObject> {
-        self.entity_arena.get(node).map(|n| GameObject {
-            node,
-            entity: *n.get(),
-        })
+    pub(crate) fn get_game_object_from_node(&self, node: NodeIndex) -> Option<GameObject> {
+        self.entity_arena
+            .node_weight(node)
+            .map(|e| GameObject { node, entity: *e })
     }
 
     pub(crate) fn get_game_object_from_entity(&self, entity: Entity) -> Option<GameObject> {
@@ -243,7 +245,7 @@ impl Scene {
         };
         let id = c_id.id;
         let entity = self.world.push((c_id, ComponentTransform::default()));
-        let node = self.entity_arena.new_node(entity);
+        let node = self.entity_arena.add_node(entity);
         let game_object = GameObject { node, entity };
         self.entity_map.insert(entity, node);
         self.uuid_map.insert(id, game_object);
@@ -254,7 +256,8 @@ impl Scene {
                 self.root_objects.insert(game_object);
             }
             Some(parent) => {
-                parent.node.append(game_object.node, &mut self.entity_arena);
+                self.entity_arena
+                    .add_edge(parent.node, game_object.node, ());
             }
         };
 
@@ -328,11 +331,15 @@ impl Scene {
     }
 
     pub fn set_parent(&mut self, game_object: GameObject, parent: Option<GameObject>) {
-        if let Some(_) = self.get_parent_game_object(game_object) {
-            game_object.node.detach(&mut self.entity_arena);
+        if let Some(edge) = self
+            .get_parent_game_object(game_object)
+            .and_then(|parent| self.entity_arena.find_edge(parent.node, game_object.node))
+        {
+            self.entity_arena.remove_edge(edge);
         }
         if let Some(parent) = parent {
-            parent.node.append(game_object.node, &mut self.entity_arena);
+            self.entity_arena
+                .add_edge(parent.node, game_object.node, ());
             self.root_objects.remove(&game_object);
         } else {
             self.root_objects.insert(game_object);
@@ -359,7 +366,7 @@ impl Scene {
 
     pub(crate) fn new_game_object(&mut self, parent: Option<GameObject>) -> GameObject {
         let entity = self.world.push(());
-        let node = self.entity_arena.new_node(entity);
+        let node = self.entity_arena.add_node(entity);
         let game_object = GameObject { node, entity };
         self.entity_map.insert(entity, node);
         match parent {
@@ -367,21 +374,21 @@ impl Scene {
                 self.root_objects.insert(game_object);
             }
             Some(parent) => {
-                parent.node.append(node, &mut self.entity_arena);
+                self.entity_arena.add_edge(parent.node, node, ());
             }
         };
         game_object
     }
 
-    fn transform_cache(&self) -> RwLockReadGuard<HashMap<NodeId, Transform>> {
+    fn transform_cache(&self) -> RwLockReadGuard<HashMap<NodeIndex, Transform>> {
         self.transform_cache.read().unwrap()
     }
 
-    fn transform_cache_mut(&self) -> RwLockWriteGuard<HashMap<NodeId, Transform>> {
+    fn transform_cache_mut(&self) -> RwLockWriteGuard<HashMap<NodeIndex, Transform>> {
         self.transform_cache.write().unwrap()
     }
 
-    pub fn bind_component<T: Send + Sync + 'static>(
+    pub fn bind_component<T: Component + Send + Sync + 'static>(
         &mut self,
         game_object: GameObject,
         component: T,
@@ -412,10 +419,17 @@ impl Scene {
         self.world.entry(game_object.entity)
     }
 
-    pub fn update(&mut self, ui: &Ui) {
+    pub fn prepare(&mut self) {
+        self.delete_game_objects();
+        PhysicsContext::prepare(self);
+    }
+
+    pub fn update(&mut self, ctx: &egui::Context) {
+        let time = Time::get();
+        PhysicsContext::update(self, &time, &PhysicsConfiguration::default());
         for (_, component) in ClassRegistry::get().components_update() {
             // No way around this, we want component's update method to take &mut self
-            // but there's no way to do that and provide an &mut Scene
+            // but there's no way to do that and provide a &mut Scene
             // At worst, this is a race condition because we can guarantee that
             // this reference only lives until the end of this function
             let scene = unsafe { &mut *(self as *mut Self) };
@@ -426,27 +440,39 @@ impl Scene {
             for game_object in game_objects {
                 if let Some(mut entry) = self.entry_mut(game_object) {
                     if let Some(instance) = component.get_instance_mut(&mut entry) {
-                        instance.update(scene, game_object, ui);
+                        instance.update(scene, game_object, ctx);
                     }
                 }
             }
         }
-        self.delete_game_objects();
     }
 
     pub fn delete_game_objects(&mut self) {
-        let mut objects_to_delete = HashSet::new();
-        std::mem::swap(&mut objects_to_delete, &mut self.objects_to_delete);
-        for game_object in objects_to_delete {
+        for game_object in self
+            .objects_to_delete
+            .drain()
+            .collect::<Vec<_>>()
+            .into_iter()
+        {
+            println!("{}", self.get_game_object_name(game_object));
             if self.get_parent_game_object(game_object).is_none() {
                 self.root_objects.remove(&game_object);
             }
-            for go in self.get_children(game_object).collect::<Vec<_>>() {
+            for go in std::iter::once(game_object)
+                .chain(
+                    Bfs::new(&self.entity_arena, game_object.node)
+                        .iter(&self.entity_arena)
+                        .filter_map(|node| self.get_game_object_from_node(node)),
+                )
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+            {
                 self.world.remove(go.entity);
                 self.entity_map.remove(&go.entity);
                 self.uuid_map.remove(&self.get_game_object_uuid(go));
+                self.entity_arena.remove_node(go.node);
             }
-            game_object.node.remove_subtree(&mut self.entity_arena);
         }
     }
 
@@ -472,8 +498,8 @@ impl Scene {
 
     pub fn get_parent_game_object(&self, game_object: GameObject) -> Option<GameObject> {
         self.entity_arena
-            .get(game_object.node)?
-            .parent()
+            .neighbors_directed(game_object.node, Direction::Incoming)
+            .next()
             .and_then(|node| self.get_game_object_from_node(node))
     }
 
@@ -481,9 +507,8 @@ impl Scene {
         &'a self,
         game_object: GameObject,
     ) -> impl Iterator<Item = GameObject> + 'a {
-        game_object
-            .node
-            .children(&self.entity_arena)
+        self.entity_arena
+            .neighbors(game_object.node)
             .filter_map(|node| self.get_game_object_from_node(node))
     }
 
@@ -541,26 +566,51 @@ impl Scene {
         transform
     }
 
+    pub fn get_transform_relative_to(
+        &self,
+        game_object: GameObject,
+        parent: GameObject,
+    ) -> Transform {
+        let transform = self.get_world_transform(game_object);
+        let parent_transform = self.get_world_transform(parent);
+        (parent_transform.inverse_matrix * transform.matrix).into()
+    }
+
     pub fn clear_transform_cache(&self) {
         self.transform_cache_mut().clear();
+    }
+
+    fn map_component<T: Component>(&self, node: NodeIndex) -> Option<GameObject> {
+        self.get_game_object_from_node(node).and_then(|go| {
+            self.entry(go)
+                .and_then(|e| e.get_component::<T>().ok().map(|_| go))
+        })
     }
 
     pub fn get_children_with_component<'a, T: Component>(
         &'a self,
         game_object: GameObject,
     ) -> impl Iterator<Item = GameObject> + 'a {
-        game_object
-            .node
-            .descendants(&self.entity_arena)
-            .filter_map(|c| match self.get_game_object_from_node(c) {
-                Some(go) => self.entry(go).and_then(|e| {
-                    if e.get_component::<T>().is_ok() {
-                        Some(go)
-                    } else {
-                        None
-                    }
-                }),
-                None => None,
-            })
+        std::iter::once(game_object).chain(
+            Bfs::new(&self.entity_arena, game_object.node)
+                .iter(&self.entity_arena)
+                .filter_map(|c| self.map_component::<T>(c)),
+        )
+    }
+
+    pub fn get_parent_with_component<T: Component>(
+        &self,
+        game_object: GameObject,
+    ) -> Option<GameObject> {
+        std::iter::once(game_object.node)
+            .chain(Bfs::new(&self.entity_arena, game_object.node).iter(&self.entity_arena))
+            .find_map(|p| self.map_component::<T>(p))
+    }
+}
+
+impl Scene {
+    pub unsafe fn as_ptr_mut(&self) -> *mut Self {
+        let ptr = self as *const Self;
+        ptr as *mut Self
     }
 }

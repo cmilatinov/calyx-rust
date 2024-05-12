@@ -1,14 +1,12 @@
 use engine::component::ComponentTransform;
-use engine::egui::{Align, Layout, Ui};
-use engine::egui_extras::Column;
+use engine::egui::Ui;
 use engine::reflect::{Reflect, ReflectDefault};
+use engine::type_ids;
 use engine::utils::TypeUuid;
-use engine::{egui_extras, type_ids};
 use std::any::TypeId;
 
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 use crate::inspector::widgets::Widgets;
-use crate::BASE_FONT_SIZE;
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, TypeInspector)]
@@ -21,49 +19,29 @@ impl TypeInspector for TransformInspector {
 
     fn show_inspector(&self, ui: &mut Ui, ctx: &InspectorContext, instance: &mut dyn Reflect) {
         if let Some(t_comp) = instance.downcast_mut::<ComponentTransform>() {
-            egui_extras::TableBuilder::new(ui)
-                .column(Column::auto().clip(true).resizable(true))
-                .column(Column::remainder().clip(true))
-                .cell_layout(Layout::left_to_right(Align::Center))
-                .body(|mut body| {
-                    let mut changed = false;
-                    let parent_transform = ctx
-                        .parent
-                        .map(|parent| ctx.scene.get_world_transform(parent))
-                        .unwrap_or_default();
-                    let mut transform = ctx.scene.get_world_transform(ctx.game_object);
-                    body.row(BASE_FONT_SIZE + 6.0, |mut row| {
-                        row.col(|ui| {
-                            ui.label("Position ");
-                        });
-                        row.col(|ui| {
-                            changed |= Widgets::drag_float3(ui, 0.1, &mut transform.position);
-                        });
-                    });
-                    body.row(BASE_FONT_SIZE + 6.0, |mut row| {
-                        row.col(|ui| {
-                            ui.label("Rotation ");
-                        });
-                        row.col(|ui| {
-                            changed |= Widgets::drag_angle3(ui, &mut transform.rotation);
-                        });
-                    });
-                    body.row(BASE_FONT_SIZE + 6.0, |mut row| {
-                        row.col(|ui| {
-                            ui.label("Scale ");
-                        });
-                        row.col(|ui| {
-                            changed |= Widgets::drag_float3(ui, 0.1, &mut transform.scale);
-                        });
-                    });
-                    if changed {
-                        transform.update_matrix();
-                        t_comp.transform.set_local_matrix(
-                            &(parent_transform.inverse_matrix * transform.matrix),
-                        );
-                    }
+            Widgets::inspector_prop_table(ui, |mut body| {
+                let mut changed = false;
+                let mut transform = ctx.scene.get_world_transform(ctx.game_object);
+                let parent_transform = ctx
+                    .parent
+                    .map(|parent| ctx.scene.get_world_transform(parent))
+                    .unwrap_or_default();
+                Widgets::inspector_row(&mut body, "Position ", |ui| {
+                    changed |= Widgets::drag_float3(ui, 0.1, &mut transform.position);
                 });
-            t_comp.transform.update_matrix();
+                Widgets::inspector_row(&mut body, "Rotation ", |ui| {
+                    changed |= Widgets::drag_angle3(ui, &mut transform.rotation);
+                });
+                Widgets::inspector_row(&mut body, "Scale ", |ui| {
+                    changed |= Widgets::drag_float3(ui, 0.1, &mut transform.scale);
+                });
+                if changed {
+                    transform.update_matrix();
+                    t_comp
+                        .transform
+                        .set_local_matrix(&(parent_transform.inverse_matrix * transform.matrix));
+                }
+            });
         }
     }
 

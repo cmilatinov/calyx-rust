@@ -1,5 +1,4 @@
 use engine::egui::Ui;
-use engine::legion::World;
 use engine::reflect::type_registry::TypeRegistry;
 use engine::reflect::{Reflect, StructInfo};
 use engine::reflect_trait;
@@ -25,7 +24,6 @@ pub struct InspectorContext<'a> {
     pub scene: &'a Scene,
     pub game_object: GameObject,
     pub parent: Option<GameObject>,
-    pub world: &'a World,
     pub type_info: &'a StructInfo,
     pub field_name: Option<&'static str>,
 }

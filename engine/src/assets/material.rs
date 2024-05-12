@@ -5,7 +5,7 @@ use std::path::Path;
 
 use egui::Color32;
 use egui_wgpu::{wgpu, RenderState};
-use naga::{ImageDimension, ScalarKind, TypeInner, VectorSize};
+use naga::{ImageDimension, Scalar, ScalarKind, TypeInner, VectorSize};
 use serde::{Deserialize, Serialize};
 
 use crate as engine;
@@ -286,17 +286,26 @@ impl Material {
             TypeInner::Matrix {
                 rows,
                 columns,
-                width,
+                scalar,
             } => {
-                if (*rows, *columns, *width) == (VectorSize::Quad, VectorSize::Quad, 4) {
-                    var.span = Some(*rows as u32 * *columns as u32 * *width as u32);
+                if (*rows, *columns, *scalar)
+                    == (
+                        VectorSize::Quad,
+                        VectorSize::Quad,
+                        Scalar {
+                            kind: ScalarKind::Float,
+                            width: 4,
+                        },
+                    )
+                {
+                    var.span = Some(*rows as u32 * *columns as u32 * scalar.width as u32);
                     var.value = ShaderVariableValue::Mat4(Default::default());
                     variables.push(var);
                 }
             }
-            TypeInner::Vector { size, kind, width } => {
-                if (*kind, *width) == (ScalarKind::Float, 4) {
-                    var.span = Some(*size as u32 * *width as u32);
+            TypeInner::Vector { size, scalar } => {
+                if (scalar.kind, scalar.width) == (ScalarKind::Float, 4) {
+                    var.span = Some(*size as u32 * scalar.width as u32);
                     var.value = match size {
                         VectorSize::Bi => ShaderVariableValue::Vec2(Default::default()),
                         VectorSize::Tri => ShaderVariableValue::Vec3(Default::default()),
@@ -305,7 +314,7 @@ impl Material {
                     variables.push(var);
                 }
             }
-            TypeInner::Scalar { kind, width } => {
+            TypeInner::Scalar(Scalar { kind, width }) => {
                 if let Some((span, value)) = match kind {
                     ScalarKind::Uint if *width as usize == std::mem::size_of::<u32>() => {
                         Some((*width, ShaderVariableValue::Uint(Default::default())))

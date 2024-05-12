@@ -20,6 +20,7 @@ use engine::egui::{Align, FontId, Layout};
 use engine::egui::{Color32, TextStyle};
 use engine::egui_dock::DockState;
 use engine::log::LevelFilter;
+use engine::rapier3d::prelude::DebugRenderPipeline;
 use engine::reflect::type_registry::TypeRegistry;
 use engine::render::{Camera, RenderContext, SceneRenderer, SceneRendererOptions};
 use engine::scene::SceneManager;
@@ -49,6 +50,7 @@ pub struct EditorApp {
     dock_state: DockState<String>,
     dock_style: Style,
     panel_manager: PanelManager,
+    physics_debug_pipeline: DebugRenderPipeline,
     pub scene_renderer: Ref<SceneRenderer>,
     pub game_renderer: Ref<SceneRenderer>,
 }
@@ -115,6 +117,10 @@ impl EditorApp {
             dock_state,
             dock_style,
             panel_manager: PanelManager::default(),
+            physics_debug_pipeline: DebugRenderPipeline::new(
+                Default::default(),
+                Default::default(),
+            ),
             scene_renderer: Ref::new(SceneRenderer::new(SceneRendererOptions {
                 grid: true,
                 gizmos: true,
@@ -159,6 +165,7 @@ impl eframe::App for EditorApp {
                 &app_state.camera.camera,
                 &app_state.camera.transform,
                 scene,
+                Some(&mut self.physics_debug_pipeline),
             );
             if let Some((node, c)) = scene.get_main_camera(&scene.world) {
                 let mut renderer = self.game_renderer.write();
@@ -178,7 +185,7 @@ impl eframe::App for EditorApp {
                     c.far_plane,
                 );
                 camera.update_projection();
-                renderer.render_scene(render_state, &camera, &transform, scene)
+                renderer.render_scene(render_state, &camera, &transform, scene, None)
             } else {
                 let device = &render_state.device;
                 let queue = &render_state.queue;
@@ -188,6 +195,12 @@ impl eframe::App for EditorApp {
                 encoder.clear_texture(&renderer.scene_texture().texture, &Default::default());
                 queue.submit(Some(encoder.finish()));
             }
+        }
+
+        {
+            let mut scene_manager = SceneManager::get_mut();
+            scene_manager.prepare();
+            scene_manager.update(ctx);
         }
 
         self.menu_bar(ctx);
@@ -351,7 +364,9 @@ impl EditorApp {
                         )
                         .clicked()
                     {
-                        SceneManager::get_mut().simulation_scene_mut().update(ui);
+                        SceneManager::get_mut()
+                            .simulation_scene_mut()
+                            .update(ui.ctx());
                     }
                 }
 
@@ -370,10 +385,6 @@ impl EditorApp {
                     {
                         SceneManager::get_mut().stop_simulation();
                     }
-                }
-
-                if SceneManager::get().is_simulating() {
-                    SceneManager::get_mut().update(ui);
                 }
             });
         });

@@ -1,8 +1,10 @@
 mod asset_ref_inspector;
 mod bool_inspector;
+mod collider_inspector;
 mod color_inspector;
 mod float_inspector;
 mod integer_inspector;
+mod rigid_body_inspector;
 mod string_inspector;
 mod transform_inspector;
 mod uuid_inspector;

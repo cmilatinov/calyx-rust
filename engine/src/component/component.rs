@@ -1,4 +1,4 @@
-use egui::Ui;
+use egui::Context;
 use legion::storage::ComponentTypeId;
 use legion::world::{Entry, EntryRef};
 
@@ -28,10 +28,11 @@ pub trait ComponentInstance: Reflect {
     }
 }
 
+#[allow(unused)]
 #[reflect_trait]
 pub trait Component: TypeUuidDynamic + ComponentInstance {
-    fn start(&mut self, _scene: &Scene, _game_object: GameObject) {}
-    fn update(&mut self, _scene: &mut Scene, _game_object: GameObject, _ui: &Ui) {}
-    fn destroy(&mut self, _scene: &Scene, _game_object: GameObject) {}
-    fn draw_gizmos(&self, _scene: &Scene, _game_object: GameObject, _gizmos: &mut Gizmos) {}
+    fn start(&mut self, scene: &Scene, game_object: GameObject) {}
+    fn update(&mut self, scene: &mut Scene, game_object: GameObject, ctx: &Context) {}
+    fn destroy(&mut self, scene: &Scene, game_object: GameObject) {}
+    fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {}
 }

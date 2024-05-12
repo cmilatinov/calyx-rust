@@ -8,6 +8,7 @@ use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::{wgpu, RenderState};
 use glm::{Mat4, Vec3};
 use legion::{Entity, IntoQuery};
+use rapier3d::pipeline::DebugRenderPipeline;
 
 use crate::assets::material::Material;
 use crate::assets::mesh::{Instance, Mesh};
@@ -209,14 +210,20 @@ impl SceneRenderer {
         camera: &Camera,
         camera_transform: &Transform,
         scene: &Scene,
+        physics_debug_pipeline: Option<&mut DebugRenderPipeline>,
     ) {
         let queue = &render_state.queue;
         let device = &render_state.device;
 
         self.load_camera_uniforms(queue, camera, camera_transform);
         if self.options.gizmos {
-            self.gizmo_renderer
-                .draw_gizmos(device, queue, camera_transform, scene);
+            self.gizmo_renderer.draw_gizmos(
+                device,
+                queue,
+                camera_transform,
+                scene,
+                physics_debug_pipeline,
+            );
         }
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

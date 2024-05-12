@@ -4,7 +4,6 @@ use crate::component::ComponentMesh;
 use crate::assets::{Asset, AssetRegistry, LoadedAsset};
 use crate::scene::Scene;
 use crate::utils::singleton_with_init;
-use egui::Ui;
 use std::ops::DerefMut;
 use std::path::PathBuf;
 
@@ -65,13 +64,17 @@ impl SceneManager {
         self.simulation_running = false;
     }
 
-    pub fn update(&mut self, ui: &mut Ui) {
+    pub fn prepare(&mut self) {
+        self.simulation_scene_mut().prepare();
+    }
+
+    pub fn update(&mut self, ctx: &egui::Context) {
         if !self.simulation_running {
             return;
         }
 
         if let Some(scene) = &mut self.simulation_scene {
-            scene.update(ui);
+            scene.update(ctx);
         }
     }
 
