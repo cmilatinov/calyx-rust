@@ -110,19 +110,17 @@ impl Panel for PanelInspector {
                     component.remove_instance(&mut entry);
                 }
             }
-        } else if let Some(id) = selection.as_ref().and_then(|s| s.first_asset()) {
+        } else if let Some(asset_id) = selection.as_ref().and_then(|s| s.first_asset()) {
             let registry = AssetRegistry::get();
-            if let Ok(asset) = registry.load_dyn_by_id(id) {
-                if let Some(meta) = registry.asset_meta_from_id(id) {
-                    if let Some(type_uuid) = meta.type_uuid {
-                        if let Some(inspector) =
-                            InspectorRegistry::get().asset_inspector_lookup(type_uuid)
-                        {
-                            ui.collapsing(registry.asset_name(id), |ui| {
-                                inspector.show_inspector(ui, asset);
-                                ui.separator();
-                            });
-                        }
+            if let Some(meta) = registry.asset_meta_from_id(asset_id) {
+                if let Some(type_uuid) = meta.type_uuid {
+                    if let Some(inspector) =
+                        InspectorRegistry::get().asset_inspector_lookup(type_uuid)
+                    {
+                        ui.collapsing(registry.asset_name(asset_id), |ui| {
+                            inspector.show_inspector(ui, asset_id);
+                            ui.separator();
+                        });
                     }
                 }
             }

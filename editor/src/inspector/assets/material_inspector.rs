@@ -1,10 +1,8 @@
 use crate::inspector::asset_inspector::{AssetInspector, ReflectAssetInspector};
 use crate::inspector::widgets::Widgets;
-use crate::BASE_FONT_SIZE;
 use engine::assets::material::{Material, ShaderVariable, ShaderVariableValue};
 use engine::assets::texture::Texture;
-use engine::assets::{Asset, AssetRegistry};
-use engine::core::Ref;
+use engine::assets::AssetRegistry;
 use engine::egui::Ui;
 use engine::egui_extras::{Column, TableBody};
 use engine::reflect::{Reflect, ReflectDefault};
@@ -23,37 +21,33 @@ impl AssetInspector for MaterialInspector {
     fn target_type_uuid(&self) -> Uuid {
         Material::type_uuid()
     }
-    fn show_inspector(&self, ui: &mut Ui, asset: Ref<dyn Asset>) {
-        if let Some(material_ref) = asset.try_downcast::<Material>() {
-            let mut material = material_ref.write();
-            egui_extras::TableBuilder::new(ui)
-                .column(
-                    Column::auto_with_initial_suggestion(200.0)
-                        .clip(true)
-                        .resizable(true),
-                )
-                .column(Column::remainder().clip(true))
-                .body(|mut body| {
-                    for var in material.variables.iter_mut() {
-                        Self::show_variable_inspector(&mut body, var);
-                    }
-                });
-            if ui
-                .add_sized(
-                    [ui.available_width(), BASE_FONT_SIZE + 4.0],
-                    egui::Button::new("Save"),
-                )
-                .clicked()
-            {
-                if let Some(meta) = AssetRegistry::get().asset_meta_from_ref(&asset) {
-                    if let Some(path) = meta.path.as_ref() {
-                        if let Ok(file) = std::fs::OpenOptions::new()
-                            .write(true)
-                            .truncate(true)
-                            .open(path)
-                        {
-                            let writer = BufWriter::new(file);
-                            let _ = serde_json::to_writer_pretty(writer, material.deref());
+    fn show_inspector(&self, ui: &mut Ui, asset_id: Uuid) {
+        if let Ok(asset) = AssetRegistry::get().load_dyn_by_id(asset_id) {
+            if let Some(material_ref) = asset.try_downcast::<Material>() {
+                let mut material = material_ref.write();
+                egui_extras::TableBuilder::new(ui)
+                    .column(
+                        Column::auto_with_initial_suggestion(200.0)
+                            .clip(true)
+                            .resizable(true),
+                    )
+                    .column(Column::remainder().clip(true))
+                    .body(|mut body| {
+                        for var in material.variables.iter_mut() {
+                            Self::show_variable_inspector(&mut body, var);
+                        }
+                    });
+                if ui.button("Save").clicked() {
+                    if let Some(meta) = AssetRegistry::get().asset_meta_from_ref(&asset) {
+                        if let Some(path) = meta.path.as_ref() {
+                            if let Ok(file) = std::fs::OpenOptions::new()
+                                .write(true)
+                                .truncate(true)
+                                .open(path)
+                            {
+                                let writer = BufWriter::new(file);
+                                let _ = serde_json::to_writer_pretty(writer, material.deref());
+                            }
                         }
                     }
                 }

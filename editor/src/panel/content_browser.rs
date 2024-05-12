@@ -273,12 +273,12 @@ impl Panel for PanelContentBrowser {
                                 .unwrap_or_default();
                             let registry = AssetRegistry::get();
                             if let Some(type_id) = registry.asset_type_from_ext(ext) {
-                                if let Ok(asset) = registry.load_dyn_by_path(node) {
+                                if let Some(asset_id) = registry.asset_id_from_path(node) {
                                     if let Some(inspector) =
                                         InspectorRegistry::get().asset_inspector_lookup(type_id)
                                     {
                                         res.context_menu(|ui| {
-                                            inspector.show_context_menu(ui, asset);
+                                            inspector.show_context_menu(ui, asset_id);
                                         });
                                     }
                                 }

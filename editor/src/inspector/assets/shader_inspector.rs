@@ -1,9 +1,9 @@
 use std::io::BufWriter;
 
+use engine::assets::AssetRegistry;
 use engine::background::Background;
 use engine::{
-    assets::{material::Material, Asset},
-    core::Ref,
+    assets::material::Material,
     egui::Ui,
     reflect::{Reflect, ReflectDefault},
     render::Shader,
@@ -22,25 +22,27 @@ impl AssetInspector for ShaderInspector {
         Shader::type_uuid()
     }
 
-    fn show_context_menu(&self, ui: &mut Ui, asset: Ref<dyn Asset>) {
+    fn show_context_menu(&self, ui: &mut Ui, asset_id: Uuid) {
         if ui.button("Create Material").clicked() {
-            if let Some(shader) = asset.try_downcast::<Shader>() {
-                if let Some(path) = rfd::FileDialog::new()
-                    .set_file_name("material.cxmat")
-                    .add_filter("cxmat", &["cxmat"])
-                    .save_file()
-                {
-                    if let Ok(file) = std::fs::OpenOptions::new()
-                        .create(true)
-                        .write(true)
-                        .truncate(true)
-                        .open(path)
+            if let Ok(asset) = AssetRegistry::get().load_dyn_by_id(asset_id) {
+                if let Some(shader) = asset.try_downcast::<Shader>() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_file_name("material.cxmat")
+                        .add_filter("cxmat", &["cxmat"])
+                        .save_file()
                     {
-                        Background::get().thread_pool().execute(move || {
-                            let material = Material::from_shader(shader);
-                            let writer = BufWriter::new(file);
-                            let _ = engine::serde_json::to_writer_pretty(writer, &material);
-                        });
+                        if let Ok(file) = std::fs::OpenOptions::new()
+                            .create(true)
+                            .write(true)
+                            .truncate(true)
+                            .open(path)
+                        {
+                            Background::get().thread_pool().execute(move || {
+                                let material = Material::from_shader(shader);
+                                let writer = BufWriter::new(file);
+                                let _ = engine::serde_json::to_writer_pretty(writer, &material);
+                            });
+                        }
                     }
                 }
             }
