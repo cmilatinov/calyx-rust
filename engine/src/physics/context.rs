@@ -92,17 +92,26 @@ impl PhysicsContext {
         let mut entities: Vec<Entity> = Default::default();
         for (entity, c_rigid_body) in query.iter(&scene.world).filter(|(_, c_rb)| c_rb.dirty) {
             if let Some(go) = scene.get_game_object_from_entity(*entity) {
+                let transform = scene.get_world_transform(go);
                 let rb_handle =
                     if let Some(handle) = scene.physics.entity_rigid_body.get(&go.entity) {
                         *handle
                     } else {
-                        let transform = scene.get_world_transform(go);
                         let rigid_body = Self::rigid_body_from_component(&transform, c_rigid_body);
                         let handle = scene.physics.bodies.insert(rigid_body);
                         scene.physics.entity_rigid_body.insert(go.entity, handle);
                         handle
                     };
                 let rb = &mut scene.physics.bodies[rb_handle];
+                rb.set_position(transform.position.into(), true);
+                rb.set_rotation(
+                    UnitQuaternion::from_euler_angles(
+                        transform.rotation.x,
+                        transform.rotation.y,
+                        transform.rotation.z,
+                    ),
+                    true,
+                );
                 rb.set_enabled(c_rigid_body.enabled);
                 rb.set_body_type(c_rigid_body.ty, true);
                 rb.set_additional_mass(c_rigid_body.mass, true);
@@ -125,15 +134,15 @@ impl PhysicsContext {
         entities.clear();
         for (entity, c_collider) in query.iter(&scene.world).filter(|(_, c_c)| c_c.dirty) {
             if let Some(go) = scene.get_game_object_from_entity(*entity) {
+                let parent = scene.get_parent_with_component::<ComponentRigidBody>(go);
+                let rb_handle =
+                    parent.and_then(|parent| scene.physics.entity_rigid_body.get(&parent.entity));
+                let transform = parent
+                    .map(|parent| scene.get_transform_relative_to(go, parent))
+                    .unwrap_or_else(|| scene.get_world_transform(go));
                 let c_handle = if let Some(handle) = scene.physics.entity_collider.get(&go.entity) {
                     *handle
                 } else {
-                    let parent = scene.get_parent_with_component::<ComponentRigidBody>(go);
-                    let rb_handle = parent
-                        .and_then(|parent| scene.physics.entity_rigid_body.get(&parent.entity));
-                    let transform = parent
-                        .map(|parent| scene.get_transform_relative_to(go, parent))
-                        .unwrap_or_else(|| scene.get_world_transform(go));
                     let collider = Self::collider_from_component(&transform, c_collider);
                     let handle = match rb_handle {
                         None => scene.physics.colliders.insert(collider),
@@ -147,6 +156,12 @@ impl PhysicsContext {
                     handle
                 };
                 let c = &mut scene.physics.colliders[c_handle];
+                c.set_position(transform.position.into());
+                c.set_rotation(UnitQuaternion::from_euler_angles(
+                    transform.rotation.x,
+                    transform.rotation.y,
+                    transform.rotation.z,
+                ));
                 c.set_shape(Self::collider_shape(c_collider.shape));
                 c.set_friction(c_collider.friction);
                 c.set_density(c_collider.density);

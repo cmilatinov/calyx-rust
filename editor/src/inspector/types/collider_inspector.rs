@@ -126,6 +126,11 @@ impl TypeInspector for ColliderInspector {
         if let Some(value) = instance.downcast_mut::<ComponentCollider>() {
             let mut changed = false;
             Widgets::inspector_prop_table(ui, |mut body| {
+                Widgets::inspector_row(&mut body, "Enabled ", |ui| {
+                    changed |= ui
+                        .add(egui::Checkbox::without_text(&mut value.enabled))
+                        .changed();
+                });
                 changed |= Self::collider_shape(&mut body, ctx, &mut value.shape);
                 Widgets::inspector_row(&mut body, "Friction ", |ui| {
                     changed |= ui.add(egui::DragValue::new(&mut value.friction)).changed();

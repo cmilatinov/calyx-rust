@@ -78,6 +78,10 @@ impl SceneManager {
         }
     }
 
+    pub fn has_simulation_scene(&self) -> bool {
+        self.simulation_scene.is_some()
+    }
+
     pub fn is_simulating(&self) -> bool {
         self.simulation_running
     }

@@ -320,7 +320,7 @@ impl EditorApp {
                 });
 
                 {
-                    let png = include_image!("../../resources/icons/compile.png");
+                    let png = include_image!("../../resources/icons/compile_dark.png");
                     let image = egui::Image::new(png)
                         .fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
                     if ui
@@ -332,51 +332,44 @@ impl EditorApp {
                         .clicked()
                     {
                         ProjectManager::get().build_assemblies();
-                        ui.close_menu();
                     }
                 }
 
                 {
-                    let png = include_image!("../../resources/icons/execute.png");
-                    let image = egui::Image::new(png)
+                    let png_play = include_image!("../../resources/icons/execute_dark.png");
+                    let image_play = egui::Image::new(png_play)
+                        .fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
+                    let png_pause = include_image!("../../resources/icons/pause_dark.png");
+                    let image_pause = egui::Image::new(png_pause)
                         .fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
                     if ui
                         .add(
-                            Button::image(image)
-                                .rounding(Rounding::ZERO)
-                                .sense(Sense::click()),
+                            Button::image(if SceneManager::get().is_simulating() {
+                                image_pause
+                            } else {
+                                image_play
+                            })
+                            .rounding(Rounding::ZERO)
+                            .sense(Sense::click()),
                         )
                         .clicked()
                     {
-                        SceneManager::get_mut().start_simulation();
+                        let mut sm = SceneManager::get_mut();
+                        if sm.is_simulating() {
+                            sm.pause_simulation();
+                        } else {
+                            sm.start_simulation();
+                        }
                     }
                 }
 
                 {
-                    let png = include_image!("../../resources/icons/execute.png");
-                    let image = egui::Image::new(png)
-                        .fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
-                    if ui
-                        .add(
-                            Button::image(image)
-                                .rounding(Rounding::ZERO)
-                                .sense(Sense::click()),
-                        )
-                        .clicked()
-                    {
-                        SceneManager::get_mut()
-                            .simulation_scene_mut()
-                            .update(ui.ctx());
-                    }
-                }
-
-                {
-                    let png = include_image!("../../resources/icons/stop.png");
+                    let png = include_image!("../../resources/icons/suspend_dark.png");
                     let image = egui::Image::new(png)
                         .fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
                     if ui
                         .add_enabled(
-                            SceneManager::get().is_simulating(),
+                            SceneManager::get().has_simulation_scene(),
                             Button::image(image)
                                 .rounding(Rounding::ZERO)
                                 .sense(Sense::click()),

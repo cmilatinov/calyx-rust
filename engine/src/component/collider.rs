@@ -41,6 +41,7 @@ impl_reflect_value!(ColliderShape());
 #[reflect_attr(name = "Collider")]
 #[serde(default)]
 pub struct ComponentCollider {
+    pub enabled: bool,
     pub shape: ColliderShape,
     pub friction: f32,
     pub density: f32,
@@ -52,6 +53,7 @@ pub struct ComponentCollider {
 impl Default for ComponentCollider {
     fn default() -> Self {
         Self {
+            enabled: true,
             shape: ColliderShape::Sphere { radius: 1.0 },
             friction: 0.5,
             density: 100.0,
