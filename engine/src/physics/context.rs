@@ -185,12 +185,13 @@ impl PhysicsContext {
             if let Some(go) = scene.get_game_object_from_entity(*entity) {
                 if let Some(rb_handle) = scene.physics.entity_rigid_body.get(entity).copied() {
                     let rb = &scene.physics.bodies[rb_handle];
+                    let old_transform = scene.get_world_transform(go);
                     let transform = Transform::from_components(
                         (*rb.translation()).into(),
                         glm::quat_euler_angles(
                             UnitQuaternion::<f32>::from(*rb.rotation()).quaternion(),
                         ),
-                        glm::vec3(1.0, 1.0, 1.0),
+                        old_transform.scale,
                     )
                     .matrix;
                     transforms.insert(go, transform);

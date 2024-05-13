@@ -454,7 +454,6 @@ impl Scene {
             .collect::<Vec<_>>()
             .into_iter()
         {
-            println!("{}", self.get_game_object_name(game_object));
             if self.get_parent_game_object(game_object).is_none() {
                 self.root_objects.remove(&game_object);
             }
