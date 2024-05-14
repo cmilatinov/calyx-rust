@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 use eframe::egui;
 use egui_dock::{DockArea, NodeIndex, Style};
-use egui_gizmo::{GizmoMode, GizmoOrientation};
 use inspector::inspector_registry::InspectorRegistry;
 use num_traits::FromPrimitive;
+use transform_gizmo_egui::{GizmoMode, GizmoOrientation};
 
 use engine::assets::AssetRegistry;
 use engine::background::Background;

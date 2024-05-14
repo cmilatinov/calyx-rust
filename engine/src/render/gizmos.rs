@@ -48,10 +48,8 @@ impl<'a> Gizmos<'a> {
     }
 
     pub fn wire_cube(&mut self, position: &Vec3, size: &Vec3) {
-        self.cube_list.push(self.gizmo_instance(
-            compose_transform(position, &vec3(0.0, 0.0, 0.0), size),
-            false,
-        ));
+        self.cube_list
+            .push(self.gizmo_instance(compose_transform(position, &Vec3::zeros(), size), false));
     }
 
     pub fn wire_frustum(

@@ -1,4 +1,5 @@
-use glm::{Mat4, Vec3};
+use glm::{DQuat, DVec3, Mat4, Quat, Vec3};
+use nalgebra::{Matrix4, Quaternion, UnitQuaternion, Vector3};
 use serde::{Deserialize, Serialize};
 
 use crate as engine;
@@ -12,14 +13,14 @@ use super::{compose_transform, decompose_transform};
 #[serde(from = "TransformShadow")]
 pub struct Transform {
     #[serde(skip)]
-    pub position: Vec3,
+    pub position: Vector3<f32>,
     #[serde(skip)]
-    pub rotation: Vec3,
+    pub rotation: Vector3<f32>,
     #[serde(skip)]
-    pub scale: Vec3,
-    pub matrix: Mat4,
+    pub scale: Vector3<f32>,
+    pub matrix: Matrix4<f32>,
     #[serde(skip)]
-    pub inverse_matrix: Mat4,
+    pub inverse_matrix: Matrix4<f32>,
 }
 
 impl Default for Transform {
@@ -189,6 +190,47 @@ impl From<TransformShadow> for Transform {
         };
         transform.update_components();
         transform
+    }
+}
+
+impl From<transform_gizmo_egui::math::Transform> for Transform {
+    fn from(value: transform_gizmo_egui::math::Transform) -> Self {
+        Transform::from_components(
+            Vec3::new(
+                value.translation.x as f32,
+                value.translation.y as f32,
+                value.translation.z as f32,
+            ),
+            glm::quat_euler_angles(&Quaternion::new(
+                value.rotation.s as f32,
+                value.rotation.v.x as f32,
+                value.rotation.v.y as f32,
+                value.rotation.v.z as f32,
+            )),
+            Vec3::new(
+                value.scale.x as f32,
+                value.scale.y as f32,
+                value.scale.z as f32,
+            ),
+        )
+    }
+}
+
+impl From<Transform> for transform_gizmo_egui::math::Transform {
+    fn from(value: Transform) -> Self {
+        Self {
+            scale: nalgebra::convert::<Vec3, DVec3>(value.scale).into(),
+            rotation: nalgebra::convert::<Quat, DQuat>(
+                *UnitQuaternion::from_euler_angles(
+                    value.rotation.x,
+                    value.rotation.y,
+                    value.rotation.z,
+                )
+                .quaternion(),
+            )
+            .into(),
+            translation: nalgebra::convert::<Vec3, DVec3>(value.position).into(),
+        }
     }
 }
 

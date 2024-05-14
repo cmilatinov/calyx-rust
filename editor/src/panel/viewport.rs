@@ -1,29 +1,46 @@
 use egui::Ui;
-use egui_gizmo::{GizmoMode, GizmoOrientation, GizmoResult, GizmoVisuals, DEFAULT_SNAP_ANGLE};
-
 use engine::egui::load::SizedTexture;
 use engine::egui::{Align2, Color32, Image, ImageSource, Key, Margin, Pos2, Sense, TextStyle};
 use engine::egui_dock::{TabBodyStyle, TabStyle};
-use engine::glm::{Mat4, Vec3};
+use engine::glm::{DMat4, Mat4};
+use engine::math::Transform;
+use engine::mint::ColumnMatrix4;
+use engine::nalgebra;
+use engine::nalgebra::{Quaternion, UnitQuaternion};
 use engine::render::CameraLike;
 use engine::scene::SceneManager;
 use engine::*;
+use transform_gizmo_egui::config::DEFAULT_SNAP_ANGLE;
+use transform_gizmo_egui::mint::RowMatrix4;
+use transform_gizmo_egui::GizmoExt;
+use transform_gizmo_egui::{
+    EnumSet, Gizmo, GizmoConfig, GizmoMode, GizmoOrientation, GizmoResult, GizmoVisuals,
+};
 
 use crate::panel::Panel;
 use crate::EditorAppState;
 
-#[derive(Default)]
-pub struct PanelViewport;
+pub struct PanelViewport {
+    gizmo: Gizmo,
+}
+
+impl Default for PanelViewport {
+    fn default() -> Self {
+        Self {
+            gizmo: Gizmo::new(GizmoConfig::default()),
+        }
+    }
+}
 
 const GIZMO_VISUALS: GizmoVisuals = GizmoVisuals {
     x_color: Color32::from_rgb(255, 0, 148),
     y_color: Color32::from_rgb(148, 255, 0),
     z_color: Color32::from_rgb(0, 148, 255),
     s_color: Color32::from_rgb(255, 255, 255),
-    inactive_alpha: 0.5,
+    inactive_alpha: 0.4,
     highlight_alpha: 1.0,
     highlight_color: Some(Color32::from_rgb(255, 215, 0)),
-    stroke_width: 5.0,
+    stroke_width: 3.5,
     gizmo_size: 75.0,
 };
 
@@ -103,7 +120,7 @@ impl PanelViewport {
         res
     }
 
-    fn gizmo(&self, ui: &mut Ui, app_state: &mut EditorAppState, viewport: &egui::Rect) {
+    fn gizmo(&mut self, ui: &mut Ui, app_state: &mut EditorAppState, viewport: &egui::Rect) {
         ui.set_clip_rect(*viewport);
         let snap = ui.input(|input| input.modifiers.ctrl);
         let snap_coarse = ui.input(|input| input.modifiers.shift);
@@ -120,27 +137,35 @@ impl PanelViewport {
                     .simulation_scene()
                     .get_game_object_by_uuid(id)
             }) {
+                let view_matrix = RowMatrix4::from(<DMat4 as Into<ColumnMatrix4<f64>>>::into(
+                    nalgebra::convert::<Mat4, DMat4>(app_state.camera.transform.inverse_matrix),
+                ));
+                let projection_matrix =
+                    RowMatrix4::from(<DMat4 as Into<ColumnMatrix4<f64>>>::into(
+                        nalgebra::convert::<Mat4, DMat4>(app_state.camera.camera.projection),
+                    ));
+                self.gizmo.update_config(GizmoConfig {
+                    view_matrix,
+                    projection_matrix,
+                    viewport: *viewport,
+                    modes: EnumSet::only(app_state.gizmo_mode),
+                    orientation: GizmoOrientation::Global,
+                    snapping: snap,
+                    snap_angle,
+                    snap_distance,
+                    snap_scale: snap_distance,
+                    visuals: GIZMO_VISUALS,
+                    pixels_per_point: 0.0,
+                });
                 let transform = SceneManager::get()
                     .simulation_scene()
                     .get_world_transform(game_object);
-                let gizmo = egui_gizmo::Gizmo::new("test")
-                    .projection_matrix(app_state.camera.camera.projection.into())
-                    .view_matrix(app_state.camera.transform.get_inverse_matrix().into())
-                    .model_matrix(transform.matrix.into())
-                    .mode(app_state.gizmo_mode)
-                    .orientation(app_state.gizmo_orientation)
-                    .viewport(*viewport)
-                    .visuals(GIZMO_VISUALS)
-                    .snapping(snap)
-                    .snap_distance(snap_distance)
-                    .snap_angle(snap_angle)
-                    .snap_scale(snap_distance);
-                if let Some(gizmo_response) = gizmo.interact(ui) {
-                    let transform = gizmo_response.transform();
+                if let Some((result, transforms)) = self.gizmo.interact(ui, &[transform.into()]) {
+                    let res: Transform = transforms[0].into();
                     SceneManager::get_mut()
                         .simulation_scene_mut()
-                        .set_world_transform(game_object, Mat4::from(transform));
-                    self.gizmo_status(ui, &gizmo_response);
+                        .set_world_transform(game_object, res.matrix);
+                    self.gizmo_status(ui, &result);
                 }
             }
         }
@@ -164,27 +189,30 @@ impl PanelViewport {
     }
 
     fn gizmo_status(&self, ui: &Ui, response: &GizmoResult) {
-        if let Some(value) = response.value {
-            let length = Vec3::from(value).magnitude();
-            let text = match response.mode {
-                GizmoMode::Rotate => format!("{:.1}°, {:.2} rad", length.to_degrees(), length),
-                GizmoMode::Translate | GizmoMode::Scale => format!(
-                    "dX: {:.2}, dY: {:.2}, dZ: {:.2}",
-                    value[0], value[1], value[2]
-                ),
-            };
-            let rect = ui.clip_rect();
-            ui.painter().text(
-                Pos2::new(rect.left() + 5.0, rect.bottom()),
-                Align2::LEFT_BOTTOM,
-                text,
-                ui.style()
-                    .text_styles
-                    .get(&TextStyle::Body)
-                    .unwrap()
-                    .clone(),
-                Color32::WHITE,
-            );
-        }
+        let text = match response {
+            GizmoResult::Rotation { total, .. } => {
+                let quat: Quaternion<f64> = (*total).into();
+                let angle = UnitQuaternion::<f32>::new_unchecked(nalgebra::convert(quat)).angle();
+                format!("{:.1}°, {:.2} rad", angle.to_degrees(), angle)
+            }
+            GizmoResult::Translation { total, .. } => {
+                format!("dX: {:.2}, dY: {:.2}, dZ: {:.2}", total.x, total.y, total.z)
+            }
+            GizmoResult::Scale { total } => {
+                format!("dX: {:.2}, dY: {:.2}, dZ: {:.2}", total.x, total.y, total.z)
+            }
+        };
+        let rect = ui.clip_rect();
+        ui.painter().text(
+            Pos2::new(rect.left() + 5.0, rect.bottom()),
+            Align2::LEFT_BOTTOM,
+            text,
+            ui.style()
+                .text_styles
+                .get(&TextStyle::Body)
+                .unwrap()
+                .clone(),
+            Color32::WHITE,
+        );
     }
 }

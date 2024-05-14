@@ -1,6 +1,6 @@
 use glm::{vec3, Mat4, Vec3};
 use mint::Vector2;
-use nalgebra::Rotation3;
+use nalgebra::UnitQuaternion;
 
 use russimp::Matrix4x4;
 pub use transform::*;
@@ -28,14 +28,15 @@ pub fn decompose_transform(
     let sy = glm::length(&vec3(matrix.m12, matrix.m22, matrix.m32));
     let sz = glm::length(&vec3(matrix.m13, matrix.m23, matrix.m33));
     *scale = vec3(sx, sy, sz);
-    let (x, y, z) = Rotation3::from_matrix_eps(
-        &glm::mat4_to_mat3(matrix),
-        f32::EPSILON,
-        1000,
-        Rotation3::identity(),
-    )
-    .euler_angles();
-    *rotation = vec3(x, y, z);
+    *rotation = glm::quat_euler_angles(
+        UnitQuaternion::from_matrix_eps(
+            &glm::mat4_to_mat3(matrix),
+            f32::EPSILON,
+            1000,
+            UnitQuaternion::identity(),
+        )
+        .quaternion(),
+    );
 }
 
 pub fn to_fov_x(aspect: f32, fov_y: f32) -> f32 {

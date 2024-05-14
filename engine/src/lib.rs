@@ -9,6 +9,8 @@ pub extern crate image;
 pub extern crate inventory;
 pub extern crate legion;
 pub extern crate log;
+pub extern crate mint;
+pub extern crate nalgebra;
 pub extern crate nalgebra_glm as glm;
 pub extern crate petgraph;
 pub extern crate rapier3d;
@@ -17,6 +19,7 @@ pub extern crate russimp;
 pub extern crate rusty_pool;
 pub extern crate serde;
 pub extern crate serde_json;
+pub extern crate transform_gizmo_egui;
 pub extern crate uuid;
 
 pub mod assets;
