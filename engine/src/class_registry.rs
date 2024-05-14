@@ -32,13 +32,13 @@ impl ClassRegistry {
     }
 
     pub fn components_update(&self) -> impl Iterator<Item = (&TypeId, &Box<(dyn Component)>)> {
-        self.components_update
-            .iter()
-            .filter_map(|id| if let Some(component) = self.components.get(id) {
+        self.components_update.iter().filter_map(|id| {
+            if let Some(component) = self.components.get(id) {
                 Some((id, component))
             } else {
                 None
-            })
+            }
+        })
     }
 
     pub fn component_by_uuid(&self, uuid: Uuid) -> Option<&dyn Component> {

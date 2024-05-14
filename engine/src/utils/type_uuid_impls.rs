@@ -1,7 +1,7 @@
+use crate as engine;
+use engine_derive::impl_extern_type_uuid;
 use glm::{Mat3, Mat4, Vec2, Vec3, Vec4};
 use uuid::Uuid;
-use engine_derive::impl_extern_type_uuid;
-use crate as engine;
 
 impl_extern_type_uuid!(Vec2, "c16b091f-edfa-46d5-8316-5eab5550fa34");
 impl_extern_type_uuid!(Vec3, "6e70688c-98e9-4f09-9869-90be09c25f88");

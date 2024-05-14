@@ -4,7 +4,7 @@ use std::fmt;
 pub enum SceneError {
     InvalidNodeId,
     ComponentNotBound,
-    UnableToCreatePrefab
+    UnableToCreatePrefab,
 }
 
 impl fmt::Display for SceneError {
@@ -20,7 +20,9 @@ impl fmt::Display for SceneError {
 impl std::error::Error for SceneError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match *self {
-            SceneError::InvalidNodeId | SceneError::ComponentNotBound | SceneError::UnableToCreatePrefab => None,
+            SceneError::InvalidNodeId
+            | SceneError::ComponentNotBound
+            | SceneError::UnableToCreatePrefab => None,
         }
     }
 }

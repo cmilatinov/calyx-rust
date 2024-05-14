@@ -6,6 +6,6 @@ pub use self::type_uuid::*;
 mod builder;
 mod lib_name;
 mod singleton;
+mod type_id;
 mod type_uuid;
 mod type_uuid_impls;
-mod type_id;
