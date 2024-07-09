@@ -54,7 +54,7 @@ impl Widgets {
         let mut changed = false;
 
         let res = egui::ComboBox::from_id_source(id)
-            .wrap(false)
+            .wrap()
             .width(ui.available_width())
             .selected_text(
                 asset_meta

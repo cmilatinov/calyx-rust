@@ -306,9 +306,10 @@ impl AssetRegistry {
     }
 
     pub fn set_root_path(&mut self, path: impl Into<PathBuf>) {
-        let path = path.into();
+        let path = dunce::canonicalize(path.into()).unwrap();
         let mut assets_path = std::env::current_dir().unwrap();
         assets_path.push("assets");
+        let assets_path = dunce::canonicalize(assets_path).unwrap();
         self.asset_paths = vec![path.clone(), assets_path];
         let paths = self.asset_paths.clone();
         let watcher_thread = thread::spawn(move || {
@@ -517,7 +518,10 @@ impl AssetRegistry {
     }
 
     fn relative_asset_path(asset_path: &Path, path: &Path) -> RelativePathBuf {
-        path.relative_to(asset_path).unwrap().with_extension("")
+        path.relative_to(asset_path)
+            .unwrap()
+            .normalize()
+            .with_extension("")
     }
 
     fn load_meta_file(&self, asset_path: &Path, meta_path: &Path) -> AssetMetaData {

@@ -1,7 +1,8 @@
 use engine::egui;
 use engine::egui::load::TexturePoll;
 use engine::egui::{
-    pos2, Color32, Image, Rect, Response, Rounding, Stroke, TextStyle, Ui, Vec2, Widget, WidgetText,
+    pos2, Color32, Image, Rect, Response, Rounding, Stroke, TextStyle, TextWrapMode, Ui, Vec2,
+    Widget, WidgetText,
 };
 
 pub struct FileButton<'a> {
@@ -24,7 +25,12 @@ impl Widget for FileButton<'_> {
             selected,
         } = self;
 
-        let text = text.into_galley(ui, Some(true), image_size.x, TextStyle::Button);
+        let text = text.into_galley(
+            ui,
+            Some(TextWrapMode::Truncate),
+            image_size.x,
+            TextStyle::Button,
+        );
         let text_size = text.size();
         let desired_size = image_size + 2.0 * padding + Vec2::new(0.0, text_size.y + image_spacing);
         let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());

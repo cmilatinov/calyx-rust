@@ -2,9 +2,6 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
-use eframe::wgpu::ShaderSource;
-use egui_wgpu::wgpu;
-
 use crate as engine;
 use crate::assets::error::AssetError;
 use crate::assets::{mesh, Asset, LoadedAsset};
@@ -12,6 +9,9 @@ use crate::render::buffer::BufferLayout;
 use crate::render::render_utils::RenderUtils;
 use crate::render::{PipelineOptions, RenderContext};
 use crate::utils::TypeUuid;
+use eframe::wgpu::ShaderSource;
+use egui_wgpu::wgpu;
+use egui_wgpu::wgpu::PipelineCompilationOptions;
 
 use super::shader_preprocessor::ShaderPreprocessor;
 
@@ -188,11 +188,19 @@ impl Shader {
                 module: &self.shader,
                 entry_point: "vs_main",
                 buffers: &[mesh::Vertex::layout(wgpu::VertexStepMode::Vertex)],
+                compilation_options: PipelineCompilationOptions {
+                    constants: &Default::default(),
+                    zero_initialize_workgroup_memory: false,
+                },
             },
             fragment: Some(wgpu::FragmentState {
                 module: &self.shader,
                 entry_point: "fs_main",
                 targets: options.fragment_targets.as_slice(),
+                compilation_options: PipelineCompilationOptions {
+                    constants: &Default::default(),
+                    zero_initialize_workgroup_memory: false,
+                },
             }),
             primitive: wgpu::PrimitiveState {
                 topology: options.primitive_topology,

@@ -1,6 +1,7 @@
 use engine::component::{Component, ReflectComponent};
 use engine::core::Time;
-use engine::egui::Ui;
+use engine::egui::Key;
+use engine::input::Input;
 use engine::reflect::{Reflect, ReflectDefault};
 use engine::scene::{GameObject, Scene};
 use engine::serde::{Deserialize, Serialize};
@@ -16,7 +17,9 @@ struct ComponentTest {
 }
 
 impl Component for ComponentTest {
-    fn update(&mut self, _scene: &mut Scene, _game_object: GameObject, _ui: &Ui) {
-        self.value = self.value + 1.0 * Time::delta_time();
+    fn update(&mut self, _scene: &mut Scene, _game_object: GameObject, input: &Input) {
+        if input.input(|input| input.key_down(Key::Space)) {
+            self.value = self.value + 1.0 * Time::delta_time();
+        }
     }
 }

@@ -7,15 +7,9 @@ pub(crate) struct FQBox;
 
 pub(crate) struct FQClone;
 
-pub(crate) struct FQDefault;
-
 pub(crate) struct FQOption;
 
 pub(crate) struct FQResult;
-
-pub(crate) struct FQSend;
-
-pub(crate) struct FQSync;
 
 pub(crate) struct FQReflect;
 
@@ -47,12 +41,6 @@ impl ToTokens for FQClone {
     }
 }
 
-impl ToTokens for FQDefault {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        quote!(::core::default::Default).to_tokens(tokens);
-    }
-}
-
 impl ToTokens for FQOption {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         quote!(::core::option::Option).to_tokens(tokens);
@@ -62,18 +50,6 @@ impl ToTokens for FQOption {
 impl ToTokens for FQResult {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         quote!(::core::result::Result).to_tokens(tokens);
-    }
-}
-
-impl ToTokens for FQSend {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        quote!(::core::marker::Send).to_tokens(tokens);
-    }
-}
-
-impl ToTokens for FQSync {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        quote!(::core::marker::Sync).to_tokens(tokens);
     }
 }
 

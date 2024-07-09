@@ -131,6 +131,8 @@ impl PanelContentBrowser {
     }
 
     fn set_selected_file(&mut self, path: PathBuf) {
+        // let root = AssetRegistry::get().root_path().clone();
+        // let path = path.relative_to(root).unwrap().to;
         EditorAppState::get_mut().selection = AssetRegistry::get()
             .asset_id_from_path(&path)
             .map(|id| EditorSelection::Asset([id].into()));

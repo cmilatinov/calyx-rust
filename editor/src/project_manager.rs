@@ -1,9 +1,8 @@
+use sharedlib::{Lib, Symbol};
 use std::io::{BufRead, BufReader};
 use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-
-use sharedlib::{Lib, Symbol};
 
 use engine::background::Background;
 use engine::class_registry::ClassRegistry;
@@ -61,6 +60,7 @@ impl ProjectManager {
     pub fn build_assemblies(&self) -> JoinHandle<()> {
         let root = self.root_project_dir();
         Background::get_mut().execute(TaskId::Build, move || {
+            // std::thread::sleep(Duration::from_secs(10));
             let mut build = Command::new("cargo")
                 .current_dir(root)
                 .args(["build", "--lib"])

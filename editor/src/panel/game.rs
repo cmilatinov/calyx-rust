@@ -70,7 +70,7 @@ impl PanelGame {
         } else {
             available
         };
-        ui.with_layout(
+        let res = ui.with_layout(
             egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
             |ui| {
                 ui.add(Image::new(ImageSource::Texture(SizedTexture {
@@ -82,10 +82,11 @@ impl PanelGame {
                         .scene_texture_handle()
                         .id(),
                     size,
-                })));
-                let screen_rect = ui.ctx().screen_rect();
-                app_state.game_size = (size.x / screen_rect.width(), size.y / screen_rect.height());
+                })))
             },
         );
+        let screen_rect = ui.ctx().screen_rect();
+        app_state.game_size = (size.x / screen_rect.width(), size.y / screen_rect.height());
+        app_state.game_response = Some(res.inner);
     }
 }

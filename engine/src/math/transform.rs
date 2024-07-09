@@ -97,7 +97,7 @@ impl Transform {
             return;
         }
         let rotation = glm::quat_look_at(&glm::normalize(&diff), &glm::vec3(0f32, 1f32, 0f32));
-        self.rotation = glm::quat_euler_angles(&rotation);
+        self.rotation = glm::quat_euler_angles(&rotation).zyx();
         self.update_matrix();
     }
 
@@ -206,7 +206,8 @@ impl From<transform_gizmo_egui::math::Transform> for Transform {
                 value.rotation.v.x as f32,
                 value.rotation.v.y as f32,
                 value.rotation.v.z as f32,
-            )),
+            ))
+            .zyx(),
             Vec3::new(
                 value.scale.x as f32,
                 value.scale.y as f32,
@@ -222,9 +223,9 @@ impl From<Transform> for transform_gizmo_egui::math::Transform {
             scale: nalgebra::convert::<Vec3, DVec3>(value.scale).into(),
             rotation: nalgebra::convert::<Quat, DQuat>(
                 *UnitQuaternion::from_euler_angles(
-                    value.rotation.x,
-                    value.rotation.y,
                     value.rotation.z,
+                    value.rotation.y,
+                    value.rotation.x,
                 )
                 .quaternion(),
             )

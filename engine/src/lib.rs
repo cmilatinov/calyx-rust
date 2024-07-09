@@ -27,6 +27,7 @@ pub mod background;
 pub mod class_registry;
 pub mod component;
 pub mod core;
+pub mod input;
 pub mod math;
 pub mod physics;
 pub mod reflect;

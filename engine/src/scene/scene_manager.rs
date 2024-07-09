@@ -2,6 +2,7 @@ use crate as engine;
 use crate::component::ComponentMesh;
 
 use crate::assets::{Asset, AssetRegistry, LoadedAsset};
+use crate::input::Input;
 use crate::scene::Scene;
 use crate::utils::singleton_with_init;
 use std::ops::DerefMut;
@@ -68,13 +69,13 @@ impl SceneManager {
         self.simulation_scene_mut().prepare();
     }
 
-    pub fn update(&mut self, ctx: &egui::Context) {
+    pub fn update(&mut self, input: &Input) {
         if !self.simulation_running {
             return;
         }
 
         if let Some(scene) = &mut self.simulation_scene {
-            scene.update(ctx);
+            scene.update(input);
         }
     }
 

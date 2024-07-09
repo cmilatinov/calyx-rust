@@ -34,56 +34,39 @@ pub trait Panel {
 }
 
 pub struct PanelManager {
-    panels: HashMap<String, Box<dyn Panel>>,
+    panels: HashMap<&'static str, Box<dyn Panel>>,
 }
 
 impl Default for PanelManager {
     fn default() -> Self {
-        let mut panels: HashMap<String, Box<dyn Panel>> = HashMap::new();
+        let mut panels: HashMap<&'static str, Box<dyn Panel>> = HashMap::new();
         panels.insert(
-            PanelContentBrowser::name().to_string(),
+            PanelContentBrowser::name(),
             Box::<PanelContentBrowser>::default(),
         );
+        panels.insert(PanelInspector::name(), Box::<PanelInspector>::default());
         panels.insert(
-            PanelInspector::name().to_string(),
-            Box::<PanelInspector>::default(),
-        );
-        panels.insert(
-            PanelSceneHierarchy::name().to_string(),
+            PanelSceneHierarchy::name(),
             Box::<PanelSceneHierarchy>::default(),
         );
-        panels.insert(
-            PanelTerminal::name().to_string(),
-            Box::<PanelTerminal>::default(),
-        );
-        panels.insert(
-            PanelViewport::name().to_string(),
-            Box::<PanelViewport>::default(),
-        );
-        panels.insert(PanelGame::name().to_string(), Box::<PanelGame>::default());
+        panels.insert(PanelTerminal::name(), Box::<PanelTerminal>::default());
+        panels.insert(PanelViewport::name(), Box::<PanelViewport>::default());
+        panels.insert(PanelGame::name(), Box::<PanelGame>::default());
         PanelManager { panels }
     }
 }
 
 impl egui_dock::TabViewer for PanelManager {
-    type Tab = String;
+    type Tab = &'static str;
 
     fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
-        tab.as_str().into()
+        (*tab).into()
     }
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
         if let Some(panel) = self.panels.get_mut(tab) {
             panel.ui(ui);
         };
-    }
-
-    fn tab_style_override(&self, tab: &Self::Tab, global_style: &TabStyle) -> Option<TabStyle> {
-        if let Some(panel) = self.panels.get(tab) {
-            panel.tab_style_override(global_style)
-        } else {
-            None
-        }
     }
 
     fn context_menu(
@@ -95,6 +78,14 @@ impl egui_dock::TabViewer for PanelManager {
     ) {
         if let Some(panel) = self.panels.get_mut(tab) {
             panel.context_menu(ui);
+        }
+    }
+
+    fn tab_style_override(&self, tab: &Self::Tab, global_style: &TabStyle) -> Option<TabStyle> {
+        if let Some(panel) = self.panels.get(tab) {
+            panel.tab_style_override(global_style)
+        } else {
+            None
         }
     }
 

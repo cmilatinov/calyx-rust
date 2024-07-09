@@ -51,7 +51,7 @@ impl TypeInspector for FloatInspector {
             if let Some(AttributeValue::Float(value)) = max_attr {
                 max = value;
             }
-            drag = drag.clamp_range(RangeInclusive::new(min, max));
+            drag = drag.range(RangeInclusive::new(min, max));
             if let Some(AttributeValue::Float(value)) = speed_attr {
                 drag = drag.speed(value);
             }

@@ -6,7 +6,7 @@ use convert_case::{Case, Casing};
 use engine::assets::AssetRegistry;
 use engine::class_registry::ClassRegistry;
 use engine::component::{ComponentID, ComponentTransform};
-use engine::egui::Ui;
+use engine::egui::{PopupCloseBehavior, Ui};
 use engine::egui_extras::{Column, TableBody};
 use engine::reflect::type_registry::TypeRegistry;
 use engine::reflect::{AttributeValue, NamedField, Reflect, ReflectDefault, TypeInfo};
@@ -77,23 +77,29 @@ impl Panel for PanelInspector {
                     egui::Button::new("Add Component"),
                 );
                 let id = ui.make_persistent_id("add_component_popup");
-                egui::popup::popup_below_widget(ui, id, &res, |ui| {
-                    for (type_id, component) in ClassRegistry::get().components() {
-                        if entity_components.contains(type_id) {
-                            continue;
-                        }
-                        let name = Self::display_name(component.as_reflect());
-                        if ui.selectable_label(false, name).clicked() {
-                            let meta = registry.trait_meta::<ReflectDefault>(*type_id).unwrap();
-                            if let Some(mut entry) = SceneManager::get_mut()
-                                .simulation_scene_mut()
-                                .entry_mut(game_object)
-                            {
-                                component.bind_instance(&mut entry, meta.default());
+                egui::popup::popup_below_widget(
+                    ui,
+                    id,
+                    &res,
+                    PopupCloseBehavior::CloseOnClick,
+                    |ui| {
+                        for (type_id, component) in ClassRegistry::get().components() {
+                            if entity_components.contains(type_id) {
+                                continue;
+                            }
+                            let name = Self::display_name(component.as_reflect());
+                            if ui.selectable_label(false, name).clicked() {
+                                let meta = registry.trait_meta::<ReflectDefault>(*type_id).unwrap();
+                                if let Some(mut entry) = SceneManager::get_mut()
+                                    .simulation_scene_mut()
+                                    .entry_mut(game_object)
+                                {
+                                    component.bind_instance(&mut entry, meta.default());
+                                }
                             }
                         }
-                    }
-                });
+                    },
+                );
                 if res.clicked() {
                     ui.memory_mut(|mem| mem.open_popup(id));
                 }
@@ -226,7 +232,7 @@ impl PanelInspector {
         if let Some(inspector) =
             InspectorRegistry::get().type_inspector_lookup(instance.as_any().type_id())
         {
-            Widgets::inspector_row_label(body, egui::Label::new(name.as_str()).wrap(false), |ui| {
+            Widgets::inspector_row_label(body, egui::Label::new(name.as_str()).wrap(), |ui| {
                 inspector.show_inspector(ui, ctx, instance);
             });
         }

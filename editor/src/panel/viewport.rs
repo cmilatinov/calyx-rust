@@ -1,12 +1,16 @@
+use crate::panel::Panel;
+use crate::EditorAppState;
 use egui::Ui;
 use engine::egui::load::SizedTexture;
-use engine::egui::{Align2, Color32, Image, ImageSource, Key, Margin, Pos2, Sense, TextStyle};
+use engine::egui::{
+    Align2, Color32, Image, ImageSource, Key, Margin, PointerButton, Pos2, Sense, TextStyle,
+};
 use engine::egui_dock::{TabBodyStyle, TabStyle};
 use engine::glm::{DMat4, Mat4};
+use engine::input::{Input, InputState};
 use engine::math::Transform;
 use engine::mint::ColumnMatrix4;
 use engine::nalgebra;
-use engine::nalgebra::{Quaternion, UnitQuaternion};
 use engine::render::CameraLike;
 use engine::scene::SceneManager;
 use engine::*;
@@ -14,11 +18,8 @@ use transform_gizmo_egui::config::DEFAULT_SNAP_ANGLE;
 use transform_gizmo_egui::mint::RowMatrix4;
 use transform_gizmo_egui::GizmoExt;
 use transform_gizmo_egui::{
-    EnumSet, Gizmo, GizmoConfig, GizmoMode, GizmoOrientation, GizmoResult, GizmoVisuals,
+    Gizmo, GizmoConfig, GizmoMode, GizmoOrientation, GizmoResult, GizmoVisuals,
 };
-
-use crate::panel::Panel;
-use crate::EditorAppState;
 
 pub struct PanelViewport {
     gizmo: Gizmo,
@@ -88,7 +89,7 @@ impl PanelViewport {
                 egui::DragValue::new(&mut degrees)
                     .speed(1.0)
                     .suffix("°")
-                    .clamp_range(30..=160),
+                    .range(30..=160),
             );
             ui.label("FOV");
             if degrees != radians.to_degrees() {
@@ -111,7 +112,12 @@ impl PanelViewport {
             }))
             .sense(Sense::drag()),
         );
-        app_state.camera.update(ui, &res);
+        let state = InputState {
+            is_active: res.dragged_by(PointerButton::Secondary),
+        };
+        app_state
+            .camera
+            .update(&Input::from_ctx(ui.ctx(), Some(&res), state));
         let screen_rect = ui.ctx().screen_rect();
         app_state.viewport_size = (
             res.rect.width() / screen_rect.width(),
@@ -148,8 +154,10 @@ impl PanelViewport {
                     view_matrix,
                     projection_matrix,
                     viewport: *viewport,
-                    modes: EnumSet::only(app_state.gizmo_mode),
+                    modes: app_state.gizmo_modes,
+                    mode_override: None,
                     orientation: GizmoOrientation::Global,
+                    pivot_point: Default::default(),
                     snapping: snap,
                     snap_angle,
                     snap_distance,
@@ -170,13 +178,13 @@ impl PanelViewport {
             }
         }
         if ui.input(|input| input.key_pressed(Key::Q)) {
-            app_state.gizmo_mode = GizmoMode::Translate;
+            app_state.gizmo_modes = GizmoMode::all_translate();
         }
         if ui.input(|input| input.key_pressed(Key::E)) {
-            app_state.gizmo_mode = GizmoMode::Rotate;
+            app_state.gizmo_modes = GizmoMode::all_rotate();
         }
         if ui.input(|input| input.key_pressed(Key::R)) {
-            app_state.gizmo_mode = GizmoMode::Scale;
+            app_state.gizmo_modes = GizmoMode::all_scale();
         }
         if ui.input(|input| input.key_pressed(Key::Z)) {
             app_state.gizmo_orientation = if app_state.gizmo_orientation == GizmoOrientation::Global
@@ -191,9 +199,7 @@ impl PanelViewport {
     fn gizmo_status(&self, ui: &Ui, response: &GizmoResult) {
         let text = match response {
             GizmoResult::Rotation { total, .. } => {
-                let quat: Quaternion<f64> = (*total).into();
-                let angle = UnitQuaternion::<f32>::new_unchecked(nalgebra::convert(quat)).angle();
-                format!("{:.1}°, {:.2} rad", angle.to_degrees(), angle)
+                format!("{:.1}°, {:.2} rad", total.to_degrees(), total)
             }
             GizmoResult::Translation { total, .. } => {
                 format!("dX: {:.2}, dY: {:.2}, dZ: {:.2}", total.x, total.y, total.z)
@@ -201,6 +207,7 @@ impl PanelViewport {
             GizmoResult::Scale { total } => {
                 format!("dX: {:.2}, dY: {:.2}, dZ: {:.2}", total.x, total.y, total.z)
             }
+            _ => String::from(""),
         };
         let rect = ui.clip_rect();
         ui.painter().text(

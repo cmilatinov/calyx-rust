@@ -19,14 +19,17 @@ use engine::egui::{include_image, Button, FontFamily, Rounding, Sense, Vec2};
 use engine::egui::{Align, FontId, Layout};
 use engine::egui::{Color32, TextStyle};
 use engine::egui_dock::DockState;
+use engine::input::{Input, InputState};
 use engine::log::LevelFilter;
 use engine::rapier3d::prelude::DebugRenderPipeline;
 use engine::reflect::type_registry::TypeRegistry;
 use engine::render::{Camera, RenderContext, SceneRenderer, SceneRendererOptions};
 use engine::scene::SceneManager;
+use engine::transform_gizmo_egui::EnumSet;
 use engine::*;
 use selection::EditorSelection;
 use utils::singleton_with_init;
+use winit::platform::windows::EventLoopBuilderExtWindows;
 
 use crate::camera::EditorCamera;
 use crate::task_id::TaskId;
@@ -47,7 +50,7 @@ pub const BASE_FONT_SIZE: f32 = 16.0;
 pub struct EditorApp {
     fps_counter: i32,
     fps: i32,
-    dock_state: DockState<String>,
+    dock_state: DockState<&'static str>,
     dock_style: Style,
     panel_manager: PanelManager,
     physics_debug_pipeline: DebugRenderPipeline,
@@ -62,8 +65,9 @@ pub struct EditorAppState {
     pub game_aspect: Option<(u32, u32)>,
     pub selection: Option<EditorSelection>,
     pub viewport_size: (f32, f32),
+    pub game_response: Option<egui::Response>,
     pub game_size: (f32, f32),
-    pub gizmo_mode: GizmoMode,
+    pub gizmo_modes: EnumSet<GizmoMode>,
     pub gizmo_orientation: GizmoOrientation,
 }
 
@@ -77,7 +81,8 @@ impl Default for EditorAppState {
             selection: Default::default(),
             viewport_size: Default::default(),
             game_size: Default::default(),
-            gizmo_mode: GizmoMode::Translate,
+            game_response: Default::default(),
+            gizmo_modes: GizmoMode::all_translate(),
             gizmo_orientation: GizmoOrientation::Global,
         }
     }
@@ -88,25 +93,19 @@ singleton_with_init!(EditorAppState);
 impl EditorApp {
     pub fn new(cc: &eframe::CreationContext) -> Self {
         let mut dock_style = Style::from_egui(&cc.egui_ctx.style());
-        dock_style.tab_bar.bg_fill = egui::Color32::from_rgb(18, 18, 18);
-        let mut dock_state = DockState::new(vec![PanelSceneHierarchy::name().to_owned()]);
+        dock_style.tab_bar.bg_fill = Color32::from_rgb(18, 18, 18);
+        let mut dock_state = DockState::new(vec![PanelSceneHierarchy::name()]);
         let surface = dock_state.main_surface_mut();
         let [_, b] = surface.split_right(
             NodeIndex::root(),
             0.2,
-            vec![
-                PanelViewport::name().to_owned(),
-                PanelGame::name().to_owned(),
-            ],
+            vec![PanelViewport::name(), PanelGame::name()],
         );
-        let [c, _] = surface.split_right(b, 0.7, vec![PanelInspector::name().to_owned()]);
+        let [c, _] = surface.split_right(b, 0.7, vec![PanelInspector::name()]);
         let [_, _] = surface.split_below(
             c,
             0.7,
-            vec![
-                PanelContentBrowser::name().to_owned(),
-                PanelTerminal::name().to_owned(),
-            ],
+            vec![PanelContentBrowser::name(), PanelTerminal::name()],
         );
         Self::configure_styles(&cc.egui_ctx);
         RenderContext::get_mut().init_from_eframe(cc);
@@ -147,6 +146,7 @@ impl eframe::App for EditorApp {
 
         {
             let mut app_state = EditorAppState::get_mut();
+            app_state.game_response = None;
             SceneManager::get()
                 .simulation_scene()
                 .clear_transform_cache();
@@ -197,12 +197,6 @@ impl eframe::App for EditorApp {
             }
         }
 
-        {
-            let mut scene_manager = SceneManager::get_mut();
-            scene_manager.prepare();
-            scene_manager.update(ctx);
-        }
-
         self.menu_bar(ctx);
 
         egui::CentralPanel::default().show(ctx, |_| {
@@ -213,6 +207,20 @@ impl eframe::App for EditorApp {
         });
 
         self.status_bar(ctx);
+
+        {
+            let app_state = EditorAppState::get();
+            let mut scene_manager = SceneManager::get_mut();
+            scene_manager.prepare();
+            let input = Input::from_ctx(
+                ctx,
+                app_state.game_response.as_ref(),
+                InputState {
+                    is_active: self.is_focused(PanelGame::name()),
+                },
+            );
+            scene_manager.update(&input);
+        }
 
         self.fps_counter += 1;
         if Time::timer("fps") >= 1.0 {
@@ -415,6 +423,14 @@ impl EditorApp {
                 });
             });
     }
+
+    fn is_focused(&mut self, tab: &'static str) -> bool {
+        self.dock_state
+            .main_surface_mut()
+            .find_active_focused()
+            .map(|(_, t)| *t == tab)
+            .unwrap_or(false)
+    }
 }
 
 impl EditorApp {
@@ -470,10 +486,17 @@ impl EditorApp {
                         | wgpu::Features::CLEAR_TEXTURE
                         | wgpu::Features::FLOAT32_FILTERABLE
                         | wgpu::Features::DEPTH32FLOAT_STENCIL8,
+                    required_limits: wgpu::Limits {
+                        max_color_attachment_bytes_per_sample: 48,
+                        ..Default::default()
+                    },
                     ..Default::default()
                 }),
                 ..Default::default()
             },
+            event_loop_builder: Some(Box::new(|builder| {
+                builder.with_any_thread(true);
+            })),
             ..Default::default()
         };
         let name = format!("Calyx — {}", ProjectManager::get().current_project().name());
@@ -485,7 +508,7 @@ impl EditorApp {
                 let app = EditorApp::new(cc);
                 app_state.scene_renderer = app.scene_renderer.clone().into();
                 app_state.game_renderer = app.game_renderer.clone().into();
-                Box::new(app)
+                Ok(Box::new(app))
             }),
         )
     }

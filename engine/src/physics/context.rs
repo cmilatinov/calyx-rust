@@ -106,9 +106,9 @@ impl PhysicsContext {
                 rb.set_position(transform.position.into(), true);
                 rb.set_rotation(
                     UnitQuaternion::from_euler_angles(
-                        transform.rotation.x,
-                        transform.rotation.y,
                         transform.rotation.z,
+                        transform.rotation.y,
+                        transform.rotation.x,
                     ),
                     true,
                 );
@@ -158,9 +158,9 @@ impl PhysicsContext {
                 let c = &mut scene.physics.colliders[c_handle];
                 c.set_position(transform.position.into());
                 c.set_rotation(UnitQuaternion::from_euler_angles(
-                    transform.rotation.x,
-                    transform.rotation.y,
                     transform.rotation.z,
+                    transform.rotation.y,
+                    transform.rotation.x,
                 ));
                 c.set_shape(Self::collider_shape(c_collider.shape));
                 c.set_friction(c_collider.friction);
@@ -188,9 +188,8 @@ impl PhysicsContext {
                     let old_transform = scene.get_world_transform(go);
                     let transform = Transform::from_components(
                         (*rb.translation()).into(),
-                        glm::quat_euler_angles(
-                            UnitQuaternion::<f32>::from(*rb.rotation()).quaternion(),
-                        ),
+                        glm::quat_euler_angles(UnitQuaternion::from(*rb.rotation()).quaternion())
+                            .zyx(),
                         old_transform.scale,
                     )
                     .matrix;

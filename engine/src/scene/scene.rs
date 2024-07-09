@@ -19,6 +19,7 @@ use crate::class_registry::ClassRegistry;
 use crate::component::{Component, ComponentTransform};
 use crate::component::{ComponentCamera, ComponentID};
 use crate::core::Time;
+use crate::input::Input;
 use crate::math::Transform;
 use crate::physics::{PhysicsConfiguration, PhysicsContext};
 use crate::scene::Prefab;
@@ -424,7 +425,7 @@ impl Scene {
         PhysicsContext::prepare(self);
     }
 
-    pub fn update(&mut self, ctx: &egui::Context) {
+    pub fn update(&mut self, input: &Input) {
         let time = Time::get();
         PhysicsContext::update(self, &time, &PhysicsConfiguration::default());
         for (_, component) in ClassRegistry::get().components_update() {
@@ -440,7 +441,7 @@ impl Scene {
             for game_object in game_objects {
                 if let Some(mut entry) = self.entry_mut(game_object) {
                     if let Some(instance) = component.get_instance_mut(&mut entry) {
-                        instance.update(scene, game_object, ctx);
+                        instance.update(scene, game_object, input);
                     }
                 }
             }

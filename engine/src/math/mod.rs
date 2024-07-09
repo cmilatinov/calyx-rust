@@ -36,7 +36,8 @@ pub fn decompose_transform(
             UnitQuaternion::identity(),
         )
         .quaternion(),
-    );
+    )
+    .zyx();
 }
 
 pub fn to_fov_x(aspect: f32, fov_y: f32) -> f32 {

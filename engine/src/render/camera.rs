@@ -1,6 +1,6 @@
-use glm::Mat4;
-
+use crate::input::Input;
 use crate::math;
+use glm::Mat4;
 
 pub struct Camera {
     pub projection: Mat4,
@@ -40,5 +40,5 @@ impl Camera {
 }
 
 pub trait CameraLike {
-    fn update(&mut self, _ui: &mut egui::Ui, _res: &egui::Response) {}
+    fn update(&mut self, _input: &Input) {}
 }

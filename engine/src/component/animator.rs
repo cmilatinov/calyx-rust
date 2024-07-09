@@ -1,19 +1,18 @@
-use egui::Context;
 use glm::{Mat4, Quat, Vec3};
 use nalgebra::Unit;
 use serde::{Deserialize, Serialize};
 
+use super::{Component, ComponentBone, ComponentSkinnedMesh, ReflectComponent};
 use crate as engine;
 use crate::assets::animation::{Animation, AnimationKeyFrames, QuatKeyFrame, VectorKeyFrame};
 use crate::assets::mesh::BoneTransform;
 use crate::core::{Ref, Time, TimeType};
+use crate::input::Input;
 use crate::scene::{GameObject, Scene};
 use crate::{
     reflect::{Reflect, ReflectDefault},
     utils::{ReflectTypeUuidDynamic, TypeUuid},
 };
-
-use super::{Component, ComponentBone, ComponentSkinnedMesh, ReflectComponent};
 
 #[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "f24db81d-7054-40b8-8f3c-d9740c03948e"]
@@ -26,7 +25,7 @@ pub struct ComponentAnimator {
 }
 
 impl Component for ComponentAnimator {
-    fn update(&mut self, scene: &mut Scene, game_object: GameObject, _ctx: &Context) {
+    fn update(&mut self, scene: &mut Scene, game_object: GameObject, _input: &Input) {
         let mut duration = None;
         let skinned_meshes = scene
             .get_children_with_component::<ComponentSkinnedMesh>(game_object)
