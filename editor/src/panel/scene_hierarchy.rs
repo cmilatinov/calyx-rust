@@ -1,6 +1,7 @@
 use crate::panel::Panel;
 use crate::{icons, EditorAppState, EditorSelection};
 use egui::Ui;
+use engine::component::ComponentID;
 use engine::egui::{Color32, Response};
 use engine::scene::{GameObject, SiblingDir};
 use engine::scene::{Scene, SceneManager};
@@ -50,31 +51,29 @@ impl Panel for PanelSceneHierarchy {
                     inner_margin: DesignTokens::panel_margin(),
                     ..Default::default()
                 }
-                    .show(ui, |ui| {
-                        let mut scene_manager = SceneManager::get_mut();
-                        let scene = scene_manager.simulation_scene_mut();
-
-                        re_ui::list_item::list_item_scope(ui, "scene", |ui| {
-                            let mut list_item = ui.list_item().draggable(false);
-                            if self.target_container == Some(scene.root()) {
-                                list_item = list_item
-                                    .force_background(ui.style().visuals.widgets.hovered.weak_bg_fill);
-                            }
-                            let response = list_item.show_flat(
-                                ui,
-                                re_ui::list_item::LabelContent::new("Scene")
-                                    .truncate(true)
-                                    .always_show_buttons(true)
-                                    .with_icon(&icons::OBJECT_TREE)
-                                    .with_buttons(|ui| {
-                                        self.add_game_object_button(ui, scene, &mut app_state)
-                                    }),
-                            );
-                            for root_object in scene.root_objects().collect::<Vec<_>>() {
-                                self.render_scene_node(scene, &mut app_state, ui, root_object, true);
-                            }
-                            self.handle_root_dnd_interaction(ui, scene, &response);
-                        });
+                .show(ui, |ui| {
+                    let mut scene_manager = SceneManager::get_mut();
+                    let scene = scene_manager.simulation_scene_mut();
+                    re_ui::list_item::list_item_scope(ui, "scene", |ui| {
+                        let mut list_item = ui.list_item().draggable(false);
+                        if self.target_container == Some(scene.root()) {
+                            list_item = list_item
+                                .force_background(ui.style().visuals.widgets.hovered.weak_bg_fill);
+                        }
+                        let response = list_item.show_flat(
+                            ui,
+                            re_ui::list_item::LabelContent::new("Scene")
+                                .truncate(true)
+                                .always_show_buttons(true)
+                                .with_icon(&icons::OBJECT_TREE)
+                                .with_buttons(|ui| {
+                                    self.add_game_object_button(ui, scene, &mut app_state)
+                                }),
+                        );
+                        for root_object in scene.root_objects().collect::<Vec<_>>() {
+                            self.render_scene_node(scene, &mut app_state, ui, root_object, true);
+                        }
+                        self.handle_root_dnd_interaction(ui, scene, &response);
 
                         let empty_space_response =
                             ui.allocate_response(ui.available_size(), egui::Sense::click());
@@ -83,8 +82,13 @@ impl Panel for PanelSceneHierarchy {
                             app_state.selection = EditorSelection::none();
                         }
 
-                        self.handle_empty_space_dnd_interaction(ui, scene, empty_space_response.rect);
+                        self.handle_empty_space_dnd_interaction(
+                            ui,
+                            scene,
+                            empty_space_response.rect,
+                        );
                     });
+                });
             });
 
         self.target_container = None;
@@ -119,29 +123,33 @@ impl PanelSceneHierarchy {
         let id = ui.make_persistent_id(game_object_id);
         let name = scene.get_game_object_name(game_object);
         let children = scene.get_children_ordered(game_object).collect::<Vec<_>>();
-
         let is_selected = app_state.selection.contains_game_object(game_object_id);
-
+        let mut visible = scene
+            .read_component::<ComponentID, _, _>(game_object, |c| c.visible)
+            .unwrap_or(false);
+        let container_visible = visible && parent_visible;
         let mut item = re_ui::list_item::ListItem::new()
             .selected(is_selected)
             .draggable(true);
         if self.target_container == Some(game_object) {
             item = item.force_background(ui.style().visuals.widgets.hovered.weak_bg_fill);
         }
-
         let response;
         let body_response;
+        let mut visibility_response = None;
         let content = re_ui::list_item::LabelContent::new(name)
             .truncate(true)
+            .subdued(!container_visible)
             .with_icon(&icons::GAME_OBJECT)
             .with_buttons(|ui| {
-                let mut value = true;
-                ui.visibility_toggle_button(&mut value)
+                let res = Self::visibility_button_ui(ui, parent_visible, &mut visible);
+                visibility_response = Some(res.clone());
+                res
             });
         if !children.is_empty() {
             let res = item.show_hierarchical_with_children(ui, id, true, content, |ui| {
                 for child_node in children {
-                    self.render_scene_node(scene, app_state, ui, child_node, parent_visible)
+                    self.render_scene_node(scene, app_state, ui, child_node, container_visible)
                 }
             });
             response = res.item_response;
@@ -156,9 +164,11 @@ impl PanelSceneHierarchy {
             id,
             game_object,
             is_selected,
+            visible,
             app_state,
             &response,
             body_response.as_ref(),
+            visibility_response.as_ref(),
         );
     }
 
@@ -169,9 +179,11 @@ impl PanelSceneHierarchy {
         id: egui::Id,
         game_object: GameObject,
         is_selected: bool,
+        is_visible: bool,
         app_state: &mut EditorAppState,
         response: &Response,
         body_response: Option<&Response>,
+        visibility_response: Option<&Response>,
     ) {
         if response.double_clicked() {
             app_state.selection =
@@ -188,6 +200,11 @@ impl PanelSceneHierarchy {
         } else if response.secondary_clicked() {
             app_state.selection =
                 EditorSelection::from_game_object_id(scene.get_game_object_uuid(game_object));
+        }
+        if visibility_response.map(|r| r.changed()).unwrap_or(false) {
+            scene.write_component::<ComponentID, _>(game_object, |c| {
+                c.visible = is_visible;
+            });
         }
         self.handle_dnd_interaction(ui, scene, game_object, response, body_response);
         response.context_menu(|ui| {
@@ -207,8 +224,8 @@ impl PanelSceneHierarchy {
                         let writer = BufWriter::new(file);
                         serde_json::to_writer_pretty(writer, &prefab).unwrap();
                     }
-                    ui.close_menu();
                 }
+                ui.close_menu();
             }
             if ui.button("Delete").clicked() {
                 scene.delete_game_object(game_object);
@@ -386,13 +403,13 @@ impl PanelSceneHierarchy {
         res
     }
 
-    fn visibility_button_ui(&self, ui: &mut Ui, enabled: bool, visible: &mut bool) -> Response {
+    fn visibility_button_ui(ui: &mut Ui, enabled: bool, visible: &mut bool) -> Response {
         ui.add_enabled_ui(enabled, |ui| {
             ui.visibility_toggle_button(visible)
                 .on_hover_text("Toggle visibility")
                 .on_disabled_hover_text("A parent is invisible")
         })
-            .inner
+        .inner
     }
 
     fn send_command(&self, cmd: Command) {

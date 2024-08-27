@@ -81,6 +81,7 @@ impl Default for Scene {
         world.entry(entity).unwrap().add_component(ComponentID {
             id,
             name: String::from("Root"),
+            visible: true,
         });
         Self {
             world,
@@ -546,6 +547,30 @@ impl Scene {
 
     pub fn entry_mut(&mut self, game_object: GameObject) -> Option<Entry> {
         self.world.entry(game_object.entity)
+    }
+
+    pub fn read_component<T: Component, R, F: FnOnce(&T) -> R>(
+        &self,
+        game_object: GameObject,
+        reader: F,
+    ) -> Option<R> {
+        let entry = self.entry(game_object);
+        entry
+            .as_ref()
+            .and_then(|entry| entry.get_component::<T>().ok())
+            .map(|c| reader(c))
+    }
+
+    pub fn write_component<T: Component, F: FnOnce(&mut T)>(
+        &mut self,
+        game_object: GameObject,
+        writer: F,
+    ) -> Option<()> {
+        let mut entry = self.entry_mut(game_object);
+        entry
+            .as_mut()
+            .and_then(|entry| entry.get_component_mut::<T>().ok())
+            .map(|c| writer(c))
     }
 
     pub fn prepare(&mut self) {

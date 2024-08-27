@@ -15,6 +15,7 @@ pub struct ComponentID {
     #[reflect_attr(name = "ID")]
     pub id: Uuid,
     pub name: String,
+    pub visible: bool,
 }
 
 impl Default for ComponentID {
@@ -22,6 +23,7 @@ impl Default for ComponentID {
         Self {
             id: Uuid::new_v4(),
             name: String::from("Game Object"),
+            visible: true,
         }
     }
 }
