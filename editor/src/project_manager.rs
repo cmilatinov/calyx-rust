@@ -54,7 +54,7 @@ impl ProjectManager {
                 _ => {}
             }
         }
-        child.wait().expect("TODO: panic message");
+        let _ = child.wait();
     }
 
     pub fn build_assemblies(&self) -> JoinHandle<()> {
@@ -63,7 +63,7 @@ impl ProjectManager {
             // std::thread::sleep(Duration::from_secs(10));
             let mut build = Command::new("cargo")
                 .current_dir(root)
-                .args(["build", "--lib"])
+                .args(["build", "--all"])
                 .stdout(Stdio::piped())
                 .spawn()
                 .unwrap();

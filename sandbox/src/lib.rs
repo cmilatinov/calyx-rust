@@ -1,4 +1,5 @@
 mod test;
+mod tps_camera;
 
 use engine::reflect::type_registry::TypeRegistry;
 

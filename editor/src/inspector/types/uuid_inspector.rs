@@ -20,9 +20,7 @@ impl TypeInspector for UuidInspector {
         if let Some(uuid) = instance.downcast_mut::<Uuid>() {
             let value = uuid.to_string();
             let mut str = value.as_str();
-            TextEdit::singleline(&mut str)
-                .desired_width(ui.available_width())
-                .show(ui);
+            TextEdit::singleline(&mut str).desired_width(130.0).show(ui);
         }
     }
 }

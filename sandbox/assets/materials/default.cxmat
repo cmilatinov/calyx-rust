@@ -36,7 +36,7 @@
       "name": "roughness",
       "span": 4,
       "value": {
-        "Float": 0.5
+        "Float": 0.0
       }
     },
     {
@@ -46,7 +46,7 @@
       "name": "ambient_occlusion",
       "span": 4,
       "value": {
-        "Float": 0.005
+        "Float": 0.15
       }
     }
   ]

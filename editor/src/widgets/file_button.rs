@@ -33,7 +33,7 @@ impl Widget for FileButton<'_> {
         );
         let text_size = text.size();
         let desired_size = image_size + 2.0 * padding + Vec2::new(0.0, text_size.y + image_spacing);
-        let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+        let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
 
         if ui.is_rect_visible(rect) {
             let visuals = ui.style().interact(&response);

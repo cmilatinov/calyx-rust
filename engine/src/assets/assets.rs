@@ -8,7 +8,7 @@ use crate::core::Ref;
 
 const SCREEN_SPACE_QUAD: &str = "screen_space_quad";
 const BLACK_TEXTURE_2D: &str = "black_texture_2d";
-const BLACK_TEXTURE_CUBE: &str = "black_texture_sube";
+const BLACK_TEXTURE_CUBE: &str = "black_texture_cube";
 
 pub struct Assets;
 

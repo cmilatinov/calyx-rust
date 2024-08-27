@@ -1,164 +1,31 @@
-use std::fs::{DirEntry, ReadDir};
-use std::path::PathBuf;
-use std::{fs, io};
-
-use engine::assets::AssetRegistry;
-use engine::egui;
-use engine::egui::text::LayoutJob;
-use engine::egui::{
-    include_image, Button, Color32, ImageSource, Margin, Response, Rounding, Sense, TextFormat, Ui,
-    Vec2,
-};
-use engine::egui_dock::{TabBodyStyle, TabStyle};
-use engine::relative_path::PathExt;
-
 use crate::inspector::inspector_registry::InspectorRegistry;
 use crate::panel::Panel;
 use crate::selection::EditorSelection;
 use crate::widgets::FileButton;
-use crate::{EditorAppState, BASE_FONT_SIZE};
+use crate::{icons, EditorAppState};
+use engine::assets::AssetRegistry;
+use engine::egui;
+use engine::egui::text::LayoutJob;
+use engine::egui::{
+    include_image, FontFamily, FontId, ImageSource, Response, TextFormat, Ui, Vec2,
+};
+use engine::relative_path::PathExt;
+use re_ui::list_item::ShowCollapsingResponse;
+use std::any::Any;
+use std::fs::{DirEntry, ReadDir};
+use std::path::PathBuf;
+use std::{fs, io};
 
 pub struct PanelContentBrowser {
     selected_folder: PathBuf,
     selected_file: Option<PathBuf>,
 }
 
-impl PanelContentBrowser {
-    fn render_directory(&mut self, ui: &mut Ui, entry: DirEntry, children: io::Result<ReadDir>) {
-        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-        if !is_dir {
-            return;
-        }
-
-        let curr_path = entry.path();
-        let path = curr_path.to_str().unwrap().to_string();
-        let collapsing_id = ui.make_persistent_id(path);
-        let is_selected = self.selected_folder == curr_path;
-        let render_node = |ui: &mut Ui| {
-            let svg = include_image!("../../../resources/icons/folder_dark.png");
-            let image =
-                egui::Image::new(svg).fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
-            let res = ui.add(
-                Button::image_and_text(image, curr_path.file_name().unwrap().to_str().unwrap())
-                    .selected(is_selected)
-                    .fill(if is_selected {
-                        ui.visuals().selection.bg_fill
-                    } else {
-                        Color32::TRANSPARENT
-                    })
-                    .rounding(Rounding::ZERO)
-                    .sense(Sense::click()),
-            );
-            if res.clicked() {
-                self.selected_folder = if is_selected {
-                    AssetRegistry::get().root_path().clone()
-                } else {
-                    curr_path
-                };
-                self.selected_file = None;
-                EditorAppState::get_mut().selection = None;
-            }
-        };
-
-        let child_entries: Vec<DirEntry> = children
-            .map(|nodes| {
-                nodes
-                    .flatten()
-                    .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
-                    .collect()
-            })
-            .unwrap_or_default();
-        if !child_entries.is_empty() {
-            egui::collapsing_header::CollapsingState::load_with_default_open(
-                ui.ctx(),
-                collapsing_id,
-                false,
-            )
-            .show_header(ui, render_node)
-            .body(|ui| {
-                for child in child_entries {
-                    let path = child.path();
-                    self.render_directory(ui, child, fs::read_dir(path));
-                }
-            });
-        } else {
-            ui.horizontal(|ui| {
-                ui.allocate_exact_size(
-                    Vec2::new(ui.spacing().icon_width, 0.0),
-                    Sense {
-                        click: false,
-                        drag: false,
-                        focusable: false,
-                    },
-                );
-                render_node(ui);
-            });
-        }
-    }
-
-    fn render_file_button<'a>(
-        ui: &'a mut Ui,
-        name: &'a str,
-        image_src: impl Into<ImageSource<'a>>,
-        image_size: Vec2,
-        image_spacing: f32,
-        padding: Vec2,
-        selected: bool,
-    ) -> Response {
-        let image = egui::Image::new(image_src).fit_to_exact_size(image_size);
-        let mut job = LayoutJob::single_section(String::from(name), TextFormat::default());
-        job.wrap.break_anywhere = true;
-        job.wrap.overflow_character = Some('…');
-        job.wrap.max_width = image_size.x;
-        job.wrap.max_rows = 1;
-        let button = FileButton {
-            image,
-            image_size,
-            image_spacing,
-            text: job.into(),
-            padding,
-            selected,
-        };
-        ui.add(button).on_hover_text_at_pointer(name)
-    }
-
-    fn set_selected_folder(&mut self, path: PathBuf) {
-        if path != self.selected_folder {
-            self.selected_folder = path;
-            self.selected_file = None;
-            EditorAppState::get_mut().selection = None;
-        }
-    }
-
-    fn set_selected_file(&mut self, path: PathBuf) {
-        // let root = AssetRegistry::get().root_path().clone();
-        // let path = path.relative_to(root).unwrap().to;
-        EditorAppState::get_mut().selection = AssetRegistry::get()
-            .asset_id_from_path(&path)
-            .map(|id| EditorSelection::Asset([id].into()));
-        self.selected_file = Some(path);
-    }
-
-    fn is_selected(&self, path: &PathBuf, is_dir: bool) -> bool {
-        if is_dir {
-            if let Some(selection) = self.selected_file.as_ref() {
-                *selection == *path
-            } else {
-                false
-            }
-        } else {
-            AssetRegistry::get()
-                .asset_id_from_path(path)
-                .map(|id| {
-                    if let Some(EditorSelection::Asset(selection)) =
-                        EditorAppState::get().selection.as_ref()
-                    {
-                        selection.contains(&id)
-                    } else {
-                        false
-                    }
-                })
-                .unwrap_or_default()
+impl Default for PanelContentBrowser {
+    fn default() -> Self {
+        PanelContentBrowser {
+            selected_folder: AssetRegistry::get().root_path().clone(),
+            selected_file: None,
         }
     }
 }
@@ -173,13 +40,15 @@ impl Panel for PanelContentBrowser {
             .resizable(true)
             .show_inside(ui, |ui| {
                 egui::ScrollArea::both().show(ui, |ui| {
-                    let path = AssetRegistry::get().root_path().clone();
-                    if let Ok(entries) = fs::read_dir(path) {
-                        for entry in entries.flatten() {
-                            let entry_path = entry.path();
-                            self.render_directory(ui, entry, fs::read_dir(entry_path));
+                    re_ui::list_item::list_item_scope(ui, "file_tree_scope", |ui| {
+                        let path = AssetRegistry::get().root_path().clone();
+                        if let Ok(entries) = fs::read_dir(path) {
+                            for entry in entries.flatten() {
+                                let entry_path = entry.path();
+                                self.render_directory(ui, entry, fs::read_dir(entry_path));
+                            }
                         }
-                    }
+                    });
                 });
             });
 
@@ -227,7 +96,7 @@ impl Panel for PanelContentBrowser {
                 });
             });
 
-        const ICON_SIZE: f32 = 75.0;
+        const ICON_SIZE: f32 = 50.0;
         const ICON_PADDING_X: f32 = 10.0;
         const ICON_PADDING_Y: f32 = 5.0;
         const ICON_SPACING: f32 = 10.0;
@@ -288,27 +157,140 @@ impl Panel for PanelContentBrowser {
                         }
                     }
                 });
-                ui.add_space(15.0);
+                let mut size = ui.available_size();
+                size.y = size.y.max(15.0);
+                ui.allocate_space(size);
             });
         });
     }
 
-    fn tab_style_override(&self, global_style: &TabStyle) -> Option<TabStyle> {
-        Some(TabStyle {
-            tab_body: TabBodyStyle {
-                inner_margin: Margin::ZERO,
-                ..global_style.tab_body.clone()
-            },
-            ..global_style.clone()
-        })
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }
 
-impl Default for PanelContentBrowser {
-    fn default() -> Self {
-        PanelContentBrowser {
-            selected_folder: AssetRegistry::get().root_path().clone(),
-            selected_file: None,
+impl PanelContentBrowser {
+    fn render_directory(&mut self, ui: &mut Ui, entry: DirEntry, children: io::Result<ReadDir>) {
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        if !is_dir {
+            return;
+        }
+
+        let curr_path = entry.path();
+        let path = curr_path.to_str().unwrap().to_string();
+        let collapsing_id = ui.make_persistent_id(path);
+        let is_selected = self.selected_folder == curr_path;
+        let text = curr_path.file_name().unwrap().to_str().unwrap();
+
+        let item = re_ui::list_item::ListItem::new()
+            .draggable(true)
+            .selected(is_selected);
+
+        let child_entries: Vec<DirEntry> = children
+            .map(|nodes| {
+                nodes
+                    .flatten()
+                    .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let response;
+        if !child_entries.is_empty() {
+            ShowCollapsingResponse {
+                item_response: response,
+                ..
+            } = item.show_hierarchical_with_children(
+                ui,
+                collapsing_id,
+                false,
+                re_ui::list_item::LabelContent::new(text).with_icon(&icons::FOLDER),
+                |ui| {
+                    for child in child_entries {
+                        let path = child.path();
+                        self.render_directory(ui, child, fs::read_dir(path));
+                    }
+                },
+            );
+        } else {
+            response = item.show_hierarchical(
+                ui,
+                re_ui::list_item::LabelContent::new(text).with_icon(&icons::FOLDER),
+            );
+        }
+
+        if response.clicked() {
+            self.selected_folder = if is_selected {
+                AssetRegistry::get().root_path().clone()
+            } else {
+                curr_path
+            };
+            self.selected_file = None;
+            EditorAppState::get_mut().selection = EditorSelection::none();
+        }
+    }
+
+    fn render_file_button<'a>(
+        ui: &'a mut Ui,
+        name: &'a str,
+        image_src: impl Into<ImageSource<'a>>,
+        image_size: Vec2,
+        image_spacing: f32,
+        padding: Vec2,
+        selected: bool,
+    ) -> Response {
+        let image = egui::Image::new(image_src).fit_to_exact_size(image_size);
+        let mut format = TextFormat::default();
+        format.font_id = FontId::new(11.0, FontFamily::Proportional);
+        let mut job = LayoutJob::single_section(String::from(name), format);
+        job.wrap.break_anywhere = true;
+        job.wrap.overflow_character = Some('…');
+        job.wrap.max_width = image_size.x;
+        job.wrap.max_rows = 1;
+        let button = FileButton {
+            image,
+            image_size,
+            image_spacing,
+            text: job.into(),
+            padding,
+            selected,
+        };
+        ui.add(button).on_hover_text_at_pointer(name)
+    }
+
+    fn set_selected_folder(&mut self, path: PathBuf) {
+        if path != self.selected_folder {
+            self.selected_folder = path;
+            self.selected_file = None;
+            EditorAppState::get_mut().selection = EditorSelection::none();
+        }
+    }
+
+    fn set_selected_file(&mut self, path: PathBuf) {
+        // let root = AssetRegistry::get().root_path().clone();
+        // let path = path.relative_to(root).unwrap().to;
+        EditorAppState::get_mut().selection = AssetRegistry::get()
+            .asset_id_from_path(&path)
+            .map(|id| EditorSelection::from_asset_id(id))
+            .unwrap_or_else(|| EditorSelection::none());
+        self.selected_file = Some(path);
+    }
+
+    fn is_selected(&self, path: &PathBuf, is_dir: bool) -> bool {
+        if is_dir {
+            if let Some(selection) = self.selected_file.as_ref() {
+                *selection == *path
+            } else {
+                false
+            }
+        } else {
+            AssetRegistry::get()
+                .asset_id_from_path(path)
+                .map(|id| EditorAppState::get().selection.contains_asset(id))
+                .unwrap_or(false)
         }
     }
 }

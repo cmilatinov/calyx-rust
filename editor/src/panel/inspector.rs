@@ -1,24 +1,23 @@
-use std::any::TypeId;
+use std::any::{Any, TypeId};
 use std::collections::HashSet;
 
 use convert_case::{Case, Casing};
-
-use engine::assets::AssetRegistry;
+use engine::assets::{AssetMeta, AssetRegistry};
 use engine::class_registry::ClassRegistry;
 use engine::component::{ComponentID, ComponentTransform};
-use engine::egui::{PopupCloseBehavior, Ui};
-use engine::egui_extras::{Column, TableBody};
+use engine::egui::{PopupCloseBehavior, Response, Ui};
 use engine::reflect::type_registry::TypeRegistry;
 use engine::reflect::{AttributeValue, NamedField, Reflect, ReflectDefault, TypeInfo};
-use engine::scene::SceneManager;
-
-use engine::{egui, egui_extras};
+use engine::scene::{GameObject, SceneManager};
+use re_ui::{DesignTokens, UiExt};
 
 use crate::inspector::inspector_registry::InspectorRegistry;
 use crate::inspector::type_inspector::InspectorContext;
 use crate::inspector::widgets::Widgets;
 use crate::panel::Panel;
-use crate::{EditorAppState, BASE_FONT_SIZE};
+use crate::EditorAppState;
+use engine::egui;
+use engine::egui::scroll_area::ScrollBarVisibility;
 
 #[derive(Default)]
 pub struct PanelInspector;
@@ -32,105 +31,105 @@ impl Panel for PanelInspector {
         let app_state = EditorAppState::get();
         let registry = TypeRegistry::get();
         let selection = app_state.selection.clone();
-        if let Some(game_object) =
-            selection
-                .as_ref()
-                .and_then(|s| s.first_entity())
-                .and_then(|id| {
-                    SceneManager::get()
-                        .simulation_scene()
-                        .get_game_object_by_uuid(id)
-                })
-        {
-            let mut entity_components = HashSet::new();
-            let mut components_to_remove = HashSet::new();
-            for (type_id, component) in ClassRegistry::get().components() {
-                let ptr = SceneManager::get_mut()
-                    .simulation_scene_mut()
-                    .get_component_ptr(game_object, component);
-                if let Some(instance) = ptr.map(|ptr| unsafe { &mut *ptr }) {
-                    entity_components.insert(*type_id);
-                    let info = registry.type_info_by_id(*type_id).unwrap();
-                    if let TypeInfo::Struct(type_info) = info {
-                        let scene_state = SceneManager::get();
-                        let ctx = InspectorContext {
-                            registry: &registry,
-                            scene: scene_state.simulation_scene(),
-                            game_object,
-                            parent: SceneManager::get()
-                                .simulation_scene()
-                                .get_parent_game_object(game_object),
-                            type_info,
-                            field_name: None,
-                        };
-                        if self.show_inspector(ui, &ctx, instance.as_reflect_mut()) {
-                            components_to_remove.insert(*type_id);
-                        }
-                    }
-                }
-            }
 
-            let num_components = ClassRegistry::get().components().count();
-            ui.add_enabled_ui(num_components > entity_components.len(), |ui| {
-                let res = ui.add_sized(
-                    [ui.available_width(), BASE_FONT_SIZE + 4.0],
-                    egui::Button::new("Add Component"),
-                );
-                let id = ui.make_persistent_id("add_component_popup");
-                egui::popup::popup_below_widget(
-                    ui,
-                    id,
-                    &res,
-                    PopupCloseBehavior::CloseOnClick,
-                    |ui| {
-                        for (type_id, component) in ClassRegistry::get().components() {
-                            if entity_components.contains(type_id) {
-                                continue;
+        egui::ScrollArea::both()
+            .auto_shrink([true, true])
+            .scroll_bar_visibility(ScrollBarVisibility::VisibleWhenNeeded)
+            .show(ui, |ui| {
+                egui::Frame {
+                    fill: ui.style().visuals.panel_fill,
+                    inner_margin: DesignTokens::panel_margin(),
+                    ..Default::default()
+                }
+                .show(ui, |ui| {
+                    re_ui::list_item::list_item_scope(ui, "inspector_scope", |ui| {
+                        if let Some(game_object) = selection.first_game_object().and_then(|id| {
+                            SceneManager::get()
+                                .simulation_scene()
+                                .get_game_object_by_uuid(id)
+                        }) {
+                            let mut entity_components = HashSet::new();
+                            let mut components_to_remove = HashSet::new();
+
+                            Self::add_component_button_ui(
+                                ui,
+                                &entity_components,
+                                &registry,
+                                game_object,
+                            );
+
+                            for (type_id, component) in ClassRegistry::get().components() {
+                                let Some(instance) = SceneManager::get_mut()
+                                    .simulation_scene_mut()
+                                    .get_component_ptr(game_object, component)
+                                    .map(|ptr| unsafe { &mut *ptr })
+                                else {
+                                    continue;
+                                };
+
+                                entity_components.insert(*type_id);
+                                let Some(TypeInfo::Struct(type_info)) =
+                                    registry.type_info_by_id(*type_id)
+                                else {
+                                    continue;
+                                };
+                                let scene_state = SceneManager::get();
+                                let ctx = InspectorContext {
+                                    registry: &registry,
+                                    scene: scene_state.simulation_scene(),
+                                    game_object,
+                                    parent: SceneManager::get()
+                                        .simulation_scene()
+                                        .get_parent_game_object(game_object),
+                                    type_info,
+                                    field_name: None,
+                                };
+                                if self.show_inspector(ui, &ctx, instance.as_reflect_mut()) {
+                                    components_to_remove.insert(*type_id);
+                                }
                             }
-                            let name = Self::display_name(component.as_reflect());
-                            if ui.selectable_label(false, name).clicked() {
-                                let meta = registry.trait_meta::<ReflectDefault>(*type_id).unwrap();
+                            for (type_id, component) in ClassRegistry::get().components() {
+                                if !components_to_remove.contains(type_id) {
+                                    continue;
+                                }
                                 if let Some(mut entry) = SceneManager::get_mut()
                                     .simulation_scene_mut()
                                     .entry_mut(game_object)
                                 {
-                                    component.bind_instance(&mut entry, meta.default());
+                                    component.remove_instance(&mut entry);
                                 }
                             }
-                        }
-                    },
-                );
-                if res.clicked() {
-                    ui.memory_mut(|mem| mem.open_popup(id));
-                }
-            });
+                        } else if let Some(asset_id) = selection.first_asset() {
+                            let registry = AssetRegistry::get();
+                            let Some(AssetMeta {
+                                type_uuid: Some(type_uuid),
+                                ..
+                            }) = registry.asset_meta_from_id(asset_id)
+                            else {
+                                return;
+                            };
 
-            for (type_id, component) in ClassRegistry::get().components() {
-                if !components_to_remove.contains(type_id) {
-                    continue;
-                }
-                if let Some(mut entry) = SceneManager::get_mut()
-                    .simulation_scene_mut()
-                    .entry_mut(game_object)
-                {
-                    component.remove_instance(&mut entry);
-                }
-            }
-        } else if let Some(asset_id) = selection.as_ref().and_then(|s| s.first_asset()) {
-            let registry = AssetRegistry::get();
-            if let Some(meta) = registry.asset_meta_from_id(asset_id) {
-                if let Some(type_uuid) = meta.type_uuid {
-                    if let Some(inspector) =
-                        InspectorRegistry::get().asset_inspector_lookup(type_uuid)
-                    {
-                        ui.collapsing(registry.asset_name(asset_id), |ui| {
-                            inspector.show_inspector(ui, asset_id);
-                            ui.separator();
-                        });
-                    }
-                }
-            }
-        }
+                            if let Some(inspector) =
+                                InspectorRegistry::get().asset_inspector_lookup(type_uuid)
+                            {
+                                ui.section_collapsing_header(registry.asset_name(asset_id))
+                                    .show(ui, |ui| {
+                                        inspector.show_inspector(ui, asset_id);
+                                    });
+                            }
+                        }
+                    });
+                    ui.allocate_space(ui.available_size());
+                });
+            });
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }
 
@@ -165,18 +164,33 @@ impl PanelInspector {
         instance: &mut dyn Reflect,
     ) -> bool {
         let name = Self::display_name(instance);
-        let mut remove = false;
+        let id = ui.make_persistent_id(name);
         let type_id = instance.as_any().type_id();
-        let res = egui::CollapsingHeader::new(name)
-            .default_open(true)
-            .show(ui, |ui| {
-                if let Some(inspector) = InspectorRegistry::get().type_inspector_lookup(type_id) {
-                    inspector.show_inspector(ui, ctx, instance);
-                } else {
-                    self.show_default_inspector(ui, ctx, instance);
-                }
-            })
-            .header_response;
+        let res = re_ui::list_item::ListItem::new()
+            .interactive(true)
+            .force_background(re_ui::design_tokens().section_collapsing_header_color())
+            .show_hierarchical_with_children_unindented(
+                ui,
+                id,
+                true,
+                re_ui::list_item::LabelContent::new(name).truncate(true),
+                |ui| {
+                    if let Some(inspector) = InspectorRegistry::get().type_inspector_lookup(type_id)
+                    {
+                        inspector.show_inspector(ui, ctx, instance);
+                    } else {
+                        self.show_default_inspector(ui, ctx, instance);
+                    }
+                },
+            )
+            .item_response;
+        if res.clicked() {
+            if let Some(mut state) = egui::collapsing_header::CollapsingState::load(ui.ctx(), id) {
+                state.toggle(ui);
+                state.store(ui.ctx());
+            }
+        }
+        let mut remove = false;
         if type_id != TypeId::of::<ComponentID>() {
             res.context_menu(|ui| {
                 if type_id != TypeId::of::<ComponentTransform>() && ui.button("Remove").clicked() {
@@ -188,7 +202,6 @@ impl PanelInspector {
                 }
             });
         }
-        ui.separator();
         remove
     }
 
@@ -201,28 +214,19 @@ impl PanelInspector {
         if let Some(TypeInfo::Struct(info)) =
             ctx.registry.type_info_by_id(instance.as_any().type_id())
         {
-            egui_extras::TableBuilder::new(ui)
-                .column(
-                    Column::auto_with_initial_suggestion(200.0)
-                        .clip(true)
-                        .resizable(true),
-                )
-                .column(Column::remainder().clip(true))
-                .body(|mut body| {
-                    for (_, field) in info.fields.iter() {
-                        let mut ctx = *ctx;
-                        ctx.field_name = Some(field.name);
-                        if let Some(value) = field.get_reflect_mut(instance.as_reflect_mut()) {
-                            self.show_default_inspector_field(&mut body, &ctx, field, value);
-                        }
-                    }
-                });
+            for (_, field) in info.fields.iter() {
+                let mut ctx = *ctx;
+                ctx.field_name = Some(field.name);
+                if let Some(value) = field.get_reflect_mut(instance.as_reflect_mut()) {
+                    self.show_default_inspector_field(ui, &ctx, field, value);
+                }
+            }
         }
     }
 
     fn show_default_inspector_field(
         &self,
-        body: &mut TableBody,
+        ui: &mut Ui,
         ctx: &InspectorContext,
         field: &NamedField,
         instance: &mut dyn Reflect,
@@ -232,9 +236,52 @@ impl PanelInspector {
         if let Some(inspector) =
             InspectorRegistry::get().type_inspector_lookup(instance.as_any().type_id())
         {
-            Widgets::inspector_row_label(body, egui::Label::new(name.as_str()).wrap(), |ui| {
+            Widgets::inspector_prop_value(ui, name, |ui, _| {
                 inspector.show_inspector(ui, ctx, instance);
             });
         }
+    }
+
+    fn add_component_button_ui(
+        ui: &mut Ui,
+        entity_components: &HashSet<TypeId>,
+        registry: &TypeRegistry,
+        game_object: GameObject,
+    ) -> Response {
+        let num_components = ClassRegistry::get().components().count();
+        let res = ui
+            .list_item()
+            .draggable(false)
+            .interactive(num_components > entity_components.len())
+            .show_flat(
+                ui,
+                re_ui::list_item::LabelContent::new(" Add Component")
+                    .always_show_buttons(true)
+                    .truncate(true)
+                    .with_icon(&re_ui::icons::ADD),
+            )
+            .on_hover_text("Add a new component to this game object");
+        let id = ui.make_persistent_id("add_component_popup");
+        egui::popup::popup_below_widget(ui, id, &res, PopupCloseBehavior::CloseOnClick, |ui| {
+            for (type_id, component) in ClassRegistry::get().components() {
+                if entity_components.contains(type_id) {
+                    continue;
+                }
+                let name = Self::display_name(component.as_reflect());
+                if ui.selectable_label(false, name).clicked() {
+                    let meta = registry.trait_meta::<ReflectDefault>(*type_id).unwrap();
+                    if let Some(mut entry) = SceneManager::get_mut()
+                        .simulation_scene_mut()
+                        .entry_mut(game_object)
+                    {
+                        component.bind_instance(&mut entry, meta.default());
+                    }
+                }
+            }
+        });
+        if res.clicked() {
+            ui.memory_mut(|mem| mem.open_popup(id));
+        }
+        res
     }
 }

@@ -1,9 +1,7 @@
+use std::any::Any;
 use std::collections::HashMap;
 
 use egui::{Ui, WidgetText};
-
-use engine::egui_dock::TabStyle;
-use engine::*;
 
 pub use self::content_browser::*;
 pub use self::game::*;
@@ -11,6 +9,10 @@ pub use self::inspector::*;
 pub use self::scene_hierarchy::*;
 pub use self::terminal::*;
 pub use self::viewport::*;
+use crate::widgets::{TabDesc, TabWidget};
+use engine::egui::{Id, Response};
+use engine::egui_tiles::{SimplificationOptions, TabState, Tile, TileId, Tiles, UiResponse};
+use engine::*;
 
 mod content_browser;
 mod game;
@@ -19,18 +21,17 @@ mod scene_hierarchy;
 mod terminal;
 mod viewport;
 
-pub trait Panel {
+#[allow(unused)]
+pub trait Panel: Any {
     fn name() -> &'static str
     where
         Self: Sized;
-    fn ui(&mut self, ui: &mut Ui);
-    fn context_menu(&mut self, _ui: &mut Ui) {}
-    fn tab_style_override(&self, _global_style: &TabStyle) -> Option<TabStyle> {
+    fn icon(&self) -> Option<&'static re_ui::Icon> {
         None
     }
-    fn scroll_bars(&self) -> [bool; 2] {
-        [true, true]
-    }
+    fn ui(&mut self, ui: &mut Ui);
+    fn as_any(&self) -> &dyn Any;
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
 pub struct PanelManager {
@@ -56,44 +57,150 @@ impl Default for PanelManager {
     }
 }
 
-impl egui_dock::TabViewer for PanelManager {
-    type Tab = &'static str;
-
-    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
-        (*tab).into()
-    }
-
-    fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
-        if let Some(panel) = self.panels.get_mut(tab) {
+impl egui_tiles::Behavior<&'static str> for PanelManager {
+    fn pane_ui(&mut self, ui: &mut Ui, _tile_id: TileId, pane: &mut &'static str) -> UiResponse {
+        if let Some(panel) = self.panels.get_mut(pane) {
             panel.ui(ui);
-        };
+        }
+        UiResponse::None
     }
 
-    fn context_menu(
+    fn tab_title_for_pane(&mut self, pane: &&'static str) -> WidgetText {
+        (*pane).into()
+    }
+
+    fn tab_ui(
         &mut self,
+        tiles: &mut Tiles<&'static str>,
         ui: &mut Ui,
-        tab: &mut Self::Tab,
-        _surface: egui_dock::SurfaceIndex,
-        _node: egui_dock::NodeIndex,
-    ) {
-        if let Some(panel) = self.panels.get_mut(tab) {
-            panel.context_menu(ui);
+        id: Id,
+        tile_id: TileId,
+        tab_state: &TabState,
+    ) -> Response {
+        let label = self.tab_title_for_tile(tiles, tile_id);
+        let icon = self.panel_icon(tiles, tile_id);
+        let mut tab_widget = TabWidget::new(
+            self,
+            ui,
+            tiles,
+            tile_id,
+            tab_state,
+            TabDesc {
+                label,
+                icon,
+                selected: false,
+                hovered: false,
+            },
+            1.0,
+        );
+
+        let response = ui
+            .interact(tab_widget.rect, id, egui::Sense::click_and_drag())
+            .on_hover_cursor(egui::CursorIcon::Grab);
+
+        if response.hovered() {
+            tab_widget.bg_color = ui.visuals().widgets.hovered.bg_fill;
+        }
+
+        // Show a gap when dragged
+        if ui.is_rect_visible(tab_widget.rect) && !tab_state.is_being_dragged {
+            tab_widget.paint(ui);
+        }
+
+        response
+    }
+
+    fn drag_ui(&mut self, tiles: &Tiles<&'static str>, ui: &mut Ui, tile_id: TileId) {
+        let label = self.tab_title_for_tile(tiles, tile_id);
+        let icon = self.panel_icon(tiles, tile_id);
+        let tab_widget = TabWidget::new(
+            self,
+            ui,
+            tiles,
+            tile_id,
+            &TabState {
+                active: true,
+                is_being_dragged: true,
+                ..Default::default()
+            },
+            TabDesc {
+                label,
+                icon,
+                selected: false,
+                hovered: true,
+            },
+            0.5,
+        );
+
+        let frame = egui::Frame {
+            inner_margin: egui::Margin::same(0.),
+            outer_margin: egui::Margin::same(0.),
+            rounding: egui::Rounding::ZERO,
+            shadow: Default::default(),
+            fill: egui::Color32::TRANSPARENT,
+            stroke: egui::Stroke::NONE,
+        };
+
+        frame.show(ui, |ui| {
+            tab_widget.paint(ui);
+        });
+    }
+
+    /// The height of the bar holding tab titles.
+    fn tab_bar_height(&self, _style: &egui::Style) -> f32 {
+        re_ui::DesignTokens::title_bar_height()
+    }
+
+    // Styling:
+
+    fn dragged_overlay_color(&self, visuals: &egui::Visuals) -> egui::Color32 {
+        visuals.panel_fill.gamma_multiply(0.5)
+    }
+
+    fn simplification_options(&self) -> SimplificationOptions {
+        SimplificationOptions {
+            prune_empty_tabs: true,
+            prune_single_child_tabs: true,
+            prune_empty_containers: true,
+            prune_single_child_containers: true,
+            all_panes_must_have_tabs: true,
+            join_nested_linear_containers: true,
         }
     }
 
-    fn tab_style_override(&self, tab: &Self::Tab, global_style: &TabStyle) -> Option<TabStyle> {
-        if let Some(panel) = self.panels.get(tab) {
-            panel.tab_style_override(global_style)
-        } else {
-            None
-        }
+    fn tab_bar_color(&self, _visuals: &egui::Visuals) -> egui::Color32 {
+        re_ui::design_tokens().tab_bar_color
     }
 
-    fn scroll_bars(&self, tab: &Self::Tab) -> [bool; 2] {
-        if let Some(panel) = self.panels.get(tab) {
-            panel.scroll_bars()
-        } else {
-            [true, true]
-        }
+    /// When drag-and-dropping a tile, the candidate area is drawn with this stroke.
+    fn drag_preview_stroke(&self, _visuals: &egui::Visuals) -> egui::Stroke {
+        egui::Stroke::new(1.0, egui::Color32::WHITE.gamma_multiply(0.5))
+    }
+
+    /// When drag-and-dropping a tile, the candidate area is drawn with this background color.
+    fn drag_preview_color(&self, _visuals: &egui::Visuals) -> egui::Color32 {
+        egui::Color32::WHITE.gamma_multiply(0.1)
+    }
+}
+
+impl PanelManager {
+    pub fn panel<T: Panel>(&self) -> Option<&T> {
+        self.panels
+            .get(T::name())
+            .and_then(|panel| (**panel).as_any().downcast_ref())
+    }
+
+    fn panel_icon(
+        &self,
+        tiles: &Tiles<&'static str>,
+        tile_id: TileId,
+    ) -> Option<&'static re_ui::Icon> {
+        tiles
+            .get(tile_id)
+            .and_then(|t| match t {
+                Tile::Pane(pane) => self.panels.get(pane),
+                _ => None,
+            })
+            .and_then(|panel| panel.icon())
     }
 }

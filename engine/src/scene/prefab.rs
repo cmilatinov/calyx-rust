@@ -83,9 +83,7 @@ impl Asset for Prefab {
             let mut meshes = Vec::new();
             for mesh in &scene.meshes {
                 let name = format!("{}/{}", meta.name, mesh.name);
-                let mesh_ref = registry
-                    .create(name, Mesh::from_russimp_mesh(mesh))
-                    .unwrap();
+                let mesh_ref = registry.create(name, Mesh::from_russimp_mesh(mesh))?;
                 meshes.push((
                     mesh_ref.clone(),
                     registry.asset_id_from_ref_t(&mesh_ref).unwrap(),
@@ -112,9 +110,8 @@ impl Asset for Prefab {
                         anim.name.as_str()
                     }
                 );
-                let anim_ref = registry
-                    .create(name.clone(), Animation::from_russimp_animation(anim))
-                    .unwrap();
+                let anim_ref =
+                    registry.create(name.clone(), Animation::from_russimp_animation(anim))?;
                 animations.push(registry.asset_id_from_ref_t(&anim_ref).unwrap());
             }
 

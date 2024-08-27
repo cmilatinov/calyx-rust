@@ -1,10 +1,10 @@
 use std::iter;
 
-use glm::{vec2, vec3, Mat4, Vec3, Vec4};
-
 use crate::assets::mesh::Mesh;
 use crate::math::{compose_transform, Transform};
 use crate::render::{Camera, GizmoInstance};
+use glm::{vec2, vec3, Mat4, Vec3, Vec4};
+use nalgebra::UnitQuaternion;
 
 pub struct Gizmos<'a> {
     pub(crate) camera_transform: &'a Transform,
@@ -48,8 +48,10 @@ impl<'a> Gizmos<'a> {
     }
 
     pub fn wire_cube(&mut self, position: &Vec3, size: &Vec3) {
-        self.cube_list
-            .push(self.gizmo_instance(compose_transform(position, &Vec3::zeros(), size), false));
+        self.cube_list.push(self.gizmo_instance(
+            compose_transform(position, &UnitQuaternion::identity(), size),
+            false,
+        ));
     }
 
     pub fn wire_frustum(

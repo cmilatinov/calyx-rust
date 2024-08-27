@@ -1,5 +1,7 @@
+#[derive(Default)]
 pub struct InputState {
     pub is_active: bool,
+    pub last_cursor_pos: Option<egui::Pos2>,
 }
 
 pub struct Input<'a> {
@@ -37,5 +39,23 @@ impl<'a> Input<'a> {
                 Default::default()
             }
         })
+    }
+
+    pub fn cursor_delta(&self) -> egui::Vec2 {
+        if !self.state.is_active {
+            return egui::Vec2::ZERO;
+        }
+        if let Some(last_pos) = self.state.last_cursor_pos {
+            if let Some(pos) = self.context.input(|input| input.pointer.interact_pos()) {
+                let diff = pos - last_pos;
+                let diff_abs = diff.abs();
+                return if diff_abs.x < 0.5 || diff_abs.y < 0.5 {
+                    egui::Vec2::ZERO
+                } else {
+                    diff
+                };
+            }
+        }
+        self.context.input(|input| input.pointer.delta())
     }
 }

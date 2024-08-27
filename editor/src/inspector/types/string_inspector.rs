@@ -15,8 +15,8 @@ impl TypeInspector for StringInspector {
         type_ids!(String)
     }
     fn show_inspector(&self, ui: &mut Ui, _ctx: &InspectorContext, instance: &mut dyn Reflect) {
-        TextEdit::singleline(instance.downcast_mut::<String>().unwrap())
-            .desired_width(ui.available_width())
-            .show(ui);
+        if let Some(value) = instance.downcast_mut::<String>() {
+            TextEdit::singleline(value).desired_width(130.0).show(ui);
+        }
     }
 }

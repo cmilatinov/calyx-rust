@@ -21,7 +21,7 @@ impl Default for ComponentID {
     fn default() -> Self {
         Self {
             id: Uuid::new_v4(),
-            name: "Game Object".to_string(),
+            name: String::from("Game Object"),
         }
     }
 }

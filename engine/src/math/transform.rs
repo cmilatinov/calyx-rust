@@ -15,7 +15,7 @@ pub struct Transform {
     #[serde(skip)]
     pub position: Vector3<f32>,
     #[serde(skip)]
-    pub rotation: Vector3<f32>,
+    pub rotation: UnitQuaternion<f32>,
     #[serde(skip)]
     pub scale: Vector3<f32>,
     pub matrix: Matrix4<f32>,
@@ -26,7 +26,7 @@ pub struct Transform {
 impl Default for Transform {
     fn default() -> Self {
         let position = Vec3::default();
-        let rotation = Vec3::default();
+        let rotation = UnitQuaternion::identity();
         let scale = glm::vec3(1.0, 1.0, 1.0);
         let matrix = compose_transform(&position, &rotation, &scale);
         let inverse_matrix = glm::inverse(&matrix);
@@ -67,7 +67,7 @@ impl From<Transform> for Mat4 {
 }
 
 impl Transform {
-    pub fn from_components(position: Vec3, rotation: Vec3, scale: Vec3) -> Self {
+    pub fn from_components(position: Vec3, rotation: UnitQuaternion<f32>, scale: Vec3) -> Self {
         let mut transform = Transform {
             position,
             rotation,
@@ -82,7 +82,7 @@ impl Transform {
     pub fn from_xyz(x: f32, y: f32, z: f32) -> Self {
         let mut transform = Transform {
             position: Vec3::new(x, y, z),
-            rotation: Vec3::zeros(),
+            rotation: UnitQuaternion::identity(),
             scale: Vec3::new(1.0, 1.0, 1.0),
             matrix: Default::default(),
             inverse_matrix: Default::default(),
@@ -96,8 +96,10 @@ impl Transform {
         if glm::length(&diff) <= 0.000001f32 {
             return;
         }
-        let rotation = glm::quat_look_at(&glm::normalize(&diff), &glm::vec3(0f32, 1f32, 0f32));
-        self.rotation = glm::quat_euler_angles(&rotation).zyx();
+        self.rotation = UnitQuaternion::new_unchecked(glm::quat_look_at(
+            &glm::normalize(&diff),
+            &glm::vec3(0f32, 1f32, 0f32),
+        ));
         self.update_matrix();
     }
 
@@ -132,8 +134,8 @@ impl Transform {
         self.update_matrix();
     }
 
-    pub fn rotate(&mut self, rotation: &Vec3) {
-        self.rotation += rotation;
+    pub fn rotate(&mut self, rotation: &UnitQuaternion<f32>) {
+        self.rotation *= rotation;
         self.update_matrix();
     }
 
@@ -201,13 +203,12 @@ impl From<transform_gizmo_egui::math::Transform> for Transform {
                 value.translation.y as f32,
                 value.translation.z as f32,
             ),
-            glm::quat_euler_angles(&Quaternion::new(
+            UnitQuaternion::new_normalize(Quaternion::new(
                 value.rotation.s as f32,
                 value.rotation.v.x as f32,
                 value.rotation.v.y as f32,
                 value.rotation.v.z as f32,
-            ))
-            .zyx(),
+            )),
             Vec3::new(
                 value.scale.x as f32,
                 value.scale.y as f32,
@@ -221,15 +222,7 @@ impl From<Transform> for transform_gizmo_egui::math::Transform {
     fn from(value: Transform) -> Self {
         Self {
             scale: nalgebra::convert::<Vec3, DVec3>(value.scale).into(),
-            rotation: nalgebra::convert::<Quat, DQuat>(
-                *UnitQuaternion::from_euler_angles(
-                    value.rotation.z,
-                    value.rotation.y,
-                    value.rotation.x,
-                )
-                .quaternion(),
-            )
-            .into(),
+            rotation: nalgebra::convert::<Quat, DQuat>(*value.rotation.quaternion()).into(),
             translation: nalgebra::convert::<Vec3, DVec3>(value.position).into(),
         }
     }

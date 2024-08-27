@@ -24,4 +24,5 @@ mod point_light;
 mod rigid_body;
 mod skinned_mesh;
 mod sky_light;
+mod tps_camera;
 mod transform;

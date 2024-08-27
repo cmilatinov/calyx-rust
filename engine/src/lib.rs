@@ -2,8 +2,8 @@
 
 pub extern crate eframe;
 pub extern crate egui;
-pub extern crate egui_dock;
 pub extern crate egui_extras;
+pub extern crate egui_tiles;
 pub extern crate egui_wgpu;
 pub extern crate image;
 pub extern crate inventory;
@@ -21,12 +21,14 @@ pub extern crate serde;
 pub extern crate serde_json;
 pub extern crate transform_gizmo_egui;
 pub extern crate uuid;
+pub extern crate winit;
 
 pub mod assets;
 pub mod background;
 pub mod class_registry;
 pub mod component;
 pub mod core;
+pub mod ext;
 pub mod input;
 pub mod math;
 pub mod physics;

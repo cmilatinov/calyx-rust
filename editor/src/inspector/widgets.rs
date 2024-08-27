@@ -1,18 +1,21 @@
-use crate::BASE_FONT_SIZE;
 use engine::assets::{Asset, AssetOptionRef, AssetRegistry};
+use engine::component::ComponentID;
 use engine::core::Ref;
-use engine::egui::{Align, DragValue, Id, Layout, Ui, Widget, WidgetText};
-use engine::egui_extras::{Column, TableBody};
+use engine::egui;
+use engine::egui::style::WidgetVisuals;
+use engine::egui::{Color32, DragValue, Frame, Id, Response, Shape, Stroke, Ui, WidgetText};
 use engine::glm::{Vec2, Vec3, Vec4};
+use engine::scene::{GameObjectRef, Scene};
 use engine::utils::TypeUuid;
 use engine::uuid::Uuid;
-use engine::{egui, egui_extras};
 use lazy_static::lazy_static;
+use re_ui::list_item::ListItemContent;
+use re_ui::UiExt;
 use std::sync::RwLock;
 
 pub struct Widgets;
 
-struct AssetSelectState {
+struct SelectState {
     search: String,
     should_request_focus: bool,
 }
@@ -39,7 +42,7 @@ impl Widgets {
         value: &mut Option<Ref<dyn Asset>>,
     ) -> bool {
         lazy_static! {
-            static ref STATE: RwLock<AssetSelectState> = RwLock::new(AssetSelectState {
+            static ref STATE: RwLock<SelectState> = RwLock::new(SelectState {
                 search: String::from(""),
                 should_request_focus: false
             });
@@ -54,28 +57,31 @@ impl Widgets {
         let mut changed = false;
 
         let res = egui::ComboBox::from_id_source(id)
-            .wrap()
-            .width(ui.available_width())
+            .truncate()
+            .width(100.0)
             .selected_text(
                 asset_meta
                     .map(|meta| meta.display_name.clone())
                     .unwrap_or("None".into()),
             )
             .show_ui(ui, |ui| {
+                let id = Id::from("asset_select");
                 if state.should_request_focus {
-                    ui.memory_mut(|m| m.request_focus(Id::from("asset_select")));
+                    ui.memory_mut(|m| m.request_focus(id));
                     state.should_request_focus = false;
                 }
                 egui::TextEdit::singleline(&mut state.search)
-                    .id(Id::from("asset_select"))
+                    .id(id)
                     .hint_text("Filter by name")
                     .show(ui);
                 let mut assets = Vec::new();
                 registry.search_assets(state.search.as_str(), type_uuid, &mut assets);
                 ui.add_space(6.0);
-                changed |= ui
-                    .selectable_value(&mut asset_id, Uuid::nil(), "None")
-                    .changed();
+                if state.search.is_empty() {
+                    changed |= ui
+                        .selectable_value(&mut asset_id, Uuid::nil(), "None")
+                        .changed();
+                }
                 for asset in assets {
                     changed |= ui
                         .selectable_value(&mut asset_id, asset.id, asset.display_name)
@@ -90,6 +96,95 @@ impl Widgets {
         *value = registry.load_dyn_by_id(asset_id).ok().into();
         changed
     }
+
+    pub fn game_object_select(
+        ui: &mut Ui,
+        id: impl std::hash::Hash,
+        scene: &Scene,
+        value: &mut Option<GameObjectRef>,
+    ) -> bool {
+        lazy_static! {
+            static ref STATE: RwLock<SelectState> = RwLock::new(SelectState {
+                search: String::from(""),
+                should_request_focus: false
+            });
+        }
+        let mut state = STATE.write().unwrap();
+        let mut changed = false;
+        let mut game_object_id = value.map(|go_ref| go_ref.id()).unwrap_or(Uuid::nil());
+        let (res, dropped_payload) = ui
+            .scope(|ui| {
+                let visuals = ui.visuals_mut();
+                visuals.widgets.inactive.bg_fill = visuals.panel_fill;
+                ui.dnd_drop_zone::<Uuid, Response>(Frame::none(), |ui| {
+                    egui::ComboBox::from_id_source(id)
+                        .truncate()
+                        .width(100.0)
+                        .selected_text(
+                            value
+                                .and_then(|go_ref| go_ref.game_object(scene))
+                                .map(|go| scene.get_game_object_name(go))
+                                .unwrap_or(String::from("None")),
+                        )
+                        .show_ui(ui, |ui| {
+                            let id = Id::from("game_object_select");
+                            if state.should_request_focus {
+                                ui.memory_mut(|m| m.request_focus(id));
+                                state.should_request_focus = false;
+                            }
+                            egui::TextEdit::singleline(&mut state.search)
+                                .id(id)
+                                .hint_text("Filter by name")
+                                .show(ui);
+                            if state.search.is_empty() {
+                                changed |= ui
+                                    .selectable_value(&mut game_object_id, Uuid::nil(), "None")
+                                    .changed();
+                            }
+                            for go in scene.game_objects() {
+                                let id = scene.get_game_object_uuid(go);
+                                if !id.is_nil() {
+                                    if let Some(entry) = scene.entry(go) {
+                                        let name = entry
+                                            .get_component::<ComponentID>()
+                                            .map(|c| c.name.as_str())
+                                            .unwrap_or("");
+                                        changed |= ui
+                                            .selectable_value(&mut game_object_id, id, name)
+                                            .changed();
+                                    }
+                                }
+                            }
+                        })
+                        .response
+                })
+            })
+            .inner;
+        if egui::DragAndDrop::has_payload_of_type::<Uuid>(ui.ctx())
+            && ui.rect_contains_pointer(res.inner.rect)
+        {
+            let stroke_width = 1.0;
+            ui.painter().add(Shape::rect_stroke(
+                res.inner.rect.expand(stroke_width),
+                ui.visuals().widgets.hovered.rounding,
+                Stroke::new(stroke_width, Color32::YELLOW),
+            ));
+        }
+        if let Some(dropped_payload) = dropped_payload {
+            game_object_id = *dropped_payload;
+        }
+        if res.inner.clicked() {
+            state.search.clear();
+            state.should_request_focus = true;
+        }
+        *value = if game_object_id.is_nil() {
+            None
+        } else {
+            Some(game_object_id.into())
+        };
+        changed
+    }
+
     pub fn drag_float4(ui: &mut Ui, speed: f32, value: &mut Vec4) -> bool {
         Self::drag_floatn(ui, speed, &mut value.data.as_mut_slice()[0..4])
     }
@@ -130,32 +225,46 @@ impl Widgets {
         changed
     }
 
-    pub fn inspector_prop_table<F: FnOnce(TableBody)>(ui: &mut Ui, add_body_contents: F) {
-        egui_extras::TableBuilder::new(ui)
-            .column(Column::auto().clip(true).resizable(true))
-            .column(Column::remainder().clip(true))
-            .cell_layout(Layout::left_to_right(Align::Center))
-            .body(add_body_contents);
-    }
-
-    pub fn inspector_row<F: FnOnce(&mut Ui)>(
-        body: &mut TableBody,
+    pub fn inspector_prop_value<F: FnOnce(&mut Ui, WidgetVisuals)>(
+        ui: &mut Ui,
         text: impl Into<WidgetText>,
         add_value_contents: F,
     ) {
-        Self::inspector_row_label(body, egui::Label::new(text), add_value_contents);
+        ui.list_item_flat_noninteractive(
+            re_ui::list_item::PropertyContent::new(text).value_fn(add_value_contents),
+        );
     }
 
-    pub fn inspector_row_label<F: FnOnce(&mut Ui)>(
-        body: &mut TableBody,
-        label_widget: impl Widget,
-        add_value_contents: F,
+    pub fn inspector_prop_children<F: FnOnce(&mut Ui)>(
+        ui: &mut Ui,
+        content: impl ListItemContent,
+        add_children: F,
     ) {
-        body.row(BASE_FONT_SIZE + 6.0, |mut row| {
-            row.col(|ui| {
-                ui.add(label_widget);
-            });
-            row.col(add_value_contents);
-        });
+        re_ui::list_item::ListItem::new().show_hierarchical_with_children(
+            ui,
+            "id".into(),
+            true,
+            content,
+            add_children,
+        );
+    }
+
+    pub fn inspector_prop_value_children<F: FnOnce(&mut Ui, WidgetVisuals), C: FnOnce(&mut Ui)>(
+        ui: &mut Ui,
+        text: impl Into<WidgetText>,
+        add_value: F,
+        add_children: C,
+    ) {
+        re_ui::list_item::ListItem::new()
+            .interactive(false)
+            .show_hierarchical_with_children(
+                ui,
+                "id".into(),
+                true,
+                re_ui::list_item::PropertyContent::new(text)
+                    .show_only_when_collapsed(false)
+                    .value_fn(add_value),
+                add_children,
+            );
     }
 }

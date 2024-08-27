@@ -1,26 +1,30 @@
 use engine::core::Time;
 use engine::egui::{Key, PointerButton};
-use engine::glm;
-use engine::glm::Vec3;
+use engine::ext::nalgebra::UnitQuaternionExt;
+use engine::glm::{Vec2, Vec3};
 use engine::input::Input;
 use engine::math::Transform;
+use engine::nalgebra;
+use engine::nalgebra::UnitQuaternion;
 use engine::render::{Camera, CameraLike};
 
 pub struct EditorCamera {
     pub camera: Camera,
     pub transform: Transform,
+    rotation: Vec2,
 }
 
 impl Default for EditorCamera {
     fn default() -> Self {
         let transform = Transform::from_components(
-            Vec3::new(10.0, 10.0, 10.0),
-            Vec3::new(40.0f32.to_radians(), 225.0f32.to_radians(), 0.0),
+            Vec3::new(10.0, 10.0, -10.0),
+            UnitQuaternion::face_towards(&Vec3::new(-1.0, -1.0, 1.0), &Vec3::y_axis()),
             Vec3::new(1.0, 1.0, 1.0),
         );
         Self {
             camera: Default::default(),
             transform,
+            rotation: transform.rotation.pitch_yaw(),
         }
     }
 }
@@ -37,9 +41,13 @@ impl CameraLike for EditorCamera {
             }
 
             let drag = res.drag_delta();
-            self.transform.rotate(
-                &glm::vec3(drag.y, drag.x, 0.0).scale(Time::static_delta_time() * ROTATION_SPEED),
-            );
+            let delta = Vec2::new(drag.y, drag.x).scale(Time::static_delta_time() * ROTATION_SPEED);
+            self.rotation += delta;
+            self.rotation.x =
+                nalgebra::clamp(self.rotation.x, -89.0f32.to_radians(), 89.0f32.to_radians());
+            self.transform.rotation =
+                UnitQuaternion::from_euler_angles(self.rotation.x, self.rotation.y, 0.0);
+            self.transform.update_matrix();
 
             let movement = input.input(|i| {
                 let forward = (i.key_down(Key::W) as u8 as f32) - (i.key_down(Key::S) as u8 as f32);

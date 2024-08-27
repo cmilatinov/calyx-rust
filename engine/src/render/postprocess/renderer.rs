@@ -1,5 +1,5 @@
-use crate::assets::texture::Texture;
-
-pub struct PostProcessRenderer {
-    textures: [Texture; 2],
-}
+// use crate::assets::texture::Texture;
+//
+// pub struct PostProcessRenderer {
+//     textures: [Texture; 2],
+// }

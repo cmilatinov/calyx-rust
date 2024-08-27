@@ -5,3 +5,60 @@ resolver = "2"
 [profile.release-with-debug]
 inherits = "release"
 debug = true
+
+[profile.dev]
+incremental = true
+
+[workspace.dependencies]
+approx = "0.5"
+bytemuck = "1.14.0"
+chrono = "0.4.31"
+common-path = "1.0.0"
+dirs = "5.0.1"
+dunce = "1.0.4"
+eframe = { version = "0.28.1", features = ["wgpu", "persistence"] }
+egui = { version = "0.28.1", features = ["mint", "persistence"] }
+egui_extras = { version = "0.28.1", features = ["all_loaders"] }
+egui-modal = "0.4.0"
+egui_tiles = "0.9.0"
+egui-wgpu = "0.28.1"
+enum-map = "2.7.0"
+transform-gizmo-egui = "0.3.0"
+lazy_static = "1.4.0"
+log = "0.4.20"
+serde = "1.0.189"
+uuid = { version = "1.5.0", features = ["v4", "serde"] }
+nalgebra-glm = { version = "0.19.0", features = ["serde-serialize", "convert-mint"] }
+rapier3d = { version = "0.22.0", features = ["serde-serialize", "debug-render"] }
+russimp = { version = "3.2.0", features = ["prebuilt", "static-link"] }
+notify = "6.1.1"
+inventory = "0.3.12"
+sha-1 = "0.10.1"
+impls = "1.0.3"
+legion = "0.4.0"
+wgsl_preprocessor = "1.1.3"
+nalgebra = { version = "0.33.0", features = ["mint", "convert-mint"] }
+serde_json = "1.0.107"
+glob = "0.3.1"
+relative-path = "1.9.0"
+path-absolutize = "3.1.1"
+rusty_pool = "0.7.0"
+image = "0.25.1"
+naga = { version = "22.1.0", features = ["wgsl-in"] }
+toml = "0.8.19"
+tinytemplate = "1.2.1"
+downcast-rs = "1.2.0"
+mint = "0.5.9"
+regex = "1.10.3"
+petgraph = "0.6"
+winit = "0.29.15"
+num = "0.4.1"
+num-derive = "0.4.1"
+num-traits = "0.2.17"
+sharedlib = "7.0.0"
+convert_case = "0.6.0"
+re_ui = "0.18.0"
+rfd = "0.14.1"
+
+[patch.crates-io]
+russimp-sys = { git = "https://github.com/cmilatinov/russimp-sys", branch = "main" }

@@ -20,6 +20,12 @@ pub struct GameObjectRef {
     pub(crate) id: Uuid,
 }
 
+impl From<Uuid> for GameObjectRef {
+    fn from(id: Uuid) -> Self {
+        Self { id }
+    }
+}
+
 impl GameObjectRef {
     pub fn game_object(&self, scene: &Scene) -> Option<GameObject> {
         scene.get_game_object_by_uuid(self.id)
@@ -37,6 +43,10 @@ impl GameObjectRef {
         scene: &'a mut Scene,
     ) -> Option<Entry<'a>> {
         self.game_object(scene).and_then(|go| scene.entry_mut(go))
+    }
+
+    pub fn id(&self) -> Uuid {
+        self.id
     }
 }
 

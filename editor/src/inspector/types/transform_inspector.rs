@@ -1,12 +1,13 @@
+use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
+use crate::inspector::widgets::Widgets;
 use engine::component::ComponentTransform;
 use engine::egui::Ui;
+use engine::glm::Vec3;
+use engine::nalgebra::UnitQuaternion;
 use engine::reflect::{Reflect, ReflectDefault};
 use engine::type_ids;
 use engine::utils::TypeUuid;
 use std::any::TypeId;
-
-use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
-use crate::inspector::widgets::Widgets;
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, TypeInspector)]
@@ -19,29 +20,33 @@ impl TypeInspector for TransformInspector {
 
     fn show_inspector(&self, ui: &mut Ui, ctx: &InspectorContext, instance: &mut dyn Reflect) {
         if let Some(t_comp) = instance.downcast_mut::<ComponentTransform>() {
-            Widgets::inspector_prop_table(ui, |mut body| {
-                let mut changed = false;
-                let mut transform = ctx.scene.get_world_transform(ctx.game_object);
-                let parent_transform = ctx
-                    .parent
-                    .map(|parent| ctx.scene.get_world_transform(parent))
-                    .unwrap_or_default();
-                Widgets::inspector_row(&mut body, "Position ", |ui| {
-                    changed |= Widgets::drag_float3(ui, 0.1, &mut transform.position);
-                });
-                Widgets::inspector_row(&mut body, "Rotation ", |ui| {
-                    changed |= Widgets::drag_angle3(ui, &mut transform.rotation);
-                });
-                Widgets::inspector_row(&mut body, "Scale ", |ui| {
-                    changed |= Widgets::drag_float3(ui, 0.1, &mut transform.scale);
-                });
-                if changed {
-                    transform.update_matrix();
-                    t_comp
-                        .transform
-                        .set_local_matrix(&(parent_transform.inverse_matrix * transform.matrix));
+            let mut changed = false;
+            let mut transform = ctx.scene.get_world_transform(ctx.game_object);
+            let parent_transform = ctx
+                .parent
+                .map(|parent| ctx.scene.get_world_transform(parent))
+                .unwrap_or_default();
+            Widgets::inspector_prop_value(ui, "Position", |ui, _| {
+                changed |= Widgets::drag_float3(ui, 0.1, &mut transform.position);
+            });
+            Widgets::inspector_prop_value(ui, "Rotation", |ui, _| {
+                let (z, y, x) = transform.rotation.euler_angles();
+                let mut euler_rot = Vec3::new(x, y, z);
+                if Widgets::drag_angle3(ui, &mut euler_rot) {
+                    transform.rotation =
+                        UnitQuaternion::from_euler_angles(euler_rot.z, euler_rot.y, euler_rot.x);
+                    changed = true;
                 }
             });
+            Widgets::inspector_prop_value(ui, "Scale", |ui, _| {
+                changed |= Widgets::drag_float3(ui, 0.1, &mut transform.scale);
+            });
+            if changed {
+                transform.update_matrix();
+                t_comp
+                    .transform
+                    .set_local_matrix(&(parent_transform.inverse_matrix * transform.matrix));
+            }
         }
     }
 

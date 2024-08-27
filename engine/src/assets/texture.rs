@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use egui_wgpu::wgpu;
-use image::{ColorType, DynamicImage};
+use image::{ColorType, DynamicImage, ImageReader};
 
 use crate::assets::error::AssetError;
 use crate::assets::Asset;
@@ -28,7 +28,7 @@ impl Asset for Texture {
     }
 
     fn from_file(path: &Path) -> Result<LoadedAsset<Self>, AssetError> {
-        let reader = image::io::Reader::open(path).map_err(|_| AssetError::LoadError)?;
+        let reader = ImageReader::open(path).map_err(|_| AssetError::LoadError)?;
         let texture_data =
             Self::transform_texture(reader.decode().map_err(|_| AssetError::LoadError)?);
         let texture_depth = texture_data.color().bytes_per_pixel() as u32;

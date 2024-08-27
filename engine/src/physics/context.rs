@@ -7,7 +7,7 @@ use crate::physics::PhysicsConfiguration;
 use crate::scene::{GameObject, Scene};
 use glm::Mat4;
 use legion::{Entity, IntoQuery};
-use nalgebra::UnitQuaternion;
+use nalgebra::{UnitQuaternion, Vector3};
 use rapier3d::prelude::*;
 use std::collections::HashMap;
 
@@ -49,9 +49,10 @@ impl PhysicsContext {
         transform: &Transform,
         rigid_body: &ComponentRigidBody,
     ) -> RigidBody {
+        let (z, y, x) = transform.rotation.euler_angles();
         RigidBodyBuilder::new(rigid_body.ty)
             .translation(transform.position.into())
-            .rotation(transform.rotation.into())
+            .rotation(Vector3::new(x, y, z).into())
             .enabled(rigid_body.enabled)
             .additional_mass(rigid_body.mass)
             .gravity_scale(rigid_body.gravity_scale)
@@ -79,9 +80,10 @@ impl PhysicsContext {
     }
 
     fn collider_from_component(transform: &Transform, collider: &ComponentCollider) -> Collider {
+        let (z, y, x) = transform.rotation.euler_angles();
         ColliderBuilder::new(Self::collider_shape(collider.shape))
             .position(transform.position.into())
-            .rotation(transform.rotation.into())
+            .rotation(Vector3::new(x, y, z).into())
             .friction(collider.friction)
             .density(collider.density)
             .build()
@@ -104,14 +106,7 @@ impl PhysicsContext {
                     };
                 let rb = &mut scene.physics.bodies[rb_handle];
                 rb.set_position(transform.position.into(), true);
-                rb.set_rotation(
-                    UnitQuaternion::from_euler_angles(
-                        transform.rotation.z,
-                        transform.rotation.y,
-                        transform.rotation.x,
-                    ),
-                    true,
-                );
+                rb.set_rotation(transform.rotation, true);
                 rb.set_enabled(c_rigid_body.enabled);
                 rb.set_body_type(c_rigid_body.ty, true);
                 rb.set_additional_mass(c_rigid_body.mass, true);
@@ -134,7 +129,7 @@ impl PhysicsContext {
         entities.clear();
         for (entity, c_collider) in query.iter(&scene.world).filter(|(_, c_c)| c_c.dirty) {
             if let Some(go) = scene.get_game_object_from_entity(*entity) {
-                let parent = scene.get_parent_with_component::<ComponentRigidBody>(go);
+                let parent = scene.get_ancestor_with_component::<ComponentRigidBody>(go);
                 let rb_handle =
                     parent.and_then(|parent| scene.physics.entity_rigid_body.get(&parent.entity));
                 let transform = parent
@@ -157,11 +152,7 @@ impl PhysicsContext {
                 };
                 let c = &mut scene.physics.colliders[c_handle];
                 c.set_position(transform.position.into());
-                c.set_rotation(UnitQuaternion::from_euler_angles(
-                    transform.rotation.z,
-                    transform.rotation.y,
-                    transform.rotation.x,
-                ));
+                c.set_rotation(transform.rotation);
                 c.set_shape(Self::collider_shape(c_collider.shape));
                 c.set_friction(c_collider.friction);
                 c.set_density(c_collider.density);
@@ -188,8 +179,7 @@ impl PhysicsContext {
                     let old_transform = scene.get_world_transform(go);
                     let transform = Transform::from_components(
                         (*rb.translation()).into(),
-                        glm::quat_euler_angles(UnitQuaternion::from(*rb.rotation()).quaternion())
-                            .zyx(),
+                        UnitQuaternion::from(*rb.rotation()),
                         old_transform.scale,
                     )
                     .matrix;
