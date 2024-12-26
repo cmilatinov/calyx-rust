@@ -26,15 +26,13 @@ impl SceneManager {
         self.current_scene = Scene::default();
         let registry = AssetRegistry::get();
         let game_object = self.current_scene.create_game_object(None, None);
-        self.current_scene
-            .bind_component(
-                game_object,
-                ComponentMesh {
-                    mesh: registry.load("meshes/cube").ok(),
-                    material: registry.load("materials/default").ok(),
-                },
-            )
-            .unwrap();
+        self.current_scene.bind_component(
+            game_object,
+            ComponentMesh {
+                mesh: registry.load("meshes/cube").ok(),
+                material: registry.load("materials/default").ok(),
+            },
+        );
     }
 
     pub fn load_scene(&mut self, scene_file: PathBuf) {

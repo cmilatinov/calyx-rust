@@ -15,6 +15,7 @@ use crate::inspector::inspector_registry::InspectorRegistry;
 use crate::inspector::type_inspector::InspectorContext;
 use crate::inspector::widgets::Widgets;
 use crate::panel::Panel;
+use crate::selection::SelectionType;
 use crate::EditorAppState;
 use engine::egui;
 use engine::egui::scroll_area::ScrollBarVisibility;
@@ -30,7 +31,6 @@ impl Panel for PanelInspector {
     fn ui(&mut self, ui: &mut Ui) {
         let app_state = EditorAppState::get();
         let registry = TypeRegistry::get();
-        let selection = app_state.selection.clone();
 
         egui::ScrollArea::both()
             .auto_shrink([true, true])
@@ -43,20 +43,19 @@ impl Panel for PanelInspector {
                 }
                 .show(ui, |ui| {
                     re_ui::list_item::list_item_scope(ui, "inspector_scope", |ui| {
-                        if let Some(game_object) = selection.first_game_object().and_then(|id| {
-                            SceneManager::get()
-                                .simulation_scene()
-                                .get_game_object_by_uuid(id)
-                        }) {
+                        if let Some(game_object) = app_state
+                            .selection
+                            .first(SelectionType::GameObject)
+                            .and_then(|id| {
+                                SceneManager::get()
+                                    .simulation_scene()
+                                    .get_game_object_by_uuid(id)
+                            })
+                        {
                             let mut entity_components = HashSet::new();
                             let mut components_to_remove = HashSet::new();
 
-                            Self::add_component_button_ui(
-                                ui,
-                                &entity_components,
-                                &registry,
-                                game_object,
-                            );
+                            Self::add_component_button_ui(ui, &entity_components, game_object);
 
                             for (type_id, component) in ClassRegistry::get().components() {
                                 let Some(instance) = SceneManager::get_mut()
@@ -99,7 +98,9 @@ impl Panel for PanelInspector {
                                     component.remove_instance(&mut entry);
                                 }
                             }
-                        } else if let Some(asset_id) = selection.first_asset() {
+                        } else if let Some(asset_id) =
+                            app_state.selection.first(SelectionType::Asset)
+                        {
                             let registry = AssetRegistry::get();
                             let Some(AssetMeta {
                                 type_uuid: Some(type_uuid),
@@ -245,7 +246,6 @@ impl PanelInspector {
     fn add_component_button_ui(
         ui: &mut Ui,
         entity_components: &HashSet<TypeId>,
-        registry: &TypeRegistry,
         game_object: GameObject,
     ) -> Response {
         let num_components = ClassRegistry::get().components().count();
@@ -269,13 +269,9 @@ impl PanelInspector {
                 }
                 let name = Self::display_name(component.as_reflect());
                 if ui.selectable_label(false, name).clicked() {
-                    let meta = registry.trait_meta::<ReflectDefault>(*type_id).unwrap();
-                    if let Some(mut entry) = SceneManager::get_mut()
+                    SceneManager::get_mut()
                         .simulation_scene_mut()
-                        .entry_mut(game_object)
-                    {
-                        component.bind_instance(&mut entry, meta.default());
-                    }
+                        .bind_component_dyn(game_object, *type_id);
                 }
             }
         });

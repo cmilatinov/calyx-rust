@@ -20,6 +20,7 @@ struct SelectState {
     should_request_focus: bool,
 }
 
+#[allow(dead_code)]
 impl Widgets {
     pub fn asset_select_t<T: Asset + TypeUuid>(
         ui: &mut Ui,

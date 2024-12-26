@@ -4,10 +4,8 @@ resolver = "2"
 
 [profile.release-with-debug]
 inherits = "release"
-debug = true
-
-[profile.dev]
 incremental = true
+debug = true
 
 [workspace.dependencies]
 approx = "0.5"
@@ -59,6 +57,9 @@ sharedlib = "7.0.0"
 convert_case = "0.6.0"
 re_ui = "0.18.0"
 rfd = "0.14.1"
+proc-macro2 = "1.0.69"
+syn = { version = "2.0.38", features = ["full", "extra-traits"] }
+quote = "1.0.33"
 
 [patch.crates-io]
 russimp-sys = { git = "https://github.com/cmilatinov/russimp-sys", branch = "main" }

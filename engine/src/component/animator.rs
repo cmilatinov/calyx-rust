@@ -4,13 +4,14 @@ use crate::assets::animation::{Animation, AnimationKeyFrames, QuatKeyFrame, Vect
 use crate::assets::mesh::BoneTransform;
 use crate::core::{Ref, Time, TimeType};
 use crate::input::Input;
+use crate::render::Gizmos;
 use crate::scene::{GameObject, Scene};
 use crate::{
     math,
     reflect::{Reflect, ReflectDefault},
     utils::{ReflectTypeUuidDynamic, TypeUuid},
 };
-use glm::{Mat4, Quat, Vec3};
+use glm::{Mat4, Quat, Vec3, Vec4};
 use nalgebra::Unit;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -23,13 +24,40 @@ use std::cmp::Ordering;
 pub struct ComponentAnimator {
     pub animation: Option<Ref<Animation>>,
     pub time: TimeType,
+    pub draw_debug_skeleton: bool,
     #[reflect_skip]
     #[serde(skip)]
     node_transforms: Vec<BoneTransform>,
 }
 
 impl Component for ComponentAnimator {
+    fn reset(&mut self, scene: &mut Scene, game_object: GameObject) {
+        self.apply_animation_pose(scene, game_object);
+    }
+
     fn update(&mut self, scene: &mut Scene, game_object: GameObject, _input: &Input) {
+        self.apply_animation_pose(scene, game_object);
+    }
+
+    fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {
+        if self.draw_debug_skeleton {
+            gizmos.set_color(&Vec4::new(1.0, 1.0, 0.0, 1.0));
+            let Some(root) = scene
+                .get_descendants_with_component::<ComponentBone>(game_object)
+                .next()
+            else {
+                return;
+            };
+            let transform = scene.get_world_transform(root);
+            for child in scene.get_children(root) {
+                self.draw_bones(scene, child, gizmos, transform.position);
+            }
+        }
+    }
+}
+
+impl ComponentAnimator {
+    fn apply_animation_pose(&mut self, scene: &mut Scene, game_object: GameObject) {
         let mut duration = None;
         let skinned_meshes = scene
             .get_descendants_with_component::<ComponentSkinnedMesh>(game_object)
@@ -82,9 +110,36 @@ impl Component for ComponentAnimator {
             self.time %= duration;
         }
     }
-}
 
-impl ComponentAnimator {
+    fn draw_bones(
+        &self,
+        scene: &Scene,
+        game_object: GameObject,
+        gizmos: &mut Gizmos,
+        parent_position: Vec3,
+    ) {
+        let transform = scene.get_world_transform(game_object);
+        let is_bone = scene
+            .entry(game_object)
+            .map(|entry| entry.get_component::<ComponentBone>().is_ok())
+            .unwrap_or(false);
+        if is_bone {
+            gizmos.line(&parent_position, &transform.position);
+        }
+        for child in scene.get_children(game_object) {
+            self.draw_bones(
+                scene,
+                child,
+                gizmos,
+                if is_bone {
+                    transform.position
+                } else {
+                    parent_position
+                },
+            );
+        }
+    }
+
     fn traverse_bone_hierarchy(
         &mut self,
         scene: &mut Scene,

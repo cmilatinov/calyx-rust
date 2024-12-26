@@ -189,11 +189,12 @@ impl GizmoRenderer {
         self.points_mesh.rebuild_mesh_data(device);
     }
 
-    pub fn gizmos<'a>(&'a mut self, camera_transform: &'a Transform) -> Gizmos {
+    pub fn gizmos<'a>(&'a mut self, camera_transform: &'a Transform) -> Gizmos<'a> {
         self.clear();
         Gizmos {
             camera_transform,
             color: vec4(1.0, 1.0, 1.0, 1.0),
+            depth_test_enabled: true,
             circle_list: &mut self.circle_list,
             cube_list: &mut self.cube_list,
             lines_mesh: &mut self.lines_mesh,

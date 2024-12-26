@@ -1,3 +1,4 @@
+use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 use std::io::BufReader;
 use std::path::Path;
@@ -23,6 +24,8 @@ use crate::core::Time;
 use crate::input::Input;
 use crate::math::Transform;
 use crate::physics::{PhysicsConfiguration, PhysicsContext};
+use crate::reflect::type_registry::TypeRegistry;
+use crate::reflect::ReflectDefault;
 use crate::scene::Prefab;
 use crate::utils::TypeUuid;
 
@@ -285,7 +288,7 @@ impl Scene {
         self.get_game_object_uuid(self.root)
     }
 
-    pub fn root_objects<'a>(&'a self) -> impl Iterator<Item=GameObject> + 'a {
+    pub fn root_objects<'a>(&'a self) -> impl Iterator<Item = GameObject> + 'a {
         self.get_children_ordered(self.root)
     }
 
@@ -522,9 +525,33 @@ impl Scene {
         &mut self,
         game_object: GameObject,
         component: T,
-    ) -> Option<()> {
+    ) -> bool {
         self.entry_mut(game_object)
             .map(|mut e| e.add_component(component))
+            .is_some()
+    }
+
+    pub fn bind_component_dyn(&mut self, game_object: GameObject, type_id: TypeId) -> bool {
+        let registry = TypeRegistry::get();
+        let Some(meta) = registry.trait_meta::<ReflectDefault>(type_id) else {
+            return false;
+        };
+        let class_registry = ClassRegistry::get();
+        let Some(component) = class_registry.component(type_id) else {
+            return false;
+        };
+        let self_ptr = unsafe { self.as_ptr_mut() };
+        self.entry_mut(game_object)
+            .map(|mut e| {
+                let result = component.bind_instance(&mut e, meta.default());
+                if result {
+                    if let Some(instance) = component.get_instance_mut(&mut e) {
+                        instance.reset(unsafe { &mut *self_ptr }, game_object);
+                    }
+                }
+                result
+            })
+            .unwrap_or(false)
     }
 
     pub fn get_component_ptr(
@@ -635,7 +662,7 @@ impl Scene {
         }
     }
 
-    pub fn game_objects<'a>(&'a self) -> impl Iterator<Item=GameObject> + 'a {
+    pub fn game_objects<'a>(&'a self) -> impl Iterator<Item = GameObject> + 'a {
         Bfs::new(&self.entity_arena, self.root.node)
             .iter(&self.entity_arena)
             .skip(1)
@@ -677,7 +704,7 @@ impl Scene {
     pub fn get_children<'a>(
         &'a self,
         game_object: GameObject,
-    ) -> impl Iterator<Item=GameObject> + 'a {
+    ) -> impl Iterator<Item = GameObject> + 'a {
         self.entity_arena
             .neighbors(game_object.node)
             .filter_map(|node| self.get_game_object_from_node(node))
@@ -692,7 +719,7 @@ impl Scene {
     pub fn get_children_ordered<'a>(
         &'a self,
         game_object: GameObject,
-    ) -> impl Iterator<Item=GameObject> + 'a {
+    ) -> impl Iterator<Item = GameObject> + 'a {
         let mut children = self
             .entity_arena
             .edges_directed(game_object.node, Direction::Outgoing)
@@ -792,7 +819,7 @@ impl Scene {
     pub fn get_descendants<'a>(
         &'a self,
         game_object: GameObject,
-    ) -> impl Iterator<Item=GameObject> + 'a {
+    ) -> impl Iterator<Item = GameObject> + 'a {
         Bfs::new(&self.entity_arena, game_object.node)
             .iter(&self.entity_arena)
             .filter_map(|node| self.get_game_object_from_node(node))
@@ -801,7 +828,7 @@ impl Scene {
     pub fn get_descendants_with_component<'a, T: Component>(
         &'a self,
         game_object: GameObject,
-    ) -> impl Iterator<Item=GameObject> + 'a {
+    ) -> impl Iterator<Item = GameObject> + 'a {
         self.get_descendants(game_object)
             .filter_map(|go| self.map_has_component::<T>(go))
     }
@@ -809,7 +836,7 @@ impl Scene {
     pub fn get_ancestors<'a>(
         &'a self,
         game_object: GameObject,
-    ) -> impl Iterator<Item=GameObject> + 'a {
+    ) -> impl Iterator<Item = GameObject> + 'a {
         let reversed_arena = Reversed(&self.entity_arena);
         Dfs::new(&reversed_arena, game_object.node)
             .iter(&self.entity_arena)

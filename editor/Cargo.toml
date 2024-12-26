@@ -7,9 +7,6 @@ edition = "2021"
 name = "editor"
 path = "src/main.rs"
 
-[features]
-default = []
-
 [dependencies]
 engine = { path = "../engine" }
 project = { path = "../project" }

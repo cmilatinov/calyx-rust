@@ -28,13 +28,14 @@ use engine::render::{Camera, RenderContext, SceneRenderer, SceneRendererOptions}
 use engine::scene::SceneManager;
 use engine::transform_gizmo_egui::EnumSet;
 use engine::*;
-use selection::EditorSelection;
+use selection::{Selection, SelectionType};
 use utils::singleton_with_init;
 use winit::platform::windows::EventLoopBuilderExtWindows;
 
 use self::panel::*;
 pub use self::project_manager::*;
 
+mod animator;
 mod camera;
 mod icons;
 mod inspector;
@@ -61,7 +62,7 @@ pub struct EditorAppState {
     pub scene_renderer: Option<Ref<SceneRenderer>>,
     pub game_renderer: Option<Ref<SceneRenderer>>,
     pub game_aspect: Option<(u32, u32)>,
-    pub selection: EditorSelection,
+    pub selection: Selection,
     pub viewport_size: (f32, f32),
     pub game_response: Option<egui::Response>,
     pub game_size: (f32, f32),
@@ -120,12 +121,13 @@ impl EditorApp {
 
         let scene_hierarchy = tiles.insert_pane(PanelSceneHierarchy::name());
         let viewport = tiles.insert_pane(PanelViewport::name());
+        let animator = tiles.insert_pane(PanelAnimator::name());
         let game = tiles.insert_pane(PanelGame::name());
         let inspector = tiles.insert_pane(PanelInspector::name());
         let content_browser = tiles.insert_pane(PanelContentBrowser::name());
         let terminal = tiles.insert_pane(PanelTerminal::name());
 
-        let center = tiles.insert_tab_tile(vec![viewport, game]);
+        let center = tiles.insert_tab_tile(vec![viewport, game, animator]);
         let bottom = tiles.insert_tab_tile(vec![content_browser, terminal]);
 
         let mut middle_linear = Linear::new(LinearDir::Vertical, vec![center, bottom]);

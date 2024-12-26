@@ -117,6 +117,7 @@ impl Shader {
             },
         }
     }
+
     fn bind_group_layout_entry(
         variable: &naga::GlobalVariable,
         ty: &naga::Type,

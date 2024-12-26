@@ -9,6 +9,7 @@ use nalgebra::UnitQuaternion;
 pub struct Gizmos<'a> {
     pub(crate) camera_transform: &'a Transform,
     pub(crate) color: Vec4,
+    pub(crate) depth_test_enabled: bool,
     pub(crate) circle_list: &'a mut Vec<GizmoInstance>,
     pub(crate) cube_list: &'a mut Vec<GizmoInstance>,
     pub(crate) lines_mesh: &'a mut Mesh,
@@ -109,6 +110,10 @@ impl<'a> Gizmos<'a> {
 
     pub fn set_color(&mut self, color: &Vec4) {
         self.color = *color;
+    }
+
+    pub fn set_depth_test_enabled(&mut self, enabled: bool) {
+        self.depth_test_enabled = enabled;
     }
 
     fn gizmo_instance(&self, transform: Mat4, enable_normals: bool) -> GizmoInstance {

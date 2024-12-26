@@ -1,12 +1,12 @@
-use crate::EditorAppState;
+use super::Panel;
+use crate::{icons, EditorAppState};
 use engine::egui::{Key, Modifiers, Response, Sense, Vec2, ViewportCommand};
 use engine::{
     egui::{self, load::SizedTexture, Image, ImageSource, Ui},
     math::fit_aspect,
 };
+use re_ui::Icon;
 use std::any::Any;
-
-use super::Panel;
 
 #[derive(Default, Debug)]
 pub struct PanelGame {
@@ -16,6 +16,10 @@ pub struct PanelGame {
 impl Panel for PanelGame {
     fn name() -> &'static str {
         "Game"
+    }
+
+    fn icon(&self) -> Option<&'static Icon> {
+        Some(&icons::GAMEPAD)
     }
 
     fn ui(&mut self, ui: &mut Ui) {

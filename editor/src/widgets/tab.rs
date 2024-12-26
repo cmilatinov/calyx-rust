@@ -34,7 +34,7 @@ impl TabWidget {
         let icon_size;
         let icon_width_plus_padding;
         if tab_desc.icon.is_some() {
-            icon_size = DesignTokens::small_icon_size();
+            icon_size = Vec2::splat(20.0);
             icon_width_plus_padding = icon_size.x + DesignTokens::text_to_icon_padding();
         } else {
             icon_size = Vec2::ZERO;

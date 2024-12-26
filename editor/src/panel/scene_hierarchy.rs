@@ -1,5 +1,5 @@
 use crate::panel::Panel;
-use crate::{icons, EditorAppState, EditorSelection};
+use crate::{icons, EditorAppState, Selection, SelectionType};
 use egui::Ui;
 use engine::component::ComponentID;
 use engine::egui::{Color32, Response};
@@ -79,7 +79,7 @@ impl Panel for PanelSceneHierarchy {
                             ui.allocate_response(ui.available_size(), egui::Sense::click());
 
                         if empty_space_response.clicked() {
-                            app_state.selection = EditorSelection::none();
+                            app_state.selection = Selection::none();
                         }
 
                         self.handle_empty_space_dnd_interaction(
@@ -123,7 +123,9 @@ impl PanelSceneHierarchy {
         let id = ui.make_persistent_id(game_object_id);
         let name = scene.get_game_object_name(game_object);
         let children = scene.get_children_ordered(game_object).collect::<Vec<_>>();
-        let is_selected = app_state.selection.contains_game_object(game_object_id);
+        let is_selected = app_state
+            .selection
+            .contains(SelectionType::GameObject, game_object_id);
         let mut visible = scene
             .read_component::<ComponentID, _, _>(game_object, |c| c.visible)
             .unwrap_or(false);
@@ -186,20 +188,27 @@ impl PanelSceneHierarchy {
         visibility_response: Option<&Response>,
     ) {
         if response.double_clicked() {
-            app_state.selection =
-                EditorSelection::from_game_object_id(scene.get_game_object_uuid(game_object));
+            app_state.selection = Selection::from_id(
+                SelectionType::GameObject,
+                scene.get_game_object_uuid(game_object),
+            );
             if let Some(state) = egui::collapsing_header::CollapsingState::load(ui.ctx(), id) {
                 state.store(ui.ctx());
             }
         } else if response.clicked() {
             app_state.selection = if is_selected {
-                EditorSelection::none()
+                Selection::none()
             } else {
-                EditorSelection::from_game_object_id(scene.get_game_object_uuid(game_object))
+                Selection::from_id(
+                    SelectionType::GameObject,
+                    scene.get_game_object_uuid(game_object),
+                )
             };
         } else if response.secondary_clicked() {
-            app_state.selection =
-                EditorSelection::from_game_object_id(scene.get_game_object_uuid(game_object));
+            app_state.selection = Selection::from_id(
+                SelectionType::GameObject,
+                scene.get_game_object_uuid(game_object),
+            );
         }
         if visibility_response.map(|r| r.changed()).unwrap_or(false) {
             scene.write_component::<ComponentID, _>(game_object, |c| {
@@ -396,7 +405,7 @@ impl PanelSceneHierarchy {
         if res.clicked() {
             let parent = app_state
                 .selection
-                .last_game_object()
+                .last(SelectionType::GameObject)
                 .and_then(|id| scene.get_game_object_by_uuid(id));
             scene.create_game_object(None, parent);
         }

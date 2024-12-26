@@ -1,85 +1,81 @@
-use std::collections::HashSet;
-
 use engine::uuid::Uuid;
+use std::collections::HashSet;
+use std::ops::{Deref, DerefMut};
 
-#[derive(Default, Clone, PartialEq, Debug)]
-pub enum EditorSelection {
-    GameObject(HashSet<Uuid>),
-    Asset(HashSet<Uuid>),
+#[derive(Default, PartialEq, Eq)]
+pub enum SelectionType {
+    GameObject,
+    Asset,
+    AnimationNode,
+    AnimationTransition,
     #[default]
     None,
 }
 
-impl EditorSelection {
+#[derive(Default)]
+pub struct Selection {
+    ty: SelectionType,
+    set: HashSet<Uuid>,
+}
+
+impl Selection {
     pub fn none() -> Self {
-        Self::None
+        Default::default()
     }
 
-    pub fn from_game_object_id(id: Uuid) -> Self {
-        Self::GameObject([id].into())
+    pub fn from_id(ty: SelectionType, id: Uuid) -> Self {
+        Self {
+            ty,
+            set: [id].into(),
+        }
     }
 
-    pub fn from_asset_id(id: Uuid) -> Self {
-        Self::Asset([id].into())
+    pub fn from_iter(ty: SelectionType, iter: impl Iterator<Item = Uuid>) -> Self {
+        Self {
+            ty,
+            set: iter.collect(),
+        }
     }
 
-    pub fn game_objects_iter<'a>(&'a self) -> Option<impl Iterator<Item = Uuid> + 'a> {
-        if let EditorSelection::GameObject(set) = self {
-            Some(set.iter().copied())
+    pub fn is(&self, ty: SelectionType) -> bool {
+        self.ty == ty
+    }
+
+    pub fn contains(&self, ty: SelectionType, id: Uuid) -> bool {
+        self.is(ty) && self.set.contains(&id)
+    }
+
+    pub fn iter<'a>(&'a self) -> impl Iterator<Item = Uuid> + 'a {
+        self.set.iter().copied()
+    }
+
+    pub fn first(&self, ty: SelectionType) -> Option<Uuid> {
+        if self.is(ty) {
+            self.iter().next()
         } else {
             None
         }
     }
 
-    pub fn game_objects_set(&self) -> Option<&HashSet<Uuid>> {
-        if let EditorSelection::GameObject(set) = self {
-            Some(set)
+    pub fn last(&self, ty: SelectionType) -> Option<Uuid> {
+        if self.is(ty) {
+            self.iter().last()
         } else {
             None
         }
     }
+}
 
-    pub fn assets_iter<'a>(&'a self) -> Option<impl Iterator<Item = Uuid> + 'a> {
-        if let EditorSelection::Asset(set) = self {
-            Some(set.iter().copied())
-        } else {
-            None
-        }
+impl Deref for Selection {
+    type Target = HashSet<Uuid>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.set
     }
+}
 
-    pub fn assets_set(&self) -> Option<&HashSet<Uuid>> {
-        if let EditorSelection::Asset(set) = self {
-            Some(set)
-        } else {
-            None
-        }
-    }
-
-    pub fn first_game_object(&self) -> Option<Uuid> {
-        self.game_objects_iter().and_then(|mut iter| iter.next())
-    }
-
-    pub fn last_game_object(&self) -> Option<Uuid> {
-        self.game_objects_iter().and_then(|iter| iter.last())
-    }
-
-    pub fn first_asset(&self) -> Option<Uuid> {
-        self.assets_iter().and_then(|mut iter| iter.next())
-    }
-
-    pub fn last_asset(&self) -> Option<Uuid> {
-        self.assets_iter().and_then(|iter| iter.last())
-    }
-
-    pub fn contains_game_object(&self, id: Uuid) -> bool {
-        self.game_objects_set()
-            .map(|set| set.contains(&id))
-            .unwrap_or(false)
-    }
-
-    pub fn contains_asset(&self, id: Uuid) -> bool {
-        self.assets_set()
-            .map(|set| set.contains(&id))
-            .unwrap_or(false)
+impl DerefMut for Selection {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.set
     }
 }

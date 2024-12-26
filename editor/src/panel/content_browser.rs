@@ -1,6 +1,6 @@
 use crate::inspector::inspector_registry::InspectorRegistry;
 use crate::panel::Panel;
-use crate::selection::EditorSelection;
+use crate::selection::{Selection, SelectionType};
 use crate::widgets::FileButton;
 use crate::{icons, EditorAppState};
 use engine::assets::AssetRegistry;
@@ -143,16 +143,20 @@ impl Panel for PanelContentBrowser {
                                 .and_then(|e| e.to_str())
                                 .unwrap_or_default();
                             let registry = AssetRegistry::get();
-                            if let Some(type_id) = registry.asset_type_from_ext(ext) {
-                                if let Some(asset_id) = registry.asset_id_from_path(node) {
-                                    if let Some(inspector) =
-                                        InspectorRegistry::get().asset_inspector_lookup(type_id)
-                                    {
-                                        res.context_menu(|ui| {
-                                            inspector.show_context_menu(ui, asset_id);
-                                        });
-                                    }
-                                }
+                            let Some(type_id) = registry.asset_type_from_ext(ext) else {
+                                return;
+                            };
+                            let Some(asset_id) = registry.asset_id_from_path(node) else {
+                                return;
+                            };
+                            let registry = InspectorRegistry::get();
+                            let Some(inspector) = registry.asset_inspector_lookup(type_id) else {
+                                return;
+                            };
+                            if inspector.has_context_menu() {
+                                res.context_menu(|ui| {
+                                    inspector.show_context_menu(ui, asset_id);
+                                });
                             }
                         }
                     }
@@ -229,7 +233,7 @@ impl PanelContentBrowser {
                 curr_path
             };
             self.selected_file = None;
-            EditorAppState::get_mut().selection = EditorSelection::none();
+            EditorAppState::get_mut().selection = Selection::none();
         }
     }
 
@@ -265,7 +269,7 @@ impl PanelContentBrowser {
         if path != self.selected_folder {
             self.selected_folder = path;
             self.selected_file = None;
-            EditorAppState::get_mut().selection = EditorSelection::none();
+            EditorAppState::get_mut().selection = Selection::none();
         }
     }
 
@@ -274,8 +278,8 @@ impl PanelContentBrowser {
         // let path = path.relative_to(root).unwrap().to;
         EditorAppState::get_mut().selection = AssetRegistry::get()
             .asset_id_from_path(&path)
-            .map(|id| EditorSelection::from_asset_id(id))
-            .unwrap_or_else(|| EditorSelection::none());
+            .map(|id| Selection::from_id(SelectionType::Asset, id))
+            .unwrap_or_else(|| Selection::none());
         self.selected_file = Some(path);
     }
 
@@ -289,7 +293,11 @@ impl PanelContentBrowser {
         } else {
             AssetRegistry::get()
                 .asset_id_from_path(path)
-                .map(|id| EditorAppState::get().selection.contains_asset(id))
+                .map(|id| {
+                    EditorAppState::get()
+                        .selection
+                        .contains(SelectionType::Asset, id)
+                })
                 .unwrap_or(false)
         }
     }

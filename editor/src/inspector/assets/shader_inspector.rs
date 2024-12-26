@@ -22,6 +22,10 @@ impl AssetInspector for ShaderInspector {
         Shader::type_uuid()
     }
 
+    fn has_context_menu(&self) -> bool {
+        true
+    }
+
     fn show_context_menu(&self, ui: &mut Ui, asset_id: Uuid) {
         if ui.button("Create Material").clicked() {
             if let Ok(asset) = AssetRegistry::get().load_dyn_by_id(asset_id) {

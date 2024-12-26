@@ -31,6 +31,7 @@ pub trait ComponentInstance: Reflect {
 #[allow(unused)]
 #[reflect_trait]
 pub trait Component: TypeUuidDynamic + ComponentInstance {
+    fn reset(&mut self, scene: &mut Scene, game_object: GameObject) {}
     fn start(&mut self, scene: &Scene, game_object: GameObject) {}
     fn update(&mut self, scene: &mut Scene, game_object: GameObject, input: &Input) {}
     fn destroy(&mut self, scene: &Scene, game_object: GameObject) {}

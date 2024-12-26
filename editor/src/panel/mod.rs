@@ -3,6 +3,7 @@ use std::collections::HashMap;
 
 use egui::{Ui, WidgetText};
 
+pub use self::animator::*;
 pub use self::content_browser::*;
 pub use self::game::*;
 pub use self::inspector::*;
@@ -14,6 +15,7 @@ use engine::egui::{Id, Response};
 use engine::egui_tiles::{SimplificationOptions, TabState, Tile, TileId, Tiles, UiResponse};
 use engine::*;
 
+mod animator;
 mod content_browser;
 mod game;
 mod inspector;
@@ -53,6 +55,7 @@ impl Default for PanelManager {
         panels.insert(PanelTerminal::name(), Box::<PanelTerminal>::default());
         panels.insert(PanelViewport::name(), Box::<PanelViewport>::default());
         panels.insert(PanelGame::name(), Box::<PanelGame>::default());
+        panels.insert(PanelAnimator::name(), Box::<PanelAnimator>::default());
         PanelManager { panels }
     }
 }

@@ -15,6 +15,11 @@ impl AssetInspector for PrefabInspector {
     fn target_type_uuid(&self) -> Uuid {
         Prefab::type_uuid()
     }
+
+    fn has_context_menu(&self) -> bool {
+        true
+    }
+
     fn show_context_menu(&self, ui: &mut Ui, asset_id: Uuid) {
         if ui.button("Import").clicked() {
             if let Ok(asset) = AssetRegistry::get().load_dyn_by_id(asset_id) {
