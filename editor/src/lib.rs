@@ -30,7 +30,14 @@ use engine::transform_gizmo_egui::EnumSet;
 use engine::*;
 use selection::{Selection, SelectionType};
 use utils::singleton_with_init;
+#[cfg(windows)]
 use winit::platform::windows::EventLoopBuilderExtWindows;
+#[cfg(unix)]
+#[cfg(feature = "x11")]
+use winit::platform::x11::EventLoopBuilderExtX11;
+#[cfg(unix)]
+#[cfg(feature = "wayland")]
+use winit::platform::wayland::EventLoopBuilderExtWayland;
 
 use self::panel::*;
 pub use self::project_manager::*;

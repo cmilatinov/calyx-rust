@@ -7,7 +7,7 @@ use engine::class_registry::ClassRegistry;
 use engine::component::{ComponentID, ComponentTransform};
 use engine::egui::{PopupCloseBehavior, Response, Ui};
 use engine::reflect::type_registry::TypeRegistry;
-use engine::reflect::{AttributeValue, NamedField, Reflect, ReflectDefault, TypeInfo};
+use engine::reflect::{AttributeValue, NamedField, Reflect, TypeInfo};
 use engine::scene::{GameObject, SceneManager};
 use re_ui::{DesignTokens, UiExt};
 

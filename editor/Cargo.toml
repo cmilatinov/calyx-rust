@@ -3,6 +3,11 @@ name = "editor"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["x11"]
+x11 = []
+wayland = []
+
 [[bin]]
 name = "editor"
 path = "src/main.rs"
