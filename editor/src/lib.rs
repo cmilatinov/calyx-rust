@@ -9,6 +9,8 @@ use inspector::inspector_registry::InspectorRegistry;
 use num_traits::FromPrimitive;
 use transform_gizmo_egui::{GizmoMode, GizmoOrientation};
 
+use self::panel::*;
+pub use self::project_manager::*;
 use crate::camera::EditorCamera;
 use crate::task_id::TaskId;
 use engine::assets::AssetRegistry;
@@ -20,6 +22,8 @@ use engine::egui::{include_image, Button, Rounding, Sense, Vec2};
 use engine::egui::{Align, Layout};
 use engine::egui::{Color32, Frame, Margin, Shadow};
 use engine::egui_tiles::{Container, Linear, LinearDir, Tiles, Tree};
+use engine::egui_wgpu::wgpu::{Backends, PowerPreference};
+use engine::egui_wgpu::WgpuSetup;
 use engine::input::{Input, InputState};
 use engine::log::LevelFilter;
 use engine::rapier3d::prelude::DebugRenderPipeline;
@@ -30,17 +34,14 @@ use engine::transform_gizmo_egui::EnumSet;
 use engine::*;
 use selection::{Selection, SelectionType};
 use utils::singleton_with_init;
+#[cfg(unix)]
+#[cfg(feature = "wayland")]
+use winit::platform::wayland::EventLoopBuilderExtWayland;
 #[cfg(windows)]
 use winit::platform::windows::EventLoopBuilderExtWindows;
 #[cfg(unix)]
 #[cfg(feature = "x11")]
 use winit::platform::x11::EventLoopBuilderExtX11;
-#[cfg(unix)]
-#[cfg(feature = "wayland")]
-use winit::platform::wayland::EventLoopBuilderExtWayland;
-
-use self::panel::*;
-pub use self::project_manager::*;
 
 mod animator;
 mod camera;
@@ -477,18 +478,29 @@ impl EditorApp {
             persist_window: true,
             renderer: eframe::Renderer::Wgpu,
             wgpu_options: egui_wgpu::WgpuConfiguration {
-                device_descriptor: Arc::new(|_adapter| wgpu::DeviceDescriptor {
-                    required_features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
-                        | wgpu::Features::POLYGON_MODE_LINE
-                        | wgpu::Features::CLEAR_TEXTURE
-                        | wgpu::Features::FLOAT32_FILTERABLE
-                        | wgpu::Features::DEPTH32FLOAT_STENCIL8,
-                    required_limits: wgpu::Limits {
-                        max_color_attachment_bytes_per_sample: 48,
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                }),
+                wgpu_setup: WgpuSetup::CreateNew {
+                    supported_backends: Backends::VULKAN,
+                    power_preference: PowerPreference::HighPerformance,
+                    device_descriptor: Arc::new(|_adapter| {
+                        wgpu::DeviceDescriptor {
+                            required_features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+                                | wgpu::Features::POLYGON_MODE_LINE
+                                | wgpu::Features::CLEAR_TEXTURE
+                                | wgpu::Features::FLOAT32_FILTERABLE
+                                | wgpu::Features::DEPTH32FLOAT_STENCIL8
+                                | wgpu::Features::BUFFER_BINDING_ARRAY
+                                | wgpu::Features::TEXTURE_BINDING_ARRAY
+                                | wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY
+                                | wgpu::Features::UNIFORM_BUFFER_AND_STORAGE_TEXTURE_ARRAY_NON_UNIFORM_INDEXING,
+                            required_limits: wgpu::Limits {
+                                max_storage_textures_per_shader_stage: 5,
+                                max_uniform_buffers_per_shader_stage: 30,
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        }
+                    }),
+                },
                 ..Default::default()
             },
             event_loop_builder: Some(Box::new(|builder| {

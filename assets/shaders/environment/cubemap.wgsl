@@ -1,36 +1,14 @@
-struct VertexIn {
-    @location(0) position: vec3f,
-};
-
-struct VertexOut {
-    @builtin(position) position: vec4f,
-    @location(0) world_position: vec3f,
-};
-
-struct FragmentOut {
-    @location(0) positive_x: vec4f,
-    @location(1) negative_x: vec4f,
-    @location(2) positive_y: vec4f,
-    @location(3) negative_y: vec4f,
-    @location(4) positive_z: vec4f,
-    @location(5) negative_z: vec4f,
-};
-
-const CUBE_NUM_FACES = 6u;
+//#include "shaders/constants.wgsl"
+//#include "shaders/cubemap_face.wgsl"
 
 @group(0) @binding(0)
-var skybox_texture: texture_2d<f32>;
+var src: texture_2d<f32>;
 
 @group(0) @binding(1)
-var skybox_sampler: sampler;
+var src_sampler: sampler;
 
-@vertex
-fn vs_main(vertex: VertexIn) -> VertexOut {     
-    var out: VertexOut;
-    out.world_position = vertex.position;
-    out.position = vec4f(out.world_position, 1.0);
-    return out;
-}
+@group(0) @binding(2)
+var dst: texture_storage_2d_array<rgba16float, write>;
 
 fn sample_spherical_map(v: vec3f) -> vec2f {
     var uv = vec2f(atan2(v.z, v.x), asin(v.y));
@@ -39,60 +17,22 @@ fn sample_spherical_map(v: vec3f) -> vec2f {
     return uv;
 }
 
-@fragment
-fn fs_main(in: VertexOut) -> FragmentOut {
-    var CUBE_FACE_TRANSFORMS = array(
-        mat4x4f(
-            vec4f(0.0, 0.0, -1.0, 0.0),
-            vec4f(0.0, 1.0, 0.0, 0.0),
-            vec4f(-1.0, 0.0, 0.0, 0.0),
-            vec4f(1.0, 0.0, 0.0, 1.0)
-        ),
-        mat4x4f(
-            vec4f(0.0, 0.0, 1.0, 0.0),
-            vec4f(0.0, 1.0, 0.0, 0.0),
-            vec4f(-1.0, 0.0, 0.0, 0.0),
-            vec4f(-1.0, 0.0, 0.0, 1.0)
-        ),
-        mat4x4f(
-            vec4f(1.0, 0.0, 0.0, 0.0),
-            vec4f(0.0, 0.0, -1.0, 0.0),
-            vec4f(0.0, 1.0, 0.0, 0.0),
-            vec4f(0.0, 1.0, 0.0, 1.0)
-        ),
-        mat4x4f(
-            vec4f(1.0, 0.0, 0.0, 0.0),
-            vec4f(0.0, 0.0, 1.0, 0.0),
-            vec4f(0.0, 1.0, 0.0, 0.0),
-            vec4f(0.0, -1.0, 0.0, 1.0)
-        ),
-        mat4x4f(
-            vec4f(1.0, 0.0, 0.0, 0.0),
-            vec4f(0.0, 1.0, 0.0, 0.0),
-            vec4f(0.0, 0.0, 1.0, 0.0),
-            vec4f(0.0, 0.0, 1.0, 1.0)
-        ),
-        mat4x4f(
-            vec4f(-1.0, 0.0, 0.0, 0.0),
-            vec4f(0.0, 1.0, 0.0, 0.0),
-            vec4f(0.0, 0.0, 1.0, 0.0),
-            vec4f(0.0, 0.0, -1.0, 1.0)
-        )
-    );
-    var colors = array<vec4f, CUBE_NUM_FACES>();
-    for (var i = 0u; i < CUBE_NUM_FACES; i++) {
-        var v = normalize((CUBE_FACE_TRANSFORMS[i] * vec4f(in.world_position, 1.0)).xyz);
-        var uv = sample_spherical_map(v);
-        uv.y = 1.0 - uv.y;
-        let color = textureSample(skybox_texture, skybox_sampler, uv);
-        colors[i] = color;
+@compute
+@workgroup_size(8, 8, 1)
+fn compute_main(@builtin(global_invocation_id) gid: vec3u) {
+    let dst_dimensions = textureDimensions(dst);
+    if (gid.x >= dst_dimensions.x || gid.y >= dst_dimensions.y) {
+        return;
     }
-    var out: FragmentOut;
-    out.positive_x = colors[0];
-    out.negative_x = colors[1];
-    out.positive_y = colors[2];
-    out.negative_y = colors[3];
-    out.positive_z = colors[4];
-    out.negative_z = colors[5];
-    return out;
+    
+    let dst_dimensions_f = vec2f(dst_dimensions);
+    let cube_uv = vec2f(gid.xy) / dst_dimensions_f * 2.0 - 1.0;
+
+    let face = CUBEMAP_FACES[gid.z];
+    let spherical = normalize(face.forward + face.right * cube_uv.x + face.up * cube_uv.y);
+    let eq_uv = sample_spherical_map(spherical);
+    let eq_pixel = vec2i(eq_uv * vec2f(textureDimensions(src)));
+    
+    let eq_sample = textureLoad(src, eq_pixel, 0);
+    textureStore(dst, gid.xy, gid.z, eq_sample);
 }

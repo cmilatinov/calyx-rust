@@ -37,10 +37,10 @@ var brdf_texture: texture_2d<f32>;
 var brdf_sampler: sampler;
 
 @group(3) @binding(0)
-var texture_diffuse: texture_2d<f32>;
+var diffuse_texture: texture_2d<f32>;
 
 @group(3) @binding(1)
-var sampler_diffuse: sampler;
+var diffuse_sampler: sampler;
 
 @group(3) @binding(2)
 var<uniform> material: MaterialProperties;
@@ -84,7 +84,7 @@ fn vs_main(vertex: VertexIn) -> VertexOut {
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4f {
-    let albedo = 5.0 * textureSample(texture_diffuse, sampler_diffuse, in.uv);
+    let albedo = 5.0 * textureSample(diffuse_texture, diffuse_sampler, in.uv);
     let n = normalize(in.normal);
     let view_position = vec3f(
         camera.inverse_view[3][0],

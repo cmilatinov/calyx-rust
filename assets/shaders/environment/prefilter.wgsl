@@ -1,44 +1,6 @@
-struct VertexIn {
-    @builtin(instance_index) instance_index: u32,
-    @location(0) position: vec3f,
-};
+//#include "shaders/constants.wgsl"
+//#include "shaders/cubemap_face.wgsl"
 
-struct VertexOut {
-    @builtin(position) position: vec4f,
-    @location(0) world_position: vec3f,
-    @location(1) instance_index: u32,
-};
-
-struct FragmentOut {
-    @location(0) positive_x: vec4f,
-    @location(1) negative_x: vec4f,
-    @location(2) positive_y: vec4f,
-    @location(3) negative_y: vec4f,
-    @location(4) positive_z: vec4f,
-    @location(5) negative_z: vec4f,
-};
-
-const CUBE_NUM_FACES = 6u;
-const SAMPLE_COUNT = 1024u;
-const PI = 3.14159265359;
-const ROUGHNESS_NUM_VALUES = 5u;
-
-@group(0) @binding(0)
-var skybox_texture: texture_cube<f32>;
-
-@group(0) @binding(1)
-var skybox_sampler: sampler;
-
-@vertex
-fn vs_main(vertex: VertexIn) -> VertexOut {
-    var out: VertexOut;
-    out.world_position = vertex.position;
-    out.position = vec4f(out.world_position, 1.0);
-    out.instance_index = vertex.instance_index;
-    return out;
-}
-
-// Distribution GGX/Throwbridge-Reitz
 fn d(n: vec3f, h: vec3f, roughness: f32) -> f32 {
     let a = roughness * roughness;
     let a2 = a * a;
@@ -93,95 +55,68 @@ fn importance_sample_ggx(xi: vec2f, n: vec3f, roughness: f32) -> vec3f {
 	return normalize(tangent * h.x + bitangent * h.y + n * h.z);
 }
 
-@fragment
-fn fs_main(in: VertexOut) -> FragmentOut {
-    var ROUGHNESS_VALUES = array<f32, ROUGHNESS_NUM_VALUES>(0.0, 0.25, 0.5, 0.75, 1.0);
-    let roughness = ROUGHNESS_VALUES[in.instance_index];
-    var CUBE_FACE_TRANSFORMS = array(
-        mat4x4f(
-            vec4f(0.0, 0.0, -1.0, 0.0),
-            vec4f(0.0, 1.0, 0.0, 0.0),
-            vec4f(-1.0, 0.0, 0.0, 0.0),
-            vec4f(1.0, 0.0, 0.0, 1.0)
-        ),
-        mat4x4f(
-            vec4f(0.0, 0.0, 1.0, 0.0),
-            vec4f(0.0, 1.0, 0.0, 0.0),
-            vec4f(-1.0, 0.0, 0.0, 0.0),
-            vec4f(-1.0, 0.0, 0.0, 1.0)
-        ),
-        mat4x4f(
-            vec4f(1.0, 0.0, 0.0, 0.0),
-            vec4f(0.0, 0.0, -1.0, 0.0),
-            vec4f(0.0, 1.0, 0.0, 0.0),
-            vec4f(0.0, 1.0, 0.0, 1.0)
-        ),
-        mat4x4f(
-            vec4f(1.0, 0.0, 0.0, 0.0),
-            vec4f(0.0, 0.0, 1.0, 0.0),
-            vec4f(0.0, 1.0, 0.0, 0.0),
-            vec4f(0.0, -1.0, 0.0, 1.0)
-        ),
-        mat4x4f(
-            vec4f(1.0, 0.0, 0.0, 0.0),
-            vec4f(0.0, 1.0, 0.0, 0.0),
-            vec4f(0.0, 0.0, 1.0, 0.0),
-            vec4f(0.0, 0.0, 1.0, 1.0)
-        ),
-        mat4x4f(
-            vec4f(-1.0, 0.0, 0.0, 0.0),
-            vec4f(0.0, 1.0, 0.0, 0.0),
-            vec4f(0.0, 0.0, 1.0, 0.0),
-            vec4f(0.0, 0.0, -1.0, 1.0)
-        )
-    );
-    var colors = array<vec4f, CUBE_NUM_FACES>();
-    let resolution = f32(textureDimensions(skybox_texture).x);
-    let sa_texel = 4.0 * PI / (6.0 * resolution * resolution);
-    for (var i = 0u; i < CUBE_NUM_FACES; i++) {
-        let n = normalize((CUBE_FACE_TRANSFORMS[i] * vec4f(in.world_position, 1.0)).xyz);
-        let r = n;
-        let v = r;
-        
-        var color = vec3f(0.0);
-        var total_weight = 0.0;
+const ROUGHNESS_NUM_VALUES = 5u;
+const ROUGHNESS_VALUES = array<f32, ROUGHNESS_NUM_VALUES>(0.0, 0.25, 0.5, 0.75, 1.0);
+const SAMPLE_COUNT = 1024u;
 
-        for (var s = 0u; s < SAMPLE_COUNT; s++) {
-            // Generates a sample vector that's biased towards 
-            // the preferred alignment direction (importance sampling).
-            let xi = hammersly(s, SAMPLE_COUNT);
-            let h = importance_sample_ggx(xi, n, roughness);
-            let l = normalize(2.0 * dot(v, h) * h - v);
+@group(0) @binding(0)
+var src: texture_cube<f32>;
 
-            let n_dot_l = max(dot(n, l), 0.0);
-            if n_dot_l > 0.0 {
-                // Sample from the environment's mip level based on roughness/pdf
-                let d = d(n, h, roughness);
-                let n_dot_h = max(dot(n, h), 0.0);
-                let n_dot_v = max(dot(n, v), 0.0);
-                let pdf = d * n_dot_h / (4.0 * n_dot_v) + 0.0001;
+@group(0) @binding(1)
+var src_sampler: sampler;
 
-                let sa_sample = 1.0 / (f32(SAMPLE_COUNT) * pdf + 0.0001);
-                let mip_level = select(0.5 * log2(sa_sample / sa_texel), 0.0, roughness == 0.0);
+@group(0) @binding(2)
+var dst: binding_array<texture_storage_2d_array<rgba16float, write>, ROUGHNESS_NUM_VALUES>;
 
-                color += 
-                    clamp(
-                        textureSampleLevel(skybox_texture, skybox_sampler, l, mip_level).rgb * n_dot_l,
-                        vec3f(0.0),
-                        vec3f(10.0)
-                    );
-                total_weight += n_dot_l;
-            }
-        }
-
-        colors[i] = vec4f(color / total_weight, 1.0);
+@compute
+@workgroup_size(8, 8, 1)
+fn compute_main(@builtin(global_invocation_id) gid: vec3u) {
+    let roughness_index = gid.z / 6u;
+    let dst_dimensions = textureDimensions(dst[roughness_index]);
+    if (gid.x >= dst_dimensions.x || gid.y >= dst_dimensions.y) {
+        return;
     }
-    var out: FragmentOut;
-    out.positive_x = colors[0];
-    out.negative_x = colors[1];
-    out.positive_y = colors[2];
-    out.negative_y = colors[3];
-    out.positive_z = colors[4];
-    out.negative_z = colors[5];
-    return out;
+    
+    let face_index = gid.z % 6u;
+    let face = CUBEMAP_FACES[face_index];
+    let roughness = ROUGHNESS_VALUES[roughness_index];
+    let dst_dimensions_f = vec2f(dst_dimensions);
+    let sa_texel = 4.0 * PI / (6.0 * dst_dimensions_f.x * dst_dimensions_f.y);
+    let cube_uv = vec2f(gid.xy) / dst_dimensions_f * 2.0 - 1.0;
+    let n = normalize(face.forward + face.right * cube_uv.x + face.up * cube_uv.y);
+    let v = n;
+    
+    var color = vec3f(0.0);
+    var total_weight = 0.0;
+
+    for (var s = 0u; s < SAMPLE_COUNT; s++) {
+        // Generates a sample vector that's biased towards 
+        // the preferred alignment direction (importance sampling).
+        let xi = hammersly(s, SAMPLE_COUNT);
+        let h = importance_sample_ggx(xi, n, roughness);
+        let l = normalize(2.0 * dot(v, h) * h - v);
+
+        let n_dot_l = max(dot(n, l), 0.0);
+        if n_dot_l > 0.0 {
+            // Sample from the environment's mip level based on roughness/pdf
+            let d = d(n, h, roughness);
+            let n_dot_h = max(dot(n, h), 0.0);
+            let n_dot_v = max(dot(n, v), 0.0);
+            let pdf = d * n_dot_h / (4.0 * n_dot_v) + 0.0001;
+
+            let sa_sample = 1.0 / (f32(SAMPLE_COUNT) * pdf + 0.0001);
+            let mip_level = select(0.5 * log2(sa_sample / sa_texel), 0.0, roughness == 0.0);
+
+            color += 
+                clamp(
+                    textureSampleLevel(src, src_sampler, l, mip_level).rgb * n_dot_l,
+                    vec3f(0.0),
+                    vec3f(10.0)
+                );
+            total_weight += n_dot_l;
+        }
+    }
+    
+    color /= total_weight;
+    textureStore(dst[roughness_index], gid.xy, face_index, vec4f(color, 1.0));
 }

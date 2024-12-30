@@ -5,11 +5,11 @@ use image::{ColorType, DynamicImage, ImageReader};
 
 use crate::assets::error::AssetError;
 use crate::assets::Asset;
-use crate::render::{PipelineOptionsBuilder, RenderContext, RenderUtils, Shader};
+use crate::render::{RenderContext, Shader};
 use crate::utils::TypeUuid;
 use crate::{self as engine};
 
-use super::{AssetRegistry, Assets, LoadedAsset};
+use super::{AssetRegistry, LoadedAsset};
 
 #[derive(TypeUuid)]
 #[uuid = "8ba4ccec-85ab-45f5-b4ee-2e803ef548a2"]
@@ -86,6 +86,8 @@ impl Asset for Texture {
 }
 
 impl Texture {
+    const WORKGROUP_SIZE: f32 = 8.0;
+
     pub fn new(
         texture_desc: &wgpu::TextureDescriptor,
         sampler_desc: Option<wgpu::SamplerDescriptor>,
@@ -170,6 +172,15 @@ impl Texture {
         })
     }
 
+    pub fn create_cubemap_array_view(&self, mip_level: Option<u32>) -> wgpu::TextureView {
+        self.texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            base_mip_level: mip_level.unwrap_or_default(),
+            mip_level_count: Some(1),
+            ..Default::default()
+        })
+    }
+
     pub fn create_cubemap_views(&self, mip_level: Option<u32>) -> [wgpu::TextureView; 6] {
         let base_mip_level = mip_level.unwrap_or_default();
         [
@@ -224,139 +235,64 @@ impl Texture {
         ]
     }
 
-    pub fn create_prefilter_cubemap_mip_views(&self) -> [wgpu::TextureView; 5] {
-        [
-            self.texture.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::Cube),
-                mip_level_count: Some(1),
-                base_mip_level: 0,
-                ..Default::default()
-            }),
-            self.texture.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::Cube),
-                mip_level_count: Some(1),
-                base_mip_level: 1,
-                ..Default::default()
-            }),
-            self.texture.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::Cube),
-                mip_level_count: Some(1),
-                base_mip_level: 2,
-                ..Default::default()
-            }),
-            self.texture.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::Cube),
-                mip_level_count: Some(1),
-                base_mip_level: 3,
-                ..Default::default()
-            }),
-            self.texture.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::Cube),
-                mip_level_count: Some(1),
-                base_mip_level: 4,
-                ..Default::default()
-            }),
-        ]
-    }
-
-    pub fn generate_mips(
+    pub fn generate_cubemap_mips(
         &self,
         render_state: &egui_wgpu::RenderState,
         encoder: &mut wgpu::CommandEncoder,
     ) {
         let device = &render_state.device;
-        let is_cube = if let Some(wgpu::TextureViewDimension::Cube) = self.view_descriptor.dimension
-        {
-            true
-        } else {
-            false
+        let Some(wgpu::TextureViewDimension::Cube) = self.view_descriptor.dimension else {
+            return;
         };
-        let shader_id = if is_cube {
-            "shaders/mip_generator_cube"
-        } else {
-            "shaders/mip_generator_2d"
+        let Ok(shader_ref) = AssetRegistry::get().load::<Shader>("shaders/mip_generator_cube")
+        else {
+            return;
         };
-        let shader_ref = AssetRegistry::get().load::<Shader>(shader_id).unwrap();
-        let mut shader = shader_ref.write();
-        let mesh_binding = Assets::screen_space_quad().unwrap();
-        let mesh = mesh_binding.read();
-        let options = PipelineOptionsBuilder::default()
-            .fragment_targets(if is_cube {
-                vec![
-                    Some(wgpu::ColorTargetState {
-                        format: self.descriptor.format,
-                        blend: None,
-                        write_mask: Default::default(),
-                    });
-                    6
-                ]
-            } else {
-                vec![Some(wgpu::ColorTargetState {
-                    format: self.descriptor.format,
-                    blend: None,
-                    write_mask: Default::default(),
-                })]
-            })
-            .depth_stencil(None)
-            .build();
-        let main_texture_view = self.texture.create_view(&wgpu::TextureViewDescriptor {
-            dimension: if is_cube {
-                Some(wgpu::TextureViewDimension::Cube)
-            } else {
-                None
-            },
+        let shader = shader_ref.write();
+        let mut src_texture_view = self.texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
             base_mip_level: 0,
             mip_level_count: Some(1),
             ..Default::default()
         });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &shader.bind_group_layouts[0],
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&main_texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-            ],
-        });
-        for mip in 1..self.descriptor.mip_level_count {
-            let texture_views;
-            if is_cube {
-                texture_views = self.create_cubemap_views(Some(mip)).into();
-            } else {
-                texture_views = vec![self.create_mip_view(mip)];
-            }
-            let attachments = texture_views
-                .iter()
-                .map(|v| {
-                    Some(wgpu::RenderPassColorAttachment {
-                        view: v,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })
-                })
-                .collect::<Vec<_>>();
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        for mip_level in 1..self.descriptor.mip_level_count {
+            let Some(pipeline) = shader.get_compute_pipeline() else {
+                continue;
+            };
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: None,
-                color_attachments: attachments.as_slice(),
-                depth_stencil_attachment: None,
                 timestamp_writes: None,
-                occlusion_query_set: None,
             });
-            shader.build_pipeline(&options);
-            if let Some(pipeline) = shader.get_pipeline(&options) {
-                render_pass.set_pipeline(pipeline);
-                render_pass.set_bind_group(0, &bind_group, &[]);
-                RenderUtils::bind_mesh_buffers(&mut render_pass, &mesh);
-                RenderUtils::draw_mesh_instanced(&mut render_pass, &mesh, 0..1);
-            }
+            let dst_texture_view = self.texture.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                base_mip_level: mip_level,
+                mip_level_count: Some(1),
+                ..Default::default()
+            });
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &shader.bind_group_layouts[0],
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&src_texture_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&dst_texture_view),
+                    },
+                ],
+            });
+            let workgroup_count_x = ((self.descriptor.size.width >> mip_level) as f32
+                / Self::WORKGROUP_SIZE)
+                .ceil() as u32;
+            let workgroup_count_y = ((self.descriptor.size.height >> mip_level) as f32
+                / Self::WORKGROUP_SIZE)
+                .ceil() as u32;
+            compute_pass.set_pipeline(pipeline);
+            compute_pass.set_bind_group(0, &bind_group, &[]);
+            compute_pass.dispatch_workgroups(workgroup_count_x, workgroup_count_y, 6);
+            src_texture_view = dst_texture_view;
         }
     }
 }

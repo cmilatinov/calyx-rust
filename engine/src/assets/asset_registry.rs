@@ -398,6 +398,10 @@ impl AssetRegistry {
             .unwrap_or_default()
     }
 
+    pub fn asset_name_from_path(&self, path: &Path) -> Option<String> {
+        self.asset_id_from_path(path).map(|id| self.asset_name(id))
+    }
+
     pub fn asset_id_from_path(&self, path: &Path) -> Option<Uuid> {
         for root_path in &self.asset_paths {
             if common_path::common_path(root_path, path)

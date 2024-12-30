@@ -88,10 +88,12 @@ impl RenderUtils {
     }
 
     pub fn bind_mesh_buffers<'a>(render_pass: &mut wgpu::RenderPass<'a>, mesh: &'a Mesh) {
-        render_pass.set_index_buffer(
-            mesh.index_buffer.as_ref().unwrap().slice(..),
-            wgpu::IndexFormat::Uint32,
-        );
+        if mesh.indices.len() > 0 {
+            render_pass.set_index_buffer(
+                mesh.index_buffer.as_ref().unwrap().slice(..),
+                wgpu::IndexFormat::Uint32,
+            );
+        }
         render_pass.set_vertex_buffer(0, mesh.vertex_buffer.as_ref().unwrap().slice(..));
     }
 

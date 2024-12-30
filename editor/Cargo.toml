@@ -15,7 +15,6 @@ path = "src/main.rs"
 [dependencies]
 engine = { path = "../engine" }
 project = { path = "../project" }
-bytemuck.workspace = true
 lazy_static.workspace = true
 serde.workspace = true
 inventory.workspace = true
@@ -26,3 +25,4 @@ sharedlib.workspace = true
 convert_case.workspace = true
 re_ui.workspace = true
 rfd.workspace = true
+enum_dispatch.workspace = true

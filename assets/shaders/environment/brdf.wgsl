@@ -1,23 +1,4 @@
-struct VertexIn {
-    @location(0) position: vec3f,
-    @location(2) uv0: vec2f,
-};
-
-struct VertexOut {
-    @builtin(position) position: vec4f,
-    @location(0) uv: vec2f,
-};
-
-const SAMPLE_COUNT = 1024u;
-const PI = 3.14159265359;
-
-@vertex
-fn vs_main(vertex: VertexIn) -> VertexOut {
-    var out: VertexOut;
-    out.position = vec4f(vertex.position, 1.0);
-    out.uv = vertex.uv0;
-    return out;
-}
+//#include "shaders/constants.wgsl"
 
 fn radical_inverse_vdc(input: u32) -> f32 {
     var bits = input;
@@ -114,7 +95,19 @@ fn integrate_brdf(n_dot_v: f32, roughness: f32) -> vec2f {
     return vec2f(a, b);
 }
 
-@fragment
-fn fs_main(in: VertexOut) -> @location(0) vec4f {
-    return vec4f(integrate_brdf(in.uv.x, in.uv.y), 0.0, 1.0);
+@group(0) @binding(0)
+var dst: texture_storage_2d<rg32float, write>;
+
+const SAMPLE_COUNT = 1024u;
+
+@compute @workgroup_size(8, 8, 1)
+fn compute_main(@builtin(global_invocation_id) gid: vec3u) {
+    let dst_dimensions = textureDimensions(dst);
+    if (gid.x >= dst_dimensions.x || gid.y >= dst_dimensions.y) {
+        return;
+    }
+    
+    let dst_dimensions_f = vec2f(dst_dimensions);
+    let dst_uv = (vec2f(gid.xy) + vec2f(0.5)) / dst_dimensions_f;   
+    textureStore(dst, gid.xy, vec4f(integrate_brdf(dst_uv.x, dst_uv.y), 0.0, 0.0));
 }

@@ -3,9 +3,10 @@ use crate::panel::Panel;
 use engine::egui;
 use engine::egui::emath::TSTransform;
 use engine::egui::{
-    Color32, CursorIcon, LayerId, Margin, Order, Rect, Sense, Stroke, TextWrapMode, Ui,
+    Color32, CursorIcon, Id, LayerId, Margin, Order, Rect, Sense, Stroke, TextWrapMode, Ui,
 };
 use engine::ext::egui::{EguiUiExt, EguiVec2Ext};
+use engine::petgraph::graph::Node;
 use engine::petgraph::prelude::{EdgeIndex, NodeIndex};
 use engine::petgraph::Graph;
 use re_ui::Icon;
@@ -52,11 +53,11 @@ impl Panel for PanelAnimator {
 
     fn ui(&mut self, ui: &mut Ui) {
         let (id, rect) = ui.allocate_space(ui.available_size());
+
         let response = ui.interact(rect, id, Sense::click_and_drag());
         if response.dragged() {
             self.transform.translation += response.drag_delta();
         }
-
         if response.double_clicked() {
             self.transform = Default::default();
             self.zoom_factor = 1.0;
@@ -82,114 +83,18 @@ impl Panel for PanelAnimator {
             }
         }
 
-        for (i, node) in self.graph.raw_nodes().iter().enumerate() {
-            let id = id.with(("node", i));
-            let window_layer = ui.layer_id();
-            let res = egui::Area::new(id)
-                .default_pos(egui::Pos2 {
-                    x: 0.0,
-                    y: i as f32 * 50.0,
-                })
-                .sense(Sense::click_and_drag())
-                .order(Order::Middle)
-                .show(ui.ctx(), |ui| {
-                    ui.set_clip_rect(transform.inverse() * rect);
-                    egui::Frame::default()
-                        .inner_margin(Margin::same(10.0))
-                        .stroke(Stroke::new(1.0, Color32::DARK_GRAY))
-                        .fill(ui.style().visuals.window_fill)
-                        .show(ui, |ui| {
-                            ui.style_mut().wrap_mode = Some(TextWrapMode::Extend);
-                            ui.style_mut().visuals.override_text_color = Some(Color32::WHITE);
-                            ui.add(
-                                egui::Label::new(node.weight.as_str())
-                                    .selectable(false)
-                                    .sense(Sense::hover()),
-                            );
-                        });
-                })
-                .response
-                .on_hover_cursor(CursorIcon::Move);
-            if res.clicked() || res.dragged() {
-                res.request_focus();
-            }
-            if res.has_focus() {
-                ui.ctx()
-                    .layer_painter(LayerId::new(Order::Foreground, id.with("top")))
-                    .rect_stroke(transform * res.rect, 0.0, Stroke::new(1.0, Color32::WHITE));
-            }
-            ui.ctx().set_transform_layer(res.layer_id, transform);
-            ui.ctx().set_sublayer(window_layer, res.layer_id);
+        for (index, node) in self.graph.raw_nodes().iter().enumerate() {
+            self.node_ui(ui, id, rect, transform, index, node);
         }
 
         let mut edge_map: HashMap<[NodeIndex; 2], Vec<EdgeIndex>> = Default::default();
-
         for (index, edge) in self.graph.raw_edges().iter().enumerate() {
             let mut key = [edge.source(), edge.target()];
             key.sort();
             edge_map.entry(key).or_default().push(EdgeIndex::new(index));
         }
-
         for ([source, target], edges) in edge_map {
-            let Some(src_state) =
-                egui::AreaState::load(ui.ctx(), id.with(("node", source.index())))
-            else {
-                continue;
-            };
-            let Some(dst_state) =
-                egui::AreaState::load(ui.ctx(), id.with(("node", target.index())))
-            else {
-                continue;
-            };
-            let Some(src_pos) = src_state.pivot_pos else {
-                continue;
-            };
-            let Some(dst_pos) = dst_state.pivot_pos else {
-                continue;
-            };
-            let Some(src_size) = src_state.size else {
-                continue;
-            };
-            let Some(dst_size) = dst_state.size else {
-                continue;
-            };
-
-            let endpoints = [
-                transform * src_pos + (transform.scaling * src_size / 2.0),
-                transform * dst_pos + (transform.scaling * dst_size / 2.0),
-            ];
-            let response = ui.allocate_rect(
-                Rect::from_two_pos(endpoints[0], endpoints[1]),
-                Sense::hover(),
-            );
-            let stroke = Stroke::new(2.0, Color32::LIGHT_GRAY);
-            let hovered_stroke = Stroke::new(5.0, Color32::LIGHT_GRAY);
-            let spacing = 15.0 * self.zoom_factor;
-            let hitbox_size = spacing / 2.0;
-            let dir = (endpoints[1] - endpoints[0]).normalized();
-            let perp_dir = dir.perp().normalized();
-            let mut start_offset = -(edges.len() as f32 - 1.0) / 2.0;
-            let end_offset = start_offset.abs().ceil();
-            let interact_rect = response.rect.expand(30.0);
-            while start_offset <= end_offset {
-                let offset = perp_dir * spacing * start_offset;
-                let p0 = endpoints[0] + offset;
-                let p1 = endpoints[1] + offset;
-                let poly = &[
-                    p0 - perp_dir * hitbox_size,
-                    p0 + perp_dir * hitbox_size,
-                    p1 + perp_dir * hitbox_size,
-                    p1 - perp_dir * hitbox_size,
-                ];
-                let stroke = if ui.rect_contains_pointer(interact_rect) && ui.pointer_in_poly(poly)
-                {
-                    hovered_stroke
-                } else {
-                    stroke
-                };
-                ui.painter().line_segment([p0, p1], stroke);
-                start_offset += 1.0;
-            }
+            self.edge_ui(ui, id, transform, source, target, edges);
         }
     }
 
@@ -199,5 +104,125 @@ impl Panel for PanelAnimator {
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
+    }
+}
+
+impl PanelAnimator {
+    fn node_ui(
+        &self,
+        ui: &mut Ui,
+        id: Id,
+        rect: Rect,
+        transform: TSTransform,
+        index: usize,
+        node: &Node<String>,
+    ) {
+        let id = id.with(("node", index));
+        let window_layer = ui.layer_id();
+        let res = egui::Area::new(id)
+            .default_pos(egui::Pos2 {
+                x: 0.0,
+                y: index as f32 * 50.0,
+            })
+            .sense(Sense::click_and_drag())
+            .order(Order::Middle)
+            .show(ui.ctx(), |ui| {
+                ui.set_clip_rect(transform.inverse() * rect);
+                egui::Frame::default()
+                    .inner_margin(Margin::same(10.0 / self.zoom_factor))
+                    .stroke(Stroke::new(1.0 / self.zoom_factor, Color32::DARK_GRAY))
+                    .fill(ui.style().visuals.window_fill)
+                    .show(ui, |ui| {
+                        let font_id = egui::FontId::proportional(14.0 * self.zoom_factor);
+                        ui.style_mut().wrap_mode = Some(TextWrapMode::Extend);
+                        ui.style_mut().visuals.override_text_color = Some(Color32::WHITE);
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(node.weight.as_str()).font(font_id),
+                            )
+                            .selectable(false)
+                            .sense(Sense::hover()),
+                        );
+                    });
+            })
+            .response
+            .on_hover_cursor(CursorIcon::Move);
+        if res.clicked() || res.dragged() {
+            res.request_focus();
+        }
+        if res.has_focus() {
+            ui.ctx()
+                .layer_painter(LayerId::new(Order::Foreground, id.with("top")))
+                .rect_stroke(transform * res.rect, 0.0, Stroke::new(1.0, Color32::WHITE));
+        }
+        ui.ctx().set_transform_layer(res.layer_id, transform);
+        ui.ctx().set_sublayer(window_layer, res.layer_id);
+    }
+
+    fn edge_ui(
+        &self,
+        ui: &mut Ui,
+        id: Id,
+        transform: TSTransform,
+        source: NodeIndex,
+        target: NodeIndex,
+        edges: Vec<EdgeIndex>,
+    ) {
+        let Some(src_state) = egui::AreaState::load(ui.ctx(), id.with(("node", source.index())))
+        else {
+            return;
+        };
+        let Some(dst_state) = egui::AreaState::load(ui.ctx(), id.with(("node", target.index())))
+        else {
+            return;
+        };
+        let Some(src_pos) = src_state.pivot_pos else {
+            return;
+        };
+        let Some(dst_pos) = dst_state.pivot_pos else {
+            return;
+        };
+        let Some(src_size) = src_state.size else {
+            return;
+        };
+        let Some(dst_size) = dst_state.size else {
+            return;
+        };
+
+        let endpoints = [
+            transform * src_pos + (transform.scaling * src_size / 2.0),
+            transform * dst_pos + (transform.scaling * dst_size / 2.0),
+        ];
+        let response = ui.allocate_rect(
+            Rect::from_two_pos(endpoints[0], endpoints[1]),
+            Sense::hover(),
+        );
+        let stroke = Stroke::new(2.0, Color32::LIGHT_GRAY);
+        let hovered_stroke = Stroke::new(5.0, Color32::LIGHT_GRAY);
+        let spacing = 15.0 * self.zoom_factor;
+        let hitbox_size = spacing / 2.0;
+        let dir = (endpoints[1] - endpoints[0]).normalized();
+        let perp_dir = dir.perp().normalized();
+        let mut start_offset = -(edges.len() as f32 - 1.0) / 2.0;
+        let end_offset = start_offset.abs().ceil();
+        let interact_rect = response.rect.expand(30.0);
+        while start_offset <= end_offset {
+            let offset = perp_dir * spacing * start_offset;
+            let p0 = endpoints[0] + offset;
+            let p1 = endpoints[1] + offset;
+            let poly = &[
+                p0 - perp_dir * hitbox_size,
+                p0 + perp_dir * hitbox_size,
+                p1 + perp_dir * hitbox_size,
+                p1 - perp_dir * hitbox_size,
+            ];
+            let stroke = if ui.rect_contains_pointer(interact_rect) && ui.pointer_in_poly(poly) {
+                hovered_stroke
+            } else {
+                stroke
+            };
+            ui.painter().line_segment([p0, p1], stroke);
+            start_offset += 1.0;
+        }
     }
 }

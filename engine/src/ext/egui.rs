@@ -1,4 +1,6 @@
-use egui::{emath, CursorIcon, Id, InnerResponse, LayerId, Order, Pos2, Sense, Ui, Vec2};
+use egui::{
+    emath, CursorIcon, Id, InnerResponse, LayerId, Order, Pos2, Sense, Ui, UiBuilder, Vec2,
+};
 use std::any::Any;
 
 pub trait EguiPos2Ext {
@@ -77,7 +79,8 @@ impl EguiUiExt for Ui {
 
             // Paint the body to a new layer:
             let layer_id = LayerId::new(Order::Tooltip, id);
-            let InnerResponse { response, .. } = self.with_layer_id(layer_id, add_contents);
+            let InnerResponse { response, .. } =
+                self.scope_builder(UiBuilder::new().layer_id(layer_id), add_contents);
 
             // Now we move the visuals of the body to where the mouse is.
             // Normally you need to decide a location for a widget first,

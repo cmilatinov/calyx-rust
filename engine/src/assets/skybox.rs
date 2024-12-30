@@ -1,15 +1,11 @@
-use std::{ops::Range, path::Path};
-
 use eframe::wgpu::{self, CommandEncoder};
 use egui_wgpu::RenderState;
 use engine_derive::TypeUuid;
+use std::path::Path;
+use std::sync::RwLockReadGuard;
 
-use super::{error::AssetError, texture::Texture, Asset, Assets, LoadedAsset};
-use crate::{
-    self as engine,
-    core::Ref,
-    render::{PipelineOptionsBuilder, RenderUtils, Shader},
-};
+use super::{error::AssetError, texture::Texture, Asset, LoadedAsset};
+use crate::{self as engine, core::Ref, render::Shader};
 
 #[derive(TypeUuid)]
 #[uuid = "bdb5dd3a-cca4-453d-8260-ff2bdf2a05b2"]
@@ -44,12 +40,11 @@ impl Asset for Skybox {
                     height: 1024,
                     depth_or_array_layers: 6,
                 },
-                mip_level_count: 5,
+                mip_level_count: Self::NUM_ROUGHNESS_VALUES,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rg11b10Float,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                format: wgpu::TextureFormat::Rgba16Float,
+                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             },
             None,
@@ -70,9 +65,8 @@ impl Asset for Skybox {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rg11b10Float,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                format: wgpu::TextureFormat::Rgba16Float,
+                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             },
             None,
@@ -90,12 +84,11 @@ impl Asset for Skybox {
                     height: 256,
                     depth_or_array_layers: 6,
                 },
-                mip_level_count: 5,
+                mip_level_count: Self::NUM_ROUGHNESS_VALUES,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rg11b10Float,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                format: wgpu::TextureFormat::Rgba16Float,
+                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             },
             None,
@@ -116,9 +109,8 @@ impl Asset for Skybox {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rg16Float,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                format: wgpu::TextureFormat::Rg32Float,
+                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             },
             None,
@@ -137,103 +129,109 @@ impl Asset for Skybox {
 }
 
 impl Skybox {
+    const WORKGROUP_SIZE: f32 = 8.0;
     const NUM_ROUGHNESS_VALUES: u32 = 5;
+
+    fn num_workgroups_xy(texture_size: u32) -> u32 {
+        (texture_size as f32 / Self::WORKGROUP_SIZE).ceil() as u32
+    }
+
+    fn create_src_dst_bind_group(
+        device: &wgpu::Device,
+        shader: &Shader,
+        src: &Texture,
+        dst: &Texture,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &shader.bind_group_layouts[0],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&src.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&src.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(
+                        &dst.create_cubemap_array_view(None),
+                    ),
+                },
+            ],
+        })
+    }
+
+    fn create_src_dst_array_bind_group(
+        device: &wgpu::Device,
+        shader: &Shader,
+        src: &Texture,
+        dst: &Texture,
+        dst_mips: u32,
+    ) -> wgpu::BindGroup {
+        let views = (0..dst_mips)
+            .into_iter()
+            .map(|mip| dst.create_cubemap_array_view(Some(mip)))
+            .collect::<Vec<_>>();
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &shader.bind_group_layouts[0],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&src.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&src.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureViewArray(
+                        views.iter().map(|v| v).collect::<Vec<_>>().as_slice(),
+                    ),
+                },
+            ],
+        })
+    }
+
+    fn create_dst_bind_group(
+        device: &wgpu::Device,
+        shader: &Shader,
+        dst: &Texture,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &shader.bind_group_layouts[0],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&dst.view),
+            }],
+        })
+    }
 
     fn prepare_step(
         &self,
-        shader_ref: &Ref<Shader>,
-        render_state: &RenderState,
+        shader: &RwLockReadGuard<Shader>,
         encoder: &mut CommandEncoder,
-        src: Option<&Texture>,
-        dest: &Texture,
-        dest_cubemap: bool,
-        dest_mip_level: Option<u32>,
-        instances: Option<Range<u32>>,
+        bind_group: &wgpu::BindGroup,
+        num_workgroups_xy: u32,
+        num_workgroups_z: Option<u32>,
     ) {
-        let device = &render_state.device;
-        let mut shader = shader_ref.write();
-        let quad_binding = Assets::screen_space_quad().unwrap();
-        let quad_mesh = quad_binding.read();
-        let views;
-        let attachment_list;
-        if dest_cubemap {
-            views = dest.create_cubemap_views(dest_mip_level);
-            attachment_list = views
-                .iter()
-                .map(|v| {
-                    Some(wgpu::RenderPassColorAttachment {
-                        view: v,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })
-                })
-                .collect::<Vec<_>>();
-        } else {
-            attachment_list = [Some(wgpu::RenderPassColorAttachment {
-                view: &dest.view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })]
-            .into();
-        };
-        let color_attachments = attachment_list.as_slice();
-        let targets = color_attachments
-            .iter()
-            .map(|_| {
-                Some(wgpu::ColorTargetState {
-                    format: dest.descriptor.format,
-                    blend: None,
-                    write_mask: Default::default(),
-                })
-            })
-            .collect::<Vec<_>>();
-        let options = &PipelineOptionsBuilder::default()
-            .fragment_targets(targets)
-            .depth_stencil(None)
-            .build();
-        let bind_group = src.map(|src| {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &shader.bind_group_layouts[0],
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&src.view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&src.sampler),
-                    },
-                ],
-            })
+        let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes: None,
         });
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: None,
-                color_attachments,
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            shader.build_pipeline(&options);
-            if let Some(pipeline) = shader.get_pipeline(&options) {
-                render_pass.set_pipeline(pipeline);
-                if let Some(bind_group) = bind_group.as_ref() {
-                    render_pass.set_bind_group(0, &bind_group, &[]);
-                }
-                RenderUtils::bind_mesh_buffers(&mut render_pass, &quad_mesh);
-                RenderUtils::draw_mesh_instanced(
-                    &mut render_pass,
-                    &quad_mesh,
-                    instances.unwrap_or(0..1),
-                );
-            }
+        if let Some(pipeline) = shader.get_compute_pipeline() {
+            compute_pass.set_pipeline(pipeline);
+            compute_pass.set_bind_group(0, bind_group, &[]);
+            compute_pass.dispatch_workgroups(
+                num_workgroups_xy,
+                num_workgroups_xy,
+                num_workgroups_z.unwrap_or(6),
+            );
         }
     }
 
@@ -246,49 +244,112 @@ impl Skybox {
         if !self.dirty {
             return;
         }
-        self.prepare_step(
-            shaders.cubemap_shader,
-            render_state,
-            encoder,
-            Some(&self.texture),
-            &self.cubemap,
-            true,
-            None,
-            None,
-        );
-        self.cubemap.generate_mips(render_state, encoder);
-        self.prepare_step(
-            shaders.irradiance_cubemap_shader,
-            render_state,
-            encoder,
-            Some(&self.cubemap),
-            &self.irradiance_cubemap,
-            true,
-            None,
-            None,
-        );
-        for i in 0..Self::NUM_ROUGHNESS_VALUES {
+        {
+            let shader = shaders.cubemap_shader.read();
+            let bind_group = Self::create_src_dst_bind_group(
+                &render_state.device,
+                &shader,
+                &self.texture,
+                &self.cubemap,
+            );
             self.prepare_step(
-                shaders.prefilter_cubemap_shader,
-                render_state,
+                &shader,
                 encoder,
-                Some(&self.cubemap),
-                &self.prefilter_cubemap,
-                true,
-                Some(i as u32),
-                Some(i..i + 1),
+                &bind_group,
+                Self::num_workgroups_xy(self.cubemap.descriptor.size.width),
+                None,
             );
         }
-        self.prepare_step(
-            shaders.brdf_shader,
-            render_state,
-            encoder,
-            None,
-            &self.brdf_map,
-            false,
-            None,
-            None,
-        );
+        self.cubemap.generate_cubemap_mips(render_state, encoder);
+        {
+            let shader = shaders.irradiance_cubemap_shader.read();
+            let bind_group = Self::create_src_dst_bind_group(
+                &render_state.device,
+                &shader,
+                &self.cubemap,
+                &self.irradiance_cubemap,
+            );
+            self.prepare_step(
+                &shader,
+                encoder,
+                &bind_group,
+                Self::num_workgroups_xy(self.irradiance_cubemap.descriptor.size.width),
+                None,
+            );
+        }
+        {
+            let shader = shaders.prefilter_cubemap_shader.read();
+            let bind_group = Self::create_src_dst_array_bind_group(
+                &render_state.device,
+                &shader,
+                &self.cubemap,
+                &self.prefilter_cubemap,
+                self.prefilter_cubemap.descriptor.mip_level_count,
+            );
+            self.prepare_step(
+                &shader,
+                encoder,
+                &bind_group,
+                Self::num_workgroups_xy(self.prefilter_cubemap.descriptor.size.width),
+                Some(Self::NUM_ROUGHNESS_VALUES * 6),
+            );
+        }
+        {
+            let shader = shaders.brdf_shader.read();
+            let bind_group =
+                Self::create_dst_bind_group(&render_state.device, &shader, &self.brdf_map);
+            self.prepare_step(
+                &shader,
+                encoder,
+                &bind_group,
+                Self::num_workgroups_xy(self.brdf_map.descriptor.size.width),
+                Some(1),
+            );
+        }
         self.dirty = false;
+        // self.prepare_step(
+        //     shaders.cubemap_shader,
+        //     render_state,
+        //     encoder,
+        //     Some(&self.texture),
+        //     &self.cubemap,
+        //     true,
+        //     None,
+        //     None,
+        // );
+        // self.cubemap.generate_mips(render_state, encoder);
+        // self.prepare_step(
+        //     shaders.irradiance_cubemap_shader,
+        //     render_state,
+        //     encoder,
+        //     Some(&self.cubemap),
+        //     &self.irradiance_cubemap,
+        //     true,
+        //     None,
+        //     None,
+        // );
+        // for i in 0..Self::NUM_ROUGHNESS_VALUES {
+        //     self.prepare_step(
+        //         shaders.prefilter_cubemap_shader,
+        //         render_state,
+        //         encoder,
+        //         Some(&self.cubemap),
+        //         &self.prefilter_cubemap,
+        //         true,
+        //         Some(i as u32),
+        //         Some(i..i + 1),
+        //     );
+        // }
+        // self.prepare_step(
+        //     shaders.brdf_shader,
+        //     render_state,
+        //     encoder,
+        //     None,
+        //     &self.brdf_map,
+        //     false,
+        //     None,
+        //     None,
+        // );
+        // self.dirty = false;
     }
 }

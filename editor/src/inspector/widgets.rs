@@ -57,7 +57,7 @@ impl Widgets {
         let asset_meta = registry.asset_meta_from_id(asset_id);
         let mut changed = false;
 
-        let res = egui::ComboBox::from_id_source(id)
+        let res = egui::ComboBox::from_id_salt(id)
             .truncate()
             .width(100.0)
             .selected_text(
@@ -118,7 +118,7 @@ impl Widgets {
                 let visuals = ui.visuals_mut();
                 visuals.widgets.inactive.bg_fill = visuals.panel_fill;
                 ui.dnd_drop_zone::<Uuid, Response>(Frame::none(), |ui| {
-                    egui::ComboBox::from_id_source(id)
+                    egui::ComboBox::from_id_salt(id)
                         .truncate()
                         .width(100.0)
                         .selected_text(

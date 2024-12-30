@@ -1,0 +1,34 @@
+{
+    "rdocCaptureSettings": 1,
+    "settings": {
+        "autoStart": false,
+        "commandLine": "./sandbox",
+        "environment": [
+            {
+                "separator": "Platform style",
+                "type": "Append",
+                "value": "C:\\Users\\Cristian\\.rustup\\toolchains\\nightly-x86_64-pc-windows-msvc\\bin\\;C:\\Program Files\\CMake\\bin",
+                "variable": "PATH"
+            }
+        ],
+        "executable": "C:\\Users\\Cristian\\Documents\\git\\calyx-rust\\target\\release-with-debug\\editor.exe",
+        "inject": false,
+        "numQueuedFrames": 0,
+        "options": {
+            "allowFullscreen": true,
+            "allowVSync": true,
+            "apiValidation": false,
+            "captureAllCmdLists": false,
+            "captureCallstacks": false,
+            "captureCallstacksOnlyDraws": false,
+            "debugOutputMute": true,
+            "delayForDebugger": 0,
+            "hookIntoChildren": false,
+            "refAllResources": false,
+            "softMemoryLimit": 0,
+            "verifyBufferAccess": false
+        },
+        "queuedFrameCap": 0,
+        "workingDir": "C:/Users/Cristian/Documents/git/calyx-rust"
+    }
+}

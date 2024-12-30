@@ -43,7 +43,7 @@ impl Panel for PanelSceneHierarchy {
         let mut app_state = EditorAppState::get_mut();
 
         egui::ScrollArea::both()
-            .id_source("scene_scroll_area")
+            .id_salt("scene_scroll_area")
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 egui::Frame {

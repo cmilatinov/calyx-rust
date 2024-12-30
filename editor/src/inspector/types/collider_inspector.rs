@@ -30,7 +30,7 @@ impl ColliderInspector {
             "Shape",
             move |ui, _| {
                 let mut state = ref1.write();
-                egui::ComboBox::from_id_source(ctx.game_object.node)
+                egui::ComboBox::from_id_salt(ctx.game_object.node)
                     .selected_text(match state.value {
                         ColliderShape::Sphere { .. } => "Sphere",
                         ColliderShape::Capsule { .. } => "Capsule",
@@ -93,7 +93,7 @@ impl ColliderInspector {
                         radius,
                     } => {
                         Widgets::inspector_prop_value(ui, "Orientation", |ui, _| {
-                            egui::ComboBox::from_id_source("orientation")
+                            egui::ComboBox::from_id_salt("orientation")
                                 .selected_text(match orientation {
                                     Orientation::X => "X",
                                     Orientation::Y => "Y",
