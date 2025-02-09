@@ -39,7 +39,7 @@ pub struct Shader {
 }
 
 impl Asset for Shader {
-    fn get_file_extensions() -> &'static [&'static str] {
+    fn file_extensions() -> &'static [&'static str] {
         &["wgsl"]
     }
 

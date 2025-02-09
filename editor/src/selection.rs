@@ -2,17 +2,17 @@ use engine::uuid::Uuid;
 use std::collections::HashSet;
 use std::ops::{Deref, DerefMut};
 
-#[derive(Default, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectionType {
     GameObject,
     Asset,
-    AnimationNode,
-    AnimationTransition,
+    AnimationNode(Uuid),
+    AnimationTransition(Uuid),
     #[default]
     None,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Selection {
     ty: SelectionType,
     set: HashSet<Uuid>,
@@ -63,6 +63,10 @@ impl Selection {
         } else {
             None
         }
+    }
+
+    pub fn ty(&self) -> SelectionType {
+        self.ty
     }
 }
 

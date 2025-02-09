@@ -1,6 +1,7 @@
 mod file_button;
+mod list;
 mod tab;
-mod zoom_pan_area;
 
 pub use file_button::*;
+pub use list::*;
 pub use tab::*;

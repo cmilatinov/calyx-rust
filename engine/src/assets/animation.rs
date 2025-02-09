@@ -38,7 +38,14 @@ pub struct Animation {
 }
 
 impl Asset for Animation {
-    fn get_file_extensions() -> &'static [&'static str] {
+    fn asset_name() -> &'static str
+    where
+        Self: Sized,
+    {
+        "Animation"
+    }
+
+    fn file_extensions() -> &'static [&'static str] {
         &[]
     }
 

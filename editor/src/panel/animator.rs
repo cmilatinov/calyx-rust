@@ -1,40 +1,39 @@
-use crate::icons;
 use crate::panel::Panel;
+use crate::selection::{Selection, SelectionType};
+use crate::{icons, EditorAppState};
+use engine::assets::animation_graph::{
+    AnimationGraph, AnimationMotion, AnimationNode, AnimationTransition,
+};
+use engine::assets::AssetRegistry;
+use engine::core::Ref;
 use engine::egui;
-use engine::egui::emath::TSTransform;
+use engine::egui::text::LayoutJob;
 use engine::egui::{
-    Color32, CursorIcon, Id, LayerId, Margin, Order, Rect, Sense, Stroke, TextWrapMode, Ui,
+    Color32, FontId, LayerId, Order, Painter, Pos2, Rect, Response, Sense, Shape, Stroke, Ui,
+    UiBuilder, Vec2,
 };
 use engine::ext::egui::{EguiUiExt, EguiVec2Ext};
-use engine::petgraph::graph::Node;
 use engine::petgraph::prelude::{EdgeIndex, NodeIndex};
-use engine::petgraph::Graph;
+use engine::uuid::Uuid;
 use re_ui::Icon;
 use std::any::Any;
 use std::collections::HashMap;
+use std::ops::DerefMut;
 
 pub struct PanelAnimator {
-    zoom_factor: f32,
-    transform: TSTransform,
-    graph: Graph<String, ()>,
+    rect: Rect,
+    selected_graph: Option<Ref<AnimationGraph>>,
+    latest_pos: Pos2,
+    source_node: Option<NodeIndex>,
 }
 
 impl Default for PanelAnimator {
     fn default() -> Self {
-        let mut graph: Graph<String, ()> = Default::default();
-        let a = graph.add_node(String::from("First"));
-        let b = graph.add_node(String::from("Second"));
-        let c = graph.add_node(String::from("Third"));
-        graph.add_edge(a, b, ());
-        graph.add_edge(b, a, ());
-        graph.add_edge(b, c, ());
-        graph.add_edge(c, b, ());
-        graph.add_edge(c, b, ());
-        graph.add_edge(c, a, ());
         Self {
-            zoom_factor: 1.0,
-            transform: Default::default(),
-            graph,
+            rect: Rect::from_center_size(Pos2::new(0.0, 0.0), Vec2::splat(1000.0)),
+            selected_graph: None,
+            latest_pos: Default::default(),
+            source_node: None,
         }
     }
 }
@@ -52,50 +51,80 @@ impl Panel for PanelAnimator {
     }
 
     fn ui(&mut self, ui: &mut Ui) {
-        let (id, rect) = ui.allocate_space(ui.available_size());
-
-        let response = ui.interact(rect, id, Sense::click_and_drag());
-        if response.dragged() {
-            self.transform.translation += response.drag_delta();
+        let ty;
+        let mut selected_id;
+        {
+            let app_state = EditorAppState::get();
+            ty = app_state.selection.ty();
+            selected_id = app_state.selection.first(ty);
         }
-        if response.double_clicked() {
-            self.transform = Default::default();
-            self.zoom_factor = 1.0;
+        let mut selected_asset_id = None;
+        if let SelectionType::AnimationNode(id) = ty {
+            selected_asset_id = Some(id);
+        } else if let SelectionType::AnimationTransition(id) = ty {
+            selected_asset_id = Some(id);
+        } else if let SelectionType::Asset = ty {
+            selected_asset_id = selected_id;
+            selected_id = None;
         }
-
-        let transform =
-            TSTransform::from_translation(ui.min_rect().left_top().to_vec2()) * self.transform;
-        if let Some(pointer) = ui.ctx().input(|i| i.pointer.hover_pos()) {
-            // Note: doesn't catch zooming / panning if a button in this PanZoom container is hovered.
-            if ui.rect_contains_pointer(response.rect) {
-                let pointer_in_layer = transform.inverse() * pointer;
-                let zoom_delta = ui.ctx().input(|i| 1.0 + i.smooth_scroll_delta.y * 0.001);
-                let zoom_factor = self.zoom_factor;
-                self.zoom_factor *= zoom_delta;
-                self.zoom_factor = self.zoom_factor.clamp(0.25, 2.0);
-                let real_zoom_delta = self.zoom_factor / zoom_factor;
-
-                // Zoom in on pointer:
-                self.transform = self.transform
-                    * TSTransform::from_translation(pointer_in_layer.to_vec2())
-                    * TSTransform::from_scaling(real_zoom_delta)
-                    * TSTransform::from_translation(-pointer_in_layer.to_vec2());
+        if let Some(id) = selected_asset_id {
+            if let Ok(graph) = AssetRegistry::get().load_by_id::<AnimationGraph>(id) {
+                self.selected_graph = Some(graph);
             }
         }
-
-        for (index, node) in self.graph.raw_nodes().iter().enumerate() {
-            self.node_ui(ui, id, rect, transform, index, node);
+        let Some(graph) = self.selected_graph.clone() else {
+            return;
+        };
+        let Some(asset_id) = AssetRegistry::get().asset_id_from_ref_t(&graph) else {
+            return;
+        };
+        let mut graph = graph.write();
+        let rect_in_ui = ui.max_rect();
+        let mut ui_from_world = re_ui::zoom_pan_area::fit_to_rect_in_scene(rect_in_ui, self.rect);
+        let mut graph_ui = ui.new_child(
+            UiBuilder::new()
+                .layer_id(LayerId::new(Order::Middle, ui.layer_id().id))
+                .max_rect(ui.max_rect()),
+        );
+        let resp = re_ui::zoom_pan_area::zoom_pan_area(&mut graph_ui, &mut ui_from_world, |ui| {
+            self.draw_graph(ui, &mut graph, asset_id, selected_id);
+        });
+        if resp.secondary_clicked() {
+            if let Some(pos) = ui.input(|input| input.pointer.interact_pos()) {
+                let transform = ui
+                    .ctx()
+                    .layer_transform_from_global(LayerId::new(
+                        ui.layer_id().order,
+                        ui.id().with("zoom_pan_area"),
+                    ))
+                    .unwrap_or_default();
+                self.latest_pos = transform * pos;
+            }
         }
-
-        let mut edge_map: HashMap<[NodeIndex; 2], Vec<EdgeIndex>> = Default::default();
-        for (index, edge) in self.graph.raw_edges().iter().enumerate() {
-            let mut key = [edge.source(), edge.target()];
-            key.sort();
-            edge_map.entry(key).or_default().push(EdgeIndex::new(index));
-        }
-        for ([source, target], edges) in edge_map {
-            self.edge_ui(ui, id, transform, source, target, edges);
-        }
+        resp.context_menu(|ui| {
+            ui.set_max_width(200.0);
+            ui.menu_button("Create state", |ui| {
+                if ui.button("Animation").clicked() {
+                    graph.add_node(AnimationNode {
+                        id: Uuid::new_v4(),
+                        name: "Animation".to_string(),
+                        motion: AnimationMotion::AnimationClip(Default::default()),
+                        position: self.latest_pos,
+                    });
+                    ui.close_menu();
+                }
+                if ui.button("Blend Tree").clicked() {
+                    graph.add_node(AnimationNode {
+                        id: Uuid::new_v4(),
+                        name: "Blend Tree".to_string(),
+                        motion: AnimationMotion::BlendTree1D(Default::default()),
+                        position: self.latest_pos,
+                    });
+                    ui.close_menu();
+                }
+            });
+        });
+        self.rect = ui_from_world.inverse() * rect_in_ui;
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -108,104 +137,197 @@ impl Panel for PanelAnimator {
 }
 
 impl PanelAnimator {
-    fn node_ui(
-        &self,
-        ui: &mut Ui,
-        id: Id,
-        rect: Rect,
-        transform: TSTransform,
-        index: usize,
-        node: &Node<String>,
-    ) {
-        let id = id.with(("node", index));
-        let window_layer = ui.layer_id();
-        let res = egui::Area::new(id)
-            .default_pos(egui::Pos2 {
-                x: 0.0,
-                y: index as f32 * 50.0,
-            })
-            .sense(Sense::click_and_drag())
-            .order(Order::Middle)
-            .show(ui.ctx(), |ui| {
-                ui.set_clip_rect(transform.inverse() * rect);
-                egui::Frame::default()
-                    .inner_margin(Margin::same(10.0 / self.zoom_factor))
-                    .stroke(Stroke::new(1.0 / self.zoom_factor, Color32::DARK_GRAY))
-                    .fill(ui.style().visuals.window_fill)
-                    .show(ui, |ui| {
-                        let font_id = egui::FontId::proportional(14.0 * self.zoom_factor);
-                        ui.style_mut().wrap_mode = Some(TextWrapMode::Extend);
-                        ui.style_mut().visuals.override_text_color = Some(Color32::WHITE);
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(node.weight.as_str()).font(font_id),
-                            )
-                            .selectable(false)
-                            .sense(Sense::hover()),
-                        );
-                    });
-            })
-            .response
-            .on_hover_cursor(CursorIcon::Move);
-        if res.clicked() || res.dragged() {
-            res.request_focus();
-        }
-        if res.has_focus() {
-            ui.ctx()
-                .layer_painter(LayerId::new(Order::Foreground, id.with("top")))
-                .rect_stroke(transform * res.rect, 0.0, Stroke::new(1.0, Color32::WHITE));
-        }
-        ui.ctx().set_transform_layer(res.layer_id, transform);
-        ui.ctx().set_sublayer(window_layer, res.layer_id);
+    fn stroke() -> Stroke {
+        Stroke::new(1.5, Color32::GRAY)
     }
 
-    fn edge_ui(
-        &self,
+    fn hovered_stroke() -> Stroke {
+        Stroke::new(3.0, Color32::WHITE)
+    }
+
+    fn selected_stroke(ui: &mut Ui) -> Stroke {
+        Stroke::new(3.0, ui.visuals().selection.bg_fill)
+    }
+
+    fn draw_graph(
+        &mut self,
         ui: &mut Ui,
-        id: Id,
-        transform: TSTransform,
-        source: NodeIndex,
-        target: NodeIndex,
-        edges: Vec<EdgeIndex>,
+        graph: &mut AnimationGraph,
+        asset_id: Uuid,
+        selected_id: Option<Uuid>,
     ) {
-        let Some(src_state) = egui::AreaState::load(ui.ctx(), id.with(("node", source.index())))
-        else {
-            return;
+        let nodes = graph.node_indices().collect::<Vec<_>>();
+        let mut any_node_hovered = false;
+        for node in nodes {
+            any_node_hovered |= self
+                .draw_node(ui, graph, node, asset_id, selected_id)
+                .hovered();
+        }
+        let mut edge_map: HashMap<[NodeIndex; 2], Vec<EdgeIndex>> = Default::default();
+        for edge in graph.edge_indices() {
+            if let Some((source, target)) = graph.edge_endpoints(edge) {
+                let mut key = [source, target];
+                key.sort();
+                edge_map.entry(key).or_default().push(edge);
+            }
+        }
+        let edge_layer_id = LayerId::new(Order::Background, ui.layer_id().id.with("edges"));
+        let mut edge_ui = ui.new_child(
+            UiBuilder::new()
+                .layer_id(edge_layer_id)
+                .sense(Sense::hover())
+                .max_rect(ui.max_rect()),
+        );
+        ui.ctx().set_transform_layer(
+            edge_layer_id,
+            ui.ctx()
+                .layer_transform_to_global(ui.layer_id())
+                .unwrap_or_default(),
+        );
+        for ([source, target], edges) in edge_map {
+            self.draw_edges(
+                &mut edge_ui,
+                graph,
+                source,
+                target,
+                edges.as_slice(),
+                asset_id,
+                selected_id,
+                any_node_hovered,
+            );
+        }
+        self.draw_new_transition(&mut edge_ui, graph);
+    }
+
+    fn draw_node(
+        &mut self,
+        ui: &mut Ui,
+        graph: &mut AnimationGraph,
+        node: NodeIndex,
+        asset_id: Uuid,
+        selected_id: Option<Uuid>,
+    ) -> Response {
+        let visuals = &ui.style().visuals;
+        let selected = if let Some(id) = selected_id {
+            graph[node].id == id
+        } else {
+            false
         };
-        let Some(dst_state) = egui::AreaState::load(ui.ctx(), id.with(("node", target.index())))
-        else {
-            return;
+        let job = LayoutJob::simple_singleline(
+            graph[node].name.clone(),
+            FontId::proportional(24.0),
+            visuals.strong_text_color(),
+        );
+        let galley = ui.fonts(|fonts| fonts.layout_job(job));
+
+        let graph = graph.deref_mut();
+
+        let padding = 15.0;
+        let rounding = 5.0;
+        let stroke = if selected {
+            Stroke::new(1.0, visuals.strong_text_color())
+        } else {
+            Stroke::new(1.0, visuals.weak_text_color())
         };
-        let Some(src_pos) = src_state.pivot_pos else {
-            return;
-        };
-        let Some(dst_pos) = dst_state.pivot_pos else {
-            return;
-        };
-        let Some(src_size) = src_state.size else {
-            return;
-        };
-        let Some(dst_size) = dst_state.size else {
-            return;
+        let bg = if selected {
+            visuals.selection.bg_fill
+        } else {
+            visuals.widgets.noninteractive.bg_fill
         };
 
-        let endpoints = [
-            transform * src_pos + (transform.scaling * src_size / 2.0),
-            transform * dst_pos + (transform.scaling * dst_size / 2.0),
-        ];
+        let size = galley.rect.expand(padding + stroke.width).size();
+        let max_rect = Rect::from_center_size(graph[node].position, size);
+        let builder = UiBuilder::new()
+            .max_rect(max_rect)
+            .sense(Sense::click_and_drag());
+        let mut node_ui = ui.new_child(builder);
+
+        egui::Frame::default()
+            .inner_margin(padding)
+            .stroke(stroke)
+            .fill(bg)
+            .rounding(rounding)
+            .show(&mut node_ui, |ui| {
+                ui.add(egui::Label::new(galley).selectable(false));
+            });
+
+        let res = node_ui.response();
+        res.context_menu(|ui| {
+            if ui.button("Make Transition").clicked() {
+                self.source_node = Some(node);
+                ui.close_menu();
+            }
+            if ui.button("Remove").clicked() {
+                graph.remove_node(node);
+                ui.close_menu();
+            }
+        });
+        if res.dragged() {
+            if let Some(node) = graph.node_weight_mut(node) {
+                node.position += res.drag_delta();
+            }
+        }
+        if res.clicked() {
+            if let Some(source) = self.source_node {
+                if source != node {
+                    graph.add_edge(
+                        source,
+                        node,
+                        AnimationTransition {
+                            id: Uuid::new_v4(),
+                            name: "Transition".to_string(),
+                            duration: 0.5,
+                            has_exit_time: false,
+                            exit_time: 0.0,
+                            conditions: vec![],
+                        },
+                    );
+                    self.source_node = None;
+                }
+            } else {
+                EditorAppState::get_mut().selection = if selected {
+                    Selection::from_id(SelectionType::Asset, asset_id)
+                } else {
+                    Selection::from_id(SelectionType::AnimationNode(asset_id), graph[node].id)
+                };
+            }
+        }
+        res
+    }
+
+    fn draw_edges(
+        &mut self,
+        ui: &mut Ui,
+        graph: &mut AnimationGraph,
+        source: NodeIndex,
+        target: NodeIndex,
+        edges: &[EdgeIndex],
+        asset_id: Uuid,
+        selected_id: Option<Uuid>,
+        any_node_hovered: bool,
+    ) {
+        let edge_directions = edges
+            .iter()
+            .map(|ei| {
+                if let Some((start, _)) = graph.edge_endpoints(*ei) {
+                    start == source
+                } else {
+                    true
+                }
+            })
+            .collect::<Vec<_>>();
+        let endpoints = [graph[source].position, graph[target].position];
         let response = ui.allocate_rect(
-            Rect::from_two_pos(endpoints[0], endpoints[1]),
-            Sense::hover(),
+            Rect::from_two_pos(endpoints[0], endpoints[1]).expand(30.0),
+            Sense::click(),
         );
-        let stroke = Stroke::new(2.0, Color32::LIGHT_GRAY);
-        let hovered_stroke = Stroke::new(5.0, Color32::LIGHT_GRAY);
-        let spacing = 15.0 * self.zoom_factor;
+        let spacing = 16.0;
         let hitbox_size = spacing / 2.0;
         let dir = (endpoints[1] - endpoints[0]).normalized();
         let perp_dir = dir.perp().normalized();
         let mut start_offset = -(edges.len() as f32 - 1.0) / 2.0;
         let end_offset = start_offset.abs().ceil();
-        let interact_rect = response.rect.expand(30.0);
+        let mut idx = 0;
         while start_offset <= end_offset {
             let offset = perp_dir * spacing * start_offset;
             let p0 = endpoints[0] + offset;
@@ -216,13 +338,78 @@ impl PanelAnimator {
                 p1 + perp_dir * hitbox_size,
                 p1 - perp_dir * hitbox_size,
             ];
-            let stroke = if ui.rect_contains_pointer(interact_rect) && ui.pointer_in_poly(poly) {
-                hovered_stroke
+            let selected = if let Some(id) = selected_id {
+                graph[edges[idx]].id == id
             } else {
-                stroke
+                false
             };
+            let hovered = !any_node_hovered
+                && ui.rect_contains_pointer2(response.interact_rect)
+                && ui.poly_contains_pointer(poly);
+            let stroke = if selected {
+                Self::selected_stroke(ui)
+            } else if hovered {
+                Self::hovered_stroke()
+            } else {
+                Self::stroke()
+            };
+            if hovered && ui.input(|input| input.pointer.primary_released()) {
+                let selection = if selected {
+                    Selection::from_id(SelectionType::Asset, asset_id)
+                } else {
+                    Selection::from_id(
+                        SelectionType::AnimationTransition(asset_id),
+                        graph[edges[idx]].id,
+                    )
+                };
+                EditorAppState::get_mut().selection = selection;
+            }
             ui.painter().line_segment([p0, p1], stroke);
+            Self::draw_arrow(
+                ui.painter(),
+                Pos2::new((p0.x + p1.x) / 2.0, (p0.y + p1.y) / 2.0),
+                if edge_directions[idx] { dir } else { -dir },
+                if selected || hovered { 14.0 } else { 8.0 },
+                stroke.color,
+            );
             start_offset += 1.0;
+            idx += 1;
         }
+    }
+
+    fn draw_new_transition(&mut self, ui: &mut Ui, graph: &mut AnimationGraph) {
+        let Some(mut cursor_pos) = ui.input(|input| input.pointer.latest_pos()) else {
+            return;
+        };
+        if let Some(transform) = ui.ctx().layer_transform_from_global(ui.layer_id()) {
+            cursor_pos = transform * cursor_pos;
+        }
+        let Some(source_node) = self.source_node else {
+            return;
+        };
+        let source_pos = graph[source_node].position;
+        let stroke = Self::hovered_stroke();
+        ui.painter().line_segment([source_pos, cursor_pos], stroke);
+        Self::draw_arrow(
+            ui.painter(),
+            (source_pos + Vec2::new(cursor_pos.x, cursor_pos.y)) / 2.0,
+            (cursor_pos - source_pos).normalized(),
+            14.0,
+            stroke.color,
+        );
+    }
+
+    fn draw_arrow(painter: &Painter, tip: Pos2, direction: Vec2, size: f32, color: Color32) {
+        let perpendicular = Vec2::new(-direction.y, direction.x) * 0.5 * size;
+
+        let p1 = tip - direction * size + perpendicular;
+        let p2 = tip - direction * size - perpendicular;
+
+        // Draw a filled triangle for the arrow
+        painter.add(Shape::convex_polygon(
+            vec![tip, p1, p2],
+            color,
+            Stroke::NONE,
+        ));
     }
 }

@@ -46,7 +46,14 @@ impl From<PrefabShadow> for Prefab {
 }
 
 impl Asset for Prefab {
-    fn get_file_extensions() -> &'static [&'static str]
+    fn asset_name() -> &'static str
+    where
+        Self: Sized,
+    {
+        "Prefab"
+    }
+
+    fn file_extensions() -> &'static [&'static str]
     where
         Self: Sized,
     {

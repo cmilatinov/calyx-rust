@@ -181,9 +181,17 @@ impl Default for Mesh {
 }
 
 impl Asset for Mesh {
-    fn get_file_extensions() -> &'static [&'static str] {
+    fn asset_name() -> &'static str
+    where
+        Self: Sized,
+    {
+        "Mesh"
+    }
+
+    fn file_extensions() -> &'static [&'static str] {
         &["obj"]
     }
+
     fn from_file(path: &Path) -> Result<LoadedAsset<Self>, AssetError> {
         let scene = Scene::from_file(
             path.to_str().unwrap(),

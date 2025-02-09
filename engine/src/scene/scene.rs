@@ -1,6 +1,5 @@
 use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
-use std::io::BufReader;
 use std::path::Path;
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -102,7 +101,14 @@ impl Default for Scene {
 }
 
 impl Asset for Scene {
-    fn get_file_extensions() -> &'static [&'static str]
+    fn asset_name() -> &'static str
+    where
+        Self: Sized,
+    {
+        "Scene"
+    }
+
+    fn file_extensions() -> &'static [&'static str]
     where
         Self: Sized,
     {
@@ -113,15 +119,7 @@ impl Asset for Scene {
     where
         Self: Sized,
     {
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .open(path)
-            .map_err(|_| AssetError::LoadError)?;
-
-        let reader = BufReader::new(file);
-        Ok(LoadedAsset::new(
-            serde_json::from_reader(reader).map_err(|_| AssetError::LoadError)?,
-        ))
+        LoadedAsset::from_json_file(path)
     }
 }
 

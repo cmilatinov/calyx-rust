@@ -1,24 +1,26 @@
 use std::any::{Any, TypeId};
 use std::collections::HashSet;
 
-use convert_case::{Case, Casing};
-use engine::assets::{AssetMeta, AssetRegistry};
-use engine::class_registry::ClassRegistry;
-use engine::component::{ComponentID, ComponentTransform};
-use engine::egui::{PopupCloseBehavior, Response, Ui};
-use engine::reflect::type_registry::TypeRegistry;
-use engine::reflect::{AttributeValue, NamedField, Reflect, TypeInfo};
-use engine::scene::{GameObject, SceneManager};
-use re_ui::{DesignTokens, UiExt};
-
+use crate::inspector::assets::animation_graph_inspector::AnimationGraphInspector;
 use crate::inspector::inspector_registry::InspectorRegistry;
 use crate::inspector::type_inspector::InspectorContext;
 use crate::inspector::widgets::Widgets;
 use crate::panel::Panel;
 use crate::selection::SelectionType;
 use crate::EditorAppState;
+use convert_case::{Case, Casing};
+use engine::assets::animation_graph::AnimationGraph;
+use engine::assets::AssetRegistry;
+use engine::class_registry::ClassRegistry;
+use engine::component::{ComponentID, ComponentTransform};
 use engine::egui;
 use engine::egui::scroll_area::ScrollBarVisibility;
+use engine::egui::{Id, PopupCloseBehavior, Response, Ui};
+use engine::reflect::type_registry::TypeRegistry;
+use engine::reflect::{AttributeValue, NamedField, Reflect, TypeInfo};
+use engine::scene::{GameObject, SceneManager};
+use re_ui::list_item::{LabelContent, ListItem};
+use re_ui::{DesignTokens, UiExt};
 
 #[derive(Default)]
 pub struct PanelInspector;
@@ -101,22 +103,77 @@ impl Panel for PanelInspector {
                         } else if let Some(asset_id) =
                             app_state.selection.first(SelectionType::Asset)
                         {
-                            let registry = AssetRegistry::get();
-                            let Some(AssetMeta {
-                                type_uuid: Some(type_uuid),
-                                ..
-                            }) = registry.asset_meta_from_id(asset_id)
+                            let Some(asset_meta) =
+                                AssetRegistry::get().asset_meta_from_id(asset_id)
                             else {
                                 return;
                             };
+                            let Some((_, type_uuid, type_name)) = asset_meta.type_id else {
+                                return;
+                            };
+                            let registry = InspectorRegistry::get();
+                            let Some(inspector) = registry.asset_inspector_lookup(type_uuid) else {
+                                return;
+                            };
 
-                            if let Some(inspector) =
-                                InspectorRegistry::get().asset_inspector_lookup(type_uuid)
-                            {
-                                ui.section_collapsing_header(registry.asset_name(asset_id))
-                                    .show(ui, |ui| {
+                            let header_id = Id::new(asset_id);
+                            ListItem::new()
+                                .interactive(true)
+                                .force_background(
+                                    re_ui::design_tokens().section_collapsing_header_color(),
+                                )
+                                .show_hierarchical_with_children_unindented(
+                                    ui,
+                                    header_id,
+                                    true,
+                                    LabelContent::new(format!(
+                                        "[{}] {}",
+                                        type_name, asset_meta.name
+                                    ))
+                                    .truncate(true)
+                                    .always_show_buttons(true)
+                                    .with_buttons(|ui| {
+                                        let popup_id = header_id.with("popup");
+                                        let res = ui.small_icon_button(&re_ui::icons::MORE);
+                                        if res.clicked() {
+                                            ui.memory_mut(|mem| mem.open_popup(popup_id))
+                                        }
+                                        ui.list_item_popup(popup_id, &res, 0.0, |ui| {
+                                            if ui
+                                                .list_item()
+                                                .show_flat(ui, LabelContent::new("Save"))
+                                                .clicked()
+                                            {
+                                                AssetRegistry::get().persist(asset_id);
+                                            }
+                                        });
+                                        res
+                                    }),
+                                    |ui| {
                                         inspector.show_inspector(ui, asset_id);
-                                    });
+                                    },
+                                );
+                        } else if let SelectionType::AnimationNode(asset_id) =
+                            app_state.selection.ty()
+                        {
+                            if let Some(id) = app_state.selection.iter().next() {
+                                if let Ok(graph_ref) =
+                                    AssetRegistry::get().load_by_id::<AnimationGraph>(asset_id)
+                                {
+                                    let mut graph = graph_ref.write();
+                                    AnimationGraphInspector::node(ui, &mut graph, id);
+                                }
+                            }
+                        } else if let SelectionType::AnimationTransition(asset_id) =
+                            app_state.selection.ty()
+                        {
+                            if let Some(id) = app_state.selection.iter().next() {
+                                if let Ok(graph_ref) =
+                                    AssetRegistry::get().load_by_id::<AnimationGraph>(asset_id)
+                                {
+                                    let mut graph = graph_ref.write();
+                                    AnimationGraphInspector::transition(ui, &mut graph, id);
+                                }
                             }
                         }
                     });
@@ -167,14 +224,14 @@ impl PanelInspector {
         let name = Self::display_name(instance);
         let id = ui.make_persistent_id(name);
         let type_id = instance.as_any().type_id();
-        let res = re_ui::list_item::ListItem::new()
+        let res = ListItem::new()
             .interactive(true)
             .force_background(re_ui::design_tokens().section_collapsing_header_color())
             .show_hierarchical_with_children_unindented(
                 ui,
                 id,
                 true,
-                re_ui::list_item::LabelContent::new(name).truncate(true),
+                LabelContent::new(name).truncate(true),
                 |ui| {
                     if let Some(inspector) = InspectorRegistry::get().type_inspector_lookup(type_id)
                     {
@@ -255,7 +312,7 @@ impl PanelInspector {
             .interactive(num_components > entity_components.len())
             .show_flat(
                 ui,
-                re_ui::list_item::LabelContent::new(" Add Component")
+                LabelContent::new(" Add Component")
                     .always_show_buttons(true)
                     .truncate(true)
                     .with_icon(&re_ui::icons::ADD),

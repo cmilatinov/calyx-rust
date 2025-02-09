@@ -3,16 +3,19 @@ use crate::panel::Panel;
 use crate::selection::{Selection, SelectionType};
 use crate::widgets::FileButton;
 use crate::{icons, EditorAppState};
+use engine::assets::animation_graph::AnimationGraph;
 use engine::assets::AssetRegistry;
-use engine::egui;
 use engine::egui::text::LayoutJob;
 use engine::egui::{
-    include_image, FontFamily, FontId, ImageSource, Response, TextFormat, Ui, Vec2,
+    include_image, FontFamily, FontId, Frame, ImageSource, Margin, Rect, Response, Sense,
+    TextFormat, Ui, Vec2,
 };
 use engine::relative_path::PathExt;
+use engine::{egui, serde_json};
 use re_ui::list_item::ShowCollapsingResponse;
 use std::any::Any;
-use std::fs::{DirEntry, ReadDir};
+use std::fs::{DirEntry, OpenOptions, ReadDir};
+use std::io::BufWriter;
 use std::path::PathBuf;
 use std::{fs, io};
 
@@ -57,12 +60,10 @@ impl Panel for PanelContentBrowser {
         if let Ok(entries) = fs {
             for entry in entries.flatten() {
                 let curr_path = entry.path();
-                if curr_path.is_file() {
-                    if let Some(ext) = curr_path.extension().and_then(|e| e.to_str()) {
-                        if ext == "meta" {
-                            continue;
-                        }
-                    }
+                if curr_path.is_file()
+                    && curr_path.extension().and_then(|e| e.to_str()) == Some("meta")
+                {
+                    continue;
                 }
                 nodes.push(curr_path);
             }
@@ -103,69 +104,90 @@ impl Panel for PanelContentBrowser {
         const TOTAL_WIDTH: f32 = ICON_SIZE + ICON_PADDING_X * 2.0;
         let folder_image = include_image!("../../../resources/icons/folder_large.png");
         let file_image = include_image!("../../../resources/icons/body_dark_large.png");
-        egui::CentralPanel::default().show_inside(ui, |ui| {
-            egui::ScrollArea::both().show(ui, |ui| {
-                let width = ui.available_width();
-                let mut num_nodes_per_row = (width / TOTAL_WIDTH) as usize;
-                if num_nodes_per_row == 0 {
-                    num_nodes_per_row = 1;
-                }
-                egui::Grid::new("content_browser").show(ui, |ui| {
-                    for (i, node) in nodes.iter().enumerate() {
-                        let is_dir = node.is_dir();
-                        let is_selected = self.is_selected(node, is_dir);
-                        let res = PanelContentBrowser::render_file_button(
-                            ui,
-                            node.file_name().unwrap().to_str().unwrap(),
-                            if is_dir {
-                                folder_image.clone()
-                            } else {
-                                file_image.clone()
-                            },
-                            Vec2::splat(ICON_SIZE),
-                            ICON_SPACING,
-                            Vec2::new(ICON_PADDING_X, ICON_PADDING_Y),
-                            is_selected,
-                        );
-                        if res.clicked() || res.secondary_clicked() {
-                            self.set_selected_file(node.clone());
-                        }
-                        if is_selected && is_dir && res.double_clicked() {
-                            self.set_selected_folder(node.clone());
-                        }
-                        if (i + 1) % num_nodes_per_row == 0 {
-                            ui.add_space(ui.available_width());
-                            ui.end_row();
-                        }
-                        if !is_dir {
-                            let ext = node
-                                .extension()
-                                .and_then(|e| e.to_str())
-                                .unwrap_or_default();
-                            let registry = AssetRegistry::get();
-                            let Some(type_id) = registry.asset_type_from_ext(ext) else {
-                                return;
-                            };
-                            let Some(asset_id) = registry.asset_id_from_path(node) else {
-                                return;
-                            };
-                            let registry = InspectorRegistry::get();
-                            let Some(inspector) = registry.asset_inspector_lookup(type_id) else {
-                                return;
-                            };
-                            if inspector.has_context_menu() {
-                                res.context_menu(|ui| {
-                                    inspector.show_context_menu(ui, asset_id);
-                                });
+        egui::CentralPanel::default()
+            .frame(Frame {
+                inner_margin: Margin::same(3.0),
+                ..Frame::central_panel(ui.style())
+            })
+            .show_inside(ui, |ui| {
+                egui::ScrollArea::both().show(ui, |ui| {
+                    ui.set_clip_rect(ui.max_rect().expand(3.0));
+                    let width = ui.available_width();
+                    let spacing = ui.style().spacing.item_spacing;
+                    ui.style_mut().spacing.item_spacing = Vec2::ZERO;
+                    let num_nodes_per_row = ((width / TOTAL_WIDTH) as usize).max(1);
+                    ui.horizontal_wrapped(|ui| {
+                        for (idx, node) in nodes.iter().enumerate() {
+                            let is_dir = node.is_dir();
+                            let is_selected = self.is_selected(node, is_dir);
+                            let res = PanelContentBrowser::render_file_button(
+                                ui,
+                                node.file_name().unwrap().to_str().unwrap(),
+                                if is_dir {
+                                    folder_image.clone()
+                                } else {
+                                    file_image.clone()
+                                },
+                                Vec2::splat(ICON_SIZE),
+                                ICON_SPACING,
+                                Vec2::new(ICON_PADDING_X, ICON_PADDING_Y),
+                                is_selected,
+                            );
+                            if res.clicked() || res.secondary_clicked() {
+                                self.set_selected_file(node.clone());
+                            }
+                            if is_selected && is_dir && res.double_clicked() {
+                                self.set_selected_folder(node.clone());
+                            }
+                            if idx % num_nodes_per_row == num_nodes_per_row - 1 {
+                                let remaining_width =
+                                    width - num_nodes_per_row as f32 * TOTAL_WIDTH - 1.0;
+                                if remaining_width > 0.0 {
+                                    let (_, rect) = ui.allocate_space(Vec2::new(
+                                        remaining_width,
+                                        ui.available_height(),
+                                    ));
+                                    self.empty_space_interaction(ui, rect);
+                                }
+                            }
+                            if !is_dir {
+                                let ext = node
+                                    .extension()
+                                    .and_then(|e| e.to_str())
+                                    .unwrap_or_default();
+                                let registry = AssetRegistry::get();
+                                let Some((_, type_uuid, _)) = registry.asset_type_from_ext(ext)
+                                else {
+                                    continue;
+                                };
+                                let Some(asset_id) = registry.asset_id_from_path(node) else {
+                                    continue;
+                                };
+                                let registry = InspectorRegistry::get();
+                                let Some(inspector) = registry.asset_inspector_lookup(type_uuid)
+                                else {
+                                    continue;
+                                };
+                                if inspector.has_context_menu() {
+                                    res.context_menu(|ui| {
+                                        inspector.show_context_menu(ui, asset_id);
+                                    });
+                                }
                             }
                         }
-                    }
+                        let remaining_width =
+                            width - (nodes.len() % num_nodes_per_row) as f32 * TOTAL_WIDTH - 1.0;
+                        if remaining_width > 0.0 {
+                            let (_, rect) = ui
+                                .allocate_space(Vec2::new(remaining_width, ui.available_height()));
+                            self.empty_space_interaction(ui, rect);
+                        }
+                    });
+                    ui.style_mut().spacing.item_spacing = spacing;
+                    let (_, rect) = ui.allocate_space(ui.available_size());
+                    self.empty_space_interaction(ui, rect);
                 });
-                let mut size = ui.available_size();
-                size.y = size.y.max(15.0);
-                ui.allocate_space(size);
             });
-        });
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -178,6 +200,27 @@ impl Panel for PanelContentBrowser {
 }
 
 impl PanelContentBrowser {
+    fn empty_space_interaction(&mut self, ui: &mut Ui, rect: Rect) {
+        ui.allocate_rect(rect, Sense::click()).context_menu(|ui| {
+            ui.menu_button("Create New", |ui| {
+                if ui.button("Animation Graph").clicked() {
+                    let mut path = self.selected_folder.clone();
+                    path.push("untitled.cxanim");
+                    if let Ok(file) = OpenOptions::new()
+                        .create(true)
+                        .write(true)
+                        .truncate(true)
+                        .open(path)
+                    {
+                        let writer = BufWriter::new(file);
+                        let _ = serde_json::to_writer_pretty(writer, &AnimationGraph::default());
+                    }
+                    ui.close_menu();
+                }
+            });
+        });
+    }
+
     fn render_directory(&mut self, ui: &mut Ui, entry: DirEntry, children: io::Result<ReadDir>) {
         let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
         if !is_dir {
@@ -274,8 +317,6 @@ impl PanelContentBrowser {
     }
 
     fn set_selected_file(&mut self, path: PathBuf) {
-        // let root = AssetRegistry::get().root_path().clone();
-        // let path = path.relative_to(root).unwrap().to;
         EditorAppState::get_mut().selection = AssetRegistry::get()
             .asset_id_from_path(&path)
             .map(|id| Selection::from_id(SelectionType::Asset, id))

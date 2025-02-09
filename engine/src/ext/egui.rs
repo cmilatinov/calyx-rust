@@ -1,5 +1,5 @@
 use egui::{
-    emath, CursorIcon, Id, InnerResponse, LayerId, Order, Pos2, Sense, Ui, UiBuilder, Vec2,
+    emath, CursorIcon, Id, InnerResponse, LayerId, Order, Pos2, Rect, Sense, Ui, UiBuilder, Vec2,
 };
 use std::any::Any;
 
@@ -53,7 +53,9 @@ pub trait EguiUiExt {
     where
         Payload: Any + Send + Sync;
 
-    fn pointer_in_poly(&self, points: &[Pos2]) -> bool;
+    fn rect_contains_pointer2(&self, rect: Rect) -> bool;
+
+    fn poly_contains_pointer(&self, points: &[Pos2]) -> bool;
 }
 
 impl EguiUiExt for Ui {
@@ -99,10 +101,28 @@ impl EguiUiExt for Ui {
         InnerResponse::new(inner, dnd_response | response)
     }
 
-    fn pointer_in_poly(&self, points: &[Pos2]) -> bool {
-        let Some(pointer_pos) = self.input(|i| i.pointer.latest_pos()) else {
+    fn rect_contains_pointer2(&self, rect: Rect) -> bool {
+        let Some(mut pointer_pos) = self.input(|i| i.pointer.latest_pos()) else {
             return false;
         };
+
+        let layer_id = self.layer_id();
+        if let Some(transform) = self.ctx().layer_transform_from_global(layer_id) {
+            pointer_pos = transform * pointer_pos;
+        }
+
+        rect.contains(pointer_pos)
+    }
+
+    fn poly_contains_pointer(&self, points: &[Pos2]) -> bool {
+        let Some(mut pointer_pos) = self.input(|i| i.pointer.latest_pos()) else {
+            return false;
+        };
+
+        let layer_id = self.layer_id();
+        if let Some(transform) = self.ctx().layer_transform_from_global(layer_id) {
+            pointer_pos = transform * pointer_pos;
+        }
 
         let ui_rect = self.max_rect();
         let start = Pos2::new(ui_rect.min.x, pointer_pos.y);

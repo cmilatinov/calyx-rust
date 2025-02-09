@@ -4,7 +4,8 @@ use crate::{icons, EditorAppState};
 use egui::Ui;
 use engine::egui::load::SizedTexture;
 use engine::egui::{
-    Align2, Color32, Image, ImageSource, Key, PointerButton, Pos2, Sense, TextStyle,
+    Align2, Color32, Image, ImageSource, Key, Modifiers, PointerButton, Pos2, Response, Sense,
+    TextStyle,
 };
 use engine::glm::{DMat4, Mat4};
 use engine::input::{Input, InputState};
@@ -65,7 +66,7 @@ impl Panel for PanelViewport {
         .show(ui, |ui| {
             self.action_bar(ui, &mut app_state);
             let res = self.viewport(ui, &mut app_state);
-            self.gizmo(ui, &mut app_state, &res.rect);
+            self.gizmo(ui, &mut app_state, &res);
         });
     }
 
@@ -129,8 +130,8 @@ impl PanelViewport {
         res
     }
 
-    fn gizmo(&mut self, ui: &mut Ui, app_state: &mut EditorAppState, viewport: &egui::Rect) {
-        ui.set_clip_rect(*viewport);
+    fn gizmo(&mut self, ui: &mut Ui, app_state: &mut EditorAppState, viewport_response: &Response) {
+        ui.set_clip_rect(viewport_response.rect);
         let snap = ui.input(|input| input.modifiers.ctrl);
         let snap_coarse = ui.input(|input| input.modifiers.shift);
         let snap_distance = if snap_coarse { 10.0 } else { 1.0 };
@@ -158,7 +159,7 @@ impl PanelViewport {
             self.gizmo.update_config(GizmoConfig {
                 view_matrix,
                 projection_matrix,
-                viewport: *viewport,
+                viewport: viewport_response.rect,
                 modes: app_state.gizmo_modes,
                 mode_override: None,
                 orientation: GizmoOrientation::Global,
@@ -181,16 +182,19 @@ impl PanelViewport {
                 self.gizmo_status(ui, &result);
             }
         }
-        if ui.input(|input| input.key_pressed(Key::Q)) {
+        if viewport_response.dragged_by(PointerButton::Secondary) {
+            return;
+        }
+        if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Q)) {
             app_state.gizmo_modes = GizmoMode::all_translate();
         }
-        if ui.input(|input| input.key_pressed(Key::E)) {
+        if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::E)) {
             app_state.gizmo_modes = GizmoMode::all_rotate();
         }
-        if ui.input(|input| input.key_pressed(Key::R)) {
+        if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::R)) {
             app_state.gizmo_modes = GizmoMode::all_scale();
         }
-        if ui.input(|input| input.key_pressed(Key::Z)) {
+        if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Z)) {
             app_state.gizmo_orientation = if app_state.gizmo_orientation == GizmoOrientation::Global
             {
                 GizmoOrientation::Local

@@ -23,7 +23,14 @@ pub struct Texture {
 }
 
 impl Asset for Texture {
-    fn get_file_extensions() -> &'static [&'static str] {
+    fn asset_name() -> &'static str
+    where
+        Self: Sized,
+    {
+        "Texture"
+    }
+
+    fn file_extensions() -> &'static [&'static str] {
         &["png", "jpg", "jpeg", "webp"]
     }
 

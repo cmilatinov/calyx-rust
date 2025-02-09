@@ -43,7 +43,6 @@ use winit::platform::windows::EventLoopBuilderExtWindows;
 #[cfg(feature = "x11")]
 use winit::platform::x11::EventLoopBuilderExtX11;
 
-mod animator;
 mod camera;
 mod icons;
 mod inspector;

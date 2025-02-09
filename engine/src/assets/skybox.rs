@@ -26,7 +26,14 @@ pub struct SkyboxShaders<'a> {
 }
 
 impl Asset for Skybox {
-    fn get_file_extensions() -> &'static [&'static str] {
+    fn asset_name() -> &'static str
+    where
+        Self: Sized,
+    {
+        "Skybox"
+    }
+
+    fn file_extensions() -> &'static [&'static str] {
         &["exr", "hdr"]
     }
 

@@ -1,6 +1,10 @@
 use super::{Component, ComponentBone, ComponentSkinnedMesh, ReflectComponent};
 use crate as engine;
 use crate::assets::animation::{Animation, AnimationKeyFrames, QuatKeyFrame, VectorKeyFrame};
+use crate::assets::animation_graph::{
+    AnimationCondition, AnimationGraph, AnimationParameterCondition, AnimationParameterValue,
+    BoolCondition, FloatCondition, IntCondition,
+};
 use crate::assets::mesh::BoneTransform;
 use crate::core::{Ref, Time, TimeType};
 use crate::input::Input;
@@ -13,8 +17,21 @@ use crate::{
 };
 use glm::{Mat4, Quat, Vec3, Vec4};
 use nalgebra::Unit;
+use petgraph::prelude::{EdgeIndex, EdgeRef, NodeIndex};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
+use std::collections::HashMap;
+use uuid::Uuid;
+
+#[derive(Clone, Copy)]
+struct AnimatorTransition {
+    transition: EdgeIndex,
+    source_time_start: f32,
+    time: f32,
+    has_exit_time: bool,
+    exit_time: f32,
+    duration: f32,
+}
 
 #[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "f24db81d-7054-40b8-8f3c-d9740c03948e"]
@@ -25,6 +42,16 @@ pub struct ComponentAnimator {
     pub animation: Option<Ref<Animation>>,
     pub time: TimeType,
     pub draw_debug_skeleton: bool,
+    pub animation_graph: Option<Ref<AnimationGraph>>,
+    #[reflect_skip]
+    #[serde(skip)]
+    current_state: Option<NodeIndex>,
+    #[reflect_skip]
+    #[serde(skip)]
+    current_transition: Option<AnimatorTransition>,
+    #[reflect_skip]
+    #[serde(skip)]
+    parameters: HashMap<Uuid, AnimationParameterValue>,
     #[reflect_skip]
     #[serde(skip)]
     node_transforms: Vec<BoneTransform>,
@@ -35,8 +62,20 @@ impl Component for ComponentAnimator {
         self.apply_animation_pose(scene, game_object);
     }
 
+    fn start(&mut self, scene: &mut Scene, game_object: GameObject) {
+        let Some(graph_ref) = self.animation_graph.clone() else {
+            return;
+        };
+        let graph = graph_ref.read();
+        self.current_state = graph
+            .start_node
+            .and_then(|id| graph.node_indices().find(|n| graph[*n].id == id));
+    }
+
     fn update(&mut self, scene: &mut Scene, game_object: GameObject, _input: &Input) {
-        self.apply_animation_pose(scene, game_object);
+        self.step_fsm();
+        let duration = self.apply_animation_pose(scene, game_object);
+        self.update_time(duration);
     }
 
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {
@@ -57,7 +96,118 @@ impl Component for ComponentAnimator {
 }
 
 impl ComponentAnimator {
-    fn apply_animation_pose(&mut self, scene: &mut Scene, game_object: GameObject) {
+    fn step_fsm(&mut self) {
+        let new_transition;
+        let Some(graph_ref) = self.animation_graph.clone() else {
+            return;
+        };
+        let graph = graph_ref.read();
+        {
+            if let Some(transition) = self.current_transition {
+                if transition.time > transition.duration {
+                    self.end_transition(&graph);
+                }
+                return;
+            }
+            let Some(mut transitions) = self.current_state.map(|n| graph.edges(n)) else {
+                return;
+            };
+            let Some(transition) = transitions.find(|transition| {
+                transition
+                    .weight()
+                    .conditions
+                    .iter()
+                    .all(|cond| Self::condition_satisfied(&self.parameters, cond))
+            }) else {
+                return;
+            };
+            new_transition = transition.id();
+        }
+        self.begin_transition(new_transition, &graph);
+    }
+
+    fn begin_transition(&mut self, transition: EdgeIndex, graph: &AnimationGraph) {
+        if let Some((duration, has_exit_time, exit_time)) =
+            graph.edge_weight(transition).map(|transition| {
+                (
+                    transition.duration,
+                    transition.has_exit_time,
+                    transition.exit_time,
+                )
+            })
+        {
+            self.current_transition = Some(AnimatorTransition {
+                transition,
+                source_time_start: self.time,
+                time: 0.0,
+                duration,
+                has_exit_time,
+                exit_time,
+            });
+        }
+    }
+
+    fn end_transition(&mut self, graph: &AnimationGraph) {
+        if let Some(transition) = self.current_transition.take() {
+            if let Some((source, target)) = graph.edge_endpoints(transition.transition) {
+                // let source_duration
+                self.current_state = Some(target);
+            }
+        }
+        self.current_transition = None;
+    }
+
+    fn condition_satisfied(
+        parameters: &HashMap<Uuid, AnimationParameterValue>,
+        condition: &AnimationParameterCondition,
+    ) -> bool {
+        parameters
+            .get(&condition.parameter)
+            .map(|p| match (p, &condition.condition) {
+                (_, AnimationCondition::None) => false,
+                (
+                    AnimationParameterValue::Float(param),
+                    AnimationCondition::Float(FloatCondition::Less(value)),
+                ) => *param < *value,
+                (
+                    AnimationParameterValue::Float(param),
+                    AnimationCondition::Float(FloatCondition::Greater(value)),
+                ) => *param > *value,
+                (
+                    AnimationParameterValue::Int(param),
+                    AnimationCondition::Int(IntCondition::Less(value)),
+                ) => *param < *value,
+                (
+                    AnimationParameterValue::Int(param),
+                    AnimationCondition::Int(IntCondition::Greater(value)),
+                ) => *param > *value,
+                (
+                    AnimationParameterValue::Int(param),
+                    AnimationCondition::Int(IntCondition::Equal(value)),
+                ) => *param == *value,
+                (
+                    AnimationParameterValue::Int(param),
+                    AnimationCondition::Int(IntCondition::NotEqual(value)),
+                ) => *param != *value,
+                (
+                    AnimationParameterValue::Bool(param),
+                    AnimationCondition::Bool(BoolCondition::True),
+                ) => *param,
+                (
+                    AnimationParameterValue::Bool(param),
+                    AnimationCondition::Bool(BoolCondition::False),
+                ) => !*param,
+                (AnimationParameterValue::Trigger, AnimationCondition::Trigger) => true,
+                _ => false,
+            })
+            .unwrap_or(false)
+    }
+
+    fn apply_animation_pose(
+        &mut self,
+        scene: &mut Scene,
+        game_object: GameObject,
+    ) -> Option<TimeType> {
         let mut duration = None;
         let skinned_meshes = scene
             .get_descendants_with_component::<ComponentSkinnedMesh>(game_object)
@@ -105,9 +255,17 @@ impl ComponentAnimator {
                 }
             }
         }
-        self.time += Time::delta_time();
-        if let Some(duration) = duration {
+        duration
+    }
+
+    fn update_time(&mut self, animation_duration: Option<TimeType>) {
+        let delta_time = Time::delta_time();
+        self.time += delta_time;
+        if let Some(duration) = animation_duration {
             self.time %= duration;
+        }
+        if let Some(transition) = &mut self.current_transition {
+            transition.time += delta_time;
         }
     }
 
