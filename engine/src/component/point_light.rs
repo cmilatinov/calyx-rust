@@ -1,13 +1,12 @@
-use egui::Color32;
-use glm::Vec4;
-use serde::{Deserialize, Serialize};
-
 use crate as engine;
 use crate::component::{Component, ReflectComponent};
 use crate::reflect::{Reflect, ReflectDefault};
 use crate::render::Gizmos;
 use crate::scene::{GameObject, Scene};
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
+use egui::Color32;
+use glm::Vec4;
+use serde::{Deserialize, Serialize};
 
 #[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "5fd24d64-6661-40ba-94a5-4fca0d06ead1"]

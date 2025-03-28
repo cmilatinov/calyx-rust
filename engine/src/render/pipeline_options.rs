@@ -1,57 +1,20 @@
-use crate::render::render_utils::RenderUtils;
-use crate::render::RenderContext;
-use crate::utils::impl_builder_fn;
+use crate::render::RenderUtils;
+use derive_builder::Builder;
 use egui_wgpu::wgpu;
 
-pub struct PipelineOptionsBuilder {
-    primitive_topology: wgpu::PrimitiveTopology,
-    polygon_mode: wgpu::PolygonMode,
-    cull_mode: Option<wgpu::Face>,
-    fragment_targets: Vec<Option<wgpu::ColorTargetState>>,
-    depth_stencil: Option<wgpu::DepthStencilState>,
-    samples: u32,
-}
-
-impl PipelineOptionsBuilder {
-    impl_builder_fn!(primitive_topology: wgpu::PrimitiveTopology);
-    impl_builder_fn!(polygon_mode: wgpu::PolygonMode);
-    impl_builder_fn!(cull_mode: Option<wgpu::Face>);
-    impl_builder_fn!(fragment_targets: Vec<Option<wgpu::ColorTargetState>>);
-    impl_builder_fn!(depth_stencil: Option<wgpu::DepthStencilState>);
-    impl_builder_fn!(samples: u32);
-    pub fn build(self) -> PipelineOptions {
-        PipelineOptions {
-            primitive_topology: self.primitive_topology,
-            polygon_mode: self.polygon_mode,
-            cull_mode: self.cull_mode,
-            fragment_targets: self.fragment_targets,
-            depth_stencil: self.depth_stencil,
-            samples: self.samples,
-        }
-    }
-}
-
-impl Default for PipelineOptionsBuilder {
-    fn default() -> Self {
-        Self {
-            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-            polygon_mode: wgpu::PolygonMode::Fill,
-            cull_mode: Some(wgpu::Face::Back),
-            fragment_targets: vec![RenderContext::target_format().map(RenderUtils::color_default)],
-            depth_stencil: Some(RenderUtils::depth_default(
-                wgpu::TextureFormat::Depth32Float,
-            )),
-            samples: 1,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Builder)]
+#[builder(pattern = "owned")]
 pub struct PipelineOptions {
+    #[builder(default = wgpu::PrimitiveTopology::TriangleList)]
     pub(crate) primitive_topology: wgpu::PrimitiveTopology,
+    #[builder(default = wgpu::PolygonMode::Fill)]
     pub(crate) polygon_mode: wgpu::PolygonMode,
+    #[builder(default = Some(wgpu::Face::Back))]
     pub(crate) cull_mode: Option<wgpu::Face>,
+    #[builder(default = vec![])]
     pub(crate) fragment_targets: Vec<Option<wgpu::ColorTargetState>>,
+    #[builder(default = Some(RenderUtils::depth_default(wgpu::TextureFormat::Depth32Float)))]
     pub(crate) depth_stencil: Option<wgpu::DepthStencilState>,
+    #[builder(default = 1)]
     pub(crate) samples: u32,
 }

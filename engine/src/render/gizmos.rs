@@ -16,7 +16,7 @@ pub struct Gizmos<'a> {
     pub(crate) points_mesh: &'a mut Mesh,
 }
 
-impl<'a> Gizmos<'a> {
+impl Gizmos<'_> {
     pub fn wire_sphere(&mut self, center: &Vec3, radius: f32) {
         let translation = glm::translate(&Mat4::identity(), center);
         let scale = vec3(radius, radius, radius);

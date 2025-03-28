@@ -51,8 +51,8 @@ impl PhysicsContext {
     ) -> RigidBody {
         let (z, y, x) = transform.rotation.euler_angles();
         RigidBodyBuilder::new(rigid_body.ty)
-            .translation(transform.position.into())
-            .rotation(Vector3::new(x, y, z).into())
+            .translation(transform.position)
+            .rotation(Vector3::new(x, y, z))
             .enabled(rigid_body.enabled)
             .additional_mass(rigid_body.mass)
             .gravity_scale(rigid_body.gravity_scale)
@@ -83,7 +83,7 @@ impl PhysicsContext {
         let (z, y, x) = transform.rotation.euler_angles();
         ColliderBuilder::new(Self::collider_shape(collider.shape))
             .position(transform.position.into())
-            .rotation(Vector3::new(x, y, z).into())
+            .rotation(Vector3::new(x, y, z))
             .friction(collider.friction)
             .density(collider.density)
             .build()
@@ -178,7 +178,7 @@ impl PhysicsContext {
                     let rb = &scene.physics.bodies[rb_handle];
                     let old_transform = scene.get_world_transform(go);
                     let transform = Transform::from_components(
-                        (*rb.translation()).into(),
+                        *rb.translation(),
                         UnitQuaternion::from(*rb.rotation()),
                         old_transform.scale,
                     )

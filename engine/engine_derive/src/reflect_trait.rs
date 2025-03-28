@@ -6,7 +6,7 @@ use syn::parse::Parse;
 use syn::{parse_macro_input, Attribute, ItemTrait, Token};
 
 use crate::fq::{
-    FQBox, FQClone, FQOption, FQReflect, FQResult, FQTraitMeta, FQTraitMetaFrom,
+    FQBox, FQClone, FQOption, FQReflect, FQResult, FQTraitMeta, FQTraitMetaFrom, FQTypeUuid,
 };
 
 #[derive(Debug)]
@@ -38,15 +38,17 @@ pub(crate) fn reflect_trait(_args: TokenStream, input: TokenStream) -> TokenStre
     TokenStream::from(quote! {
         #item_trait
 
-        #[derive(#FQClone)]
+        #[derive(#FQClone, #FQTypeUuid)]
         #trait_vis struct #reflect_trait_ident {
             get_func: fn(&dyn #FQReflect) -> #FQOption<&dyn #trait_ident>,
             get_mut_func: fn(&mut dyn #FQReflect) -> #FQOption<&mut dyn #trait_ident>,
             get_boxed_func: fn(#FQBox<dyn #FQReflect>) -> #FQResult<#FQBox<dyn #trait_ident>, #FQBox<dyn #FQReflect>>,
         }
 
+        #[automatically_derived]
         impl #FQTraitMeta for #reflect_trait_ident {}
 
+        #[automatically_derived]
         impl #reflect_trait_ident {
             pub fn get<'a>(&self, value: &'a dyn #FQReflect) -> #FQOption<&'a dyn #trait_ident> {
                 (self.get_func)(value)
@@ -59,6 +61,7 @@ pub(crate) fn reflect_trait(_args: TokenStream, input: TokenStream) -> TokenStre
             }
         }
 
+        #[automatically_derived]
         impl<T: #trait_ident + #FQReflect> #FQTraitMetaFrom<T> for #reflect_trait_ident {
             fn trait_meta() -> Self {
                 Self {

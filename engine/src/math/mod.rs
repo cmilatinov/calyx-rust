@@ -9,7 +9,7 @@ pub use transform::*;
 mod transform;
 
 pub fn compose_transform(translation: &Vec3, rotation: &UnitQuaternion<f32>, scale: &Vec3) -> Mat4 {
-    glm::translation(&translation) * glm::quat_to_mat4(&rotation) * glm::scaling(&scale)
+    glm::translation(translation) * glm::quat_to_mat4(rotation) * glm::scaling(scale)
 }
 
 pub fn decompose_transform(

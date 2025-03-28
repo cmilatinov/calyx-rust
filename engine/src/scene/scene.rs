@@ -10,23 +10,23 @@ use petgraph::prelude::{EdgeRef, StableGraph};
 use petgraph::stable_graph::{DefaultIx, NodeIndex, WalkNeighbors};
 use petgraph::visit::{Bfs, Dfs, Reversed, Walker};
 use petgraph::Direction;
+use serde::de::DeserializeSeed;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
 
 use crate as engine;
 use crate::assets::error::AssetError;
 use crate::assets::{Asset, LoadedAsset};
-use crate::class_registry::ClassRegistry;
 use crate::component::{Component, ComponentTransform};
 use crate::component::{ComponentCamera, ComponentID};
+use crate::context::ReadOnlyAssetContext;
 use crate::core::Time;
 use crate::input::Input;
 use crate::math::Transform;
 use crate::physics::{PhysicsConfiguration, PhysicsContext};
-use crate::reflect::type_registry::TypeRegistry;
 use crate::reflect::ReflectDefault;
 use crate::scene::Prefab;
-use crate::utils::TypeUuid;
+use crate::utils::{ContextSeed, TypeUuid};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GameObject {
@@ -53,6 +53,7 @@ pub struct Scene {
     camera: Option<GameObject>,
     objects_to_delete: HashSet<GameObject>,
     new_index: usize,
+    assets: ReadOnlyAssetContext,
 }
 
 pub struct WalkChildren {
@@ -72,8 +73,8 @@ impl WalkChildren {
     }
 }
 
-impl Default for Scene {
-    fn default() -> Self {
+impl Scene {
+    pub fn new(assets: ReadOnlyAssetContext) -> Self {
         let mut world: World = Default::default();
         let mut entity_arena: StableGraph<Entity, i32> = Default::default();
         let entity = world.push(());
@@ -96,6 +97,7 @@ impl Default for Scene {
             camera: Default::default(),
             objects_to_delete: Default::default(),
             new_index: 0,
+            assets,
         }
     }
 }
@@ -115,11 +117,14 @@ impl Asset for Scene {
         &["cxscene"]
     }
 
-    fn from_file(path: &Path) -> Result<LoadedAsset<Self>, AssetError>
+    fn from_file(
+        assets: &ReadOnlyAssetContext,
+        path: &Path,
+    ) -> Result<LoadedAsset<Self>, AssetError>
     where
         Self: Sized,
     {
-        LoadedAsset::from_json_file(path)
+        LoadedAsset::<Self>::from_json_file_ctx(assets, path)
     }
 }
 
@@ -133,29 +138,38 @@ impl Serialize for Scene {
     }
 }
 
-impl<'de> Deserialize<'de> for Scene {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+impl<'de> DeserializeSeed<'de> for ContextSeed<'de, ReadOnlyAssetContext, Scene> {
+    type Value = Scene;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: Deserializer<'de>,
     {
-        Ok(Scene::from(SceneData::deserialize(deserializer)?))
+        Ok(Scene::from((
+            self.context,
+            SceneData::deserialize(deserializer)?,
+        )))
     }
 }
 
 impl Clone for Scene {
     fn clone(&self) -> Self {
         let data: SceneData = self.into();
-        data.into()
+        (&self.assets, data).into()
     }
 }
 
-impl From<SceneData> for Scene {
-    fn from(value: SceneData) -> Self {
-        let mut scene = Self::default();
+impl From<(&ReadOnlyAssetContext, SceneData)> for Scene {
+    fn from((assets, value): (&ReadOnlyAssetContext, SceneData)) -> Self {
+        let mut scene = assets.scene();
         for (_, components) in value.components {
             let game_object = scene.new_game_object(None);
             for (component_id, data) in components {
-                if let Some(component) = ClassRegistry::get().component_by_uuid(component_id) {
+                if let Some(component) = assets
+                    .component_registry
+                    .read()
+                    .component_by_uuid(component_id)
+                {
                     if let Some(instance) = component.deserialize(data) {
                         if let Some(mut entry) = scene.entry_mut(game_object) {
                             let _ = component.bind_instance(&mut entry, instance);
@@ -199,7 +213,9 @@ impl From<&Scene> for SceneData {
                         }
                     }
                 }
-                for (component_id, component) in ClassRegistry::get().components_uuid() {
+                for (component_id, component) in
+                    scene.assets.component_registry.read().components_uuid()
+                {
                     if let Some(entry) = scene.entry(game_object) {
                         if let Some(instance) = component.get_instance(&entry) {
                             if let Some(value) = instance.serialize() {
@@ -238,7 +254,9 @@ impl From<(&Scene, GameObject)> for SceneData {
                                 }
                             }
                         }
-                        for (component_id, component) in ClassRegistry::get().components_uuid() {
+                        for (component_id, component) in
+                            scene.assets.component_registry.read().components_uuid()
+                        {
                             if let Some(entry) = scene.entry(game_object) {
                                 if let Some(instance) = component.get_instance(&entry) {
                                     if let Some(value) = instance.serialize() {
@@ -286,7 +304,7 @@ impl Scene {
         self.get_game_object_uuid(self.root)
     }
 
-    pub fn root_objects<'a>(&'a self) -> impl Iterator<Item = GameObject> + 'a {
+    pub fn root_objects(&self) -> impl Iterator<Item = GameObject> + '_ {
         self.get_children_ordered(self.root)
     }
 
@@ -323,7 +341,7 @@ impl Scene {
 
         Prefab {
             data: data.clone(),
-            scene: data.into(),
+            scene: (&self.assets, data).into(),
         }
     }
 
@@ -333,7 +351,11 @@ impl Scene {
         for (_, components) in prefab.data.components.iter() {
             let game_object = self.new_game_object(None);
             for (component_id, data) in components {
-                if let Some(component) = ClassRegistry::get().component_by_uuid(*component_id) {
+                let asset_registry_ref = self.assets.asset_registry.clone();
+                let asset_registry = asset_registry_ref.read();
+                let component_registry_ref = self.assets.component_registry.clone();
+                let component_registry = component_registry_ref.read();
+                if let Some(component) = component_registry.component_by_uuid(*component_id) {
                     if let Some(instance) = component.deserialize(data.clone()) {
                         if let Some(mut entry) = self.entry_mut(game_object) {
                             let _ = component.bind_instance(&mut entry, instance);
@@ -530,21 +552,24 @@ impl Scene {
     }
 
     pub fn bind_component_dyn(&mut self, game_object: GameObject, type_id: TypeId) -> bool {
-        let registry = TypeRegistry::get();
-        let Some(meta) = registry.trait_meta::<ReflectDefault>(type_id) else {
+        let type_registry_ref = self.assets.type_registry.clone();
+        let type_registry = type_registry_ref.read();
+        let Some(meta) = type_registry.trait_meta::<ReflectDefault>(type_id) else {
             return false;
         };
-        let class_registry = ClassRegistry::get();
-        let Some(component) = class_registry.component(type_id) else {
+        let component_registry_ref = self.assets.component_registry.clone();
+        let component_registry = component_registry_ref.read();
+        let Some(component) = component_registry.component(type_id) else {
             return false;
         };
         let self_ptr = unsafe { self.as_ptr_mut() };
+        let assets = self.assets.clone();
         self.entry_mut(game_object)
             .map(|mut e| {
                 let result = component.bind_instance(&mut e, meta.default());
                 if result {
                     if let Some(instance) = component.get_instance_mut(&mut e) {
-                        instance.reset(unsafe { &mut *self_ptr }, game_object);
+                        instance.reset(&assets, unsafe { &mut *self_ptr }, game_object);
                     }
                 }
                 result
@@ -552,17 +577,15 @@ impl Scene {
             .unwrap_or(false)
     }
 
-    pub fn get_component_ptr(
+    pub unsafe fn get_component_ptr(
         &mut self,
         game_object: GameObject,
-        component: &Box<dyn Component>,
+        component: &dyn Component,
     ) -> Option<*mut dyn Component> {
         self.entry_mut(game_object).and_then(|mut entry| {
-            if let Some(instance) = component.get_instance_mut(&mut entry) {
-                Some(instance as *mut dyn Component)
-            } else {
-                None
-            }
+            component
+                .get_instance_mut(&mut entry)
+                .map(|instance| instance as *mut dyn Component)
         })
     }
 
@@ -583,7 +606,7 @@ impl Scene {
         entry
             .as_ref()
             .and_then(|entry| entry.get_component::<T>().ok())
-            .map(|c| reader(c))
+            .map(reader)
     }
 
     pub fn write_component<T: Component, F: FnOnce(&mut T)>(
@@ -595,7 +618,7 @@ impl Scene {
         entry
             .as_mut()
             .and_then(|entry| entry.get_component_mut::<T>().ok())
-            .map(|c| writer(c))
+            .map(writer)
     }
 
     pub fn prepare(&mut self) {
@@ -603,10 +626,12 @@ impl Scene {
         PhysicsContext::prepare(self);
     }
 
-    pub fn update(&mut self, input: &Input) {
-        let time = Time::get();
-        PhysicsContext::update(self, &time, &PhysicsConfiguration::default());
-        for (_, component) in ClassRegistry::get().components_update() {
+    pub fn update(&mut self, time: &Time, input: &Input) {
+        PhysicsContext::update(self, time, &PhysicsConfiguration::default());
+        let component_registry_ref = self.assets.component_registry.clone();
+        let component_registry = component_registry_ref.read();
+        let ctx = self.assets.clone();
+        for (_, component) in component_registry.components_update() {
             // No way around this, we want component's update method to take &mut self
             // but there's no way to do that and provide a &mut Scene
             // At worst, this is a race condition because we can guarantee that
@@ -619,7 +644,7 @@ impl Scene {
             for game_object in game_objects {
                 if let Some(mut entry) = self.entry_mut(game_object) {
                     if let Some(instance) = component.get_instance_mut(&mut entry) {
-                        instance.update(scene, game_object, input);
+                        instance.update(&ctx, scene, game_object, time, input);
                     }
                 }
             }
@@ -660,7 +685,7 @@ impl Scene {
         }
     }
 
-    pub fn game_objects<'a>(&'a self) -> impl Iterator<Item = GameObject> + 'a {
+    pub fn game_objects(&self) -> impl Iterator<Item = GameObject> + '_ {
         Bfs::new(&self.entity_arena, self.root.node)
             .iter(&self.entity_arena)
             .skip(1)
@@ -699,10 +724,7 @@ impl Scene {
             .map(|parent| self.get_game_object_uuid(parent))
     }
 
-    pub fn get_children<'a>(
-        &'a self,
-        game_object: GameObject,
-    ) -> impl Iterator<Item = GameObject> + 'a {
+    pub fn get_children(&self, game_object: GameObject) -> impl Iterator<Item = GameObject> + '_ {
         self.entity_arena
             .neighbors(game_object.node)
             .filter_map(|node| self.get_game_object_from_node(node))
@@ -714,10 +736,10 @@ impl Scene {
         }
     }
 
-    pub fn get_children_ordered<'a>(
-        &'a self,
+    pub fn get_children_ordered(
+        &self,
         game_object: GameObject,
-    ) -> impl Iterator<Item = GameObject> + 'a {
+    ) -> impl Iterator<Item = GameObject> + '_ {
         let mut children = self
             .entity_arena
             .edges_directed(game_object.node, Direction::Outgoing)
@@ -740,8 +762,7 @@ impl Scene {
     pub fn is_descendant(&self, parent: GameObject, game_object: GameObject) -> bool {
         std::iter::once(parent)
             .chain(self.get_descendants(parent))
-            .find(|go| *go == game_object)
-            .is_some()
+            .any(|go| go == game_object)
     }
 
     pub fn get_transform(&self, game_object: GameObject) -> Transform {
@@ -814,27 +835,24 @@ impl Scene {
             .and_then(|e| e.get_component::<T>().ok().map(|_| game_object))
     }
 
-    pub fn get_descendants<'a>(
-        &'a self,
+    pub fn get_descendants(
+        &self,
         game_object: GameObject,
-    ) -> impl Iterator<Item = GameObject> + 'a {
+    ) -> impl Iterator<Item = GameObject> + '_ {
         Bfs::new(&self.entity_arena, game_object.node)
             .iter(&self.entity_arena)
             .filter_map(|node| self.get_game_object_from_node(node))
     }
 
-    pub fn get_descendants_with_component<'a, T: Component>(
-        &'a self,
+    pub fn get_descendants_with_component<T: Component>(
+        &self,
         game_object: GameObject,
-    ) -> impl Iterator<Item = GameObject> + 'a {
+    ) -> impl Iterator<Item = GameObject> + '_ {
         self.get_descendants(game_object)
             .filter_map(|go| self.map_has_component::<T>(go))
     }
 
-    pub fn get_ancestors<'a>(
-        &'a self,
-        game_object: GameObject,
-    ) -> impl Iterator<Item = GameObject> + 'a {
+    pub fn get_ancestors(&self, game_object: GameObject) -> impl Iterator<Item = GameObject> + '_ {
         let reversed_arena = Reversed(&self.entity_arena);
         Dfs::new(&reversed_arena, game_object.node)
             .iter(&self.entity_arena)
@@ -851,7 +869,7 @@ impl Scene {
 }
 
 impl Scene {
-    pub unsafe fn as_ptr_mut(&self) -> *mut Self {
+    pub(crate) unsafe fn as_ptr_mut(&self) -> *mut Self {
         let ptr = self as *const Self;
         ptr as *mut Self
     }

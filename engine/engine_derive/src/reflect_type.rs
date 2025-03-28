@@ -176,6 +176,7 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
     }
 
     TokenStream::from(quote! {
+        #[automatically_derived]
         impl #FQTypeName for #name {
             #[inline]
             fn type_name() -> &'static str { std::any::type_name::<Self>() }
@@ -183,6 +184,7 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
             fn type_name_short() -> &'static str { stringify!(#name) }
         }
 
+        #[automatically_derived]
         impl #FQReflect for #name {
             #[inline]
             fn as_any(&self) -> &dyn #FQAny { self }
@@ -205,6 +207,7 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
             }
         }
 
+        #[automatically_derived]
         impl #FQReflectedType for #name {
             fn register(registry: &mut engine::reflect::type_registry::TypeRegistry) {
                 registry.meta_struct::<#name>(#reflect_attrs)
@@ -214,7 +217,10 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
         }
 
         engine::inventory::submit!(
-            crate::ReflectRegistrationFn(<#name as #FQReflectedType>::register)
+            crate::ReflectRegistrationFn {
+                name: stringify!(#name),
+                function: <#name as #FQReflectedType>::register
+            }
         );
     })
 }

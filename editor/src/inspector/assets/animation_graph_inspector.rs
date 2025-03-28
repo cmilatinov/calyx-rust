@@ -1,20 +1,20 @@
 use crate::inspector::asset_inspector::{AssetInspector, ReflectAssetInspector};
-use crate::inspector::widgets::Widgets;
-use crate::widgets::{List, ListItemContext};
-use engine::assets::animation::Animation;
+use crate::widgets::{List, ListButtons, ListItemContext};
 use engine::assets::animation_graph::{
     AnimationClip, AnimationCondition, AnimationGraph, AnimationMotion, AnimationNode,
     AnimationParameter, AnimationParameterValue, AnimationTransition, BlendTree1D, BoolCondition,
     FloatCondition, IntCondition,
 };
-use engine::assets::AssetRegistry;
+use engine::context::GameContext;
 use engine::egui::{ComboBox, DragValue, Id, Label, TextEdit, Ui, UiBuilder};
 use engine::petgraph::prelude::StableGraph;
 use engine::reflect::ReflectDefault;
 use engine::utils::TypeUuid;
 use engine::uuid::Uuid;
 use engine::Reflect;
-use re_ui::list_item::{CustomContent, LabelContent, ListItem, PropertyContent};
+use re_ui::list_item::{
+    CustomContent, LabelContent, ListItem, PropertyContent, ShowCollapsingResponse,
+};
 use re_ui::UiExt;
 use std::time::{Duration, Instant};
 
@@ -27,8 +27,8 @@ impl AssetInspector for AnimationGraphInspector {
         AnimationGraph::type_uuid()
     }
 
-    fn show_inspector(&self, ui: &mut Ui, asset_id: Uuid) {
-        let Ok(asset) = AssetRegistry::get().load_dyn_by_id(asset_id) else {
+    fn show_inspector(&self, ui: &mut Ui, game: &mut GameContext, asset_id: Uuid) {
+        let Ok(asset) = game.assets.asset_registry.read().load_dyn_by_id(asset_id) else {
             return;
         };
         let Some(graph_ref) = asset.try_downcast::<AnimationGraph>() else {
@@ -38,7 +38,7 @@ impl AssetInspector for AnimationGraphInspector {
         let list_id = Id::new("animation_graph").with("parameters");
         let (parameters, graph, start_node) = graph.split();
         Self::start_node_select(ui, graph, start_node);
-        List::new("Parameters", parameters).show(
+        List::new("Parameters", parameters, |_| {}).show(
             ui,
             move |ui,
                   ListItemContext {
@@ -48,8 +48,9 @@ impl AssetInspector for AnimationGraphInspector {
                   }| {
                 let item_id = list_id.with(index);
                 ListItem::new()
-                    .interactive(true)
                     .selected(selected)
+                    .interactive(true)
+                    .draggable(true)
                     .show_hierarchical_with_children(
                         ui,
                         item_id,
@@ -57,13 +58,7 @@ impl AssetInspector for AnimationGraphInspector {
                         LabelContent::new(format!("Parameter {}", index + 1)),
                         |ui| {
                             ui.list_item_flat_noninteractive(
-                                PropertyContent::new("Name").value_fn(|ui, _| {
-                                    let buttons_width = List::buttons_width(ui);
-                                    ui.add(
-                                        TextEdit::singleline(&mut value.name)
-                                            .desired_width(ui.available_width() - buttons_width),
-                                    );
-                                }),
+                                PropertyContent::new("Name").value_text_mut(&mut value.name),
                             );
                             ui.list_item_flat_noninteractive(
                                 PropertyContent::new("Type").value_fn(|ui, _| {
@@ -143,7 +138,6 @@ impl AssetInspector for AnimationGraphInspector {
                             );
                         },
                     )
-                    .item_response
             },
         );
     }
@@ -165,7 +159,7 @@ impl AnimationGraphInspector {
                 LabelContent::new("Animation Node").truncate(true),
                 |ui| {
                     let node = &mut graph[node_idx];
-                    let buttons_width = List::buttons_width(ui);
+                    let buttons_width = ListButtons::width(ui);
                     ui.list_item_flat_noninteractive(PropertyContent::new("ID").value_fn(
                         |ui, _| {
                             ui.add_sized(
@@ -211,14 +205,9 @@ impl AnimationGraphInspector {
                         LabelContent::new(format!("{} -> {}", source_name, target_name))
                             .truncate(true),
                     );
-                    ui.list_item_flat_noninteractive(PropertyContent::new("Name").value_fn(
-                        |ui, _| {
-                            ui.add(
-                                TextEdit::singleline(&mut graph[edge_idx].name)
-                                    .desired_width(ui.available_width() - List::buttons_width(ui)),
-                            );
-                        },
-                    ));
+                    ui.list_item_flat_noninteractive(
+                        PropertyContent::new("Name").value_text_mut(&mut graph[edge_idx].name),
+                    );
                     ui.list_item_flat_noninteractive(
                         PropertyContent::new("Has Exit Time")
                             .value_bool_mut(&mut graph[edge_idx].has_exit_time),
@@ -235,15 +224,16 @@ impl AnimationGraphInspector {
                             ui.add(DragValue::new(&mut graph[edge_idx].duration).speed(0.01));
                         },
                     ));
-                    List::new("Conditions", &mut graph[edge_idx].conditions).show(
+                    List::new("Conditions", &mut graph[edge_idx].conditions, |_| {}).show(
                         ui,
                         |ui,
                          ListItemContext {
                              selected, value, ..
                          }| {
-                            ListItem::new()
+                            let item_response = ListItem::new()
                                 .selected(selected)
                                 .interactive(true)
+                                .draggable(true)
                                 .show_flat(
                                     ui,
                                     CustomContent::new(|ui, _| {
@@ -265,7 +255,12 @@ impl AnimationGraphInspector {
                                             Self::condition_select(ui, param, &mut value.condition);
                                         });
                                     }),
-                                )
+                                );
+                            ShowCollapsingResponse {
+                                item_response,
+                                body_response: None,
+                                openness: 0.0,
+                            }
                         },
                     );
                 },
@@ -449,15 +444,19 @@ impl AnimationMotionInspector {
     pub fn motion(ui: &mut Ui, motion: &mut AnimationMotion) {
         let id = Id::new(motion as *const _);
         match motion {
-            AnimationMotion::AnimationClip(AnimationClip { animation, speed }) => {
+            AnimationMotion::AnimationClip(AnimationClip {
+                animation: _,
+                speed,
+            }) => {
                 ui.list_item_flat_noninteractive(PropertyContent::new("Animation").value_fn(
-                    |ui, _| {
-                        Widgets::asset_select_t(
-                            ui,
-                            id.with("animation"),
-                            Some(Animation::type_uuid()),
-                            animation,
-                        );
+                    |_ui, _| {
+                        // TODO: Provide an asset selector that can use ids instead of refs
+                        // Widgets::asset_select_t(
+                        //     ui,
+                        //     id.with("animation"),
+                        //     Some(Animation::type_uuid()),
+                        //     animation,
+                        // );
                     },
                 ));
                 ui.list_item_flat_noninteractive(PropertyContent::new("Speed").value_fn(
@@ -467,7 +466,7 @@ impl AnimationMotionInspector {
                 ));
             }
             AnimationMotion::BlendTree1D(BlendTree1D { motions, .. }) => {
-                List::new("Motions", motions).show(
+                List::new("Motions", motions, |_| {}).show(
                     ui,
                     |ui,
                      ListItemContext {
@@ -478,6 +477,7 @@ impl AnimationMotionInspector {
                         let item_id = id.with(index);
                         ListItem::new()
                             .selected(selected)
+                            .draggable(true)
                             .show_hierarchical_with_children(
                                 ui,
                                 item_id,
@@ -492,7 +492,6 @@ impl AnimationMotionInspector {
                                     );
                                 },
                             )
-                            .item_response
                     },
                 );
             }

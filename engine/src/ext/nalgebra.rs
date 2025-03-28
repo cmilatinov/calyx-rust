@@ -11,7 +11,7 @@ impl<T: SimdValue + RealField> UnitQuaternionExt<T> for UnitQuaternion<T> {
             pitch = nalgebra::convert::<f64, T>(std::f64::consts::PI) + pitch;
             yaw = nalgebra::convert::<f64, T>(std::f64::consts::PI) - yaw;
         } else if pitch > nalgebra::convert::<f64, T>(90.0f64.to_radians()) {
-            pitch = pitch - nalgebra::convert::<f64, T>(std::f64::consts::PI);
+            pitch -= nalgebra::convert::<f64, T>(std::f64::consts::PI);
             yaw = nalgebra::convert::<f64, T>(std::f64::consts::PI) - yaw;
         }
         Vector2::new(pitch, yaw)

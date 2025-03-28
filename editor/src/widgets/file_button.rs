@@ -1,8 +1,8 @@
 use engine::egui;
 use engine::egui::load::TexturePoll;
 use engine::egui::{
-    pos2, Color32, Image, Rect, Response, Rounding, Stroke, TextStyle, TextWrapMode, Ui, Vec2,
-    Widget, WidgetText,
+    pos2, Color32, CornerRadius, Image, Rect, Response, Stroke, StrokeKind, TextStyle,
+    TextWrapMode, Ui, Vec2, Widget, WidgetText,
 };
 
 pub struct FileButton<'a> {
@@ -41,7 +41,7 @@ impl Widget for FileButton<'_> {
                 let selection = ui.visuals().selection;
                 (
                     Vec2::ZERO,
-                    Rounding::ZERO,
+                    CornerRadius::ZERO,
                     selection.bg_fill,
                     selection.stroke,
                 )
@@ -49,7 +49,7 @@ impl Widget for FileButton<'_> {
                 let hovered = ui.visuals().widgets.hovered;
                 (
                     Vec2::ZERO,
-                    Rounding::ZERO,
+                    CornerRadius::ZERO,
                     hovered.bg_fill,
                     Stroke::default(),
                 )
@@ -61,6 +61,7 @@ impl Widget for FileButton<'_> {
                 frame_rounding,
                 frame_fill,
                 frame_stroke,
+                StrokeKind::Middle,
             );
 
             let mut image_rect = rect.shrink2(padding);

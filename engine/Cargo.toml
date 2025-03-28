@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-crate-type = ["dylib"]
+crate-type = ["dylib", "rlib"]
 
 [dependencies]
 engine_derive = { path = "./engine_derive" }
@@ -17,7 +17,6 @@ egui_extras.workspace = true
 egui_tiles.workspace = true
 egui-wgpu.workspace = true
 transform-gizmo-egui.workspace = true
-lazy_static.workspace = true
 log.workspace = true
 serde.workspace = true
 uuid.workspace = true
@@ -42,3 +41,4 @@ regex.workspace = true
 petgraph.workspace = true
 winit.workspace = true
 approx.workspace = true
+derive_builder.workspace = true

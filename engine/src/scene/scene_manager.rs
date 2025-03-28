@@ -1,45 +1,50 @@
-use crate as engine;
-use crate::component::ComponentMesh;
-
-use crate::assets::{Asset, AssetRegistry, LoadedAsset};
+use crate::assets::AssetRegistry;
+use crate::core::{ReadOnlyRef, Time};
 use crate::input::Input;
 use crate::scene::Scene;
-use crate::utils::singleton_with_init;
-use std::ops::DerefMut;
-use std::path::PathBuf;
 
-#[derive(Default)]
 pub struct SceneManager {
     simulation_running: bool,
     current_scene: Scene,
     simulation_scene: Option<Scene>,
+    default_scene: ReadOnlyRef<Scene>,
+    asset_registry: ReadOnlyRef<AssetRegistry>,
 }
 
 impl SceneManager {
+    pub fn new(asset_registry_ref: ReadOnlyRef<AssetRegistry>) -> Self {
+        let current_scene;
+        let default_scene;
+        {
+            let asset_registry = asset_registry_ref.read();
+            current_scene = asset_registry.new_empty_scene();
+            default_scene = asset_registry
+                .default_scene()
+                .expect("failed to load default scene")
+                .readonly();
+        }
+        Self {
+            simulation_running: false,
+            current_scene,
+            simulation_scene: None,
+            default_scene,
+            asset_registry: asset_registry_ref,
+        }
+    }
+
     pub fn load_empty_scene(&mut self) {
         self.stop_simulation();
-        self.current_scene = Scene::default();
+        self.current_scene = self.asset_registry.read().new_empty_scene();
     }
 
     pub fn load_default_scene(&mut self) {
         self.stop_simulation();
-        self.current_scene = Scene::default();
-        let registry = AssetRegistry::get();
-        let game_object = self.current_scene.create_game_object(None, None);
-        self.current_scene.bind_component(
-            game_object,
-            ComponentMesh {
-                mesh: registry.load("meshes/cube").ok(),
-                material: registry.load("materials/default").ok(),
-            },
-        );
+        self.current_scene = self.default_scene.read().clone();
     }
 
-    pub fn load_scene(&mut self, scene_file: PathBuf) {
+    pub fn load_scene(&mut self, scene: ReadOnlyRef<Scene>) {
         self.stop_simulation();
-        if let Ok(LoadedAsset { asset: scene, .. }) = Scene::from_file(&scene_file) {
-            self.current_scene = scene;
-        }
+        self.current_scene = scene.read().clone();
     }
 
     pub fn unload_current_scene(&mut self) {
@@ -67,13 +72,13 @@ impl SceneManager {
         self.simulation_scene_mut().prepare();
     }
 
-    pub fn update(&mut self, input: &Input) {
+    pub fn update(&mut self, time: &Time, input: &Input) {
         if !self.simulation_running {
             return;
         }
 
         if let Some(scene) = &mut self.simulation_scene {
-            scene.update(input);
+            scene.update(time, input);
         }
     }
 
@@ -107,5 +112,3 @@ impl SceneManager {
         &mut self.current_scene
     }
 }
-
-singleton_with_init!(SceneManager);

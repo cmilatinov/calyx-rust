@@ -1,22 +1,21 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
-use std::fs;
+use std::io::BufReader;
 use std::path::Path;
 
-use egui::Color32;
-use egui_wgpu::{wgpu, RenderState};
-use naga::{ImageDimension, Scalar, ScalarKind, TypeInner, VectorSize};
-use serde::{Deserialize, Serialize};
-
+use super::{AssetAccess, AssetRef, LoadedAsset};
 use crate as engine;
 use crate::assets::error::AssetError;
 use crate::assets::texture::Texture;
 use crate::assets::Asset;
+use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
-use crate::render::{AssetMap, LockedAssetRenderState, RenderContext, Shader};
+use crate::render::{AssetMap, LockedAssetRenderState, Shader};
 use crate::utils::TypeUuid;
-
-use super::{Assets, LoadedAsset};
+use egui::Color32;
+use egui_wgpu::{wgpu, RenderState};
+use naga::{ImageDimension, Scalar, ScalarKind, TypeInner, VectorSize};
+use serde::{Deserialize, Serialize};
 
 pub enum BindingType {
     Buffer,
@@ -44,10 +43,7 @@ impl Eq for ShaderVariable {}
 
 impl PartialOrd for ShaderVariable {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.group
-            .partial_cmp(&other.group)
-            .or_else(|| self.binding.partial_cmp(&other.binding))
-            .or_else(|| self.offset.partial_cmp(&other.offset))
+        Some(self.cmp(other))
     }
 }
 
@@ -71,7 +67,7 @@ pub enum ShaderVariableValue {
     Vec3([f32; 3]),
     Vec4([f32; 4]),
     Mat4([[f32; 4]; 4]),
-    Texture2D(Option<Ref<Texture>>),
+    Texture2D(AssetRef<Texture>),
     Sampler,
 }
 
@@ -100,26 +96,22 @@ impl ShaderVariableValue {
         }
     }
 
-    pub fn as_texture(&self) -> Ref<Texture> {
-        if let ShaderVariableValue::Texture2D(texture) = self {
-            texture
-                .clone()
-                .unwrap_or(Assets::missing_texture().unwrap())
-        } else {
-            unreachable!()
-        }
+    pub fn as_texture(&self, assets: &ReadOnlyAssetContext, default: Ref<Texture>) -> Ref<Texture> {
+        let ShaderVariableValue::Texture2D(texture) = self else {
+            return default;
+        };
+        texture.get_ref(assets).unwrap_or(default)
     }
 }
 
-#[derive(Serialize, Deserialize, TypeUuid)]
+#[derive(TypeUuid, Serialize)]
 #[uuid = "f98a7f41-84d4-482d-b7af-a670b07035ae"]
-#[serde(from = "MaterialShadow")]
 pub struct Material {
-    pub shader: Ref<Shader>,
+    pub shader: AssetRef<Shader>,
     pub variables: Vec<ShaderVariable>,
-    #[serde(skip_serializing, skip_deserializing)]
+    #[serde(skip)]
     pub bind_group_entries: BTreeMap<u32, BTreeMap<u32, BindGroupEntry>>,
-    #[serde(skip_serializing, skip_deserializing)]
+    #[serde(skip)]
     pub buffers: HashMap<(u32, u32), wgpu::Buffer>,
 }
 
@@ -143,27 +135,35 @@ impl Asset for Material {
         &["cxmat"]
     }
 
-    fn from_file(path: &Path) -> Result<LoadedAsset<Self>, AssetError>
+    fn from_file(
+        assets: &ReadOnlyAssetContext,
+        path: &Path,
+    ) -> Result<LoadedAsset<Self>, AssetError>
     where
         Self: Sized,
     {
-        let material_str = fs::read_to_string(path).map_err(|_| AssetError::LoadError)?;
-        let mut material: Material = serde_json::from_str(material_str.as_str()).unwrap();
-        material.init();
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .open(path)
+            .map_err(|_| AssetError::LoadError)?;
+        let reader = BufReader::new(file);
+        let data: MaterialData =
+            serde_json::from_reader(reader).map_err(|_| AssetError::LoadError)?;
+        let material: Material = (assets, data).into();
         Ok(LoadedAsset::new(material))
     }
 }
 
 impl Material {
-    pub fn from_shader(shader_ref: Ref<Shader>) -> Self {
+    pub fn from_shader(assets: &ReadOnlyAssetContext, shader_ref: Ref<Shader>) -> Self {
         let mut material = Self {
-            shader: shader_ref,
+            shader: Some(shader_ref.clone()).into(),
             variables: Default::default(),
             bind_group_entries: Default::default(),
             buffers: Default::default(),
         };
         {
-            let shader = material.shader.read();
+            let shader = shader_ref.read();
             for (_, variable) in shader.module.global_variables.iter() {
                 if let Some(binding) = &variable.binding {
                     let ty = &shader.module.types[variable.ty];
@@ -180,24 +180,28 @@ impl Material {
                 }
             }
         }
-        material.init();
+        material.init(assets);
         material
     }
 
-    pub(crate) fn collect_textures(&self, textures: &mut AssetMap<Texture>) {
-        let missing_texture = Assets::missing_texture().unwrap();
+    pub(crate) fn collect_textures(
+        &self,
+        assets: &ReadOnlyAssetContext,
+        textures: &mut AssetMap<Texture>,
+        default_texture: Ref<Texture>,
+    ) {
         for var in self.variables.iter() {
-            if let ShaderVariableValue::Texture2D(texture) = &var.value {
-                let texture = texture.clone().unwrap_or(missing_texture.clone());
-                textures.refs.insert(texture.id(), texture);
-            }
+            let texture = var.value.as_texture(assets, default_texture.clone());
+            textures.refs.insert(texture.id(), texture);
         }
     }
 
     pub(crate) fn bind_groups(
         &self,
         device: &wgpu::Device,
+        asset_context: &ReadOnlyAssetContext,
         assets: &LockedAssetRenderState,
+        default_texture: Ref<Texture>,
     ) -> HashMap<u32, wgpu::BindGroup> {
         let shader = assets.shader(self.shader.id());
         self.bind_group_entries
@@ -214,14 +218,20 @@ impl Material {
                                     self.find_buffer(*group, *binding).as_entire_binding()
                                 }
                                 BindingType::Texture => {
-                                    let texture = var.value.as_texture();
+                                    let texture = var
+                                        .value
+                                        .as_texture(asset_context, default_texture.clone());
                                     wgpu::BindingResource::TextureView(
                                         &assets.texture(texture.id()).view,
                                     )
                                 }
                                 BindingType::Sampler => {
-                                    let texture =
-                                        self.find_closest_texture_in_group(*group, *binding);
+                                    let texture = self.find_closest_texture_in_group(
+                                        asset_context,
+                                        *group,
+                                        *binding,
+                                        default_texture.clone(),
+                                    );
                                     wgpu::BindingResource::Sampler(
                                         &assets.texture(texture.id()).sampler,
                                     )
@@ -253,7 +263,13 @@ impl Material {
         self.buffers.get(&(group, binding)).unwrap()
     }
 
-    fn find_closest_texture_in_group(&self, group: u32, binding: u32) -> Ref<Texture> {
+    fn find_closest_texture_in_group(
+        &self,
+        assets: &ReadOnlyAssetContext,
+        group: u32,
+        binding: u32,
+        default_texture: Ref<Texture>,
+    ) -> Ref<Texture> {
         let mut closest = u32::MAX;
         let mut closest_index: isize = -1;
         for (i, var) in self
@@ -263,14 +279,16 @@ impl Material {
             .filter(|(_, v)| v.group == group)
         {
             if let BindingType::Texture = var.value.binding_type() {
-                let diff = (binding as i32 - var.binding as i32).abs() as u32;
+                let diff = (binding as i32 - var.binding as i32).unsigned_abs();
                 if diff < closest {
                     closest = diff;
                     closest_index = i as isize;
                 }
             }
         }
-        self.variables[closest_index as usize].value.as_texture()
+        self.variables[closest_index as usize]
+            .value
+            .as_texture(assets, default_texture)
     }
 
     fn shader_variable(
@@ -323,13 +341,13 @@ impl Material {
             }
             TypeInner::Scalar(Scalar { kind, width }) => {
                 if let Some((span, value)) = match kind {
-                    ScalarKind::Uint if *width as usize == std::mem::size_of::<u32>() => {
+                    ScalarKind::Uint if *width as usize == size_of::<u32>() => {
                         Some((*width, ShaderVariableValue::Uint(Default::default())))
                     }
-                    ScalarKind::Sint if *width as usize == std::mem::size_of::<i32>() => {
+                    ScalarKind::Sint if *width as usize == size_of::<i32>() => {
                         Some((*width, ShaderVariableValue::Int(Default::default())))
                     }
-                    ScalarKind::Float if *width as usize == std::mem::size_of::<f32>() => {
+                    ScalarKind::Float if *width as usize == size_of::<f32>() => {
                         Some((*width, ShaderVariableValue::Float(Default::default())))
                     }
                     ScalarKind::Bool => {
@@ -344,7 +362,7 @@ impl Material {
             }
             TypeInner::Image { dim, arrayed, .. } => {
                 if (*dim, *arrayed) == (ImageDimension::D2, false) {
-                    var.value = ShaderVariableValue::Texture2D(Option::<Ref<_>>::default());
+                    var.value = ShaderVariableValue::Texture2D(Default::default());
                     variables.push(var);
                 }
             }
@@ -370,12 +388,12 @@ impl Material {
     }
 
     #[inline]
-    fn init(&mut self) {
-        self.update_entries();
-        self.create_buffers();
+    fn init(&mut self, assets: &ReadOnlyAssetContext) {
+        self.update_entries(assets);
+        self.create_buffers(assets);
     }
 
-    fn update_entries(&mut self) {
+    fn update_entries(&mut self, assets: &ReadOnlyAssetContext) {
         for var in self.variables.iter() {
             self.bind_group_entries
                 .entry(var.group)
@@ -388,7 +406,10 @@ impl Material {
                     },
                 );
         }
-        let shader = self.shader.read();
+        let Some(shader_ref) = self.shader.get_ref(assets) else {
+            return;
+        };
+        let shader = shader_ref.read();
         for (_, var) in shader.module.global_variables.iter() {
             if let Some(binding) = &var.binding {
                 let ty = &shader.module.types[var.ty];
@@ -405,8 +426,8 @@ impl Material {
         }
     }
 
-    fn create_buffers(&mut self) {
-        let device = RenderContext::device().unwrap();
+    fn create_buffers(&mut self, assets: &ReadOnlyAssetContext) {
+        let device = assets.render_context.device();
         for (group, entries) in self.bind_group_entries.iter() {
             for (binding, entry) in entries {
                 if let BindingType::Buffer = entry.ty {
@@ -439,20 +460,20 @@ impl Material {
 }
 
 #[derive(Deserialize)]
-struct MaterialShadow {
-    shader: Ref<Shader>,
+struct MaterialData {
+    shader: AssetRef<Shader>,
     variables: Vec<ShaderVariable>,
 }
 
-impl From<MaterialShadow> for Material {
-    fn from(value: MaterialShadow) -> Self {
+impl From<(&ReadOnlyAssetContext, MaterialData)> for Material {
+    fn from((assets, value): (&ReadOnlyAssetContext, MaterialData)) -> Self {
         let mut value = Self {
             shader: value.shader,
             variables: value.variables,
             bind_group_entries: Default::default(),
             buffers: Default::default(),
         };
-        value.init();
+        value.init(assets);
         value
     }
 }

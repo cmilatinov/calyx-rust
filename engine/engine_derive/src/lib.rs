@@ -1,4 +1,5 @@
 mod component;
+mod deserialize_context;
 mod fq;
 mod reflect_trait;
 mod reflect_type;
@@ -37,4 +38,12 @@ pub fn reflect_trait(args: TokenStream, input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn impl_reflect_value(input: TokenStream) -> TokenStream {
     reflect_value::impl_reflect_value(input)
+}
+
+#[proc_macro_derive(
+    DeserializeWithContext,
+    attributes(context, use_context, skip_deserialize)
+)]
+pub fn derive_deserialize(input: TokenStream) -> TokenStream {
+    deserialize_context::derive_deserialize_with_context(input)
 }

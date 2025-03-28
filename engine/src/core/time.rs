@@ -1,14 +1,11 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ops::DerefMut;
 use std::time::Instant;
-
-use crate as engine;
-use crate::utils::singleton_with_init;
 
 pub type TimeType = f32;
 
 pub struct Time {
-    timers: HashMap<&'static str, Instant>,
+    timers: RefCell<HashMap<&'static str, Instant>>,
     last_time: Instant,
     pub time: TimeType,
     pub static_time: TimeType,
@@ -17,36 +14,31 @@ pub struct Time {
     pub time_scale: TimeType,
 }
 
-singleton_with_init!(Time);
-
 macro_rules! time_member_getter {
     ($member:ident) => {
-        pub fn $member() -> TimeType {
-            let instance = Self::get();
-            instance.$member
+        pub fn $member(&self) -> TimeType {
+            self.$member
         }
     };
 }
 
 impl Time {
-    pub fn update_time() {
-        let mut instance = Self::get_mut();
-        instance.static_delta_time = instance.last_time.elapsed().as_secs_f32();
-        instance.static_time += instance.static_delta_time;
-        instance.delta_time = instance.static_delta_time * instance.time_scale;
-        instance.time += instance.delta_time;
-        instance.last_time = Instant::now();
+    pub fn update_time(&mut self) {
+        self.static_delta_time = self.last_time.elapsed().as_secs_f32();
+        self.static_time += self.static_delta_time;
+        self.delta_time = self.static_delta_time * self.time_scale;
+        self.time += self.delta_time;
+        self.last_time = Instant::now();
     }
 
-    pub fn timer(name: &'static str) -> TimeType {
-        let mut instance = Self::get_mut();
-        let instant = instance.timers.entry(name).or_insert(Instant::now());
+    pub fn timer(&self, name: &'static str) -> TimeType {
+        let mut timers = self.timers.borrow_mut();
+        let instant = timers.entry(name).or_insert(Instant::now());
         instant.elapsed().as_secs_f32()
     }
 
-    pub fn reset_timer(name: &'static str) {
-        let mut instance = Self::get_mut();
-        instance.timers.insert(name, Instant::now());
+    pub fn reset_timer(&mut self, name: &'static str) {
+        self.timers.borrow_mut().insert(name, Instant::now());
     }
 
     time_member_getter!(time);
@@ -59,7 +51,7 @@ impl Time {
 impl Default for Time {
     fn default() -> Self {
         Self {
-            timers: HashMap::new(),
+            timers: RefCell::new(HashMap::new()),
             last_time: Instant::now(),
             time: 0.0,
             static_time: 0.0,

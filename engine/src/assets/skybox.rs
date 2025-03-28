@@ -5,6 +5,7 @@ use std::path::Path;
 use std::sync::RwLockReadGuard;
 
 use super::{error::AssetError, texture::Texture, Asset, LoadedAsset};
+use crate::context::ReadOnlyAssetContext;
 use crate::{self as engine, core::Ref, render::Shader};
 
 #[derive(TypeUuid)]
@@ -23,6 +24,7 @@ pub struct SkyboxShaders<'a> {
     pub irradiance_cubemap_shader: &'a Ref<Shader>,
     pub prefilter_cubemap_shader: &'a Ref<Shader>,
     pub brdf_shader: &'a Ref<Shader>,
+    pub cubemap_mip_shader: &'a Ref<Shader>,
 }
 
 impl Asset for Skybox {
@@ -37,9 +39,13 @@ impl Asset for Skybox {
         &["exr", "hdr"]
     }
 
-    fn from_file(path: &Path) -> Result<LoadedAsset<Self>, AssetError> {
-        let LoadedAsset { asset: texture, .. } = Texture::from_file(path)?;
+    fn from_file(
+        game: &ReadOnlyAssetContext,
+        path: &Path,
+    ) -> Result<LoadedAsset<Self>, AssetError> {
+        let LoadedAsset { asset: texture, .. } = Texture::from_file(game, path)?;
         let cubemap = Texture::new(
+            game.render_context.clone(),
             &wgpu::TextureDescriptor {
                 label: None,
                 size: wgpu::Extent3d {
@@ -62,6 +68,7 @@ impl Asset for Skybox {
             false,
         );
         let irradiance_cubemap = Texture::new(
+            game.render_context.clone(),
             &wgpu::TextureDescriptor {
                 label: None,
                 size: wgpu::Extent3d {
@@ -84,6 +91,7 @@ impl Asset for Skybox {
             false,
         );
         let prefilter_cubemap = Texture::new(
+            game.render_context.clone(),
             &wgpu::TextureDescriptor {
                 label: None,
                 size: wgpu::Extent3d {
@@ -106,6 +114,7 @@ impl Asset for Skybox {
             false,
         );
         let brdf_map = Texture::new(
+            game.render_context.clone(),
             &wgpu::TextureDescriptor {
                 label: None,
                 size: wgpu::Extent3d {
@@ -179,7 +188,6 @@ impl Skybox {
         dst_mips: u32,
     ) -> wgpu::BindGroup {
         let views = (0..dst_mips)
-            .into_iter()
             .map(|mip| dst.create_cubemap_array_view(Some(mip)))
             .collect::<Vec<_>>();
         device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -197,7 +205,7 @@ impl Skybox {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::TextureViewArray(
-                        views.iter().map(|v| v).collect::<Vec<_>>().as_slice(),
+                        views.iter().collect::<Vec<_>>().as_slice(),
                     ),
                 },
             ],
@@ -267,7 +275,8 @@ impl Skybox {
                 None,
             );
         }
-        self.cubemap.generate_cubemap_mips(render_state, encoder);
+        self.cubemap
+            .generate_cubemap_mips(render_state, encoder, shaders.cubemap_mip_shader);
         {
             let shader = shaders.irradiance_cubemap_shader.read();
             let bind_group = Self::create_src_dst_bind_group(

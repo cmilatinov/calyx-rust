@@ -1,5 +1,6 @@
 use crate as engine;
 use crate::component::{Component, ReflectComponent};
+use crate::context::ReadOnlyAssetContext;
 use crate::core::Time;
 use crate::input::Input;
 use crate::reflect::{Reflect, ReflectDefault};
@@ -35,9 +36,16 @@ impl Default for ComponentThirdPersonCamera {
 }
 
 impl Component for ComponentThirdPersonCamera {
-    fn update(&mut self, scene: &mut Scene, game_object: GameObject, input: &Input) {
+    fn update(
+        &mut self,
+        _game: &ReadOnlyAssetContext,
+        scene: &mut Scene,
+        game_object: GameObject,
+        time: &Time,
+        input: &Input,
+    ) {
         let delta = input.input(|input| input.pointer.motion().unwrap_or_default());
-        let rot = Vec2::new(delta.x, delta.y).scale(Time::delta_time() * self.sensitivity);
+        let rot = Vec2::new(delta.x, delta.y).scale(time.delta_time() * self.sensitivity);
         self.rotation += rot;
         self.rotation.y =
             nalgebra::clamp(self.rotation.y, -89.0f32.to_radians(), 89.0f32.to_radians());
@@ -52,6 +60,6 @@ impl Component for ComponentThirdPersonCamera {
         transform.position = pos - self.distance * (*dir);
         transform.rotation = UnitQuaternion::face_towards(&dir, &Vec3::y_axis());
         transform.update_matrix();
-        scene.set_world_transform(game_object, transform);
+        scene.set_world_transform(game_object, transform.matrix);
     }
 }

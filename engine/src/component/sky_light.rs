@@ -1,11 +1,10 @@
-use serde::{Deserialize, Serialize};
-
 use crate as engine;
 use crate::assets::skybox::Skybox;
+use crate::assets::AssetRef;
 use crate::component::{Component, ReflectComponent};
-use crate::core::Ref;
 use crate::reflect::{Reflect, ReflectDefault};
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
+use serde::{Deserialize, Serialize};
 
 #[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "eb42f81f-45ab-428c-9d07-961696edc5fa"]
@@ -15,7 +14,7 @@ use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 pub struct ComponentSkyLight {
     pub active: bool,
     pub intensity: f32,
-    pub skybox: Option<Ref<Skybox>>,
+    pub skybox: AssetRef<Skybox>,
 }
 
 impl Default for ComponentSkyLight {

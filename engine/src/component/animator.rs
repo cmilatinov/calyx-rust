@@ -6,7 +6,9 @@ use crate::assets::animation_graph::{
     BoolCondition, FloatCondition, IntCondition,
 };
 use crate::assets::mesh::BoneTransform;
-use crate::core::{Ref, Time, TimeType};
+use crate::assets::AssetRef;
+use crate::context::ReadOnlyAssetContext;
+use crate::core::{Time, TimeType};
 use crate::input::Input;
 use crate::render::Gizmos;
 use crate::scene::{GameObject, Scene};
@@ -39,10 +41,10 @@ struct AnimatorTransition {
 #[reflect_attr(name = "Animator", update)]
 #[serde(default)]
 pub struct ComponentAnimator {
-    pub animation: Option<Ref<Animation>>,
+    pub animation: AssetRef<Animation>,
     pub time: TimeType,
     pub draw_debug_skeleton: bool,
-    pub animation_graph: Option<Ref<AnimationGraph>>,
+    pub animation_graph: AssetRef<AnimationGraph>,
     #[reflect_skip]
     #[serde(skip)]
     current_state: Option<NodeIndex>,
@@ -58,12 +60,17 @@ pub struct ComponentAnimator {
 }
 
 impl Component for ComponentAnimator {
-    fn reset(&mut self, scene: &mut Scene, game_object: GameObject) {
-        self.apply_animation_pose(scene, game_object);
+    fn reset(&mut self, assets: &ReadOnlyAssetContext, scene: &mut Scene, game_object: GameObject) {
+        self.apply_animation_pose(assets, scene, game_object);
     }
 
-    fn start(&mut self, scene: &mut Scene, game_object: GameObject) {
-        let Some(graph_ref) = self.animation_graph.clone() else {
+    fn start(
+        &mut self,
+        assets: &ReadOnlyAssetContext,
+        _scene: &mut Scene,
+        _game_object: GameObject,
+    ) {
+        let Some(graph_ref) = self.animation_graph.get_ref(assets) else {
             return;
         };
         let graph = graph_ref.read();
@@ -72,10 +79,17 @@ impl Component for ComponentAnimator {
             .and_then(|id| graph.node_indices().find(|n| graph[*n].id == id));
     }
 
-    fn update(&mut self, scene: &mut Scene, game_object: GameObject, _input: &Input) {
-        self.step_fsm();
-        let duration = self.apply_animation_pose(scene, game_object);
-        self.update_time(duration);
+    fn update(
+        &mut self,
+        assets: &ReadOnlyAssetContext,
+        scene: &mut Scene,
+        game_object: GameObject,
+        time: &Time,
+        _input: &Input,
+    ) {
+        self.step_fsm(assets);
+        let duration = self.apply_animation_pose(assets, scene, game_object);
+        self.update_time(time, duration);
     }
 
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {
@@ -89,16 +103,16 @@ impl Component for ComponentAnimator {
             };
             let transform = scene.get_world_transform(root);
             for child in scene.get_children(root) {
-                self.draw_bones(scene, child, gizmos, transform.position);
+                Self::draw_bones(scene, child, gizmos, transform.position);
             }
         }
     }
 }
 
 impl ComponentAnimator {
-    fn step_fsm(&mut self) {
+    fn step_fsm(&mut self, assets: &ReadOnlyAssetContext) {
         let new_transition;
-        let Some(graph_ref) = self.animation_graph.clone() else {
+        let Some(graph_ref) = self.animation_graph.get_ref(assets) else {
             return;
         };
         let graph = graph_ref.read();
@@ -149,7 +163,7 @@ impl ComponentAnimator {
 
     fn end_transition(&mut self, graph: &AnimationGraph) {
         if let Some(transition) = self.current_transition.take() {
-            if let Some((source, target)) = graph.edge_endpoints(transition.transition) {
+            if let Some((_source, target)) = graph.edge_endpoints(transition.transition) {
                 // let source_duration
                 self.current_state = Some(target);
             }
@@ -205,61 +219,57 @@ impl ComponentAnimator {
 
     fn apply_animation_pose(
         &mut self,
+        assets: &ReadOnlyAssetContext,
         scene: &mut Scene,
         game_object: GameObject,
     ) -> Option<TimeType> {
-        let mut duration = None;
         let skinned_meshes = scene
             .get_descendants_with_component::<ComponentSkinnedMesh>(game_object)
             .collect::<Vec<_>>();
-        if let Some(animation) = self.animation.clone() {
-            let animation = animation.read();
-            duration = Some((animation.duration / animation.ticks_per_second) as TimeType);
-            for skinned_mesh_go in skinned_meshes {
-                let mut mesh_bone = None;
-                if let Some(entry) = scene.entry(skinned_mesh_go) {
-                    if let Ok(c_skinned_mesh) = entry.get_component::<ComponentSkinnedMesh>() {
-                        if let Some(mesh) = &c_skinned_mesh.mesh {
-                            if let Some(root_bone) = &c_skinned_mesh.root_bone {
-                                mesh_bone = Some((mesh.clone(), *root_bone));
-                            }
-                        }
-                    }
-                }
-                if let Some((mesh, root_bone)) = mesh_bone {
-                    if let Some(root) = root_bone.game_object(scene) {
-                        let mesh = mesh.read();
-                        self.node_transforms.resize(
-                            mesh.bones.len(),
-                            BoneTransform {
-                                transform: Mat4::identity().into(),
-                            },
-                        );
-                        let transform = scene.get_transform(root);
-                        self.traverse_bone_hierarchy(
-                            scene,
-                            root,
-                            &animation,
-                            &transform.inverse_matrix,
-                            Mat4::identity(),
-                        );
-                    }
-                }
-                if let Some(mut entry) = scene.entry_mut(skinned_mesh_go) {
-                    if let Ok(c_skinned_mesh) = entry.get_component_mut::<ComponentSkinnedMesh>() {
-                        c_skinned_mesh.bone_transforms.clear();
-                        c_skinned_mesh
-                            .bone_transforms
-                            .extend(self.node_transforms.drain(0..));
-                    }
+        let animation = self.animation.get_ref(assets)?;
+        let animation = animation.read();
+        for skinned_mesh_go in skinned_meshes {
+            let Some(entry) = scene.entry(skinned_mesh_go) else {
+                continue;
+            };
+            let Ok(c_skinned_mesh) = entry.get_component::<ComponentSkinnedMesh>() else {
+                continue;
+            };
+            let Some(root) = c_skinned_mesh.root_bone.game_object(scene) else {
+                continue;
+            };
+            let Some(mesh_ref) = c_skinned_mesh.mesh.get_ref(assets) else {
+                continue;
+            };
+            let mesh = mesh_ref.read();
+            self.node_transforms.resize(
+                mesh.bones.len(),
+                BoneTransform {
+                    transform: Mat4::identity().into(),
+                },
+            );
+            let transform = scene.get_transform(root);
+            self.traverse_bone_hierarchy(
+                scene,
+                root,
+                &animation,
+                &transform.inverse_matrix,
+                Mat4::identity(),
+            );
+            if let Some(mut entry) = scene.entry_mut(skinned_mesh_go) {
+                if let Ok(c_skinned_mesh) = entry.get_component_mut::<ComponentSkinnedMesh>() {
+                    c_skinned_mesh.bone_transforms.clear();
+                    c_skinned_mesh
+                        .bone_transforms
+                        .extend(self.node_transforms.drain(0..));
                 }
             }
         }
-        duration
+        Some((animation.duration / animation.ticks_per_second) as TimeType)
     }
 
-    fn update_time(&mut self, animation_duration: Option<TimeType>) {
-        let delta_time = Time::delta_time();
+    fn update_time(&mut self, time: &Time, animation_duration: Option<TimeType>) {
+        let delta_time = time.delta_time();
         self.time += delta_time;
         if let Some(duration) = animation_duration {
             self.time %= duration;
@@ -270,7 +280,6 @@ impl ComponentAnimator {
     }
 
     fn draw_bones(
-        &self,
         scene: &Scene,
         game_object: GameObject,
         gizmos: &mut Gizmos,
@@ -285,7 +294,7 @@ impl ComponentAnimator {
             gizmos.line(&parent_position, &transform.position);
         }
         for child in scene.get_children(game_object) {
-            self.draw_bones(
+            Self::draw_bones(
                 scene,
                 child,
                 gizmos,
@@ -324,7 +333,7 @@ impl ComponentAnimator {
                 }
             }
         }
-        parent_transform = parent_transform * local_transform;
+        parent_transform *= local_transform;
         scene.set_transform(game_object, local_transform);
         let mut walker = scene.get_children_walker(game_object);
         while let Some(child) = walker.next(scene) {
@@ -339,7 +348,7 @@ impl ComponentAnimator {
     }
 
     fn find_keyframes<T, F: FnMut(&T) -> TimeType>(
-        keyframes: &Vec<T>,
+        keyframes: &[T],
         time: TimeType,
         mut accessor: F,
     ) -> (&T, &T) {

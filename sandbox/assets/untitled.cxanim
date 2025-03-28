@@ -1,9 +1,51 @@
 {
   "graph": {
-    "nodes": [],
+    "nodes": [
+      {
+        "id": "e5c48ca8-ff98-4016-9e49-e79c71bc7f9c",
+        "name": "Animation",
+        "motion": {
+          "AnimationClip": {
+            "speed": 1.0,
+            "animation": null
+          }
+        },
+        "position": {
+          "x": -277.1609,
+          "y": 28.095972
+        }
+      },
+      {
+        "id": "096ccf2d-b4e3-4d58-9712-42578e2f3bfe",
+        "name": "Blend Tree",
+        "motion": {
+          "BlendTree1D": {
+            "parameter": "00000000-0000-0000-0000-000000000000",
+            "motions": []
+          }
+        },
+        "position": {
+          "x": 145.8333,
+          "y": -3.0377464
+        }
+      }
+    ],
     "node_holes": [],
     "edge_property": "directed",
-    "edges": []
+    "edges": [
+      [
+        0,
+        1,
+        {
+          "id": "f3168229-ea62-4558-af57-eeaea4bbdf2f",
+          "name": "Transition",
+          "has_exit_time": false,
+          "exit_time": 0.0,
+          "duration": 0.5,
+          "conditions": []
+        }
+      ]
+    ]
   },
   "parameters": [],
   "start_node": null

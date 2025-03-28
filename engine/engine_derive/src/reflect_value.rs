@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 
 use proc_macro2::Span;
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::token::Comma;
@@ -32,7 +32,7 @@ pub(crate) fn impl_reflect_value(input: TokenStream) -> TokenStream {
     let mut register_traits_impl = quote! {};
     for trait_path in traits {
         let trait_ident = trait_path.segments.last().unwrap().ident.clone();
-        let reflect_trait_ident = Ident::new(&format!("Reflect{}", trait_ident), Span::call_site());
+        let reflect_trait_ident = format_ident!("Reflect{}", trait_ident);
         let register_trait_impl = quote! {
             registry.meta_impls::<#name, #reflect_trait_ident>();
         };
@@ -43,6 +43,7 @@ pub(crate) fn impl_reflect_value(input: TokenStream) -> TokenStream {
     }
 
     TokenStream::from(quote! {
+        #[automatically_derived]
         impl #FQTypeName for #name {
             #[inline]
             fn type_name() -> &'static str { std::any::type_name::<Self>() }
@@ -50,6 +51,7 @@ pub(crate) fn impl_reflect_value(input: TokenStream) -> TokenStream {
             fn type_name_short() -> &'static str { stringify!(#name) }
         }
 
+        #[automatically_derived]
         impl #FQReflect for #name {
             #[inline]
             fn as_any(&self) -> &dyn #FQAny { self }
@@ -72,6 +74,7 @@ pub(crate) fn impl_reflect_value(input: TokenStream) -> TokenStream {
             }
         }
 
+        #[automatically_derived]
         impl #FQReflectedType for #name {
             fn register(registry: &mut engine::reflect::type_registry::TypeRegistry) {
                 registry.meta::<#name>();

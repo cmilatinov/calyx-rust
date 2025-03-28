@@ -2,9 +2,10 @@ use crate::panel::Panel;
 use crate::{icons, EditorAppState, Selection, SelectionType};
 use egui::Ui;
 use engine::component::ComponentID;
+use engine::context::GameContext;
 use engine::egui::{Color32, Response};
+use engine::scene::Scene;
 use engine::scene::{GameObject, SiblingDir};
-use engine::scene::{Scene, SceneManager};
 use engine::uuid::Uuid;
 use engine::*;
 use re_ui::drag_and_drop::{DropTarget, ItemKind};
@@ -39,9 +40,7 @@ impl Panel for PanelSceneHierarchy {
         "Scene Hierarchy"
     }
 
-    fn ui(&mut self, ui: &mut Ui) {
-        let mut app_state = EditorAppState::get_mut();
-
+    fn ui(&mut self, ui: &mut Ui, state: &mut EditorAppState) {
         egui::ScrollArea::both()
             .id_salt("scene_scroll_area")
             .auto_shrink([false, false])
@@ -52,8 +51,13 @@ impl Panel for PanelSceneHierarchy {
                     ..Default::default()
                 }
                 .show(ui, |ui| {
-                    let mut scene_manager = SceneManager::get_mut();
-                    let scene = scene_manager.simulation_scene_mut();
+                    let EditorAppState {
+                        game: GameContext { scenes, .. },
+                        selection,
+                        ..
+                    } = state;
+
+                    let scene = scenes.simulation_scene_mut();
                     re_ui::list_item::list_item_scope(ui, "scene", |ui| {
                         let mut list_item = ui.list_item().draggable(false);
                         if self.target_container == Some(scene.root()) {
@@ -67,11 +71,11 @@ impl Panel for PanelSceneHierarchy {
                                 .always_show_buttons(true)
                                 .with_icon(&icons::OBJECT_TREE)
                                 .with_buttons(|ui| {
-                                    self.add_game_object_button(ui, scene, &mut app_state)
+                                    self.add_game_object_button(ui, scene, selection)
                                 }),
                         );
                         for root_object in scene.root_objects().collect::<Vec<_>>() {
-                            self.render_scene_node(scene, &mut app_state, ui, root_object, true);
+                            self.render_scene_node(scene, selection, ui, root_object, true);
                         }
                         self.handle_root_dnd_interaction(ui, scene, &response);
 
@@ -79,7 +83,7 @@ impl Panel for PanelSceneHierarchy {
                             ui.allocate_response(ui.available_size(), egui::Sense::click());
 
                         if empty_space_response.clicked() {
-                            app_state.selection = Selection::none();
+                            *selection = Selection::none();
                         }
 
                         self.handle_empty_space_dnd_interaction(
@@ -114,7 +118,7 @@ impl PanelSceneHierarchy {
     fn render_scene_node(
         &mut self,
         scene: &mut Scene,
-        app_state: &mut EditorAppState,
+        selection: &mut Selection,
         ui: &mut Ui,
         game_object: GameObject,
         parent_visible: bool,
@@ -123,9 +127,7 @@ impl PanelSceneHierarchy {
         let id = ui.make_persistent_id(game_object_id);
         let name = scene.get_game_object_name(game_object);
         let children = scene.get_children_ordered(game_object).collect::<Vec<_>>();
-        let is_selected = app_state
-            .selection
-            .contains(SelectionType::GameObject, game_object_id);
+        let is_selected = selection.contains(SelectionType::GameObject, game_object_id);
         let mut visible = scene
             .read_component::<ComponentID, _, _>(game_object, |c| c.visible)
             .unwrap_or(false);
@@ -151,7 +153,7 @@ impl PanelSceneHierarchy {
         if !children.is_empty() {
             let res = item.show_hierarchical_with_children(ui, id, true, content, |ui| {
                 for child_node in children {
-                    self.render_scene_node(scene, app_state, ui, child_node, container_visible)
+                    self.render_scene_node(scene, selection, ui, child_node, container_visible)
                 }
             });
             response = res.item_response;
@@ -167,7 +169,7 @@ impl PanelSceneHierarchy {
             game_object,
             is_selected,
             visible,
-            app_state,
+            selection,
             &response,
             body_response.as_ref(),
             visibility_response.as_ref(),
@@ -182,13 +184,13 @@ impl PanelSceneHierarchy {
         game_object: GameObject,
         is_selected: bool,
         is_visible: bool,
-        app_state: &mut EditorAppState,
+        selection: &mut Selection,
         response: &Response,
         body_response: Option<&Response>,
         visibility_response: Option<&Response>,
     ) {
         if response.double_clicked() {
-            app_state.selection = Selection::from_id(
+            *selection = Selection::from_id(
                 SelectionType::GameObject,
                 scene.get_game_object_uuid(game_object),
             );
@@ -196,7 +198,7 @@ impl PanelSceneHierarchy {
                 state.store(ui.ctx());
             }
         } else if response.clicked() {
-            app_state.selection = if is_selected {
+            *selection = if is_selected {
                 Selection::none()
             } else {
                 Selection::from_id(
@@ -205,7 +207,7 @@ impl PanelSceneHierarchy {
                 )
             };
         } else if response.secondary_clicked() {
-            app_state.selection = Selection::from_id(
+            *selection = Selection::from_id(
                 SelectionType::GameObject,
                 scene.get_game_object_uuid(game_object),
             );
@@ -397,14 +399,13 @@ impl PanelSceneHierarchy {
         &self,
         ui: &mut Ui,
         scene: &mut Scene,
-        app_state: &EditorAppState,
+        selection: &Selection,
     ) -> Response {
         let res = ui
             .small_icon_button(&re_ui::icons::ADD)
             .on_hover_text("Add a new game object");
         if res.clicked() {
-            let parent = app_state
-                .selection
+            let parent = selection
                 .last(SelectionType::GameObject)
                 .and_then(|id| scene.get_game_object_by_uuid(id));
             scene.create_game_object(None, parent);

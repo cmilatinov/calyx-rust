@@ -22,16 +22,15 @@ impl Panel for PanelGame {
         Some(&icons::GAMEPAD)
     }
 
-    fn ui(&mut self, ui: &mut Ui) {
+    fn ui(&mut self, ui: &mut Ui, state: &mut EditorAppState) {
         egui::Frame {
             fill: ui.style().visuals.panel_fill,
             ..Default::default()
         }
         .show(ui, |ui| {
-            let mut app_state = EditorAppState::get_mut();
-            self.action_bar(ui, &mut app_state);
-            let (size, res) = self.viewport(ui, &mut app_state);
-            self.viewport_input(ui, &mut app_state, size, res);
+            self.action_bar(ui, state);
+            let (size, res) = self.viewport(ui, state);
+            self.viewport_input(ui, state, size, res);
         });
     }
 
@@ -80,15 +79,16 @@ impl PanelGame {
         let res = ui.with_layout(
             egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
             |ui| {
+                let Some(texture_id) = app_state
+                    .game_renderer
+                    .scene_texture_handle()
+                    .map(|handle| handle.id())
+                else {
+                    return ui.response();
+                };
                 ui.add(
                     Image::new(ImageSource::Texture(SizedTexture {
-                        id: app_state
-                            .game_renderer
-                            .as_ref()
-                            .unwrap()
-                            .read()
-                            .scene_texture_handle()
-                            .id(),
+                        id: texture_id,
                         size,
                     }))
                     .sense(Sense::click()),

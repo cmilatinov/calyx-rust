@@ -14,7 +14,8 @@ pub enum Orientation {
     Z,
 }
 
-#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, TypeUuid, Serialize, Deserialize)]
+#[uuid = "9b1a794d-df37-4abe-a7a0-c4423bb9edd3"]
 pub enum ColliderShape {
     Sphere {
         radius: f32,

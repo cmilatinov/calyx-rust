@@ -4,7 +4,6 @@ use crate::{icons, EditorAppState};
 use engine::assets::animation_graph::{
     AnimationGraph, AnimationMotion, AnimationNode, AnimationTransition,
 };
-use engine::assets::AssetRegistry;
 use engine::core::Ref;
 use engine::egui;
 use engine::egui::text::LayoutJob;
@@ -50,14 +49,9 @@ impl Panel for PanelAnimator {
         Some(&icons::WALKING)
     }
 
-    fn ui(&mut self, ui: &mut Ui) {
-        let ty;
-        let mut selected_id;
-        {
-            let app_state = EditorAppState::get();
-            ty = app_state.selection.ty();
-            selected_id = app_state.selection.first(ty);
-        }
+    fn ui(&mut self, ui: &mut Ui, state: &mut EditorAppState) {
+        let ty = state.selection.ty();
+        let mut selected_id = state.selection.first(ty);
         let mut selected_asset_id = None;
         if let SelectionType::AnimationNode(id) = ty {
             selected_asset_id = Some(id);
@@ -68,27 +62,27 @@ impl Panel for PanelAnimator {
             selected_id = None;
         }
         if let Some(id) = selected_asset_id {
-            if let Ok(graph) = AssetRegistry::get().load_by_id::<AnimationGraph>(id) {
+            if let Ok(graph) = state
+                .game
+                .assets
+                .asset_registry
+                .read()
+                .load_by_id::<AnimationGraph>(id)
+            {
                 self.selected_graph = Some(graph);
             }
         }
         let Some(graph) = self.selected_graph.clone() else {
             return;
         };
-        let Some(asset_id) = AssetRegistry::get().asset_id_from_ref_t(&graph) else {
-            return;
-        };
+        let asset_id = graph.id();
         let mut graph = graph.write();
-        let rect_in_ui = ui.max_rect();
-        let mut ui_from_world = re_ui::zoom_pan_area::fit_to_rect_in_scene(rect_in_ui, self.rect);
-        let mut graph_ui = ui.new_child(
-            UiBuilder::new()
-                .layer_id(LayerId::new(Order::Middle, ui.layer_id().id))
-                .max_rect(ui.max_rect()),
-        );
-        let resp = re_ui::zoom_pan_area::zoom_pan_area(&mut graph_ui, &mut ui_from_world, |ui| {
-            self.draw_graph(ui, &mut graph, asset_id, selected_id);
-        });
+        let mut rect = self.rect;
+        let resp = egui::Scene::new()
+            .show(ui, &mut rect, |ui| {
+                self.draw_graph(ui, &mut state.selection, &mut graph, asset_id, selected_id);
+            })
+            .response;
         if resp.secondary_clicked() {
             if let Some(pos) = ui.input(|input| input.pointer.interact_pos()) {
                 let transform = ui
@@ -124,7 +118,7 @@ impl Panel for PanelAnimator {
                 }
             });
         });
-        self.rect = ui_from_world.inverse() * rect_in_ui;
+        self.rect = rect;
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -152,6 +146,7 @@ impl PanelAnimator {
     fn draw_graph(
         &mut self,
         ui: &mut Ui,
+        selection: &mut Selection,
         graph: &mut AnimationGraph,
         asset_id: Uuid,
         selected_id: Option<Uuid>,
@@ -160,7 +155,7 @@ impl PanelAnimator {
         let mut any_node_hovered = false;
         for node in nodes {
             any_node_hovered |= self
-                .draw_node(ui, graph, node, asset_id, selected_id)
+                .draw_node(ui, selection, graph, node, asset_id, selected_id)
                 .hovered();
         }
         let mut edge_map: HashMap<[NodeIndex; 2], Vec<EdgeIndex>> = Default::default();
@@ -187,6 +182,7 @@ impl PanelAnimator {
         for ([source, target], edges) in edge_map {
             self.draw_edges(
                 &mut edge_ui,
+                selection,
                 graph,
                 source,
                 target,
@@ -202,6 +198,7 @@ impl PanelAnimator {
     fn draw_node(
         &mut self,
         ui: &mut Ui,
+        selection: &mut Selection,
         graph: &mut AnimationGraph,
         node: NodeIndex,
         asset_id: Uuid,
@@ -223,7 +220,7 @@ impl PanelAnimator {
         let graph = graph.deref_mut();
 
         let padding = 15.0;
-        let rounding = 5.0;
+        let corner_radius = 5.0;
         let stroke = if selected {
             Stroke::new(1.0, visuals.strong_text_color())
         } else {
@@ -246,7 +243,7 @@ impl PanelAnimator {
             .inner_margin(padding)
             .stroke(stroke)
             .fill(bg)
-            .rounding(rounding)
+            .corner_radius(corner_radius)
             .show(&mut node_ui, |ui| {
                 ui.add(egui::Label::new(galley).selectable(false));
             });
@@ -285,7 +282,7 @@ impl PanelAnimator {
                     self.source_node = None;
                 }
             } else {
-                EditorAppState::get_mut().selection = if selected {
+                *selection = if selected {
                     Selection::from_id(SelectionType::Asset, asset_id)
                 } else {
                     Selection::from_id(SelectionType::AnimationNode(asset_id), graph[node].id)
@@ -298,6 +295,7 @@ impl PanelAnimator {
     fn draw_edges(
         &mut self,
         ui: &mut Ui,
+        editor_selection: &mut Selection,
         graph: &mut AnimationGraph,
         source: NodeIndex,
         target: NodeIndex,
@@ -362,7 +360,7 @@ impl PanelAnimator {
                         graph[edges[idx]].id,
                     )
                 };
-                EditorAppState::get_mut().selection = selection;
+                *editor_selection = selection;
             }
             ui.painter().line_segment([p0, p1], stroke);
             Self::draw_arrow(

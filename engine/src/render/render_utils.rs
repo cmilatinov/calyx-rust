@@ -8,10 +8,10 @@ use crate::assets::mesh::Mesh;
 pub struct RenderUtils;
 
 impl RenderUtils {
-    pub fn color_attachment<'a>(
-        view: &'a wgpu::TextureView,
+    pub fn color_attachment(
+        view: &wgpu::TextureView,
         clear_color: Color32,
-    ) -> wgpu::RenderPassColorAttachment<'a> {
+    ) -> wgpu::RenderPassColorAttachment<'_> {
         let [x, y, z, w] = clear_color.to_array();
         wgpu::RenderPassColorAttachment {
             view,
@@ -88,7 +88,7 @@ impl RenderUtils {
     }
 
     pub fn bind_mesh_buffers<'a>(render_pass: &mut wgpu::RenderPass<'a>, mesh: &'a Mesh) {
-        if mesh.indices.len() > 0 {
+        if !mesh.indices.is_empty() {
             render_pass.set_index_buffer(
                 mesh.index_buffer.as_ref().unwrap().slice(..),
                 wgpu::IndexFormat::Uint32,

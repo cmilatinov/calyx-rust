@@ -1,3 +1,4 @@
+use crate::core::Time;
 use crate::input::Input;
 use crate::math;
 use glm::Mat4;
@@ -40,5 +41,5 @@ impl Camera {
 }
 
 pub trait CameraLike {
-    fn update(&mut self, _input: &Input) {}
+    fn update(&mut self, time: &Time, input: &Input);
 }

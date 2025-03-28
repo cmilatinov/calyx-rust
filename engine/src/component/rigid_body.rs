@@ -1,10 +1,9 @@
-use rapier3d::dynamics::RigidBodyType;
-use serde::{Deserialize, Serialize};
-
 use crate as engine;
 use crate::component::{Component, ReflectComponent};
 use crate::reflect::{Reflect, ReflectDefault};
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
+use rapier3d::dynamics::RigidBodyType;
+use serde::{Deserialize, Serialize};
 
 #[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "8cac1bae-e3c3-4ee6-b672-7689e9c10f7e"]

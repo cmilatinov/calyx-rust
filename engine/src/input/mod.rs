@@ -28,7 +28,7 @@ impl<'a> Input<'a> {
     }
 
     pub fn res(&self) -> Option<&egui::Response> {
-        self.res.clone()
+        self.res
     }
 
     pub fn input<R: Default>(&self, reader: impl FnOnce(&egui::InputState) -> R) -> R {

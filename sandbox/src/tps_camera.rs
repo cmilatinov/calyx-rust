@@ -5,9 +5,9 @@ use engine::input::Input;
 use engine::nalgebra::UnitQuaternion;
 use engine::reflect::{Reflect, ReflectDefault};
 use engine::scene::{GameObject, GameObjectRef, Scene};
+use engine::serde::{Deserialize, Serialize};
 use engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use engine::{nalgebra, serde_json};
-use serde::{Deserialize, Serialize};
 
 #[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[reflect(Default, TypeUuidDynamic, Component)]
@@ -28,20 +28,14 @@ impl Default for ComponentThirdPersonCamera {
             target: None,
             sensitivity: 0.5,
             distance: 5.0,
-            rotation: Vec2::default(),
+            rotation: Default::default(),
         }
     }
 }
 
 impl Component for ComponentThirdPersonCamera {
     fn update(&mut self, scene: &mut Scene, game_object: GameObject, input: &Input) {
-        let (scroll_delta, delta) = input.input(|input| {
-            (
-                input.smooth_scroll_delta,
-                input.pointer.motion().unwrap_or_default(),
-            )
-        });
-        self.distance += scroll_delta.y;
+        let delta = input.input(|input| input.pointer.motion().unwrap_or_default());
         let rot = Vec2::new(delta.x, delta.y).scale(Time::delta_time() * self.sensitivity);
         self.rotation += rot;
         self.rotation.y =
@@ -57,6 +51,6 @@ impl Component for ComponentThirdPersonCamera {
         transform.position = pos - self.distance * (*dir);
         transform.rotation = UnitQuaternion::face_towards(&dir, &Vec3::y_axis());
         transform.update_matrix();
-        scene.set_world_transform(game_object, transform);
+        scene.set_world_transform(game_object, transform.matrix);
     }
 }

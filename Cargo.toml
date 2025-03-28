@@ -12,24 +12,24 @@ approx = "0.5"
 bytemuck = "1.14.0"
 chrono = "0.4.31"
 common-path = "1.0.0"
-dirs = "5.0.1"
+dirs = "6.0.0"
 dunce = "1.0.4"
-eframe = { version = "0.30.0", features = ["wgpu", "persistence"] }
-egui = { version = "0.30.0", features = ["mint", "persistence"] }
-egui_extras = { version = "0.30.0", features = ["all_loaders"] }
+eframe = { version = "0.31.1", features = ["wgpu", "persistence"] }
+egui = { version = "0.31.1", features = ["mint", "persistence"] }
+egui_extras = { version = "0.31.1", features = ["all_loaders"] }
 egui-modal = "0.6.0"
-egui_tiles = "0.11.0"
-egui-wgpu = "0.30.0"
+egui_tiles = "0.12.0"
+egui-wgpu = "0.31.1"
 enum_dispatch = "0.3.13"
 transform-gizmo-egui = "0.4.0"
 lazy_static = "1.4.0"
 log = "0.4.20"
-serde = "1.0.189"
+serde = { version = "1.0.189", features = ["derive"] }
 uuid = { version = "1.5.0", features = ["v4", "serde"] }
 nalgebra-glm = { version = "0.19.0", features = ["serde-serialize", "convert-mint"] }
-rapier3d = { version = "0.22.0", features = ["serde-serialize", "debug-render"] }
-russimp = { version = "3.2.0", features = ["prebuilt", "static-link"] }
-notify = "7.0.0"
+rapier3d = { version = "0.23.1", features = ["serde-serialize", "debug-render"] }
+russimp = { version = "3.2.0", features = ["prebuilt"] }
+notify = "8.0.0"
 inventory = "0.3.12"
 sha-1 = "0.10.1"
 impls = "1.0.3"
@@ -42,26 +42,26 @@ relative-path = "1.9.0"
 path-absolutize = "3.1.1"
 rusty_pool = "0.7.0"
 image = "0.25.1"
-naga = { version = "23.1.0", features = ["wgsl-in"] }
+naga = { version = "24.0.0", features = ["wgsl-in"] }
 toml = "0.8.19"
 tinytemplate = "1.2.1"
-downcast-rs = "1.2.0"
+downcast-rs = "2.0.1"
 mint = "0.5.9"
 regex = "1.10.3"
-petgraph = { version = "0.6", features = ["serde-1"] }
+petgraph = { version = "0.7.1", features = ["serde-1"] }
 winit = "0.30.7"
 num = "0.4.1"
 num-derive = "0.4.1"
 num-traits = "0.2.17"
 sharedlib = "7.0.0"
-convert_case = "0.6.0"
-re_ui = "0.21.0"
+convert_case = "0.8.0"
+re_ui = "0.22.1"
 rfd = "0.15.1"
 proc-macro2 = "1.0.69"
 syn = { version = "2.0.38", features = ["full", "extra-traits"] }
 quote = "1.0.33"
+derive_builder = "0.20.2"
 
 [patch.crates-io]
 russimp-sys = { git = "https://github.com/cmilatinov/russimp-sys", branch = "main" }
-re_arrow2 = { git = "https://github.com/rerun-io/re_arrow2", rev = "4049468314caf5e67410539e0a1b72eb4b8d5b22" }
 transform-gizmo-egui = { git = "https://github.com/cmilatinov/transform-gizmo", package = "transform-gizmo-egui", branch = "main" }

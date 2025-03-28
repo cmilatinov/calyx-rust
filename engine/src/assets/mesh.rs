@@ -7,14 +7,14 @@ use egui_wgpu::wgpu::util::DeviceExt;
 use glm::{vec2, vec3, vec4, IVec4, Mat4, Vec2, Vec3, Vec4};
 use russimp::scene::{PostProcess, Scene};
 
+use super::LoadedAsset;
 use crate::assets::error::AssetError;
 use crate::assets::Asset;
+use crate::context::ReadOnlyAssetContext;
 use crate::render::buffer::{wgpu_buffer_init_desc, BufferLayout, ResizableBuffer};
 use crate::render::RenderContext;
 use crate::utils::TypeUuid;
 use crate::{self as engine, math};
-
-use super::LoadedAsset;
 
 const CX_MESH_NUM_UV_CHANNELS: usize = 4;
 
@@ -115,9 +115,9 @@ impl Mesh {
     // const ATTRIBUTE_MODEL3: u32 = 9;
 }
 
-impl Default for Mesh {
-    fn default() -> Self {
-        let device = RenderContext::device().unwrap();
+impl Mesh {
+    pub fn new(render_context: &RenderContext) -> Self {
+        let device = render_context.device();
 
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("instance_buffer"),
@@ -192,7 +192,10 @@ impl Asset for Mesh {
         &["obj"]
     }
 
-    fn from_file(path: &Path) -> Result<LoadedAsset<Self>, AssetError> {
+    fn from_file(
+        game: &ReadOnlyAssetContext,
+        path: &Path,
+    ) -> Result<LoadedAsset<Self>, AssetError> {
         let scene = Scene::from_file(
             path.to_str().unwrap(),
             vec![
@@ -205,8 +208,11 @@ impl Asset for Mesh {
         )?;
 
         // Assuming you want to load the first mesh in the scene
-        let mesh = scene.meshes.get(0).ok_or(AssetError::NotFound)?;
-        Ok(LoadedAsset::new(Mesh::from_russimp_mesh(mesh)))
+        let mesh = scene.meshes.first().ok_or(AssetError::NotFound)?;
+        Ok(LoadedAsset::new(Mesh::from_russimp_mesh(
+            &game.render_context,
+            mesh,
+        )))
     }
 }
 
@@ -232,7 +238,7 @@ impl Mesh {
         }
     }
 
-    pub fn from_russimp_mesh(mesh: &russimp::mesh::Mesh) -> Self {
+    pub fn from_russimp_mesh(render_context: &RenderContext, mesh: &russimp::mesh::Mesh) -> Self {
         let indices = mesh
             .faces
             .iter()
@@ -296,7 +302,7 @@ impl Mesh {
                 );
                 if sum > 0.00001 {
                     for w in weight.as_mut_slice() {
-                        *w = *w / sum;
+                        *w /= sum;
                     }
                 }
             }
@@ -311,7 +317,7 @@ impl Mesh {
             bone_indices,
             bone_weights,
             dirty: true,
-            ..Default::default()
+            ..Mesh::new(render_context)
         }
     }
 }
@@ -367,7 +373,7 @@ impl Mesh {
         queue.write_buffer(
             &self.instance_buffer,
             0 as wgpu::BufferAddress,
-            bytemuck::cast_slice(&[uniforms].as_slice()),
+            bytemuck::cast_slice([uniforms].as_slice()),
         );
     }
 

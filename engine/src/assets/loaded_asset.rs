@@ -1,6 +1,8 @@
 use crate::assets::error::AssetError;
+use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
-use serde::de::DeserializeOwned;
+use crate::utils::ContextSeed;
+use serde::de::{DeserializeOwned, DeserializeSeed};
 use std::io::BufReader;
 use std::path::Path;
 use uuid::Uuid;
@@ -19,7 +21,32 @@ impl<T> LoadedAsset<T> {
     }
 }
 
-impl<T: DeserializeOwned> LoadedAsset<T> {
+impl<'de, T> LoadedAsset<T>
+where
+    ContextSeed<'de, ReadOnlyAssetContext, T>: DeserializeSeed<'de, Value = T>,
+{
+    pub fn from_json_file_ctx(
+        game: &'de ReadOnlyAssetContext,
+        path: &Path,
+    ) -> Result<LoadedAsset<T>, AssetError> {
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .open(path)
+            .map_err(|_| AssetError::LoadError)?;
+        let reader = BufReader::new(file);
+        let seed = ContextSeed::<ReadOnlyAssetContext, T>::new(game);
+        let mut deserializer = serde_json::Deserializer::from_reader(reader);
+        let asset: T = seed
+            .deserialize(&mut deserializer)
+            .map_err(|_| AssetError::LoadError)?;
+        Ok(LoadedAsset::new(asset))
+    }
+}
+
+impl<T> LoadedAsset<T>
+where
+    T: DeserializeOwned,
+{
     pub fn from_json_file(path: &Path) -> Result<LoadedAsset<T>, AssetError> {
         let file = std::fs::OpenOptions::new()
             .read(true)
@@ -37,10 +64,10 @@ pub struct LoadedAssetRef<T: ?Sized> {
     pub sub_assets: Vec<Uuid>,
 }
 
-impl<T> From<LoadedAsset<T>> for LoadedAssetRef<T> {
-    fn from(LoadedAsset { asset, sub_assets }: LoadedAsset<T>) -> Self {
+impl<T> LoadedAssetRef<T> {
+    pub fn new(id: Uuid, LoadedAsset { asset, sub_assets }: LoadedAsset<T>) -> Self {
         Self {
-            asset: Ref::new(asset),
+            asset: Ref::from_id_value(id, asset),
             sub_assets,
         }
     }

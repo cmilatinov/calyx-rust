@@ -1,45 +1,45 @@
 use std::any::TypeId;
 use std::collections::HashMap;
-use std::ops::DerefMut;
-
-use inventory::collect;
 
 use crate::reflect::trait_meta::TraitMeta;
 use crate::reflect::type_info::{FieldGetter, FieldSetter, NamedField, StructInfo, TypeInfo};
 use crate::reflect::{AttributeMap, FieldGetterMut, Reflect, ReflectedType, TraitMetaFrom};
-use crate::utils::{singleton, Init};
+use crate::utils::TypeUuid;
+use inventory::collect;
+use uuid::Uuid;
 
 pub struct TypeRegistrationFn(pub fn(&mut TypeRegistry));
 collect!(TypeRegistrationFn);
 
 pub struct TypeRegistration {
-    pub trait_meta: HashMap<TypeId, Box<dyn TraitMeta>>,
+    pub trait_meta: HashMap<Uuid, Box<dyn TraitMeta>>,
     pub type_info: TypeInfo,
 }
 
-#[derive(Default)]
 pub struct TypeRegistry {
-    pub types: HashMap<TypeId, TypeRegistration>,
+    pub types: HashMap<Uuid, TypeRegistration>,
 }
 
-impl Init for TypeRegistry {
-    fn initialize(&mut self) {
+impl TypeRegistry {
+    pub fn new() -> Self {
+        let mut registry = Self {
+            types: Default::default(),
+        };
         for f in inventory::iter::<TypeRegistrationFn> {
-            (f.0)(self)
+            f.0(&mut registry)
         }
+        registry
     }
 }
-
-singleton!(TypeRegistry);
 
 impl TypeRegistry {
     pub fn register<T: ReflectedType + 'static>(&mut self) {
         T::register(self)
     }
 
-    pub fn meta<T: 'static>(&mut self) {
+    pub fn meta<T: TypeUuid + 'static>(&mut self) {
         self.types.insert(
-            TypeId::of::<T>(),
+            T::type_uuid(),
             TypeRegistration {
                 trait_meta: HashMap::new(),
                 type_info: TypeInfo::None,
@@ -47,21 +47,21 @@ impl TypeRegistry {
         );
     }
 
-    pub fn meta_struct<T: 'static>(&mut self, attrs: AttributeMap) -> StructInfoBuilder {
-        let type_id = TypeId::of::<T>();
+    pub fn meta_struct<T: TypeUuid + 'static>(&mut self, attrs: AttributeMap) -> StructInfoBuilder {
+        let type_uuid = T::type_uuid();
         self.types.insert(
-            type_id,
+            type_uuid,
             TypeRegistration {
                 trait_meta: HashMap::new(),
                 type_info: TypeInfo::Struct(StructInfo {
                     type_name: std::any::type_name::<T>(),
-                    type_id,
+                    type_id: TypeId::of::<T>(),
                     attrs,
                     fields: HashMap::new(),
                 }),
             },
         );
-        let registration = self.types.get_mut(&type_id).unwrap();
+        let registration = self.types.get_mut(&type_uuid).unwrap();
         if let TypeInfo::Struct(ref mut type_info) = registration.type_info {
             StructInfoBuilder { type_info }
         } else {
@@ -69,53 +69,54 @@ impl TypeRegistry {
         }
     }
 
-    pub fn meta_impls<T: Reflect + 'static, M: TraitMeta + TraitMetaFrom<T>>(&mut self) {
+    pub fn meta_impls<
+        T: Reflect + TypeUuid + 'static,
+        M: TraitMeta + TraitMetaFrom<T> + TypeUuid,
+    >(
+        &mut self,
+    ) {
         self.types
-            .get_mut(&TypeId::of::<T>())
+            .get_mut(&T::type_uuid())
             .and_then(|registration| {
                 registration
                     .trait_meta
-                    .insert(TypeId::of::<M>(), Box::new(M::trait_meta()))
+                    .insert(M::type_uuid(), Box::new(M::trait_meta()))
             });
     }
 
-    pub fn type_info<T: 'static>(&self) -> Option<&TypeInfo> {
-        self.type_info_by_id(TypeId::of::<T>())
+    pub fn type_info<T: TypeUuid + 'static>(&self) -> Option<&TypeInfo> {
+        self.type_info_by_id(T::type_uuid())
     }
 
-    pub fn type_info_by_id(&self, type_id: TypeId) -> Option<&TypeInfo> {
+    pub fn type_info_by_id(&self, type_uuid: Uuid) -> Option<&TypeInfo> {
         self.types
-            .get(&type_id)
+            .get(&type_uuid)
             .map(|registration| &registration.type_info)
     }
 
-    pub fn type_registration<T: 'static>(&self) -> Option<&TypeRegistration> {
-        self.type_registration_by_id(TypeId::of::<T>())
+    pub fn type_registration<T: TypeUuid + 'static>(&self) -> Option<&TypeRegistration> {
+        self.type_registration_by_id(T::type_uuid())
     }
 
-    pub fn type_registration_by_id(&self, type_id: TypeId) -> Option<&TypeRegistration> {
-        self.types.get(&type_id)
+    pub fn type_registration_by_id(&self, type_uuid: Uuid) -> Option<&TypeRegistration> {
+        self.types.get(&type_uuid)
     }
 
-    pub fn trait_meta<T: TraitMeta>(&self, type_id: TypeId) -> Option<&T> {
-        self.type_registration_by_id(type_id)
-            .and_then(|registration| {
-                let id = TypeId::of::<T>();
-                registration.trait_meta.get(&id)
-            })
+    pub fn trait_meta<T: TraitMeta + TypeUuid>(&self, type_uuid: Uuid) -> Option<&T> {
+        self.type_registration_by_id(type_uuid)
+            .and_then(|registration| registration.trait_meta.get(&T::type_uuid()))
             .and_then(|meta| meta.downcast_ref::<T>())
     }
 
-    pub fn list_types<T: TraitMeta>(&self) -> Vec<TypeId> {
-        let type_id = TypeId::of::<T>();
+    pub fn list_types<T: TraitMeta + TypeUuid>(&self) -> Vec<Uuid> {
         self.types
             .iter()
-            .filter(|(_id, reg)| reg.trait_meta.contains_key(&type_id))
+            .filter(|(_id, reg)| reg.trait_meta.contains_key(&T::type_uuid()))
             .map(|(id, _)| *id)
             .collect()
     }
 
-    pub fn all_of(&self, traits: Vec<TypeId>) -> Vec<TypeId> {
+    pub fn all_of(&self, traits: Vec<Uuid>) -> Vec<Uuid> {
         self.types
             .iter()
             .filter(|(_id, reg)| traits.iter().all(|tid| reg.trait_meta.contains_key(tid)))

@@ -1,4 +1,5 @@
 use engine::component::{Component, ReflectComponent};
+use engine::context::ReadOnlyAssetContext;
 use engine::core::Time;
 use engine::egui::Key;
 use engine::input::Input;
@@ -17,9 +18,16 @@ struct ComponentTest {
 }
 
 impl Component for ComponentTest {
-    fn update(&mut self, _scene: &mut Scene, _game_object: GameObject, input: &Input) {
+    fn update(
+        &mut self,
+        _game: &ReadOnlyAssetContext,
+        _scene: &mut Scene,
+        _game_object: GameObject,
+        time: &Time,
+        input: &Input,
+    ) {
         if input.input(|input| input.key_down(Key::Space)) {
-            self.value = self.value + 1.0 * Time::delta_time();
+            self.value = self.value + 1.0 * time.delta_time();
         }
     }
 }

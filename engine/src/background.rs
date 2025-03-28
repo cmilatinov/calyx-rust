@@ -1,31 +1,33 @@
 use std::collections::HashSet;
-use std::ops::DerefMut;
 use std::time::Duration;
 
+use crate::core::Ref;
 use rusty_pool::{JoinHandle, ThreadPool};
-
-use crate as engine;
-use crate::utils::singleton_with_init;
 
 pub struct Background {
     thread_pool: ThreadPool,
-    task_list: HashSet<isize>,
+    task_list: Ref<HashSet<isize>>,
 }
-
-singleton_with_init!(Background);
 
 impl Default for Background {
     fn default() -> Self {
         Self {
             thread_pool: ThreadPool::new(1, 10, Duration::from_secs(30)),
-            task_list: HashSet::new(),
+            task_list: Ref::new(Default::default()),
         }
     }
 }
 
 impl Background {
-    pub fn task_list(&self) -> &HashSet<isize> {
-        &self.task_list
+    pub fn new() -> Ref<Self> {
+        Ref::new(Self {
+            thread_pool: ThreadPool::new(1, 10, Duration::from_secs(30)),
+            task_list: Ref::new(Default::default()),
+        })
+    }
+
+    pub fn task_list(&self) -> Ref<HashSet<isize>> {
+        self.task_list.clone()
     }
 
     pub fn thread_pool(&self) -> &ThreadPool {
@@ -38,10 +40,11 @@ impl Background {
         task: F,
     ) -> JoinHandle<()> {
         let id = id.into();
-        self.task_list.insert(id);
+        let task_list = self.task_list.clone();
+        task_list.write().insert(id);
         self.thread_pool.evaluate(move || {
             task();
-            Background::get_mut().task_list.remove(&id);
+            task_list.write().remove(&id);
         })
     }
 }

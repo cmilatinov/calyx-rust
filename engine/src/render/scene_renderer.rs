@@ -1,33 +1,33 @@
-use std::collections::{HashMap, HashSet};
-use std::default::Default;
-use std::ops::Deref;
-use std::ops::Range;
-
+use super::{LockedAssetRenderState, RenderContext};
+use crate::assets::material::Material;
+use crate::assets::mesh::{Instance, Mesh};
+use crate::assets::skybox::SkyboxShaders;
+use crate::assets::texture::Texture;
+use crate::assets::AssetId;
+use crate::component::{
+    ComponentDirectionalLight, ComponentMesh, ComponentPointLight, ComponentSkinnedMesh,
+    ComponentSkyLight,
+};
+use crate::context::ReadOnlyAssetContext;
+use crate::core::Ref;
+use crate::math::Transform;
+use crate::render::asset_render_state::AssetRenderState;
+use crate::render::buffer::ResizableBuffer;
+use crate::render::render_utils::RenderUtils;
+use crate::render::{Camera, GizmoRenderer, PipelineOptions, Shader};
+use crate::scene::Scene;
 use egui::Color32;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::{wgpu, RenderState};
 use glm::{Mat4, Vec3};
 use legion::{Entity, IntoQuery};
 use rapier3d::pipeline::DebugRenderPipeline;
-
-use crate::assets::material::Material;
-use crate::assets::mesh::{Instance, Mesh};
-use crate::assets::skybox::SkyboxShaders;
-use crate::assets::texture::Texture;
-use crate::assets::{AssetRegistry, Assets};
-use crate::component::{
-    ComponentDirectionalLight, ComponentMesh, ComponentPointLight, ComponentSkinnedMesh,
-    ComponentSkyLight,
-};
-use crate::core::Ref;
-use crate::math::Transform;
-use crate::render::asset_render_state::AssetRenderState;
-use crate::render::buffer::ResizableBuffer;
-use crate::render::render_utils::RenderUtils;
-use crate::render::{Camera, GizmoRenderer, PipelineOptions, PipelineOptionsBuilder, Shader};
-use crate::scene::Scene;
-
-use super::{LockedAssetRenderState, RenderContext};
+use std::collections::{HashMap, HashSet};
+use std::default::Default;
+use std::ops::Deref;
+use std::ops::Range;
+use std::sync::Arc;
+use uuid::Uuid;
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -83,14 +83,24 @@ pub struct SceneRendererOptions {
 }
 
 pub struct DrawListElement {
-    shader_id: usize,
-    mat_id: usize,
-    mesh_id: usize,
+    shader_id: AssetId,
+    mat_id: AssetId,
+    mesh_id: AssetId,
     bone_transform_index: i32,
     transform: [[f32; 4]; 4],
 }
 
+struct SceneRendererAssets {
+    cube: Ref<Mesh>,
+    screen_space_quad: Ref<Mesh>,
+    black_texture_2d: Ref<Texture>,
+    black_texture_cube: Ref<Texture>,
+    missing_texture: Ref<Texture>,
+}
+
 pub struct SceneRenderer {
+    asset_context: ReadOnlyAssetContext,
+    default_assets: SceneRendererAssets,
     options: SceneRendererOptions,
     scene_texture: Texture,
     scene_depth_texture: Texture,
@@ -98,12 +108,13 @@ pub struct SceneRenderer {
     scene_shader: Ref<Shader>,
     camera_bind_group: wgpu::BindGroup,
     grid_shader: Ref<Shader>,
-    skybox: Option<usize>,
+    skybox: Option<Uuid>,
     skybox_shader: Ref<Shader>,
     skybox_cubemap_shader: Ref<Shader>,
     skybox_irradiance_cubemap_shader: Ref<Shader>,
     skybox_prefilter_cubemap_shader: Ref<Shader>,
     skybox_brdf_shader: Ref<Shader>,
+    skybox_cubemap_mip_shader: Ref<Shader>,
     camera_uniform_buffer: wgpu::Buffer,
     point_light_storage_buffer: ResizableBuffer,
     directional_light_storage_buffer: ResizableBuffer,
@@ -113,43 +124,47 @@ pub struct SceneRenderer {
 }
 
 impl SceneRenderer {
-    pub fn new(mut options: SceneRendererOptions) -> Self {
-        let render_state = RenderContext::render_state().unwrap();
+    pub fn new(assets: &ReadOnlyAssetContext, mut options: SceneRendererOptions) -> Self {
+        let render_state = assets.render_context.render_state();
+        let asset_registry = assets.asset_registry.read();
         let device = &render_state.device;
         let width = 1280;
         let height = 720;
         options.samples = options.samples.max(1);
 
         // Textures
-        let (scene_texture, scene_texture_msaa, scene_depth_texture) =
-            Self::create_textures(width, height, options.samples);
+        let (scene_texture, scene_texture_msaa, scene_depth_texture) = Self::create_textures(
+            assets.render_context.clone(),
+            width,
+            height,
+            options.samples,
+        );
 
         // Shaders
-        let scene_shader;
-        let grid_shader;
-        let skybox_shader;
-        let skybox_cubemap_shader;
-        let skybox_irradiance_cubemap_shader;
-        let skybox_prefilter_cubemap_shader;
-        let skybox_brdf_shader;
-        {
-            let registry = AssetRegistry::get();
-            scene_shader = registry.load::<Shader>("shaders/pbr").unwrap();
-            grid_shader = registry.load::<Shader>("shaders/grid").unwrap();
-            skybox_shader = registry
-                .load::<Shader>("shaders/environment/skybox")
-                .unwrap();
-            skybox_cubemap_shader = registry
-                .load::<Shader>("shaders/environment/cubemap")
-                .unwrap();
-            skybox_irradiance_cubemap_shader = registry
-                .load::<Shader>("shaders/environment/irradiance")
-                .unwrap();
-            skybox_prefilter_cubemap_shader = registry
-                .load::<Shader>("shaders/environment/prefilter")
-                .unwrap();
-            skybox_brdf_shader = registry.load::<Shader>("shaders/environment/brdf").unwrap();
-        }
+        let scene_shader = asset_registry
+            .load::<Shader>("shaders/pbr")
+            .expect("missing scene_shader");
+        let grid_shader = asset_registry
+            .load::<Shader>("shaders/grid")
+            .expect("missing grid_shader");
+        let skybox_shader = asset_registry
+            .load::<Shader>("shaders/environment/skybox")
+            .expect("missing skybox_shader");
+        let skybox_cubemap_shader = asset_registry
+            .load::<Shader>("shaders/environment/cubemap")
+            .expect("missing skybox_cubemap_shader");
+        let skybox_irradiance_cubemap_shader = asset_registry
+            .load::<Shader>("shaders/environment/irradiance")
+            .expect("missing skybox_irradiance_cubemap_shader");
+        let skybox_prefilter_cubemap_shader = asset_registry
+            .load::<Shader>("shaders/environment/prefilter")
+            .expect("missing skybox_prefilter_cubemap_shader");
+        let skybox_brdf_shader = asset_registry
+            .load::<Shader>("shaders/environment/brdf")
+            .expect("missing skybox_brdf_shader");
+        let skybox_cubemap_mip_shader = asset_registry
+            .load::<Shader>("shaders/mip_generator_cube")
+            .expect("missing skybox_cubemap_mip_shader");
 
         let camera_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("camera_uniform_buffer"),
@@ -171,9 +186,24 @@ impl SceneRenderer {
         let directional_light_storage_buffer =
             ResizableBuffer::new(wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
 
-        let gizmo_renderer = GizmoRenderer::new(&camera_uniform_buffer, options.samples);
+        let gizmo_renderer = GizmoRenderer::new(assets, &camera_uniform_buffer, options.samples);
+
+        // Default assets
+        let cube = asset_registry.cube().unwrap();
+        let screen_space_quad = asset_registry.screen_space_quad().unwrap();
+        let black_texture_2d = asset_registry.black_texture_2d().unwrap();
+        let black_texture_cube = asset_registry.black_texture_cube().unwrap();
+        let missing_texture = asset_registry.missing_texture().unwrap();
 
         Self {
+            asset_context: assets.clone(),
+            default_assets: SceneRendererAssets {
+                cube,
+                screen_space_quad,
+                black_texture_2d,
+                black_texture_cube,
+                missing_texture,
+            },
             options,
             scene_texture_msaa,
             scene_texture,
@@ -187,6 +217,7 @@ impl SceneRenderer {
             skybox_irradiance_cubemap_shader,
             skybox_prefilter_cubemap_shader,
             skybox_brdf_shader,
+            skybox_cubemap_mip_shader,
             camera_uniform_buffer,
             point_light_storage_buffer,
             directional_light_storage_buffer,
@@ -237,13 +268,13 @@ impl SceneRenderer {
 
         // Resolve MSAA texture
         encoder.copy_texture_to_texture(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &self.scene_texture_msaa.texture,
                 mip_level: 0,
                 origin: Default::default(),
                 aspect: Default::default(),
             },
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &self.scene_texture.texture,
                 mip_level: 0,
                 origin: Default::default(),
@@ -328,24 +359,26 @@ impl SceneRenderer {
         encoder: &mut wgpu::CommandEncoder,
     ) {
         let device = &render_state.device;
-        let options = PipelineOptionsBuilder::default()
+        let options = self
+            .asset_context
+            .render_context
+            .pipeline_options_builder()
             .samples(self.options.samples)
             .fragment_targets(vec![Some(wgpu::ColorTargetState {
                 format: self.scene_texture_msaa.descriptor.format,
                 blend: None,
                 write_mask: Default::default(),
             })])
-            .build();
+            .build()
+            .expect("invalid builder options");
         self.build_asset_data(render_state, scene, &options);
         let draw_list = self.build_draw_list();
         self.build_mesh_data(render_state);
         self.build_light_data(render_state, scene);
         let assets = self.assets.lock(device);
         let material_bind_groups = self.build_material_bind_groups(device, &assets);
-        let black_texture_cube_binding = Assets::black_texture_cube().unwrap();
-        let black_texture_cube = black_texture_cube_binding.read();
-        let black_texture_2d_binding = Assets::black_texture_2d().unwrap();
-        let black_texture_2d = black_texture_2d_binding.read();
+        let black_texture_cube = self.default_assets.black_texture_cube.read();
+        let black_texture_2d = self.default_assets.black_texture_2d.read();
         let (irradiance_map, prefilter_map, brdf_map) = self
             .skybox
             .map(|id| {
@@ -382,7 +415,7 @@ impl SceneRenderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            let mut last: (usize, usize, usize) = Default::default();
+            let mut last: (AssetId, AssetId, AssetId) = Default::default();
             for (shader_id, mat_id, mesh_id, instances) in draw_list {
                 let shader = assets.shader(shader_id);
                 let mesh = assets.mesh(mesh_id);
@@ -403,7 +436,7 @@ impl SceneRenderer {
                 if mesh_id != last.2 {
                     render_pass.set_bind_group(1, assets.mesh_instance_group(mesh_id), &[]);
                 }
-                RenderUtils::bind_mesh_buffers(&mut render_pass, &mesh);
+                RenderUtils::bind_mesh_buffers(&mut render_pass, mesh);
                 RenderUtils::draw_mesh_instanced(&mut render_pass, mesh, instances);
                 last = (shader_id, mat_id, mesh_id);
             }
@@ -419,8 +452,7 @@ impl SceneRenderer {
     fn render_grid(&mut self, render_state: &RenderState, encoder: &mut wgpu::CommandEncoder) {
         let device = &render_state.device;
         let queue = &render_state.queue;
-        let quad_binding = Assets::screen_space_quad().unwrap();
-        let mut quad_mesh = quad_binding.write();
+        let mut quad_mesh = self.default_assets.screen_space_quad.write();
         let mut grid_shader = self.grid_shader.write();
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -446,12 +478,16 @@ impl SceneRenderer {
             });
 
             // Render grid
-            let options = PipelineOptionsBuilder::default()
+            let options = self
+                .asset_context
+                .render_context
+                .pipeline_options_builder()
                 .samples(self.options.samples)
                 .fragment_targets(vec![Some(RenderUtils::color_alpha_blending(
                     self.scene_texture_msaa.descriptor.format,
                 ))])
-                .build();
+                .build()
+                .expect("invalid builder options");
             grid_shader.build_pipeline(&options);
             if let Some(pipeline) = grid_shader.get_pipeline(&options) {
                 render_pass.set_pipeline(pipeline);
@@ -478,6 +514,7 @@ impl SceneRenderer {
                     irradiance_cubemap_shader: &self.skybox_irradiance_cubemap_shader,
                     prefilter_cubemap_shader: &self.skybox_prefilter_cubemap_shader,
                     brdf_shader: &self.skybox_brdf_shader,
+                    cubemap_mip_shader: &self.skybox_cubemap_mip_shader,
                 },
                 render_state,
                 encoder,
@@ -485,8 +522,7 @@ impl SceneRenderer {
 
             let device = &render_state.device;
             let mut shader = self.skybox_shader.write();
-            let cube_binding = Assets::cube().unwrap();
-            let cube_mesh = cube_binding.read();
+            let cube_mesh = self.default_assets.cube.read();
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
                 layout: &shader.bind_group_layouts[1],
@@ -523,7 +559,10 @@ impl SceneRenderer {
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
-                let options = PipelineOptionsBuilder::default()
+                let options = self
+                    .asset_context
+                    .render_context
+                    .pipeline_options_builder()
                     .fragment_targets(vec![Some(wgpu::ColorTargetState {
                         format: self.scene_texture_msaa.descriptor.format,
                         blend: None,
@@ -531,7 +570,8 @@ impl SceneRenderer {
                     })])
                     .samples(self.options.samples)
                     .cull_mode(Some(wgpu::Face::Front))
-                    .build();
+                    .build()
+                    .expect("invalid builder options");
                 shader.build_pipeline(&options);
                 if let Some(pipeline) = shader.get_pipeline(&options) {
                     render_pass.set_pipeline(pipeline);
@@ -544,13 +584,13 @@ impl SceneRenderer {
         }
     }
 
-    fn build_draw_list(&mut self) -> Vec<(usize, usize, usize, Range<u32>)> {
-        let mut last: (usize, usize, usize) = Default::default();
-        let mut mesh_instances: HashMap<usize, u32> = Default::default();
+    fn build_draw_list(&mut self) -> Vec<(AssetId, AssetId, AssetId, Range<u32>)> {
+        let mut last: (AssetId, AssetId, AssetId) = Default::default();
+        let mut mesh_instances: HashMap<AssetId, u32> = Default::default();
         let mut instance_count: u32 = 0;
         let mut mesh = None;
-        let mut draw_list: Vec<(usize, usize, usize, Range<u32>)> = Default::default();
-        let mut insert_instance_list = |last: (usize, usize, usize), instance_count: u32| {
+        let mut draw_list: Vec<(AssetId, AssetId, AssetId, Range<u32>)> = Default::default();
+        let mut insert_instance_list = |last: (AssetId, AssetId, AssetId), instance_count: u32| {
             if last != Default::default() {
                 let entry = mesh_instances.entry(last.2).or_default();
                 let start = *entry;
@@ -592,7 +632,9 @@ impl SceneRenderer {
         bone_transform_index: Option<i32>,
         transform: [[f32; 4]; 4],
     ) {
-        let shader_ref = mat_ref.read().shader.clone();
+        let Some(shader_ref) = mat_ref.read().shader.get_ref(&self.asset_context) else {
+            return;
+        };
         self.draw_list.push(DrawListElement {
             shader_id: shader_ref.id(),
             mat_id: mat_ref.id(),
@@ -624,66 +666,70 @@ impl SceneRenderer {
         self.draw_list.clear();
         let mut query = <(Entity, &ComponentMesh)>::query();
         for (entity, c_mesh) in query.iter(world) {
-            if let Some(game_object) = scene.get_game_object_from_entity(*entity) {
-                if let Some(mesh_ref) = c_mesh.mesh.as_ref() {
-                    if let Some(mat_ref) = c_mesh.material.as_ref() {
-                        let transform = scene.get_world_transform(game_object);
-                        self.insert_draw_list_entry(
-                            mesh_ref,
-                            mat_ref,
-                            None,
-                            transform.matrix.into(),
-                        );
-                    }
-                }
-            }
+            let Some(game_object) = scene.get_game_object_from_entity(*entity) else {
+                continue;
+            };
+            let Some(mesh_ref) = c_mesh.mesh.get_ref(&self.asset_context) else {
+                continue;
+            };
+            let Some(mat_ref) = c_mesh.material.get_ref(&self.asset_context) else {
+                continue;
+            };
+            let transform = scene.get_world_transform(game_object);
+            self.insert_draw_list_entry(&mesh_ref, &mat_ref, None, transform.matrix.into());
         }
-        let mut skinned_meshes: HashSet<usize> = Default::default();
+        let mut skinned_meshes: HashSet<Uuid> = Default::default();
         let mut query = <(Entity, &ComponentSkinnedMesh)>::query();
         for (entity, c_skinned_mesh) in query.iter(world) {
-            if let Some(game_object) = scene.get_game_object_from_entity(*entity) {
-                if let Some(mesh_ref) = c_skinned_mesh.mesh.as_ref() {
-                    if let Some(mat_ref) = c_skinned_mesh.material.as_ref() {
-                        let mesh_id = mesh_ref.id();
-                        let transform = scene.get_world_transform(game_object);
-                        let bone_transform_index;
-                        {
-                            let mut mesh = mesh_ref.write();
-                            if !skinned_meshes.contains(&mesh_id) {
-                                mesh.bone_transforms.clear();
-                            }
-                            skinned_meshes.insert(mesh_id);
-                            bone_transform_index = mesh.bone_transforms.len() / mesh.bones.len();
-                            mesh.bone_transforms
-                                .extend(c_skinned_mesh.bone_transforms.iter().copied());
-                        }
-                        self.insert_draw_list_entry(
-                            mesh_ref,
-                            mat_ref,
-                            Some(bone_transform_index as i32),
-                            transform.matrix.into(),
-                        );
-                    }
+            let Some(game_object) = scene.get_game_object_from_entity(*entity) else {
+                continue;
+            };
+            let Some(mesh_ref) = c_skinned_mesh.mesh.get_ref(&self.asset_context) else {
+                continue;
+            };
+            let Some(mat_ref) = c_skinned_mesh.material.get_ref(&self.asset_context) else {
+                continue;
+            };
+            let mesh_id = mesh_ref.id();
+            let transform = scene.get_world_transform(game_object);
+            let bone_transform_index;
+            {
+                let mut mesh = mesh_ref.write();
+                if !skinned_meshes.contains(&mesh_id) {
+                    mesh.bone_transforms.clear();
                 }
+                skinned_meshes.insert(mesh_id);
+                bone_transform_index = mesh.bone_transforms.len() / mesh.bones.len();
+                mesh.bone_transforms
+                    .extend(c_skinned_mesh.bone_transforms.iter().copied());
             }
+            self.insert_draw_list_entry(
+                &mesh_ref,
+                &mat_ref,
+                Some(bone_transform_index as i32),
+                transform.matrix.into(),
+            );
         }
         let mut query = <&ComponentSkyLight>::query();
         let mut skybox = None;
         for c_sky_light in query.iter(world).filter(|s| s.active) {
-            if let Some(skybox_ref) = &c_sky_light.skybox {
-                let skybox_id = skybox_ref.id();
-                self.assets
-                    .skyboxes
-                    .entry(skybox_id)
-                    .or_insert(skybox_ref.clone());
-                if let Some(cube) = Assets::cube() {
-                    self.assets.meshes.entry(cube.id()).or_insert(cube);
-                }
-                if let Some(quad) = Assets::screen_space_quad() {
-                    self.assets.meshes.entry(quad.id()).or_insert(quad);
-                }
-                skybox = Some(skybox_id);
-            }
+            let Some(skybox_ref) = c_sky_light.skybox.get_ref(&self.asset_context) else {
+                continue;
+            };
+            let skybox_id = skybox_ref.id();
+            self.assets
+                .skyboxes
+                .entry(skybox_id)
+                .or_insert(skybox_ref.clone());
+            self.assets
+                .meshes
+                .entry(self.default_assets.cube.id())
+                .or_insert(self.default_assets.cube.clone());
+            self.assets
+                .meshes
+                .entry(self.default_assets.screen_space_quad.id())
+                .or_insert(self.default_assets.screen_space_quad.clone());
+            skybox = Some(skybox_id);
         }
         self.skybox = skybox;
         for (_, mut mesh) in self.assets.meshes.lock_write() {
@@ -694,7 +740,16 @@ impl SceneRenderer {
         }
         for (_, mut material) in self.assets.materials.lock_write() {
             material.load_buffers(render_state);
-            material.collect_textures(&mut self.assets.textures);
+            let Self {
+                asset_context,
+                assets: AssetRenderState { textures, .. },
+                ..
+            } = self;
+            material.collect_textures(
+                asset_context,
+                textures,
+                self.default_assets.missing_texture.clone(),
+            );
         }
         self.draw_list.sort_by_key(
             |DrawListElement {
@@ -710,10 +765,18 @@ impl SceneRenderer {
         &self,
         device: &wgpu::Device,
         assets: &LockedAssetRenderState,
-    ) -> HashMap<usize, HashMap<u32, wgpu::BindGroup>> {
-        let mut bind_groups: HashMap<usize, HashMap<u32, wgpu::BindGroup>> = Default::default();
+    ) -> HashMap<AssetId, HashMap<u32, wgpu::BindGroup>> {
+        let mut bind_groups: HashMap<AssetId, HashMap<u32, wgpu::BindGroup>> = Default::default();
         for (mat_id, mat) in assets.materials.iter() {
-            bind_groups.insert(*mat_id, mat.bind_groups(device, assets));
+            bind_groups.insert(
+                *mat_id,
+                mat.bind_groups(
+                    device,
+                    &self.asset_context,
+                    assets,
+                    self.default_assets.missing_texture.clone(),
+                ),
+            );
         }
         bind_groups
     }
@@ -820,12 +883,18 @@ impl SceneRenderer {
         &self.scene_texture
     }
 
-    pub fn scene_texture_handle(&self) -> &egui::TextureHandle {
-        self.scene_texture.handle.as_ref().unwrap()
+    pub fn scene_texture_handle(&self) -> Option<&egui::TextureHandle> {
+        self.scene_texture.handle.as_ref()
     }
 
-    fn create_textures(width: u32, height: u32, samples: u32) -> (Texture, Texture, Texture) {
+    fn create_textures(
+        render_context: Arc<RenderContext>,
+        width: u32,
+        height: u32,
+        samples: u32,
+    ) -> (Texture, Texture, Texture) {
         let scene_texture = Texture::new(
+            render_context.clone(),
             &wgpu::TextureDescriptor {
                 label: Some("scene_texture"),
                 size: wgpu::Extent3d {
@@ -845,6 +914,7 @@ impl SceneRenderer {
             true,
         );
         let scene_texture_msaa = Texture::new(
+            render_context.clone(),
             &wgpu::TextureDescriptor {
                 label: Some("scene_texture_msaa"),
                 size: wgpu::Extent3d {
@@ -866,6 +936,7 @@ impl SceneRenderer {
             false,
         );
         let scene_depth_texture = Texture::new(
+            render_context.clone(),
             &wgpu::TextureDescriptor {
                 label: Some("scene_depth_texture"),
                 size: wgpu::Extent3d {
@@ -925,6 +996,11 @@ impl SceneRenderer {
             self.scene_texture,
             self.scene_texture_msaa,
             self.scene_depth_texture,
-        ) = Self::create_textures(width, height, self.options.samples);
+        ) = Self::create_textures(
+            self.asset_context.render_context.clone(),
+            width,
+            height,
+            self.options.samples,
+        );
     }
 }

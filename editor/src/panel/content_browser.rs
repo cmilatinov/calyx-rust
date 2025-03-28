@@ -1,10 +1,8 @@
-use crate::inspector::inspector_registry::InspectorRegistry;
 use crate::panel::Panel;
 use crate::selection::{Selection, SelectionType};
 use crate::widgets::FileButton;
 use crate::{icons, EditorAppState};
 use engine::assets::animation_graph::AnimationGraph;
-use engine::assets::AssetRegistry;
 use engine::egui::text::LayoutJob;
 use engine::egui::{
     include_image, FontFamily, FontId, Frame, ImageSource, Margin, Rect, Response, Sense,
@@ -24,10 +22,10 @@ pub struct PanelContentBrowser {
     selected_file: Option<PathBuf>,
 }
 
-impl Default for PanelContentBrowser {
-    fn default() -> Self {
+impl PanelContentBrowser {
+    pub fn new(root_path: impl Into<PathBuf>) -> Self {
         PanelContentBrowser {
-            selected_folder: AssetRegistry::get().root_path().clone(),
+            selected_folder: root_path.into(),
             selected_file: None,
         }
     }
@@ -38,17 +36,18 @@ impl Panel for PanelContentBrowser {
         "Content Browser"
     }
 
-    fn ui(&mut self, ui: &mut Ui) {
+    fn ui(&mut self, ui: &mut Ui, state: &mut EditorAppState) {
+        let root_path = state.game.assets.asset_registry.read().root_path().clone();
+
         egui::SidePanel::left("file_tree")
             .resizable(true)
             .show_inside(ui, |ui| {
                 egui::ScrollArea::both().show(ui, |ui| {
                     re_ui::list_item::list_item_scope(ui, "file_tree_scope", |ui| {
-                        let path = AssetRegistry::get().root_path().clone();
-                        if let Ok(entries) = fs::read_dir(path) {
+                        if let Ok(entries) = fs::read_dir(&root_path) {
                             for entry in entries.flatten() {
                                 let entry_path = entry.path();
-                                self.render_directory(ui, entry, fs::read_dir(entry_path));
+                                self.render_directory(ui, state, entry, fs::read_dir(entry_path));
                             }
                         }
                     });
@@ -73,10 +72,10 @@ impl Panel for PanelContentBrowser {
             .exact_height(26.0)
             .show_inside(ui, |ui| {
                 ui.horizontal_centered(|ui| {
-                    let mut root = AssetRegistry::get().root_path().clone();
+                    let mut root = root_path;
                     let path = self.selected_folder.relative_to(root.clone()).unwrap();
                     if ui.button(">").clicked() {
-                        self.set_selected_folder(AssetRegistry::get().root_path().clone());
+                        self.set_selected_folder(&mut state.selection, root.clone());
                     }
                     let mut iterator = path.components();
                     let mut component = iterator.next();
@@ -87,7 +86,7 @@ impl Panel for PanelContentBrowser {
                         let name = component.unwrap();
                         root.push(name.as_str());
                         if ui.button(name.as_str()).clicked() {
-                            self.set_selected_folder(root.clone());
+                            self.set_selected_folder(&mut state.selection, root.clone());
                         }
                         component = iterator.next();
                         if component.is_some() {
@@ -106,7 +105,7 @@ impl Panel for PanelContentBrowser {
         let file_image = include_image!("../../../resources/icons/body_dark_large.png");
         egui::CentralPanel::default()
             .frame(Frame {
-                inner_margin: Margin::same(3.0),
+                inner_margin: Margin::same(3),
                 ..Frame::central_panel(ui.style())
             })
             .show_inside(ui, |ui| {
@@ -119,7 +118,7 @@ impl Panel for PanelContentBrowser {
                     ui.horizontal_wrapped(|ui| {
                         for (idx, node) in nodes.iter().enumerate() {
                             let is_dir = node.is_dir();
-                            let is_selected = self.is_selected(node, is_dir);
+                            let is_selected = self.is_selected(state, node, is_dir);
                             let res = PanelContentBrowser::render_file_button(
                                 ui,
                                 node.file_name().unwrap().to_str().unwrap(),
@@ -134,10 +133,10 @@ impl Panel for PanelContentBrowser {
                                 is_selected,
                             );
                             if res.clicked() || res.secondary_clicked() {
-                                self.set_selected_file(node.clone());
+                                self.set_selected_file(state, node.clone());
                             }
                             if is_selected && is_dir && res.double_clicked() {
-                                self.set_selected_folder(node.clone());
+                                self.set_selected_folder(&mut state.selection, node.clone());
                             }
                             if idx % num_nodes_per_row == num_nodes_per_row - 1 {
                                 let remaining_width =
@@ -155,7 +154,7 @@ impl Panel for PanelContentBrowser {
                                     .extension()
                                     .and_then(|e| e.to_str())
                                     .unwrap_or_default();
-                                let registry = AssetRegistry::get();
+                                let registry = state.game.assets.asset_registry.read();
                                 let Some((_, type_uuid, _)) = registry.asset_type_from_ext(ext)
                                 else {
                                     continue;
@@ -163,14 +162,15 @@ impl Panel for PanelContentBrowser {
                                 let Some(asset_id) = registry.asset_id_from_path(node) else {
                                     continue;
                                 };
-                                let registry = InspectorRegistry::get();
-                                let Some(inspector) = registry.asset_inspector_lookup(type_uuid)
+                                drop(registry);
+                                let Some(inspector) =
+                                    state.inspector_registry.asset_inspector_lookup(type_uuid)
                                 else {
                                     continue;
                                 };
                                 if inspector.has_context_menu() {
                                     res.context_menu(|ui| {
-                                        inspector.show_context_menu(ui, asset_id);
+                                        inspector.show_context_menu(ui, &mut state.game, asset_id);
                                     });
                                 }
                             }
@@ -221,7 +221,13 @@ impl PanelContentBrowser {
         });
     }
 
-    fn render_directory(&mut self, ui: &mut Ui, entry: DirEntry, children: io::Result<ReadDir>) {
+    fn render_directory(
+        &mut self,
+        ui: &mut Ui,
+        state: &mut EditorAppState,
+        entry: DirEntry,
+        children: io::Result<ReadDir>,
+    ) {
         let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
         if !is_dir {
             return;
@@ -258,7 +264,7 @@ impl PanelContentBrowser {
                 |ui| {
                     for child in child_entries {
                         let path = child.path();
-                        self.render_directory(ui, child, fs::read_dir(path));
+                        self.render_directory(ui, state, child, fs::read_dir(path));
                     }
                 },
             );
@@ -271,12 +277,12 @@ impl PanelContentBrowser {
 
         if response.clicked() {
             self.selected_folder = if is_selected {
-                AssetRegistry::get().root_path().clone()
+                state.game.assets.asset_registry.read().root_path().clone()
             } else {
                 curr_path
             };
             self.selected_file = None;
-            EditorAppState::get_mut().selection = Selection::none();
+            state.selection = Selection::none();
         }
     }
 
@@ -308,23 +314,27 @@ impl PanelContentBrowser {
         ui.add(button).on_hover_text_at_pointer(name)
     }
 
-    fn set_selected_folder(&mut self, path: PathBuf) {
+    fn set_selected_folder(&mut self, selection: &mut Selection, path: PathBuf) {
         if path != self.selected_folder {
             self.selected_folder = path;
             self.selected_file = None;
-            EditorAppState::get_mut().selection = Selection::none();
+            *selection = Selection::none();
         }
     }
 
-    fn set_selected_file(&mut self, path: PathBuf) {
-        EditorAppState::get_mut().selection = AssetRegistry::get()
+    fn set_selected_file(&mut self, state: &mut EditorAppState, path: PathBuf) {
+        state.selection = state
+            .game
+            .assets
+            .asset_registry
+            .read()
             .asset_id_from_path(&path)
             .map(|id| Selection::from_id(SelectionType::Asset, id))
             .unwrap_or_else(|| Selection::none());
         self.selected_file = Some(path);
     }
 
-    fn is_selected(&self, path: &PathBuf, is_dir: bool) -> bool {
+    fn is_selected(&self, state: &EditorAppState, path: &PathBuf, is_dir: bool) -> bool {
         if is_dir {
             if let Some(selection) = self.selected_file.as_ref() {
                 *selection == *path
@@ -332,13 +342,13 @@ impl PanelContentBrowser {
                 false
             }
         } else {
-            AssetRegistry::get()
+            state
+                .game
+                .assets
+                .asset_registry
+                .read()
                 .asset_id_from_path(path)
-                .map(|id| {
-                    EditorAppState::get()
-                        .selection
-                        .contains(SelectionType::Asset, id)
-                })
+                .map(|id| state.selection.contains(SelectionType::Asset, id))
                 .unwrap_or(false)
         }
     }

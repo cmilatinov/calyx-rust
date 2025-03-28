@@ -7,6 +7,7 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = input.ident;
     let expanded = quote! {
+        #[automatically_derived]
         impl engine::component::ComponentInstance for #name {
             fn component_type_id(&self) -> engine::legion::storage::ComponentTypeId {
                 engine::legion::storage::ComponentTypeId::of::<#name>()

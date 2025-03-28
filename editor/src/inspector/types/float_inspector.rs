@@ -33,38 +33,41 @@ impl TypeInspector for FloatInspector {
         let min_attr = attrs.get("min").copied();
         let max_attr = attrs.get("max").copied();
         let speed_attr = attrs.get("speed").copied();
-        let meta = ctx
-            .registry
-            .trait_meta::<ReflectGenericFloat>(instance.as_any().type_id())
-            .unwrap();
-        if let Some(num) = meta.get_mut(instance) {
-            let mut value = num.as_f64();
+        let type_registry = ctx.assets.type_registry.read();
+        let Some(meta) =
+            type_registry.trait_meta::<ReflectGenericFloat>(instance.as_any().type_id())
+        else {
+            return;
+        };
+        let Some(num) = meta.get_mut(instance) else {
+            return;
+        };
+        let mut value = num.as_f64();
+        if angle_attr.is_some() {
+            value = value.to_degrees();
+        }
+        let mut drag = egui::DragValue::new(&mut value);
+        let mut min = f64::NEG_INFINITY;
+        let mut max = f64::INFINITY;
+        if let Some(AttributeValue::Float(value)) = min_attr {
+            min = value;
+        }
+        if let Some(AttributeValue::Float(value)) = max_attr {
+            max = value;
+        }
+        drag = drag.range(RangeInclusive::new(min, max));
+        if let Some(AttributeValue::Float(value)) = speed_attr {
+            drag = drag.speed(value);
+        }
+        if angle_attr.is_some() {
+            drag = drag.suffix("°");
+        }
+        let res = ui.add(drag);
+        if res.changed() {
             if angle_attr.is_some() {
-                value = value.to_degrees();
+                value = value.to_radians();
             }
-            let mut drag = egui::DragValue::new(&mut value);
-            let mut min = f64::NEG_INFINITY;
-            let mut max = f64::INFINITY;
-            if let Some(AttributeValue::Float(value)) = min_attr {
-                min = value;
-            }
-            if let Some(AttributeValue::Float(value)) = max_attr {
-                max = value;
-            }
-            drag = drag.range(RangeInclusive::new(min, max));
-            if let Some(AttributeValue::Float(value)) = speed_attr {
-                drag = drag.speed(value);
-            }
-            if angle_attr.is_some() {
-                drag = drag.suffix("°");
-            }
-            let res = ui.add(drag);
-            if res.changed() {
-                if angle_attr.is_some() {
-                    value = value.to_radians();
-                }
-                num.set_from_f64(value);
-            }
+            num.set_from_f64(value);
         }
     }
 }

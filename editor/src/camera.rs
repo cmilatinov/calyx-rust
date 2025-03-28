@@ -30,7 +30,7 @@ impl Default for EditorCamera {
 }
 
 impl CameraLike for EditorCamera {
-    fn update(&mut self, input: &Input) {
+    fn update(&mut self, time: &Time, input: &Input) {
         const TRANSLATION_SPEED: f32 = 10.0;
         const ROTATION_SPEED: f32 = 0.5;
         const GIGA_SPEED_FACTOR: f32 = 5.0;
@@ -41,7 +41,7 @@ impl CameraLike for EditorCamera {
             }
 
             let drag = res.drag_delta();
-            let delta = Vec2::new(drag.y, drag.x).scale(Time::static_delta_time() * ROTATION_SPEED);
+            let delta = Vec2::new(drag.y, drag.x).scale(time.static_delta_time() * ROTATION_SPEED);
             self.rotation += delta;
             self.rotation.x =
                 nalgebra::clamp(self.rotation.x, -89.0f32.to_radians(), 89.0f32.to_radians());
@@ -62,7 +62,7 @@ impl CameraLike for EditorCamera {
                 } else {
                     1.0
                 })
-                .scale(Time::static_delta_time() * TRANSLATION_SPEED)
+                .scale(time.static_delta_time() * TRANSLATION_SPEED)
             });
 
             self.transform.translate(&movement);

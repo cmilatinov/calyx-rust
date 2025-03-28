@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::fs;
 use std::fs::File;
 use std::io::{Read, Write};
@@ -11,12 +12,12 @@ use tinytemplate::TinyTemplate;
 pub struct Project {
     name: String,
     creation_date: String,
-    #[serde(skip_serializing, skip_deserializing)]
+    #[serde(skip)]
     root_directory: PathBuf,
 }
 
 #[derive(Debug, Serialize)]
-struct CargoTemplateCtx {
+struct CargoTemplateContext {
     project_name: String,
 }
 
@@ -56,7 +57,7 @@ impl Project {
         let cargo_content = tt
             .render(
                 "cargo template",
-                &CargoTemplateCtx {
+                &CargoTemplateContext {
                     project_name: project.name.clone(),
                 },
             )
@@ -71,26 +72,27 @@ impl Project {
         project
     }
 
-    pub fn load(directory: PathBuf) -> Result<Self, String> {
+    pub fn load(directory: PathBuf) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let toml_path = directory.join("project.toml");
 
         let mut file = match File::open(toml_path) {
             Ok(file) => file,
-            Err(e) => return Err(format!("Failed to find project file 'project.toml': {}", e)),
+            Err(e) => {
+                return Err(format!("Failed to find project file 'project.toml': {}", e).into())
+            }
         };
 
         let mut toml_string = String::new();
         if let Err(e) = file.read_to_string(&mut toml_string) {
-            return Err(format!("Failed to read project file 'project.toml': {}", e));
+            return Err(format!("Failed to read project file 'project.toml': {}", e).into());
         }
 
         let mut project: Project = match toml::from_str(&toml_string) {
             Ok(project) => project,
             Err(e) => {
-                return Err(format!(
-                    "Failed to deserialize project file 'project.toml': {}",
-                    e
-                ));
+                return Err(
+                    format!("Failed to deserialize project file 'project.toml': {}", e).into(),
+                );
             }
         };
         project.root_directory = directory;

@@ -13,7 +13,6 @@ use engine::math::Transform;
 use engine::mint::ColumnMatrix4;
 use engine::nalgebra;
 use engine::render::CameraLike;
-use engine::scene::SceneManager;
 use engine::*;
 use re_ui::Icon;
 use std::any::Any;
@@ -57,16 +56,15 @@ impl Panel for PanelViewport {
         Some(&icons::VIEWPORT_3D)
     }
 
-    fn ui(&mut self, ui: &mut Ui) {
-        let mut app_state = EditorAppState::get_mut();
+    fn ui(&mut self, ui: &mut Ui, state: &mut EditorAppState) {
         egui::Frame {
             fill: ui.style().visuals.panel_fill,
             ..Default::default()
         }
         .show(ui, |ui| {
-            self.action_bar(ui, &mut app_state);
-            let res = self.viewport(ui, &mut app_state);
-            self.gizmo(ui, &mut app_state, &res);
+            self.action_bar(ui, state);
+            let res = self.viewport(ui, state);
+            self.gizmo(ui, state, &res);
         });
     }
 
@@ -102,15 +100,16 @@ impl PanelViewport {
     }
 
     fn viewport(&self, ui: &mut Ui, app_state: &mut EditorAppState) -> egui::Response {
+        let Some(texture_id) = app_state
+            .scene_renderer
+            .scene_texture_handle()
+            .map(|handle| handle.id())
+        else {
+            return ui.response();
+        };
         let res = ui.add(
             Image::new(ImageSource::Texture(SizedTexture {
-                id: app_state
-                    .scene_renderer
-                    .as_ref()
-                    .unwrap()
-                    .read()
-                    .scene_texture_handle()
-                    .id(),
+                id: texture_id,
                 size: ui.available_size() - egui::Vec2::new(0.0, 1.0),
             }))
             .sense(Sense::drag()),
@@ -119,9 +118,9 @@ impl PanelViewport {
             is_active: res.dragged_by(PointerButton::Secondary),
             last_cursor_pos: None,
         };
-        app_state
-            .camera
-            .update(&Input::from_ctx(ui.ctx(), Some(&res), state));
+        let EditorAppState { camera, game, .. } = app_state;
+        let input = Input::from_ctx(ui.ctx(), Some(&res), state);
+        camera.update(&game.time, &input);
         let screen_rect = ui.ctx().screen_rect();
         app_state.viewport_size = (
             res.rect.width() / screen_rect.width(),
@@ -141,14 +140,13 @@ impl PanelViewport {
             DEFAULT_SNAP_ANGLE / 2.0
         };
 
-        if let Some(game_object) = app_state
-            .selection
+        let EditorAppState {
+            selection, game, ..
+        } = app_state;
+
+        if let Some(game_object) = selection
             .first(SelectionType::GameObject)
-            .and_then(|id| {
-                SceneManager::get()
-                    .simulation_scene()
-                    .get_game_object_by_uuid(id)
-            })
+            .and_then(|id| game.scenes.simulation_scene().get_game_object_by_uuid(id))
         {
             let view_matrix = RowMatrix4::from(<DMat4 as Into<ColumnMatrix4<f64>>>::into(
                 nalgebra::convert::<Mat4, DMat4>(app_state.camera.transform.inverse_matrix),
@@ -171,12 +169,13 @@ impl PanelViewport {
                 visuals: GIZMO_VISUALS,
                 pixels_per_point: 0.0,
             });
-            let transform = SceneManager::get()
+            let transform = game
+                .scenes
                 .simulation_scene()
                 .get_world_transform(game_object);
             if let Some((result, transforms)) = self.gizmo.interact(ui, &[transform.into()]) {
                 let res: Transform = transforms[0].into();
-                SceneManager::get_mut()
+                game.scenes
                     .simulation_scene_mut()
                     .set_world_transform(game_object, res.matrix);
                 self.gizmo_status(ui, &result);

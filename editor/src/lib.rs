@@ -1,6 +1,5 @@
 use std::env;
 use std::io::BufWriter;
-use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -13,27 +12,24 @@ use self::panel::*;
 pub use self::project_manager::*;
 use crate::camera::EditorCamera;
 use crate::task_id::TaskId;
-use engine::assets::AssetRegistry;
 use engine::background::Background;
-use engine::class_registry::ClassRegistry;
-use engine::core::{LogRegistry, Logger, Ref, Time};
+use engine::context::{AssetContext, GameContext};
+use engine::core::Ref;
 use engine::eframe::{wgpu, NativeOptions};
-use engine::egui::{include_image, Button, Rounding, Sense, Vec2};
+use engine::egui::{include_image, Button, CornerRadius, Sense, Vec2};
 use engine::egui::{Align, Layout};
 use engine::egui::{Color32, Frame, Margin, Shadow};
 use engine::egui_tiles::{Container, Linear, LinearDir, Tiles, Tree};
-use engine::egui_wgpu::wgpu::{Backends, PowerPreference};
-use engine::egui_wgpu::WgpuSetup;
+use engine::egui_wgpu::wgpu::PowerPreference;
+use engine::egui_wgpu::{SurfaceErrorAction, WgpuSetup, WgpuSetupCreateNew};
+use engine::error::BoxedError;
 use engine::input::{Input, InputState};
-use engine::log::LevelFilter;
 use engine::rapier3d::prelude::DebugRenderPipeline;
-use engine::reflect::type_registry::TypeRegistry;
-use engine::render::{Camera, RenderContext, SceneRenderer, SceneRendererOptions};
-use engine::scene::SceneManager;
+use engine::render::{Camera, SceneRenderer, SceneRendererOptions};
+use engine::scene::Scene;
 use engine::transform_gizmo_egui::EnumSet;
 use engine::*;
 use selection::{Selection, SelectionType};
-use utils::singleton_with_init;
 #[cfg(unix)]
 #[cfg(feature = "wayland")]
 use winit::platform::wayland::EventLoopBuilderExtWayland;
@@ -58,16 +54,18 @@ pub struct EditorApp {
     fps_counter: i32,
     fps: i32,
     tree: Tree<&'static str>,
-    panel_manager: PanelManager,
+    panels: Panels,
     physics_debug_pipeline: DebugRenderPipeline,
-    pub scene_renderer: Ref<SceneRenderer>,
-    pub game_renderer: Ref<SceneRenderer>,
+    project_manager: Ref<ProjectManager>,
+    state: EditorAppState,
 }
 
 pub struct EditorAppState {
+    pub game: GameContext,
+    pub scene_renderer: SceneRenderer,
+    pub game_renderer: SceneRenderer,
+    pub inspector_registry: InspectorRegistry,
     pub camera: EditorCamera,
-    pub scene_renderer: Option<Ref<SceneRenderer>>,
-    pub game_renderer: Option<Ref<SceneRenderer>>,
     pub game_aspect: Option<(u32, u32)>,
     pub selection: Selection,
     pub viewport_size: (f32, f32),
@@ -77,12 +75,13 @@ pub struct EditorAppState {
     pub gizmo_orientation: GizmoOrientation,
 }
 
-impl Default for EditorAppState {
-    fn default() -> Self {
+impl EditorAppState {
+    fn new(game: GameContext) -> Self {
+        let asset_context = game.assets.lock_read();
+        let inspector_registry = InspectorRegistry::new(&asset_context.type_registry.read());
         Self {
+            game,
             camera: Default::default(),
-            scene_renderer: Default::default(),
-            game_renderer: Default::default(),
             game_aspect: None,
             selection: Default::default(),
             viewport_size: Default::default(),
@@ -90,37 +89,65 @@ impl Default for EditorAppState {
             game_response: Default::default(),
             gizmo_modes: GizmoMode::all_translate(),
             gizmo_orientation: GizmoOrientation::Global,
+            scene_renderer: SceneRenderer::new(
+                &asset_context,
+                SceneRendererOptions {
+                    grid: true,
+                    gizmos: true,
+                    samples: 1,
+                    clear_color: Color32::from_rgb(8, 8, 8),
+                },
+            ),
+            game_renderer: SceneRenderer::new(
+                &asset_context,
+                SceneRendererOptions {
+                    clear_color: Color32::from_rgb(0, 0, 0),
+                    ..Default::default()
+                },
+            ),
+            inspector_registry,
         }
     }
 }
 
-singleton_with_init!(EditorAppState);
-
 impl EditorApp {
-    pub fn new(cc: &eframe::CreationContext) -> Self {
+    pub fn new(
+        cc: &eframe::CreationContext,
+        project_path: impl Into<PathBuf>,
+    ) -> Result<Self, BoxedError> {
         let tree = Self::create_tree();
-        RenderContext::get_mut().init_from_eframe(cc);
-        re_ui::apply_style_and_install_loaders(&cc.egui_ctx);
-        Self {
+        let project_path = project_path.into();
+        let asset_context = AssetContext::new(cc, project_path.join("assets"))?;
+        let background = Background::new();
+        let project_manager = ProjectManager::new(asset_context.clone(), project_path, background)?;
+        let game = GameContext::new(asset_context);
+        let panels = Panels::new(
+            project_manager
+                .read()
+                .current_project()
+                .root_directory()
+                .clone(),
+        );
+        Self::apply_style(cc);
+        Ok(Self {
             fps: 0,
             fps_counter: 0,
             tree,
-            panel_manager: PanelManager::default(),
+            panels,
             physics_debug_pipeline: DebugRenderPipeline::new(
                 Default::default(),
                 Default::default(),
             ),
-            scene_renderer: Ref::new(SceneRenderer::new(SceneRendererOptions {
-                grid: true,
-                gizmos: true,
-                samples: 1,
-                clear_color: Color32::from_rgb(8, 8, 8),
-            })),
-            game_renderer: Ref::new(SceneRenderer::new(SceneRendererOptions {
-                clear_color: Color32::from_rgb(0, 0, 0),
-                ..Default::default()
-            })),
-        }
+            project_manager,
+            state: EditorAppState::new(game),
+        })
+    }
+
+    fn apply_style(cc: &eframe::CreationContext) {
+        re_ui::apply_style_and_install_loaders(&cc.egui_ctx);
+        cc.egui_ctx.style_mut(|style| {
+            style.spacing.text_edit_width = 150.0;
+        });
     }
 
     fn create_tree() -> Tree<&'static str> {
@@ -154,66 +181,71 @@ impl EditorApp {
     }
 }
 
-impl Drop for EditorApp {
-    fn drop(&mut self) {
-        RenderContext::get_mut().destroy();
-    }
-}
-
 impl eframe::App for EditorApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        Time::update_time();
-
         {
-            let mut app_state = EditorAppState::get_mut();
-            app_state.game_response = None;
-            SceneManager::get()
-                .simulation_scene()
-                .clear_transform_cache();
+            let Self {
+                physics_debug_pipeline,
+                state:
+                    EditorAppState {
+                        game: GameContext { scenes, time, .. },
+                        scene_renderer,
+                        game_renderer,
+                        game_response,
+                        game_size,
+                        camera:
+                            EditorCamera {
+                                camera, transform, ..
+                            },
+                        ..
+                    },
+                ..
+            } = self;
+
+            time.update_time();
+            *game_response = None;
+            scenes.simulation_scene().clear_transform_cache();
             let render_state = frame.wgpu_render_state().unwrap();
-            let mut renderer = self.scene_renderer.write();
-            let (width, height) = EditorApp::get_physical_size(ctx, app_state.viewport_size);
+            let (width, height) = EditorApp::get_physical_size(ctx, self.state.viewport_size);
             if width != 0 && height != 0 {
-                renderer.resize_textures(width, height);
-                app_state.camera.camera.aspect = width as f32 / height as f32;
+                scene_renderer.resize_textures(width, height);
+                camera.aspect = width as f32 / height as f32;
             }
-            app_state.camera.camera.update_projection();
-            let scene_manager = SceneManager::get();
-            let scene = scene_manager.simulation_scene();
-            renderer.render_scene(
-                render_state,
-                &app_state.camera.camera,
-                &app_state.camera.transform,
-                scene,
-                Some(&mut self.physics_debug_pipeline),
-            );
-            if let Some((node, c)) = scene.get_main_camera(&scene.world) {
-                let mut renderer = self.game_renderer.write();
-                {
-                    let options = renderer.options_mut();
-                    options.clear_color = c.clear_color;
-                }
-                let (width, height) = EditorApp::get_physical_size(ctx, app_state.game_size);
-                if width != 0 && height != 0 {
-                    renderer.resize_textures(width, height);
-                }
-                let transform = scene.get_world_transform(node);
-                let mut camera = Camera::new(
-                    width as f32 / height as f32,
-                    c.fov,
-                    c.near_plane,
-                    c.far_plane,
+            camera.update_projection();
+
+            {
+                let scene = scenes.simulation_scene();
+                scene_renderer.render_scene(
+                    render_state,
+                    camera,
+                    transform,
+                    scene,
+                    Some(physics_debug_pipeline),
                 );
-                camera.update_projection();
-                renderer.render_scene(render_state, &camera, &transform, scene, None)
-            } else {
-                let device = &render_state.device;
-                let queue = &render_state.queue;
-                let renderer = self.game_renderer.read();
-                let mut encoder =
-                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-                encoder.clear_texture(&renderer.scene_texture().texture, &Default::default());
-                queue.submit(Some(encoder.finish()));
+                if let Some((node, c)) = scene.get_main_camera(&scene.world) {
+                    game_renderer.options_mut().clear_color = c.clear_color;
+                    let (width, height) = EditorApp::get_physical_size(ctx, *game_size);
+                    if width != 0 && height != 0 {
+                        game_renderer.resize_textures(width, height);
+                    }
+                    let transform = scene.get_world_transform(node);
+                    let mut camera = Camera::new(
+                        width as f32 / height as f32,
+                        c.fov,
+                        c.near_plane,
+                        c.far_plane,
+                    );
+                    camera.update_projection();
+                    game_renderer.render_scene(render_state, &camera, &transform, scene, None)
+                } else {
+                    let device = &render_state.device;
+                    let queue = &render_state.queue;
+                    let mut encoder = device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+                    encoder
+                        .clear_texture(&game_renderer.scene_texture().texture, &Default::default());
+                    queue.submit(Some(encoder.finish()));
+                }
             }
         }
 
@@ -223,47 +255,56 @@ impl eframe::App for EditorApp {
             .frame(Frame {
                 inner_margin: Margin::ZERO,
                 outer_margin: Margin::ZERO,
-                rounding: Rounding::ZERO,
+                corner_radius: CornerRadius::ZERO,
                 shadow: Shadow::NONE,
                 fill: Default::default(),
                 stroke: Default::default(),
             })
             .show(ctx, |ui| {
-                self.tree.ui(&mut self.panel_manager, ui);
+                let Self { panels, state, .. } = self;
+                let mut panel_manager = PanelManager { panels, state };
+                self.tree.ui(&mut panel_manager, ui);
             });
 
         self.status_bar(ctx);
 
         {
-            let app_state = EditorAppState::get();
-            let mut scene_manager = SceneManager::get_mut();
-            scene_manager.prepare();
-            let last_cursor_pos = app_state
+            self.state.game.scenes.prepare();
+            let last_cursor_pos = self
+                .state
                 .game_response
                 .as_ref()
                 .map(|res| res.rect.center());
             let input = Input::from_ctx(
                 ctx,
-                app_state.game_response.as_ref(),
+                self.state.game_response.as_ref(),
                 InputState {
                     is_active: self.is_game_focused(),
                     last_cursor_pos,
                 },
             );
-            scene_manager.update(&input);
+            let GameContext { scenes, time, .. } = &mut self.state.game;
+            scenes.update(time, &input);
         }
 
         self.fps_counter += 1;
-        if Time::timer("fps") >= 1.0 {
+        if self.state.game.time.timer("fps") >= 1.0 {
             self.fps = self.fps_counter;
             self.fps_counter = 0;
-            Time::reset_timer("fps");
+            self.state.game.time.reset_timer("fps");
         }
 
-        SceneManager::get_mut()
+        self.state
+            .game
+            .scenes
             .current_scene_mut()
             .delete_game_objects();
-        AssetRegistry::get().reload_assets();
+        self.state
+            .game
+            .assets
+            .asset_registry
+            .write()
+            .reload_assets();
 
         ctx.request_repaint();
     }
@@ -287,16 +328,20 @@ impl EditorApp {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("New").clicked() {
-                        SceneManager::get_mut().load_default_scene();
+                        self.state.game.scenes.load_default_scene();
                         ui.close_menu();
                     }
                     if ui.button("Open").clicked() {
-                        SceneManager::get_mut().load_scene(
-                            ProjectManager::get()
-                                .current_project()
-                                .assets_directory()
-                                .join("scene.cxscene"),
-                        );
+                        if let Ok(scene) = self
+                            .state
+                            .game
+                            .assets
+                            .asset_registry
+                            .read()
+                            .load::<Scene>("scene")
+                        {
+                            self.state.game.scenes.load_scene(scene.readonly());
+                        }
                         ui.close_menu();
                     }
                     if ui.button("Save").clicked() {
@@ -305,7 +350,8 @@ impl EditorApp {
                             .write(true)
                             .truncate(true)
                             .open(
-                                ProjectManager::get()
+                                self.project_manager
+                                    .read()
                                     .current_project()
                                     .assets_directory()
                                     .join("scene.cxscene"),
@@ -314,7 +360,7 @@ impl EditorApp {
                             let writer = BufWriter::new(file);
                             serde_json::to_writer_pretty(
                                 writer,
-                                SceneManager::get().simulation_scene(),
+                                self.state.game.scenes.simulation_scene(),
                             )
                             .unwrap();
                         }
@@ -332,12 +378,12 @@ impl EditorApp {
                     if ui
                         .add(
                             Button::image(image)
-                                .rounding(Rounding::ZERO)
+                                .corner_radius(CornerRadius::ZERO)
                                 .sense(Sense::click()),
                         )
                         .clicked()
                     {
-                        ProjectManager::get().build_assemblies();
+                        self.project_manager.read().build_assemblies();
                     }
                 }
 
@@ -350,21 +396,20 @@ impl EditorApp {
                         .fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
                     if ui
                         .add(
-                            Button::image(if SceneManager::get().is_simulating() {
+                            Button::image(if self.is_simulating() {
                                 image_pause
                             } else {
                                 image_play
                             })
-                            .rounding(Rounding::ZERO)
+                            .corner_radius(CornerRadius::ZERO)
                             .sense(Sense::click()),
                         )
                         .clicked()
                     {
-                        let mut sm = SceneManager::get_mut();
-                        if sm.is_simulating() {
-                            sm.pause_simulation();
+                        if self.is_simulating() {
+                            self.state.game.scenes.pause_simulation();
                         } else {
-                            sm.start_simulation();
+                            self.state.game.scenes.start_simulation();
                         }
                     }
                 }
@@ -375,14 +420,14 @@ impl EditorApp {
                         .fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
                     if ui
                         .add_enabled(
-                            SceneManager::get().has_simulation_scene(),
+                            self.state.game.scenes.has_simulation_scene(),
                             Button::image(image)
-                                .rounding(Rounding::ZERO)
+                                .corner_radius(CornerRadius::ZERO)
                                 .sense(Sense::click()),
                         )
                         .clicked()
                     {
-                        SceneManager::get_mut().stop_simulation();
+                        self.state.game.scenes.stop_simulation();
                     }
                 }
             });
@@ -399,8 +444,8 @@ impl EditorApp {
                             ui.label(format!("{}", self.fps));
                         }
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            let background = Background::get();
-                            let task_list = background.task_list();
+                            let task_list_ref = self.state.game.background.task_list();
+                            let task_list = task_list_ref.read();
                             if !task_list.is_empty() {
                                 ui.add(egui::Spinner::new().size(15.0));
                             }
@@ -423,10 +468,14 @@ impl EditorApp {
     }
 
     fn is_game_focused(&self) -> bool {
-        self.panel_manager
+        self.panels
             .panel::<PanelGame>()
             .map(|panel| panel.is_cursor_grabbed)
             .unwrap_or_default()
+    }
+
+    fn is_simulating(&self) -> bool {
+        self.state.game.scenes.is_simulating()
     }
 }
 
@@ -434,52 +483,56 @@ impl EditorApp {
     pub fn run() -> eframe::Result<()> {
         // LOAD PROJECT
         let args: Vec<String> = env::args().collect();
-        if args.len() != 2 {
+        if args.len() != 2 {}
+
+        let Some(project_path) = env::args().nth(1).map(|arg| PathBuf::from(arg)) else {
             eprintln!("Expected 2 arguments, got {}", args.len());
             std::process::exit(1);
-        }
+        };
 
         // START ACTUAL EDITOR
-        ProjectManager::init();
-        ProjectManager::get_mut().load(PathBuf::from(&args[1]));
+        // ProjectManager::init();
+        // ProjectManager::get_mut().load(PathBuf::from(&args[1]));
         // ProjectManager::get().build_assemblies();
 
-        Time::init();
-        AssetRegistry::init();
-        AssetRegistry::get_mut()
-            .set_root_path(ProjectManager::get().current_project().assets_directory());
+        // Time::init();
+        // AssetRegistry::init();
+        // AssetRegistry::get_mut()
+        //     .set_root_path(ProjectManager::get().current_project().assets_directory());
 
-        SceneManager::init();
+        // SceneRegistry::init();
+        //
+        // TypeRegistry::init();
+        // {
+        //     let mut registry = TypeRegistry::get_mut();
+        //     for f in inventory::iter::<ReflectRegistrationFn>() {
+        //         (f.0)(&mut registry);
+        //     }
+        // }
+        // ComponentRegistry::init();
+        // InspectorRegistry::init();
+        // LogRegistry::init();
 
-        TypeRegistry::init();
-        {
-            let mut registry = TypeRegistry::get_mut();
-            for f in inventory::iter::<ReflectRegistrationFn>() {
-                (f.0)(&mut registry);
-            }
-        }
-        ClassRegistry::init();
-        InspectorRegistry::init();
-        LogRegistry::init();
-
-        log::set_boxed_logger(Box::new(Logger)).expect("Unable to setup logger");
-        log::set_max_level(LevelFilter::Debug);
+        // log::set_boxed_logger(Box::new(Logger)).expect("Unable to setup logger");
+        // log::set_max_level(LevelFilter::Debug);
 
         let options = NativeOptions {
             viewport: egui::ViewportBuilder {
                 inner_size: Some(egui::vec2(1280.0, 720.0)),
                 min_inner_size: Some(egui::vec2(1280.0, 720.0)),
-                maximized: Some(true),
-                transparent: Some(true),
                 decorations: Some(true),
                 ..Default::default()
             },
             persist_window: true,
             renderer: eframe::Renderer::Wgpu,
             wgpu_options: egui_wgpu::WgpuConfiguration {
-                wgpu_setup: WgpuSetup::CreateNew {
-                    supported_backends: Backends::VULKAN,
+                present_mode: Default::default(),
+                desired_maximum_frame_latency: None,
+                on_surface_error: Arc::new(|_| SurfaceErrorAction::SkipFrame),
+                wgpu_setup: WgpuSetup::CreateNew(WgpuSetupCreateNew {
+                    instance_descriptor: Default::default(),
                     power_preference: PowerPreference::HighPerformance,
+                    native_adapter_selector: None,
                     device_descriptor: Arc::new(|_adapter| {
                         wgpu::DeviceDescriptor {
                             required_features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
@@ -499,25 +552,19 @@ impl EditorApp {
                             ..Default::default()
                         }
                     }),
-                },
-                ..Default::default()
+                    trace_path: None,
+                }),
             },
             event_loop_builder: Some(Box::new(|builder| {
                 builder.with_any_thread(true);
             })),
             ..Default::default()
         };
-        let name = format!("Calyx — {}", ProjectManager::get().current_project().name());
+        // let name = format!("Calyx — {}", ProjectManager::get().current_project().name());
         eframe::run_native(
-            name.as_str(),
+            "Calyx",
             options,
-            Box::new(|cc| {
-                let mut app_state = EditorAppState::get_mut();
-                let app = EditorApp::new(cc);
-                app_state.scene_renderer = app.scene_renderer.clone().into();
-                app_state.game_renderer = app.game_renderer.clone().into();
-                Ok(Box::new(app))
-            }),
+            Box::new(|cc| Ok(Box::new(EditorApp::new(cc, project_path)?))),
         )
     }
 }

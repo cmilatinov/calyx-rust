@@ -16,10 +16,11 @@ impl TypeInspector for IntegerInspector {
     }
 
     fn show_inspector(&self, ui: &mut Ui, ctx: &InspectorContext, instance: &mut dyn Reflect) {
-        let meta = ctx
-            .registry
-            .trait_meta::<ReflectGenericInt>(instance.as_any().type_id())
-            .unwrap();
+        let type_registry = ctx.assets.type_registry.read();
+        let Some(meta) = type_registry.trait_meta::<ReflectGenericInt>(instance.as_any().type_id())
+        else {
+            return;
+        };
         let integer = meta.get_mut(instance).unwrap();
         let mut value = integer.as_i64();
         let res = ui.add(egui::DragValue::new(&mut value));

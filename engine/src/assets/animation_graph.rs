@@ -1,8 +1,7 @@
 use crate as engine;
-use crate::assets::animation::Animation;
 use crate::assets::error::AssetError;
 use crate::assets::{Asset, AssetRegistry, LoadedAsset};
-use crate::core::Ref;
+use crate::context::ReadOnlyAssetContext;
 use eframe::emath::Pos2;
 use engine_derive::TypeUuid;
 use glm::Vec2;
@@ -29,7 +28,7 @@ pub enum AnimationMotion {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct AnimationClip {
     pub speed: f32,
-    pub animation: Option<Ref<Animation>>,
+    pub animation: Option<Uuid>,
 }
 
 impl Default for AnimationClip {
@@ -193,11 +192,14 @@ impl Asset for AnimationGraph {
         &["cxanim"]
     }
 
-    fn from_file(path: &Path) -> Result<LoadedAsset<Self>, AssetError>
+    fn from_file(
+        _assets: &ReadOnlyAssetContext,
+        path: &Path,
+    ) -> Result<LoadedAsset<Self>, AssetError>
     where
         Self: Sized,
     {
-        LoadedAsset::from_json_file(path)
+        LoadedAsset::<Self>::from_json_file(path)
     }
 
     fn to_file(&self, path: &Path) -> Result<(), Error> {

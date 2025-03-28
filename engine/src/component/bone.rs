@@ -1,10 +1,9 @@
-use glm::Mat4;
-use serde::{Deserialize, Serialize};
-
 use crate as engine;
 use crate::component::{Component, ReflectComponent};
 use crate::reflect::{Reflect, ReflectDefault};
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
+use glm::Mat4;
+use serde::{Deserialize, Serialize};
 
 #[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "4a83ab8d-8a10-462a-90bd-8a0cf7f32b7f"]

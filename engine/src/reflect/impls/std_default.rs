@@ -1,6 +1,8 @@
 use crate::reflect::{Reflect, TraitMeta, TraitMetaFrom};
+use engine_derive::TypeUuid;
 
-#[derive(Clone)]
+#[derive(Clone, TypeUuid)]
+#[uuid = "1aebc41e-39f5-4921-8a53-ab0035bdbada"]
 pub struct ReflectDefault {
     default: fn() -> Box<dyn Reflect>,
 }

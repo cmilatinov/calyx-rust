@@ -3,6 +3,7 @@ use std::fmt::{Debug, Formatter};
 
 use crate::reflect::type_registry::TypeRegistry;
 
+use crate::utils::TypeUuidDynamic;
 pub use engine_derive::Reflect;
 
 pub trait TypeName {
@@ -24,7 +25,7 @@ impl<T: TypeName> TypeNameDynamic for T {
     }
 }
 
-pub trait Reflect: TypeNameDynamic + Any + Send + Sync {
+pub trait Reflect: TypeUuidDynamic + TypeNameDynamic + Any + Send + Sync {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn as_reflect(&self) -> &dyn Reflect;

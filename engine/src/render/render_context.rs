@@ -1,57 +1,51 @@
-use std::ops::DerefMut;
 use std::sync::Arc;
 
+use crate::render::{PipelineOptionsBuilder, RenderUtils};
 use egui::epaint;
 use egui_wgpu::{wgpu, Renderer};
 
-use crate as engine;
-use crate::utils::singleton_with_init;
-
-#[derive(Default)]
 pub struct RenderContext {
-    render_state: Option<egui_wgpu::RenderState>,
-    texture_manager: Option<Arc<epaint::mutex::RwLock<epaint::TextureManager>>>,
+    render_state: egui_wgpu::RenderState,
+    texture_manager: Arc<epaint::mutex::RwLock<epaint::TextureManager>>,
 }
 
-singleton_with_init!(RenderContext);
-
 impl RenderContext {
-    pub fn init_from_eframe(&mut self, cc: &eframe::CreationContext) {
-        self.render_state = cc.wgpu_render_state.clone();
-        self.texture_manager = Some(cc.egui_ctx.tex_manager());
+    pub fn from_eframe(cc: &eframe::CreationContext) -> Self {
+        Self {
+            render_state: cc
+                .wgpu_render_state
+                .clone()
+                .expect("eframe context not using wgpu"),
+            texture_manager: cc.egui_ctx.tex_manager(),
+        }
     }
-    pub fn destroy(&mut self) {
-        self.render_state = None;
-        self.texture_manager = None;
+
+    pub fn render_state(&self) -> &egui_wgpu::RenderState {
+        &self.render_state
     }
-    pub fn render_state() -> Option<egui_wgpu::RenderState> {
-        RenderContext::get().render_state.clone()
+
+    pub fn device(&self) -> &wgpu::Device {
+        &self.render_state.device
     }
-    pub fn device() -> Option<Arc<wgpu::Device>> {
-        RenderContext::get()
-            .render_state
-            .as_ref()
-            .map(|state| state.device.clone())
+
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.render_state.queue
     }
-    pub fn queue() -> Option<Arc<wgpu::Queue>> {
-        RenderContext::get()
-            .render_state
-            .as_ref()
-            .map(|state| state.queue.clone())
+
+    pub fn renderer(&self) -> Arc<epaint::mutex::RwLock<Renderer>> {
+        self.render_state.renderer.clone()
     }
-    pub fn renderer() -> Option<Arc<epaint::mutex::RwLock<Renderer>>> {
-        RenderContext::get()
-            .render_state
-            .as_ref()
-            .map(|state| state.renderer.clone())
+
+    pub fn target_format(&self) -> wgpu::TextureFormat {
+        self.render_state.target_format
     }
-    pub fn target_format() -> Option<wgpu::TextureFormat> {
-        RenderContext::get()
-            .render_state
-            .as_ref()
-            .map(|state| state.target_format.clone())
+
+    pub fn texture_manager(&self) -> Arc<epaint::mutex::RwLock<epaint::TextureManager>> {
+        self.texture_manager.clone()
     }
-    pub fn texture_manager() -> Option<Arc<epaint::mutex::RwLock<epaint::TextureManager>>> {
-        RenderContext::get().texture_manager.clone()
+
+    pub fn pipeline_options_builder(&self) -> PipelineOptionsBuilder {
+        PipelineOptionsBuilder::default()
+            .fragment_targets(vec![Some(RenderUtils::color_default(self.target_format()))])
     }
 }

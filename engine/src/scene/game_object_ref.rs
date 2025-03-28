@@ -1,6 +1,6 @@
 use engine_derive::impl_reflect_value;
 use legion::world::{Entry, EntryRef};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
 
 use crate as engine;
@@ -12,16 +12,32 @@ use crate::{
 
 use super::GameObject;
 
-#[derive(Default, Clone, Copy, TypeUuid, Serialize, Deserialize, Reflect)]
+#[derive(Default, Clone, Copy, TypeUuid, Reflect)]
 #[uuid = "a20d9c21-adea-4af1-ad75-05828aad89de"]
-#[serde(transparent)]
-#[repr(transparent)]
 pub struct GameObjectRef {
-    pub(crate) id: Uuid,
+    id: Uuid,
 }
 
-impl From<Uuid> for GameObjectRef {
-    fn from(id: Uuid) -> Self {
+impl Serialize for GameObjectRef {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.id.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for GameObjectRef {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Uuid::deserialize(deserializer).map(|id| Self { id })
+    }
+}
+
+impl GameObjectRef {
+    pub fn new(id: Uuid) -> Self {
         Self { id }
     }
 }

@@ -1,10 +1,8 @@
-use std::ops::DerefMut;
 use std::{any::TypeId, collections::HashMap};
 
 use engine::{
     reflect::{type_registry::TypeRegistry, ReflectDefault},
-    singleton, type_ids,
-    utils::Init,
+    type_ids,
     uuid::Uuid,
 };
 
@@ -20,9 +18,11 @@ pub struct InspectorRegistry {
     asset_inspectors: HashMap<Uuid, Box<dyn AssetInspector>>,
 }
 
-impl Init for InspectorRegistry {
-    fn initialize(&mut self) {
-        let registry = TypeRegistry::get();
+impl InspectorRegistry {
+    pub fn new(registry: &TypeRegistry) -> Self {
+        let mut type_inspectors = HashMap::new();
+        let mut type_association = HashMap::new();
+        let mut asset_inspectors = HashMap::new();
         for type_id in registry.all_of(type_ids!(ReflectDefault, ReflectTypeInspector)) {
             let meta_default = registry.trait_meta::<ReflectDefault>(type_id).unwrap();
             let meta_inspector = registry
@@ -31,9 +31,9 @@ impl Init for InspectorRegistry {
             let instance = meta_default.default();
             let inspector = meta_inspector.get_boxed(instance).unwrap();
             for target_type_id in inspector.target_type_ids() {
-                self.type_association.insert(target_type_id, type_id);
+                type_association.insert(target_type_id, type_id);
             }
-            self.type_inspectors.insert(type_id, inspector);
+            type_inspectors.insert(type_id, inspector);
         }
 
         for type_id in registry.all_of(type_ids!(ReflectDefault, ReflectAssetInspector)) {
@@ -43,13 +43,16 @@ impl Init for InspectorRegistry {
                 .unwrap();
             let instance = meta_default.default();
             let inspector = meta_inspector.get_boxed(instance).unwrap();
-            self.asset_inspectors
-                .insert(inspector.target_type_uuid(), inspector);
+            asset_inspectors.insert(inspector.target_type_uuid(), inspector);
+        }
+
+        Self {
+            type_inspectors,
+            type_association,
+            asset_inspectors,
         }
     }
 }
-
-singleton!(InspectorRegistry);
 
 impl InspectorRegistry {
     pub fn type_inspector_lookup(&self, type_id: TypeId) -> Option<&dyn TypeInspector> {

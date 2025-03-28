@@ -12,7 +12,7 @@ impl<'a> From<Gizmos<'a>> for PhysicsDebugRenderer<'a> {
     }
 }
 
-impl<'a> DebugRenderBackend for PhysicsDebugRenderer<'a> {
+impl DebugRenderBackend for PhysicsDebugRenderer<'_> {
     fn draw_line(
         &mut self,
         _object: DebugRenderObject,

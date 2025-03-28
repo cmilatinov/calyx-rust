@@ -1,10 +1,10 @@
-use egui::{ScrollArea, Ui};
+use egui::Ui;
 use std::any::Any;
 
-use engine::core::LogRegistry;
-use engine::egui;
-
+// use engine::core::LogRegistry;
 use crate::panel::Panel;
+use crate::EditorAppState;
+use engine::egui;
 
 #[derive(Default)]
 pub struct PanelTerminal {
@@ -20,17 +20,17 @@ impl Panel for PanelTerminal {
         "Console"
     }
 
-    fn ui(&mut self, ui: &mut Ui) {
-        let mut scroll_area = ScrollArea::new([false, true]);
-        scroll_area = scroll_area.stick_to_bottom(true);
-
-        scroll_area.show(ui, |ui| {
-            self.history
-                .append(&mut LogRegistry::get_mut().drain_logs());
-            for message in &self.history {
-                ui.label(message);
-            }
-        });
+    fn ui(&mut self, ui: &mut Ui, state: &mut EditorAppState) {
+        // let mut scroll_area = ScrollArea::new([false, true]);
+        // scroll_area = scroll_area.stick_to_bottom(true);
+        //
+        // scroll_area.show(ui, |ui| {
+        //     self.history
+        //         .append(&mut LogRegistry::get_mut().drain_logs());
+        //     for message in &self.history {
+        //         ui.label(message);
+        //     }
+        // });
     }
 
     fn as_any(&self) -> &dyn Any {

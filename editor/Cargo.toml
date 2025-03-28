@@ -26,3 +26,4 @@ convert_case.workspace = true
 re_ui.workspace = true
 rfd.workspace = true
 enum_dispatch.workspace = true
+dunce.workspace = true

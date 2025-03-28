@@ -1,16 +1,18 @@
-use std::default::Default;
-use std::path::Path;
-
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::wgpu::BufferUsages;
 use glm::{vec4, Mat4};
 use legion::{Entity, IntoQuery};
 use rapier3d::pipeline::DebugRenderPipeline;
+use std::default::Default;
+use std::path::Path;
+use std::sync::Arc;
 
 use crate::assets::mesh::Mesh;
-use crate::assets::{Asset, Assets};
-use crate::class_registry::ClassRegistry;
+use crate::assets::Asset;
+use crate::class_registry::ComponentRegistry;
+use crate::context::ReadOnlyAssetContext;
+use crate::core::ReadOnlyRef;
 use crate::math::Transform;
 use crate::physics::PhysicsDebugRenderer;
 use crate::render::gizmos::Gizmos;
@@ -18,7 +20,7 @@ use crate::render::render_utils::RenderUtils;
 use crate::scene::Scene;
 
 use super::buffer::wgpu_buffer_init_desc;
-use super::{PipelineOptions, PipelineOptionsBuilder, RenderContext, Shader};
+use super::{PipelineOptions, RenderContext, Shader};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -31,6 +33,9 @@ pub struct GizmoInstance {
 }
 
 pub struct GizmoRenderer {
+    render_context: Arc<RenderContext>,
+    component_registry: ReadOnlyRef<ComponentRegistry>,
+
     samples: u32,
     circle_list: Vec<GizmoInstance>,
     cube_list: Vec<GizmoInstance>,
@@ -52,8 +57,13 @@ pub struct GizmoRenderer {
 }
 
 impl GizmoRenderer {
-    pub fn new(camera_uniform_buffer: &wgpu::Buffer, samples: u32) -> Self {
-        let render_state = RenderContext::render_state().unwrap();
+    pub fn new(
+        game: &ReadOnlyAssetContext,
+        camera_uniform_buffer: &wgpu::Buffer,
+        samples: u32,
+    ) -> Self {
+        let render_context = game.render_context.clone();
+        let render_state = render_context.render_state();
         let device = &render_state.device;
 
         let circle_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -79,7 +89,7 @@ impl GizmoRenderer {
             }; Mesh::MAX_INSTANCES],
         ));
 
-        let shader = Shader::from_file(&Path::new("assets/shaders/gizmos.wgsl"))
+        let shader = Shader::from_file(game, Path::new("assets/shaders/gizmos.wgsl"))
             .unwrap()
             .asset;
 
@@ -133,10 +143,10 @@ impl GizmoRenderer {
             circle_list: Vec::new(),
             cube_list: Vec::new(),
 
-            wire_circle_mesh: Assets::wire_circle(),
-            wire_cube_mesh: Assets::wire_cube(),
-            lines_mesh: Mesh::default(),
-            points_mesh: Mesh::default(),
+            wire_circle_mesh: game.asset_registry.read().wire_circle(),
+            wire_cube_mesh: game.asset_registry.read().wire_cube(),
+            lines_mesh: Mesh::new(&render_context),
+            points_mesh: Mesh::new(&render_context),
 
             shader,
             gizmo_bind_group,
@@ -147,20 +157,26 @@ impl GizmoRenderer {
 
             circle_instance_buffer,
             cube_instance_buffer,
+
+            component_registry: game.component_registry.clone(),
+            render_context,
         };
         renderer
     }
 
     fn pipeline_options(
+        &self,
         topology: wgpu::PrimitiveTopology,
         target_format: wgpu::TextureFormat,
         samples: u32,
     ) -> PipelineOptions {
-        PipelineOptionsBuilder::default()
+        self.render_context
+            .pipeline_options_builder()
             .samples(samples)
             .primitive_topology(topology)
             .fragment_targets(vec![Some(RenderUtils::color_alpha_blending(target_format))])
             .build()
+            .expect("invalid builder options")
     }
 
     fn clear(&mut self) {
@@ -211,15 +227,20 @@ impl GizmoRenderer {
         physics_debug_pipeline: Option<&mut DebugRenderPipeline>,
     ) {
         {
-            let mut gizmos = self.gizmos(camera_transform);
-            let mut query = <Entity>::query();
-            let world = &scene.world;
-            for entity in query.iter(world) {
-                if let Some(game_object) = scene.get_game_object_from_entity(*entity) {
-                    for (_, comp) in ClassRegistry::get().components() {
-                        if let Some(entry) = scene.entry(game_object) {
-                            if let Some(instance) = comp.get_instance(&entry) {
-                                instance.draw_gizmos(scene, game_object, &mut gizmos);
+            let registry_ref = self.component_registry.clone();
+            let mut gizmos;
+            {
+                let registry = registry_ref.read();
+                gizmos = self.gizmos(camera_transform);
+                let mut query = <Entity>::query();
+                let world = &scene.world;
+                for entity in query.iter(world) {
+                    if let Some(game_object) = scene.get_game_object_from_entity(*entity) {
+                        for (_, comp) in registry.components() {
+                            if let Some(entry) = scene.entry(game_object) {
+                                if let Some(instance) = comp.get_instance(&entry) {
+                                    instance.draw_gizmos(scene, game_object, &mut gizmos);
+                                }
                             }
                         }
                     }
@@ -245,22 +266,22 @@ impl GizmoRenderer {
         target_format: wgpu::TextureFormat,
         render_pass: &mut wgpu::RenderPass<'a>,
     ) {
-        let circle_options = Self::pipeline_options(
+        let circle_options = self.pipeline_options(
             wgpu::PrimitiveTopology::LineStrip,
             target_format,
             self.samples,
         );
-        let cube_options = Self::pipeline_options(
+        let cube_options = self.pipeline_options(
             wgpu::PrimitiveTopology::LineList,
             target_format,
             self.samples,
         );
-        let line_options = Self::pipeline_options(
+        let line_options = self.pipeline_options(
             wgpu::PrimitiveTopology::LineList,
             target_format,
             self.samples,
         );
-        let point_options = Self::pipeline_options(
+        let point_options = self.pipeline_options(
             wgpu::PrimitiveTopology::PointList,
             target_format,
             self.samples,

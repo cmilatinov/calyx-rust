@@ -1,11 +1,8 @@
-use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
-
 use super::shader_preprocessor::ShaderPreprocessor;
 use crate as engine;
 use crate::assets::error::AssetError;
 use crate::assets::{mesh, Asset, LoadedAsset};
+use crate::context::ReadOnlyAssetContext;
 use crate::render::buffer::BufferLayout;
 use crate::render::render_utils::RenderUtils;
 use crate::render::{PipelineOptions, RenderContext};
@@ -13,6 +10,10 @@ use crate::utils::TypeUuid;
 use eframe::wgpu::ShaderSource;
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::PipelineCompilationOptions;
+use std::borrow::Cow;
+use std::collections::{BTreeMap, HashMap};
+use std::path::Path;
+use std::sync::Arc;
 
 pub type BindGroupEntries = BTreeMap<u32, Vec<wgpu::BindGroupLayoutEntry>>;
 pub type BindGroupLayouts = Vec<wgpu::BindGroupLayout>;
@@ -26,6 +27,7 @@ pub enum ShaderType {
 #[derive(TypeUuid)]
 #[uuid = "00415831-a64c-4dc2-b573-5e112f99b674"]
 pub struct Shader {
+    pub(crate) render_context: Arc<RenderContext>,
     pub ty: ShaderType,
     pub name: String,
     pub source: String,
@@ -43,15 +45,19 @@ impl Asset for Shader {
         &["wgsl"]
     }
 
-    fn from_file(path: &Path) -> Result<LoadedAsset<Self>, AssetError> {
-        let device = RenderContext::device().unwrap();
+    fn from_file(
+        game: &ReadOnlyAssetContext,
+        path: &Path,
+    ) -> Result<LoadedAsset<Self>, AssetError> {
+        let render_context = game.render_context.clone();
+        let device = render_context.device();
         let name = path
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("shader")
             .to_string();
-        let source =
-            ShaderPreprocessor::load_shader_source(path).map_err(|_| AssetError::LoadError)?;
+        let source = ShaderPreprocessor::load_shader_source(&game.asset_registry.read(), path)
+            .map_err(|_| AssetError::LoadError)?;
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(
                 path.file_stem()
@@ -66,7 +72,7 @@ impl Asset for Shader {
 
         let ty = Self::shader_type(&module);
         let bind_group_entries = Self::bind_group_entries(&module);
-        let bind_group_layouts = Self::bind_group_layouts(&device, &bind_group_entries);
+        let bind_group_layouts = Self::bind_group_layouts(device, &bind_group_entries);
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("pipeline_layout"),
@@ -90,6 +96,7 @@ impl Asset for Shader {
         };
 
         Ok(LoadedAsset::new(Self {
+            render_context,
             ty,
             name,
             source,
@@ -153,6 +160,7 @@ impl Shader {
             naga::StorageFormat::Rg11b10Ufloat => wgpu::TextureFormat::Rg11b10Ufloat,
 
             // 64-bit formats
+            naga::StorageFormat::R64Uint => wgpu::TextureFormat::R64Uint,
             naga::StorageFormat::Rg32Uint => wgpu::TextureFormat::Rg32Uint,
             naga::StorageFormat::Rg32Sint => wgpu::TextureFormat::Rg32Sint,
             naga::StorageFormat::Rg32Float => wgpu::TextureFormat::Rg32Float,
@@ -331,7 +339,7 @@ impl Shader {
     }
 
     pub fn rebuild_pipeline_layout(&mut self) {
-        let device = RenderContext::device().unwrap();
+        let device = self.render_context.device();
         self.pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("pipeline_layout"),
             bind_group_layouts: self
@@ -348,7 +356,7 @@ impl Shader {
         if self.pipelines.contains_key(options) {
             return;
         }
-        let device = RenderContext::device().unwrap();
+        let device = self.render_context.device();
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(self.name.as_str()),
             layout: Some(&self.pipeline_layout),

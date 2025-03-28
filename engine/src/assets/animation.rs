@@ -5,10 +5,11 @@ use glm::{Quat, Vec3};
 use nalgebra::Unit;
 
 use crate as engine;
+use crate::context::ReadOnlyAssetContext;
 use crate::utils::TypeUuid;
 
 use super::error::AssetError;
-use super::Asset;
+use super::{Asset, LoadedAsset};
 
 #[derive(Debug)]
 pub struct VectorKeyFrame {
@@ -49,8 +50,11 @@ impl Asset for Animation {
         &[]
     }
 
-    fn from_file(_path: &Path) -> Result<super::LoadedAsset<Self>, super::error::AssetError> {
-        Err(AssetError::LoadError)
+    fn from_file(
+        _assets: &ReadOnlyAssetContext,
+        _path: &Path,
+    ) -> Result<LoadedAsset<Self>, AssetError> {
+        todo!()
     }
 }
 

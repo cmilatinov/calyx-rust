@@ -1,9 +1,10 @@
-use engine::assets::{Asset, AssetOptionRef, AssetRegistry};
+use engine::assets::{Asset, AssetAccess, AssetRef, AssetRegistry};
 use engine::component::ComponentID;
-use engine::core::Ref;
 use engine::egui;
 use engine::egui::style::WidgetVisuals;
-use engine::egui::{Color32, DragValue, Frame, Id, Response, Shape, Stroke, Ui, WidgetText};
+use engine::egui::{
+    Color32, DragValue, Frame, Id, Response, Shape, Stroke, StrokeKind, Ui, WidgetText,
+};
 use engine::glm::{Vec2, Vec3, Vec4};
 use engine::scene::{GameObjectRef, Scene};
 use engine::utils::TypeUuid;
@@ -24,24 +25,25 @@ struct SelectState {
 impl Widgets {
     pub fn asset_select_t<T: Asset + TypeUuid>(
         ui: &mut Ui,
+        registry: &AssetRegistry,
         id: impl std::hash::Hash,
         type_uuid: Option<Uuid>,
-        value: &mut Option<Ref<T>>,
-    ) -> bool {
-        let mut asset_ref = value.as_asset_option();
-        let changed = Self::asset_select(ui, id, type_uuid, &mut asset_ref);
-        if changed {
-            value.set(asset_ref);
+        value: &mut AssetRef<T>,
+    ) -> Response {
+        let res = Self::asset_select(ui, registry, id, type_uuid, value.id_mut());
+        if res.changed() {
+            value.clear_cache();
         }
-        changed
+        res
     }
 
     pub fn asset_select(
         ui: &mut Ui,
+        registry: &AssetRegistry,
         id: impl std::hash::Hash,
         type_uuid: Option<Uuid>,
-        value: &mut Option<Ref<dyn Asset>>,
-    ) -> bool {
+        value: &mut Uuid,
+    ) -> Response {
         lazy_static! {
             static ref STATE: RwLock<SelectState> = RwLock::new(SelectState {
                 search: String::from(""),
@@ -49,15 +51,10 @@ impl Widgets {
             });
         }
         let mut state = STATE.write().unwrap();
-        let registry = AssetRegistry::get();
-        let mut asset_id = value
-            .as_ref()
-            .and_then(|r| registry.asset_id_from_ref(r))
-            .unwrap_or_default();
-        let asset_meta = registry.asset_meta_from_id(asset_id);
+        let asset_meta = registry.asset_meta_from_id(*value);
         let mut changed = false;
 
-        let res = egui::ComboBox::from_id_salt(id)
+        let mut res = egui::ComboBox::from_id_salt(id)
             .truncate()
             .width(100.0)
             .selected_text(
@@ -79,13 +76,11 @@ impl Widgets {
                 registry.search_assets(state.search.as_str(), type_uuid, &mut assets);
                 ui.add_space(6.0);
                 if state.search.is_empty() {
-                    changed |= ui
-                        .selectable_value(&mut asset_id, Uuid::nil(), "None")
-                        .changed();
+                    changed |= ui.selectable_value(value, Uuid::nil(), "None").changed();
                 }
                 for asset in assets {
                     changed |= ui
-                        .selectable_value(&mut asset_id, asset.id, asset.display_name)
+                        .selectable_value(value, asset.id, asset.display_name)
                         .changed();
                 }
             })
@@ -94,8 +89,10 @@ impl Widgets {
             state.search.clear();
             state.should_request_focus = true;
         }
-        *value = registry.load_dyn_by_id(asset_id).ok().into();
-        changed
+        if changed {
+            res.mark_changed();
+        }
+        res
     }
 
     pub fn game_object_select(
@@ -117,7 +114,7 @@ impl Widgets {
             .scope(|ui| {
                 let visuals = ui.visuals_mut();
                 visuals.widgets.inactive.bg_fill = visuals.panel_fill;
-                ui.dnd_drop_zone::<Uuid, Response>(Frame::none(), |ui| {
+                ui.dnd_drop_zone::<Uuid, Response>(Frame::NONE, |ui| {
                     egui::ComboBox::from_id_salt(id)
                         .truncate()
                         .width(100.0)
@@ -143,18 +140,16 @@ impl Widgets {
                                     .changed();
                             }
                             for go in scene.game_objects() {
+                                let Some(entry) = scene.entry(go) else {
+                                    return;
+                                };
                                 let id = scene.get_game_object_uuid(go);
-                                if !id.is_nil() {
-                                    if let Some(entry) = scene.entry(go) {
-                                        let name = entry
-                                            .get_component::<ComponentID>()
-                                            .map(|c| c.name.as_str())
-                                            .unwrap_or("");
-                                        changed |= ui
-                                            .selectable_value(&mut game_object_id, id, name)
-                                            .changed();
-                                    }
-                                }
+                                let name = entry
+                                    .get_component::<ComponentID>()
+                                    .map(|c| c.name.as_str())
+                                    .unwrap_or("");
+                                changed |=
+                                    ui.selectable_value(&mut game_object_id, id, name).changed();
                             }
                         })
                         .response
@@ -167,8 +162,9 @@ impl Widgets {
             let stroke_width = 1.0;
             ui.painter().add(Shape::rect_stroke(
                 res.inner.rect.expand(stroke_width),
-                ui.visuals().widgets.hovered.rounding,
+                ui.visuals().widgets.hovered.corner_radius,
                 Stroke::new(stroke_width, Color32::YELLOW),
+                StrokeKind::Middle,
             ));
         }
         if let Some(dropped_payload) = dropped_payload {
@@ -181,7 +177,7 @@ impl Widgets {
         *value = if game_object_id.is_nil() {
             None
         } else {
-            Some(game_object_id.into())
+            Some(GameObjectRef::new(game_object_id))
         };
         changed
     }

@@ -1,5 +1,5 @@
+use engine::context::ReadOnlyAssetContext;
 use engine::egui::Ui;
-use engine::reflect::type_registry::TypeRegistry;
 use engine::reflect::{Reflect, StructInfo};
 use engine::reflect_trait;
 use engine::scene::{GameObject, Scene};
@@ -20,7 +20,7 @@ pub trait TypeInspector: Send + Sync {
 
 #[derive(Copy, Clone)]
 pub struct InspectorContext<'a> {
-    pub registry: &'a TypeRegistry,
+    pub assets: &'a ReadOnlyAssetContext,
     pub scene: &'a Scene,
     pub game_object: GameObject,
     pub parent: Option<GameObject>,
