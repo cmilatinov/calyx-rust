@@ -1,11 +1,10 @@
 use proc_macro::TokenStream;
 
-use proc_macro2::Span;
 use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::token::Comma;
-use syn::{parenthesized, parse_macro_input, Ident, Path, Token, Type};
+use syn::{parenthesized, parse_macro_input, Path, Token, Type};
 
 use crate::fq::{FQAny, FQBox, FQReflect, FQReflectedType, FQTypeName};
 

@@ -1,9 +1,9 @@
+use egui::Ui;
 use engine::context::GameContext;
-use engine::egui::Ui;
 use engine::reflect::{Reflect, ReflectDefault};
 use engine::scene::Prefab;
 use engine::utils::TypeUuid;
-use engine::uuid::Uuid;
+use uuid::Uuid;
 
 use crate::inspector::asset_inspector::{AssetInspector, ReflectAssetInspector};
 
@@ -23,14 +23,17 @@ impl AssetInspector for PrefabInspector {
     fn show_context_menu(&self, ui: &mut Ui, game: &mut GameContext, asset_id: Uuid) {
         if ui.button("Import").clicked() {
             let Ok(asset) = game.assets.asset_registry.read().load_dyn_by_id(asset_id) else {
+                ui.close_menu();
                 return;
             };
-            if let Some(prefab_ref) = asset.try_downcast::<Prefab>() {
-                let prefab = prefab_ref.read();
-                game.scenes
-                    .simulation_scene_mut()
-                    .instantiate_prefab(&prefab, None);
-            }
+            let Some(prefab_ref) = asset.try_downcast::<Prefab>() else {
+                ui.close_menu();
+                return;
+            };
+            let prefab = prefab_ref.read();
+            game.scenes
+                .simulation_scene_mut()
+                .instantiate_prefab(&prefab, None);
             ui.close_menu();
         }
     }

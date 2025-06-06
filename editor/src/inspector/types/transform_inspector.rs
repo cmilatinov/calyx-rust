@@ -1,21 +1,21 @@
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 use crate::inspector::widgets::Widgets;
+use egui::Ui;
 use engine::component::ComponentTransform;
-use engine::egui::Ui;
-use engine::glm::Vec3;
-use engine::nalgebra::UnitQuaternion;
 use engine::reflect::{Reflect, ReflectDefault};
-use engine::type_ids;
+use engine::type_uuids;
 use engine::utils::TypeUuid;
-use std::any::TypeId;
+use nalgebra::UnitQuaternion;
+use nalgebra_glm::Vec3;
+use uuid::Uuid;
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, TypeInspector)]
 pub struct TransformInspector;
 
 impl TypeInspector for TransformInspector {
-    fn target_type_ids(&self) -> Vec<TypeId> {
-        type_ids!(ComponentTransform)
+    fn target_type_uuids(&self) -> Vec<Uuid> {
+        type_uuids!(ComponentTransform)
     }
 
     fn show_inspector(&self, ui: &mut Ui, ctx: &InspectorContext, instance: &mut dyn Reflect) {

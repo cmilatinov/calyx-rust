@@ -2,7 +2,7 @@ use crate as engine;
 use crate::component::{Component, ReflectComponent};
 use crate::reflect::{Reflect, ReflectDefault};
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
-use glm::Mat4;
+use nalgebra_glm::Mat4;
 use serde::{Deserialize, Serialize};
 
 #[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Bone")]
 #[serde(default)]
+#[repr(C)]
 pub struct ComponentBone {
     pub name: String,
     #[reflect_attr(hide)]

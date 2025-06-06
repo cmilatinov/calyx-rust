@@ -8,9 +8,9 @@ use engine::context::AssetContext;
 use engine::core::{Ref, WeakRef};
 use engine::error::BoxedError;
 use engine::reflect::type_registry::TypeRegistry;
-use engine::rusty_pool::JoinHandle;
-use engine::serde_json::Value;
 use project::Project;
+use rusty_pool::JoinHandle;
+use serde_json::Value;
 
 use crate::task_id::TaskId;
 
@@ -88,7 +88,7 @@ impl ProjectManager {
             .arg("metadata")
             .output()
             .expect("");
-        let json: Value = engine::serde_json::from_slice(&meta_output.stdout).unwrap();
+        let json: Value = serde_json::from_slice(&meta_output.stdout).unwrap();
         let mut target = PathBuf::from(json["target_directory"].as_str().unwrap());
         target.push("debug");
         target.push(engine::utils::lib_file_name(

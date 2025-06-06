@@ -19,8 +19,9 @@ use crate::scene::Scene;
 use egui::Color32;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::{wgpu, RenderState};
-use glm::{Mat4, Vec3};
 use legion::{Entity, IntoQuery};
+use nalgebra_glm as glm;
+use nalgebra_glm::{Mat4, Vec3};
 use rapier3d::pipeline::DebugRenderPipeline;
 use std::collections::{HashMap, HashSet};
 use std::default::Default;
@@ -965,18 +966,18 @@ impl SceneRenderer {
         camera_transform: &Transform,
     ) {
         let mut camera_uniform = CameraUniform::default();
-        let projection = camera.projection;
-        let view = camera_transform.get_inverse_matrix();
+        let mut projection = camera.projection;
+        let mut view = camera_transform.get_inverse_matrix();
         camera_uniform
             .projection
-            .clone_from_slice(projection.as_ref());
-        camera_uniform.view.clone_from_slice(view.as_ref());
+            .clone_from_slice(projection.as_mut());
+        camera_uniform.view.clone_from_slice(view.as_mut());
         camera_uniform
             .inverse_projection
-            .clone_from_slice(glm::inverse(&projection).as_ref());
+            .clone_from_slice(glm::inverse(&projection).as_mut());
         camera_uniform
             .inverse_view
-            .clone_from_slice(glm::inverse(&view).as_ref());
+            .clone_from_slice(glm::inverse(&view).as_mut());
         camera_uniform.near_plane = camera.near_plane;
         camera_uniform.far_plane = camera.far_plane;
         queue.write_buffer(

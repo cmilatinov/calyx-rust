@@ -13,6 +13,7 @@ use super::{Component, ReflectComponent};
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Directional Light")]
 #[serde(default)]
+#[repr(C)]
 pub struct ComponentDirectionalLight {
     pub active: bool,
     pub color: Color32,

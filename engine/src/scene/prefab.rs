@@ -11,7 +11,7 @@ use crate::math::{self, Transform};
 use crate::scene::{Scene, SceneData};
 use crate::utils::TypeUuid;
 use crate::{self as engine, utils};
-use glm::Mat4;
+use nalgebra_glm::Mat4;
 use russimp::property::{Property, PropertyStore};
 use russimp::scene::PostProcess;
 use russimp::sys::AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS;

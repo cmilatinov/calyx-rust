@@ -1,8 +1,8 @@
-use engine::egui::{
+use egui::{
     Align2, Color32, CursorIcon, Galley, Id, InnerResponse, Pos2, Rect, Response, Sense, Stroke,
     StrokeKind, TextStyle, TextWrapMode, Ui, Vec2, WidgetText,
 };
-use engine::egui_tiles::{Behavior, TabState, TileId, Tiles};
+use egui_tiles::{Behavior, TabState, TileId, Tiles};
 use re_ui::{DesignTokens, Icon};
 use std::sync::Arc;
 

@@ -1,12 +1,13 @@
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 use crate::inspector::widgets::Widgets;
+use egui::Ui;
 use engine::component::{ColliderShape, ComponentCollider, Orientation};
 use engine::core::Ref;
-use engine::egui::Ui;
 use engine::reflect::{Reflect, ReflectDefault};
-use engine::{egui, glm, type_ids, TypeUuid};
-use std::any::TypeId;
+use engine::{type_uuids, TypeUuid};
+use nalgebra_glm as glm;
 use std::ops::DerefMut;
+use uuid::Uuid;
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, TypeInspector)]
@@ -144,8 +145,8 @@ impl ColliderInspector {
 }
 
 impl TypeInspector for ColliderInspector {
-    fn target_type_ids(&self) -> Vec<TypeId> {
-        type_ids!(ComponentCollider)
+    fn target_type_uuids(&self) -> Vec<Uuid> {
+        type_uuids!(ComponentCollider)
     }
 
     fn show_inspector(&self, ui: &mut Ui, ctx: &InspectorContext, instance: &mut dyn Reflect) {

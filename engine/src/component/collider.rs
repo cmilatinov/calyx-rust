@@ -1,5 +1,5 @@
 use engine_derive::impl_reflect_value;
-use glm::Vec3;
+use nalgebra_glm::Vec3;
 use serde::{Deserialize, Serialize};
 
 use crate as engine;
@@ -41,6 +41,7 @@ impl_reflect_value!(ColliderShape());
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Collider")]
 #[serde(default)]
+#[repr(C)]
 pub struct ComponentCollider {
     pub enabled: bool,
     pub shape: ColliderShape,

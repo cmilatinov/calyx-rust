@@ -1,8 +1,9 @@
 #[macro_export]
-macro_rules! type_ids {
-    ($($ty:ty),*) => {
+macro_rules! type_uuids {
+    ($($ty:ty),*) => {{
+        use engine::utils::TypeUuid;
         vec![
-            $(std::any::TypeId::of::<$ty>()),*
+            $(<$ty>::type_uuid()),*
         ]
-    };
+    }};
 }

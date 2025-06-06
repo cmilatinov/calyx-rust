@@ -15,6 +15,12 @@ path = "src/main.rs"
 [dependencies]
 engine = { path = "../engine" }
 project = { path = "../project" }
+eframe.workspace = true
+egui.workspace = true
+egui_extras.workspace = true
+egui_tiles.workspace = true
+egui-wgpu.workspace = true
+transform-gizmo-egui.workspace = true
 lazy_static.workspace = true
 serde.workspace = true
 inventory.workspace = true
@@ -27,3 +33,13 @@ re_ui.workspace = true
 rfd.workspace = true
 enum_dispatch.workspace = true
 dunce.workspace = true
+winit.workspace = true
+rapier3d.workspace = true
+nalgebra.workspace = true
+nalgebra-glm.workspace = true
+uuid.workspace = true
+petgraph.workspace = true
+serde_json.workspace = true
+relative-path.workspace = true
+mint.workspace = true
+rusty_pool.workspace = true

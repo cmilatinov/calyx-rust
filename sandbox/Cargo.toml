@@ -6,8 +6,18 @@ edition = "2021"
 [lib]
 name = "sandbox"
 path = "src/lib.rs"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "game"
+path = "src/game.rs"
 
 [dependencies]
 engine = { path = "../engine" }
 serde.workspace = true
+inventory.workspace = true
+egui.workspace = true
+serde_json.workspace = true
+legion.workspace = true
+eframe.workspace = true
+winit.workspace = true

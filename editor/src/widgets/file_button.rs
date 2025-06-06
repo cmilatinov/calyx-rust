@@ -1,6 +1,5 @@
-use engine::egui;
-use engine::egui::load::TexturePoll;
-use engine::egui::{
+use egui::load::TexturePoll;
+use egui::{
     pos2, Color32, CornerRadius, Image, Rect, Response, Stroke, StrokeKind, TextStyle,
     TextWrapMode, Ui, Vec2, Widget, WidgetText,
 };

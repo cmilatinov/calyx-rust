@@ -1,5 +1,5 @@
-use engine::eframe::egui::collapsing_header::CollapsingState;
-use engine::eframe::egui::{Color32, CursorIcon, DragAndDrop, Id, Response, Ui};
+use eframe::egui::collapsing_header::CollapsingState;
+use eframe::egui::{Color32, CursorIcon, DragAndDrop, Id, Response, Ui};
 use re_ui::drag_and_drop::{find_drop_target, ItemContext, ItemKind};
 use re_ui::list_item::{
     ItemButton, LabelContent, ListItem, PropertyContent, ShowCollapsingResponse,

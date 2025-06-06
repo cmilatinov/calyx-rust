@@ -1,18 +1,17 @@
 use crate::panel::Panel;
 use crate::{icons, EditorAppState, Selection, SelectionType};
 use egui::Ui;
+use egui::{Color32, Response};
 use engine::component::ComponentID;
 use engine::context::GameContext;
-use engine::egui::{Color32, Response};
 use engine::scene::Scene;
 use engine::scene::{GameObject, SiblingDir};
-use engine::uuid::Uuid;
-use engine::*;
 use re_ui::drag_and_drop::{DropTarget, ItemKind};
 use re_ui::{DesignTokens, UiExt};
 use std::any::Any;
 use std::io::BufWriter;
 use std::sync::mpsc::{Receiver, Sender};
+use uuid::Uuid;
 
 enum Command {
     SetTargetContainer(GameObject),

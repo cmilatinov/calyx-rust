@@ -1,7 +1,7 @@
 use crate::core::Time;
 use crate::input::Input;
 use crate::math;
-use glm::Mat4;
+use nalgebra_glm::Mat4;
 
 pub struct Camera {
     pub projection: Mat4,
@@ -31,7 +31,7 @@ impl Camera {
     }
 
     pub fn update_projection(&mut self) {
-        self.projection = glm::perspective_lh::<f32>(
+        self.projection = nalgebra_glm::perspective_lh::<f32>(
             self.aspect,
             math::to_fov_y(self.aspect, self.fov_x),
             self.near_plane,

@@ -1,18 +1,15 @@
+use egui;
+use egui::{Color32, DragValue, Frame, Id, Response, Shape, Stroke, StrokeKind, Ui, WidgetText};
 use engine::assets::{Asset, AssetAccess, AssetRef, AssetRegistry};
 use engine::component::ComponentID;
-use engine::egui;
-use engine::egui::style::WidgetVisuals;
-use engine::egui::{
-    Color32, DragValue, Frame, Id, Response, Shape, Stroke, StrokeKind, Ui, WidgetText,
-};
-use engine::glm::{Vec2, Vec3, Vec4};
 use engine::scene::{GameObjectRef, Scene};
 use engine::utils::TypeUuid;
-use engine::uuid::Uuid;
 use lazy_static::lazy_static;
-use re_ui::list_item::ListItemContent;
+use nalgebra_glm::{Vec2, Vec3, Vec4};
+use re_ui::list_item::{ListItemContent, ListVisuals};
 use re_ui::UiExt;
 use std::sync::RwLock;
+use uuid::Uuid;
 
 pub struct Widgets;
 
@@ -99,8 +96,8 @@ impl Widgets {
         ui: &mut Ui,
         id: impl std::hash::Hash,
         scene: &Scene,
-        value: &mut Option<GameObjectRef>,
-    ) -> bool {
+        value: &mut GameObjectRef,
+    ) -> Response {
         lazy_static! {
             static ref STATE: RwLock<SelectState> = RwLock::new(SelectState {
                 search: String::from(""),
@@ -109,8 +106,8 @@ impl Widgets {
         }
         let mut state = STATE.write().unwrap();
         let mut changed = false;
-        let mut game_object_id = value.map(|go_ref| go_ref.id()).unwrap_or(Uuid::nil());
-        let (res, dropped_payload) = ui
+        let mut game_object_id = value.id();
+        let (mut res, dropped_payload) = ui
             .scope(|ui| {
                 let visuals = ui.visuals_mut();
                 visuals.widgets.inactive.bg_fill = visuals.panel_fill;
@@ -120,7 +117,7 @@ impl Widgets {
                         .width(100.0)
                         .selected_text(
                             value
-                                .and_then(|go_ref| go_ref.game_object(scene))
+                                .game_object(scene)
                                 .map(|go| scene.get_game_object_name(go))
                                 .unwrap_or(String::from("None")),
                         )
@@ -174,12 +171,11 @@ impl Widgets {
             state.search.clear();
             state.should_request_focus = true;
         }
-        *value = if game_object_id.is_nil() {
-            None
-        } else {
-            Some(GameObjectRef::new(game_object_id))
-        };
-        changed
+        if changed {
+            res.inner.mark_changed();
+        }
+        *value = GameObjectRef::new(game_object_id);
+        res.inner
     }
 
     pub fn drag_float4(ui: &mut Ui, speed: f32, value: &mut Vec4) -> bool {
@@ -222,7 +218,7 @@ impl Widgets {
         changed
     }
 
-    pub fn inspector_prop_value<F: FnOnce(&mut Ui, WidgetVisuals)>(
+    pub fn inspector_prop_value<F: FnOnce(&mut Ui, ListVisuals)>(
         ui: &mut Ui,
         text: impl Into<WidgetText>,
         add_value_contents: F,
@@ -246,7 +242,7 @@ impl Widgets {
         );
     }
 
-    pub fn inspector_prop_value_children<F: FnOnce(&mut Ui, WidgetVisuals), C: FnOnce(&mut Ui)>(
+    pub fn inspector_prop_value_children<F: FnOnce(&mut Ui, ListVisuals), C: FnOnce(&mut Ui)>(
         ui: &mut Ui,
         text: impl Into<WidgetText>,
         add_value: F,

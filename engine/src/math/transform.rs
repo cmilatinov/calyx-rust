@@ -1,5 +1,6 @@
-use glm::{DQuat, DVec3, Mat4, Quat, Vec3};
 use nalgebra::{Matrix4, Quaternion, UnitQuaternion, Vector3};
+use nalgebra_glm as glm;
+use nalgebra_glm::{DQuat, DVec3, Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
 use crate as engine;
@@ -231,6 +232,7 @@ impl From<Transform> for transform_gizmo_egui::math::Transform {
 #[cfg(test)]
 mod tests {
     use crate::math::transform::Transform;
+    use nalgebra_glm as glm;
 
     #[test]
     fn basic_transform_translation() {

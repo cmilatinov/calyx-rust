@@ -1,4 +1,3 @@
-use engine_derive::impl_reflect_value;
 use legion::world::{Entry, EntryRef};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
@@ -14,6 +13,7 @@ use super::GameObject;
 
 #[derive(Default, Clone, Copy, TypeUuid, Reflect)]
 #[uuid = "a20d9c21-adea-4af1-ad75-05828aad89de"]
+#[reflect(Default)]
 pub struct GameObjectRef {
     id: Uuid,
 }
@@ -65,5 +65,3 @@ impl GameObjectRef {
         self.id
     }
 }
-
-impl_reflect_value!(Option<GameObjectRef>(Default));

@@ -1,19 +1,17 @@
 use crate::panel::Panel;
 use crate::selection::SelectionType;
 use crate::{icons, EditorAppState};
+use egui::load::SizedTexture;
 use egui::Ui;
-use engine::egui::load::SizedTexture;
-use engine::egui::{
+use egui::{
     Align2, Color32, Image, ImageSource, Key, Modifiers, PointerButton, Pos2, Response, Sense,
     TextStyle,
 };
-use engine::glm::{DMat4, Mat4};
 use engine::input::{Input, InputState};
 use engine::math::Transform;
-use engine::mint::ColumnMatrix4;
-use engine::nalgebra;
 use engine::render::CameraLike;
-use engine::*;
+use mint::ColumnMatrix4;
+use nalgebra_glm::{DMat4, Mat4};
 use re_ui::Icon;
 use std::any::Any;
 use transform_gizmo_egui::config::DEFAULT_SNAP_ANGLE;
@@ -120,7 +118,7 @@ impl PanelViewport {
         };
         let EditorAppState { camera, game, .. } = app_state;
         let input = Input::from_ctx(ui.ctx(), Some(&res), state);
-        camera.update(&game.time, &input);
+        camera.update(game.resources.time(), &input);
         let screen_rect = ui.ctx().screen_rect();
         app_state.viewport_size = (
             res.rect.width() / screen_rect.width(),

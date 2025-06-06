@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Skinned Mesh Renderer")]
 #[serde(default)]
+#[repr(C)]
 pub struct ComponentSkinnedMesh {
     pub material: AssetRef<Material>,
     pub mesh: AssetRef<Mesh>,

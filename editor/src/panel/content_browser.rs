@@ -2,15 +2,14 @@ use crate::panel::Panel;
 use crate::selection::{Selection, SelectionType};
 use crate::widgets::FileButton;
 use crate::{icons, EditorAppState};
-use engine::assets::animation_graph::AnimationGraph;
-use engine::egui::text::LayoutJob;
-use engine::egui::{
+use egui::text::LayoutJob;
+use egui::{
     include_image, FontFamily, FontId, Frame, ImageSource, Margin, Rect, Response, Sense,
     TextFormat, Ui, Vec2,
 };
-use engine::relative_path::PathExt;
-use engine::{egui, serde_json};
+use engine::assets::animation_graph::AnimationGraph;
 use re_ui::list_item::ShowCollapsingResponse;
+use relative_path::PathExt;
 use std::any::Any;
 use std::fs::{DirEntry, OpenOptions, ReadDir};
 use std::io::BufWriter;
@@ -155,8 +154,7 @@ impl Panel for PanelContentBrowser {
                                     .and_then(|e| e.to_str())
                                     .unwrap_or_default();
                                 let registry = state.game.assets.asset_registry.read();
-                                let Some((_, type_uuid, _)) = registry.asset_type_from_ext(ext)
-                                else {
+                                let Some(type_uuid) = registry.asset_type_uuid_from_ext(ext) else {
                                     continue;
                                 };
                                 let Some(asset_id) = registry.asset_id_from_path(node) else {

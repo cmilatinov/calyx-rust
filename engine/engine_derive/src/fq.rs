@@ -25,6 +25,8 @@ pub(crate) struct FQTypeName;
 
 pub(crate) struct FQTypeUuid;
 
+pub(crate) struct FQResource;
+
 impl ToTokens for FQAny {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         quote!(::core::any::Any).to_tokens(tokens);
@@ -94,5 +96,11 @@ impl ToTokens for FQTypeName {
 impl ToTokens for FQTypeUuid {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         quote!(engine::utils::TypeUuid).to_tokens(tokens)
+    }
+}
+
+impl ToTokens for FQResource {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        quote!(engine::resource::Resource).to_tokens(tokens)
     }
 }

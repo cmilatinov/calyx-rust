@@ -12,24 +12,24 @@ use self::panel::*;
 pub use self::project_manager::*;
 use crate::camera::EditorCamera;
 use crate::task_id::TaskId;
+use eframe::{wgpu, NativeOptions};
+use egui::{include_image, Button, CornerRadius, Sense, Vec2};
+use egui::{Align, Layout};
+use egui::{Color32, Frame, Margin, Shadow};
+use egui_tiles::{Container, Linear, LinearDir, Tiles, Tree};
+use egui_wgpu::wgpu::PowerPreference;
+use egui_wgpu::{SurfaceErrorAction, WgpuSetup, WgpuSetupCreateNew};
 use engine::background::Background;
 use engine::context::{AssetContext, GameContext};
 use engine::core::Ref;
-use engine::eframe::{wgpu, NativeOptions};
-use engine::egui::{include_image, Button, CornerRadius, Sense, Vec2};
-use engine::egui::{Align, Layout};
-use engine::egui::{Color32, Frame, Margin, Shadow};
-use engine::egui_tiles::{Container, Linear, LinearDir, Tiles, Tree};
-use engine::egui_wgpu::wgpu::PowerPreference;
-use engine::egui_wgpu::{SurfaceErrorAction, WgpuSetup, WgpuSetupCreateNew};
 use engine::error::BoxedError;
 use engine::input::{Input, InputState};
-use engine::rapier3d::prelude::DebugRenderPipeline;
 use engine::render::{Camera, SceneRenderer, SceneRendererOptions};
 use engine::scene::Scene;
-use engine::transform_gizmo_egui::EnumSet;
 use engine::*;
+use rapier3d::prelude::DebugRenderPipeline;
 use selection::{Selection, SelectionType};
+use transform_gizmo_egui::EnumSet;
 #[cfg(unix)]
 #[cfg(feature = "wayland")]
 use winit::platform::wayland::EventLoopBuilderExtWayland;
@@ -188,7 +188,10 @@ impl eframe::App for EditorApp {
                 physics_debug_pipeline,
                 state:
                     EditorAppState {
-                        game: GameContext { scenes, time, .. },
+                        game:
+                            GameContext {
+                                scenes, resources, ..
+                            },
                         scene_renderer,
                         game_renderer,
                         game_response,
@@ -202,7 +205,7 @@ impl eframe::App for EditorApp {
                 ..
             } = self;
 
-            time.update_time();
+            resources.time_mut().update_time();
             *game_response = None;
             scenes.simulation_scene().clear_transform_cache();
             let render_state = frame.wgpu_render_state().unwrap();
@@ -222,20 +225,19 @@ impl eframe::App for EditorApp {
                     scene,
                     Some(physics_debug_pipeline),
                 );
-                if let Some((node, c)) = scene.get_main_camera(&scene.world) {
+                if let Some((node, c)) = scene.get_main_camera() {
                     game_renderer.options_mut().clear_color = c.clear_color;
                     let (width, height) = EditorApp::get_physical_size(ctx, *game_size);
                     if width != 0 && height != 0 {
                         game_renderer.resize_textures(width, height);
                     }
                     let transform = scene.get_world_transform(node);
-                    let mut camera = Camera::new(
+                    let camera = Camera::new(
                         width as f32 / height as f32,
                         c.fov,
                         c.near_plane,
                         c.far_plane,
                     );
-                    camera.update_projection();
                     game_renderer.render_scene(render_state, &camera, &transform, scene, None)
                 } else {
                     let device = &render_state.device;
@@ -283,15 +285,17 @@ impl eframe::App for EditorApp {
                     last_cursor_pos,
                 },
             );
-            let GameContext { scenes, time, .. } = &mut self.state.game;
-            scenes.update(time, &input);
+            let GameContext {
+                scenes, resources, ..
+            } = &mut self.state.game;
+            scenes.update(resources.time(), &input);
         }
 
         self.fps_counter += 1;
-        if self.state.game.time.timer("fps") >= 1.0 {
+        if self.state.game.resources.time().timer("fps") >= 1.0 {
             self.fps = self.fps_counter;
             self.fps_counter = 0;
-            self.state.game.time.reset_timer("fps");
+            self.state.game.resources.time_mut().reset_timer("fps");
         }
 
         self.state
@@ -444,7 +448,7 @@ impl EditorApp {
                             ui.label(format!("{}", self.fps));
                         }
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            let task_list_ref = self.state.game.background.task_list();
+                            let task_list_ref = self.state.game.resources.background().task_list();
                             let task_list = task_list_ref.read();
                             if !task_list.is_empty() {
                                 ui.add(egui::Spinner::new().size(15.0));
@@ -481,7 +485,6 @@ impl EditorApp {
 
 impl EditorApp {
     pub fn run() -> eframe::Result<()> {
-        // LOAD PROJECT
         let args: Vec<String> = env::args().collect();
         if args.len() != 2 {}
 
@@ -490,36 +493,13 @@ impl EditorApp {
             std::process::exit(1);
         };
 
-        // START ACTUAL EDITOR
-        // ProjectManager::init();
-        // ProjectManager::get_mut().load(PathBuf::from(&args[1]));
-        // ProjectManager::get().build_assemblies();
-
-        // Time::init();
-        // AssetRegistry::init();
-        // AssetRegistry::get_mut()
-        //     .set_root_path(ProjectManager::get().current_project().assets_directory());
-
-        // SceneRegistry::init();
-        //
-        // TypeRegistry::init();
-        // {
-        //     let mut registry = TypeRegistry::get_mut();
-        //     for f in inventory::iter::<ReflectRegistrationFn>() {
-        //         (f.0)(&mut registry);
-        //     }
-        // }
-        // ComponentRegistry::init();
-        // InspectorRegistry::init();
-        // LogRegistry::init();
-
         // log::set_boxed_logger(Box::new(Logger)).expect("Unable to setup logger");
         // log::set_max_level(LevelFilter::Debug);
 
         let options = NativeOptions {
             viewport: egui::ViewportBuilder {
-                inner_size: Some(egui::vec2(1280.0, 720.0)),
-                min_inner_size: Some(egui::vec2(1280.0, 720.0)),
+                inner_size: Some(egui::vec2(1600.0, 900.0)),
+                min_inner_size: Some(egui::vec2(1600.0, 900.0)),
                 decorations: Some(true),
                 ..Default::default()
             },

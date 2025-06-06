@@ -1,6 +1,6 @@
-use engine::uuid::Uuid;
 use std::collections::HashSet;
 use std::ops::{Deref, DerefMut};
+use uuid::Uuid;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectionType {

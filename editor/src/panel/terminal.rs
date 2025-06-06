@@ -4,7 +4,6 @@ use std::any::Any;
 // use engine::core::LogRegistry;
 use crate::panel::Panel;
 use crate::EditorAppState;
-use engine::egui;
 
 #[derive(Default)]
 pub struct PanelTerminal {

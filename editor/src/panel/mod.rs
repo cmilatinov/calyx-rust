@@ -12,9 +12,8 @@ pub use self::terminal::*;
 pub use self::viewport::*;
 use crate::widgets::{TabDesc, TabWidget};
 use crate::EditorAppState;
-use engine::egui::{Id, InnerResponse, Response};
-use engine::egui_tiles::{SimplificationOptions, TabState, Tile, TileId, Tiles, UiResponse};
-use engine::*;
+use egui::{Id, InnerResponse, Response};
+use egui_tiles::{SimplificationOptions, TabState, Tile, TileId, Tiles, UiResponse};
 
 mod animator;
 mod content_browser;

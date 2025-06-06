@@ -1,11 +1,10 @@
-use std::any::TypeId;
-use std::collections::HashMap;
-
 use crate::reflect::trait_meta::TraitMeta;
 use crate::reflect::type_info::{FieldGetter, FieldSetter, NamedField, StructInfo, TypeInfo};
 use crate::reflect::{AttributeMap, FieldGetterMut, Reflect, ReflectedType, TraitMetaFrom};
 use crate::utils::TypeUuid;
 use inventory::collect;
+use std::any::TypeId;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 pub struct TypeRegistrationFn(pub fn(&mut TypeRegistry));
@@ -105,7 +104,7 @@ impl TypeRegistry {
     pub fn trait_meta<T: TraitMeta + TypeUuid>(&self, type_uuid: Uuid) -> Option<&T> {
         self.type_registration_by_id(type_uuid)
             .and_then(|registration| registration.trait_meta.get(&T::type_uuid()))
-            .and_then(|meta| meta.downcast_ref::<T>())
+            .and_then(|meta| unsafe { Some(&*(meta.as_ref() as *const dyn TraitMeta as *const T)) })
     }
 
     pub fn list_types<T: TraitMeta + TypeUuid>(&self) -> Vec<Uuid> {
@@ -130,7 +129,7 @@ pub struct StructInfoBuilder<'a> {
 }
 
 impl<'a> StructInfoBuilder<'a> {
-    pub fn field<T: 'static>(
+    pub fn field<T: TypeUuid + 'static>(
         &mut self,
         name: &'static str,
         attrs: AttributeMap,
@@ -145,6 +144,7 @@ impl<'a> StructInfoBuilder<'a> {
                 name,
                 type_name: std::any::type_name::<T>(),
                 type_id: TypeId::of::<T>(),
+                type_uuid: T::type_uuid(),
                 attrs,
                 doc,
                 getter,

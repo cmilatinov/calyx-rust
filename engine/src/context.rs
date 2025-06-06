@@ -1,11 +1,10 @@
 use crate::assets::AssetRegistry;
-use crate::background::Background;
 use crate::class_registry::ComponentRegistry;
-use crate::core::{ReadOnlyRef, Ref, Time};
+use crate::core::{ReadOnlyRef, Ref};
 use crate::error::BoxedError;
 use crate::reflect::type_registry::TypeRegistry;
-use crate::reflect::ReflectDefault;
 use crate::render::RenderContext;
+use crate::resource::ResourceMap;
 use crate::scene::{Scene, SceneManager};
 use crate::ReflectRegistrationFn;
 use std::path::PathBuf;
@@ -24,14 +23,9 @@ impl AssetContext {
         cc: &eframe::CreationContext,
         project_path: impl Into<PathBuf>,
     ) -> Result<Self, BoxedError> {
-        println!(
-            "Loading engine: {:?}",
-            std::any::TypeId::of::<ReflectDefault>()
-        );
         let render_context = Arc::new(RenderContext::from_eframe(cc));
         let mut type_registry = TypeRegistry::new();
         for f in inventory::iter::<ReflectRegistrationFn>() {
-            println!("{:?}", f.name);
             (f.function)(&mut type_registry);
         }
         let type_registry = Ref::new(type_registry);
@@ -81,8 +75,7 @@ impl ReadOnlyAssetContext {
 pub struct GameContext {
     pub assets: AssetContext,
     pub scenes: SceneManager,
-    pub time: Time,
-    pub background: Background,
+    pub resources: ResourceMap,
 }
 
 impl GameContext {
@@ -90,8 +83,7 @@ impl GameContext {
         Self {
             scenes: SceneManager::new(assets.asset_registry.readonly()),
             assets,
-            time: Default::default(),
-            background: Default::default(),
+            resources: ResourceMap::new(),
         }
     }
 }

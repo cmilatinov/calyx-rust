@@ -1,16 +1,16 @@
 use crate::inspector::asset_inspector::{AssetInspector, ReflectAssetInspector};
 use crate::inspector::widgets::Widgets;
+use egui;
+use egui::Ui;
 use engine::assets::material::{Material, ShaderVariable, ShaderVariableValue};
 use engine::assets::texture::Texture;
 use engine::context::{AssetContext, GameContext};
-use engine::egui;
-use engine::egui::Ui;
 use engine::reflect::{Reflect, ReflectDefault};
-use engine::serde_json;
 use engine::utils::TypeUuid;
-use engine::uuid::Uuid;
+use serde_json;
 use std::io::BufWriter;
 use std::ops::Deref;
+use uuid::Uuid;
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, AssetInspector)]

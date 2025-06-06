@@ -1,9 +1,9 @@
 use super::{Component, ComponentBone, ComponentSkinnedMesh, ReflectComponent};
 use crate as engine;
-use crate::assets::animation::{Animation, AnimationKeyFrames, QuatKeyFrame, VectorKeyFrame};
+use crate::assets::animation::{AnimationKeyFrames, QuatKeyFrame, VectorKeyFrame};
 use crate::assets::animation_graph::{
-    AnimationCondition, AnimationGraph, AnimationParameterCondition, AnimationParameterValue,
-    BoolCondition, FloatCondition, IntCondition,
+    AnimationCondition, AnimationGraph, AnimationMotion, AnimationParameterCondition,
+    AnimationParameterValue, BoolCondition, FloatCondition, IntCondition,
 };
 use crate::assets::mesh::BoneTransform;
 use crate::assets::AssetRef;
@@ -17,8 +17,8 @@ use crate::{
     reflect::{Reflect, ReflectDefault},
     utils::{ReflectTypeUuidDynamic, TypeUuid},
 };
-use glm::{Mat4, Quat, Vec3, Vec4};
 use nalgebra::Unit;
+use nalgebra_glm::{Mat4, Quat, Vec3, Vec4};
 use petgraph::prelude::{EdgeIndex, EdgeRef, NodeIndex};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -26,6 +26,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 #[derive(Clone, Copy)]
+#[repr(C)]
 struct AnimatorTransition {
     transition: EdgeIndex,
     source_time_start: f32,
@@ -35,13 +36,79 @@ struct AnimatorTransition {
     duration: f32,
 }
 
+#[derive(Copy, Clone)]
+#[repr(C)]
+struct LocalBoneTransform {
+    position: Vec3,
+    rotation: Unit<Quat>,
+    scaling: Vec3,
+}
+
+impl Default for LocalBoneTransform {
+    fn default() -> Self {
+        Self {
+            position: Default::default(),
+            rotation: Default::default(),
+            scaling: Vec3::new(1.0, 1.0, 1.0),
+        }
+    }
+}
+
+impl LocalBoneTransform {
+    fn nlerp(transforms: impl Iterator<Item = (f32, LocalBoneTransform)>) -> LocalBoneTransform {
+        let mut position = Vec3::zeros();
+        let mut rotation = Quat::new(0.0, 0.0, 0.0, 0.0);
+        let mut scaling = Vec3::new(1.0, 1.0, 1.0);
+        let mut total_weight = 0.0;
+
+        for (weight, transform) in transforms {
+            total_weight += weight;
+            position += transform.position * weight;
+
+            // Simpler scaling approach - direct linear blend
+            // This works reasonably well for moderate scaling differences
+            scaling += (transform.scaling - Vec3::new(1.0, 1.0, 1.0)) * weight;
+
+            let q = transform.rotation.into_inner();
+            let dot = rotation.dot(&q);
+            let corrected_q = if dot < 0.0 { -q } else { q };
+            rotation += corrected_q * weight;
+        }
+
+        // Normalize if needed
+        if (total_weight - 1.0).abs() > std::f32::EPSILON && total_weight > 0.0 {
+            position /= total_weight;
+            scaling =
+                Vec3::new(1.0, 1.0, 1.0) + (scaling - Vec3::new(1.0, 1.0, 1.0)) / total_weight;
+        }
+
+        let rotation = Unit::new_normalize(rotation);
+
+        LocalBoneTransform {
+            position,
+            rotation,
+            scaling,
+        }
+    }
+
+    fn as_matrix(&self) -> Mat4 {
+        math::compose_transform(&self.position, &self.rotation, &self.scaling)
+    }
+}
+
+#[derive(Default)]
+#[repr(C)]
+struct AnimatorPose {
+    bone_transforms: Vec<BoneTransform>,
+}
+
 #[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "f24db81d-7054-40b8-8f3c-d9740c03948e"]
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Animator", update)]
 #[serde(default)]
+#[repr(C)]
 pub struct ComponentAnimator {
-    pub animation: AssetRef<Animation>,
     pub time: TimeType,
     pub draw_debug_skeleton: bool,
     pub animation_graph: AssetRef<AnimationGraph>,
@@ -53,10 +120,10 @@ pub struct ComponentAnimator {
     current_transition: Option<AnimatorTransition>,
     #[reflect_skip]
     #[serde(skip)]
-    parameters: HashMap<Uuid, AnimationParameterValue>,
+    current_pose: AnimatorPose,
     #[reflect_skip]
     #[serde(skip)]
-    node_transforms: Vec<BoneTransform>,
+    parameters: HashMap<Uuid, AnimationParameterValue>,
 }
 
 impl Component for ComponentAnimator {
@@ -74,6 +141,9 @@ impl Component for ComponentAnimator {
             return;
         };
         let graph = graph_ref.read();
+        for param in graph.parameters.iter() {
+            self.parameters.insert(param.id, param.value);
+        }
         self.current_state = graph
             .start_node
             .and_then(|id| graph.node_indices().find(|n| graph[*n].id == id));
@@ -106,6 +176,16 @@ impl Component for ComponentAnimator {
                 Self::draw_bones(scene, child, gizmos, transform.position);
             }
         }
+    }
+}
+
+impl ComponentAnimator {
+    pub fn parameters(&self) -> &HashMap<Uuid, AnimationParameterValue> {
+        &self.parameters
+    }
+
+    pub fn parameters_mut(&mut self) -> &mut HashMap<Uuid, AnimationParameterValue> {
+        &mut self.parameters
     }
 }
 
@@ -226,8 +306,8 @@ impl ComponentAnimator {
         let skinned_meshes = scene
             .get_descendants_with_component::<ComponentSkinnedMesh>(game_object)
             .collect::<Vec<_>>();
-        let animation = self.animation.get_ref(assets)?;
-        let animation = animation.read();
+        let animation_graph = self.animation_graph.get_ref(assets)?;
+        let animation_graph = animation_graph.read();
         for skinned_mesh_go in skinned_meshes {
             let Some(entry) = scene.entry(skinned_mesh_go) else {
                 continue;
@@ -242,7 +322,7 @@ impl ComponentAnimator {
                 continue;
             };
             let mesh = mesh_ref.read();
-            self.node_transforms.resize(
+            self.current_pose.bone_transforms.resize(
                 mesh.bones.len(),
                 BoneTransform {
                     transform: Mat4::identity().into(),
@@ -250,22 +330,25 @@ impl ComponentAnimator {
             );
             let transform = scene.get_transform(root);
             self.traverse_bone_hierarchy(
+                assets,
                 scene,
                 root,
-                &animation,
+                &animation_graph,
                 &transform.inverse_matrix,
                 Mat4::identity(),
             );
-            if let Some(mut entry) = scene.entry_mut(skinned_mesh_go) {
-                if let Ok(c_skinned_mesh) = entry.get_component_mut::<ComponentSkinnedMesh>() {
-                    c_skinned_mesh.bone_transforms.clear();
-                    c_skinned_mesh
-                        .bone_transforms
-                        .extend(self.node_transforms.drain(0..));
-                }
-            }
+            let Some(mut entry) = scene.entry_mut(skinned_mesh_go) else {
+                continue;
+            };
+            let Ok(c_skinned_mesh) = entry.get_component_mut::<ComponentSkinnedMesh>() else {
+                continue;
+            };
+            c_skinned_mesh.bone_transforms.clear();
+            c_skinned_mesh
+                .bone_transforms
+                .extend(self.current_pose.bone_transforms.drain(0..));
         }
-        Some((animation.duration / animation.ticks_per_second) as TimeType)
+        None
     }
 
     fn update_time(&mut self, time: &Time, animation_duration: Option<TimeType>) {
@@ -309,38 +392,47 @@ impl ComponentAnimator {
 
     fn traverse_bone_hierarchy(
         &mut self,
+        assets: &ReadOnlyAssetContext,
         scene: &mut Scene,
         game_object: GameObject,
-        animation: &Animation,
+        animation_graph: &AnimationGraph,
         global_inverse_transform: &Mat4,
         mut parent_transform: Mat4,
     ) {
         let mut local_transform = scene.get_transform(game_object).matrix;
-        if let Some(entry) = scene.entry(game_object) {
-            if let Ok(c_bone) = entry.get_component::<ComponentBone>() {
-                if let Some(keyframes) = animation.node_keyframes.get(&c_bone.name) {
-                    local_transform = self.local_animation_bone_transform(
-                        keyframes,
-                        self.time * animation.ticks_per_second as f32,
-                    );
-                    self.node_transforms[c_bone.index] = BoneTransform {
-                        transform: (global_inverse_transform
-                            * parent_transform
-                            * local_transform
-                            * c_bone.offset_matrix)
-                            .into(),
-                    };
-                }
-            }
+        'calc_bone_transform: {
+            let Some(entry) = scene.entry(game_object) else {
+                break 'calc_bone_transform;
+            };
+            let Ok(c_bone) = entry.get_component::<ComponentBone>() else {
+                break 'calc_bone_transform;
+            };
+            let Some(node) = self
+                .current_state
+                .and_then(|nid| animation_graph.graph.node_weight(nid))
+            else {
+                break 'calc_bone_transform;
+            };
+            local_transform = self
+                .motion_local_bone_transform(assets, &node.motion, &c_bone.name, self.time)
+                .as_matrix();
+            self.current_pose.bone_transforms[c_bone.index] = BoneTransform {
+                transform: (global_inverse_transform
+                    * parent_transform
+                    * local_transform
+                    * c_bone.offset_matrix)
+                    .into(),
+            };
         }
         parent_transform *= local_transform;
         scene.set_transform(game_object, local_transform);
         let mut walker = scene.get_children_walker(game_object);
         while let Some(child) = walker.next(scene) {
             self.traverse_bone_hierarchy(
+                assets,
                 scene,
                 child,
-                animation,
+                animation_graph,
                 global_inverse_transform,
                 parent_transform,
             );
@@ -349,11 +441,11 @@ impl ComponentAnimator {
 
     fn find_keyframes<T, F: FnMut(&T) -> TimeType>(
         keyframes: &[T],
-        time: TimeType,
+        ticks: TimeType,
         mut accessor: F,
     ) -> (&T, &T) {
         let index = keyframes
-            .binary_search_by(|k| accessor(k).partial_cmp(&time).unwrap_or(Ordering::Less))
+            .binary_search_by(|k| accessor(k).partial_cmp(&ticks).unwrap_or(Ordering::Less))
             .unwrap_or_else(|index| index) as isize;
         let max_index = (keyframes.len() - 1) as isize;
         let prev = (index - 1).clamp(0, max_index) as usize;
@@ -370,26 +462,88 @@ impl ComponentAnimator {
         (time - prev_time) / interval
     }
 
-    fn interpolate_vector(prev: &VectorKeyFrame, next: &VectorKeyFrame, time: f32) -> Vec3 {
-        let progression = Self::progression(prev.time as f32, next.time as f32, time);
+    fn interpolate_vector(prev: &VectorKeyFrame, next: &VectorKeyFrame, ticks: f32) -> Vec3 {
+        let progression = Self::progression(prev.time as f32, next.time as f32, ticks);
         prev.value.lerp(&next.value, progression)
     }
 
-    fn interpolate_quat(prev: &QuatKeyFrame, next: &QuatKeyFrame, time: f32) -> Unit<Quat> {
-        let progression = Self::progression(prev.time as f32, next.time as f32, time);
+    fn interpolate_quat(prev: &QuatKeyFrame, next: &QuatKeyFrame, ticks: f32) -> Unit<Quat> {
+        let progression = Self::progression(prev.time as f32, next.time as f32, ticks);
         prev.value.slerp(&next.value, progression)
     }
 
-    fn local_animation_bone_transform(&self, keyframes: &AnimationKeyFrames, time: f32) -> Mat4 {
-        let (prev, next) = Self::find_keyframes(&keyframes.positions, time, |k| k.time as f32);
-        let position = Self::interpolate_vector(prev, next, time);
+    fn motion_local_bone_transform(
+        &self,
+        assets: &ReadOnlyAssetContext,
+        motion: &AnimationMotion,
+        bone_name: &str,
+        time: f32,
+    ) -> LocalBoneTransform {
+        match motion {
+            AnimationMotion::AnimationClip(clip) => {
+                let Some(animation) = clip.animation.get_ref(assets) else {
+                    return Default::default();
+                };
+                let animation = animation.read();
+                let Some(keyframes) = animation.node_keyframes.get(bone_name) else {
+                    return Default::default();
+                };
+                Self::animation_local_bone_transform(
+                    keyframes,
+                    (clip.speed * time * animation.ticks_per_second as f32)
+                        % animation.duration as f32,
+                )
+            }
+            AnimationMotion::BlendTree1D(tree) => LocalBoneTransform::nlerp(
+                tree.nearest_neighbors(2, &self.parameters).into_iter().map(
+                    |(weight, neighbor)| {
+                        (
+                            weight,
+                            self.motion_local_bone_transform(
+                                assets,
+                                &neighbor.motion,
+                                bone_name,
+                                time,
+                            ),
+                        )
+                    },
+                ),
+            ),
+            AnimationMotion::BlendTree2D(tree) => LocalBoneTransform::nlerp(
+                tree.nearest_neighbors(4, &self.parameters).into_iter().map(
+                    |(weight, neighbor)| {
+                        (
+                            weight,
+                            self.motion_local_bone_transform(
+                                assets,
+                                &neighbor.motion,
+                                bone_name,
+                                time,
+                            ),
+                        )
+                    },
+                ),
+            ),
+        }
+    }
 
-        let (prev, next) = Self::find_keyframes(&keyframes.rotations, time, |k| k.time as f32);
-        let rotation = Self::interpolate_quat(prev, next, time);
+    fn animation_local_bone_transform(
+        keyframes: &AnimationKeyFrames,
+        ticks: f32,
+    ) -> LocalBoneTransform {
+        let (prev, next) = Self::find_keyframes(&keyframes.positions, ticks, |k| k.time as f32);
+        let position = Self::interpolate_vector(prev, next, ticks);
 
-        let (prev, next) = Self::find_keyframes(&keyframes.scaling, time, |k| k.time as f32);
-        let scaling = Self::interpolate_vector(prev, next, time);
+        let (prev, next) = Self::find_keyframes(&keyframes.rotations, ticks, |k| k.time as f32);
+        let rotation = Self::interpolate_quat(prev, next, ticks);
 
-        math::compose_transform(&position, &rotation, &scaling)
+        let (prev, next) = Self::find_keyframes(&keyframes.scaling, ticks, |k| k.time as f32);
+        let scaling = Self::interpolate_vector(prev, next, ticks);
+
+        LocalBoneTransform {
+            position,
+            rotation,
+            scaling,
+        }
     }
 }

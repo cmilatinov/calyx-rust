@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Sky Light")]
 #[serde(default)]
+#[repr(C)]
 pub struct ComponentSkyLight {
     pub active: bool,
     pub intensity: f32,

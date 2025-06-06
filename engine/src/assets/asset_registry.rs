@@ -1,6 +1,6 @@
 use eframe::wgpu;
-use glm::{vec2, vec3};
 use glob::glob;
+use nalgebra_glm::{vec2, vec3};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use path_absolutize::Absolutize;
 use relative_path::{PathExt, RelativePathBuf};
@@ -58,12 +58,11 @@ pub struct AssetMeta {
     pub id: Uuid,
     pub name: String,
     pub display_name: String,
+    pub type_uuid: Uuid,
     #[serde(skip)]
     pub parent: Option<Uuid>,
     #[serde(skip)]
     pub children: Vec<Uuid>,
-    #[serde(skip)]
-    pub type_id: Option<(TypeId, Uuid, &'static str)>,
     #[serde(skip)]
     pub path: Option<PathBuf>,
 }
@@ -113,7 +112,6 @@ impl AssetRegistry {
         let assets_path = std::env::current_dir().map_err(Box::new)?.join("assets");
         let assets_path = dunce::canonicalize(assets_path).map_err(Box::new)?;
         let asset_paths = [path.clone(), assets_path];
-        println!("{:?}", asset_paths);
         let mut watcher = RecommendedWatcher::new(tx, Config::default()).map_err(Box::new)?;
         for path in asset_paths.iter() {
             watcher
@@ -257,10 +255,9 @@ impl AssetRegistry {
         }
 
         // Find constructor & file path
-        let (_, type_uuid, _) = meta.type_id.as_ref().ok_or(AssetError::NotFound)?;
         let path = meta.path.as_ref().ok_or(AssetError::NotFound)?;
         let ctors = self.asset_constructors();
-        let ctor = ctors.get(type_uuid).ok_or(AssetError::NotFound)?;
+        let ctor = ctors.get(&meta.type_uuid).ok_or(AssetError::NotFound)?;
         let LoadedAssetRef { asset, sub_assets } = (ctor.create)(self.game_context(), id, path)?;
 
         // Load from file
@@ -295,7 +292,7 @@ impl AssetRegistry {
             id,
             AssetMeta {
                 id,
-                type_id: Some((TypeId::of::<A>(), A::type_uuid(), A::asset_name())),
+                type_uuid: A::type_uuid(),
                 display_name: display_name.unwrap_or(name.clone()),
                 name,
                 parent: None,
@@ -540,8 +537,11 @@ impl AssetRegistry {
         }
     }
 
-    pub fn asset_type_from_ext(&self, ext: &str) -> Option<(TypeId, Uuid, &'static str)> {
-        self.asset_data().extensions.get(ext).copied()
+    pub fn asset_type_uuid_from_ext(&self, ext: &str) -> Option<Uuid> {
+        self.asset_data()
+            .extensions
+            .get(ext)
+            .map(|(_, uuid, _)| *uuid)
     }
 }
 
@@ -581,7 +581,7 @@ impl AssetRegistry {
             let meta = AssetMetaData {
                 main: AssetMeta {
                     id: utils::uuid_from_str(relative_path.as_str()),
-                    type_id: None,
+                    type_uuid: Uuid::nil(),
                     name: relative_path.with_extension("").to_string(),
                     display_name,
                     parent: None,
@@ -593,7 +593,9 @@ impl AssetRegistry {
             self.write_meta_file(meta_path, &meta).map_err(Box::new)?;
             meta.main
         };
-        meta.type_id = self.asset_type_from_ext(path.extension().unwrap().to_str().unwrap());
+        meta.type_uuid = self
+            .asset_type_uuid_from_ext(path.extension().unwrap().to_str().unwrap())
+            .unwrap_or(Uuid::nil());
         meta.path = Some(match path.absolutize().map_err(Box::new)? {
             Cow::Borrowed(p) => p.to_path_buf(),
             Cow::Owned(p) => p,
@@ -653,7 +655,7 @@ impl AssetRegistry {
         let search_term = search_term.to_lowercase();
         // TODO: Case insensitive and word by word filter
         for (_, meta) in self.asset_data().meta.iter() {
-            if (asset_type.is_none() || meta.type_id.map(|(_, uuid, _)| uuid) == asset_type)
+            if (asset_type.is_none() || Some(meta.type_uuid) == asset_type)
                 && meta
                     .display_name
                     .to_lowercase()
@@ -678,9 +680,8 @@ impl AssetRegistry {
                 continue;
             };
 
-            let type_uuid = meta.type_id.map(|(_, uuid, _)| uuid).unwrap_or_default();
             let ctors = self.asset_constructors();
-            if let Some(ctor) = ctors.get(&type_uuid) {
+            if let Some(ctor) = ctors.get(&meta.type_uuid) {
                 let _ = (ctor.reload)(self.game_context(), asset_ref, &path);
             }
         }

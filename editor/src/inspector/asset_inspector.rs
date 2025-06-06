@@ -1,7 +1,7 @@
+use egui::Ui;
 use engine::context::GameContext;
-use engine::egui::Ui;
 use engine::reflect_trait;
-use engine::uuid::Uuid;
+use uuid::Uuid;
 
 #[reflect_trait]
 pub trait AssetInspector: Send + Sync {

@@ -39,6 +39,7 @@ pub(crate) fn reflect_trait(_args: TokenStream, input: TokenStream) -> TokenStre
         #item_trait
 
         #[derive(#FQClone, #FQTypeUuid)]
+        #[repr(C)]
         #trait_vis struct #reflect_trait_ident {
             get_func: fn(&dyn #FQReflect) -> #FQOption<&dyn #trait_ident>,
             get_mut_func: fn(&mut dyn #FQReflect) -> #FQOption<&mut dyn #trait_ident>,

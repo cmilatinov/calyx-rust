@@ -1,11 +1,14 @@
 use approx::AbsDiffEq;
-use glm::{vec3, Mat4, Vec3};
 use mint::Vector2;
 use nalgebra::UnitQuaternion;
+use nalgebra_glm as glm;
+use nalgebra_glm::{vec3, Mat4, Vec3};
 
+pub use dist::*;
 use russimp::Matrix4x4;
 pub use transform::*;
 
+mod dist;
 mod transform;
 
 pub fn compose_transform(translation: &Vec3, rotation: &UnitQuaternion<f32>, scale: &Vec3) -> Mat4 {

@@ -1,9 +1,12 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
+use crate as engine;
 use crate::core::Ref;
+use crate::resource::Resource;
 use rusty_pool::{JoinHandle, ThreadPool};
 
+#[derive(Resource)]
 pub struct Background {
     thread_pool: ThreadPool,
     task_list: Ref<HashSet<isize>>,

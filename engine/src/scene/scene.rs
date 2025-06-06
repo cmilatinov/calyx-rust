@@ -1,17 +1,16 @@
-use std::any::TypeId;
-use std::collections::{HashMap, HashSet};
-use std::path::Path;
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
-
-use glm::Mat4;
+use bimap::BiHashMap;
 use legion::world::{Entry, EntryRef};
 use legion::{Entity, EntityStore, IntoQuery, World};
+use nalgebra_glm::Mat4;
 use petgraph::prelude::{EdgeRef, StableGraph};
 use petgraph::stable_graph::{DefaultIx, NodeIndex, WalkNeighbors};
 use petgraph::visit::{Bfs, Dfs, Reversed, Walker};
 use petgraph::Direction;
 use serde::de::DeserializeSeed;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use uuid::Uuid;
 
 use crate as engine;
@@ -24,8 +23,8 @@ use crate::core::Time;
 use crate::input::Input;
 use crate::math::Transform;
 use crate::physics::{PhysicsConfiguration, PhysicsContext};
-use crate::reflect::ReflectDefault;
-use crate::scene::Prefab;
+use crate::reflect::{ReflectDefault, TypeInfo};
+use crate::scene::{GameObjectRef, Prefab};
 use crate::utils::{ContextSeed, TypeUuid};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -52,8 +51,10 @@ pub struct Scene {
     transform_cache: RwLock<HashMap<NodeIndex, Transform>>,
     camera: Option<GameObject>,
     objects_to_delete: HashSet<GameObject>,
+    components_to_start: HashSet<(GameObject, Uuid)>,
     new_index: usize,
     assets: ReadOnlyAssetContext,
+    first_frame: bool,
 }
 
 pub struct WalkChildren {
@@ -96,8 +97,10 @@ impl Scene {
             transform_cache: Default::default(),
             camera: Default::default(),
             objects_to_delete: Default::default(),
+            components_to_start: Default::default(),
             new_index: 0,
             assets,
+            first_frame: true,
         }
     }
 }
@@ -165,17 +168,17 @@ impl From<(&ReadOnlyAssetContext, SceneData)> for Scene {
         for (_, components) in value.components {
             let game_object = scene.new_game_object(None);
             for (component_id, data) in components {
-                if let Some(component) = assets
-                    .component_registry
-                    .read()
-                    .component_by_uuid(component_id)
-                {
-                    if let Some(instance) = component.deserialize(data) {
-                        if let Some(mut entry) = scene.entry_mut(game_object) {
-                            let _ = component.bind_instance(&mut entry, instance);
-                        }
-                    }
-                }
+                let registry = assets.component_registry.read();
+                let Some(component) = registry.component(component_id) else {
+                    continue;
+                };
+                let Some(instance) = component.deserialize(data) else {
+                    continue;
+                };
+                let Some(mut entry) = scene.entry_mut(game_object) else {
+                    continue;
+                };
+                let _ = component.bind_instance(&mut entry, instance);
             }
             let mut id = None;
             if let Some(entry) = scene.entry(game_object) {
@@ -202,80 +205,33 @@ impl From<&Scene> for SceneData {
     fn from(scene: &Scene) -> Self {
         let world = &scene.world;
         let mut query = <(Entity, &ComponentID)>::query();
-        let mut hierarchy = HashMap::new();
-        let mut components: HashMap<Uuid, HashMap<Uuid, serde_json::Value>> = HashMap::new();
+        let mut data = Default::default();
         for (entity, id) in query.iter(world) {
-            if let Some(game_object) = scene.get_game_object_from_entity(*entity) {
-                if let Some(parent) = scene.get_parent_game_object(game_object) {
-                    if let Some(entry) = scene.entry(parent) {
-                        if let Ok(parent_id) = entry.get_component::<ComponentID>() {
-                            hierarchy.insert(id.id, parent_id.id);
-                        }
-                    }
-                }
-                for (component_id, component) in
-                    scene.assets.component_registry.read().components_uuid()
-                {
-                    if let Some(entry) = scene.entry(game_object) {
-                        if let Some(instance) = component.get_instance(&entry) {
-                            if let Some(value) = instance.serialize() {
-                                components
-                                    .entry(id.id)
-                                    .or_default()
-                                    .insert(*component_id, value);
-                            }
-                        }
-                    }
-                }
-            }
+            let Some(game_object) = scene.get_game_object_from_entity(*entity) else {
+                continue;
+            };
+            scene.serialize_game_object(game_object, id.id, &mut data);
         }
-        SceneData {
-            hierarchy,
-            components,
-        }
+        data
     }
 }
 
 impl From<(&Scene, GameObject)> for SceneData {
     fn from((scene, game_object): (&Scene, GameObject)) -> Self {
-        let mut hierarchy = HashMap::new();
-        let mut components: HashMap<Uuid, HashMap<Uuid, serde_json::Value>> = HashMap::new();
-
+        let mut data = Default::default();
         std::iter::once(game_object.node)
             .chain(Bfs::new(&scene.entity_arena, game_object.node).iter(&scene.entity_arena))
             .filter_map(|c| scene.get_game_object_from_node(c))
             .for_each(|game_object| {
-                if let Some(entry) = scene.entry(game_object) {
-                    if let Ok(id) = entry.get_component::<ComponentID>() {
-                        if let Some(parent) = scene.get_parent_game_object(game_object) {
-                            if let Some(entry) = scene.entry(parent) {
-                                if let Ok(parent_id) = entry.get_component::<ComponentID>() {
-                                    hierarchy.insert(id.id, parent_id.id);
-                                }
-                            }
-                        }
-                        for (component_id, component) in
-                            scene.assets.component_registry.read().components_uuid()
-                        {
-                            if let Some(entry) = scene.entry(game_object) {
-                                if let Some(instance) = component.get_instance(&entry) {
-                                    if let Some(value) = instance.serialize() {
-                                        components
-                                            .entry(id.id)
-                                            .or_default()
-                                            .insert(*component_id, value);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                let Some(entry) = scene.entry(game_object) else {
+                    return;
+                };
+                let Ok(id) = entry.get_component::<ComponentID>() else {
+                    return;
+                };
+                scene.serialize_game_object(game_object, id.id, &mut data);
             });
-
-        SceneData {
-            hierarchy,
-            components,
-        }
+        data
     }
 }
 
@@ -291,6 +247,42 @@ impl Scene {
             node: *node,
             entity,
         })
+    }
+
+    pub(crate) fn serialize_game_object(
+        &self,
+        game_object: GameObject,
+        game_object_id: Uuid,
+        data: &mut SceneData,
+    ) {
+        'insert_hierarchy: {
+            let Some(parent) = self.get_parent_game_object(game_object) else {
+                break 'insert_hierarchy;
+            };
+            let Some(entry) = self.entry(parent) else {
+                break 'insert_hierarchy;
+            };
+            let Ok(parent_id) = entry.get_component::<ComponentID>() else {
+                break 'insert_hierarchy;
+            };
+            data.hierarchy.insert(game_object_id, parent_id.id);
+        }
+
+        for (component_id, component) in self.assets.component_registry.read().components() {
+            let Some(entry) = self.entry(game_object) else {
+                continue;
+            };
+            let Some(instance) = component.get_instance(&entry) else {
+                continue;
+            };
+            let Some(value) = instance.serialize() else {
+                continue;
+            };
+            data.components
+                .entry(game_object_id)
+                .or_default()
+                .insert(*component_id, value);
+        }
     }
 }
 
@@ -308,7 +300,6 @@ impl Scene {
         self.get_children_ordered(self.root)
     }
 
-    // TODO: Refactor this to call Scene::new_game_object in order to avoid code duplication
     pub fn create_game_object(
         &mut self,
         id: Option<ComponentID>,
@@ -348,50 +339,70 @@ impl Scene {
     pub fn instantiate_prefab(&mut self, prefab: &Prefab, parent: Option<GameObject>) {
         let root_node = prefab.scene.game_objects().next().unwrap();
 
-        for (_, components) in prefab.data.components.iter() {
+        let mut id_mapping: BiHashMap<Uuid, Uuid> = Default::default();
+        for (game_object_id, _) in &prefab.data.components {
+            let new_game_object_id = Uuid::new_v4();
+            id_mapping.insert(*game_object_id, new_game_object_id);
+        }
+
+        for (game_object_id, components) in prefab.data.components.iter() {
             let game_object = self.new_game_object(None);
+            let new_game_object_id = *id_mapping.get_by_left(game_object_id).unwrap();
             for (component_id, data) in components {
                 let asset_registry_ref = self.assets.asset_registry.clone();
                 let asset_registry = asset_registry_ref.read();
                 let component_registry_ref = self.assets.component_registry.clone();
                 let component_registry = component_registry_ref.read();
-                if let Some(component) = component_registry.component_by_uuid(*component_id) {
-                    if let Some(instance) = component.deserialize(data.clone()) {
-                        if let Some(mut entry) = self.entry_mut(game_object) {
-                            let _ = component.bind_instance(&mut entry, instance);
-                        }
-                    }
+                let type_registry_ref = self.assets.type_registry.clone();
+                let type_registry = type_registry_ref.read();
+                let Some(TypeInfo::Struct(struct_info)) =
+                    type_registry.type_info_by_id(*component_id)
+                else {
+                    continue;
+                };
+                let Some(component) = component_registry.component(*component_id) else {
+                    continue;
+                };
+                let Some(mut instance) = component.deserialize(data.clone()) else {
+                    continue;
+                };
+                let Some(mut entry) = self.entry_mut(game_object) else {
+                    continue;
+                };
+                for (name, field) in &struct_info.fields {
+                    let Some(id) = field.get::<GameObjectRef>(&*instance).map(|r| r.id()) else {
+                        continue;
+                    };
+                    let Some(target_id) = id_mapping.get_by_left(&id) else {
+                        continue;
+                    };
+                    field.set(&mut *instance, GameObjectRef::new(*target_id));
+                }
+                let _ = component.bind_instance(&mut entry, instance);
+            }
+            if let Some(mut entry) = self.entry_mut(game_object) {
+                if let Ok(c_id) = entry.get_component_mut::<ComponentID>() {
+                    c_id.id = new_game_object_id;
                 }
             }
-            let mut id = None;
-            if let Some(entry) = self.entry(game_object) {
-                if let Ok(c_id) = entry.get_component::<ComponentID>() {
-                    id = Some(c_id.id);
-                }
-            }
-            if let Some(id) = id {
-                self.uuid_map.insert(id, game_object);
-            }
+            self.uuid_map.insert(new_game_object_id, game_object);
         }
 
-        for (id, parent) in prefab.data.hierarchy.iter() {
-            if let Some(game_object) = self.get_game_object_by_uuid(*id) {
-                if let Some(parent) = self.get_game_object_by_uuid(*parent) {
-                    self.set_parent(game_object, Some(parent));
-                }
-            }
+        for (id, parent_id) in prefab.data.hierarchy.iter() {
+            let Some(new_id) = id_mapping.get_by_left(id) else {
+                continue;
+            };
+            let Some(new_parent_id) = id_mapping.get_by_left(parent_id) else {
+                continue;
+            };
+            let Some(game_object) = self.get_game_object_by_uuid(*new_id) else {
+                continue;
+            };
+            let Some(parent) = self.get_game_object_by_uuid(*new_parent_id) else {
+                continue;
+            };
+            self.set_parent(game_object, Some(parent));
         }
-
-        // for (id, _) in prefab.data.components.iter() {
-        //     if let Some(node) = self.get_node_by_uuid(*id) {
-        //         self.world
-        //             .entry(self.get_entity(node))
-        //             .unwrap()
-        //             .get_component_mut::<ComponentID>()
-        //             .unwrap()
-        //             .id = Uuid::new_v4();
-        //     }
-        // }
 
         if let Some(parent) = parent {
             if let Some(game_object) =
@@ -498,22 +509,19 @@ impl Scene {
         self.entity_arena[second_edge] = first;
     }
 
-    pub fn get_main_camera<'a>(
-        &'a self,
-        world: &'a World,
-    ) -> Option<(GameObject, &'a ComponentCamera)> {
+    pub fn get_main_camera(&self) -> Option<(GameObject, &ComponentCamera)> {
         let mut query = <(Entity, &ComponentTransform, &ComponentCamera)>::query();
         query
-            .iter(world)
-            .filter_map(|(e, t, c)| self.get_game_object_from_entity(*e).map(|go| (go, t, c)))
-            .find(|(go, _, c)| {
+            .iter(&self.world)
+            .filter_map(|(e, t, c)| self.get_game_object_from_entity(*e).map(|go| (go, c)))
+            .find(|(go, c)| {
                 if let Some(camera) = &self.camera {
                     go == camera
                 } else {
                     c.enabled
                 }
             })
-            .map(|(go, _, c)| (go, c))
+            .map(|(go, c)| (go, c))
     }
 
     pub(crate) fn new_game_object(&mut self, parent: Option<GameObject>) -> GameObject {
@@ -541,40 +549,48 @@ impl Scene {
         self.get_children(parent.unwrap_or(self.root)).count() as i32
     }
 
-    pub fn bind_component<T: Component + Send + Sync + 'static>(
+    pub fn add_component<T: Component + Send + Sync + 'static>(
         &mut self,
         game_object: GameObject,
         component: T,
-    ) -> bool {
-        self.entry_mut(game_object)
-            .map(|mut e| e.add_component(component))
-            .is_some()
+    ) {
+        let component_uuid = component.uuid();
+        self.bind_component(game_object, component);
+        self.components_to_start
+            .insert((game_object, component_uuid));
     }
 
-    pub fn bind_component_dyn(&mut self, game_object: GameObject, type_id: TypeId) -> bool {
+    pub(crate) fn bind_component<T: Component + Send + Sync + 'static>(
+        &mut self,
+        game_object: GameObject,
+        component: T,
+    ) {
+        self.entry_mut(game_object)
+            .map(|mut e| e.add_component(component));
+    }
+
+    pub fn bind_component_dyn(&mut self, game_object: GameObject, type_uuid: Uuid) {
         let type_registry_ref = self.assets.type_registry.clone();
         let type_registry = type_registry_ref.read();
-        let Some(meta) = type_registry.trait_meta::<ReflectDefault>(type_id) else {
-            return false;
+        let Some(meta) = type_registry.trait_meta::<ReflectDefault>(type_uuid) else {
+            return;
         };
         let component_registry_ref = self.assets.component_registry.clone();
         let component_registry = component_registry_ref.read();
-        let Some(component) = component_registry.component(type_id) else {
-            return false;
+        let Some(component) = component_registry.component(type_uuid) else {
+            return;
         };
         let self_ptr = unsafe { self.as_ptr_mut() };
         let assets = self.assets.clone();
-        self.entry_mut(game_object)
-            .map(|mut e| {
-                let result = component.bind_instance(&mut e, meta.default());
-                if result {
-                    if let Some(instance) = component.get_instance_mut(&mut e) {
-                        instance.reset(&assets, unsafe { &mut *self_ptr }, game_object);
-                    }
+        self.entry_mut(game_object).map(|mut e| {
+            let result = component.bind_instance(&mut e, meta.default());
+            if result {
+                if let Some(instance) = component.get_instance_mut(&mut e) {
+                    instance.reset(&assets, unsafe { &mut *self_ptr }, game_object);
                 }
-                result
-            })
-            .unwrap_or(false)
+            }
+            result
+        });
     }
 
     pub unsafe fn get_component_ptr(
@@ -631,23 +647,47 @@ impl Scene {
         let component_registry_ref = self.assets.component_registry.clone();
         let component_registry = component_registry_ref.read();
         let ctx = self.assets.clone();
+        let first_frame = self.first_frame;
+        if first_frame {
+            self.components_to_start.clear();
+        }
         for (_, component) in component_registry.components_update() {
             // No way around this, we want component's update method to take &mut self
             // but there's no way to do that and provide a &mut Scene
             // At worst, this is a race condition because we can guarantee that
             // this reference only lives until the end of this function
             let scene = unsafe { &mut *(self as *mut Self) };
-            let game_objects = <Entity>::query()
+            let assets = self.assets.clone();
+            for (game_object, component_uuid) in
+                self.components_to_start.drain().collect::<Vec<_>>()
+            {
+                let Some(mut entry) = self.entry_mut(game_object) else {
+                    continue;
+                };
+                let Some(instance) = component.get_instance_mut(&mut entry) else {
+                    continue;
+                };
+                instance.start(&assets, scene, game_object);
+            }
+            for game_object in <Entity>::query()
                 .iter(&self.world)
                 .filter_map(|e| self.get_game_object_from_entity(*e))
-                .collect::<Vec<_>>();
-            for game_object in game_objects {
-                if let Some(mut entry) = self.entry_mut(game_object) {
-                    if let Some(instance) = component.get_instance_mut(&mut entry) {
-                        instance.update(&ctx, scene, game_object, time, input);
-                    }
+                .collect::<Vec<_>>()
+            {
+                let Some(mut entry) = self.entry_mut(game_object) else {
+                    continue;
+                };
+                let Some(instance) = component.get_instance_mut(&mut entry) else {
+                    continue;
+                };
+                if first_frame {
+                    instance.start(&assets, scene, game_object);
                 }
+                instance.update(&ctx, scene, game_object, time, input);
             }
+        }
+        if self.first_frame {
+            self.first_frame = false;
         }
     }
 

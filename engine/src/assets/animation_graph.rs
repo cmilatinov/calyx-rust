@@ -1,55 +1,122 @@
 use crate as engine;
+use crate::assets::animation::Animation;
 use crate::assets::error::AssetError;
-use crate::assets::{Asset, AssetRegistry, LoadedAsset};
+use crate::assets::{Asset, AssetRef, AssetRegistry, LoadedAsset};
 use crate::context::ReadOnlyAssetContext;
+use crate::math::Distance;
 use eframe::emath::Pos2;
 use engine_derive::TypeUuid;
-use glm::Vec2;
 use petgraph::prelude::StableGraph;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::io::Error;
 use std::ops::{Deref, DerefMut};
 use std::path::Path;
 use uuid::Uuid;
 
 #[derive(Default, Clone, Serialize, Deserialize)]
+#[repr(C)]
 pub struct BlendTreeMotion<T: Default + Clone> {
     pub threshold: T,
     pub motion: AnimationMotion,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+#[repr(C)]
 pub enum AnimationMotion {
     AnimationClip(AnimationClip),
-    BlendTree1D(BlendTree1D),
-    BlendTree2D(BlendTree2D),
+    BlendTree1D(BlendTree<1>),
+    BlendTree2D(BlendTree<2>),
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+#[repr(C)]
 pub struct AnimationClip {
     pub speed: f32,
-    pub animation: Option<Uuid>,
+    pub animation: AssetRef<Animation>,
 }
 
 impl Default for AnimationClip {
     fn default() -> Self {
         Self {
             speed: 1.0,
-            animation: None,
+            animation: Default::default(),
         }
     }
 }
 
 #[derive(Default, Clone, Serialize, Deserialize)]
-pub struct BlendTree1D {
-    pub parameter: Uuid,
-    pub motions: Vec<BlendTreeMotion<f32>>,
+#[repr(C)]
+pub struct BlendTree<const N: usize>
+where
+    [f32; N]: Default + Serialize + for<'a> Deserialize<'a>,
+{
+    pub parameters: Vec<Uuid>,
+    pub motions: Vec<BlendTreeMotion<[f32; N]>>,
 }
 
-#[derive(Default, Clone, Serialize, Deserialize)]
-pub struct BlendTree2D {
-    pub parameters: (Uuid, Uuid),
-    pub motions: Vec<BlendTreeMotion<Vec2>>,
+impl<const N: usize> BlendTree<N>
+where
+    [f32; N]: Default + Serialize + for<'a> Deserialize<'a>,
+{
+    pub const fn dimensions() -> usize
+    where
+        [f32; N]: Default + Serialize + for<'a> Deserialize<'a>,
+    {
+        N
+    }
+}
+
+impl<const N: usize> BlendTree<N>
+where
+    [f32; N]: Default + Serialize + for<'a> Deserialize<'a>,
+{
+    pub fn nearest_neighbors(
+        &self,
+        n: usize,
+        parameters: &HashMap<Uuid, AnimationParameterValue>,
+    ) -> Vec<(f32, &BlendTreeMotion<[f32; N]>)>
+    where
+        [f32; N]: Default + Serialize + for<'a> Deserialize<'a>,
+    {
+        let value: [f32; N] = std::array::from_fn(|idx| {
+            self.parameters
+                .get(idx)
+                .and_then(|pid| match parameters.get(pid) {
+                    Some(AnimationParameterValue::Float(value)) => Some(*value),
+                    _ => None,
+                })
+                .unwrap_or(f32::NAN)
+        });
+        if value.iter().any(|value| value.is_nan()) {
+            return vec![];
+        }
+        let mut motions = self
+            .motions
+            .iter()
+            .map(|motion| {
+                let dist = motion.threshold.distance(&value);
+                let weight = if dist < f32::EPSILON {
+                    f32::INFINITY
+                } else {
+                    1.0 / dist.powf(2.0)
+                };
+                (weight, motion)
+            })
+            .collect::<Vec<_>>();
+        motions.sort_by(|a, b| b.0.total_cmp(&a.0));
+        motions.truncate(n);
+        if motions[0].0 == f32::INFINITY {
+            motions[0].0 = 1.0;
+            motions.truncate(1);
+        } else {
+            let total_weight = motions.iter().map(|(d, _)| *d).sum::<f32>();
+            for motion in &mut motions {
+                motion.0 /= total_weight;
+            }
+        }
+        motions
+    }
 }
 
 impl Default for AnimationMotion {
@@ -204,17 +271,5 @@ impl Asset for AnimationGraph {
 
     fn to_file(&self, path: &Path) -> Result<(), Error> {
         AssetRegistry::write_to_file(self, path)
-    }
-}
-
-impl AnimationGraph {
-    pub fn split(
-        &mut self,
-    ) -> (
-        &mut Vec<AnimationParameter>,
-        &mut StableGraph<AnimationNode, AnimationTransition>,
-        &mut Option<Uuid>,
-    ) {
-        (&mut self.parameters, &mut self.graph, &mut self.start_node)
     }
 }

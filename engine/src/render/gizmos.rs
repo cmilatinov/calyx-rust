@@ -3,8 +3,9 @@ use std::iter;
 use crate::assets::mesh::Mesh;
 use crate::math::{compose_transform, Transform};
 use crate::render::{Camera, GizmoInstance};
-use glm::{vec2, vec3, Mat4, Vec3, Vec4};
 use nalgebra::UnitQuaternion;
+use nalgebra_glm as glm;
+use nalgebra_glm::{vec2, vec3, Mat4, Vec3, Vec4};
 
 pub struct Gizmos<'a> {
     pub(crate) camera_transform: &'a Transform,

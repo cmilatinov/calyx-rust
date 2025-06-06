@@ -10,6 +10,7 @@ use uuid::Uuid;
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Game Object")]
 #[serde(default)]
+#[repr(C)]
 pub struct ComponentID {
     #[reflect_attr(name = "ID")]
     pub id: Uuid,

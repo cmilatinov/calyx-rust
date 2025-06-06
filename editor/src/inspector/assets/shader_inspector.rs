@@ -1,14 +1,14 @@
 use crate::inspector::asset_inspector::{AssetInspector, ReflectAssetInspector};
+use egui::Ui;
 use engine::assets::material::Material;
 use engine::context::GameContext;
 use engine::{
-    egui::Ui,
     reflect::{Reflect, ReflectDefault},
     render::Shader,
     utils::TypeUuid,
-    uuid::Uuid,
 };
 use std::io::BufWriter;
+use uuid::Uuid;
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, AssetInspector)]
@@ -48,10 +48,10 @@ impl AssetInspector for ShaderInspector {
                     break 'cleanup;
                 };
                 let assets = game.assets.lock_read();
-                game.background.thread_pool().execute(move || {
+                game.resources.background().thread_pool().execute(move || {
                     let material = Material::from_shader(&assets, shader);
                     let writer = BufWriter::new(file);
-                    let _ = engine::serde_json::to_writer_pretty(writer, &material);
+                    let _ = serde_json::to_writer_pretty(writer, &material);
                 });
             }
             ui.close_menu();

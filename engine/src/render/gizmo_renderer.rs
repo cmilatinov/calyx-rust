@@ -1,8 +1,8 @@
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::wgpu::BufferUsages;
-use glm::{vec4, Mat4};
 use legion::{Entity, IntoQuery};
+use nalgebra_glm::{vec4, Mat4};
 use rapier3d::pipeline::DebugRenderPipeline;
 use std::default::Default;
 use std::path::Path;

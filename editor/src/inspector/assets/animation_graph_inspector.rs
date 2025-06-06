@@ -1,22 +1,27 @@
 use crate::inspector::asset_inspector::{AssetInspector, ReflectAssetInspector};
+use crate::inspector::widgets::Widgets;
 use crate::widgets::{List, ListButtons, ListItemContext};
+use egui::{ComboBox, DragValue, Id, Label, TextEdit, Ui, UiBuilder};
+use engine::assets::animation::Animation;
 use engine::assets::animation_graph::{
     AnimationClip, AnimationCondition, AnimationGraph, AnimationMotion, AnimationNode,
-    AnimationParameter, AnimationParameterValue, AnimationTransition, BlendTree1D, BoolCondition,
+    AnimationParameter, AnimationParameterValue, AnimationTransition, BlendTree, BoolCondition,
     FloatCondition, IntCondition,
 };
+use engine::assets::AssetRegistry;
 use engine::context::GameContext;
-use engine::egui::{ComboBox, DragValue, Id, Label, TextEdit, Ui, UiBuilder};
-use engine::petgraph::prelude::StableGraph;
 use engine::reflect::ReflectDefault;
 use engine::utils::TypeUuid;
-use engine::uuid::Uuid;
 use engine::Reflect;
+use petgraph::prelude::StableGraph;
 use re_ui::list_item::{
     CustomContent, LabelContent, ListItem, PropertyContent, ShowCollapsingResponse,
 };
 use re_ui::UiExt;
+use std::collections::HashMap;
+// use std::collections::HashMap;
 use std::time::{Duration, Instant};
+use uuid::Uuid;
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, AssetInspector)]
@@ -35,10 +40,24 @@ impl AssetInspector for AnimationGraphInspector {
             return;
         };
         let mut graph = graph_ref.write();
-        let list_id = Id::new("animation_graph").with("parameters");
-        let (parameters, graph, start_node) = graph.split();
+        let AnimationGraph {
+            graph,
+            parameters,
+            start_node,
+        } = &mut *graph;
         Self::start_node_select(ui, graph, start_node);
-        List::new("Parameters", parameters, |_| {}).show(
+        Self::parameters(ui, parameters, None);
+    }
+}
+
+impl AnimationGraphInspector {
+    pub fn parameters(
+        ui: &mut Ui,
+        parameters: &mut Vec<AnimationParameter>,
+        mut values: Option<&mut HashMap<Uuid, AnimationParameterValue>>,
+    ) {
+        let list_id = Id::new("animation_graph").with("parameters");
+        List::new("Parameters", parameters, |p| p.id).show(
             ui,
             move |ui,
                   ListItemContext {
@@ -100,38 +119,42 @@ impl AssetInspector for AnimationGraphInspector {
                                         });
                                 }),
                             );
+                            let param_value = values
+                                .as_mut()
+                                .map(|values| {
+                                    values
+                                        .entry(value.id)
+                                        .or_insert(AnimationParameterValue::Float(0.0))
+                                })
+                                .unwrap_or_else(|| &mut value.value);
                             ui.list_item_flat_noninteractive(
-                                PropertyContent::new("Value").value_fn(|ui, _| {
-                                    match &mut value.value {
-                                        AnimationParameterValue::Float(value) => {
-                                            ui.add(DragValue::new(value));
-                                        }
-                                        AnimationParameterValue::Int(value) => {
-                                            ui.add(DragValue::new(value));
-                                        }
-                                        AnimationParameterValue::Bool(value) => {
-                                            ui.checkbox(value, "");
-                                        }
-                                        AnimationParameterValue::Trigger => {
-                                            let trigger_id = item_id.with("trigger");
-                                            let last_trigger = ui.memory_mut(|mem| {
+                                PropertyContent::new("Value").value_fn(|ui, _| match param_value {
+                                    AnimationParameterValue::Float(value) => {
+                                        ui.add(DragValue::new(value).speed(0.01));
+                                    }
+                                    AnimationParameterValue::Int(value) => {
+                                        ui.add(DragValue::new(value));
+                                    }
+                                    AnimationParameterValue::Bool(value) => {
+                                        ui.checkbox(value, "");
+                                    }
+                                    AnimationParameterValue::Trigger => {
+                                        let trigger_id = item_id.with("trigger");
+                                        let last_trigger = ui.memory_mut(|mem| {
+                                            mem.data
+                                                .get_temp::<Option<Instant>>(trigger_id)
+                                                .unwrap_or_default()
+                                        });
+                                        let selected = last_trigger
+                                            .map(|time| {
+                                                (Instant::now() - time) < Duration::from_secs(3)
+                                            })
+                                            .unwrap_or(false);
+                                        if ui.radio(selected, "").clicked() && !selected {
+                                            ui.memory_mut(|mem| {
                                                 mem.data
-                                                    .get_temp::<Option<Instant>>(trigger_id)
-                                                    .unwrap_or_default()
+                                                    .insert_temp(trigger_id, Some(Instant::now()))
                                             });
-                                            let selected = last_trigger
-                                                .map(|time| {
-                                                    (Instant::now() - time) < Duration::from_secs(3)
-                                                })
-                                                .unwrap_or(false);
-                                            if ui.radio(selected, "").clicked() && !selected {
-                                                ui.memory_mut(|mem| {
-                                                    mem.data.insert_temp(
-                                                        trigger_id,
-                                                        Some(Instant::now()),
-                                                    )
-                                                });
-                                            }
                                         }
                                     }
                                 }),
@@ -141,10 +164,8 @@ impl AssetInspector for AnimationGraphInspector {
             },
         );
     }
-}
 
-impl AnimationGraphInspector {
-    pub fn node(ui: &mut Ui, graph: &mut AnimationGraph, id: Uuid) {
+    pub fn node(ui: &mut Ui, asset_registry: &AssetRegistry, graph: &mut AnimationGraph, id: Uuid) {
         let Some(node_idx) = graph.node_indices().find(|ni| graph[*ni].id == id) else {
             return;
         };
@@ -158,6 +179,9 @@ impl AnimationGraphInspector {
                 true,
                 LabelContent::new("Animation Node").truncate(true),
                 |ui| {
+                    let AnimationGraph {
+                        parameters, graph, ..
+                    } = graph;
                     let node = &mut graph[node_idx];
                     let buttons_width = ListButtons::width(ui);
                     ui.list_item_flat_noninteractive(PropertyContent::new("ID").value_fn(
@@ -176,7 +200,12 @@ impl AnimationGraphInspector {
                             );
                         },
                     ));
-                    AnimationMotionInspector::motion(ui, &mut node.motion);
+                    AnimationMotionInspector::motion(
+                        ui,
+                        asset_registry,
+                        &mut node.motion,
+                        parameters,
+                    );
                 },
             );
     }
@@ -189,7 +218,9 @@ impl AnimationGraphInspector {
             return;
         };
         let header_id = Id::new("animation_transition_header");
-        let (parameters, graph, _) = graph.split();
+        let AnimationGraph {
+            parameters, graph, ..
+        } = graph;
         ListItem::new()
             .interactive(true)
             .force_background(re_ui::design_tokens().section_collapsing_header_color())
@@ -441,31 +472,69 @@ impl AnimationGraphInspector {
 pub struct AnimationMotionInspector;
 
 impl AnimationMotionInspector {
-    pub fn motion(ui: &mut Ui, motion: &mut AnimationMotion) {
+    pub fn motion(
+        ui: &mut Ui,
+        asset_registry: &AssetRegistry,
+        motion: &mut AnimationMotion,
+        params: &Vec<AnimationParameter>,
+    ) {
         let id = Id::new(motion as *const _);
         match motion {
-            AnimationMotion::AnimationClip(AnimationClip {
-                animation: _,
-                speed,
-            }) => {
+            AnimationMotion::AnimationClip(AnimationClip { animation, speed }) => {
                 ui.list_item_flat_noninteractive(PropertyContent::new("Animation").value_fn(
-                    |_ui, _| {
-                        // TODO: Provide an asset selector that can use ids instead of refs
-                        // Widgets::asset_select_t(
-                        //     ui,
-                        //     id.with("animation"),
-                        //     Some(Animation::type_uuid()),
-                        //     animation,
-                        // );
+                    |ui, _| {
+                        Widgets::asset_select_t(
+                            ui,
+                            asset_registry,
+                            id.with("animation"),
+                            Some(Animation::type_uuid()),
+                            animation,
+                        );
                     },
                 ));
                 ui.list_item_flat_noninteractive(PropertyContent::new("Speed").value_fn(
                     |ui, _| {
-                        ui.add(DragValue::new(speed).speed(0.1));
+                        ui.add(DragValue::new(speed).speed(0.01));
                     },
                 ));
             }
-            AnimationMotion::BlendTree1D(BlendTree1D { motions, .. }) => {
+            AnimationMotion::BlendTree1D(BlendTree {
+                parameters,
+                motions,
+            }) => {
+                parameters.resize(1, Uuid::nil());
+                ui.list_item_flat_noninteractive(PropertyContent::new("Parameter").value_fn(
+                    |ui, _| {
+                        ComboBox::from_id_salt(id.with("parameter"))
+                            .selected_text(
+                                params
+                                    .iter()
+                                    .filter(|p| {
+                                        matches!(p.value, AnimationParameterValue::Float(_))
+                                    })
+                                    .find_map(|p| {
+                                        if p.id == parameters[0] {
+                                            Some(p.name.clone())
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .unwrap_or_else(|| String::from("None")),
+                            )
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut parameters[0], Uuid::nil(), "None");
+                                for param in params.iter().filter(|p| {
+                                    matches!(p.value, AnimationParameterValue::Float(_))
+                                }) {
+                                    ui.selectable_value(
+                                        &mut parameters[0],
+                                        param.id,
+                                        param.name.clone(),
+                                    );
+                                }
+                            });
+                    },
+                ));
                 List::new("Motions", motions, |_| {}).show(
                     ui,
                     |ui,
@@ -484,10 +553,12 @@ impl AnimationMotionInspector {
                                 false,
                                 LabelContent::new(format!("Motion {}", index + 1)).truncate(true),
                                 |ui| {
-                                    Self::motion(ui, &mut value.motion);
+                                    Self::motion(ui, asset_registry, &mut value.motion, params);
                                     ui.list_item_flat_noninteractive(
                                         PropertyContent::new("Threshold").value_fn(|ui, _| {
-                                            ui.add(DragValue::new(&mut value.threshold).speed(0.1));
+                                            ui.add(
+                                                DragValue::new(&mut value.threshold[0]).speed(0.1),
+                                            );
                                         }),
                                     );
                                 },

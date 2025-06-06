@@ -1,13 +1,13 @@
+use egui::Ui;
 use engine::context::ReadOnlyAssetContext;
-use engine::egui::Ui;
 use engine::reflect::{Reflect, StructInfo};
 use engine::reflect_trait;
 use engine::scene::{GameObject, Scene};
-use std::any::TypeId;
+use uuid::Uuid;
 
 #[reflect_trait]
 pub trait TypeInspector: Send + Sync {
-    fn target_type_ids(&self) -> Vec<TypeId>;
+    fn target_type_uuids(&self) -> Vec<Uuid>;
     fn show_inspector(&self, ui: &mut Ui, ctx: &InspectorContext, instance: &mut dyn Reflect);
     fn show_inspector_context(
         &self,

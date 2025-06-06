@@ -4,7 +4,7 @@ use std::path::Path;
 
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
-use glm::{vec2, vec3, vec4, IVec4, Mat4, Vec2, Vec3, Vec4};
+use nalgebra_glm::{vec2, vec3, vec4, IVec4, Mat4, Vec2, Vec3, Vec4};
 use russimp::scene::{PostProcess, Scene};
 
 use super::LoadedAsset;

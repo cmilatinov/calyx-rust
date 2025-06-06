@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use glm::{Quat, Vec3};
-use nalgebra::Unit;
-
 use crate as engine;
 use crate::context::ReadOnlyAssetContext;
 use crate::utils::TypeUuid;
+use nalgebra::Unit;
+use nalgebra_glm::{Quat, Vec3};
 
 use super::error::AssetError;
 use super::{Asset, LoadedAsset};

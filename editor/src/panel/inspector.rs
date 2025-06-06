@@ -1,4 +1,4 @@
-use std::any::{Any, TypeId};
+use std::any::Any;
 use std::collections::HashSet;
 
 use crate::inspector::assets::animation_graph_inspector::AnimationGraphInspector;
@@ -9,17 +9,18 @@ use crate::panel::Panel;
 use crate::selection::SelectionType;
 use crate::EditorAppState;
 use convert_case::{Case, Casing};
+use egui::scroll_area::ScrollBarVisibility;
+use egui::{Id, PopupCloseBehavior, Response, Ui};
 use engine::assets::animation_graph::AnimationGraph;
 use engine::component::{ComponentID, ComponentTransform};
 use engine::context::ReadOnlyAssetContext;
-use engine::egui;
-use engine::egui::scroll_area::ScrollBarVisibility;
-use engine::egui::{Id, PopupCloseBehavior, Response, Ui};
 use engine::reflect::type_registry::TypeRegistry;
 use engine::reflect::{AttributeValue, NamedField, Reflect, TypeInfo};
 use engine::scene::{GameObject, SceneManager};
+use engine::utils::TypeUuid;
 use re_ui::list_item::{LabelContent, ListItem};
 use re_ui::{DesignTokens, UiExt};
+use uuid::Uuid;
 
 #[derive(Default)]
 pub struct PanelInspector;
@@ -125,11 +126,9 @@ impl Panel for PanelInspector {
                             else {
                                 return;
                             };
-                            let Some((_, type_uuid, type_name)) = asset_meta.type_id else {
-                                return;
-                            };
-                            let Some(inspector) =
-                                state.inspector_registry.asset_inspector_lookup(type_uuid)
+                            let Some(inspector) = state
+                                .inspector_registry
+                                .asset_inspector_lookup(asset_meta.type_uuid)
                             else {
                                 return;
                             };
@@ -144,29 +143,26 @@ impl Panel for PanelInspector {
                                     ui,
                                     header_id,
                                     true,
-                                    LabelContent::new(format!(
-                                        "[{}] {}",
-                                        type_name, asset_meta.name
-                                    ))
-                                    .truncate(true)
-                                    .always_show_buttons(true)
-                                    .with_buttons(|ui| {
-                                        let popup_id = header_id.with("popup");
-                                        let res = ui.small_icon_button(&re_ui::icons::MORE);
-                                        if res.clicked() {
-                                            ui.memory_mut(|mem| mem.open_popup(popup_id))
-                                        }
-                                        ui.list_item_popup(popup_id, &res, 0.0, |ui| {
-                                            if ui
-                                                .list_item()
-                                                .show_flat(ui, LabelContent::new("Save"))
-                                                .clicked()
-                                            {
-                                                asset_registry.persist(asset_id);
+                                    LabelContent::new(format!("{}", asset_meta.name))
+                                        .truncate(true)
+                                        .always_show_buttons(true)
+                                        .with_buttons(|ui| {
+                                            let popup_id = header_id.with("popup");
+                                            let res = ui.small_icon_button(&re_ui::icons::MORE);
+                                            if res.clicked() {
+                                                ui.memory_mut(|mem| mem.open_popup(popup_id))
                                             }
-                                        });
-                                        res
-                                    }),
+                                            ui.list_item_popup(popup_id, &res, 0.0, |ui| {
+                                                if ui
+                                                    .list_item()
+                                                    .show_flat(ui, LabelContent::new("Save"))
+                                                    .clicked()
+                                                {
+                                                    asset_registry.persist(asset_id);
+                                                }
+                                            });
+                                            res
+                                        }),
                                     |ui| {
                                         inspector.show_inspector(ui, &mut state.game, asset_id);
                                     },
@@ -182,7 +178,13 @@ impl Panel for PanelInspector {
                                     .load_by_id::<AnimationGraph>(asset_id)
                                 {
                                     let mut graph = graph_ref.write();
-                                    AnimationGraphInspector::node(ui, &mut graph, id);
+                                    let asset_registry = state.game.assets.asset_registry.read();
+                                    AnimationGraphInspector::node(
+                                        ui,
+                                        &asset_registry,
+                                        &mut graph,
+                                        id,
+                                    );
                                 }
                             }
                         } else if let SelectionType::AnimationTransition(asset_id) =
@@ -219,7 +221,7 @@ impl Panel for PanelInspector {
 impl PanelInspector {
     fn display_name(type_registry: &TypeRegistry, instance: &dyn Reflect) -> &'static str {
         type_registry
-            .type_info_by_id(instance.type_id())
+            .type_info_by_id(instance.uuid())
             .and_then(|info| {
                 if let TypeInfo::Struct(info) = info {
                     if let Some(AttributeValue::String(str)) = info.attr("name") {
@@ -248,7 +250,7 @@ impl PanelInspector {
     ) -> bool {
         let name = Self::display_name(&ctx.assets.type_registry.read(), instance);
         let id = ui.make_persistent_id(name);
-        let type_id = instance.as_any().type_id();
+        let type_uuid = instance.uuid();
         let res = ListItem::new()
             .interactive(true)
             .force_background(re_ui::design_tokens().section_collapsing_header_color())
@@ -258,7 +260,7 @@ impl PanelInspector {
                 true,
                 LabelContent::new(name).truncate(true),
                 |ui| {
-                    if let Some(inspector) = registry.type_inspector_lookup(type_id) {
+                    if let Some(inspector) = registry.type_inspector_lookup(type_uuid) {
                         inspector.show_inspector(ui, ctx, instance);
                     } else {
                         self.show_default_inspector(ui, registry, ctx, instance);
@@ -273,13 +275,13 @@ impl PanelInspector {
             }
         }
         let mut remove = false;
-        if type_id != TypeId::of::<ComponentID>() {
+        if type_uuid != ComponentID::type_uuid() {
             res.context_menu(|ui| {
-                if type_id != TypeId::of::<ComponentTransform>() && ui.button("Remove").clicked() {
+                if type_uuid != ComponentTransform::type_uuid() && ui.button("Remove").clicked() {
                     remove = true;
                     ui.close_menu();
                 }
-                if let Some(inspector) = registry.type_inspector_lookup(type_id) {
+                if let Some(inspector) = registry.type_inspector_lookup(type_uuid) {
                     inspector.show_inspector_context(ui, ctx, instance);
                 }
             });
@@ -298,7 +300,7 @@ impl PanelInspector {
             .assets
             .type_registry
             .read()
-            .type_info_by_id(instance.as_any().type_id())
+            .type_info_by_id(instance.uuid())
         {
             for (_, field) in info.fields.iter() {
                 let mut ctx = *ctx;
@@ -320,7 +322,7 @@ impl PanelInspector {
     ) {
         let mut name = Self::field_display_name(field);
         name.push(' ');
-        if let Some(inspector) = registry.type_inspector_lookup(instance.as_any().type_id()) {
+        if let Some(inspector) = registry.type_inspector_lookup(instance.uuid()) {
             Widgets::inspector_prop_value(ui, name, |ui, _| {
                 inspector.show_inspector(ui, ctx, instance);
             });
@@ -331,7 +333,7 @@ impl PanelInspector {
         ui: &mut Ui,
         assets: &ReadOnlyAssetContext,
         scenes: &mut SceneManager,
-        entity_components: &HashSet<TypeId>,
+        entity_components: &HashSet<Uuid>,
         game_object: GameObject,
     ) -> Response {
         let num_components = assets.component_registry.read().components().count();
@@ -349,15 +351,15 @@ impl PanelInspector {
             .on_hover_text("Add a new component to this game object");
         let id = ui.make_persistent_id("add_component_popup");
         egui::popup::popup_below_widget(ui, id, &res, PopupCloseBehavior::CloseOnClick, |ui| {
-            for (type_id, component) in assets.component_registry.read().components() {
-                if entity_components.contains(type_id) {
+            for (type_uuid, component) in assets.component_registry.read().components() {
+                if entity_components.contains(type_uuid) {
                     continue;
                 }
                 let name = Self::display_name(&assets.type_registry.read(), component.as_reflect());
                 if ui.selectable_label(false, name).clicked() {
                     scenes
                         .simulation_scene_mut()
-                        .bind_component_dyn(game_object, *type_id);
+                        .bind_component_dyn(game_object, *type_uuid);
                 }
             }
         });

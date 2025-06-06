@@ -4,6 +4,7 @@ mod fq;
 mod reflect_trait;
 mod reflect_type;
 mod reflect_value;
+mod resource;
 mod type_uuid;
 
 extern crate proc_macro;
@@ -18,6 +19,11 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(TypeUuid, attributes(uuid))]
 pub fn derive_type_uuid(input: TokenStream) -> TokenStream {
     type_uuid::derive_type_uuid(input)
+}
+
+#[proc_macro_derive(Resource)]
+pub fn derive_resource(input: TokenStream) -> TokenStream {
+    resource::derive_resource(input)
 }
 
 #[proc_macro]

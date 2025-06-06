@@ -1,21 +1,20 @@
-use std::any::TypeId;
 use std::collections::HashMap;
 use std::ops::RangeInclusive;
 
-use engine::egui::Ui;
-use engine::reflect::{AttributeValue, Reflect, ReflectDefault, ReflectGenericFloat};
-use engine::utils::TypeUuid;
-use engine::{egui, type_ids};
-
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
+use egui::Ui;
+use engine::reflect::{AttributeValue, Reflect, ReflectDefault, ReflectGenericFloat};
+use engine::type_uuids;
+use engine::utils::TypeUuid;
+use uuid::Uuid;
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, TypeInspector)]
 pub struct FloatInspector;
 
 impl TypeInspector for FloatInspector {
-    fn target_type_ids(&self) -> Vec<TypeId> {
-        type_ids!(f32, f64)
+    fn target_type_uuids(&self) -> Vec<Uuid> {
+        type_uuids!(f32, f64)
     }
 
     fn show_inspector(&self, ui: &mut Ui, ctx: &InspectorContext, instance: &mut dyn Reflect) {
@@ -34,9 +33,7 @@ impl TypeInspector for FloatInspector {
         let max_attr = attrs.get("max").copied();
         let speed_attr = attrs.get("speed").copied();
         let type_registry = ctx.assets.type_registry.read();
-        let Some(meta) =
-            type_registry.trait_meta::<ReflectGenericFloat>(instance.as_any().type_id())
-        else {
+        let Some(meta) = type_registry.trait_meta::<ReflectGenericFloat>(instance.uuid()) else {
             return;
         };
         let Some(num) = meta.get_mut(instance) else {

@@ -1,23 +1,25 @@
+use crate::inspector::assets::animation_graph_inspector::AnimationGraphInspector;
 use crate::panel::Panel;
 use crate::selection::{Selection, SelectionType};
 use crate::{icons, EditorAppState};
-use engine::assets::animation_graph::{
-    AnimationGraph, AnimationMotion, AnimationNode, AnimationTransition,
-};
-use engine::core::Ref;
-use engine::egui;
-use engine::egui::text::LayoutJob;
-use engine::egui::{
+use egui::panel::Side;
+use egui::text::LayoutJob;
+use egui::{
     Color32, FontId, LayerId, Order, Painter, Pos2, Rect, Response, Sense, Shape, Stroke, Ui,
     UiBuilder, Vec2,
 };
+use engine::assets::animation_graph::{
+    AnimationGraph, AnimationMotion, AnimationNode, AnimationTransition,
+};
+use engine::component::ComponentAnimator;
+use engine::core::Ref;
 use engine::ext::egui::{EguiUiExt, EguiVec2Ext};
-use engine::petgraph::prelude::{EdgeIndex, NodeIndex};
-use engine::uuid::Uuid;
-use re_ui::Icon;
+use petgraph::prelude::{EdgeIndex, NodeIndex};
+use re_ui::{DesignTokens, Icon};
 use std::any::Any;
 use std::collections::HashMap;
 use std::ops::DerefMut;
+use uuid::Uuid;
 
 pub struct PanelAnimator {
     rect: Rect,
@@ -53,6 +55,7 @@ impl Panel for PanelAnimator {
         let ty = state.selection.ty();
         let mut selected_id = state.selection.first(ty);
         let mut selected_asset_id = None;
+        let mut game_object = None;
         if let SelectionType::AnimationNode(id) = ty {
             selected_asset_id = Some(id);
         } else if let SelectionType::AnimationTransition(id) = ty {
@@ -60,6 +63,14 @@ impl Panel for PanelAnimator {
         } else if let SelectionType::Asset = ty {
             selected_asset_id = selected_id;
             selected_id = None;
+        } else if let SelectionType::GameObject = ty {
+            game_object = selected_id.and_then(|id| {
+                state
+                    .game
+                    .scenes
+                    .simulation_scene()
+                    .get_game_object_by_uuid(id)
+            });
         }
         if let Some(id) = selected_asset_id {
             if let Ok(graph) = state
@@ -77,48 +88,88 @@ impl Panel for PanelAnimator {
         };
         let asset_id = graph.id();
         let mut graph = graph.write();
-        let mut rect = self.rect;
-        let resp = egui::Scene::new()
-            .show(ui, &mut rect, |ui| {
-                self.draw_graph(ui, &mut state.selection, &mut graph, asset_id, selected_id);
-            })
-            .response;
-        if resp.secondary_clicked() {
-            if let Some(pos) = ui.input(|input| input.pointer.interact_pos()) {
-                let transform = ui
-                    .ctx()
-                    .layer_transform_from_global(LayerId::new(
-                        ui.layer_id().order,
-                        ui.id().with("zoom_pan_area"),
-                    ))
-                    .unwrap_or_default();
-                self.latest_pos = transform * pos;
-            }
-        }
-        resp.context_menu(|ui| {
-            ui.set_max_width(200.0);
-            ui.menu_button("Create state", |ui| {
-                if ui.button("Animation").clicked() {
-                    graph.add_node(AnimationNode {
-                        id: Uuid::new_v4(),
-                        name: "Animation".to_string(),
-                        motion: AnimationMotion::AnimationClip(Default::default()),
-                        position: self.latest_pos,
+        egui::SidePanel::new(Side::Left, "animator_side_panel")
+            .resizable(true)
+            .frame(egui::Frame::NONE)
+            .show_inside(ui, |ui| {
+                egui::ScrollArea::both().show(ui, |ui| {
+                    egui::Frame {
+                        fill: ui.style().visuals.panel_fill,
+                        inner_margin: DesignTokens::panel_margin(),
+                        ..Default::default()
+                    }
+                    .show(ui, |ui| {
+                        re_ui::list_item::list_item_scope(ui, "animator_tree_scope", |ui| {
+                            let scene = state.game.scenes.simulation_scene_mut();
+                            let mut entry = game_object.and_then(|go| scene.entry_mut(go));
+                            let parameter_values = entry
+                                .as_mut()
+                                .and_then(|entry| {
+                                    entry.get_component_mut::<ComponentAnimator>().ok()
+                                })
+                                .map(|animator| animator.parameters_mut());
+                            AnimationGraphInspector::parameters(
+                                ui,
+                                &mut graph.parameters,
+                                parameter_values,
+                            );
+                        });
+                        ui.allocate_space(ui.available_size());
                     });
-                    ui.close_menu();
-                }
-                if ui.button("Blend Tree").clicked() {
-                    graph.add_node(AnimationNode {
-                        id: Uuid::new_v4(),
-                        name: "Blend Tree".to_string(),
-                        motion: AnimationMotion::BlendTree1D(Default::default()),
-                        position: self.latest_pos,
-                    });
-                    ui.close_menu();
-                }
+                });
             });
-        });
-        self.rect = rect;
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show_inside(ui, |ui| {
+                let mut rect = self.rect;
+                let resp = egui::Scene::new()
+                    .show(ui, &mut rect, |ui| {
+                        self.draw_graph(
+                            ui,
+                            &mut state.selection,
+                            &mut graph,
+                            asset_id,
+                            selected_id,
+                        );
+                    })
+                    .response;
+                if resp.secondary_clicked() {
+                    if let Some(pos) = ui.input(|input| input.pointer.interact_pos()) {
+                        let transform = ui
+                            .ctx()
+                            .layer_transform_from_global(LayerId::new(
+                                ui.layer_id().order,
+                                ui.id().with("scene_area"),
+                            ))
+                            .unwrap_or_default();
+                        self.latest_pos = transform * pos;
+                    }
+                }
+                resp.context_menu(|ui| {
+                    ui.set_max_width(200.0);
+                    ui.menu_button("Create state", |ui| {
+                        if ui.button("Animation").clicked() {
+                            graph.add_node(AnimationNode {
+                                id: Uuid::new_v4(),
+                                name: "Animation".to_string(),
+                                motion: AnimationMotion::AnimationClip(Default::default()),
+                                position: self.latest_pos,
+                            });
+                            ui.close_menu();
+                        }
+                        if ui.button("Blend Tree").clicked() {
+                            graph.add_node(AnimationNode {
+                                id: Uuid::new_v4(),
+                                name: "Blend Tree".to_string(),
+                                motion: AnimationMotion::BlendTree1D(Default::default()),
+                                position: self.latest_pos,
+                            });
+                            ui.close_menu();
+                        }
+                    });
+                });
+                self.rect = rect;
+            });
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -152,10 +203,23 @@ impl PanelAnimator {
         selected_id: Option<Uuid>,
     ) {
         let nodes = graph.node_indices().collect::<Vec<_>>();
+        let node_layer_id = LayerId::new(Order::Middle, ui.layer_id().id.with("nodes"));
+        let mut node_ui = ui.new_child(
+            UiBuilder::new()
+                .layer_id(node_layer_id)
+                .sense(Sense::hover())
+                .max_rect(ui.max_rect()),
+        );
+        ui.ctx().set_transform_layer(
+            node_layer_id,
+            ui.ctx()
+                .layer_transform_to_global(ui.layer_id())
+                .unwrap_or_default(),
+        );
         let mut any_node_hovered = false;
         for node in nodes {
             any_node_hovered |= self
-                .draw_node(ui, selection, graph, node, asset_id, selected_id)
+                .draw_node(&mut node_ui, selection, graph, node, asset_id, selected_id)
                 .hovered();
         }
         let mut edge_map: HashMap<[NodeIndex; 2], Vec<EdgeIndex>> = Default::default();

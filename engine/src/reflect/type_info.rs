@@ -1,7 +1,7 @@
+use crate::reflect::Reflect;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
-
-use crate::reflect::Reflect;
+use uuid::Uuid;
 
 pub type FieldGetter = fn(&dyn Any) -> Option<&dyn Reflect>;
 pub type FieldGetterMut = fn(&mut dyn Any) -> Option<&mut dyn Reflect>;
@@ -43,6 +43,7 @@ impl StructInfo {
 pub struct NamedField {
     pub name: &'static str,
     pub type_id: TypeId,
+    pub type_uuid: Uuid,
     pub type_name: &'static str,
     pub attrs: AttributeMap,
     pub doc: Option<&'static str>,

@@ -1,10 +1,10 @@
 use super::Panel;
 use crate::{icons, EditorAppState};
-use engine::egui::{Key, Modifiers, Response, Sense, Vec2, ViewportCommand};
-use engine::{
-    egui::{self, load::SizedTexture, Image, ImageSource, Ui},
-    math::fit_aspect,
+use egui::{
+    load::SizedTexture, Image, ImageSource, Key, Modifiers, Response, Sense, Ui, Vec2,
+    ViewportCommand,
 };
+use engine::math::fit_aspect;
 use re_ui::Icon;
 use std::any::Any;
 

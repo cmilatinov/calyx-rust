@@ -2,51 +2,68 @@
   "graph": {
     "nodes": [
       {
-        "id": "e5c48ca8-ff98-4016-9e49-e79c71bc7f9c",
-        "name": "Animation",
-        "motion": {
-          "AnimationClip": {
-            "speed": 1.0,
-            "animation": null
-          }
-        },
-        "position": {
-          "x": -277.1609,
-          "y": 28.095972
-        }
-      },
-      {
-        "id": "096ccf2d-b4e3-4d58-9712-42578e2f3bfe",
-        "name": "Blend Tree",
+        "id": "e5e6e9f6-d8f3-4208-aa7f-0834aa2e703b",
+        "name": "Movement",
         "motion": {
           "BlendTree1D": {
-            "parameter": "00000000-0000-0000-0000-000000000000",
-            "motions": []
+            "parameters": [
+              "d8913e4a-b324-4309-a182-350b9a23401d"
+            ],
+            "motions": [
+              {
+                "threshold": [
+                  0.0
+                ],
+                "motion": {
+                  "AnimationClip": {
+                    "speed": 1.0,
+                    "animation": "12d8edd2-9630-1aaa-81b4-32cb2acb8dfe"
+                  }
+                }
+              },
+              {
+                "threshold": [
+                  0.3
+                ],
+                "motion": {
+                  "AnimationClip": {
+                    "speed": 1.0,
+                    "animation": "db050f2a-eb63-094d-7627-b78556ba096b"
+                  }
+                }
+              },
+              {
+                "threshold": [
+                  1.0
+                ],
+                "motion": {
+                  "AnimationClip": {
+                    "speed": 1.0,
+                    "animation": "0906e914-b66f-841a-d15f-a3f2b6c35939"
+                  }
+                }
+              }
+            ]
           }
         },
         "position": {
-          "x": 145.8333,
-          "y": -3.0377464
+          "x": -68.00476,
+          "y": 123.37665
         }
       }
     ],
     "node_holes": [],
     "edge_property": "directed",
-    "edges": [
-      [
-        0,
-        1,
-        {
-          "id": "f3168229-ea62-4558-af57-eeaea4bbdf2f",
-          "name": "Transition",
-          "has_exit_time": false,
-          "exit_time": 0.0,
-          "duration": 0.5,
-          "conditions": []
-        }
-      ]
-    ]
+    "edges": []
   },
-  "parameters": [],
-  "start_node": null
+  "parameters": [
+    {
+      "id": "d8913e4a-b324-4309-a182-350b9a23401d",
+      "name": "Speed",
+      "value": {
+        "Float": 0.0
+      }
+    }
+  ],
+  "start_node": "e5e6e9f6-d8f3-4208-aa7f-0834aa2e703b"
 }

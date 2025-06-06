@@ -5,9 +5,9 @@ use crate::core::{Time, TimeType};
 use crate::math::Transform;
 use crate::physics::PhysicsConfiguration;
 use crate::scene::{GameObject, Scene};
-use glm::Mat4;
 use legion::{Entity, IntoQuery};
 use nalgebra::{UnitQuaternion, Vector3};
+use nalgebra_glm::Mat4;
 use rapier3d::prelude::*;
 use std::collections::HashMap;
 

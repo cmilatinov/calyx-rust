@@ -1,11 +1,11 @@
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 use crate::inspector::widgets::Widgets;
+use egui::Ui;
 use engine::component::ComponentRigidBody;
-use engine::egui::Ui;
-use engine::rapier3d::dynamics::RigidBodyType;
 use engine::reflect::{Reflect, ReflectDefault};
-use engine::{egui, type_ids, TypeUuid};
-use std::any::TypeId;
+use engine::{type_uuids, TypeUuid};
+use rapier3d::dynamics::RigidBodyType;
+use uuid::Uuid;
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, TypeInspector)]
@@ -23,8 +23,8 @@ impl RigidBodyInspector {
 }
 
 impl TypeInspector for RigidBodyInspector {
-    fn target_type_ids(&self) -> Vec<TypeId> {
-        type_ids!(ComponentRigidBody)
+    fn target_type_uuids(&self) -> Vec<Uuid> {
+        type_uuids!(ComponentRigidBody)
     }
 
     fn show_inspector(&self, ui: &mut Ui, ctx: &InspectorContext, instance: &mut dyn Reflect) {

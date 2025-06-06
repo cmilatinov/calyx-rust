@@ -5,7 +5,7 @@ use crate::render::Gizmos;
 use crate::scene::{GameObject, Scene};
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use egui::Color32;
-use glm::Vec4;
+use nalgebra_glm::Vec4;
 use serde::{Deserialize, Serialize};
 
 #[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Point Light")]
 #[serde(default)]
+#[repr(C)]
 pub struct ComponentPointLight {
     pub active: bool,
     #[reflect_attr(min = 0.0, speed = 0.1)]

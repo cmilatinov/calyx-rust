@@ -1,9 +1,12 @@
+use crate as engine;
+use crate::resource::Resource;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::time::Instant;
 
 pub type TimeType = f32;
 
+#[derive(Resource)]
 pub struct Time {
     timers: RefCell<HashMap<&'static str, Instant>>,
     last_time: Instant,
@@ -37,7 +40,7 @@ impl Time {
         instant.elapsed().as_secs_f32()
     }
 
-    pub fn reset_timer(&mut self, name: &'static str) {
+    pub fn reset_timer(&self, name: &'static str) {
         self.timers.borrow_mut().insert(name, Instant::now());
     }
 

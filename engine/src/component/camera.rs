@@ -5,7 +5,7 @@ use crate::render::Gizmos;
 use crate::scene::{GameObject, Scene};
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use egui::Color32;
-use glm::Vec4;
+use nalgebra_glm::Vec4;
 use serde::{Deserialize, Serialize};
 
 #[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Camera")]
 #[serde(default)]
+#[repr(C)]
 pub struct ComponentCamera {
     #[reflect_attr(angle, min = 30.0, max = 160.0, speed = 0.1)]
     pub fov: f32,
