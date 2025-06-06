@@ -2,35 +2,28 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use crate as engine;
-use crate::core::Ref;
+use crate::core::{Ref, WeakRef};
 use crate::resource::Resource;
 use rusty_pool::{JoinHandle, ThreadPool};
 
 #[derive(Resource)]
 pub struct Background {
     thread_pool: ThreadPool,
-    task_list: Ref<HashSet<isize>>,
-}
-
-impl Default for Background {
-    fn default() -> Self {
-        Self {
-            thread_pool: ThreadPool::new(1, 10, Duration::from_secs(30)),
-            task_list: Ref::new(Default::default()),
-        }
-    }
+    task_list: HashSet<isize>,
+    background: WeakRef<Background>,
 }
 
 impl Background {
     pub fn new() -> Ref<Self> {
-        Ref::new(Self {
+        Ref::new_cyclic(|background| Self {
             thread_pool: ThreadPool::new(1, 10, Duration::from_secs(30)),
-            task_list: Ref::new(Default::default()),
+            task_list: Default::default(),
+            background,
         })
     }
 
-    pub fn task_list(&self) -> Ref<HashSet<isize>> {
-        self.task_list.clone()
+    pub fn task_list(&self) -> &HashSet<isize> {
+        &self.task_list
     }
 
     pub fn thread_pool(&self) -> &ThreadPool {
@@ -43,11 +36,11 @@ impl Background {
         task: F,
     ) -> JoinHandle<()> {
         let id = id.into();
-        let task_list = self.task_list.clone();
-        task_list.write().insert(id);
+        self.task_list.insert(id);
+        let background = self.background.upgrade().unwrap();
         self.thread_pool.evaluate(move || {
             task();
-            task_list.write().remove(&id);
+            background.write().task_list.remove(&id);
         })
     }
 }

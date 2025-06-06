@@ -6,10 +6,10 @@ pub use engine_derive::Component;
 
 use crate as engine;
 use crate::context::ReadOnlyAssetContext;
-use crate::core::Time;
 use crate::input::Input;
 use crate::reflect::Reflect;
 use crate::render::Gizmos;
+use crate::resource::ResourceMap;
 use crate::scene::{GameObject, Scene};
 use crate::utils::TypeUuidDynamic;
 
@@ -30,28 +30,17 @@ pub trait ComponentInstance: Reflect {
     }
 }
 
+pub struct ComponentEventContext<'a> {
+    pub assets: &'a ReadOnlyAssetContext,
+    pub scene: &'a mut Scene,
+    pub game_object: GameObject,
+}
+
 #[allow(unused)]
 #[reflect_trait]
 pub trait Component: TypeUuidDynamic + ComponentInstance {
-    fn reset(&mut self, assets: &ReadOnlyAssetContext, scene: &mut Scene, game_object: GameObject) {
-    }
-    fn start(&mut self, assets: &ReadOnlyAssetContext, scene: &mut Scene, game_object: GameObject) {
-    }
-    fn update(
-        &mut self,
-        assets: &ReadOnlyAssetContext,
-        scene: &mut Scene,
-        game_object: GameObject,
-        time: &Time,
-        input: &Input,
-    ) {
-    }
-    fn destroy(
-        &mut self,
-        assets: &ReadOnlyAssetContext,
-        scene: &mut Scene,
-        game_object: GameObject,
-    ) {
-    }
+    fn reset(&mut self, ctx: ComponentEventContext) {}
+    fn update(&mut self, ctx: ComponentEventContext, resources: &mut ResourceMap, input: &Input) {}
+    fn destroy(&mut self, ctx: ComponentEventContext) {}
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {}
 }

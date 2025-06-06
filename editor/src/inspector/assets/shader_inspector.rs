@@ -48,11 +48,15 @@ impl AssetInspector for ShaderInspector {
                     break 'cleanup;
                 };
                 let assets = game.assets.lock_read();
-                game.resources.background().thread_pool().execute(move || {
-                    let material = Material::from_shader(&assets, shader);
-                    let writer = BufWriter::new(file);
-                    let _ = serde_json::to_writer_pretty(writer, &material);
-                });
+                game.resources
+                    .background()
+                    .read()
+                    .thread_pool()
+                    .execute(move || {
+                        let material = Material::from_shader(&assets, shader);
+                        let writer = BufWriter::new(file);
+                        let _ = serde_json::to_writer_pretty(writer, &material);
+                    });
             }
             ui.close_menu();
         }

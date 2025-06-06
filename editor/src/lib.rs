@@ -19,7 +19,6 @@ use egui::{Color32, Frame, Margin, Shadow};
 use egui_tiles::{Container, Linear, LinearDir, Tiles, Tree};
 use egui_wgpu::wgpu::PowerPreference;
 use egui_wgpu::{SurfaceErrorAction, WgpuSetup, WgpuSetupCreateNew};
-use engine::background::Background;
 use engine::context::{AssetContext, GameContext};
 use engine::core::Ref;
 use engine::error::BoxedError;
@@ -118,9 +117,12 @@ impl EditorApp {
         let tree = Self::create_tree();
         let project_path = project_path.into();
         let asset_context = AssetContext::new(cc, project_path.join("assets"))?;
-        let background = Background::new();
-        let project_manager = ProjectManager::new(asset_context.clone(), project_path, background)?;
-        let game = GameContext::new(asset_context);
+        let game = GameContext::new(asset_context.clone());
+        let project_manager = ProjectManager::new(
+            asset_context,
+            project_path,
+            game.resources.background().clone(),
+        )?;
         let panels = Panels::new(
             project_manager
                 .read()
@@ -207,7 +209,6 @@ impl eframe::App for EditorApp {
 
             resources.time_mut().update_time();
             *game_response = None;
-            scenes.simulation_scene().clear_transform_cache();
             let render_state = frame.wgpu_render_state().unwrap();
             let (width, height) = EditorApp::get_physical_size(ctx, self.state.viewport_size);
             if width != 0 && height != 0 {
@@ -288,7 +289,7 @@ impl eframe::App for EditorApp {
             let GameContext {
                 scenes, resources, ..
             } = &mut self.state.game;
-            scenes.update(resources.time(), &input);
+            scenes.update(resources, &input);
         }
 
         self.fps_counter += 1;
@@ -448,15 +449,15 @@ impl EditorApp {
                             ui.label(format!("{}", self.fps));
                         }
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            let task_list_ref = self.state.game.resources.background().task_list();
-                            let task_list = task_list_ref.read();
-                            if !task_list.is_empty() {
+                            let background_ref = self.state.game.resources.background().clone();
+                            let background = background_ref.read();
+                            if !background.task_list().is_empty() {
                                 ui.add(egui::Spinner::new().size(15.0));
                             }
-                            match task_list.len() {
+                            match background.task_list().len() {
                                 0 => {}
                                 1 => {
-                                    let id = task_list.iter().next().unwrap();
+                                    let id = background.task_list().iter().next().unwrap();
                                     if let Some(task_id) = TaskId::from_isize(*id) {
                                         ui.label(task_id.message());
                                     }

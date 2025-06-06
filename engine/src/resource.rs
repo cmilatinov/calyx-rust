@@ -1,5 +1,6 @@
 use crate::background::Background;
-use crate::core::Time;
+use crate::core::{Ref, Time};
+use crate::net::Network;
 use downcast_rs::{impl_downcast, Downcast};
 pub use engine_derive::Resource;
 use paste::paste;
@@ -38,7 +39,8 @@ impl ResourceMap {
             inner: Default::default(),
         };
         resources.insert_default::<Time>();
-        resources.insert_default::<Background>();
+        resources.insert::<Ref<Background>>(Background::new());
+        resources.insert_default::<Network>();
         resources
     }
 
@@ -66,6 +68,26 @@ impl ResourceMap {
             .and_then(|r| r.downcast_mut())
     }
 
+    #[inline]
+    pub fn resource2_mut<T1: Resource, T2: Resource>(&mut self) -> Option<(&mut T1, &mut T2)> {
+        match self
+            .inner
+            .get_disjoint_mut([&TypeId::of::<T1>(), &TypeId::of::<T2>()])
+        {
+            [Some(value1), Some(value2)] => {
+                if let (Some(value1), Some(value2)) =
+                    (value1.downcast_mut::<T1>(), value2.downcast_mut::<T2>())
+                {
+                    Some((value1, value2))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
     impl_getter!(mut time, Time);
-    impl_getter!(mut background, Background);
+    impl_getter!(mut background, Ref<Background>);
+    impl_getter!(mut network, Network);
 }

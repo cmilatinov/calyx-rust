@@ -52,20 +52,23 @@ impl CameraLike for EditorCamera {
             UnitQuaternion::from_euler_angles(self.rotation.x, self.rotation.y, 0.0);
         self.transform.update_matrix();
 
-        let movement = input.input(|i| {
-            let forward = (i.key_down(Key::W) as u8 as f32) - (i.key_down(Key::S) as u8 as f32);
-            let lateral = (i.key_down(Key::D) as u8 as f32) - (i.key_down(Key::A) as u8 as f32);
-            let vertical = (i.key_down(Key::Space) as u8 as f32) - (i.modifiers.shift as u8 as f32);
-            (self.transform.forward().scale(forward)
-                + self.transform.right().scale(lateral)
-                + Vec3::y_axis().scale(vertical))
-            .scale(if i.modifiers.ctrl {
-                GIGA_SPEED_FACTOR
-            } else {
-                1.0
+        let movement = input
+            .input(|i| {
+                let forward = (i.key_down(Key::W) as u8 as f32) - (i.key_down(Key::S) as u8 as f32);
+                let lateral = (i.key_down(Key::D) as u8 as f32) - (i.key_down(Key::A) as u8 as f32);
+                let vertical =
+                    (i.key_down(Key::Space) as u8 as f32) - (i.modifiers.shift as u8 as f32);
+                (self.transform.forward().scale(forward)
+                    + self.transform.right().scale(lateral)
+                    + Vec3::y_axis().scale(vertical))
+                .scale(if i.modifiers.ctrl {
+                    GIGA_SPEED_FACTOR
+                } else {
+                    1.0
+                })
+                .scale(time.static_delta_time() * TRANSLATION_SPEED)
             })
-            .scale(time.static_delta_time() * TRANSLATION_SPEED)
-        });
+            .unwrap_or(Vec3::zeros());
 
         self.transform.translate(&movement);
     }

@@ -31,12 +31,25 @@ impl<'a> Input<'a> {
         self.res
     }
 
-    pub fn input<R: Default>(&self, reader: impl FnOnce(&egui::InputState) -> R) -> R {
+    pub fn input<R>(&self, reader: impl FnOnce(&egui::InputState) -> R) -> Option<R> {
         self.context.input(|input| {
             if self.state.is_active {
-                reader(input)
+                Some(reader(input))
             } else {
-                Default::default()
+                None
+            }
+        })
+    }
+
+    pub fn input_mut<R: Default>(
+        &self,
+        reader: impl FnOnce(&mut egui::InputState) -> R,
+    ) -> Option<R> {
+        self.context.input_mut(|input| {
+            if self.state.is_active {
+                Some(reader(input))
+            } else {
+                None
             }
         })
     }

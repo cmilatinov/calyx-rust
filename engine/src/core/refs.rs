@@ -1,4 +1,5 @@
 use crate::reflect::TypeName;
+use crate::resource::Resource;
 use std::fmt::{Debug, Formatter};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak};
 use uuid::Uuid;
@@ -94,6 +95,8 @@ impl<T: TypeName> TypeName for Ref<T> {
     }
 }
 
+impl<T: Resource> Resource for Ref<T> {}
+
 pub struct ReadOnlyRef<T: ?Sized> {
     inner: Ref<T>,
 }
@@ -139,6 +142,8 @@ impl<T: ?Sized> Clone for ReadOnlyRef<T> {
         }
     }
 }
+
+impl<T: Resource> Resource for ReadOnlyRef<T> {}
 
 pub struct WeakRef<T: ?Sized> {
     id: Uuid,

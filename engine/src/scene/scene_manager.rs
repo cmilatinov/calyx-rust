@@ -1,6 +1,7 @@
 use crate::assets::AssetRegistry;
-use crate::core::{ReadOnlyRef, Time};
+use crate::core::ReadOnlyRef;
 use crate::input::Input;
+use crate::resource::ResourceMap;
 use crate::scene::Scene;
 
 pub struct SceneManager {
@@ -72,13 +73,13 @@ impl SceneManager {
         self.simulation_scene_mut().prepare();
     }
 
-    pub fn update(&mut self, time: &Time, input: &Input) {
+    pub fn update(&mut self, resources: &mut ResourceMap, input: &Input) {
         if !self.simulation_running {
             return;
         }
 
         if let Some(scene) = &mut self.simulation_scene {
-            scene.update(time, input);
+            scene.update(resources, input);
         }
     }
 

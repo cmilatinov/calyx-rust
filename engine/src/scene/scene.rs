@@ -16,14 +16,14 @@ use uuid::Uuid;
 use crate as engine;
 use crate::assets::error::AssetError;
 use crate::assets::{Asset, LoadedAsset};
-use crate::component::{Component, ComponentTransform};
+use crate::component::{Component, ComponentEventContext, ComponentTransform};
 use crate::component::{ComponentCamera, ComponentID};
 use crate::context::ReadOnlyAssetContext;
-use crate::core::Time;
 use crate::input::Input;
 use crate::math::Transform;
 use crate::physics::{PhysicsConfiguration, PhysicsContext};
 use crate::reflect::{ReflectDefault, TypeInfo};
+use crate::resource::ResourceMap;
 use crate::scene::{GameObjectRef, Prefab};
 use crate::utils::{ContextSeed, TypeUuid};
 
@@ -54,7 +54,6 @@ pub struct Scene {
     components_to_start: HashSet<(GameObject, Uuid)>,
     new_index: usize,
     assets: ReadOnlyAssetContext,
-    first_frame: bool,
 }
 
 pub struct WalkChildren {
@@ -100,7 +99,6 @@ impl Scene {
             components_to_start: Default::default(),
             new_index: 0,
             assets,
-            first_frame: true,
         }
     }
 }
@@ -586,7 +584,11 @@ impl Scene {
             let result = component.bind_instance(&mut e, meta.default());
             if result {
                 if let Some(instance) = component.get_instance_mut(&mut e) {
-                    instance.reset(&assets, unsafe { &mut *self_ptr }, game_object);
+                    instance.reset(ComponentEventContext {
+                        assets: &assets,
+                        scene: unsafe { &mut *self_ptr },
+                        game_object,
+                    });
                 }
             }
             result
@@ -639,55 +641,42 @@ impl Scene {
 
     pub fn prepare(&mut self) {
         self.delete_game_objects();
+        self.clear_transform_cache();
         PhysicsContext::prepare(self);
     }
 
-    pub fn update(&mut self, time: &Time, input: &Input) {
-        PhysicsContext::update(self, time, &PhysicsConfiguration::default());
+    pub fn update(&mut self, resources: &mut ResourceMap, input: &Input) {
+        PhysicsContext::update(self, resources.time(), &PhysicsConfiguration::default());
         let component_registry_ref = self.assets.component_registry.clone();
         let component_registry = component_registry_ref.read();
-        let ctx = self.assets.clone();
-        let first_frame = self.first_frame;
-        if first_frame {
-            self.components_to_start.clear();
-        }
+        // No way around this, we want component's update method to take &mut self
+        // but there's no way to do that and provide a &mut Scene
+        // At worst, this is a race condition because we can guarantee that
+        // this reference only lives until the end of this function
+        let scene = unsafe { &mut *(self as *mut Self) };
+        let scene2 = unsafe { &mut *(self as *mut Self) };
+        let assets = self.assets.clone();
         for (_, component) in component_registry.components_update() {
-            // No way around this, we want component's update method to take &mut self
-            // but there's no way to do that and provide a &mut Scene
-            // At worst, this is a race condition because we can guarantee that
-            // this reference only lives until the end of this function
-            let scene = unsafe { &mut *(self as *mut Self) };
-            let assets = self.assets.clone();
-            for (game_object, component_uuid) in
-                self.components_to_start.drain().collect::<Vec<_>>()
-            {
-                let Some(mut entry) = self.entry_mut(game_object) else {
-                    continue;
-                };
-                let Some(instance) = component.get_instance_mut(&mut entry) else {
-                    continue;
-                };
-                instance.start(&assets, scene, game_object);
-            }
             for game_object in <Entity>::query()
                 .iter(&self.world)
                 .filter_map(|e| self.get_game_object_from_entity(*e))
-                .collect::<Vec<_>>()
             {
-                let Some(mut entry) = self.entry_mut(game_object) else {
+                let Some(mut entry) = scene2.entry_mut(game_object) else {
                     continue;
                 };
                 let Some(instance) = component.get_instance_mut(&mut entry) else {
                     continue;
                 };
-                if first_frame {
-                    instance.start(&assets, scene, game_object);
-                }
-                instance.update(&ctx, scene, game_object, time, input);
+                instance.update(
+                    ComponentEventContext {
+                        assets: &assets,
+                        scene,
+                        game_object,
+                    },
+                    resources,
+                    input,
+                );
             }
-        }
-        if self.first_frame {
-            self.first_frame = false;
         }
     }
 

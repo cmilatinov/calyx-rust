@@ -1,5 +1,6 @@
 use egui::{
-    emath, CursorIcon, Id, InnerResponse, LayerId, Order, Pos2, Rect, Sense, Ui, UiBuilder, Vec2,
+    emath, Context, CursorIcon, Id, InnerResponse, LayerId, Order, Pos2, Rect, Sense, Ui,
+    UiBuilder, Vec2, ViewportCommand,
 };
 use std::any::Any;
 
@@ -136,5 +137,25 @@ impl EguiUiExt for Ui {
         }
 
         num_intersects % 2 != 0
+    }
+}
+
+pub trait EguiContextExt {
+    fn grab_cursor(&self, condition: bool);
+    fn grab_cursor_with_pos(&self, condition: bool, pos: Pos2);
+}
+
+impl EguiContextExt for Context {
+    fn grab_cursor(&self, condition: bool) {
+        self.grab_cursor_with_pos(condition, self.screen_rect().center())
+    }
+
+    fn grab_cursor_with_pos(&self, condition: bool, pos: Pos2) {
+        if condition {
+            self.send_viewport_cmd(ViewportCommand::CursorVisible(false));
+            self.send_viewport_cmd(ViewportCommand::CursorPosition(pos));
+        } else {
+            self.send_viewport_cmd(ViewportCommand::CursorVisible(true));
+        }
     }
 }

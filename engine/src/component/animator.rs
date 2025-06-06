@@ -1,4 +1,6 @@
-use super::{Component, ComponentBone, ComponentSkinnedMesh, ReflectComponent};
+use super::{
+    Component, ComponentBone, ComponentEventContext, ComponentSkinnedMesh, ReflectComponent,
+};
 use crate as engine;
 use crate::assets::animation::{AnimationKeyFrames, QuatKeyFrame, VectorKeyFrame};
 use crate::assets::animation_graph::{
@@ -11,6 +13,7 @@ use crate::context::ReadOnlyAssetContext;
 use crate::core::{Time, TimeType};
 use crate::input::Input;
 use crate::render::Gizmos;
+use crate::resource::ResourceMap;
 use crate::scene::{GameObject, Scene};
 use crate::{
     math,
@@ -127,39 +130,32 @@ pub struct ComponentAnimator {
 }
 
 impl Component for ComponentAnimator {
-    fn reset(&mut self, assets: &ReadOnlyAssetContext, scene: &mut Scene, game_object: GameObject) {
-        self.apply_animation_pose(assets, scene, game_object);
-    }
-
-    fn start(
+    fn reset(
         &mut self,
-        assets: &ReadOnlyAssetContext,
-        _scene: &mut Scene,
-        _game_object: GameObject,
+        ComponentEventContext {
+            assets,
+            scene,
+            game_object,
+            ..
+        }: ComponentEventContext,
     ) {
-        let Some(graph_ref) = self.animation_graph.get_ref(assets) else {
-            return;
-        };
-        let graph = graph_ref.read();
-        for param in graph.parameters.iter() {
-            self.parameters.insert(param.id, param.value);
-        }
-        self.current_state = graph
-            .start_node
-            .and_then(|id| graph.node_indices().find(|n| graph[*n].id == id));
+        self.apply_animation_pose(assets, scene, game_object);
     }
 
     fn update(
         &mut self,
-        assets: &ReadOnlyAssetContext,
-        scene: &mut Scene,
-        game_object: GameObject,
-        time: &Time,
+        ComponentEventContext {
+            assets,
+            scene,
+            game_object,
+        }: ComponentEventContext,
+        resources: &mut ResourceMap,
         _input: &Input,
     ) {
+        self.init(assets);
         self.step_fsm(assets);
-        let duration = self.apply_animation_pose(assets, scene, game_object);
-        self.update_time(time, duration);
+        self.apply_animation_pose(assets, scene, game_object);
+        self.update_time(resources.time());
     }
 
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {
@@ -190,6 +186,22 @@ impl ComponentAnimator {
 }
 
 impl ComponentAnimator {
+    fn init(&mut self, assets: &ReadOnlyAssetContext) {
+        if !self.parameters.is_empty() {
+            return;
+        }
+        let Some(graph_ref) = self.animation_graph.get_ref(assets) else {
+            return;
+        };
+        let graph = graph_ref.read();
+        for param in graph.parameters.iter() {
+            self.parameters.insert(param.id, param.value);
+        }
+        self.current_state = graph
+            .start_node
+            .and_then(|id| graph.node_indices().find(|n| graph[*n].id == id));
+    }
+
     fn step_fsm(&mut self, assets: &ReadOnlyAssetContext) {
         let new_transition;
         let Some(graph_ref) = self.animation_graph.get_ref(assets) else {
@@ -351,12 +363,9 @@ impl ComponentAnimator {
         None
     }
 
-    fn update_time(&mut self, time: &Time, animation_duration: Option<TimeType>) {
+    fn update_time(&mut self, time: &Time) {
         let delta_time = time.delta_time();
         self.time += delta_time;
-        if let Some(duration) = animation_duration {
-            self.time %= duration;
-        }
         if let Some(transition) = &mut self.current_transition {
             transition.time += delta_time;
         }

@@ -1,10 +1,9 @@
 use crate as engine;
-use crate::component::{Component, ReflectComponent};
-use crate::context::ReadOnlyAssetContext;
-use crate::core::Time;
+use crate::component::{Component, ComponentEventContext, ReflectComponent};
 use crate::input::Input;
 use crate::reflect::{Reflect, ReflectDefault};
-use crate::scene::{GameObject, GameObjectRef, Scene};
+use crate::resource::ResourceMap;
+use crate::scene::GameObjectRef;
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use nalgebra::UnitQuaternion;
 use nalgebra_glm::{Vec2, Vec3};
@@ -16,7 +15,10 @@ use serde::{Deserialize, Serialize};
 #[repr(C)]
 pub struct ComponentThirdPersonCamera {
     pub target: GameObjectRef,
+    #[reflect_attr(speed = 0.01, min = 0.0)]
     pub sensitivity: f32,
+    #[reflect_attr(speed = 0.01, min = 0.0)]
+    pub zoom_sensitivity: f32,
     #[reflect_attr(min = 0.0)]
     pub distance: f32,
     #[serde(skip)]
@@ -29,6 +31,7 @@ impl Default for ComponentThirdPersonCamera {
         Self {
             target: Default::default(),
             sensitivity: 0.5,
+            zoom_sensitivity: 0.25,
             distance: 5.0,
             rotation: Default::default(),
         }
@@ -38,14 +41,21 @@ impl Default for ComponentThirdPersonCamera {
 impl Component for ComponentThirdPersonCamera {
     fn update(
         &mut self,
-        _game: &ReadOnlyAssetContext,
-        scene: &mut Scene,
-        game_object: GameObject,
-        time: &Time,
+        ComponentEventContext {
+            scene, game_object, ..
+        }: ComponentEventContext,
+        resources: &mut ResourceMap,
         input: &Input,
     ) {
-        let delta = input.input(|input| input.pointer.motion().unwrap_or_default());
-        let rot = Vec2::new(delta.x, delta.y).scale(time.delta_time() * self.sensitivity);
+        let delta = input
+            .input(|input| input.pointer.motion().unwrap_or_default())
+            .unwrap_or(egui::Vec2::ZERO);
+        let zoom_delta = input
+            .input(|input| input.smooth_scroll_delta.y)
+            .unwrap_or(0.0);
+        self.distance -= self.zoom_sensitivity * zoom_delta;
+        let rot =
+            Vec2::new(delta.x, delta.y).scale(resources.time().delta_time() * self.sensitivity);
         self.rotation += rot;
         self.rotation.y =
             nalgebra::clamp(self.rotation.y, -89.0f32.to_radians(), 89.0f32.to_radians());

@@ -2,11 +2,17 @@ use eframe::egui_wgpu::{SurfaceErrorAction, WgpuSetup, WgpuSetupCreateNew};
 use eframe::wgpu::PowerPreference;
 use eframe::{egui_wgpu, wgpu, Frame, NativeOptions};
 use egui::load::SizedTexture;
-use egui::{Context, Direction, Image, ImageSource, InnerResponse, Layout, Rect, Sense};
+use egui::{
+    Align2, Color32, Context, Direction, FontId, Image, ImageSource, InnerResponse, Layout, Pos2,
+    Rect, Sense,
+};
 use engine::context::{AssetContext, GameContext};
+use engine::core::Time;
 use engine::error::DynError;
+use engine::ext::egui::EguiContextExt;
 use engine::input::{Input, InputState};
-use engine::render::{Camera, SceneRenderer};
+use engine::net::Network;
+use engine::render::{Camera, SceneRenderer, SceneRendererOptions};
 use engine::scene::Scene;
 use sandbox::plugin_main;
 use std::path::PathBuf;
@@ -23,69 +29,117 @@ use winit::platform::x11::EventLoopBuilderExtX11;
 struct GameApp {
     game: GameContext,
     renderer: SceneRenderer,
+    fps_counter: usize,
+    fps: usize,
 }
 
 impl GameApp {
     fn new(cc: &eframe::CreationContext) -> Result<Self, Box<DynError>> {
         let assets =
             AssetContext::new(cc, PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"))?;
-        plugin_main(&mut assets.type_registry.write());
+        {
+            let mut type_registry = assets.type_registry.write();
+            plugin_main(&mut type_registry);
+            assets
+                .component_registry
+                .write()
+                .refresh_class_lists(&mut type_registry);
+        }
         let mut game = GameContext::new(assets.clone());
         let scene = assets.asset_registry.read().load::<Scene>("scene").unwrap();
         game.scenes.load_scene(scene.readonly());
         Ok(Self {
-            game: GameContext::new(assets.clone()),
-            renderer: SceneRenderer::new(&assets.lock_read(), Default::default()),
+            game,
+            renderer: SceneRenderer::new(
+                &assets.lock_read(),
+                SceneRendererOptions {
+                    samples: 8,
+                    ..Default::default()
+                },
+            ),
+            fps_counter: 0,
+            fps: 0,
         })
+    }
+
+    fn physical_size(ctx: &Context, rect: &Rect) -> (u32, u32) {
+        let pixels_per_point = ctx.pixels_per_point();
+        (
+            (pixels_per_point * rect.width()) as u32,
+            (pixels_per_point * rect.height()) as u32,
+        )
     }
 }
 
 impl eframe::App for GameApp {
     fn update(&mut self, ctx: &Context, frame: &mut Frame) {
-        let Some(texture_id) = self
-            .renderer
-            .scene_texture_handle()
-            .map(|handle| handle.id())
-        else {
-            return;
-        };
+        self.game.resources.time_mut().update_time();
 
-        let mut rect = Rect::ZERO;
-        egui::CentralPanel::default().show(ctx, |ui| {
-            let InnerResponse {
-                inner: response, ..
-            } = ui.with_layout(
-                Layout::centered_and_justified(Direction::LeftToRight),
-                |ui| {
-                    ui.add(
-                        Image::new(ImageSource::Texture(SizedTexture {
-                            id: texture_id,
-                            size: ui.available_size(),
-                        }))
-                        .sense(Sense::click_and_drag()),
-                    )
-                },
-            );
-            let state = InputState {
-                is_active: true,
-                last_cursor_pos: None,
-            };
-            rect = response.rect;
-            let input = Input::from_ctx(ui.ctx(), Some(&response), state);
+        {
             let GameContext {
                 scenes, resources, ..
             } = &mut self.game;
-            let scene = scenes.current_scene_mut();
-            scene.prepare();
-            scene.update(resources.time(), &input);
-        });
+            if let Some((network, time)) = resources.resource2_mut::<Network, Time>() {
+                // TODO: Pass &Time resource directly maybe?
+                network.update(scenes.current_scene_mut(), time.static_duration());
+            }
+        }
+
+        let texture_id = self
+            .renderer
+            .scene_texture_handle()
+            .map(|handle| handle.id())
+            .expect("invalid or missing scene texture");
+        let mut rect = Rect::ZERO;
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(ctx, |ui| {
+                let InnerResponse {
+                    inner: response, ..
+                } = ui.with_layout(
+                    Layout::centered_and_justified(Direction::LeftToRight),
+                    |ui| {
+                        ui.add(
+                            Image::new(ImageSource::Texture(SizedTexture {
+                                id: texture_id,
+                                size: ui.available_size(),
+                            }))
+                            .sense(Sense::click_and_drag()),
+                        )
+                    },
+                );
+                let state = InputState {
+                    is_active: true,
+                    last_cursor_pos: None,
+                };
+                rect = response.rect;
+                let input = Input::from_ctx(ui.ctx(), Some(&response), state);
+                let GameContext {
+                    scenes, resources, ..
+                } = &mut self.game;
+                let scene = scenes.current_scene_mut();
+                scene.prepare();
+                scene.update(resources, &input);
+                ui.painter().text(
+                    Pos2::new(0.0, ui.max_rect().height()),
+                    Align2::LEFT_BOTTOM,
+                    format!("{}", self.fps),
+                    FontId::proportional(18.0),
+                    Color32::GREEN,
+                );
+            });
 
         {
             let GameApp { game, renderer, .. } = self;
             let render_state = frame.wgpu_render_state().unwrap();
             let scene = game.scenes.current_scene();
+            let (width, height) = Self::physical_size(ctx, &rect);
+            if width != 0 && height != 0 {
+                renderer.resize_textures(width, height);
+            }
             if let Some((game_object, c_camera)) = scene.get_main_camera() {
                 let transform = scene.get_world_transform(game_object);
+
                 let camera = Camera::new(
                     rect.aspect_ratio(),
                     c_camera.fov,
@@ -95,6 +149,16 @@ impl eframe::App for GameApp {
                 renderer.render_scene(render_state, &camera, &transform, scene, None);
             }
         }
+
+        self.fps_counter += 1;
+        if self.game.resources.time().timer("fps") >= 1.0 {
+            self.fps = self.fps_counter;
+            self.fps_counter = 0;
+            self.game.resources.time_mut().reset_timer("fps");
+        }
+
+        // ctx.grab_cursor(ctx.input(|input| input.focused));
+        ctx.request_repaint();
     }
 }
 

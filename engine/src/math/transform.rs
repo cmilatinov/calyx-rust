@@ -11,7 +11,7 @@ use crate::utils::TypeUuid;
 use super::{compose_transform, decompose_transform};
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, TypeUuid, Reflect)]
-#[serde(from = "TransformShadow")]
+#[serde(from = "TransformData")]
 pub struct Transform {
     #[serde(skip)]
     pub position: Vector3<f32>,
@@ -179,13 +179,13 @@ impl Transform {
 }
 
 #[derive(Deserialize)]
-struct TransformShadow {
+struct TransformData {
     matrix: Mat4,
 }
 
-impl From<TransformShadow> for Transform {
-    fn from(value: TransformShadow) -> Self {
-        let TransformShadow { matrix } = value;
+impl From<TransformData> for Transform {
+    fn from(value: TransformData) -> Self {
+        let TransformData { matrix } = value;
         let mut transform = Transform {
             inverse_matrix: glm::inverse(&matrix),
             matrix,

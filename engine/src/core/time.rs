@@ -2,7 +2,7 @@ use crate as engine;
 use crate::resource::Resource;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub type TimeType = f32;
 
@@ -42,6 +42,10 @@ impl Time {
 
     pub fn reset_timer(&self, name: &'static str) {
         self.timers.borrow_mut().insert(name, Instant::now());
+    }
+
+    pub fn static_duration(&self) -> Duration {
+        Duration::from_secs_f32(self.static_delta_time)
     }
 
     time_member_getter!(time);
