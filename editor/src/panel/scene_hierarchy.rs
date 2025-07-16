@@ -239,10 +239,15 @@ impl PanelSceneHierarchy {
             }
             if ui.button("Delete").clicked() {
                 scene.delete_game_object(game_object);
+                *selection = Selection::none();
                 ui.close_menu();
             }
             if ui.button("New Game Object").clicked() {
-                scene.create_game_object(None, Some(game_object));
+                let child = scene.create_game_object(None, Some(game_object));
+                *selection = Selection::from_id(
+                    SelectionType::GameObject,
+                    scene.get_game_object_uuid(child),
+                );
                 ui.close_menu();
             }
         });

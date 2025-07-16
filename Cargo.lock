@@ -2076,6 +2076,7 @@ dependencies = [
  "image",
  "inventory",
  "legion",
+ "lerp",
  "mint",
  "naga 25.0.1",
  "nalgebra",
@@ -2097,6 +2098,7 @@ dependencies = [
  "serde_json",
  "sha-1",
  "transform-gizmo-egui",
+ "typed-builder",
  "uuid 1.16.0",
 ]
 
@@ -3657,6 +3659,27 @@ dependencies = [
  "quote",
  "syn 1.0.109",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "lerp"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ecc56a024593ecbcacb6bb4f8f4ace719eb08ae9b701535640ef3efb0e706260"
+dependencies = [
+ "lerp_derive",
+ "num-traits",
+]
+
+[[package]]
+name = "lerp_derive"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36cd57b70ff225446222bf104d80f6d43d2bdca0f2f31171d6cf17148bce0171"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -7206,6 +7229,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "deb68604048ff8fa93347f02441e4487594adc20bb8a084f9e564d2b827a0a9f"
 dependencies = [
  "rustc-hash 1.1.0",
+]
+
+[[package]]
+name = "typed-builder"
+version = "0.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce63bcaf7e9806c206f7d7b9c1f38e0dce8bb165a80af0898161058b19248534"
+dependencies = [
+ "typed-builder-macro",
+]
+
+[[package]]
+name = "typed-builder-macro"
+version = "0.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "60d8d828da2a3d759d3519cdf29a5bac49c77d039ad36d0782edadbf9cd5415b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
 ]
 
 [[package]]

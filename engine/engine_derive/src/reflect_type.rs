@@ -1,13 +1,14 @@
 use proc_macro::TokenStream;
 
+use crate::fq::{FQAny, FQAttributeValue, FQBox, FQReflect, FQReflectedType, FQTypeName};
 use proc_macro2::{Ident, Span};
 use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::token::Comma;
-use syn::{DeriveInput, Expr, ExprLit, Fields, Lit, LitStr, Meta, MetaNameValue, Path, Token};
-
-use crate::fq::{FQAny, FQAttributeValue, FQBox, FQReflect, FQReflectedType, FQTypeName};
+use syn::{
+    Attribute, DeriveInput, Expr, ExprLit, Fields, Lit, LitStr, Meta, MetaNameValue, Path, Token,
+};
 
 #[derive(Debug)]
 struct ReflectAttribute {
@@ -50,6 +51,10 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
     let ast: DeriveInput = syn::parse(input).unwrap();
     let name = &ast.ident;
     let attrs = &ast.attrs;
+
+    if !has_repr_c(&attrs) {
+        panic!("Reflect requires #[repr(C)]");
+    }
 
     let fields = match &ast.data {
         syn::Data::Struct(s) => &s.fields,
@@ -223,4 +228,19 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
             }
         );
     })
+}
+
+fn has_repr_c(attrs: &[Attribute]) -> bool {
+    for attr in attrs {
+        if !attr.meta.path().is_ident("repr") {
+            continue;
+        }
+        let Ok(path) = attr.parse_args::<Path>() else {
+            continue;
+        };
+        if path.is_ident("C") {
+            return true;
+        }
+    }
+    false
 }

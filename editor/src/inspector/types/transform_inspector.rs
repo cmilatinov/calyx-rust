@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, TypeInspector)]
+#[repr(C)]
 pub struct TransformInspector;
 
 impl TypeInspector for TransformInspector {
@@ -42,10 +43,9 @@ impl TypeInspector for TransformInspector {
                 changed |= Widgets::drag_float3(ui, 0.1, &mut transform.scale);
             });
             if changed {
-                transform.update_matrix();
                 t_comp
                     .transform
-                    .set_local_matrix(&(parent_transform.inverse_matrix * transform.matrix));
+                    .set_local_matrix(&(parent_transform.inverse_matrix() * transform.matrix()));
             }
         }
     }
@@ -64,7 +64,7 @@ impl TypeInspector for TransformInspector {
                     .unwrap_or_default();
                 t_comp
                     .transform
-                    .set_local_matrix(&parent_transform.inverse_matrix);
+                    .set_local_matrix(&parent_transform.inverse_matrix());
                 ui.close_menu()
             }
         }

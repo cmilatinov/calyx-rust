@@ -1,4 +1,5 @@
 use crate::reflect::Reflect;
+use crate::utils::TypeUuid;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -53,11 +54,14 @@ pub struct NamedField {
 }
 
 impl NamedField {
-    pub fn get<'a, T: 'static + Reflect>(&'a self, instance: &'a dyn Reflect) -> Option<&'a T> {
+    pub fn get<'a, T: 'static + Reflect + TypeUuid>(
+        &'a self,
+        instance: &'a dyn Reflect,
+    ) -> Option<&'a T> {
         let value = (self.getter)(instance.as_any())?;
         value.downcast_ref::<T>()
     }
-    pub fn get_mut<'a, T: 'static + Reflect>(
+    pub fn get_mut<'a, T: 'static + Reflect + TypeUuid>(
         &'a self,
         instance: &'a mut dyn Reflect,
     ) -> Option<&'a mut T> {

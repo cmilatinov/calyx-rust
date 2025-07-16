@@ -32,7 +32,7 @@ impl RenderUtils {
         view: &wgpu::TextureView,
         clear_value: f32,
         stencil_ops: Option<wgpu::Operations<u32>>,
-    ) -> wgpu::RenderPassDepthStencilAttachment {
+    ) -> wgpu::RenderPassDepthStencilAttachment<'_> {
         wgpu::RenderPassDepthStencilAttachment {
             view,
             depth_ops: Some(wgpu::Operations {

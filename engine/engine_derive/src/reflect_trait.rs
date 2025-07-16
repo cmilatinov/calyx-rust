@@ -63,7 +63,7 @@ pub(crate) fn reflect_trait(_args: TokenStream, input: TokenStream) -> TokenStre
         }
 
         #[automatically_derived]
-        impl<T: #trait_ident + #FQReflect> #FQTraitMetaFrom<T> for #reflect_trait_ident {
+        impl<T: #trait_ident + #FQReflect + #FQTypeUuid> #FQTraitMetaFrom<T> for #reflect_trait_ident {
             fn trait_meta() -> Self {
                 Self {
                     get_func: |reflect_value| {

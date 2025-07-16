@@ -1,4 +1,5 @@
 mod network;
+mod player;
 
 use engine::reflect::type_registry::TypeRegistry;
 

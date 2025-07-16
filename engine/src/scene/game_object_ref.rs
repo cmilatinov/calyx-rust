@@ -14,6 +14,7 @@ use super::GameObject;
 #[derive(Default, Clone, Copy, TypeUuid, Reflect)]
 #[uuid = "a20d9c21-adea-4af1-ad75-05828aad89de"]
 #[reflect(Default)]
+#[repr(C)]
 pub struct GameObjectRef {
     id: Uuid,
 }
@@ -47,17 +48,11 @@ impl GameObjectRef {
         scene.get_game_object_by_uuid(self.id)
     }
 
-    pub fn entry<'a, T: legion::storage::Component>(
-        &self,
-        scene: &'a Scene,
-    ) -> Option<EntryRef<'a>> {
+    pub fn entry<'a>(&self, scene: &'a Scene) -> Option<EntryRef<'a>> {
         self.game_object(scene).and_then(|go| scene.entry(go))
     }
 
-    pub fn entry_mut<'a, T: legion::storage::Component>(
-        &self,
-        scene: &'a mut Scene,
-    ) -> Option<Entry<'a>> {
+    pub fn entry_mut<'a>(&self, scene: &'a mut Scene) -> Option<Entry<'a>> {
         self.game_object(scene).and_then(|go| scene.entry_mut(go))
     }
 

@@ -1,6 +1,6 @@
-use nalgebra::{Matrix4, Quaternion, UnitQuaternion, Vector3};
+use nalgebra::{Quaternion, Unit, UnitQuaternion};
 use nalgebra_glm as glm;
-use nalgebra_glm::{DQuat, DVec3, Mat4, Quat, Vec3};
+use nalgebra_glm::{DQuat, DVec3, Mat3, Mat4, Quat, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 
 use crate as engine;
@@ -11,46 +11,44 @@ use crate::utils::TypeUuid;
 use super::{compose_transform, decompose_transform};
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, TypeUuid, Reflect)]
-#[serde(from = "TransformData")]
+#[repr(C)]
 pub struct Transform {
-    #[serde(skip)]
-    pub position: Vector3<f32>,
-    #[serde(skip)]
+    pub position: Vec3,
     pub rotation: UnitQuaternion<f32>,
-    #[serde(skip)]
-    pub scale: Vector3<f32>,
-    pub matrix: Matrix4<f32>,
-    #[serde(skip)]
-    pub inverse_matrix: Matrix4<f32>,
+    pub scale: Vec3,
 }
 
 impl Default for Transform {
     fn default() -> Self {
         let position = Vec3::default();
         let rotation = UnitQuaternion::identity();
-        let scale = glm::vec3(1.0, 1.0, 1.0);
-        let matrix = compose_transform(&position, &rotation, &scale);
-        let inverse_matrix = glm::inverse(&matrix);
+        let scale = Vec3::from_element(1.0);
         Transform {
             position,
             rotation,
             scale,
-            matrix,
-            inverse_matrix,
         }
+    }
+}
+
+impl From<&Mat4> for Transform {
+    fn from(matrix: &Mat4) -> Self {
+        let mut transform = Transform {
+            ..Default::default()
+        };
+        decompose_transform(
+            matrix,
+            &mut transform.position,
+            &mut transform.rotation,
+            &mut transform.scale,
+        );
+        transform
     }
 }
 
 impl From<Mat4> for Transform {
     fn from(matrix: Mat4) -> Self {
-        let inverse_matrix = glm::inverse(&matrix);
-        let mut transform = Transform {
-            matrix,
-            inverse_matrix,
-            ..Default::default()
-        };
-        transform.update_components();
-        transform
+        (&matrix).into()
     }
 }
 
@@ -63,33 +61,25 @@ impl From<mint::ColumnMatrix4<f32>> for Transform {
 
 impl From<Transform> for Mat4 {
     fn from(value: Transform) -> Self {
-        value.matrix
+        value.matrix()
     }
 }
 
 impl Transform {
     pub fn from_components(position: Vec3, rotation: UnitQuaternion<f32>, scale: Vec3) -> Self {
-        let mut transform = Transform {
+        Transform {
             position,
             rotation,
             scale,
-            matrix: Mat4::default(),
-            inverse_matrix: Mat4::default(),
-        };
-        transform.update_matrix();
-        transform
+        }
     }
 
     pub fn from_xyz(x: f32, y: f32, z: f32) -> Self {
-        let mut transform = Transform {
+        Transform {
             position: Vec3::new(x, y, z),
             rotation: UnitQuaternion::identity(),
             scale: Vec3::new(1.0, 1.0, 1.0),
-            matrix: Default::default(),
-            inverse_matrix: Default::default(),
-        };
-        transform.update_matrix();
-        transform
+        }
     }
 
     pub fn look_at(&mut self, position: &Vec3) {
@@ -97,54 +87,44 @@ impl Transform {
         if glm::length(&diff) <= 0.000001f32 {
             return;
         }
-        self.rotation = UnitQuaternion::new_unchecked(glm::quat_look_at(
-            &glm::normalize(&diff),
-            &glm::vec3(0f32, 1f32, 0f32),
-        ));
-        self.update_matrix();
+        self.rotation = UnitQuaternion::look_at_rh(&diff.normalize(), &Vec3::y_axis());
     }
 
     pub fn transform_position(&self, position: &Vec3) -> Vec3 {
-        let transformed = self.matrix * glm::vec4(position.x, position.y, position.z, 1.0);
+        let transformed = self.matrix() * glm::vec4(position.x, position.y, position.z, 1.0);
         glm::vec3(transformed.x, transformed.y, transformed.z)
     }
 
     pub fn transform_direction(&self, direction: &Vec3) -> Vec3 {
-        let matrix = glm::mat4_to_mat3(&self.matrix);
+        let matrix = glm::mat4_to_mat3(&self.matrix());
         matrix * direction
     }
 
     pub fn inverse_transform_position(&self, position: &Vec3) -> Vec3 {
         let transformed =
-            self.get_inverse_matrix() * glm::vec4(position.x, position.y, position.z, 1.0);
-        glm::vec3(transformed.x, transformed.y, transformed.z)
+            self.inverse_matrix() * Vec4::new(position.x, position.y, position.z, 1.0);
+        Vec3::new(transformed.x, transformed.y, transformed.z)
     }
 
     pub fn inverse_transform_direction(&self, direction: &Vec3) -> Vec3 {
-        let matrix = glm::mat4_to_mat3(&self.get_inverse_matrix());
+        let matrix = glm::mat4_to_mat3(&self.inverse_matrix());
         matrix * direction
     }
 
     pub fn set_local_matrix(&mut self, matrix: &Mat4) {
-        self.matrix = *matrix;
-        self.update_components();
+        *self = matrix.into();
     }
 
     pub fn translate(&mut self, translation: &Vec3) {
         self.position += translation;
-        self.update_matrix();
     }
 
     pub fn rotate(&mut self, rotation: &UnitQuaternion<f32>) {
         self.rotation *= rotation;
-        self.update_matrix();
     }
 
     pub fn scale(&mut self, scale: &Vec3) {
-        self.scale.x *= scale.x;
-        self.scale.y *= scale.y;
-        self.scale.z *= scale.z;
-        self.update_matrix();
+        self.scale = self.scale.component_mul(scale);
     }
 
     pub fn forward(&self) -> Vec3 {
@@ -159,40 +139,74 @@ impl Transform {
         self.transform_direction(&glm::vec3(0.0, 1.0, 0.0))
     }
 
-    pub fn update_matrix(&mut self) {
-        self.matrix = compose_transform(&self.position, &self.rotation, &self.scale);
-        self.inverse_matrix = glm::inverse(&self.matrix);
+    pub fn matrix(&self) -> Mat4 {
+        compose_transform(&self.position, &self.rotation, &self.scale)
     }
 
-    pub fn update_components(&mut self) {
-        decompose_transform(
-            &self.matrix,
-            &mut self.position,
-            &mut self.rotation,
-            &mut self.scale,
-        );
+    pub fn inverse_matrix(&self) -> Mat4 {
+        let inv_scale = Vec3::new(1.0 / self.scale.x, 1.0 / self.scale.y, 1.0 / self.scale.z);
+        let inv_rot = self.rotation.conjugate();
+
+        // Build inverse matrix directly
+        let rot_mat = inv_rot.to_rotation_matrix();
+        let scaled_rot = rot_mat.matrix() * Mat3::from_diagonal(&inv_scale);
+
+        // Apply inverse translation
+        let inv_translation = -(scaled_rot * self.position);
+
+        Mat4::new(
+            scaled_rot[(0, 0)],
+            scaled_rot[(0, 1)],
+            scaled_rot[(0, 2)],
+            inv_translation.x,
+            scaled_rot[(1, 0)],
+            scaled_rot[(1, 1)],
+            scaled_rot[(1, 2)],
+            inv_translation.y,
+            scaled_rot[(2, 0)],
+            scaled_rot[(2, 1)],
+            scaled_rot[(2, 2)],
+            inv_translation.z,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+        )
     }
 
-    pub fn get_inverse_matrix(&self) -> Mat4 {
-        glm::inverse(&self.matrix)
-    }
-}
+    pub fn nlerp(transforms: impl Iterator<Item = (f32, Transform)>) -> Transform {
+        let mut position = Vec3::zeros();
+        let mut rotation = Quat::new(0.0, 0.0, 0.0, 0.0);
+        let mut scale = Vec3::new(1.0, 1.0, 1.0);
+        let mut total_weight = 0.0;
 
-#[derive(Deserialize)]
-struct TransformData {
-    matrix: Mat4,
-}
+        for (weight, transform) in transforms {
+            total_weight += weight;
+            position += transform.position * weight;
 
-impl From<TransformData> for Transform {
-    fn from(value: TransformData) -> Self {
-        let TransformData { matrix } = value;
-        let mut transform = Transform {
-            inverse_matrix: glm::inverse(&matrix),
-            matrix,
-            ..Default::default()
-        };
-        transform.update_components();
-        transform
+            // Simpler scaling approach - direct linear blend
+            // This works reasonably well for moderate scaling differences
+            scale += (transform.scale - Vec3::new(1.0, 1.0, 1.0)) * weight;
+
+            let q = transform.rotation.into_inner();
+            let dot = rotation.dot(&q);
+            let corrected_q = if dot < 0.0 { -q } else { q };
+            rotation += corrected_q * weight;
+        }
+
+        // Normalize if needed
+        if (total_weight - 1.0).abs() > std::f32::EPSILON && total_weight > 0.0 {
+            position /= total_weight;
+            scale = Vec3::new(1.0, 1.0, 1.0) + (scale - Vec3::new(1.0, 1.0, 1.0)) / total_weight;
+        }
+
+        let rotation = Unit::new_normalize(rotation);
+
+        Transform {
+            position,
+            rotation,
+            scale,
+        }
     }
 }
 

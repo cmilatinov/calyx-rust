@@ -10,6 +10,8 @@ pub type TimeType = f32;
 pub struct Time {
     timers: RefCell<HashMap<&'static str, Instant>>,
     last_time: Instant,
+    tick_rate: TimeType,
+    tick_period: TimeType,
     pub time: TimeType,
     pub static_time: TimeType,
     pub delta_time: TimeType,
@@ -25,7 +27,29 @@ macro_rules! time_member_getter {
     };
 }
 
+impl Default for Time {
+    fn default() -> Self {
+        Self::new(Self::DEFAULT_TICK_RATE_HZ)
+    }
+}
+
 impl Time {
+    const DEFAULT_TICK_RATE_HZ: TimeType = 120.0;
+
+    pub fn new(tick_rate: TimeType) -> Self {
+        Self {
+            timers: RefCell::new(HashMap::new()),
+            last_time: Instant::now(),
+            tick_rate,
+            tick_period: 1.0 / tick_rate,
+            time: 0.0,
+            static_time: 0.0,
+            delta_time: 0.0,
+            static_delta_time: 0.0,
+            time_scale: 1.0,
+        }
+    }
+
     pub fn update_time(&mut self) {
         self.static_delta_time = self.last_time.elapsed().as_secs_f32();
         self.static_time += self.static_delta_time;
@@ -48,23 +72,21 @@ impl Time {
         Duration::from_secs_f32(self.static_delta_time)
     }
 
+    pub fn tick_rate(&self) -> TimeType {
+        self.tick_rate
+    }
+
+    pub fn current_tick(&self) -> u32 {
+        (self.time / self.tick_period) as u32
+    }
+
+    pub fn time_to_tick(&self, time: TimeType) -> u32 {
+        (time / self.tick_period) as u32
+    }
+
     time_member_getter!(time);
     time_member_getter!(delta_time);
     time_member_getter!(static_time);
     time_member_getter!(static_delta_time);
     time_member_getter!(time_scale);
-}
-
-impl Default for Time {
-    fn default() -> Self {
-        Self {
-            timers: RefCell::new(HashMap::new()),
-            last_time: Instant::now(),
-            time: 0.0,
-            static_time: 0.0,
-            delta_time: 0.0,
-            static_delta_time: 0.0,
-            time_scale: 1.0,
-        }
-    }
 }

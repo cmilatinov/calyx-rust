@@ -123,6 +123,7 @@ impl EditorApp {
             project_path,
             game.resources.background().clone(),
         )?;
+        project_manager.read().build_assemblies();
         let panels = Panels::new(
             project_manager
                 .read()

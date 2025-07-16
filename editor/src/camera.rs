@@ -50,7 +50,6 @@ impl CameraLike for EditorCamera {
             nalgebra::clamp(self.rotation.x, -89.0f32.to_radians(), 89.0f32.to_radians());
         self.transform.rotation =
             UnitQuaternion::from_euler_angles(self.rotation.x, self.rotation.y, 0.0);
-        self.transform.update_matrix();
 
         let movement = input
             .input(|i| {

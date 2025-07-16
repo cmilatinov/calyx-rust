@@ -7,11 +7,8 @@ use egui::{
     Rect, Sense,
 };
 use engine::context::{AssetContext, GameContext};
-use engine::core::Time;
 use engine::error::DynError;
-use engine::ext::egui::EguiContextExt;
 use engine::input::{Input, InputState};
-use engine::net::Network;
 use engine::render::{Camera, SceneRenderer, SceneRendererOptions};
 use engine::scene::Scene;
 use sandbox::plugin_main;
@@ -73,17 +70,7 @@ impl GameApp {
 
 impl eframe::App for GameApp {
     fn update(&mut self, ctx: &Context, frame: &mut Frame) {
-        self.game.resources.time_mut().update_time();
-
-        {
-            let GameContext {
-                scenes, resources, ..
-            } = &mut self.game;
-            if let Some((network, time)) = resources.resource2_mut::<Network, Time>() {
-                // TODO: Pass &Time resource directly maybe?
-                network.update(scenes.current_scene_mut(), time.static_duration());
-            }
-        }
+        self.game.update();
 
         let texture_id = self
             .renderer
@@ -165,8 +152,8 @@ impl eframe::App for GameApp {
 fn main() -> eframe::Result<()> {
     let options = NativeOptions {
         viewport: egui::ViewportBuilder {
-            inner_size: Some(egui::vec2(1600.0, 900.0)),
-            min_inner_size: Some(egui::vec2(1600.0, 900.0)),
+            inner_size: Some(egui::vec2(1280.0, 720.0)),
+            min_inner_size: Some(egui::vec2(1280.0, 720.0)),
             decorations: Some(true),
             ..Default::default()
         },

@@ -1,7 +1,7 @@
 use crate::error::BoxedError;
 use crate::net::message::GameMessage;
-use crate::scene::Scene;
-use renet::{DefaultChannel, RenetClient};
+use crate::net::MessageQueue;
+use renet::{ClientId, DefaultChannel, RenetClient};
 use renet_netcode::{ClientAuthentication, NetcodeClientTransport};
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, SystemTime};
@@ -9,6 +9,7 @@ use std::time::{Duration, SystemTime};
 pub struct Client {
     client: RenetClient,
     transport: Option<NetcodeClientTransport>,
+    pub(crate) client_ids: Vec<ClientId>,
 }
 
 impl Default for Client {
@@ -16,6 +17,7 @@ impl Default for Client {
         Self {
             client: RenetClient::new(Default::default()),
             transport: None,
+            client_ids: Default::default(),
         }
     }
 }
@@ -25,6 +27,7 @@ impl Client {
         Self {
             client: RenetClient::new(Default::default()),
             transport: None,
+            client_ids: Default::default(),
         }
     }
 
@@ -46,8 +49,10 @@ impl Client {
         Ok(())
     }
 
-    pub fn update(&mut self, scene: &mut Scene, duration: Duration) {
-        let Self { client, transport } = self;
+    pub fn update(&mut self, queue: &mut MessageQueue<GameMessage>, duration: Duration) {
+        let Self {
+            client, transport, ..
+        } = self;
         client.update(duration);
         if let Some(transport) = transport {
             if let Err(err) = transport.update(duration, client) {
@@ -62,7 +67,7 @@ impl Client {
             .receive_message(DefaultChannel::ReliableOrdered)
             .and_then(|bytes| bincode::deserialize::<GameMessage>(&bytes).ok())
         {
-            println!("CLIENT - Received message: {:?}", message);
+            queue.queue_message(message);
         }
     }
 
@@ -88,5 +93,13 @@ impl Client {
 
     pub fn rtt(&self) -> Duration {
         Duration::from_secs_f64(self.client.rtt())
+    }
+
+    pub fn client_id(&self) -> Option<ClientId> {
+        self.transport.as_ref().map(|t| t.client_id())
+    }
+
+    pub fn client_ids(&self) -> Vec<ClientId> {
+        self.client_ids.clone()
     }
 }

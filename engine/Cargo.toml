@@ -45,3 +45,5 @@ renet_netcode.workspace = true
 renet_visualizer.workspace = true
 bincode.workspace = true
 num-traits.workspace = true
+lerp.workspace = true
+typed-builder.workspace = true

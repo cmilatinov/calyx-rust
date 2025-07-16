@@ -6,7 +6,6 @@ use nalgebra_glm::{vec4, Mat4};
 use rapier3d::pipeline::DebugRenderPipeline;
 use std::default::Default;
 use std::path::Path;
-use std::sync::Arc;
 
 use crate::assets::mesh::Mesh;
 use crate::assets::Asset;
@@ -20,7 +19,7 @@ use crate::render::render_utils::RenderUtils;
 use crate::scene::Scene;
 
 use super::buffer::wgpu_buffer_init_desc;
-use super::{PipelineOptions, RenderContext, Shader};
+use super::{PipelineOptions, Shader};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -33,7 +32,6 @@ pub struct GizmoInstance {
 }
 
 pub struct GizmoRenderer {
-    render_context: Arc<RenderContext>,
     component_registry: ReadOnlyRef<ComponentRegistry>,
 
     samples: u32,
@@ -62,19 +60,18 @@ impl GizmoRenderer {
         camera_uniform_buffer: &wgpu::Buffer,
         samples: u32,
     ) -> Self {
-        let render_context = game.render_context.clone();
-        let render_state = render_context.render_state();
+        let render_state = game.render_context.render_state();
         let device = &render_state.device;
 
         let circle_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("circle_instance_buffer"),
-            size: (std::mem::size_of::<GizmoInstance>() * Mesh::MAX_INSTANCES) as u64,
+            size: (size_of::<GizmoInstance>() * Mesh::MAX_INSTANCES) as u64,
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let cube_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("cube_instance_buffer"),
-            size: (std::mem::size_of::<GizmoInstance>() * Mesh::MAX_INSTANCES) as u64,
+            size: (size_of::<GizmoInstance>() * Mesh::MAX_INSTANCES) as u64,
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -145,8 +142,8 @@ impl GizmoRenderer {
 
             wire_circle_mesh: game.asset_registry.read().wire_circle(),
             wire_cube_mesh: game.asset_registry.read().wire_cube(),
-            lines_mesh: Mesh::new(&render_context),
-            points_mesh: Mesh::new(&render_context),
+            lines_mesh: Mesh::new(&game.render_context),
+            points_mesh: Mesh::new(&game.render_context),
 
             shader,
             gizmo_bind_group,
@@ -159,7 +156,6 @@ impl GizmoRenderer {
             cube_instance_buffer,
 
             component_registry: game.component_registry.clone(),
-            render_context,
         };
         renderer
     }
@@ -170,13 +166,11 @@ impl GizmoRenderer {
         target_format: wgpu::TextureFormat,
         samples: u32,
     ) -> PipelineOptions {
-        self.render_context
-            .pipeline_options_builder()
+        PipelineOptions::builder()
             .samples(samples)
             .primitive_topology(topology)
             .fragment_targets(vec![Some(RenderUtils::color_alpha_blending(target_format))])
             .build()
-            .expect("invalid builder options")
     }
 
     fn clear(&mut self) {

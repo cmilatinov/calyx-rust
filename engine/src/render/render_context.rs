@@ -1,8 +1,8 @@
-use std::sync::Arc;
-
-use crate::render::{PipelineOptionsBuilder, RenderUtils};
+use crate::render::{PipelineOptions, PipelineOptionsBuilder, RenderUtils};
+use eframe::wgpu::ColorTargetState;
 use egui::epaint;
 use egui_wgpu::{wgpu, Renderer};
+use std::sync::Arc;
 
 pub struct RenderContext {
     render_state: egui_wgpu::RenderState,
@@ -44,8 +44,10 @@ impl RenderContext {
         self.texture_manager.clone()
     }
 
-    pub fn pipeline_options_builder(&self) -> PipelineOptionsBuilder {
-        PipelineOptionsBuilder::default()
+    pub fn pipeline_options_builder(
+        &self,
+    ) -> PipelineOptionsBuilder<((), (), (), (Vec<Option<ColorTargetState>>,), (), ())> {
+        PipelineOptions::builder()
             .fragment_targets(vec![Some(RenderUtils::color_default(self.target_format()))])
     }
 }

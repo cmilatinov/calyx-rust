@@ -1,48 +1,47 @@
 use crate as engine;
-use crate::component::{Component, ComponentEventContext, ComponentTransform, ReflectComponent};
+use crate::component::{AnimationParameters, Component, ReflectComponent};
+use crate::component::{ComponentAnimator, ComponentEventContext};
 use crate::input::Input;
-use crate::math::Transform;
 use crate::net::sync::{SynchronizationOptions, Synchronized};
-
 use crate::reflect::{Reflect, ReflectDefault};
 use crate::resource::ResourceMap;
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use serde::{Deserialize, Serialize};
 
 #[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
-#[uuid = "9eb02caf-dcf2-4ea4-98bf-5c170230b9a2"]
+#[uuid = "997d899f-b7ec-48cd-854f-0e3ec07440b6"]
 #[reflect(Default, TypeUuidDynamic, Component)]
-#[reflect_attr(name = "Network Transform", update)]
+#[reflect_attr(name = "Network Animator", update)]
 #[serde(default)]
 #[repr(C)]
-pub struct ComponentNetworkTransform {
-    #[reflect_skip]
+pub struct ComponentNetworkAnimator {
     #[serde(skip)]
-    transform: Synchronized<Transform>,
+    #[reflect_skip]
+    parameters: Synchronized<AnimationParameters>,
 }
 
-impl Default for ComponentNetworkTransform {
+impl Default for ComponentNetworkAnimator {
     fn default() -> Self {
         Self {
-            transform: Synchronized::new(
+            parameters: Synchronized::new(
                 SynchronizationOptions::builder()
                     .interpolate(true)
                     .extrapolate(false)
-                    .component_uuid(ComponentTransform::type_uuid())
+                    .component_uuid(ComponentAnimator::type_uuid())
                     .build(),
             ),
         }
     }
 }
 
-impl Component for ComponentNetworkTransform {
+impl Component for ComponentNetworkAnimator {
     fn update(
         &mut self,
         mut ctx: ComponentEventContext,
         resources: &mut ResourceMap,
         _input: &Input,
     ) {
-        if let Some(value) = self.transform.update(
+        if let Some(AnimationParameters(value)) = self.parameters.update(
             &mut ctx,
             resources,
             |ComponentEventContext {
@@ -51,19 +50,19 @@ impl Component for ComponentNetworkTransform {
                 let Some(entry) = scene.entry(*game_object) else {
                     return Default::default();
                 };
-                let Ok(c_transform) = entry.get_component::<ComponentTransform>() else {
+                let Ok(c_animator) = entry.get_component::<ComponentAnimator>() else {
                     return Default::default();
                 };
-                c_transform.transform
+                AnimationParameters(c_animator.parameters.clone())
             },
         ) {
             let Some(mut entry) = ctx.scene.entry_mut(ctx.game_object) else {
                 return Default::default();
             };
-            let Ok(c_transform) = entry.get_component_mut::<ComponentTransform>() else {
+            let Ok(c_animator) = entry.get_component_mut::<ComponentAnimator>() else {
                 return Default::default();
             };
-            c_transform.transform = value;
+            c_animator.parameters = value;
         }
     }
 }

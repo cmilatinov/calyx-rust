@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, TypeInspector)]
+#[repr(C)]
 pub struct FloatInspector;
 
 impl TypeInspector for FloatInspector {

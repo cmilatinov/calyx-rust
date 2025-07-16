@@ -147,7 +147,7 @@ impl PanelViewport {
             .and_then(|id| game.scenes.simulation_scene().get_game_object_by_uuid(id))
         {
             let view_matrix = RowMatrix4::from(<DMat4 as Into<ColumnMatrix4<f64>>>::into(
-                nalgebra::convert::<Mat4, DMat4>(app_state.camera.transform.inverse_matrix),
+                nalgebra::convert::<Mat4, DMat4>(app_state.camera.transform.inverse_matrix()),
             ));
             let projection_matrix = RowMatrix4::from(<DMat4 as Into<ColumnMatrix4<f64>>>::into(
                 nalgebra::convert::<Mat4, DMat4>(app_state.camera.camera.projection),
@@ -175,7 +175,7 @@ impl PanelViewport {
                 let res: Transform = transforms[0].into();
                 game.scenes
                     .simulation_scene_mut()
-                    .set_world_transform(game_object, res.matrix);
+                    .set_world_transform(game_object, res.matrix());
                 self.gizmo_status(ui, &result);
             }
         }

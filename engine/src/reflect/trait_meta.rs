@@ -1,10 +1,8 @@
 use crate::utils::TypeUuidDynamic;
-use downcast_rs::{impl_downcast, Downcast};
 
 /// Allows you to cast structs implementing the Reflect trait
 /// into a specific trait if they implement such a trait
-pub trait TraitMeta: TypeUuidDynamic + Downcast + Send + Sync {}
-impl_downcast!(TraitMeta);
+pub trait TraitMeta: TypeUuidDynamic + Send + Sync {}
 
 /// Allows creation of a TraitMeta object (ex: ReflectDefault)
 /// from its original struct type

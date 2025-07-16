@@ -22,7 +22,7 @@ pub(crate) struct AssetRenderState {
 
 #[allow(unused)]
 impl AssetRenderState {
-    pub fn lock(&self, device: &wgpu::Device) -> LockedAssetRenderState {
+    pub fn lock(&self, device: &wgpu::Device) -> LockedAssetRenderState<'_> {
         let meshes = self.meshes.lock_read();
         LockedAssetRenderState {
             mesh_instance_groups: meshes
@@ -64,22 +64,22 @@ pub(crate) struct LockedAssetRenderState<'a> {
 
 #[allow(unused)]
 impl LockedAssetRenderState<'_> {
-    pub fn mesh(&self, id: AssetId) -> &RwLockReadGuard<Mesh> {
+    pub fn mesh(&self, id: AssetId) -> &RwLockReadGuard<'_, Mesh> {
         self.meshes.get(&id).unwrap()
     }
     pub fn mesh_instance_group(&self, id: AssetId) -> &wgpu::BindGroup {
         self.mesh_instance_groups.get(&id).unwrap()
     }
-    pub fn material(&self, id: AssetId) -> &RwLockReadGuard<Material> {
+    pub fn material(&self, id: AssetId) -> &RwLockReadGuard<'_, Material> {
         self.materials.get(&id).unwrap()
     }
-    pub fn texture(&self, id: AssetId) -> &RwLockReadGuard<Texture> {
+    pub fn texture(&self, id: AssetId) -> &RwLockReadGuard<'_, Texture> {
         self.textures.get(&id).unwrap()
     }
-    pub fn shader(&self, id: AssetId) -> &RwLockReadGuard<Shader> {
+    pub fn shader(&self, id: AssetId) -> &RwLockReadGuard<'_, Shader> {
         self.shaders.get(&id).unwrap()
     }
-    pub fn skybox(&self, id: AssetId) -> &RwLockReadGuard<Skybox> {
+    pub fn skybox(&self, id: AssetId) -> &RwLockReadGuard<'_, Skybox> {
         self.skyboxes.get(&id).unwrap()
     }
 }

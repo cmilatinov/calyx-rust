@@ -21,6 +21,7 @@ use crate::component::{ComponentCamera, ComponentID};
 use crate::context::ReadOnlyAssetContext;
 use crate::input::Input;
 use crate::math::Transform;
+use crate::net::{ComponentNetworkObject, Network};
 use crate::physics::{PhysicsConfiguration, PhysicsContext};
 use crate::reflect::{ReflectDefault, TypeInfo};
 use crate::resource::ResourceMap;
@@ -51,7 +52,6 @@ pub struct Scene {
     transform_cache: RwLock<HashMap<NodeIndex, Transform>>,
     camera: Option<GameObject>,
     objects_to_delete: HashSet<GameObject>,
-    components_to_start: HashSet<(GameObject, Uuid)>,
     new_index: usize,
     assets: ReadOnlyAssetContext,
 }
@@ -96,7 +96,6 @@ impl Scene {
             transform_cache: Default::default(),
             camera: Default::default(),
             objects_to_delete: Default::default(),
-            components_to_start: Default::default(),
             new_index: 0,
             assets,
         }
@@ -535,11 +534,11 @@ impl Scene {
         game_object
     }
 
-    fn transform_cache(&self) -> RwLockReadGuard<HashMap<NodeIndex, Transform>> {
+    fn transform_cache(&self) -> RwLockReadGuard<'_, HashMap<NodeIndex, Transform>> {
         self.transform_cache.read().unwrap()
     }
 
-    fn transform_cache_mut(&self) -> RwLockWriteGuard<HashMap<NodeIndex, Transform>> {
+    fn transform_cache_mut(&self) -> RwLockWriteGuard<'_, HashMap<NodeIndex, Transform>> {
         self.transform_cache.write().unwrap()
     }
 
@@ -554,8 +553,6 @@ impl Scene {
     ) {
         let component_uuid = component.uuid();
         self.bind_component(game_object, component);
-        self.components_to_start
-            .insert((game_object, component_uuid));
     }
 
     pub(crate) fn bind_component<T: Component + Send + Sync + 'static>(
@@ -607,11 +604,11 @@ impl Scene {
         })
     }
 
-    pub fn entry(&self, game_object: GameObject) -> Option<EntryRef> {
+    pub fn entry(&self, game_object: GameObject) -> Option<EntryRef<'_>> {
         self.world.entry_ref(game_object.entity).ok()
     }
 
-    pub fn entry_mut(&mut self, game_object: GameObject) -> Option<Entry> {
+    pub fn entry_mut(&mut self, game_object: GameObject) -> Option<Entry<'_>> {
         self.world.entry(game_object.entity)
     }
 
@@ -649,10 +646,13 @@ impl Scene {
         PhysicsContext::update(self, resources.time(), &PhysicsConfiguration::default());
         let component_registry_ref = self.assets.component_registry.clone();
         let component_registry = component_registry_ref.read();
-        // No way around this, we want component's update method to take &mut self
+        // No way around this for now, we want component's update method to take &mut self
         // but there's no way to do that and provide a &mut Scene
         // At worst, this is a race condition because we can guarantee that
         // this reference only lives until the end of this function
+        // TODO(Cristian): Refactor the component update(&mut self, ...) into a static
+        // update(...) and just pass the &mut Scene once, and have the component function
+        // mutate itself by accessing the &mut Scene (which is more inconvenient btw)
         let scene = unsafe { &mut *(self as *mut Self) };
         let scene2 = unsafe { &mut *(self as *mut Self) };
         let assets = self.assets.clone();
@@ -679,8 +679,6 @@ impl Scene {
             }
         }
     }
-
-    fn first_update(&mut self) {}
 
     pub fn delete_game_objects(&mut self) {
         for game_object in self
@@ -795,34 +793,32 @@ impl Scene {
     }
 
     pub fn get_transform(&self, game_object: GameObject) -> Transform {
-        if let Some(entry) = self.entry(game_object) {
-            if let Ok(c_transform) = entry.get_component::<ComponentTransform>() {
-                return c_transform.transform;
-            }
-        }
-        Transform::default()
+        let Some(entry) = self.entry(game_object) else {
+            return Default::default();
+        };
+        let Ok(c_transform) = entry.get_component::<ComponentTransform>() else {
+            return Default::default();
+        };
+        c_transform.transform
     }
 
-    pub fn set_transform(&mut self, game_object: GameObject, matrix: Mat4) {
-        if let Some(mut entry) = self.entry_mut(game_object) {
-            if let Ok(tc) = entry.get_component_mut::<ComponentTransform>() {
-                tc.transform.set_local_matrix(&matrix);
-            }
-        }
+    pub fn set_transform(&mut self, game_object: GameObject, matrix: &Mat4) {
+        let Some(mut entry) = self.entry_mut(game_object) else {
+            return;
+        };
+        let Ok(c_transform) = entry.get_component_mut::<ComponentTransform>() else {
+            return;
+        };
+        c_transform.transform.set_local_matrix(matrix);
     }
 
     pub fn set_world_transform(&mut self, game_object: GameObject, matrix: impl Into<Mat4>) {
         let parent_transform = self
             .get_parent_game_object(game_object)
             .map_or(Mat4::identity(), |go| {
-                self.get_world_transform(go).inverse_matrix
+                self.get_world_transform(go).inverse_matrix()
             });
-        if let Some(mut entry) = self.entry_mut(game_object) {
-            if let Ok(tc) = entry.get_component_mut::<ComponentTransform>() {
-                tc.transform
-                    .set_local_matrix(&(parent_transform * matrix.into()));
-            }
-        }
+        self.set_transform(game_object, &(parent_transform * matrix.into()));
     }
 
     pub fn get_world_transform(&self, game_object: GameObject) -> Transform {
@@ -834,10 +830,12 @@ impl Scene {
             .as_ref()
             .map(|e| e.get_component::<ComponentTransform>().ok())
             .map_or(Mat4::identity(), |co| {
-                co.map_or(Mat4::identity(), |c| c.transform.matrix)
+                co.map_or(Mat4::identity(), |c| c.transform.matrix())
             });
         if let Some(parent_node) = self.get_parent_game_object(game_object) {
-            matrix = self.get_world_transform(parent_node).matrix * matrix;
+            if parent_node != game_object {
+                matrix = self.get_world_transform(parent_node).matrix() * matrix;
+            }
         }
         let transform = matrix.into();
         self.transform_cache_mut()
@@ -852,7 +850,7 @@ impl Scene {
     ) -> Transform {
         let transform = self.get_world_transform(game_object);
         let parent_transform = self.get_world_transform(parent);
-        (parent_transform.inverse_matrix * transform.matrix).into()
+        (parent_transform.inverse_matrix() * transform.matrix()).into()
     }
 
     pub fn clear_transform_cache(&self) {
@@ -894,6 +892,16 @@ impl Scene {
     ) -> Option<GameObject> {
         self.get_ancestors(game_object)
             .find_map(|go| self.map_has_component::<T>(go))
+    }
+
+    pub fn is_game_object_owner(&self, game_object: GameObject, network: &Network) -> bool {
+        let Some(entry) = self.entry(game_object) else {
+            return false;
+        };
+        let Ok(c_netobj) = entry.get_component::<ComponentNetworkObject>() else {
+            return true;
+        };
+        c_netobj.is_owner(network)
     }
 }
 

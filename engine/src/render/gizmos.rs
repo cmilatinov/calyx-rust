@@ -65,7 +65,9 @@ impl Gizmos<'_> {
         far_plane: f32,
     ) {
         let camera = Camera::new(aspect, fov, near_plane, far_plane);
-        let matrix = glm::inverse(&(camera.projection * transform.inverse_matrix));
+        let matrix = (camera.projection * transform.inverse_matrix())
+            .try_inverse()
+            .unwrap_or_else(Mat4::identity);
         let _n1 = matrix * Vec4::new(-1.0, -1.0, -1.0, 1.0);
         let n1 = (_n1 / _n1.w).xyz();
         let _n2 = matrix * Vec4::new(-1.0, 1.0, -1.0, 1.0);

@@ -49,11 +49,11 @@ impl<T: ?Sized> Ref<T> {
         WeakRef::new(self)
     }
 
-    pub fn read(&self) -> RwLockReadGuard<T> {
+    pub fn read(&self) -> RwLockReadGuard<'_, T> {
         self.inner.read().unwrap()
     }
 
-    pub fn write(&self) -> RwLockWriteGuard<T> {
+    pub fn write(&self) -> RwLockWriteGuard<'_, T> {
         self.inner.write().unwrap()
     }
 
@@ -106,7 +106,7 @@ impl<T: ?Sized> ReadOnlyRef<T> {
         Self { inner }
     }
 
-    pub fn read(&self) -> RwLockReadGuard<T> {
+    pub fn read(&self) -> RwLockReadGuard<'_, T> {
         self.inner.read()
     }
 

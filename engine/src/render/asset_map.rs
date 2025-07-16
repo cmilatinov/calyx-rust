@@ -35,11 +35,11 @@ impl<T> AssetMap<T> {
         self.refs.get(&id).unwrap()
     }
 
-    pub fn lock_read(&self) -> HashMap<AssetId, RwLockReadGuard<T>> {
+    pub fn lock_read(&self) -> HashMap<AssetId, RwLockReadGuard<'_, T>> {
         self.refs.iter().map(|(id, r)| (*id, r.read())).collect()
     }
 
-    pub fn lock_write(&self) -> HashMap<AssetId, RwLockWriteGuard<T>> {
+    pub fn lock_write(&self) -> HashMap<AssetId, RwLockWriteGuard<'_, T>> {
         self.refs.iter().map(|(id, r)| (*id, r.write())).collect()
     }
 }

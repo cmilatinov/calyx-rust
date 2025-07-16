@@ -46,7 +46,10 @@ impl TypeRegistry {
         );
     }
 
-    pub fn meta_struct<T: TypeUuid + 'static>(&mut self, attrs: AttributeMap) -> StructInfoBuilder {
+    pub fn meta_struct<T: TypeUuid + 'static>(
+        &mut self,
+        attrs: AttributeMap,
+    ) -> StructInfoBuilder<'_> {
         let type_uuid = T::type_uuid();
         self.types.insert(
             type_uuid,
@@ -70,7 +73,7 @@ impl TypeRegistry {
 
     pub fn meta_impls<
         T: Reflect + TypeUuid + 'static,
-        M: TraitMeta + TraitMetaFrom<T> + TypeUuid,
+        M: TraitMeta + TraitMetaFrom<T> + TypeUuid + 'static,
     >(
         &mut self,
     ) {

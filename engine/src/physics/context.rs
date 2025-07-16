@@ -182,7 +182,7 @@ impl PhysicsContext {
                         UnitQuaternion::from(*rb.rotation()),
                         old_transform.scale,
                     )
-                    .matrix;
+                    .matrix();
                     transforms.insert(go, transform);
                 }
             }

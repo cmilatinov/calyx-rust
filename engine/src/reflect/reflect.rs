@@ -1,9 +1,9 @@
-use std::any::{Any, TypeId};
+use std::any::Any;
 use std::fmt::{Debug, Formatter};
 
 use crate::reflect::type_registry::TypeRegistry;
 
-use crate::utils::TypeUuidDynamic;
+use crate::utils::{TypeUuid, TypeUuidDynamic};
 pub use engine_derive::Reflect;
 
 pub trait TypeName {
@@ -35,18 +35,27 @@ pub trait Reflect: TypeUuidDynamic + TypeNameDynamic + Any + Send + Sync {
 }
 
 impl dyn Reflect {
-    pub fn is<T: Reflect>(&self) -> bool {
-        self.type_id() == TypeId::of::<T>()
+    pub fn is<T: Reflect + TypeUuid>(&self) -> bool {
+        self.uuid() == T::type_uuid()
     }
-    pub fn downcast_ref<T: Reflect>(&self) -> Option<&T> {
-        self.as_any().downcast_ref::<T>()
-    }
-    pub fn downcast_mut<T: Reflect>(&mut self) -> Option<&mut T> {
-        self.as_any_mut().downcast_mut::<T>()
-    }
-    pub fn downcast<T: Reflect>(self: Box<Self>) -> Result<Box<T>, Box<dyn Reflect>> {
+    pub fn downcast_ref<T: Reflect + TypeUuid>(&self) -> Option<&T> {
         if self.is::<T>() {
-            Ok(self.into_any().downcast().unwrap())
+            unsafe { Some(&*(self as *const dyn Reflect as *const T)) }
+        } else {
+            None
+        }
+    }
+    pub fn downcast_mut<T: Reflect + TypeUuid>(&mut self) -> Option<&mut T> {
+        if self.is::<T>() {
+            unsafe { Some(&mut *(self as *mut dyn Reflect as *mut T)) }
+        } else {
+            None
+        }
+    }
+    pub fn downcast<T: Reflect + TypeUuid>(self: Box<Self>) -> Result<Box<T>, Box<dyn Reflect>> {
+        if self.is::<T>() {
+            let raw = Box::into_raw(self);
+            unsafe { Ok(Box::from_raw(raw as *mut T)) }
         } else {
             Err(self)
         }

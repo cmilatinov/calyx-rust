@@ -1,7 +1,7 @@
 use crate::error::BoxedError;
 use crate::net::message::GameMessage;
-use crate::scene::Scene;
-use renet::{ClientId, ConnectionConfig, DefaultChannel, RenetServer, ServerEvent};
+use crate::net::{MessageQueue, ServerEvent};
+use renet::{ClientId, ConnectionConfig, DefaultChannel, RenetServer};
 use renet_netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig};
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, SystemTime};
@@ -33,7 +33,7 @@ impl Server {
         Ok(Self { server, transport })
     }
 
-    pub fn update(&mut self, scene: &mut Scene, duration: Duration) {
+    pub fn update(&mut self, queue: &mut MessageQueue<GameMessage>, duration: Duration) {
         let Self { server, transport } = self;
         server.update(duration);
         if let Err(err) = transport.update(duration, server) {
@@ -41,15 +41,23 @@ impl Server {
         }
 
         while let Some(event) = server.get_event() {
-            match event {
-                ServerEvent::ClientConnected { client_id } => {
+            match &event {
+                renet::ServerEvent::ClientConnected { client_id } => {
                     println!("SERVER - Client connected: {}", client_id);
                 }
-                ServerEvent::ClientDisconnected { client_id, reason } => {
+                renet::ServerEvent::ClientDisconnected { client_id, reason } => {
                     println!("SERVER - Client disconnected: {}", client_id);
                     println!("SERVER - Reason: {}", reason);
                 }
             }
+            queue.queue_message(GameMessage::ServerEvent(match event {
+                renet::ServerEvent::ClientConnected { client_id } => {
+                    ServerEvent::ClientConnected { client_id }
+                }
+                renet::ServerEvent::ClientDisconnected { client_id, .. } => {
+                    ServerEvent::ClientDisconnected { client_id }
+                }
+            }));
         }
 
         for client_id in server.clients_id() {
@@ -57,11 +65,37 @@ impl Server {
                 .receive_message(client_id, DefaultChannel::ReliableOrdered)
                 .and_then(|bytes| bincode::deserialize::<GameMessage>(&bytes).ok())
             {
-                println!("SERVER - Received message: {:?}", message);
+                queue.queue_message(message);
             }
         }
 
         transport.send_packets(server);
+    }
+
+    fn serialize_message(message: &GameMessage) -> Result<Vec<u8>, BoxedError> {
+        Ok(bincode::serialize(message).map_err(Box::new)?)
+    }
+
+    pub fn broadcast_message<I: Into<u8>>(
+        &mut self,
+        channel_id: I,
+        message: &GameMessage,
+    ) -> Result<(), BoxedError> {
+        let bytes = Self::serialize_message(message)?;
+        self.server.broadcast_message(channel_id, bytes);
+        Ok(())
+    }
+
+    pub fn broadcast_message_except<I: Into<u8>>(
+        &mut self,
+        except_id: ClientId,
+        channel_id: I,
+        message: &GameMessage,
+    ) -> Result<(), BoxedError> {
+        let bytes = Self::serialize_message(message)?;
+        self.server
+            .broadcast_message_except(except_id, channel_id, bytes);
+        Ok(())
     }
 
     pub fn send_message<I: Into<u8>>(
@@ -70,18 +104,16 @@ impl Server {
         channel_id: I,
         message: &GameMessage,
     ) -> Result<(), BoxedError> {
-        let bytes = bincode::serialize(message).map_err(Box::new)?;
+        let bytes = Self::serialize_message(message)?;
         self.server.send_message(client_id, channel_id, bytes);
         Ok(())
     }
 
-    pub fn receive_message<I: Into<u8>>(
-        &mut self,
-        client_id: ClientId,
-        channel_id: I,
-    ) -> Option<GameMessage> {
-        self.server
-            .receive_message(client_id, channel_id)
-            .and_then(|msg| bincode::deserialize(&msg).ok())
+    pub fn client_ids(&self) -> Vec<ClientId> {
+        self.server.clients_id()
+    }
+
+    pub fn client_ids_iter<'a>(&'a self) -> impl Iterator<Item = ClientId> + 'a {
+        self.server.clients_id_iter()
     }
 }

@@ -397,27 +397,27 @@ impl AssetRegistry {
 }
 
 impl AssetRegistry {
-    fn asset_data(&self) -> RwLockReadGuard<AssetData> {
+    fn asset_data(&self) -> RwLockReadGuard<'_, AssetData> {
         self.asset_data.read().unwrap()
     }
 
-    fn asset_data_mut(&self) -> RwLockWriteGuard<AssetData> {
+    fn asset_data_mut(&self) -> RwLockWriteGuard<'_, AssetData> {
         self.asset_data.write().unwrap()
     }
 
-    fn asset_cache(&self) -> RwLockReadGuard<AssetCache> {
+    fn asset_cache(&self) -> RwLockReadGuard<'_, AssetCache> {
         self.asset_cache.read().unwrap()
     }
 
-    fn asset_cache_mut(&self) -> RwLockWriteGuard<AssetCache> {
+    fn asset_cache_mut(&self) -> RwLockWriteGuard<'_, AssetCache> {
         self.asset_cache.write().unwrap()
     }
 
-    fn asset_constructors(&self) -> RwLockReadGuard<HashMap<Uuid, AssetConstructors>> {
+    fn asset_constructors(&self) -> RwLockReadGuard<'_, HashMap<Uuid, AssetConstructors>> {
         self.asset_constructors.read().unwrap()
     }
 
-    fn asset_constructors_mut(&self) -> RwLockWriteGuard<HashMap<Uuid, AssetConstructors>> {
+    fn asset_constructors_mut(&self) -> RwLockWriteGuard<'_, HashMap<Uuid, AssetConstructors>> {
         self.asset_constructors.write().unwrap()
     }
 

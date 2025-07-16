@@ -3,7 +3,7 @@ use egui_wgpu::wgpu;
 pub fn wgpu_buffer_init_desc<T: bytemuck::Pod>(
     usage: wgpu::BufferUsages,
     contents: &[T],
-) -> wgpu::util::BufferInitDescriptor {
+) -> wgpu::util::BufferInitDescriptor<'_> {
     wgpu::util::BufferInitDescriptor {
         label: None,
         usage,

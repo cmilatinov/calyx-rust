@@ -360,18 +360,14 @@ impl SceneRenderer {
         encoder: &mut wgpu::CommandEncoder,
     ) {
         let device = &render_state.device;
-        let options = self
-            .asset_context
-            .render_context
-            .pipeline_options_builder()
+        let options = PipelineOptions::builder()
             .samples(self.options.samples)
             .fragment_targets(vec![Some(wgpu::ColorTargetState {
                 format: self.scene_texture_msaa.descriptor.format,
                 blend: None,
                 write_mask: Default::default(),
             })])
-            .build()
-            .expect("invalid builder options");
+            .build();
         self.build_asset_data(render_state, scene, &options);
         let draw_list = self.build_draw_list();
         self.build_mesh_data(render_state);
@@ -479,16 +475,12 @@ impl SceneRenderer {
             });
 
             // Render grid
-            let options = self
-                .asset_context
-                .render_context
-                .pipeline_options_builder()
+            let options = PipelineOptions::builder()
                 .samples(self.options.samples)
                 .fragment_targets(vec![Some(RenderUtils::color_alpha_blending(
                     self.scene_texture_msaa.descriptor.format,
                 ))])
-                .build()
-                .expect("invalid builder options");
+                .build();
             grid_shader.build_pipeline(&options);
             if let Some(pipeline) = grid_shader.get_pipeline(&options) {
                 render_pass.set_pipeline(pipeline);
@@ -560,10 +552,7 @@ impl SceneRenderer {
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
-                let options = self
-                    .asset_context
-                    .render_context
-                    .pipeline_options_builder()
+                let options = PipelineOptions::builder()
                     .fragment_targets(vec![Some(wgpu::ColorTargetState {
                         format: self.scene_texture_msaa.descriptor.format,
                         blend: None,
@@ -571,8 +560,7 @@ impl SceneRenderer {
                     })])
                     .samples(self.options.samples)
                     .cull_mode(Some(wgpu::Face::Front))
-                    .build()
-                    .expect("invalid builder options");
+                    .build();
                 shader.build_pipeline(&options);
                 if let Some(pipeline) = shader.get_pipeline(&options) {
                     render_pass.set_pipeline(pipeline);
@@ -677,7 +665,7 @@ impl SceneRenderer {
                 continue;
             };
             let transform = scene.get_world_transform(game_object);
-            self.insert_draw_list_entry(&mesh_ref, &mat_ref, None, transform.matrix.into());
+            self.insert_draw_list_entry(&mesh_ref, &mat_ref, None, transform.matrix().into());
         }
         let mut skinned_meshes: HashSet<Uuid> = Default::default();
         let mut query = <(Entity, &ComponentSkinnedMesh)>::query();
@@ -708,7 +696,7 @@ impl SceneRenderer {
                 &mesh_ref,
                 &mat_ref,
                 Some(bone_transform_index as i32),
-                transform.matrix.into(),
+                transform.matrix().into(),
             );
         }
         let mut query = <&ComponentSkyLight>::query();
@@ -967,7 +955,7 @@ impl SceneRenderer {
     ) {
         let mut camera_uniform = CameraUniform::default();
         let mut projection = camera.projection;
-        let mut view = camera_transform.get_inverse_matrix();
+        let mut view = camera_transform.inverse_matrix();
         camera_uniform
             .projection
             .clone_from_slice(projection.as_mut());

@@ -47,6 +47,9 @@ impl Component for ComponentThirdPersonCamera {
         resources: &mut ResourceMap,
         input: &Input,
     ) {
+        if !scene.is_game_object_owner(game_object, resources.network()) {
+            return;
+        }
         let delta = input
             .input(|input| input.pointer.motion().unwrap_or_default())
             .unwrap_or(egui::Vec2::ZERO);
@@ -69,7 +72,6 @@ impl Component for ComponentThirdPersonCamera {
             .unwrap_or_default();
         transform.position = pos - self.distance * (*dir);
         transform.rotation = UnitQuaternion::face_towards(&dir, &Vec3::y_axis());
-        transform.update_matrix();
-        scene.set_world_transform(game_object, transform.matrix);
+        scene.set_world_transform(game_object, transform.matrix());
     }
 }

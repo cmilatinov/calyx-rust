@@ -1,9 +1,8 @@
 use crate::render::RenderUtils;
-use derive_builder::Builder;
 use egui_wgpu::wgpu;
+use typed_builder::TypedBuilder;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Builder)]
-#[builder(pattern = "owned")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, TypedBuilder)]
 pub struct PipelineOptions {
     #[builder(default = wgpu::PrimitiveTopology::TriangleList)]
     pub(crate) primitive_topology: wgpu::PrimitiveTopology,

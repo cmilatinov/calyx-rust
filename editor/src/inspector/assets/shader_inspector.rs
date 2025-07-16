@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, AssetInspector)]
+#[repr(C)]
 pub struct ShaderInspector;
 
 impl AssetInspector for ShaderInspector {

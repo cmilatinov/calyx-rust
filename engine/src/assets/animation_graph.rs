@@ -6,6 +6,7 @@ use crate::context::ReadOnlyAssetContext;
 use crate::math::Distance;
 use eframe::emath::Pos2;
 use engine_derive::TypeUuid;
+use lerp::Lerp;
 use petgraph::prelude::StableGraph;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -133,7 +134,7 @@ pub struct AnimationNode {
     pub position: Pos2,
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum AnimationParameterValue {
     Float(f32),
     Int(i32),
@@ -156,6 +157,23 @@ impl AnimationParameterValue {
 
     pub fn is_trigger(&self) -> bool {
         matches!(self, Self::Trigger)
+    }
+}
+
+impl Lerp<f32> for AnimationParameterValue {
+    fn lerp(self, other: Self, t: f32) -> Self {
+        match (self, other) {
+            (AnimationParameterValue::Float(current), AnimationParameterValue::Float(other)) => {
+                AnimationParameterValue::Float(current.lerp(other, t))
+            }
+            (AnimationParameterValue::Int(current), AnimationParameterValue::Int(other)) => {
+                AnimationParameterValue::Int((current as f32).lerp(other as f32, t) as i32)
+            }
+            (AnimationParameterValue::Bool(current), AnimationParameterValue::Bool(other)) => {
+                AnimationParameterValue::Bool(if t >= 0.5 { other } else { current })
+            }
+            (_, other) => other,
+        }
     }
 }
 

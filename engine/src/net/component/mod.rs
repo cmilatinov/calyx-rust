@@ -1,3 +1,4 @@
+mod animator;
 mod object;
 mod transform;
 

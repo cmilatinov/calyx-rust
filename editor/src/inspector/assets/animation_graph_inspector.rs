@@ -25,6 +25,7 @@ use uuid::Uuid;
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, AssetInspector)]
+#[repr(C)]
 pub struct AnimationGraphInspector;
 
 impl AssetInspector for AnimationGraphInspector {

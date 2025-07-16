@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, TypeInspector)]
+#[repr(C)]
 pub struct VecInspector;
 
 impl TypeInspector for VecInspector {
