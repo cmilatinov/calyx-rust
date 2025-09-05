@@ -25,7 +25,7 @@ use crate::assets::LoadedAssetRef;
 use crate::class_registry::ComponentRegistry;
 use crate::component::ComponentMesh;
 use crate::context::ReadOnlyAssetContext;
-use crate::core::{Ref, WeakRef};
+use crate::core::{ReadOnlyRef, Ref, WeakRef};
 use crate::error::BoxedError;
 use crate::reflect::type_registry::TypeRegistry;
 use crate::reflect::{AttributeValue, TypeInfo};
@@ -520,7 +520,13 @@ impl AssetRegistry {
         self.asset_data().meta.get(&id).cloned()
     }
 
-    pub fn asset_meta_from_ref(&self, reference: &Ref<dyn Asset>) -> Option<AssetMeta> {
+    #[inline]
+    pub fn asset_meta_from_ref<A: Asset>(&self, reference: &ReadOnlyRef<A>) -> Option<AssetMeta> {
+        self.asset_meta_from_id(reference.id())
+    }
+
+    #[inline]
+    pub fn asset_meta_from_ref_dyn(&self, reference: &ReadOnlyRef<dyn Asset>) -> Option<AssetMeta> {
         self.asset_meta_from_id(reference.id())
     }
 

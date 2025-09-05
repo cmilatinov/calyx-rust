@@ -20,6 +20,7 @@ use crate::assets::LoadedAsset;
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::Shader;
+use crate::scene::Prefab;
 use crate::utils::{ContextSeed, TypeUuid};
 
 use super::animation::Animation;
@@ -198,31 +199,6 @@ impl<'de, T: Asset + TypeUuid> DeserializeSeed<'de>
     }
 }
 
-impl_extern_type_uuid!(Ref<Mesh>, "fe0cede5-078e-453e-a680-1ff55bb582fc");
-impl_extern_type_uuid!(Ref<Shader>, "d07ea11e-60d8-4e51-a4d5-7099b50c0a12");
-impl_extern_type_uuid!(Ref<Texture>, "731cd634-75a5-4550-9df8-0cc59cfbbd06");
-impl_extern_type_uuid!(Ref<Material>, "86d2370f-aecd-462f-a1f3-9b8068627cd8");
-impl_extern_type_uuid!(Ref<Skybox>, "913ec3d7-7078-4e65-a890-d540608eeb6b");
-impl_extern_type_uuid!(Ref<Animation>, "8163d22f-e417-475f-bbda-04c9f4389961");
-impl_extern_type_uuid!(Ref<AnimationGraph>, "6f0df1ef-9aad-4f61-8731-d60ac608d9fd");
-
-impl_extern_type_uuid!(Option<Ref<Mesh>>, "ccee7bcc-744a-4eee-b1c2-af08dd4f481b");
-impl_extern_type_uuid!(Option<Ref<Shader>>, "6f9f1e5a-8f39-4595-98cf-410777321105");
-impl_extern_type_uuid!(Option<Ref<Texture>>, "b1c1260e-4c2e-4eff-8d6a-ae53308a6cb0");
-impl_extern_type_uuid!(
-    Option<Ref<Material>>,
-    "8c13be0d-18ee-4add-99a6-368d8adf0440"
-);
-impl_extern_type_uuid!(Option<Ref<Skybox>>, "ee52ede4-a2ae-42d3-b872-c3c6516d53ef");
-impl_extern_type_uuid!(
-    Option<Ref<Animation>>,
-    "0583bce5-72b1-4157-8361-aa4255e097a6"
-);
-impl_extern_type_uuid!(
-    Option<Ref<AnimationGraph>>,
-    "520c2d38-85af-454c-b789-5c0661bcae2f"
-);
-
 impl_extern_type_uuid!(AssetRef<Mesh>, "082319aa-393d-4630-a9fb-470ed6d030b8");
 impl_extern_type_uuid!(AssetRef<Shader>, "c8689617-519a-4e5e-8b47-50af43c4bb68");
 impl_extern_type_uuid!(AssetRef<Texture>, "a3007cc8-f56c-4310-8a57-17d9d8580e56");
@@ -233,6 +209,7 @@ impl_extern_type_uuid!(
     AssetRef<AnimationGraph>,
     "3c20b700-e0a1-4a01-bd53-246c1d1a292c"
 );
+impl_extern_type_uuid!(AssetRef<Prefab>, "6c255f88-b471-421f-8e61-c04a95a918f3");
 
 impl_reflect_value!(AssetRef<Mesh>(AssetAccess));
 impl_reflect_value!(AssetRef<Shader>(AssetAccess));
@@ -241,3 +218,4 @@ impl_reflect_value!(AssetRef<Material>(AssetAccess));
 impl_reflect_value!(AssetRef<Skybox>(AssetAccess));
 impl_reflect_value!(AssetRef<Animation>(AssetAccess));
 impl_reflect_value!(AssetRef<AnimationGraph>(AssetAccess));
+impl_reflect_value!(AssetRef<Prefab>(AssetAccess));

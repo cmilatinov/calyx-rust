@@ -3,10 +3,17 @@ use crate::core::ReadOnlyRef;
 use crate::input::Input;
 use crate::resource::ResourceMap;
 use crate::scene::Scene;
+use std::path::PathBuf;
+
+#[derive(Default)]
+pub struct SceneMeta {
+    pub file: Option<PathBuf>,
+}
 
 pub struct SceneManager {
     simulation_running: bool,
     current_scene: Scene,
+    current_scene_meta: SceneMeta,
     simulation_scene: Option<Scene>,
     default_scene: ReadOnlyRef<Scene>,
     asset_registry: ReadOnlyRef<AssetRegistry>,
@@ -27,6 +34,7 @@ impl SceneManager {
         Self {
             simulation_running: false,
             current_scene,
+            current_scene_meta: Default::default(),
             simulation_scene: None,
             default_scene,
             asset_registry: asset_registry_ref,
@@ -45,7 +53,13 @@ impl SceneManager {
 
     pub fn load_scene(&mut self, scene: ReadOnlyRef<Scene>) {
         self.stop_simulation();
+
         self.current_scene = scene.read().clone();
+        if let Some(asset_meta) = self.asset_registry.read().asset_meta_from_ref(&scene) {
+            self.current_scene_meta = SceneMeta {
+                file: asset_meta.path.clone(),
+            };
+        }
     }
 
     pub fn unload_current_scene(&mut self) {
@@ -103,6 +117,10 @@ impl SceneManager {
             return scene;
         }
         &mut self.current_scene
+    }
+
+    pub fn current_scene_meta(&self) -> &SceneMeta {
+        &self.current_scene_meta
     }
 
     pub fn current_scene(&self) -> &Scene {

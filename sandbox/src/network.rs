@@ -1,9 +1,12 @@
 use egui::{Key, Modifiers};
+use engine::assets::AssetRef;
 use engine::component::{Component, ComponentEventContext, ReflectComponent};
 use engine::input::Input;
 use engine::net::Server;
 use engine::reflect::{Reflect, ReflectDefault};
 use engine::resource::ResourceMap;
+use engine::scene::Prefab;
+use engine::try_all;
 use engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use serde::{Deserialize, Serialize};
 
@@ -12,10 +15,17 @@ use serde::{Deserialize, Serialize};
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Network Manager", update)]
 #[repr(C)]
-pub struct ComponentNetworkManager {}
+pub struct ComponentNetworkManager {
+    pub player_prefab: AssetRef<Prefab>,
+}
 
 impl Component for ComponentNetworkManager {
-    fn update(&mut self, _ctx: ComponentEventContext, resources: &mut ResourceMap, input: &Input) {
+    fn update(
+        &mut self,
+        ComponentEventContext { scene, assets, .. }: ComponentEventContext,
+        resources: &mut ResourceMap,
+        input: &Input,
+    ) {
         let network = resources.network_mut();
 
         'connect_host: {
@@ -39,7 +49,14 @@ impl Component for ComponentNetworkManager {
                 break 'connect_client;
             }
             match network.client.connect(Server::addr()) {
-                Ok(_) => println!("CLIENT - Connecting ..."),
+                Ok(_) => {
+                    println!("CLIENT - Connecting ...");
+                    try_all!(
+                        None => return;
+                        let player_prefab = self.player_prefab.get_ref(assets);
+                    );
+                    network.instantiate_prefab(scene, player_prefab);
+                }
                 Err(err) => println!("CLIENT - Failed to connect: {}", err),
             }
         }

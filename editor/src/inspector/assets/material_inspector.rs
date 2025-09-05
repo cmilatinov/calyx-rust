@@ -37,7 +37,7 @@ impl AssetInspector for MaterialInspector {
                 .assets
                 .asset_registry
                 .read()
-                .asset_meta_from_ref(&asset)
+                .asset_meta_from_ref_dyn(&asset.readonly())
             else {
                 return;
             };

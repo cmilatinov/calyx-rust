@@ -3,16 +3,16 @@ use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 
+use crate::task_id::TaskId;
 use engine::background::Background;
 use engine::context::AssetContext;
 use engine::core::{Ref, WeakRef};
 use engine::error::BoxedError;
 use engine::reflect::type_registry::TypeRegistry;
+use engine::reflect::TypeInfo;
 use project::Project;
 use rusty_pool::JoinHandle;
 use serde_json::Value;
-
-use crate::task_id::TaskId;
 
 pub struct ProjectManager {
     current_project: Project,
@@ -72,7 +72,7 @@ impl ProjectManager {
             // std::thread::sleep(Duration::from_secs(10));
             let mut build = Command::new("cargo")
                 .current_dir(root)
-                .args(["build"])
+                .args(["build", "--profile", "release-with-debug"])
                 .stdout(Stdio::piped())
                 .spawn()
                 .unwrap();
@@ -90,7 +90,7 @@ impl ProjectManager {
             .expect("");
         let json: Value = serde_json::from_slice(&meta_output.stdout).unwrap();
         let mut target = PathBuf::from(json["target_directory"].as_str().unwrap());
-        target.push("debug");
+        target.push("release-with-debug");
         target.push(engine::utils::lib_file_name(
             self.current_project().name().as_str(),
         ));
@@ -102,6 +102,11 @@ impl ProjectManager {
                     {
                         let mut registry = self.context.type_registry.write();
                         load_fn.get()(&mut registry);
+                        for (id, registration) in &registry.types {
+                            if let TypeInfo::Struct(info) = &registration.type_info {
+                                println!("[{}] {}", id, info.type_name);
+                            }
+                        }
                     }
                     self.assembly = Some(lib);
                     let component_registry_ref = self.context.component_registry.clone();

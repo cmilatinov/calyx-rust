@@ -30,13 +30,13 @@ impl ComponentRegistry {
         self.components.get(&id).map(|b| b.deref())
     }
 
-    pub fn components_update(&self) -> impl Iterator<Item = (Uuid, &Box<(dyn Component)>)> {
+    pub fn components_update(&self) -> impl Iterator<Item = (Uuid, &Box<dyn Component>)> {
         self.components_update
             .iter()
             .filter_map(|id| self.components.get(id).map(|component| (*id, component)))
     }
 
-    pub fn components(&self) -> impl Iterator<Item = (&Uuid, &Box<(dyn Component)>)> {
+    pub fn components(&self) -> impl Iterator<Item = (&Uuid, &Box<dyn Component>)> {
         self.components.iter()
     }
 

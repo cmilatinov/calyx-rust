@@ -6,6 +6,7 @@ use crate::net::sync::{SynchronizationOptions, Synchronized};
 
 use crate::reflect::{Reflect, ReflectDefault};
 use crate::resource::ResourceMap;
+use crate::try_all;
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use serde::{Deserialize, Serialize};
 
@@ -48,21 +49,19 @@ impl Component for ComponentNetworkTransform {
             |ComponentEventContext {
                  scene, game_object, ..
              }| {
-                let Some(entry) = scene.entry(*game_object) else {
-                    return Default::default();
-                };
-                let Ok(c_transform) = entry.get_component::<ComponentTransform>() else {
-                    return Default::default();
-                };
+                try_all!(
+                    None => return Default::default();
+                    let entry = scene.entry(*game_object);
+                    let c_transform = entry.get_component::<ComponentTransform>().ok();
+                );
                 c_transform.transform
             },
         ) {
-            let Some(mut entry) = ctx.scene.entry_mut(ctx.game_object) else {
-                return Default::default();
-            };
-            let Ok(c_transform) = entry.get_component_mut::<ComponentTransform>() else {
-                return Default::default();
-            };
+            try_all!(
+                None => return Default::default();
+                let mut entry = ctx.scene.entry_mut(ctx.game_object);
+                let c_transform = entry.get_component_mut::<ComponentTransform>().ok();
+            );
             c_transform.transform = value;
         }
     }

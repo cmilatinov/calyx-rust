@@ -1,5 +1,4 @@
 #![allow(clippy::module_inception)]
-#![feature(downcast_unchecked)]
 pub mod assets;
 pub mod background;
 pub mod class_registry;
@@ -9,6 +8,7 @@ pub mod core;
 pub mod error;
 pub mod ext;
 pub mod input;
+mod macros;
 pub mod math;
 pub mod net;
 pub mod physics;

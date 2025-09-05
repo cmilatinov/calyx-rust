@@ -63,9 +63,15 @@ impl Client {
             }
         }
 
-        while let Some(message) = client
+        while let Some((message, _)) = client
             .receive_message(DefaultChannel::ReliableOrdered)
-            .and_then(|bytes| bincode::deserialize::<GameMessage>(&bytes).ok())
+            .and_then(|bytes| {
+                bincode::serde::decode_from_slice::<GameMessage, _>(
+                    &bytes,
+                    bincode::config::standard(),
+                )
+                .ok()
+            })
         {
             queue.queue_message(message);
         }
@@ -74,7 +80,8 @@ impl Client {
     pub fn send_message(&mut self, message: &GameMessage) -> Result<(), BoxedError> {
         self.client.send_message(
             DefaultChannel::ReliableOrdered,
-            bincode::serialize(message).map_err(Box::new)?,
+            bincode::serde::encode_to_vec(message, bincode::config::standard())
+                .map_err(Box::new)?,
         );
         Ok(())
     }

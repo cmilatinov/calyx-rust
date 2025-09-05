@@ -2,7 +2,7 @@ use crate::core::TimeType;
 use crate::net::NetworkObjectId;
 use renet::ClientId;
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -41,6 +41,15 @@ pub enum GameMessage {
         network_object_id: NetworkObjectId,
         from_client_id: ClientId,
         to_client_id: ClientId,
+    },
+    SpawnPrefab {
+        network_object_ids: HashMap<u32, NetworkObjectId>,
+        from_client_id: ClientId,
+        prefab_id: Uuid,
+    },
+    DestroyGameObject {
+        network_object_id: NetworkObjectId,
+        from_client_id: ClientId,
     },
 }
 

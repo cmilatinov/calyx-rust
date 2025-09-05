@@ -165,7 +165,7 @@ impl Prefab {
         let matrix: Mat4 = math::mat4_from_russimp(&node.transformation);
         let id = utils::uuid_from_str(node.name.as_str());
         if let Some(parent_id) = parent {
-            data.hierarchy.insert(id, parent_id);
+            data.hierarchy.entry(parent_id).or_default().push(id);
         }
         parent = Some(id);
         let entry = data.components.entry(id).or_default();

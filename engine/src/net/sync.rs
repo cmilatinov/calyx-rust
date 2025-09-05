@@ -99,7 +99,7 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>> Synchronized<T> {
         let Some(self_client_id) = network.client.client_id() else {
             return;
         };
-        let Ok(data) = bincode::serialize(&value) else {
+        let Ok(data) = bincode::serde::encode_to_vec(&value, bincode::config::standard()) else {
             return;
         };
         let message = GameMessage::SyncComponent {
@@ -169,7 +169,9 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>>
                 && c_netobj_owner_id == *from_client_id
                 && *component_uuid == self.options.component_uuid =>
             {
-                if let Ok(value) = bincode::deserialize(&data) {
+                if let Ok((value, _)) =
+                    bincode::serde::decode_from_slice(&data, bincode::config::standard())
+                {
                     self.history.insert(time.time_to_tick(*sync_time), value);
                 }
                 MessageHandlerResult::Consume

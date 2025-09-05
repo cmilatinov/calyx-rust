@@ -2,7 +2,7 @@ use crate::assets::AssetRegistry;
 use crate::class_registry::ComponentRegistry;
 use crate::core::{ReadOnlyRef, Ref, Time};
 use crate::error::BoxedError;
-use crate::net::{Network, NetworkSceneSync};
+use crate::net::Network;
 use crate::reflect::type_registry::TypeRegistry;
 use crate::render::RenderContext;
 use crate::resource::ResourceMap;
@@ -95,12 +95,6 @@ impl GameContext {
         time.update_time();
         network.update(time);
         let scene = self.scenes.current_scene_mut();
-        let Network {
-            queue,
-            client,
-            server,
-            ..
-        } = network;
-        queue.receive_messages(&mut (scene, client, server), &mut NetworkSceneSync);
+        network.update_scene(scene, &self.assets.lock_read());
     }
 }

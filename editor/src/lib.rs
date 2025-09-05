@@ -13,7 +13,7 @@ pub use self::project_manager::*;
 use crate::camera::EditorCamera;
 use crate::task_id::TaskId;
 use eframe::{wgpu, NativeOptions};
-use egui::{include_image, Button, CornerRadius, Sense, Vec2};
+use egui::{include_image, Button, CornerRadius, ImageSource, Response, Sense, Ui, Vec2};
 use egui::{Align, Layout};
 use egui::{Color32, Frame, Margin, Shadow};
 use egui_tiles::{Container, Linear, LinearDir, Tiles, Tree};
@@ -329,112 +329,131 @@ impl EditorApp {
 }
 
 impl EditorApp {
+    fn file_menu(&mut self, ui: &mut Ui) {
+        ui.menu_button("File", |ui| {
+            if ui.button("New").clicked() {
+                self.new_interaction();
+                ui.close_menu();
+            }
+            if ui.button("Open").clicked() {
+                self.open_interaction();
+                ui.close_menu();
+            }
+            if ui.button("Save").clicked() {
+                self.save_interaction(false);
+                ui.close_menu();
+            }
+            if ui.button("Save As").clicked() {
+                self.save_interaction(true);
+                ui.close_menu();
+            }
+        });
+    }
+
+    fn new_interaction(&mut self) {
+        self.state.game.scenes.load_default_scene();
+    }
+
+    fn open_interaction(&mut self) {
+        try_all!(
+            None => return;
+            let file = Self::pick_scene_open_file();
+            let scene = self.state.game.assets.asset_registry
+                .read()
+                .load_by_path(file.as_path())
+                .ok();
+        );
+        self.state.game.scenes.load_scene(scene.readonly());
+    }
+
+    fn save_interaction(&mut self, save_as: bool) {
+        try_all!(
+            None => return;
+            let file = self.scene_save_file(save_as);
+        );
+        Self::save_scene(file, self.state.game.scenes.current_scene());
+    }
+
+    fn pick_scene_open_file() -> Option<PathBuf> {
+        rfd::FileDialog::new()
+            .set_file_name(".cxscene")
+            .add_filter("Calyx Scene", &["cxscene"])
+            .pick_file()
+    }
+
+    fn pick_scene_save_file() -> Option<PathBuf> {
+        rfd::FileDialog::new()
+            .set_file_name(".cxscene")
+            .add_filter("Calyx Scene", &["cxscene"])
+            .save_file()
+    }
+
+    fn scene_save_file(&self, save_as: bool) -> Option<PathBuf> {
+        if save_as {
+            return Self::pick_scene_save_file();
+        }
+        if self.state.game.scenes.current_scene_meta().file.is_some() {
+            return self.state.game.scenes.current_scene_meta().file.clone();
+        }
+        Self::pick_scene_save_file()
+    }
+
+    fn save_scene(file: PathBuf, scene: &Scene) {
+        let Ok(file) = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(file)
+        else {
+            return;
+        };
+        let writer = BufWriter::new(file);
+        serde_json::to_writer_pretty(writer, scene).unwrap();
+    }
+
+    fn icon_button(ui: &mut Ui, source: ImageSource) -> Response {
+        let image =
+            egui::Image::new(source).fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
+        ui.add(
+            Button::image(image)
+                .corner_radius(CornerRadius::ZERO)
+                .sense(Sense::click()),
+        )
+    }
+
     fn menu_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
-                ui.menu_button("File", |ui| {
-                    if ui.button("New").clicked() {
-                        self.state.game.scenes.load_default_scene();
-                        ui.close_menu();
-                    }
-                    if ui.button("Open").clicked() {
-                        if let Ok(scene) = self
-                            .state
-                            .game
-                            .assets
-                            .asset_registry
-                            .read()
-                            .load::<Scene>("scene")
-                        {
-                            self.state.game.scenes.load_scene(scene.readonly());
-                        }
-                        ui.close_menu();
-                    }
-                    if ui.button("Save").clicked() {
-                        let res = std::fs::OpenOptions::new()
-                            .create(true)
-                            .write(true)
-                            .truncate(true)
-                            .open(
-                                self.project_manager
-                                    .read()
-                                    .current_project()
-                                    .assets_directory()
-                                    .join("scene.cxscene"),
-                            );
-                        if let Ok(file) = res {
-                            let writer = BufWriter::new(file);
-                            serde_json::to_writer_pretty(
-                                writer,
-                                self.state.game.scenes.simulation_scene(),
-                            )
-                            .unwrap();
-                        }
-                        ui.close_menu();
-                    }
-                    if ui.button("Save As").clicked() {
-                        ui.close_menu();
-                    }
-                });
+                self.file_menu(ui);
 
+                if Self::icon_button(ui, include_image!("../../resources/icons/compile_dark.png"))
+                    .clicked()
                 {
-                    let png = include_image!("../../resources/icons/compile_dark.png");
-                    let image = egui::Image::new(png)
-                        .fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
-                    if ui
-                        .add(
-                            Button::image(image)
-                                .corner_radius(CornerRadius::ZERO)
-                                .sense(Sense::click()),
-                        )
-                        .clicked()
-                    {
-                        self.project_manager.read().build_assemblies();
+                    self.project_manager.read().build_assemblies();
+                }
+
+                let is_simulating = self.is_simulating();
+                if Self::icon_button(
+                    ui,
+                    if is_simulating {
+                        include_image!("../../resources/icons/pause_dark.png")
+                    } else {
+                        include_image!("../../resources/icons/execute_dark.png")
+                    },
+                )
+                .clicked()
+                {
+                    if is_simulating {
+                        self.state.game.scenes.pause_simulation();
+                    } else {
+                        self.state.game.scenes.start_simulation();
                     }
                 }
 
+                if Self::icon_button(ui, include_image!("../../resources/icons/suspend_dark.png"))
+                    .clicked()
                 {
-                    let png_play = include_image!("../../resources/icons/execute_dark.png");
-                    let image_play = egui::Image::new(png_play)
-                        .fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
-                    let png_pause = include_image!("../../resources/icons/pause_dark.png");
-                    let image_pause = egui::Image::new(png_pause)
-                        .fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
-                    if ui
-                        .add(
-                            Button::image(if self.is_simulating() {
-                                image_pause
-                            } else {
-                                image_play
-                            })
-                            .corner_radius(CornerRadius::ZERO)
-                            .sense(Sense::click()),
-                        )
-                        .clicked()
-                    {
-                        if self.is_simulating() {
-                            self.state.game.scenes.pause_simulation();
-                        } else {
-                            self.state.game.scenes.start_simulation();
-                        }
-                    }
-                }
-
-                {
-                    let png = include_image!("../../resources/icons/suspend_dark.png");
-                    let image = egui::Image::new(png)
-                        .fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
-                    if ui
-                        .add_enabled(
-                            self.state.game.scenes.has_simulation_scene(),
-                            Button::image(image)
-                                .corner_radius(CornerRadius::ZERO)
-                                .sense(Sense::click()),
-                        )
-                        .clicked()
-                    {
-                        self.state.game.scenes.stop_simulation();
-                    }
+                    self.state.game.scenes.stop_simulation();
                 }
             });
         });

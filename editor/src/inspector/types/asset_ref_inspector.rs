@@ -10,6 +10,7 @@ use engine::assets::texture::Texture;
 use engine::assets::{AssetRef, ReflectAssetAccess};
 use engine::reflect::{Reflect, ReflectDefault};
 use engine::render::Shader;
+use engine::scene::Prefab;
 use engine::type_uuids;
 use engine::utils::TypeUuid;
 use uuid::Uuid;
@@ -28,7 +29,8 @@ impl TypeInspector for AssetRefInspector {
             AssetRef<Material>,
             AssetRef<Skybox>,
             AssetRef<Animation>,
-            AssetRef<AnimationGraph>
+            AssetRef<AnimationGraph>,
+            AssetRef<Prefab>
         )
     }
 
