@@ -8,6 +8,7 @@ use engine::resource::ResourceMap;
 use engine::scene::Prefab;
 use engine::try_all;
 use engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
+use log::{error, info, trace};
 use serde::{Deserialize, Serialize};
 
 #[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
@@ -36,8 +37,8 @@ impl Component for ComponentNetworkManager {
                 break 'connect_host;
             }
             match network.host(Server::addr()) {
-                Ok(_) => println!("SERVER - {:?}", Server::addr()),
-                Err(err) => println!("{}", err),
+                Ok(_) => trace!("SERVER - {:?}", Server::addr()),
+                Err(err) => error!("{}", err),
             }
         }
 
@@ -50,14 +51,14 @@ impl Component for ComponentNetworkManager {
             }
             match network.client.connect(Server::addr()) {
                 Ok(_) => {
-                    println!("CLIENT - Connecting ...");
+                    info!("CLIENT - Connecting ...");
                     try_all!(
                         None => return;
                         let player_prefab = self.player_prefab.get_ref(assets);
                     );
                     network.instantiate_prefab(scene, player_prefab);
                 }
-                Err(err) => println!("CLIENT - Failed to connect: {}", err),
+                Err(err) => error!("CLIENT - Failed to connect: {}", err),
             }
         }
     }

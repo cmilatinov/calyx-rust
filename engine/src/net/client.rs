@@ -1,6 +1,7 @@
 use crate::error::BoxedError;
 use crate::net::message::GameMessage;
 use crate::net::MessageQueue;
+use log::{error, info, trace};
 use renet::{ClientId, DefaultChannel, RenetClient};
 use renet_netcode::{ClientAuthentication, NetcodeClientTransport};
 use std::net::{SocketAddr, UdpSocket};
@@ -32,20 +33,37 @@ impl Client {
     }
 
     pub fn connect(&mut self, server_addr: SocketAddr) -> Result<(), BoxedError> {
-        let socket = UdpSocket::bind("127.0.0.1:0").map_err(Box::new)?;
+        info!("Connecting to server at {}", server_addr);
+        let socket = UdpSocket::bind("127.0.0.1:0").map_err(|e| {
+            error!("Failed to bind socket: {}", e);
+            Box::new(e) as Box<dyn std::error::Error + Send + Sync>
+        })?;
+
         let current_time = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
-            .map_err(Box::new)?;
+            .map_err(|e| {
+                error!("System time error: {}", e);
+                Box::new(e) as Box<dyn std::error::Error + Send + Sync>
+            })?;
+
         let client_id = current_time.as_millis() as u64;
+        trace!("Generated client ID: {}", client_id);
+
         let authentication = ClientAuthentication::Unsecure {
             server_addr,
             client_id,
             user_data: None,
             protocol_id: GameMessage::PROTOCOL_ID,
         };
+
         self.transport = Some(
-            NetcodeClientTransport::new(current_time, authentication, socket).map_err(Box::new)?,
+            NetcodeClientTransport::new(current_time, authentication, socket).map_err(|e| {
+                error!("Failed to create transport: {}", e);
+                Box::new(e) as Box<dyn std::error::Error + Send + Sync>
+            })?,
         );
+
+        info!("Successfully initialized client transport");
         Ok(())
     }
 
@@ -53,13 +71,16 @@ impl Client {
         let Self {
             client, transport, ..
         } = self;
+
         client.update(duration);
+
         if let Some(transport) = transport {
             if let Err(err) = transport.update(duration, client) {
-                println!("CLIENT - Error updating transport: {:?}", err);
+                error!("Error updating transport: {:?}", err);
             }
+
             if let Err(err) = transport.send_packets(client) {
-                println!("CLIENT - Error sending packets: {}", err);
+                error!("Error sending packets: {}", err);
             }
         }
 
@@ -70,6 +91,10 @@ impl Client {
                     &bytes,
                     bincode::config::standard(),
                 )
+                .map_err(|e| {
+                    error!("Failed to decode message from server: {}", e);
+                    e
+                })
                 .ok()
             })
         {
@@ -78,24 +103,40 @@ impl Client {
     }
 
     pub fn send_message(&mut self, message: &GameMessage) -> Result<(), BoxedError> {
-        self.client.send_message(
-            DefaultChannel::ReliableOrdered,
-            bincode::serde::encode_to_vec(message, bincode::config::standard())
-                .map_err(Box::new)?,
-        );
+        trace!("Sending message to server: {:?}", message);
+        let bytes =
+            bincode::serde::encode_to_vec(message, bincode::config::standard()).map_err(|e| {
+                error!("Failed to serialize message: {}", e);
+                Box::new(e) as Box<dyn std::error::Error + Send + Sync>
+            })?;
+
+        self.client
+            .send_message(DefaultChannel::ReliableOrdered, bytes);
         Ok(())
     }
 
     pub fn is_connected(&self) -> bool {
-        self.client.is_connected()
+        let connected = self.client.is_connected();
+        if connected {
+            trace!("Client is connected");
+        }
+        connected
     }
 
     pub fn is_connecting(&self) -> bool {
-        self.client.is_connecting()
+        let connecting = self.client.is_connecting();
+        if connecting {
+            trace!("Client is connecting...");
+        }
+        connecting
     }
 
     pub fn is_disconnected(&self) -> bool {
-        self.client.is_disconnected()
+        let disconnected = self.client.is_disconnected();
+        if disconnected {
+            trace!("Client is disconnected");
+        }
+        disconnected
     }
 
     pub fn rtt(&self) -> Duration {

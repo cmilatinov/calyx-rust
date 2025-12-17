@@ -12,6 +12,7 @@ use crate::scene::{GameObject, Prefab, Scene};
 use crate::try_all;
 use engine_derive::Resource;
 use legion::IntoQuery;
+use log::trace;
 use rand::Rng;
 use renet::{ClientId, DefaultChannel};
 use std::collections::HashMap;
@@ -236,7 +237,7 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                     let self_client_id = client.client_id();
                     client.client_ids = client_ids.clone();
                     client.client_ids.retain(|cid| self_client_id != Some(*cid));
-                    println!("Server Client ID: {:?}", server_client_id);
+                    trace!("Server Client ID: {:?}", server_client_id);
                 };
                 MessageHandlerResult::Consume
             }
@@ -244,7 +245,7 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                 #[allow(unused)]
                 'client_logic: {
                     client.client_ids.push(*client_id);
-                    println!("Client Connected: {:?}", client_id);
+                    trace!("Client Connected: {:?}", client_id);
                 };
                 MessageHandlerResult::Consume
             }
@@ -252,7 +253,7 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                 #[allow(unused)]
                 'client_logic: {
                     client.client_ids.retain(|&id| id != *client_id);
-                    println!("Client Disconnected: {:?}", client_id);
+                    trace!("Client Disconnected: {:?}", client_id);
                 };
                 MessageHandlerResult::Consume
             }
@@ -278,7 +279,7 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                         None => break 'server_logic;
                         let server = server;
                     );
-                    println!("SERVER - Transferring ownership");
+                    trace!("SERVER - Transferring ownership");
                     let _ = server.broadcast_message(DefaultChannel::ReliableOrdered, message);
                 }
                 'client_logic: {
@@ -287,7 +288,7 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                         let mut entry = scene.entry_mut(game_object);
                         let c_netobj = entry.get_component_mut::<ComponentNetworkObject>().ok();
                     );
-                    println!("CLIENT - Transferring ownership");
+                    trace!("CLIENT - Transferring ownership");
                     c_netobj.owner_id = *to_client_id;
                 }
                 MessageHandlerResult::Consume

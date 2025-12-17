@@ -1688,6 +1688,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "dirs"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3e8aa94d75141228480295a7d0e7feb620b1a5ad9f12bc40be62411e38cce4e"
+dependencies = [
+ "dirs-sys",
+]
+
+[[package]]
+name = "dirs-sys"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e01a3366d27ee9890022452ee61b2b63a67e6f13f58900b651ff5665f0bb1fab"
+dependencies = [
+ "libc",
+ "option-ext",
+ "redox_users",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "dispatch"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1794,6 +1815,7 @@ dependencies = [
  "enum_dispatch",
  "inventory",
  "lazy_static 1.5.0",
+ "log",
  "mint",
  "nalgebra",
  "nalgebra-glm",
@@ -2077,17 +2099,20 @@ dependencies = [
  "bytemuck",
  "common-path",
  "derive_builder",
+ "dirs",
  "downcast-rs 2.0.1",
  "dunce",
  "eframe",
  "egui 0.31.1",
  "egui-wgpu",
  "engine_derive",
+ "env_logger",
  "glob",
  "image",
  "inventory",
  "legion",
  "lerp",
+ "log",
  "mint",
  "naga 25.0.1",
  "nalgebra",
@@ -2218,6 +2243,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "186e05a59d4c50738528153b83b0b0194d3a29507dfec16eccd4b342903397d0"
 dependencies = [
  "log",
+ "regex",
 ]
 
 [[package]]
@@ -4686,6 +4712,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "option-ext"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
+
+[[package]]
 name = "orbclient"
 version = "0.3.48"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5801,6 +5833,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "redox_users"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4e608c6638b9c18977b00b475ac1f28d14e84b27d8d42f70e0bf1e3dec127ac"
+dependencies = [
+ "getrandom 0.2.15",
+ "libredox",
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "regex"
 version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6246,6 +6289,9 @@ dependencies = [
  "engine",
  "inventory",
  "legion",
+ "log",
+ "nalgebra",
+ "nalgebra-glm",
  "serde",
  "serde_json",
  "winit",

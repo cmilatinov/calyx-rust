@@ -23,6 +23,7 @@ use engine::context::{AssetContext, GameContext};
 use engine::core::Ref;
 use engine::error::BoxedError;
 use engine::input::{Input, InputState};
+use engine::logging::{DefaultLogger, DefaultLoggerBuilder, Log};
 use engine::render::{Camera, SceneRenderer, SceneRendererOptions};
 use engine::scene::Scene;
 use engine::*;
@@ -57,6 +58,7 @@ pub struct EditorApp {
     physics_debug_pipeline: DebugRenderPipeline,
     project_manager: Ref<ProjectManager>,
     state: EditorAppState,
+    log: Log<DefaultLogger>,
 }
 
 pub struct EditorAppState {
@@ -143,6 +145,12 @@ impl EditorApp {
             ),
             project_manager,
             state: EditorAppState::new(game),
+            log: Log::new(
+                DefaultLogger::builder()
+                    .app_vendor("Calyx")
+                    .app_name("Editor")
+                    .build(),
+            ),
         })
     }
 
@@ -305,12 +313,7 @@ impl eframe::App for EditorApp {
             .scenes
             .current_scene_mut()
             .delete_game_objects();
-        self.state
-            .game
-            .assets
-            .asset_registry
-            .write()
-            .reload_assets();
+        self.state.game.assets.asset_registry.read().reload_assets();
 
         ctx.request_repaint();
     }

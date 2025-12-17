@@ -1,6 +1,7 @@
 use crate::error::BoxedError;
 use crate::net::message::GameMessage;
 use crate::net::{MessageQueue, ServerEvent};
+use log::{error, info};
 use renet::{ClientId, ConnectionConfig, DefaultChannel, RenetServer};
 use renet_netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig};
 use std::net::{SocketAddr, UdpSocket};
@@ -35,19 +36,19 @@ impl Server {
 
     pub fn update(&mut self, queue: &mut MessageQueue<GameMessage>, duration: Duration) {
         let Self { server, transport } = self;
+
         server.update(duration);
         if let Err(err) = transport.update(duration, server) {
-            println!("SERVER - Error updating transport: {:?}", err);
+            error!("Error updating server transport: {:?}", err);
         }
 
         while let Some(event) = server.get_event() {
             match &event {
                 renet::ServerEvent::ClientConnected { client_id } => {
-                    println!("SERVER - Client connected: {}", client_id);
+                    info!("Client connected: {}", client_id);
                 }
                 renet::ServerEvent::ClientDisconnected { client_id, reason } => {
-                    println!("SERVER - Client disconnected: {}", client_id);
-                    println!("SERVER - Reason: {}", reason);
+                    info!("Client disconnected: {}, reason: {}", client_id, reason);
                 }
             }
             queue.queue_message(GameMessage::ServerEvent(match event {
@@ -68,6 +69,10 @@ impl Server {
                         &bytes,
                         bincode::config::standard(),
                     )
+                    .map_err(|e| {
+                        error!("Failed to decode message from client {}: {}", client_id, e);
+                        e
+                    })
                     .ok()
                 })
             {
@@ -91,7 +96,7 @@ impl Server {
         message: &GameMessage,
     ) -> Result<(), BoxedError> {
         let bytes = Self::serialize_message(message)?;
-        self.server.broadcast_message(channel_id, bytes);
+        self.server.broadcast_message(channel_id.into(), bytes);
         Ok(())
     }
 
@@ -103,7 +108,7 @@ impl Server {
     ) -> Result<(), BoxedError> {
         let bytes = Self::serialize_message(message)?;
         self.server
-            .broadcast_message_except(except_id, channel_id, bytes);
+            .broadcast_message_except(except_id, channel_id.into(), bytes);
         Ok(())
     }
 
@@ -114,7 +119,8 @@ impl Server {
         message: &GameMessage,
     ) -> Result<(), BoxedError> {
         let bytes = Self::serialize_message(message)?;
-        self.server.send_message(client_id, channel_id, bytes);
+        self.server
+            .send_message(client_id, channel_id.into(), bytes);
         Ok(())
     }
 

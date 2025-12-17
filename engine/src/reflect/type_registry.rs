@@ -10,11 +10,13 @@ use uuid::Uuid;
 pub struct TypeRegistrationFn(pub fn(&mut TypeRegistry));
 collect!(TypeRegistrationFn);
 
+#[repr(C)]
 pub struct TypeRegistration {
     pub trait_meta: HashMap<Uuid, Box<dyn TraitMeta>>,
     pub type_info: TypeInfo,
 }
 
+#[repr(C)]
 pub struct TypeRegistry {
     pub types: HashMap<Uuid, TypeRegistration>,
 }

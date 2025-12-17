@@ -1,6 +1,7 @@
 use bimap::BiHashMap;
 use legion::world::{Entry, EntryRef};
 use legion::{Entity, EntityStore, IntoQuery, World};
+use log::trace;
 use nalgebra_glm::Mat4;
 use petgraph::prelude::{EdgeRef, StableGraph};
 use petgraph::stable_graph::{DefaultIx, NodeIndex, WalkNeighbors};
@@ -364,6 +365,12 @@ impl Scene {
         for (game_object_id, components) in prefab.data.components.iter() {
             let game_object = self.new_game_object(None);
             let new_game_object_id = *id_mapping.get_by_left(game_object_id).unwrap();
+            self.uuid_map.insert(new_game_object_id, game_object);
+        }
+
+        for (game_object_id, components) in prefab.data.components.iter() {
+            let new_game_object_id = *id_mapping.get_by_left(game_object_id).unwrap();
+            let game_object = self.get_game_object_by_uuid(new_game_object_id).unwrap();
             for (component_id, data) in components {
                 try_all!(
                     None => continue;
@@ -378,7 +385,10 @@ impl Scene {
                         let id = field.get::<GameObjectRef>(&*instance).map(|r| r.id());
                         let target_id = id_mapping.get_by_left(&id);
                     );
-                    field.set(&mut *instance, GameObjectRef::new(*target_id));
+                    trace!("{} - {}", name, field.name);
+                    field
+                        .set(&mut *instance, GameObjectRef::new(*target_id))
+                        .unwrap();
                 }
                 let _ = component.bind_instance(&mut entry, instance);
             }
@@ -387,7 +397,6 @@ impl Scene {
                     c_id.id = new_game_object_id;
                 }
             }
-            self.uuid_map.insert(new_game_object_id, game_object);
         }
 
         for (parent_id, children) in prefab.data.hierarchy.iter() {

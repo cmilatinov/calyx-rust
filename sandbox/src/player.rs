@@ -1,21 +1,38 @@
-use egui::{Key, Modifiers};
-use engine::assets::animation_graph::AnimationParameterValue;
-use engine::component::{Component, ComponentAnimator, ComponentEventContext, ReflectComponent};
+use egui::Key;
+use engine::component::{Component, ComponentEventContext, ComponentTransform, ReflectComponent};
+use engine::core::TimeType;
 use engine::input::Input;
-use engine::net::{ComponentNetworkObject, GameMessage};
 use engine::reflect::{Reflect, ReflectDefault};
 use engine::resource::ResourceMap;
 use engine::scene::GameObjectRef;
+use engine::try_all;
 use engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
+use log::trace;
+use nalgebra::UnitQuaternion;
+use nalgebra_glm::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
-#[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
+#[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "8c4d2976-47c1-403c-a248-6db84a124816"]
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Player Controller", update)]
 #[repr(C)]
 pub struct ComponentPlayerController {
     pub camera: GameObjectRef,
+    pub move_speed: f32,
+    pub sprint_multiplier: f32,
+    pub rotation_speed: f32,
+}
+
+impl Default for ComponentPlayerController {
+    fn default() -> Self {
+        Self {
+            camera: Default::default(),
+            move_speed: 5.0,
+            sprint_multiplier: 2.0,
+            rotation_speed: 2.0,
+        }
+    }
 }
 
 impl Component for ComponentPlayerController {
@@ -25,112 +42,57 @@ impl Component for ComponentPlayerController {
         resources: &mut ResourceMap,
         input: &Input,
     ) {
-        self.update_transfer(&mut ctx, resources, input);
-        self.update_animator(&mut ctx, resources, input);
+        let dt = resources.time().delta_time();
+        self.update_movement(&mut ctx, resources, input, dt);
     }
 }
 
 impl ComponentPlayerController {
-    fn update_transfer(
+    fn update_movement(
         &mut self,
         ComponentEventContext {
             scene, game_object, ..
         }: &mut ComponentEventContext,
-        resources: &mut ResourceMap,
+        resources: &ResourceMap,
         input: &Input,
+        dt: TimeType,
     ) {
-        let network = resources.network_mut();
-        let transfer = input
-            .input_mut(|input| input.consume_key(Modifiers::NONE, Key::T))
-            .unwrap_or(false);
-        if !transfer
-            || network.client.is_disconnected()
-            || !scene.is_game_object_owner(*game_object, network)
-        {
-            return;
-        }
-        let Some(entry) = scene.entry(*game_object) else {
-            return;
-        };
-        let Ok(player_network_object_id) = entry
-            .get_component::<ComponentNetworkObject>()
-            .map(|c_netobj| c_netobj.id)
-        else {
-            return;
-        };
-        let Some(entry) = self.camera.entry(scene) else {
-            return;
-        };
-        let Ok(camera_network_object_id) = entry
-            .get_component::<ComponentNetworkObject>()
-            .map(|c_netobj| c_netobj.id)
-        else {
-            return;
-        };
-        let Some(from_client_id) = network.client.client_id() else {
-            return;
-        };
-        let Some(to_client_id) = network
-            .client
-            .client_ids()
-            .into_iter()
-            .find(|cid| from_client_id != *cid)
-        else {
-            return;
-        };
-        println!("CLIENT - Transferring ownership to {}", to_client_id);
-        let _ = network
-            .client
-            .send_message(&GameMessage::TransferOwnership {
-                from_client_id,
-                to_client_id,
-                network_object_id: player_network_object_id,
-            });
-        let _ = network
-            .client
-            .send_message(&GameMessage::TransferOwnership {
-                from_client_id,
-                to_client_id,
-                network_object_id: camera_network_object_id,
-            });
-    }
-
-    fn update_animator(
-        &mut self,
-        ComponentEventContext {
-            scene,
-            game_object,
-            assets,
-            ..
-        }: &mut ComponentEventContext,
-        resources: &mut ResourceMap,
-        input: &Input,
-    ) {
-        let animate_plus = input
-            .input_mut(|input| input.key_down(Key::Equals))
-            .unwrap_or(false);
-        let animate_minus = input
-            .input_mut(|input| input.key_down(Key::Minus))
-            .unwrap_or(false);
-        if !animate_plus && !animate_minus {
-            return;
-        }
         if !scene.is_game_object_owner(*game_object, resources.network()) {
             return;
         }
-        let Some(mut entry) = scene.entry_mut(*game_object) else {
+
+        let forward = input
+            .input(|i| (i.key_down(Key::W) as i32 - i.key_down(Key::S) as i32) as f32)
+            .unwrap_or_default();
+        let right = input
+            .input(|i| (i.key_down(Key::D) as i32 - i.key_down(Key::A) as i32) as f32)
+            .unwrap_or_default();
+        let run = input.input(|i| i.modifiers.shift).unwrap_or(false);
+        let speed = self.move_speed * if run { self.sprint_multiplier } else { 1.0 } * dt;
+
+        try_all!(
+            None => return;
+            let camera = self.camera.game_object(scene);
+        );
+        let camera_transform = scene.get_world_transform(camera);
+        let camera_forward = camera_transform.forward().xz().normalize();
+        let camera_right = camera_transform.right().xz().normalize();
+        let move_direction = camera_forward * forward + camera_right * right;
+        let move_vector = Vec3::new(move_direction.x, 0.0, move_direction.y) * speed;
+
+        if move_direction.metric_distance(&Vec2::zeros()) <= f32::EPSILON {
             return;
-        };
-        let Ok(c_animator) = entry.get_component_mut::<ComponentAnimator>() else {
-            return;
-        };
-        let delta = 0.01 * ((animate_plus as u32 as f32) - (animate_minus as u32 as f32));
-        c_animator.set_parameter_with(assets, "Speed", move |value| {
-            let value = match value {
-                Some(AnimationParameterValue::Float(value)) => value,
-                _ => 0.0,
-            };
-            AnimationParameterValue::Float((value + delta).clamp(0.0, 1.0))
-        });
+        }
+
+        let mut transform = scene.get_world_transform(*game_object);
+        transform.position += move_vector;
+
+        if let Some(move_dir_2d) = move_direction.try_normalize(f32::EPSILON) {
+            transform.rotation = UnitQuaternion::face_towards(
+                &Vec3::new(move_dir_2d.x, 0.0, move_dir_2d.y),
+                &Vec3::y_axis(),
+            );
+        }
+        scene.set_world_transform(*game_object, transform.matrix());
     }
 }

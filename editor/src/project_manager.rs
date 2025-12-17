@@ -10,6 +10,7 @@ use engine::core::{Ref, WeakRef};
 use engine::error::BoxedError;
 use engine::reflect::type_registry::TypeRegistry;
 use engine::reflect::TypeInfo;
+use log::trace;
 use project::Project;
 use rusty_pool::JoinHandle;
 use serde_json::Value;
@@ -104,7 +105,7 @@ impl ProjectManager {
                         load_fn.get()(&mut registry);
                         for (id, registration) in &registry.types {
                             if let TypeInfo::Struct(info) = &registration.type_info {
-                                println!("[{}] {}", id, info.type_name);
+                                trace!("[{}] {}", id, info.type_name);
                             }
                         }
                     }

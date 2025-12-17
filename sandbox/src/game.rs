@@ -9,6 +9,7 @@ use egui::{
 use engine::context::{AssetContext, GameContext};
 use engine::error::DynError;
 use engine::input::{Input, InputState};
+use engine::logging::{DefaultLogger, Log};
 use engine::render::{Camera, SceneRenderer, SceneRendererOptions};
 use engine::scene::Scene;
 use sandbox::plugin_main;
@@ -28,6 +29,8 @@ struct GameApp {
     renderer: SceneRenderer,
     fps_counter: usize,
     fps: usize,
+    #[allow(unused)]
+    log: Log<DefaultLogger>,
 }
 
 impl GameApp {
@@ -51,11 +54,18 @@ impl GameApp {
                 &assets.lock_read(),
                 SceneRendererOptions {
                     samples: 8,
+                    grid: true,
                     ..Default::default()
                 },
             ),
             fps_counter: 0,
             fps: 0,
+            log: Log::new(
+                DefaultLogger::builder()
+                    .app_vendor("Calyx")
+                    .app_name("Sandbox")
+                    .build(),
+            ),
         })
     }
 
