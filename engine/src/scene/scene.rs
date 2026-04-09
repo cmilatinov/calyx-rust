@@ -417,11 +417,14 @@ impl Scene {
 
         try_all!(
             None => return None;
-            let parent = parent;
             let prefab_uuid = id_mapping.get_by_left(&prefab.scene.get_game_object_uuid(root_node));
             let game_object = self.get_game_object_by_uuid(*prefab_uuid);
         );
-        self.set_parent(game_object, Some(parent));
+
+        if let Some(parent) = parent {
+            self.set_parent(game_object, Some(parent));
+        }
+
         Some(game_object)
     }
 

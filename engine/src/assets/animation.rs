@@ -58,7 +58,7 @@ impl Asset for Animation {
 }
 
 impl Animation {
-    pub fn from_russimp_animation(animation: &russimp::animation::Animation) -> Self {
+    pub fn from_russimp_animation(animation: &russimp_ng::animation::Animation) -> Self {
         let ticks_per_second = animation.ticks_per_second;
         let duration = animation.duration;
         let node_keyframes = animation

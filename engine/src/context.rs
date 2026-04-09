@@ -89,7 +89,7 @@ impl GameContext {
     }
 
     pub fn update(&mut self) {
-        let Some((network, time)) = self.resources.resource2_mut::<Network, Time>() else {
+        let Some((network, time)) = self.resources.resource_pair_mut::<Network, Time>() else {
             return;
         };
         time.update_time();

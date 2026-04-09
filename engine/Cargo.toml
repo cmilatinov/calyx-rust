@@ -10,14 +10,6 @@ log_file = []
 [lib]
 crate-type = ["rlib"]
 
-[target.'cfg(target_os = "linux")'.dependencies.russimp]
-version = "3.2.1"
-features = ["static-link"]
-
-[target.'cfg(target_os = "windows")'.dependencies.russimp]
-version = "3.2.1"
-features = ["prebuilt"]
-
 [dependencies]
 engine_derive = { path = "./engine_derive" }
 bimap.workspace = true
@@ -62,3 +54,4 @@ rand.workspace = true
 log.workspace = true
 dirs.workspace = true
 env_logger.workspace = true
+russimp-ng.workspace = true

@@ -5,7 +5,7 @@ use nalgebra_glm as glm;
 use nalgebra_glm::{vec3, Mat4, Vec3};
 
 pub use dist::*;
-use russimp::Matrix4x4;
+use russimp_ng::Matrix4x4;
 pub use transform::*;
 
 mod dist;

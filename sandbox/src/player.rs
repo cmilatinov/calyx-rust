@@ -1,5 +1,5 @@
 use egui::Key;
-use engine::component::{Component, ComponentEventContext, ComponentTransform, ReflectComponent};
+use engine::component::{Component, ComponentEventContext, ReflectComponent};
 use engine::core::TimeType;
 use engine::input::Input;
 use engine::reflect::{Reflect, ReflectDefault};
@@ -7,7 +7,6 @@ use engine::resource::ResourceMap;
 use engine::scene::GameObjectRef;
 use engine::try_all;
 use engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
-use log::trace;
 use nalgebra::UnitQuaternion;
 use nalgebra_glm::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};

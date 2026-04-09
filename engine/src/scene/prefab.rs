@@ -12,9 +12,8 @@ use crate::scene::{Scene, SceneData};
 use crate::utils::TypeUuid;
 use crate::{self as engine, utils};
 use nalgebra_glm::Mat4;
-use russimp::property::{Property, PropertyStore};
-use russimp::scene::PostProcess;
-use russimp::sys::AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS;
+use russimp_ng::property::{Property, PropertyStore};
+use russimp_ng::scene::PostProcess;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::borrow::Borrow;
@@ -22,6 +21,8 @@ use std::collections::HashMap;
 use std::io::BufReader;
 use std::path::Path;
 use uuid::Uuid;
+
+const AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS: &[u8; 27] = b"IMPORT_FBX_PRESERVE_PIVOTS\0";
 
 #[derive(Serialize, TypeUuid)]
 #[uuid = "960f1d60-3ad4-4f1d-92d3-cceb0e0623d7"]
@@ -74,7 +75,7 @@ impl Asset for Prefab {
             )]
             .into_iter()
             .into();
-            let scene = russimp::scene::Scene::from_file_with_props(
+            let scene = russimp_ng::scene::Scene::from_file_with_props(
                 path.to_str().unwrap(),
                 vec![
                     PostProcess::Triangulate,
@@ -157,8 +158,8 @@ impl Prefab {
         registry: &AssetRegistry,
         bones: &HashMap<String, (usize, Mat4)>,
         meshes: &Vec<Ref<Mesh>>,
-        root: &russimp::node::Node,
-        node: &russimp::node::Node,
+        root: &russimp_ng::node::Node,
+        node: &russimp_ng::node::Node,
         mut parent: Option<Uuid>,
         data: &mut SceneData,
     ) {

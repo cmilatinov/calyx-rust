@@ -5,7 +5,7 @@ use std::path::Path;
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use nalgebra_glm::{vec2, vec3, vec4, IVec4, Mat4, Vec2, Vec3, Vec4};
-use russimp::scene::{PostProcess, Scene};
+use russimp_ng::scene::{PostProcess, Scene};
 
 use super::LoadedAsset;
 use crate::assets::error::AssetError;
@@ -238,7 +238,10 @@ impl Mesh {
         }
     }
 
-    pub fn from_russimp_mesh(render_context: &RenderContext, mesh: &russimp::mesh::Mesh) -> Self {
+    pub fn from_russimp_mesh(
+        render_context: &RenderContext,
+        mesh: &russimp_ng::mesh::Mesh,
+    ) -> Self {
         let indices = mesh
             .faces
             .iter()

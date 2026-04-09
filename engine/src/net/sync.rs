@@ -66,7 +66,7 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>> Synchronized<T> {
         let value = getter(ctx);
         self.update_owner(ctx, resources, &value);
         let new_value = self.update_remote(ctx, resources);
-        let Some((network, time)) = resources.resource2_mut::<Network, Time>() else {
+        let Some((network, time)) = resources.resource_pair_mut::<Network, Time>() else {
             return new_value;
         };
         network.queue.receive_messages(&mut (ctx, &*time), self);
@@ -80,7 +80,7 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>> Synchronized<T> {
         resources: &mut ResourceMap,
         value: &T,
     ) {
-        let Some((network, time)) = resources.resource2_mut::<Network, Time>() else {
+        let Some((network, time)) = resources.resource_pair_mut::<Network, Time>() else {
             return;
         };
         if !ctx.scene.is_game_object_owner(ctx.game_object, network) {
@@ -125,7 +125,7 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>> Synchronized<T> {
         ctx: &mut ComponentEventContext,
         resources: &mut ResourceMap,
     ) -> Option<T> {
-        let Some((network, time)) = resources.resource2_mut::<Network, Time>() else {
+        let Some((network, time)) = resources.resource_pair_mut::<Network, Time>() else {
             return None;
         };
         if ctx.scene.is_game_object_owner(ctx.game_object, network) {

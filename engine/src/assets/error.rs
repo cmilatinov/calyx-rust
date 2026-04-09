@@ -1,4 +1,4 @@
-use russimp::RussimpError;
+use russimp_ng::RussimpError;
 
 #[derive(Debug)]
 pub enum AssetError {

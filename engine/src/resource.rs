@@ -69,7 +69,7 @@ impl ResourceMap {
     }
 
     #[inline]
-    pub fn resource2_mut<T1: Resource, T2: Resource>(&mut self) -> Option<(&mut T1, &mut T2)> {
+    pub fn resource_pair_mut<T1: Resource, T2: Resource>(&mut self) -> Option<(&mut T1, &mut T2)> {
         match self
             .inner
             .get_disjoint_mut([&TypeId::of::<T1>(), &TypeId::of::<T2>()])

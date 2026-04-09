@@ -103,7 +103,6 @@ impl Client {
     }
 
     pub fn send_message(&mut self, message: &GameMessage) -> Result<(), BoxedError> {
-        trace!("Sending message to server: {:?}", message);
         let bytes =
             bincode::serde::encode_to_vec(message, bincode::config::standard()).map_err(|e| {
                 error!("Failed to serialize message: {}", e);
