@@ -24,7 +24,7 @@ use crate::assets::Asset;
 use crate::assets::LoadedAssetRef;
 use crate::class_registry::ComponentRegistry;
 use crate::component::ComponentMesh;
-use crate::context::ReadOnlyAssetContext;
+use crate::context::{ReadOnlyAssetContext, ReadOnlyRegistryContext};
 use crate::core::{ReadOnlyRef, Ref, WeakRef};
 use crate::error::BoxedError;
 use crate::reflect::type_registry::TypeRegistry;
@@ -147,6 +147,65 @@ impl AssetRegistry {
     }
 }
 
+
+#[cfg(test)]
+impl AssetRegistry {
+    pub fn new_test(
+        root_path: impl Into<PathBuf>,
+        render_context: Arc<RenderContext>,
+        type_registry: Ref<TypeRegistry>,
+        component_registry: Ref<ComponentRegistry>,
+    ) -> Ref<Self> {
+        let path = root_path.into();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let watcher = RecommendedWatcher::new(tx, Config::default())
+            .expect("failed to create watcher");
+        Ref::new_cyclic(|weak| Self {
+            render_context,
+            asset_registry: weak,
+            type_registry,
+            component_registry,
+            asset_paths: vec![path],
+            asset_cache: Default::default(),
+            asset_data: Default::default(),
+            asset_constructors: Default::default(),
+            watcher_thread: None,
+            watcher,
+        })
+    }
+}
+
+#[cfg(test)]
+impl AssetRegistry {
+    pub fn new_test_with_assets(
+        asset_paths: Vec<PathBuf>,
+        render_context: Arc<RenderContext>,
+        type_registry: Ref<TypeRegistry>,
+        component_registry: Ref<ComponentRegistry>,
+    ) -> Ref<Self> {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let watcher = RecommendedWatcher::new(tx, Config::default())
+            .expect("failed to create watcher");
+        let registry = Ref::new_cyclic(|weak| {
+            let mut r = Self {
+                render_context,
+                asset_registry: weak,
+                type_registry,
+                component_registry,
+                asset_paths,
+                asset_cache: Default::default(),
+                asset_data: Default::default(),
+                asset_constructors: Default::default(),
+                watcher_thread: None,
+                watcher,
+            };
+            r.register_default_asset_types();
+            r.build_meta().expect("failed to build asset metadata");
+            r
+        });
+        registry
+    }
+}
 impl AssetRegistry {
     fn register_default_asset_types(&mut self) {
         self.register_asset_type::<Mesh>();
@@ -258,7 +317,7 @@ impl AssetRegistry {
         let path = meta.path.as_ref().ok_or(AssetError::NotFound)?;
         let ctors = self.asset_constructors();
         let ctor = ctors.get(&meta.type_uuid).ok_or(AssetError::NotFound)?;
-        let LoadedAssetRef { asset, sub_assets } = (ctor.create)(self.game_context(), id, path)?;
+        let LoadedAssetRef { asset, sub_assets } = (ctor.create)(self.asset_context(), id, path)?;
 
         // Load from file
         self.load_sub_asset_meta(id, sub_assets);
@@ -385,7 +444,7 @@ impl AssetRegistry {
     }
 
     fn load_asset_file<A: Asset>(&self, id: Uuid, path: &Path) -> Result<Ref<A>, AssetError> {
-        let loaded_asset = A::from_file(&self.game_context(), path)?;
+        let loaded_asset = A::from_file(&self.asset_context(), path)?;
         let LoadedAssetRef { asset, sub_assets } = LoadedAssetRef::new(id, loaded_asset);
         self.load_sub_asset_meta(id, sub_assets);
         Ok(asset)
@@ -421,12 +480,18 @@ impl AssetRegistry {
         self.asset_constructors.write().unwrap()
     }
 
-    fn game_context(&self) -> ReadOnlyAssetContext {
+    fn registry_context(&self) -> ReadOnlyRegistryContext {
+        ReadOnlyRegistryContext {
+            assets: self.asset_registry.upgrade().unwrap().readonly(),
+            types: self.type_registry.readonly(),
+            components: self.component_registry.readonly(),
+        }
+    }
+
+    fn asset_context(&self) -> ReadOnlyAssetContext {
         ReadOnlyAssetContext {
             render_context: self.render_context.clone(),
-            asset_registry: self.asset_registry.upgrade().unwrap().readonly(),
-            type_registry: self.type_registry.readonly(),
-            component_registry: self.component_registry.readonly(),
+            registries: self.registry_context(),
         }
     }
 }
@@ -688,7 +753,7 @@ impl AssetRegistry {
 
             let ctors = self.asset_constructors();
             if let Some(ctor) = ctors.get(&meta.type_uuid) {
-                let _ = (ctor.reload)(self.game_context(), asset_ref, &path);
+                let _ = (ctor.reload)(self.asset_context(), asset_ref, &path);
             }
         }
     }
@@ -852,13 +917,13 @@ impl AssetRegistry {
     }
 
     pub fn new_empty_scene(&self) -> Scene {
-        self.game_context().scene()
+        self.registry_context().scene()
     }
 
     pub fn default_scene(&self) -> Option<Ref<Scene>> {
         self.load_or_create(Self::DEFAULT_SCENE, || {
             let mut scene = self.new_empty_scene();
-            let game_object = scene.create_game_object(None, None);
+            let game_object = scene.create(None, None);
             scene.bind_component(
                 game_object,
                 ComponentMesh {

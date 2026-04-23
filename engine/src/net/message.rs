@@ -17,7 +17,6 @@ pub enum GameMessage {
     ServerEvent(ServerEvent),
     // CLIENT EVENTS
     SelfConnected {
-        server_client_id: ClientId,
         client_ids: Vec<ClientId>,
     },
     ClientConnected {

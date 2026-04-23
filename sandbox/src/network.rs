@@ -23,7 +23,11 @@ pub struct ComponentNetworkManager {
 impl Component for ComponentNetworkManager {
     fn update(
         &mut self,
-        ComponentEventContext { scene, assets, .. }: ComponentEventContext,
+        ComponentEventContext {
+            scene,
+            registries: assets,
+            ..
+        }: ComponentEventContext,
         resources: &mut ResourceMap,
         input: &Input,
     ) {

@@ -10,3 +10,6 @@ pub use component::*;
 pub use message::*;
 pub use network::*;
 pub use server::*;
+
+#[cfg(test)]
+mod tests;

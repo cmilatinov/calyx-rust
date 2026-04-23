@@ -64,19 +64,14 @@ impl Panel for PanelAnimator {
             selected_asset_id = selected_id;
             selected_id = None;
         } else if let SelectionType::GameObject = ty {
-            game_object = selected_id.and_then(|id| {
-                state
-                    .game
-                    .scenes
-                    .simulation_scene()
-                    .get_game_object_by_uuid(id)
-            });
+            game_object = selected_id.and_then(|id| state.game.scenes.simulation_scene().find(id));
         }
         if let Some(id) = selected_asset_id {
             if let Ok(graph) = state
                 .game
                 .assets
-                .asset_registry
+                .registries
+                .assets
                 .read()
                 .load_by_id::<AnimationGraph>(id)
             {

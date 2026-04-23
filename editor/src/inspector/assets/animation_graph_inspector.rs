@@ -34,7 +34,13 @@ impl AssetInspector for AnimationGraphInspector {
     }
 
     fn show_inspector(&self, ui: &mut Ui, game: &mut GameContext, asset_id: Uuid) {
-        let Ok(asset) = game.assets.asset_registry.read().load_dyn_by_id(asset_id) else {
+        let Ok(asset) = game
+            .assets
+            .registries
+            .assets
+            .read()
+            .load_dyn_by_id(asset_id)
+        else {
             return;
         };
         let Some(graph_ref) = asset.try_downcast::<AnimationGraph>() else {

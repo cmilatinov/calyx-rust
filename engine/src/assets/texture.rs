@@ -123,7 +123,7 @@ impl Texture {
         let texture = device.create_texture(texture_desc);
         let sampler = device.create_sampler(&sampler_desc);
         let view = texture.create_view(&view_desc);
-        let handle = if create_handle {
+        let handle = if create_handle && !render_context.is_headless() {
             let renderer = render_context.renderer();
             let tex_mgr = render_context.texture_manager();
             let texture_id =

@@ -23,6 +23,6 @@ impl Component for ComponentNetworkObject {}
 
 impl ComponentNetworkObject {
     pub fn is_owner(&self, network: &Network) -> bool {
-        network.client.client_id() == Some(self.owner_id)
+        network.local_id == Some(self.owner_id)
     }
 }

@@ -19,6 +19,11 @@ pub mod resource;
 pub mod scene;
 pub mod utils;
 
+#[cfg(test)]
+pub mod test_utils;
+#[cfg(test)]
+pub mod test_harness;
+
 pub use engine_derive::*;
 use inventory::collect;
 use reflect::type_registry::TypeRegistry;

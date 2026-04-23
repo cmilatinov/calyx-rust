@@ -5,3 +5,6 @@ pub use debug::*;
 mod config;
 mod context;
 mod debug;
+
+#[cfg(test)]
+mod tests;

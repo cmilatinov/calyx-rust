@@ -56,7 +56,7 @@ impl Asset for Shader {
             .and_then(|s| s.to_str())
             .unwrap_or("shader")
             .to_string();
-        let source = ShaderPreprocessor::load_shader_source(&game.asset_registry.read(), path)
+        let source = ShaderPreprocessor::load_shader_source(&game.registries.assets.read(), path)
             .map_err(|_| AssetError::LoadError)?;
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(

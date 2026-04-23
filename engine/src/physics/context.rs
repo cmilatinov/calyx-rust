@@ -37,7 +37,7 @@ pub struct PhysicsContext {
     pub query_pipeline: QueryPipeline,
     /// The integration parameters, controlling various low-level coefficient of the simulation.
     pub integration_parameters: IntegrationParameters,
-    entity_rigid_body: HashMap<Entity, RigidBodyHandle>,
+    pub(crate) entity_rigid_body: HashMap<Entity, RigidBodyHandle>,
     entity_collider: HashMap<Entity, ColliderHandle>,
     accumulated_time: TimeType,
 }
@@ -90,76 +90,88 @@ impl PhysicsContext {
     }
 
     pub fn prepare(scene: &mut Scene) {
+        Self::sync_rigid_bodies(scene);
+        Self::sync_colliders(scene);
+        Self::sync_transforms(scene);
+    }
+
+    /// Create or update rigid body properties when the component is dirty.
+    fn sync_rigid_bodies(scene: &mut Scene) {
         let mut query = <(Entity, &ComponentRigidBody)>::query();
-        let mut entities: Vec<Entity> = Default::default();
-        for (entity, c_rigid_body) in query.iter(&scene.world).filter(|(_, c_rb)| c_rb.dirty) {
-            if let Some(go) = scene.get_game_object_from_entity(*entity) {
-                let transform = scene.get_world_transform(go);
-                let rb_handle =
-                    if let Some(handle) = scene.physics.entity_rigid_body.get(&go.entity) {
-                        *handle
-                    } else {
-                        let rigid_body = Self::rigid_body_from_component(&transform, c_rigid_body);
-                        let handle = scene.physics.bodies.insert(rigid_body);
-                        scene.physics.entity_rigid_body.insert(go.entity, handle);
-                        handle
-                    };
-                let rb = &mut scene.physics.bodies[rb_handle];
-                rb.set_position(transform.position.into(), true);
-                rb.set_rotation(transform.rotation, true);
-                rb.set_enabled(c_rigid_body.enabled);
-                rb.set_body_type(c_rigid_body.ty, true);
-                rb.set_additional_mass(c_rigid_body.mass, true);
-                rb.set_gravity_scale(c_rigid_body.gravity_scale, true);
-                if !c_rigid_body.can_sleep {
+        let mut dirty_entities: Vec<Entity> = Vec::new();
+        for (entity, c_rb) in query.iter(&scene.world) {
+            let Some(go) = scene.game_object_from_entity(*entity) else {
+                continue;
+            };
+            // Ensure a rapier body exists
+            if !scene.physics.entity_rigid_body.contains_key(&go.entity) {
+                let transform = scene.world_transform(go);
+                let rigid_body = Self::rigid_body_from_component(&transform, c_rb);
+                let handle = scene.physics.bodies.insert(rigid_body);
+                scene.physics.entity_rigid_body.insert(go.entity, handle);
+            }
+            // Sync properties only when dirty
+            if c_rb.dirty {
+                let handle = scene.physics.entity_rigid_body[&go.entity];
+                let rb = &mut scene.physics.bodies[handle];
+                rb.set_enabled(c_rb.enabled);
+                rb.set_body_type(c_rb.ty, true);
+                rb.set_additional_mass(c_rb.mass, true);
+                rb.set_gravity_scale(c_rb.gravity_scale, true);
+                if !c_rb.can_sleep {
                     rb.activation_mut().normalized_linear_threshold = -1.0;
                     rb.activation_mut().angular_threshold = -1.0;
                 }
-                entities.push(*entity);
+                dirty_entities.push(*entity);
             }
         }
-        for entity in entities.drain(0..) {
+        for entity in dirty_entities {
             if let Some(mut entry) = scene.world.entry(entity) {
                 if let Ok(c_rb) = entry.get_component_mut::<ComponentRigidBody>() {
                     c_rb.dirty = false;
                 }
             }
         }
+    }
+
+    /// Create or update collider properties when the component is dirty.
+    fn sync_colliders(scene: &mut Scene) {
         let mut query = <(Entity, &ComponentCollider)>::query();
-        entities.clear();
-        for (entity, c_collider) in query.iter(&scene.world).filter(|(_, c_c)| c_c.dirty) {
-            if let Some(go) = scene.get_game_object_from_entity(*entity) {
-                let parent = scene.get_ancestor_with_component::<ComponentRigidBody>(go);
-                let rb_handle =
-                    parent.and_then(|parent| scene.physics.entity_rigid_body.get(&parent.entity));
+        let mut dirty_entities: Vec<Entity> = Vec::new();
+        for (entity, c_collider) in query.iter(&scene.world) {
+            let Some(go) = scene.game_object_from_entity(*entity) else {
+                continue;
+            };
+            let parent = scene.ancestor_with::<ComponentRigidBody>(go);
+            let rb_handle =
+                parent.and_then(|p| scene.physics.entity_rigid_body.get(&p.entity).copied());
+            // Ensure a rapier collider exists
+            if !scene.physics.entity_collider.contains_key(&go.entity) {
                 let transform = parent
-                    .map(|parent| scene.get_transform_relative_to(go, parent))
-                    .unwrap_or_else(|| scene.get_world_transform(go));
-                let c_handle = if let Some(handle) = scene.physics.entity_collider.get(&go.entity) {
-                    *handle
-                } else {
-                    let collider = Self::collider_from_component(&transform, c_collider);
-                    let handle = match rb_handle {
-                        None => scene.physics.colliders.insert(collider),
-                        Some(rb_handle) => scene.physics.colliders.insert_with_parent(
-                            collider,
-                            *rb_handle,
-                            &mut scene.physics.bodies,
-                        ),
-                    };
-                    scene.physics.entity_collider.insert(go.entity, handle);
-                    handle
+                    .map(|p| scene.transform_relative_to(go, p))
+                    .unwrap_or_else(|| scene.world_transform(go));
+                let collider = Self::collider_from_component(&transform, c_collider);
+                let handle = match rb_handle {
+                    None => scene.physics.colliders.insert(collider),
+                    Some(rb_handle) => scene.physics.colliders.insert_with_parent(
+                        collider,
+                        rb_handle,
+                        &mut scene.physics.bodies,
+                    ),
                 };
+                scene.physics.entity_collider.insert(go.entity, handle);
+            }
+            // Sync properties only when dirty
+            if c_collider.dirty {
+                let c_handle = scene.physics.entity_collider[&go.entity];
                 let c = &mut scene.physics.colliders[c_handle];
-                c.set_position(transform.position.into());
-                c.set_rotation(transform.rotation);
                 c.set_shape(Self::collider_shape(c_collider.shape));
                 c.set_friction(c_collider.friction);
                 c.set_density(c_collider.density);
-                entities.push(*entity);
+                dirty_entities.push(*entity);
             }
         }
-        for entity in entities.drain(0..) {
+        for entity in dirty_entities {
             if let Some(mut entry) = scene.world.entry(entity) {
                 if let Ok(c_c) = entry.get_component_mut::<ComponentCollider>() {
                     c_c.dirty = false;
@@ -168,15 +180,53 @@ impl PhysicsContext {
         }
     }
 
+    /// Sync scene transforms → rapier for kinematic and fixed bodies only.
+    /// Dynamic bodies are owned by rapier during simulation — their
+    /// transforms flow back to the scene via update().
+    fn sync_transforms(scene: &mut Scene) {
+        let mut query = <(Entity, &ComponentRigidBody)>::query();
+        for (entity, c_rb) in query.iter(&scene.world) {
+            if c_rb.ty == RigidBodyType::Dynamic {
+                continue;
+            }
+            let Some(go) = scene.game_object_from_entity(*entity) else {
+                continue;
+            };
+            let Some(&handle) = scene.physics.entity_rigid_body.get(&go.entity) else {
+                continue;
+            };
+            let transform = scene.world_transform(go);
+            let rb = &mut scene.physics.bodies[handle];
+            rb.set_position(transform.position.into(), true);
+            rb.set_rotation(transform.rotation, true);
+        }
+        let mut query = <(Entity, &ComponentCollider)>::query();
+        for (entity, _) in query.iter(&scene.world) {
+            let Some(go) = scene.game_object_from_entity(*entity) else {
+                continue;
+            };
+            let Some(&c_handle) = scene.physics.entity_collider.get(&go.entity) else {
+                continue;
+            };
+            let parent = scene.ancestor_with::<ComponentRigidBody>(go);
+            let transform = parent
+                .map(|p| scene.transform_relative_to(go, p))
+                .unwrap_or_else(|| scene.world_transform(go));
+            let c = &mut scene.physics.colliders[c_handle];
+            c.set_position(transform.position.into());
+            c.set_rotation(transform.rotation);
+        }
+    }
+
     pub fn update(scene: &mut Scene, time: &Time, config: &PhysicsConfiguration) {
         scene.physics.step_simulation(time, config);
         let mut query = <(Entity, &ComponentTransform, &ComponentRigidBody)>::query();
         let mut transforms: HashMap<GameObject, Mat4> = Default::default();
         for (entity, _, _) in query.iter(&scene.world) {
-            if let Some(go) = scene.get_game_object_from_entity(*entity) {
+            if let Some(go) = scene.game_object_from_entity(*entity) {
                 if let Some(rb_handle) = scene.physics.entity_rigid_body.get(entity).copied() {
                     let rb = &scene.physics.bodies[rb_handle];
-                    let old_transform = scene.get_world_transform(go);
+                    let old_transform = scene.world_transform(go);
                     let transform = Transform::from_components(
                         *rb.translation(),
                         UnitQuaternion::from(*rb.rotation()),
@@ -190,11 +240,12 @@ impl PhysicsContext {
         for (go, transform) in transforms {
             scene.set_world_transform(go, transform);
         }
+        scene.clear_transform_cache();
     }
 
     pub fn step_simulation(&mut self, time: &Time, config: &PhysicsConfiguration) {
         self.accumulated_time += time.delta_time * time.time_scale;
-        while self.accumulated_time > Self::TIME_STEP {
+        while self.accumulated_time >= Self::TIME_STEP {
             self.integration_parameters.dt = Self::TIME_STEP;
             self.physics_pipeline.step(
                 &config.gravity,

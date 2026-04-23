@@ -160,3 +160,84 @@ impl<'a> StructInfoBuilder<'a> {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate as engine;
+    use crate::reflect::impls::ReflectDefault;
+    use crate::type_uuids;
+    use crate::utils::TypeUuid;
+    use ReflectedType;
+
+    // Minimal stub type with a known UUID
+    #[derive(Default, TypeUuid, Reflect)]
+    #[reflect(Default)]
+    #[allow(unused)]
+    #[repr(C)]
+    struct Foo {
+        data: f32,
+    }
+
+    fn empty_registry() -> TypeRegistry {
+        TypeRegistry {
+            types: Default::default(),
+        }
+    }
+
+    fn foo_registry() -> TypeRegistry {
+        let mut registry = TypeRegistry {
+            types: Default::default(),
+        };
+        Foo::register(&mut registry);
+        registry
+    }
+
+    #[test]
+    fn meta_registers_type() {
+        let reg = foo_registry();
+        assert!(reg.type_registration::<Foo>().is_some());
+    }
+
+    #[test]
+    fn missing_type_returns_none() {
+        let reg = empty_registry();
+        assert!(reg.type_registration::<Foo>().is_none());
+    }
+
+    #[test]
+    fn meta_struct_stores_type_info() {
+        let reg = foo_registry();
+        let info = reg.type_info::<Foo>().unwrap();
+        assert!(matches!(info, TypeInfo::Struct(_)));
+    }
+
+    #[test]
+    fn type_info_by_id_works() {
+        let reg = foo_registry();
+        let info = reg.type_info_by_id(Foo::type_uuid());
+        assert!(info.is_some());
+    }
+
+    #[test]
+    fn list_types_finds_registered_trait() {
+        let reg = empty_registry();
+        assert!(reg.list_types::<ReflectDefault>().is_empty());
+        let reg = foo_registry();
+        assert_eq!(reg.list_types::<ReflectDefault>().len(), 1);
+    }
+
+    #[test]
+    fn all_of_traits_expected_behavior() {
+        let reg = empty_registry();
+        let result = reg.all_of(vec![]);
+        assert!(result.is_empty());
+
+        let reg = foo_registry();
+        let result = reg.all_of(vec![]);
+        assert!(result.contains(&Foo::type_uuid()));
+
+        let result = reg.all_of(type_uuids!(ReflectDefault));
+        assert!(result.contains(&Foo::type_uuid()));
+    }
+}

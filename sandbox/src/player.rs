@@ -56,7 +56,7 @@ impl ComponentPlayerController {
         input: &Input,
         dt: TimeType,
     ) {
-        if !scene.is_game_object_owner(*game_object, resources.network()) {
+        if !scene.is_owner(*game_object, resources.network()) {
             return;
         }
 
@@ -73,7 +73,7 @@ impl ComponentPlayerController {
             None => return;
             let camera = self.camera.game_object(scene);
         );
-        let camera_transform = scene.get_world_transform(camera);
+        let camera_transform = scene.world_transform(camera);
         let camera_forward = camera_transform.forward().xz().normalize();
         let camera_right = camera_transform.right().xz().normalize();
         let move_direction = camera_forward * forward + camera_right * right;
@@ -83,7 +83,7 @@ impl ComponentPlayerController {
             return;
         }
 
-        let mut transform = scene.get_world_transform(*game_object);
+        let mut transform = scene.world_transform(*game_object);
         transform.position += move_vector;
 
         if let Some(move_dir_2d) = move_direction.try_normalize(f32::EPSILON) {

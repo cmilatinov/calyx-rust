@@ -33,7 +33,7 @@ impl TypeInspector for FloatInspector {
         let min_attr = attrs.get("min").copied();
         let max_attr = attrs.get("max").copied();
         let speed_attr = attrs.get("speed").copied();
-        let type_registry = ctx.assets.type_registry.read();
+        let type_registry = ctx.assets.types.read();
         let Some(meta) = type_registry.trait_meta::<ReflectGenericFloat>(instance.uuid()) else {
             return;
         };

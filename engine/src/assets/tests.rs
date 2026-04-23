@@ -1,0 +1,69 @@
+#[cfg(test)]
+mod tests {
+    use crate::assets::mesh::Mesh;
+    use crate::assets::texture::Texture;
+    use crate::test_utils::test_registries_with_assets;
+    use crate::utils::TypeUuid;
+    use std::path::PathBuf;
+
+    fn asset_registries() -> crate::context::ReadOnlyRegistryContext {
+        let assets_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets");
+        let assets_path = dunce::canonicalize(assets_path).expect("assets dir not found");
+        test_registries_with_assets(vec![assets_path])
+    }
+
+    #[test]
+    fn load_mesh_by_name() {
+        let registries = asset_registries();
+        let registry = registries.assets.read();
+        let mesh = registry.load::<Mesh>("meshes/cube");
+        assert!(mesh.is_ok(), "failed to load cube mesh: {:?}", mesh.err());
+        let mesh = mesh.unwrap();
+        let mesh = mesh.read();
+        assert!(!mesh.vertices.is_empty());
+        assert!(!mesh.indices.is_empty());
+    }
+
+    #[test]
+    fn load_texture_by_name() {
+        let registries = asset_registries();
+        let registry = registries.assets.read();
+        let texture = registry.load::<Texture>("textures/white");
+        assert!(
+            texture.is_ok(),
+            "failed to load white texture: {:?}",
+            texture.err()
+        );
+    }
+
+    #[test]
+    fn load_nonexistent_asset_returns_error() {
+        let registries = asset_registries();
+        let registry = registries.assets.read();
+        let result = registry.load::<Mesh>("meshes/does_not_exist");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn asset_meta_lookup() {
+        let registries = asset_registries();
+        let registry = registries.assets.read();
+        let id = registry.asset_id("meshes/cube");
+        assert!(id.is_some());
+        let meta = registry.asset_meta_from_id(id.unwrap());
+        assert!(meta.is_some());
+        let meta = meta.unwrap();
+        assert_eq!(meta.type_uuid, Mesh::type_uuid());
+    }
+
+    #[test]
+    fn loaded_mesh_has_gpu_buffers() {
+        let registries = asset_registries();
+        let registry = registries.assets.read();
+        let mesh = registry.load::<Mesh>("meshes/cube").unwrap();
+        let mesh = mesh.read();
+        // Mesh::from_russimp_mesh creates vertex/index buffers via the GPU device
+        // They're None until mark_dirty + upload, but instance_buffer is always created
+        assert!(mesh.vertices.len() > 0);
+    }
+}

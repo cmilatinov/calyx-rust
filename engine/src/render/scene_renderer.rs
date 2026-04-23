@@ -125,9 +125,9 @@ pub struct SceneRenderer {
 }
 
 impl SceneRenderer {
-    pub fn new(assets: &ReadOnlyAssetContext, mut options: SceneRendererOptions) -> Self {
-        let render_state = assets.render_context.render_state();
-        let asset_registry = assets.asset_registry.read();
+    pub fn new(context: &ReadOnlyAssetContext, mut options: SceneRendererOptions) -> Self {
+        let render_state = context.render_context.render_state();
+        let asset_registry = context.registries.assets.read();
         let device = &render_state.device;
         let width = 1280;
         let height = 720;
@@ -135,7 +135,7 @@ impl SceneRenderer {
 
         // Textures
         let (scene_texture, scene_texture_msaa, scene_depth_texture) = Self::create_textures(
-            assets.render_context.clone(),
+            context.render_context.clone(),
             width,
             height,
             options.samples,
@@ -187,7 +187,7 @@ impl SceneRenderer {
         let directional_light_storage_buffer =
             ResizableBuffer::new(wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
 
-        let gizmo_renderer = GizmoRenderer::new(assets, &camera_uniform_buffer, options.samples);
+        let gizmo_renderer = GizmoRenderer::new(context, &camera_uniform_buffer, options.samples);
 
         // Default assets
         let cube = asset_registry.cube().unwrap();
@@ -197,7 +197,7 @@ impl SceneRenderer {
         let missing_texture = asset_registry.missing_texture().unwrap();
 
         Self {
-            asset_context: assets.clone(),
+            asset_context: context.clone(),
             default_assets: SceneRendererAssets {
                 cube,
                 screen_space_quad,
@@ -621,7 +621,11 @@ impl SceneRenderer {
         bone_transform_index: Option<i32>,
         transform: [[f32; 4]; 4],
     ) {
-        let Some(shader_ref) = mat_ref.read().shader.get_ref(&self.asset_context) else {
+        let Some(shader_ref) = mat_ref
+            .read()
+            .shader
+            .get_ref(&self.asset_context.registries)
+        else {
             return;
         };
         self.draw_list.push(DrawListElement {
@@ -655,32 +659,35 @@ impl SceneRenderer {
         self.draw_list.clear();
         let mut query = <(Entity, &ComponentMesh)>::query();
         for (entity, c_mesh) in query.iter(world) {
-            let Some(game_object) = scene.get_game_object_from_entity(*entity) else {
+            let Some(game_object) = scene.game_object_from_entity(*entity) else {
                 continue;
             };
-            let Some(mesh_ref) = c_mesh.mesh.get_ref(&self.asset_context) else {
+            let Some(mesh_ref) = c_mesh.mesh.get_ref(&self.asset_context.registries) else {
                 continue;
             };
-            let Some(mat_ref) = c_mesh.material.get_ref(&self.asset_context) else {
+            let Some(mat_ref) = c_mesh.material.get_ref(&self.asset_context.registries) else {
                 continue;
             };
-            let transform = scene.get_world_transform(game_object);
+            let transform = scene.world_transform(game_object);
             self.insert_draw_list_entry(&mesh_ref, &mat_ref, None, transform.matrix().into());
         }
         let mut skinned_meshes: HashSet<Uuid> = Default::default();
         let mut query = <(Entity, &ComponentSkinnedMesh)>::query();
         for (entity, c_skinned_mesh) in query.iter(world) {
-            let Some(game_object) = scene.get_game_object_from_entity(*entity) else {
+            let Some(game_object) = scene.game_object_from_entity(*entity) else {
                 continue;
             };
-            let Some(mesh_ref) = c_skinned_mesh.mesh.get_ref(&self.asset_context) else {
+            let Some(mesh_ref) = c_skinned_mesh.mesh.get_ref(&self.asset_context.registries) else {
                 continue;
             };
-            let Some(mat_ref) = c_skinned_mesh.material.get_ref(&self.asset_context) else {
+            let Some(mat_ref) = c_skinned_mesh
+                .material
+                .get_ref(&self.asset_context.registries)
+            else {
                 continue;
             };
             let mesh_id = mesh_ref.id();
-            let transform = scene.get_world_transform(game_object);
+            let transform = scene.world_transform(game_object);
             let bone_transform_index;
             {
                 let mut mesh = mesh_ref.write();
@@ -702,7 +709,8 @@ impl SceneRenderer {
         let mut query = <&ComponentSkyLight>::query();
         let mut skybox = None;
         for c_sky_light in query.iter(world).filter(|s| s.active) {
-            let Some(skybox_ref) = c_sky_light.skybox.get_ref(&self.asset_context) else {
+            let Some(skybox_ref) = c_sky_light.skybox.get_ref(&self.asset_context.registries)
+            else {
                 continue;
             };
             let skybox_id = skybox_ref.id();
@@ -828,7 +836,7 @@ impl SceneRenderer {
             .filter(|(_, light)| light.active)
             .filter_map(|(entity, light)| {
                 scene
-                    .get_game_object_from_entity(*entity)
+                    .game_object_from_entity(*entity)
                     .map(|go| (go, light))
             })
         {
@@ -836,7 +844,7 @@ impl SceneRenderer {
             point_lights.push(PointLight {
                 color: [color[0], color[1], color[2]],
                 radius: light.radius,
-                position: scene.get_world_transform(game_object).position.into(),
+                position: scene.world_transform(game_object).position.into(),
                 ..Default::default()
             });
         }
@@ -851,7 +859,7 @@ impl SceneRenderer {
             .filter(|(_, light)| light.active)
             .filter_map(|(entity, light)| {
                 scene
-                    .get_game_object_from_entity(*entity)
+                    .game_object_from_entity(*entity)
                     .map(|go| (go, light))
             })
         {
@@ -859,7 +867,7 @@ impl SceneRenderer {
             directional_lights.push(DirectionalLight {
                 color: [color[0], color[1], color[2]],
                 direction: scene
-                    .get_world_transform(game_object)
+                    .world_transform(game_object)
                     .transform_direction(&Vec3::z_axis())
                     .into(),
                 ..Default::default()

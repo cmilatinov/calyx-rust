@@ -45,7 +45,7 @@ impl GameObjectRef {
 
 impl GameObjectRef {
     pub fn game_object(&self, scene: &Scene) -> Option<GameObject> {
-        scene.get_game_object_by_uuid(self.id)
+        scene.find(self.id)
     }
 
     pub fn entry<'a>(&self, scene: &'a Scene) -> Option<EntryRef<'a>> {

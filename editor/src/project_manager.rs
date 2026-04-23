@@ -101,7 +101,7 @@ impl ProjectManager {
                     if let Ok(load_fn) =
                         lib.find_func::<extern "C" fn(&mut TypeRegistry), &str>("plugin_main")
                     {
-                        let mut registry = self.context.type_registry.write();
+                        let mut registry = self.context.registries.types.write();
                         load_fn.get()(&mut registry);
                         for (id, registration) in &registry.types {
                             if let TypeInfo::Struct(info) = &registration.type_info {
@@ -110,10 +110,10 @@ impl ProjectManager {
                         }
                     }
                     self.assembly = Some(lib);
-                    let component_registry_ref = self.context.component_registry.clone();
+                    let component_registry_ref = self.context.registries.components.clone();
                     component_registry_ref
                         .write()
-                        .refresh_class_lists(&self.context.type_registry.read());
+                        .refresh_class_lists(&self.context.registries.types.read());
                 }
                 Err(err) => eprintln!("{}", err),
             }

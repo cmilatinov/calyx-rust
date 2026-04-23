@@ -10,6 +10,7 @@ use std::time::{Duration, SystemTime};
 pub struct Server {
     server: RenetServer,
     transport: NetcodeServerTransport,
+    addr: SocketAddr,
 }
 
 impl Server {
@@ -19,23 +20,30 @@ impl Server {
     }
 
     pub fn new(socket_addr: SocketAddr) -> Result<Self, BoxedError> {
+        let socket = UdpSocket::bind(socket_addr).map_err(Box::new)?;
+        let bound_addr = socket.local_addr().map_err(Box::new)?;
         let config = ServerConfig {
             current_time: SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap(),
             max_clients: 32,
             protocol_id: GameMessage::PROTOCOL_ID,
-            public_addresses: vec!["127.0.0.1:0".parse().unwrap()],
+            public_addresses: vec![bound_addr],
             authentication: ServerAuthentication::Unsecure,
         };
-        let socket = UdpSocket::bind(socket_addr).map_err(Box::new)?;
         let server = RenetServer::new(ConnectionConfig::default());
         let transport = NetcodeServerTransport::new(config, socket).map_err(Box::new)?;
-        Ok(Self { server, transport })
+        Ok(Self {
+            server,
+            transport,
+            addr: bound_addr,
+        })
     }
 
     pub fn update(&mut self, queue: &mut MessageQueue<GameMessage>, duration: Duration) {
-        let Self { server, transport } = self;
+        let Self {
+            server, transport, ..
+        } = self;
 
         server.update(duration);
         if let Err(err) = transport.update(duration, server) {
@@ -130,5 +138,13 @@ impl Server {
 
     pub fn client_ids_iter<'a>(&'a self) -> impl Iterator<Item = ClientId> + 'a {
         self.server.clients_id_iter()
+    }
+
+    pub fn addresses(&self) -> Vec<SocketAddr> {
+        self.transport.addresses()
+    }
+
+    pub fn bound_addr(&self) -> SocketAddr {
+        self.addr
     }
 }

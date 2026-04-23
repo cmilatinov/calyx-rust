@@ -27,7 +27,13 @@ impl AssetInspector for ShaderInspector {
     fn show_context_menu(&self, ui: &mut Ui, game: &mut GameContext, asset_id: Uuid) {
         if ui.button("Create Material").clicked() {
             'cleanup: {
-                let Ok(asset) = game.assets.asset_registry.read().load_dyn_by_id(asset_id) else {
+                let Ok(asset) = game
+                    .assets
+                    .registries
+                    .assets
+                    .read()
+                    .load_dyn_by_id(asset_id)
+                else {
                     break 'cleanup;
                 };
                 let Some(shader) = asset.try_downcast::<Shader>() else {

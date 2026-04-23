@@ -64,3 +64,53 @@ pub fn mat4_from_russimp(matrix: &Matrix4x4) -> Mat4 {
         matrix.c1, matrix.c2, matrix.c3, matrix.c4, matrix.d1, matrix.d2, matrix.d3, matrix.d4,
     ])
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use approx::assert_abs_diff_eq;
+    use nalgebra::UnitQuaternion;
+    use nalgebra_glm::{vec3, Vec3};
+
+    #[test]
+    fn compose_decompose_round_trip() {
+        let pos = vec3(1.0f32, 2.0, 3.0);
+        let rot = UnitQuaternion::from_euler_angles(0.1, 0.2, 0.3);
+        let scale = vec3(1.0f32, 1.0, 1.0);
+
+        let mat = compose_transform(&pos, &rot, &scale);
+
+        let mut out_pos = Vec3::zeros();
+        let mut out_rot = UnitQuaternion::identity();
+        let mut out_scale = Vec3::zeros();
+        decompose_transform(&mat, &mut out_pos, &mut out_rot, &mut out_scale);
+
+        assert_abs_diff_eq!(out_pos, pos, epsilon = 1e-5);
+        assert_abs_diff_eq!(out_scale, scale, epsilon = 1e-5);
+        let dot = rot.quaternion().dot(out_rot.quaternion()).abs();
+        assert_abs_diff_eq!(dot, 1.0, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn fov_x_y_round_trip() {
+        let aspect = 16.0f32 / 9.0;
+        let fov_y = std::f32::consts::FRAC_PI_4;
+        let fov_x = to_fov_x(aspect, fov_y);
+        let recovered = to_fov_y(aspect, fov_x);
+        assert_abs_diff_eq!(recovered, fov_y, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn fit_aspect_wide_available() {
+        let result = fit_aspect(1.0, [4.0f32, 2.0f32]);
+        assert_abs_diff_eq!(result.x, 2.0, epsilon = 1e-5);
+        assert_abs_diff_eq!(result.y, 2.0, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn fit_aspect_tall_available() {
+        let result = fit_aspect(2.0, [2.0f32, 4.0f32]);
+        assert_abs_diff_eq!(result.x, 2.0, epsilon = 1e-5);
+        assert_abs_diff_eq!(result.y, 1.0, epsilon = 1e-5);
+    }
+}

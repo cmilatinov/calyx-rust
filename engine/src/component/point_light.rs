@@ -33,7 +33,7 @@ impl Default for ComponentPointLight {
 
 impl Component for ComponentPointLight {
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {
-        let transform = scene.get_world_transform(game_object);
+        let transform = scene.world_transform(game_object);
         let color = self.color.to_normalized_gamma_f32();
         gizmos.set_color(&Vec4::from(color));
         gizmos.wire_sphere(&transform.position, self.radius);

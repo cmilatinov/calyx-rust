@@ -26,3 +26,6 @@ mod skinned_mesh;
 mod sky_light;
 mod tps_camera;
 mod transform;
+
+#[cfg(test)]
+mod tests;

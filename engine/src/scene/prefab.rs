@@ -5,7 +5,7 @@ use crate::assets::{Asset, AssetRegistry, LoadedAsset};
 use crate::component::{
     ComponentBone, ComponentID, ComponentMesh, ComponentSkinnedMesh, ComponentTransform,
 };
-use crate::context::ReadOnlyAssetContext;
+use crate::context::{ReadOnlyAssetContext, ReadOnlyRegistryContext};
 use crate::core::Ref;
 use crate::math::{self, Transform};
 use crate::scene::{Scene, SceneData};
@@ -37,11 +37,11 @@ pub struct PrefabData {
     pub data: SceneData,
 }
 
-impl From<(&ReadOnlyAssetContext, PrefabData)> for Prefab {
-    fn from((game, value): (&ReadOnlyAssetContext, PrefabData)) -> Self {
+impl From<(&ReadOnlyRegistryContext, PrefabData)> for Prefab {
+    fn from((registries, value): (&ReadOnlyRegistryContext, PrefabData)) -> Self {
         Self {
             data: value.data.clone(),
-            scene: (game, value.data).into(),
+            scene: (registries, value.data).into(),
         }
     }
 }
@@ -66,7 +66,7 @@ impl Asset for Prefab {
         Self: Sized,
     {
         let ext = path.extension().and_then(|ext| ext.to_str()).unwrap();
-        let asset_registry = game.asset_registry.read();
+        let asset_registry = game.registries.assets.read();
         let meta = asset_registry.asset_meta_from_path(path).unwrap();
         if ext == "fbx" || ext == "dae" {
             let props: PropertyStore = [(
@@ -148,7 +148,7 @@ impl Asset for Prefab {
             let reader = BufReader::new(file);
             let data: PrefabData =
                 serde_json::from_reader(reader).map_err(|_| AssetError::LoadError)?;
-            Ok(LoadedAsset::new((game, data).into()))
+            Ok(LoadedAsset::new((&game.registries, data).into()))
         }
     }
 }

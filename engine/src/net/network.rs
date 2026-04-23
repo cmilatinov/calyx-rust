@@ -11,7 +11,6 @@ use crate::net::{
 use crate::scene::{GameObject, Prefab, Scene};
 use crate::try_all;
 use engine_derive::Resource;
-use legion::IntoQuery;
 use log::trace;
 use rand::Rng;
 use renet::{ClientId, DefaultChannel};
@@ -24,6 +23,7 @@ pub struct Network {
     pub client: Client,
     pub server: Option<Server>,
     pub queue: MessageQueue<GameMessage>,
+    pub local_id: Option<ClientId>,
     tick_rate: TimeType,
     tick_period: TimeType,
     accumulated_time: TimeType,
@@ -54,6 +54,7 @@ impl Network {
             client: Default::default(),
             server: None,
             queue: Default::default(),
+            local_id: None,
             tick_rate,
             tick_period: 1.0 / tick_rate,
             accumulated_time: 0.0,
@@ -62,6 +63,7 @@ impl Network {
 
     pub fn host(&mut self, socket_addr: SocketAddr) -> Result<(), BoxedError> {
         self.server = Some(Server::new(socket_addr)?);
+        self.local_id = Some(Self::new_id() as u64);
         Ok(())
     }
 
@@ -95,11 +97,11 @@ impl Network {
         assets: &'a ReadOnlyAssetContext,
     ) {
         self.queue.receive_messages(
-            &mut (&mut self.client, &mut self.server, &mut scene),
+            &mut (&mut self.client, &mut self.server, &mut scene, &mut self.local_id),
             &mut NetworkSceneSync,
         );
         self.queue.receive_messages(
-            &mut (&mut self.client, &mut self.server, &mut scene, assets),
+            &mut (&mut self.client, &mut self.server, &mut scene, assets, &mut self.local_id),
             &mut NetworkPrefabSync,
         );
     }
@@ -139,7 +141,7 @@ impl Network {
             }
         }
         *index += 1;
-        for child in scene.get_children_ordered(root).collect::<Vec<_>>() {
+        for child in scene.children_ordered(root).collect::<Vec<_>>() {
             Self::traverse_prefab(client_id, scene, child, index, src_ids, dst_ids);
         }
     }
@@ -149,7 +151,7 @@ impl Network {
         scene: &mut Scene,
         prefab_ref: Ref<Prefab>,
     ) -> Option<GameObject> {
-        let client_id = self.client.client_id()?;
+        let client_id = self.local_id?;
         let prefab = prefab_ref.read();
         let prefab_root = scene.instantiate_prefab(&prefab, None)?;
         let mut index = 0;
@@ -193,12 +195,13 @@ type NetworkSceneSyncContext<'a, 'b> = (
     &'a mut Client,
     &'a mut Option<Server>,
     &'a mut &'b mut Scene,
+    &'a mut Option<ClientId>,
 );
 
 impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSceneSync {
     fn handle_message(
         &mut self,
-        (client, server, scene): &mut NetworkSceneSyncContext,
+        (client, server, scene, local_id): &mut NetworkSceneSyncContext,
         message: &GameMessage,
     ) -> MessageHandlerResult {
         match message {
@@ -211,7 +214,6 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                     *client_id,
                     DefaultChannel::ReliableOrdered,
                     &GameMessage::SelfConnected {
-                        server_client_id: client.client_id().unwrap(),
                         client_ids: server.client_ids(),
                     },
                 );
@@ -225,19 +227,15 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                 MessageHandlerResult::Consume
             }
             GameMessage::SelfConnected {
-                server_client_id,
                 client_ids,
             } => {
                 #[allow(unused)]
                 'client_logic: {
-                    let mut query = <&mut ComponentNetworkObject>::query();
-                    for c_netobj in query.iter_mut(&mut scene.world) {
-                        c_netobj.owner_id = *server_client_id;
-                    }
                     let self_client_id = client.client_id();
+                    **local_id = self_client_id;
                     client.client_ids = client_ids.clone();
                     client.client_ids.retain(|cid| self_client_id != Some(*cid));
-                    trace!("Server Client ID: {:?}", server_client_id);
+                    trace!("Self connected, local_id: {:?}", self_client_id);
                 };
                 MessageHandlerResult::Consume
             }
@@ -263,7 +261,7 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                 to_client_id,
             } => {
                 // TODO(Cristian): Optimize this, maybe cache network ids in scene
-                let Some(game_object) = scene.game_objects().find(|go| {
+                let Some(game_object) = scene.objects().find(|go| {
                     let Some(entry) = scene.entry(*go) else {
                         return false;
                     };
@@ -304,11 +302,12 @@ type NetworkPrefabSyncContext<'a, 'b> = (
     &'a mut Option<Server>,
     &'a mut &'b mut Scene,
     &'a ReadOnlyAssetContext,
+    &'a mut Option<ClientId>,
 );
 impl MessageHandler<NetworkPrefabSyncContext<'_, '_>, GameMessage> for NetworkPrefabSync {
     fn handle_message(
         &mut self,
-        (client, server, scene, assets): &mut NetworkPrefabSyncContext,
+        (_client, server, scene, context, local_id): &mut NetworkPrefabSyncContext,
         message: &GameMessage,
     ) -> MessageHandlerResult {
         match message {
@@ -327,14 +326,14 @@ impl MessageHandler<NetworkPrefabSyncContext<'_, '_>, GameMessage> for NetworkPr
                 }
                 try_all!(
                     None => return MessageHandlerResult::Consume;
-                    let client_id = client.client_id();
+                    let client_id = **local_id;
                 );
                 if client_id == *from_client_id {
                     return MessageHandlerResult::Consume;
                 }
                 try_all!(
                     None => return MessageHandlerResult::Consume;
-                    let prefab_ref = assets.asset_registry
+                    let prefab_ref = context.registries.assets
                         .read()
                         .load_by_id::<Prefab>(*prefab_id)
                         .ok();

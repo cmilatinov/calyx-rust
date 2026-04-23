@@ -38,15 +38,21 @@ impl GameApp {
         let assets =
             AssetContext::new(cc, PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"))?;
         {
-            let mut type_registry = assets.type_registry.write();
+            let mut type_registry = assets.registries.types.write();
             plugin_main(&mut type_registry);
             assets
-                .component_registry
+                .registries
+                .components
                 .write()
                 .refresh_class_lists(&mut type_registry);
         }
         let mut game = GameContext::new(assets.clone());
-        let scene = assets.asset_registry.read().load::<Scene>("scene").unwrap();
+        let scene = assets
+            .registries
+            .assets
+            .read()
+            .load::<Scene>("scene")
+            .unwrap();
         game.scenes.load_scene(scene.readonly());
         Ok(Self {
             game,
@@ -134,8 +140,8 @@ impl eframe::App for GameApp {
             if width != 0 && height != 0 {
                 renderer.resize_textures(width, height);
             }
-            if let Some((game_object, c_camera)) = scene.get_main_camera() {
-                let transform = scene.get_world_transform(game_object);
+            if let Some((game_object, c_camera)) = scene.main_camera() {
+                let transform = scene.world_transform(game_object);
 
                 let camera = Camera::new(
                     rect.aspect_ratio(),

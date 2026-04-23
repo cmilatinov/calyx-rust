@@ -36,7 +36,14 @@ impl Panel for PanelContentBrowser {
     }
 
     fn ui(&mut self, ui: &mut Ui, state: &mut EditorAppState) {
-        let root_path = state.game.assets.asset_registry.read().root_path().clone();
+        let root_path = state
+            .game
+            .assets
+            .registries
+            .assets
+            .read()
+            .root_path()
+            .clone();
 
         egui::SidePanel::left("file_tree")
             .resizable(true)
@@ -153,7 +160,7 @@ impl Panel for PanelContentBrowser {
                                     .extension()
                                     .and_then(|e| e.to_str())
                                     .unwrap_or_default();
-                                let registry = state.game.assets.asset_registry.read();
+                                let registry = state.game.assets.registries.assets.read();
                                 let Some(type_uuid) = registry.asset_type_uuid_from_ext(ext) else {
                                     continue;
                                 };
@@ -275,7 +282,14 @@ impl PanelContentBrowser {
 
         if response.clicked() {
             self.selected_folder = if is_selected {
-                state.game.assets.asset_registry.read().root_path().clone()
+                state
+                    .game
+                    .assets
+                    .registries
+                    .assets
+                    .read()
+                    .root_path()
+                    .clone()
             } else {
                 curr_path
             };
@@ -324,7 +338,8 @@ impl PanelContentBrowser {
         state.selection = state
             .game
             .assets
-            .asset_registry
+            .registries
+            .assets
             .read()
             .asset_id_from_path(&path)
             .map(|id| Selection::from_id(SelectionType::Asset, id))
@@ -343,7 +358,8 @@ impl PanelContentBrowser {
             state
                 .game
                 .assets
-                .asset_registry
+                .registries
+                .assets
                 .read()
                 .asset_id_from_path(path)
                 .map(|id| state.selection.contains(SelectionType::Asset, id))

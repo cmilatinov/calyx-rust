@@ -12,11 +12,39 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Clone)]
+pub struct RegistryContext {
+    pub assets: Ref<AssetRegistry>,
+    pub types: Ref<TypeRegistry>,
+    pub components: Ref<ComponentRegistry>,
+}
+
+impl RegistryContext {
+    pub fn lock_read(&self) -> ReadOnlyRegistryContext {
+        ReadOnlyRegistryContext {
+            assets: self.assets.readonly(),
+            types: self.types.readonly(),
+            components: self.components.readonly(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct ReadOnlyRegistryContext {
+    pub assets: ReadOnlyRef<AssetRegistry>,
+    pub types: ReadOnlyRef<TypeRegistry>,
+    pub components: ReadOnlyRef<ComponentRegistry>,
+}
+
+impl ReadOnlyRegistryContext {
+    pub fn scene(&self) -> Scene {
+        Scene::new(self.clone())
+    }
+}
+
+#[derive(Clone)]
 pub struct AssetContext {
     pub render_context: Arc<RenderContext>,
-    pub asset_registry: Ref<AssetRegistry>,
-    pub type_registry: Ref<TypeRegistry>,
-    pub component_registry: Ref<ComponentRegistry>,
+    pub registries: RegistryContext,
 }
 
 impl AssetContext {
@@ -39,22 +67,18 @@ impl AssetContext {
         )?;
         Ok(Self {
             render_context,
-            type_registry,
-            component_registry,
-            asset_registry,
+            registries: RegistryContext {
+                types: type_registry,
+                components: component_registry,
+                assets: asset_registry,
+            },
         })
-    }
-
-    pub fn scene(&self) -> Scene {
-        Scene::new(self.lock_read())
     }
 
     pub fn lock_read(&self) -> ReadOnlyAssetContext {
         ReadOnlyAssetContext {
             render_context: self.render_context.clone(),
-            asset_registry: self.asset_registry.readonly(),
-            type_registry: self.type_registry.readonly(),
-            component_registry: self.component_registry.readonly(),
+            registries: self.registries.lock_read(),
         }
     }
 }
@@ -62,14 +86,12 @@ impl AssetContext {
 #[derive(Clone)]
 pub struct ReadOnlyAssetContext {
     pub render_context: Arc<RenderContext>,
-    pub asset_registry: ReadOnlyRef<AssetRegistry>,
-    pub type_registry: ReadOnlyRef<TypeRegistry>,
-    pub component_registry: ReadOnlyRef<ComponentRegistry>,
+    pub registries: ReadOnlyRegistryContext,
 }
 
 impl ReadOnlyAssetContext {
     pub fn scene(&self) -> Scene {
-        Scene::new(self.clone())
+        Scene::new(self.registries.clone())
     }
 }
 
@@ -82,7 +104,7 @@ pub struct GameContext {
 impl GameContext {
     pub fn new(assets: AssetContext) -> Self {
         Self {
-            scenes: SceneManager::new(assets.asset_registry.readonly()),
+            scenes: SceneManager::new(assets.registries.assets.readonly()),
             assets,
             resources: ResourceMap::new(),
         }

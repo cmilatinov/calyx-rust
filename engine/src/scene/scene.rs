@@ -5,7 +5,7 @@ use log::trace;
 use nalgebra_glm::Mat4;
 use petgraph::prelude::{EdgeRef, StableGraph};
 use petgraph::stable_graph::{DefaultIx, NodeIndex, WalkNeighbors};
-use petgraph::visit::{Bfs, Dfs, Reversed, Walker};
+use petgraph::visit::{Bfs, Walker};
 use petgraph::Direction;
 use serde::de::DeserializeSeed;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -19,7 +19,7 @@ use crate::assets::error::AssetError;
 use crate::assets::{Asset, LoadedAsset};
 use crate::component::{Component, ComponentEventContext, ComponentTransform};
 use crate::component::{ComponentCamera, ComponentID};
-use crate::context::ReadOnlyAssetContext;
+use crate::context::{ReadOnlyAssetContext, ReadOnlyRegistryContext};
 use crate::input::Input;
 use crate::math::Transform;
 use crate::net::{ComponentNetworkObject, Network};
@@ -55,7 +55,7 @@ pub struct Scene {
     camera: Option<GameObject>,
     objects_to_delete: HashSet<GameObject>,
     new_index: usize,
-    assets: ReadOnlyAssetContext,
+    registries: ReadOnlyRegistryContext,
 }
 
 pub struct WalkChildren {
@@ -71,12 +71,12 @@ impl WalkChildren {
     pub fn next(&mut self, scene: &Scene) -> Option<GameObject> {
         self.walker
             .next_node(&scene.entity_arena)
-            .and_then(|node| scene.get_game_object_from_node(node))
+            .and_then(|node| scene.game_object_from_node(node))
     }
 }
 
 impl Scene {
-    pub fn new(assets: ReadOnlyAssetContext) -> Self {
+    pub fn new(assets: ReadOnlyRegistryContext) -> Self {
         let mut world: World = Default::default();
         let mut entity_arena: StableGraph<Entity, i32> = Default::default();
         let entity = world.push(());
@@ -99,7 +99,7 @@ impl Scene {
             camera: Default::default(),
             objects_to_delete: Default::default(),
             new_index: 0,
-            assets,
+            registries: assets,
         }
     }
 }
@@ -157,14 +157,14 @@ impl<'de> DeserializeSeed<'de> for ContextSeed<'de, ReadOnlyAssetContext, Scene>
 impl Clone for Scene {
     fn clone(&self) -> Self {
         let data: SceneData = self.into();
-        (&self.assets, data).into()
+        (&self.registries, data).into()
     }
 }
 
-impl From<(&ReadOnlyAssetContext, SceneData)> for Scene {
-    fn from((assets, value): (&ReadOnlyAssetContext, SceneData)) -> Self {
-        let mut scene = assets.scene();
-        let registry = assets.component_registry.read();
+impl From<(&ReadOnlyRegistryContext, SceneData)> for Scene {
+    fn from((registries, value): (&ReadOnlyRegistryContext, SceneData)) -> Self {
+        let mut scene = registries.scene();
+        let registry = registries.components.read();
         for (_, components) in value.components {
             let game_object = scene.new_game_object(None);
             for (component_id, data) in components {
@@ -189,17 +189,23 @@ impl From<(&ReadOnlyAssetContext, SceneData)> for Scene {
         for (parent_id, children) in value.hierarchy {
             try_all!(
                 None => continue;
-                let parent = scene.get_game_object_by_uuid(parent_id);
+                let parent = scene.find(parent_id);
             );
             for child_id in children {
                 try_all!(
                     None => continue;
-                    let child = scene.get_game_object_by_uuid(child_id);
+                    let child = scene.find(child_id);
                 );
                 scene.set_parent(child, Some(parent));
             }
         }
         scene
+    }
+}
+
+impl From<(&ReadOnlyAssetContext, SceneData)> for Scene {
+    fn from((assets, value): (&ReadOnlyAssetContext, SceneData)) -> Self {
+        (&assets.registries, value).into()
     }
 }
 
@@ -209,7 +215,7 @@ impl From<&Scene> for SceneData {
         let mut query = <(Entity, &ComponentID)>::query();
         let mut data = Default::default();
         for (entity, id) in query.iter(world) {
-            let Some(game_object) = scene.get_game_object_from_entity(*entity) else {
+            let Some(game_object) = scene.game_object_from_entity(*entity) else {
                 continue;
             };
             scene.serialize_game_object(game_object, id.id, &mut data);
@@ -223,7 +229,7 @@ impl From<(&Scene, GameObject)> for SceneData {
         let mut data = Default::default();
         std::iter::once(game_object.node)
             .chain(Bfs::new(&scene.entity_arena, game_object.node).iter(&scene.entity_arena))
-            .filter_map(|c| scene.get_game_object_from_node(c))
+            .filter_map(|c| scene.game_object_from_node(c))
             .for_each(|game_object| {
                 let Some(entry) = scene.entry(game_object) else {
                     return;
@@ -238,13 +244,13 @@ impl From<(&Scene, GameObject)> for SceneData {
 }
 
 impl Scene {
-    pub(crate) fn get_game_object_from_node(&self, node: NodeIndex) -> Option<GameObject> {
+    pub(crate) fn game_object_from_node(&self, node: NodeIndex) -> Option<GameObject> {
         self.entity_arena
             .node_weight(node)
             .map(|e| GameObject { node, entity: *e })
     }
 
-    pub(crate) fn get_game_object_from_entity(&self, entity: Entity) -> Option<GameObject> {
+    pub(crate) fn game_object_from_entity(&self, entity: Entity) -> Option<GameObject> {
         self.entity_map.get(&entity).map(|node| GameObject {
             node: *node,
             entity,
@@ -260,7 +266,7 @@ impl Scene {
         'insert_hierarchy: {
             try_all!(
                 None => break 'insert_hierarchy;
-                let parent = self.get_parent_game_object(game_object);
+                let parent = self.parent(game_object);
                 let entry = self.entry(parent);
                 let parent_id = entry.get_component::<ComponentID>().ok();
             );
@@ -270,7 +276,7 @@ impl Scene {
                 .push(game_object_id);
         }
 
-        for (component_id, component) in self.assets.component_registry.read().components() {
+        for (component_id, component) in self.registries.components.read().components() {
             let Some(entry) = self.entry(game_object) else {
                 continue;
             };
@@ -295,22 +301,18 @@ impl Scene {
     }
 
     pub fn root_id(&self) -> Uuid {
-        self.get_game_object_uuid(self.root)
+        self.uuid(self.root)
     }
 
     pub fn root_objects(&self) -> impl Iterator<Item = GameObject> + '_ {
-        self.get_children_ordered(self.root)
+        self.children_ordered(self.root)
     }
 
     pub fn prefab_root(&self) -> Option<GameObject> {
         self.root_objects().next()
     }
 
-    pub fn create_game_object(
-        &mut self,
-        id: Option<ComponentID>,
-        parent: Option<GameObject>,
-    ) -> GameObject {
+    pub fn create(&mut self, id: Option<ComponentID>, parent: Option<GameObject>) -> GameObject {
         let is_default_id = id.is_none();
         let mut id = id.unwrap_or_default();
         if is_default_id {
@@ -329,7 +331,7 @@ impl Scene {
         game_object
     }
 
-    pub fn delete_game_object(&mut self, game_object: GameObject) {
+    pub fn delete(&mut self, game_object: GameObject) {
         self.objects_to_delete.insert(game_object);
     }
 
@@ -338,7 +340,7 @@ impl Scene {
 
         Prefab {
             data: data.clone(),
-            scene: (&self.assets, data).into(),
+            scene: (&self.registries, data).into(),
         }
     }
 
@@ -356,11 +358,11 @@ impl Scene {
             .map(|(game_object_id, id)| (*game_object_id, Uuid::new_v4()))
             .collect::<BiHashMap<_, _>>();
 
-        let asset_registry_ref = self.assets.asset_registry.clone();
+        let asset_registry_ref = self.registries.assets.clone();
         let asset_registry = asset_registry_ref.read();
-        let component_registry_ref = self.assets.component_registry.clone();
+        let component_registry_ref = self.registries.components.clone();
         let component_registry = component_registry_ref.read();
-        let type_registry_ref = self.assets.type_registry.clone();
+        let type_registry_ref = self.registries.types.clone();
         let type_registry = type_registry_ref.read();
         for (game_object_id, components) in prefab.data.components.iter() {
             let game_object = self.new_game_object(None);
@@ -370,7 +372,7 @@ impl Scene {
 
         for (game_object_id, components) in prefab.data.components.iter() {
             let new_game_object_id = *id_mapping.get_by_left(game_object_id).unwrap();
-            let game_object = self.get_game_object_by_uuid(new_game_object_id).unwrap();
+            let game_object = self.find(new_game_object_id).unwrap();
             for (component_id, data) in components {
                 try_all!(
                     None => continue;
@@ -403,13 +405,13 @@ impl Scene {
             try_all!(
                 None => continue;
                 let new_parent_id = id_mapping.get_by_left(parent_id);
-                let parent = self.get_game_object_by_uuid(*new_parent_id);
+                let parent = self.find(*new_parent_id);
             );
             for child_id in children {
                 try_all!(
                     None => continue;
                     let new_child_id = id_mapping.get_by_left(child_id);
-                    let child = self.get_game_object_by_uuid(*new_child_id);
+                    let child = self.find(*new_child_id);
                 );
                 self.set_parent(child, Some(parent));
             }
@@ -417,8 +419,8 @@ impl Scene {
 
         try_all!(
             None => return None;
-            let prefab_uuid = id_mapping.get_by_left(&prefab.scene.get_game_object_uuid(root_node));
-            let game_object = self.get_game_object_by_uuid(*prefab_uuid);
+            let prefab_uuid = id_mapping.get_by_left(&prefab.scene.uuid(root_node));
+            let game_object = self.find(*prefab_uuid);
         );
 
         if let Some(parent) = parent {
@@ -441,9 +443,8 @@ impl Scene {
         let parent = parent.unwrap_or(self.root);
         let mut insert_index = None;
         if let Some((sibling, dir)) = sibling {
-            if let Some(index) = self.get_index_in_parent(parent, sibling, dir) {
-                if let Some(current) =
-                    self.get_index_in_parent(parent, game_object, SiblingDir::Before)
+            if let Some(index) = self.index_in_parent(parent, sibling, dir) {
+                if let Some(current) = self.index_in_parent(parent, game_object, SiblingDir::Before)
                 {
                     // Same parent, just swap edge weights and done
                     self.swap_edge_weights(parent, current, index);
@@ -456,7 +457,7 @@ impl Scene {
             }
         }
 
-        if let Some((parent, edge)) = self.get_parent_game_object(game_object).and_then(|parent| {
+        if let Some((parent, edge)) = self.parent(game_object).and_then(|parent| {
             self.entity_arena
                 .find_edge(parent.node, game_object.node)
                 .map(|edge| (parent, edge))
@@ -471,7 +472,7 @@ impl Scene {
             .add_edge(parent.node, game_object.node, insert_index);
     }
 
-    pub fn get_index_in_parent(
+    pub fn index_in_parent(
         &self,
         parent: GameObject,
         sibling: GameObject,
@@ -481,7 +482,7 @@ impl Scene {
             .entity_arena
             .edges_directed(parent.node, Direction::Outgoing)
             .find(|edge| {
-                self.get_game_object_from_node(edge.target())
+                self.game_object_from_node(edge.target())
                     .map(|go| go == sibling)
                     .unwrap_or(false)
             });
@@ -524,11 +525,11 @@ impl Scene {
         self.entity_arena[second_edge] = first;
     }
 
-    pub fn get_main_camera(&self) -> Option<(GameObject, &ComponentCamera)> {
+    pub fn main_camera(&self) -> Option<(GameObject, &ComponentCamera)> {
         let mut query = <(Entity, &ComponentTransform, &ComponentCamera)>::query();
         query
             .iter(&self.world)
-            .filter_map(|(e, t, c)| self.get_game_object_from_entity(*e).map(|go| (go, c)))
+            .filter_map(|(e, t, c)| self.game_object_from_entity(*e).map(|go| (go, c)))
             .find(|(go, c)| {
                 if let Some(camera) = &self.camera {
                     go == camera
@@ -561,7 +562,7 @@ impl Scene {
     }
 
     fn next_edge_index(&self, parent: Option<GameObject>) -> i32 {
-        self.get_children(parent.unwrap_or(self.root)).count() as i32
+        self.children(parent.unwrap_or(self.root)).count() as i32
     }
 
     pub fn add_component<T: Component + Send + Sync + 'static>(
@@ -583,24 +584,24 @@ impl Scene {
     }
 
     pub fn bind_component_dyn(&mut self, game_object: GameObject, type_uuid: Uuid) {
-        let type_registry_ref = self.assets.type_registry.clone();
+        let type_registry_ref = self.registries.types.clone();
         let type_registry = type_registry_ref.read();
         let Some(meta) = type_registry.trait_meta::<ReflectDefault>(type_uuid) else {
             return;
         };
-        let component_registry_ref = self.assets.component_registry.clone();
+        let component_registry_ref = self.registries.components.clone();
         let component_registry = component_registry_ref.read();
         let Some(component) = component_registry.component(type_uuid) else {
             return;
         };
         let self_ptr = unsafe { self.as_ptr_mut() };
-        let assets = self.assets.clone();
+        let assets = self.registries.clone();
         self.entry_mut(game_object).map(|mut e| {
             let result = component.bind_instance(&mut e, meta.default());
             if result {
                 if let Some(instance) = component.get_instance_mut(&mut e) {
                     instance.reset(ComponentEventContext {
-                        assets: &assets,
+                        registries: &assets,
                         scene: unsafe { &mut *self_ptr },
                         game_object,
                     });
@@ -655,14 +656,14 @@ impl Scene {
     }
 
     pub fn prepare(&mut self) {
-        self.delete_game_objects();
+        self.flush_deletes();
         self.clear_transform_cache();
         PhysicsContext::prepare(self);
     }
 
     pub fn update(&mut self, resources: &mut ResourceMap, input: &Input) {
         PhysicsContext::update(self, resources.time(), &PhysicsConfiguration::default());
-        let component_registry_ref = self.assets.component_registry.clone();
+        let component_registry_ref = self.registries.components.clone();
         let component_registry = component_registry_ref.read();
         // No way around this for now, we want component's update method to take &mut self
         // but there's no way to do that and provide a &mut Scene
@@ -673,11 +674,11 @@ impl Scene {
         // mutate itself by accessing the &mut Scene (which is more inconvenient btw)
         let scene = unsafe { &mut *(self as *mut Self) };
         let scene2 = unsafe { &mut *(self as *mut Self) };
-        let assets = self.assets.clone();
+        let assets = self.registries.clone();
         for (_, component) in component_registry.components_update() {
             for game_object in <Entity>::query()
                 .iter(&self.world)
-                .filter_map(|e| self.get_game_object_from_entity(*e))
+                .filter_map(|e| self.game_object_from_entity(*e))
             {
                 let Some(mut entry) = scene2.entry_mut(game_object) else {
                     continue;
@@ -687,7 +688,7 @@ impl Scene {
                 };
                 instance.update(
                     ComponentEventContext {
-                        assets: &assets,
+                        registries: &assets,
                         scene,
                         game_object,
                     },
@@ -698,46 +699,45 @@ impl Scene {
         }
     }
 
-    pub fn delete_game_objects(&mut self) {
+    pub fn flush_deletes(&mut self) {
         for game_object in self
             .objects_to_delete
             .drain()
             .collect::<Vec<_>>()
             .into_iter()
         {
-            let parent = self
-                .get_parent_game_object(game_object)
-                .unwrap_or(self.root);
+            let parent = self.parent(game_object).unwrap_or(self.root);
             let index = self
-                .get_index_in_parent(parent, game_object, SiblingDir::Before)
+                .index_in_parent(parent, game_object, SiblingDir::Before)
                 .unwrap();
             self.shift_edge_weights(parent, index, -1);
             for go in std::iter::once(game_object)
                 .chain(
                     Bfs::new(&self.entity_arena, game_object.node)
                         .iter(&self.entity_arena)
-                        .filter_map(|node| self.get_game_object_from_node(node)),
+                        .filter_map(|node| self.game_object_from_node(node)),
                 )
                 .collect::<Vec<_>>()
                 .into_iter()
                 .rev()
             {
+                let uuid = self.uuid(go);
                 self.world.remove(go.entity);
                 self.entity_map.remove(&go.entity);
-                self.uuid_map.remove(&self.get_game_object_uuid(go));
+                self.uuid_map.remove(&uuid);
                 self.entity_arena.remove_node(go.node);
             }
         }
     }
 
-    pub fn game_objects(&self) -> impl Iterator<Item = GameObject> + '_ {
+    pub fn objects(&self) -> impl Iterator<Item = GameObject> + '_ {
         Bfs::new(&self.entity_arena, self.root.node)
             .iter(&self.entity_arena)
             .skip(1)
-            .filter_map(|n| self.get_game_object_from_node(n))
+            .filter_map(|n| self.game_object_from_node(n))
     }
 
-    pub fn get_game_object_name(&self, game_object: GameObject) -> String {
+    pub fn name(&self, game_object: GameObject) -> String {
         self.entry(game_object)
             .and_then(|e| {
                 e.get_component::<ComponentID>()
@@ -747,41 +747,40 @@ impl Scene {
             .unwrap_or_default()
     }
 
-    pub fn get_game_object_uuid(&self, game_object: GameObject) -> Uuid {
+    pub fn uuid(&self, game_object: GameObject) -> Uuid {
         self.entry(game_object)
             .and_then(|e| e.get_component::<ComponentID>().ok().map(|id| id.id))
             .unwrap_or_default()
     }
 
-    pub fn get_game_object_by_uuid(&self, id: Uuid) -> Option<GameObject> {
+    pub fn find(&self, id: Uuid) -> Option<GameObject> {
         self.uuid_map.get(&id).copied()
     }
 
-    pub fn get_parent_game_object(&self, game_object: GameObject) -> Option<GameObject> {
+    pub fn parent(&self, game_object: GameObject) -> Option<GameObject> {
         self.entity_arena
             .neighbors_directed(game_object.node, Direction::Incoming)
             .next()
-            .and_then(|node| self.get_game_object_from_node(node))
+            .and_then(|node| self.game_object_from_node(node))
     }
 
-    pub fn get_parent_uuid(&self, game_object: GameObject) -> Option<Uuid> {
-        self.get_parent_game_object(game_object)
-            .map(|parent| self.get_game_object_uuid(parent))
+    pub fn parent_uuid(&self, game_object: GameObject) -> Option<Uuid> {
+        self.parent(game_object).map(|parent| self.uuid(parent))
     }
 
-    pub fn get_children(&self, game_object: GameObject) -> impl Iterator<Item = GameObject> + '_ {
+    pub fn children(&self, game_object: GameObject) -> impl Iterator<Item = GameObject> + '_ {
         self.entity_arena
             .neighbors(game_object.node)
-            .filter_map(|node| self.get_game_object_from_node(node))
+            .filter_map(|node| self.game_object_from_node(node))
     }
 
-    pub fn get_children_walker(&self, game_object: GameObject) -> WalkChildren {
+    pub fn children_walker(&self, game_object: GameObject) -> WalkChildren {
         WalkChildren {
             walker: self.entity_arena.neighbors(game_object.node).detach(),
         }
     }
 
-    pub fn get_children_ordered(
+    pub fn children_ordered(
         &self,
         game_object: GameObject,
     ) -> impl Iterator<Item = GameObject> + '_ {
@@ -789,7 +788,7 @@ impl Scene {
             .entity_arena
             .edges_directed(game_object.node, Direction::Outgoing)
             .filter_map(|edge| {
-                self.get_game_object_from_node(edge.target())
+                self.game_object_from_node(edge.target())
                     .map(|go| (edge.weight(), go))
             })
             .collect::<Vec<_>>();
@@ -797,20 +796,20 @@ impl Scene {
         children.into_iter().map(|c| c.1)
     }
 
-    pub fn get_child_by_index(&self, game_object: GameObject, index: i32) -> Option<GameObject> {
+    pub fn child_at(&self, game_object: GameObject, index: i32) -> Option<GameObject> {
         self.entity_arena
             .edges_directed(game_object.node, Direction::Outgoing)
             .find(|edge| *edge.weight() == index)
-            .and_then(|edge| self.get_game_object_from_node(edge.target()))
+            .and_then(|edge| self.game_object_from_node(edge.target()))
     }
 
     pub fn is_descendant(&self, parent: GameObject, game_object: GameObject) -> bool {
         std::iter::once(parent)
-            .chain(self.get_descendants(parent))
+            .chain(self.descendants(parent))
             .any(|go| go == game_object)
     }
 
-    pub fn get_transform(&self, game_object: GameObject) -> Transform {
+    pub fn transform(&self, game_object: GameObject) -> Transform {
         let Some(entry) = self.entry(game_object) else {
             return Default::default();
         };
@@ -831,15 +830,13 @@ impl Scene {
     }
 
     pub fn set_world_transform(&mut self, game_object: GameObject, matrix: impl Into<Mat4>) {
-        let parent_transform = self
-            .get_parent_game_object(game_object)
-            .map_or(Mat4::identity(), |go| {
-                self.get_world_transform(go).inverse_matrix()
-            });
+        let parent_transform = self.parent(game_object).map_or(Mat4::identity(), |go| {
+            self.world_transform(go).inverse_matrix()
+        });
         self.set_transform(game_object, &(parent_transform * matrix.into()));
     }
 
-    pub fn get_world_transform(&self, game_object: GameObject) -> Transform {
+    pub fn world_transform(&self, game_object: GameObject) -> Transform {
         if let Some(transform) = self.transform_cache().get(&game_object.node) {
             return *transform;
         }
@@ -850,9 +847,9 @@ impl Scene {
             .map_or(Mat4::identity(), |co| {
                 co.map_or(Mat4::identity(), |c| c.transform.matrix())
             });
-        if let Some(parent_node) = self.get_parent_game_object(game_object) {
+        if let Some(parent_node) = self.parent(game_object) {
             if parent_node != game_object {
-                matrix = self.get_world_transform(parent_node).matrix() * matrix;
+                matrix = self.world_transform(parent_node).matrix() * matrix;
             }
         }
         let transform = matrix.into();
@@ -861,13 +858,9 @@ impl Scene {
         transform
     }
 
-    pub fn get_transform_relative_to(
-        &self,
-        game_object: GameObject,
-        parent: GameObject,
-    ) -> Transform {
-        let transform = self.get_world_transform(game_object);
-        let parent_transform = self.get_world_transform(parent);
+    pub fn transform_relative_to(&self, game_object: GameObject, parent: GameObject) -> Transform {
+        let transform = self.world_transform(game_object);
+        let parent_transform = self.world_transform(parent);
         (parent_transform.inverse_matrix() * transform.matrix()).into()
     }
 
@@ -880,39 +873,30 @@ impl Scene {
             .and_then(|e| e.get_component::<T>().ok().map(|_| game_object))
     }
 
-    pub fn get_descendants(
-        &self,
-        game_object: GameObject,
-    ) -> impl Iterator<Item = GameObject> + '_ {
+    pub fn descendants(&self, game_object: GameObject) -> impl Iterator<Item = GameObject> + '_ {
         Bfs::new(&self.entity_arena, game_object.node)
             .iter(&self.entity_arena)
-            .filter_map(|node| self.get_game_object_from_node(node))
+            .filter_map(|node| self.game_object_from_node(node))
     }
 
-    pub fn get_descendants_with_component<T: Component>(
+    pub fn descendants_with<T: Component>(
         &self,
         game_object: GameObject,
     ) -> impl Iterator<Item = GameObject> + '_ {
-        self.get_descendants(game_object)
+        self.descendants(game_object)
             .filter_map(|go| self.map_has_component::<T>(go))
     }
 
-    pub fn get_ancestors(&self, game_object: GameObject) -> impl Iterator<Item = GameObject> + '_ {
-        let reversed_arena = Reversed(&self.entity_arena);
-        Dfs::new(&reversed_arena, game_object.node)
-            .iter(&self.entity_arena)
-            .filter_map(|node| self.get_game_object_from_node(node))
+    pub fn ancestors(&self, game_object: GameObject) -> impl Iterator<Item = GameObject> + '_ {
+        std::iter::successors(self.parent(game_object), |go| self.parent(*go))
     }
 
-    pub fn get_ancestor_with_component<T: Component>(
-        &self,
-        game_object: GameObject,
-    ) -> Option<GameObject> {
-        self.get_ancestors(game_object)
+    pub fn ancestor_with<T: Component>(&self, game_object: GameObject) -> Option<GameObject> {
+        self.ancestors(game_object)
             .find_map(|go| self.map_has_component::<T>(go))
     }
 
-    pub fn is_game_object_owner(&self, game_object: GameObject, network: &Network) -> bool {
+    pub fn is_owner(&self, game_object: GameObject, network: &Network) -> bool {
         let Some(entry) = self.entry(game_object) else {
             return false;
         };

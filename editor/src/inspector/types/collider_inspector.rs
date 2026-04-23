@@ -1,10 +1,11 @@
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 use crate::inspector::widgets::Widgets;
-use egui::Ui;
+use egui::{Id, Ui};
 use engine::component::{ColliderShape, ComponentCollider, Orientation};
 use engine::core::Ref;
 use engine::reflect::{Reflect, ReflectDefault};
-use engine::{type_uuids, TypeUuid};
+use engine::type_uuids;
+use engine::utils::TypeUuid;
 use nalgebra_glm as glm;
 use std::ops::DerefMut;
 use uuid::Uuid;
@@ -32,7 +33,8 @@ impl ColliderInspector {
             "Shape",
             move |ui, _| {
                 let mut state = ref1.write();
-                egui::ComboBox::from_id_salt(ctx.game_object.node)
+                let id = Id::new(ctx.game_object.node).with(ComponentCollider::type_uuid());
+                egui::ComboBox::from_id_salt(id)
                     .selected_text(match state.value {
                         ColliderShape::Sphere { .. } => "Sphere",
                         ColliderShape::Capsule { .. } => "Capsule",

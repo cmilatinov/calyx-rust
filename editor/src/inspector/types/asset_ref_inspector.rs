@@ -35,7 +35,7 @@ impl TypeInspector for AssetRefInspector {
     }
 
     fn show_inspector(&self, ui: &mut Ui, ctx: &InspectorContext, instance: &mut dyn Reflect) {
-        let type_registry = ctx.assets.type_registry.read();
+        let type_registry = ctx.assets.types.read();
 
         let Some(meta) = type_registry.trait_meta::<ReflectAssetAccess>(instance.uuid()) else {
             return;
@@ -46,7 +46,7 @@ impl TypeInspector for AssetRefInspector {
 
         if Widgets::asset_select(
             ui,
-            &ctx.assets.asset_registry.read(),
+            &ctx.assets.assets.read(),
             ctx.field_name,
             Some(asset_ref.asset_type_uuid()),
             asset_ref.id_mut(),

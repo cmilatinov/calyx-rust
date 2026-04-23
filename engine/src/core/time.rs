@@ -90,3 +90,39 @@ impl Time {
     time_member_getter!(static_delta_time);
     time_member_getter!(time_scale);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Time;
+
+    #[test]
+    fn new_starts_at_zero() {
+        let t = Time::new(60.0);
+        assert_eq!(t.time(), 0.0);
+        assert_eq!(t.delta_time(), 0.0);
+        assert_eq!(t.time_scale(), 1.0);
+    }
+
+    #[test]
+    fn current_tick_increases_with_time() {
+        let t = Time::new(100.0);
+        assert_eq!(t.tick_rate(), 100.0);
+        assert_eq!(t.current_tick(), 0);
+    }
+
+    #[test]
+    fn time_to_tick_formula() {
+        let t = Time::new(10.0);
+        assert_eq!(t.time_to_tick(0.0), 0);
+        assert_eq!(t.time_to_tick(0.25), 2);
+        assert_eq!(t.time_to_tick(1.0), 10);
+    }
+
+    #[test]
+    fn time_scale_affects_delta() {
+        let mut t = Time::new(60.0);
+        t.time_scale = 2.0;
+        t.update_time();
+        assert!((t.delta_time() - t.static_delta_time() * 2.0).abs() < 1e-4);
+    }
+}

@@ -39,7 +39,7 @@ impl Default for ComponentCamera {
 
 impl Component for ComponentCamera {
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {
-        let transform = scene.get_world_transform(game_object);
+        let transform = scene.world_transform(game_object);
         gizmos.set_color(&Vec4::new(1.0, 1.0, 1.0, 1.0));
         gizmos.wire_frustum(
             &transform,

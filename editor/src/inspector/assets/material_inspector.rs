@@ -22,7 +22,13 @@ impl AssetInspector for MaterialInspector {
         Material::type_uuid()
     }
     fn show_inspector(&self, ui: &mut Ui, game: &mut GameContext, asset_id: Uuid) {
-        let Ok(asset) = game.assets.asset_registry.read().load_dyn_by_id(asset_id) else {
+        let Ok(asset) = game
+            .assets
+            .registries
+            .assets
+            .read()
+            .load_dyn_by_id(asset_id)
+        else {
             return;
         };
         let Some(material_ref) = asset.try_downcast::<Material>() else {
@@ -35,7 +41,8 @@ impl AssetInspector for MaterialInspector {
         if ui.button("Save").clicked() {
             let Some(meta) = game
                 .assets
-                .asset_registry
+                .registries
+                .assets
                 .read()
                 .asset_meta_from_ref_dyn(&asset.readonly())
             else {
@@ -94,7 +101,7 @@ impl MaterialInspector {
             ShaderVariableValue::Texture2D(ref mut tex) => {
                 Widgets::asset_select_t(
                     ui,
-                    &game.asset_registry.read(),
+                    &game.registries.assets.read(),
                     (var.group, var.binding, var.offset),
                     Some(Texture::type_uuid()),
                     tex,

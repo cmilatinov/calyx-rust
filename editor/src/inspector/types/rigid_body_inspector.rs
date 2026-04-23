@@ -1,9 +1,10 @@
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
 use crate::inspector::widgets::Widgets;
-use egui::Ui;
+use egui::{Id, Ui};
 use engine::component::ComponentRigidBody;
 use engine::reflect::{Reflect, ReflectDefault};
-use engine::{type_uuids, TypeUuid};
+use engine::type_uuids;
+use engine::utils::TypeUuid;
 use rapier3d::dynamics::RigidBodyType;
 use uuid::Uuid;
 
@@ -37,6 +38,7 @@ impl TypeInspector for RigidBodyInspector {
                     .changed();
             });
             Widgets::inspector_prop_value(ui, "Type", |ui, _| {
+                let id = Id::new(ctx.game_object.node).with(ComponentRigidBody::type_uuid());
                 egui::ComboBox::from_id_salt(ctx.game_object.node)
                     .selected_text(Self::rigid_body_type_label(value.ty))
                     .show_ui(ui, |ui| {

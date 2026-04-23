@@ -12,3 +12,6 @@ pub mod material;
 pub mod mesh;
 pub mod skybox;
 pub mod texture;
+
+#[cfg(test)]
+mod tests;

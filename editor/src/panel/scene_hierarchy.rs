@@ -122,10 +122,10 @@ impl PanelSceneHierarchy {
         game_object: GameObject,
         parent_visible: bool,
     ) {
-        let game_object_id = scene.get_game_object_uuid(game_object);
+        let game_object_id = scene.uuid(game_object);
         let id = ui.make_persistent_id(game_object_id);
-        let name = scene.get_game_object_name(game_object);
-        let children = scene.get_children_ordered(game_object).collect::<Vec<_>>();
+        let name = scene.name(game_object);
+        let children = scene.children_ordered(game_object).collect::<Vec<_>>();
         let is_selected = selection.contains(SelectionType::GameObject, game_object_id);
         let mut visible = scene
             .read_component::<ComponentID, _, _>(game_object, |c| c.visible)
@@ -191,7 +191,7 @@ impl PanelSceneHierarchy {
         if response.double_clicked() {
             *selection = Selection::from_id(
                 SelectionType::GameObject,
-                scene.get_game_object_uuid(game_object),
+                scene.uuid(game_object),
             );
             if let Some(state) = egui::collapsing_header::CollapsingState::load(ui.ctx(), id) {
                 state.store(ui.ctx());
@@ -202,13 +202,13 @@ impl PanelSceneHierarchy {
             } else {
                 Selection::from_id(
                     SelectionType::GameObject,
-                    scene.get_game_object_uuid(game_object),
+                    scene.uuid(game_object),
                 )
             };
         } else if response.secondary_clicked() {
             *selection = Selection::from_id(
                 SelectionType::GameObject,
-                scene.get_game_object_uuid(game_object),
+                scene.uuid(game_object),
             );
         }
         if visibility_response.map(|r| r.changed()).unwrap_or(false) {
@@ -238,15 +238,15 @@ impl PanelSceneHierarchy {
                 ui.close_menu();
             }
             if ui.button("Delete").clicked() {
-                scene.delete_game_object(game_object);
+                scene.delete(game_object);
                 *selection = Selection::none();
                 ui.close_menu();
             }
             if ui.button("New Game Object").clicked() {
-                let child = scene.create_game_object(None, Some(game_object));
+                let child = scene.create(None, Some(game_object));
                 *selection = Selection::from_id(
                     SelectionType::GameObject,
-                    scene.get_game_object_uuid(child),
+                    scene.uuid(child),
                 );
                 ui.close_menu();
             }
@@ -259,7 +259,7 @@ impl PanelSceneHierarchy {
         };
 
         let item_desc = re_ui::drag_and_drop::ItemContext {
-            id: scene.get_game_object_uuid(scene.root()),
+            id: scene.uuid(scene.root()),
             item_kind: ItemKind::RootContainer,
             previous_container_id: None,
         };
@@ -308,23 +308,23 @@ impl PanelSceneHierarchy {
         body_response: Option<&Response>,
     ) {
         if response.drag_started() {
-            egui::DragAndDrop::set_payload(ui.ctx(), scene.get_game_object_uuid(game_object));
+            egui::DragAndDrop::set_payload(ui.ctx(), scene.uuid(game_object));
         }
         let Some(dragged_game_object) = self.dragged_game_object(ui, scene) else {
             return;
         };
 
-        let game_object_id = scene.get_game_object_uuid(game_object);
-        let parent = scene.get_parent_game_object(game_object).unwrap();
-        let parent_id = scene.get_game_object_uuid(parent);
+        let game_object_id = scene.uuid(game_object);
+        let parent = scene.parent(game_object).unwrap();
+        let parent_id = scene.uuid(parent);
         let position_index_in_parent = scene
-            .get_index_in_parent(parent, game_object, SiblingDir::Before)
+            .index_in_parent(parent, game_object, SiblingDir::Before)
             .unwrap() as usize;
 
         let previous_container_id = if position_index_in_parent > 0 {
             scene
-                .get_child_by_index(parent, (position_index_in_parent - 1) as i32)
-                .map(|go| scene.get_game_object_uuid(go))
+                .child_at(parent, (position_index_in_parent - 1) as i32)
+                .map(|go| scene.uuid(go))
         } else {
             None
         };
@@ -358,7 +358,7 @@ impl PanelSceneHierarchy {
         drop_target: DropTarget<Uuid>,
         dragged_game_object: GameObject,
     ) {
-        let Some(target_parent) = scene.get_game_object_by_uuid(drop_target.target_parent_id)
+        let Some(target_parent) = scene.find(drop_target.target_parent_id)
         else {
             return;
         };
@@ -368,7 +368,7 @@ impl PanelSceneHierarchy {
         }
 
         let target_sibling =
-            scene.get_child_by_index(target_parent, drop_target.target_position_index as i32);
+            scene.child_at(target_parent, drop_target.target_position_index as i32);
 
         ui.painter().hline(
             drop_target.indicator_span_x,
@@ -391,7 +391,7 @@ impl PanelSceneHierarchy {
     fn dragged_game_object(&mut self, ui: &Ui, scene: &Scene) -> Option<GameObject> {
         let dragged_game_object_id =
             egui::DragAndDrop::payload::<Uuid>(ui.ctx()).map(|payload| (*payload))?;
-        if let Some(go) = scene.get_game_object_by_uuid(dragged_game_object_id) {
+        if let Some(go) = scene.find(dragged_game_object_id) {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
             Some(go)
         } else {
@@ -411,8 +411,8 @@ impl PanelSceneHierarchy {
         if res.clicked() {
             let parent = selection
                 .last(SelectionType::GameObject)
-                .and_then(|id| scene.get_game_object_by_uuid(id));
-            scene.create_game_object(None, parent);
+                .and_then(|id| scene.find(id));
+            scene.create(None, parent);
         }
         res
     }

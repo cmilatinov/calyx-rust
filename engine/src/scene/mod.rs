@@ -9,3 +9,6 @@ mod game_object_ref;
 mod prefab;
 mod scene;
 mod scene_manager;
+
+#[cfg(test)]
+mod tests;

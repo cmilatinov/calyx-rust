@@ -2204,6 +2204,7 @@ dependencies = [
  "paste",
  "path-absolutize",
  "petgraph",
+ "pollster",
  "rand 0.9.2",
  "rapier3d",
  "regex",

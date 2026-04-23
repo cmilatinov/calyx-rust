@@ -35,3 +35,25 @@ pub fn uuid_from_str(value: &str) -> Uuid {
     bytes.copy_from_slice(&hash.as_slice()[0..16]);
     Uuid::from_bytes(bytes)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::uuid_from_str;
+
+    #[test]
+    fn deterministic() {
+        assert_eq!(uuid_from_str("hello"), uuid_from_str("hello"));
+    }
+
+    #[test]
+    fn different_inputs_differ() {
+        assert_ne!(uuid_from_str("foo"), uuid_from_str("bar"));
+    }
+
+    #[test]
+    fn empty_string_is_stable() {
+        let a = uuid_from_str("");
+        let b = uuid_from_str("");
+        assert_eq!(a, b);
+    }
+}

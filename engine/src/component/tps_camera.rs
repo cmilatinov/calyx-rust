@@ -47,7 +47,7 @@ impl Component for ComponentThirdPersonCamera {
         resources: &mut ResourceMap,
         input: &Input,
     ) {
-        if !scene.is_game_object_owner(game_object, resources.network()) {
+        if !scene.is_owner(game_object, resources.network()) {
             return;
         }
         let delta = input
@@ -62,13 +62,13 @@ impl Component for ComponentThirdPersonCamera {
         self.rotation += rot;
         self.rotation.y =
             nalgebra::clamp(self.rotation.y, -89.0f32.to_radians(), 89.0f32.to_radians());
-        let mut transform = scene.get_world_transform(game_object);
+        let mut transform = scene.world_transform(game_object);
         let rotation = UnitQuaternion::from_euler_angles(self.rotation.y, self.rotation.x, 0.0);
         let dir = rotation * Vec3::z_axis();
         let pos = self
             .target
             .game_object(scene)
-            .map(|go| scene.get_world_transform(go).position)
+            .map(|go| scene.world_transform(go).position)
             .unwrap_or_default();
         transform.position = pos - self.distance * (*dir);
         transform.rotation = UnitQuaternion::face_towards(&dir, &Vec3::y_axis());

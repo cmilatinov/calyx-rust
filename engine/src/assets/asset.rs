@@ -17,7 +17,7 @@ use crate::assets::material::Material;
 use crate::assets::mesh::Mesh;
 use crate::assets::texture::Texture;
 use crate::assets::LoadedAsset;
-use crate::context::ReadOnlyAssetContext;
+use crate::context::{ReadOnlyAssetContext, ReadOnlyRegistryContext};
 use crate::core::Ref;
 use crate::render::Shader;
 use crate::scene::Prefab;
@@ -112,8 +112,12 @@ impl<'de, T: Asset + TypeUuid> Deserialize<'de> for AssetRef<T> {
 }
 
 impl<T: Asset + TypeUuid> AssetRef<T> {
-    pub fn get_ref(&self, assets: &ReadOnlyAssetContext) -> Option<Ref<T>> {
-        assets.asset_registry.read().load_by_id(self.id).ok()
+    pub fn from_id(id: Uuid) -> AssetRef<T> {
+        Self { id, inner: None }
+    }
+
+    pub fn get_ref(&self, context: &ReadOnlyRegistryContext) -> Option<Ref<T>> {
+        context.assets.read().load_by_id(self.id).ok()
     }
 }
 
@@ -145,7 +149,7 @@ impl<T: Asset + TypeUuid> AssetAccess for AssetRef<T> {
     }
 
     fn get_asset_ref(&mut self, context: &ReadOnlyAssetContext) -> Option<Ref<dyn Asset>> {
-        let asset_ref = context.asset_registry.read().load_by_id(self.id).ok();
+        let asset_ref = context.registries.assets.read().load_by_id(self.id).ok();
         self.inner = asset_ref.clone();
         asset_ref.map(|r| r.as_asset())
     }
@@ -153,7 +157,12 @@ impl<T: Asset + TypeUuid> AssetAccess for AssetRef<T> {
     fn set_asset_ref(&mut self, context: &ReadOnlyAssetContext, asset_id: Option<Uuid>) {
         self.clear_cache();
         self.id = asset_id.unwrap_or_default();
-        self.inner = context.asset_registry.read().load_by_id::<T>(self.id).ok();
+        self.inner = context
+            .registries
+            .assets
+            .read()
+            .load_by_id::<T>(self.id)
+            .ok();
     }
 }
 
@@ -192,7 +201,8 @@ impl<'de, T: Asset + TypeUuid> DeserializeSeed<'de>
     {
         let id = Uuid::deserialize(deserializer)?;
         self.context
-            .asset_registry
+            .registries
+            .assets
             .read()
             .load_by_id::<T>(id)
             .map_err(|err| serde::de::Error::custom(format!("{:?}", err)))

@@ -13,7 +13,7 @@ use egui::scroll_area::ScrollBarVisibility;
 use egui::{Id, PopupCloseBehavior, Response, Ui};
 use engine::assets::animation_graph::AnimationGraph;
 use engine::component::{ComponentID, ComponentTransform};
-use engine::context::ReadOnlyAssetContext;
+use engine::context::ReadOnlyRegistryContext;
 use engine::reflect::type_registry::TypeRegistry;
 use engine::reflect::{AttributeValue, NamedField, Reflect, TypeInfo};
 use engine::scene::{GameObject, SceneManager};
@@ -31,7 +31,7 @@ impl Panel for PanelInspector {
     }
 
     fn ui(&mut self, ui: &mut Ui, state: &mut EditorAppState) {
-        let type_registry_ref = state.game.assets.type_registry.clone();
+        let type_registry_ref = state.game.assets.registries.types.clone();
         let type_registry = type_registry_ref.read();
 
         egui::ScrollArea::both()
@@ -48,27 +48,21 @@ impl Panel for PanelInspector {
                         if let Some(game_object) = state
                             .selection
                             .first(SelectionType::GameObject)
-                            .and_then(|id| {
-                                state
-                                    .game
-                                    .scenes
-                                    .simulation_scene()
-                                    .get_game_object_by_uuid(id)
-                            })
+                            .and_then(|id| state.game.scenes.simulation_scene().find(id))
                         {
                             let mut entity_components = HashSet::new();
                             let mut components_to_remove = HashSet::new();
 
                             Self::add_component_button_ui(
                                 ui,
-                                &state.game.assets.lock_read(),
+                                &state.game.assets.lock_read().registries,
                                 &mut state.game.scenes,
                                 &entity_components,
                                 game_object,
                             );
 
                             let component_registry_ref =
-                                state.game.assets.component_registry.clone();
+                                state.game.assets.registries.components.clone();
                             let component_registry = component_registry_ref.read();
                             for (type_id, component) in component_registry.components() {
                                 let Some(instance) = (unsafe {
@@ -90,10 +84,10 @@ impl Panel for PanelInspector {
                                 };
                                 let simulation_scene = state.game.scenes.simulation_scene();
                                 let ctx = InspectorContext {
-                                    assets: &state.game.assets.lock_read(),
+                                    assets: &state.game.assets.lock_read().registries,
                                     scene: simulation_scene,
                                     game_object,
-                                    parent: simulation_scene.get_parent_game_object(game_object),
+                                    parent: simulation_scene.parent(game_object),
                                     type_info,
                                     field_name: None,
                                 };
@@ -120,7 +114,7 @@ impl Panel for PanelInspector {
                                 }
                             }
                         } else if let Some(asset_id) = state.selection.first(SelectionType::Asset) {
-                            let asset_registry_ref = state.game.assets.asset_registry.clone();
+                            let asset_registry_ref = state.game.assets.registries.assets.clone();
                             let asset_registry = asset_registry_ref.read();
                             let Some(asset_meta) = asset_registry.asset_meta_from_id(asset_id)
                             else {
@@ -173,12 +167,13 @@ impl Panel for PanelInspector {
                                 if let Ok(graph_ref) = state
                                     .game
                                     .assets
-                                    .asset_registry
+                                    .registries
+                                    .assets
                                     .read()
                                     .load_by_id::<AnimationGraph>(asset_id)
                                 {
                                     let mut graph = graph_ref.write();
-                                    let asset_registry = state.game.assets.asset_registry.read();
+                                    let asset_registry = state.game.assets.registries.assets.read();
                                     AnimationGraphInspector::node(
                                         ui,
                                         &asset_registry,
@@ -194,7 +189,8 @@ impl Panel for PanelInspector {
                                 if let Ok(graph_ref) = state
                                     .game
                                     .assets
-                                    .asset_registry
+                                    .registries
+                                    .assets
                                     .read()
                                     .load_by_id::<AnimationGraph>(asset_id)
                                 {
@@ -248,7 +244,7 @@ impl PanelInspector {
         ctx: &InspectorContext,
         instance: &mut dyn Reflect,
     ) -> bool {
-        let name = Self::display_name(&ctx.assets.type_registry.read(), instance);
+        let name = Self::display_name(&ctx.assets.types.read(), instance);
         let id = ui.make_persistent_id(name);
         let type_uuid = instance.uuid();
         let res = ListItem::new()
@@ -296,11 +292,8 @@ impl PanelInspector {
         ctx: &InspectorContext,
         instance: &mut dyn Reflect,
     ) {
-        if let Some(TypeInfo::Struct(info)) = ctx
-            .assets
-            .type_registry
-            .read()
-            .type_info_by_id(instance.uuid())
+        if let Some(TypeInfo::Struct(info)) =
+            ctx.assets.types.read().type_info_by_id(instance.uuid())
         {
             for (_, field) in info.fields.iter() {
                 let mut ctx = *ctx;
@@ -331,12 +324,12 @@ impl PanelInspector {
 
     fn add_component_button_ui(
         ui: &mut Ui,
-        assets: &ReadOnlyAssetContext,
+        assets: &ReadOnlyRegistryContext,
         scenes: &mut SceneManager,
         entity_components: &HashSet<Uuid>,
         game_object: GameObject,
     ) -> Response {
-        let num_components = assets.component_registry.read().components().count();
+        let num_components = assets.components.read().components().count();
         let res = ui
             .list_item()
             .draggable(false)
@@ -351,11 +344,11 @@ impl PanelInspector {
             .on_hover_text("Add a new component to this game object");
         let id = ui.make_persistent_id("add_component_popup");
         egui::popup::popup_below_widget(ui, id, &res, PopupCloseBehavior::CloseOnClick, |ui| {
-            for (type_uuid, component) in assets.component_registry.read().components() {
+            for (type_uuid, component) in assets.components.read().components() {
                 if entity_components.contains(type_uuid) {
                     continue;
                 }
-                let name = Self::display_name(&assets.type_registry.read(), component.as_reflect());
+                let name = Self::display_name(&assets.types.read(), component.as_reflect());
                 if ui.selectable_label(false, name).clicked() {
                     scenes
                         .simulation_scene_mut()

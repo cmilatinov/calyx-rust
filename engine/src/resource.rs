@@ -91,3 +91,60 @@ impl ResourceMap {
     impl_getter!(mut background, Ref<Background>);
     impl_getter!(mut network, Network);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Resource, ResourceMap};
+
+    #[derive(Default)]
+    struct Counter(u32);
+    impl Resource for Counter {}
+
+    #[derive(Default)]
+    struct Flag(bool);
+    impl Resource for Flag {}
+
+    fn map_with_counter(n: u32) -> ResourceMap {
+        let mut m = ResourceMap { inner: Default::default() };
+        m.insert(Counter(n));
+        m
+    }
+
+    #[test]
+    fn insert_and_get() {
+        let m = map_with_counter(42);
+        assert_eq!(m.resource::<Counter>().unwrap().0, 42);
+    }
+
+    #[test]
+    fn missing_resource_returns_none() {
+        let m = map_with_counter(0);
+        assert!(m.resource::<Flag>().is_none());
+    }
+
+    #[test]
+    fn resource_mut_modifies() {
+        let mut m = map_with_counter(1);
+        m.resource_mut::<Counter>().unwrap().0 = 99;
+        assert_eq!(m.resource::<Counter>().unwrap().0, 99);
+    }
+
+    #[test]
+    fn insert_default() {
+        let mut m = ResourceMap { inner: Default::default() };
+        m.insert_default::<Counter>();
+        assert_eq!(m.resource::<Counter>().unwrap().0, 0);
+    }
+
+    #[test]
+    fn resource_pair_mut() {
+        let mut m = ResourceMap { inner: Default::default() };
+        m.insert(Counter(1));
+        m.insert(Flag(false));
+        let (c, f) = m.resource_pair_mut::<Counter, Flag>().unwrap();
+        c.0 = 10;
+        f.0 = true;
+        assert_eq!(m.resource::<Counter>().unwrap().0, 10);
+        assert!(m.resource::<Flag>().unwrap().0);
+    }
+}

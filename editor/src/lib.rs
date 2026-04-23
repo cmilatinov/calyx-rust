@@ -23,7 +23,7 @@ use engine::context::{AssetContext, GameContext};
 use engine::core::Ref;
 use engine::error::BoxedError;
 use engine::input::{Input, InputState};
-use engine::logging::{DefaultLogger, DefaultLoggerBuilder, Log};
+use engine::logging::{DefaultLogger, Log};
 use engine::render::{Camera, SceneRenderer, SceneRendererOptions};
 use engine::scene::Scene;
 use engine::*;
@@ -79,7 +79,7 @@ pub struct EditorAppState {
 impl EditorAppState {
     fn new(game: GameContext) -> Self {
         let asset_context = game.assets.lock_read();
-        let inspector_registry = InspectorRegistry::new(&asset_context.type_registry.read());
+        let inspector_registry = InspectorRegistry::new(&asset_context.registries.types.read());
         Self {
             game,
             camera: Default::default(),
@@ -235,13 +235,13 @@ impl eframe::App for EditorApp {
                     scene,
                     Some(physics_debug_pipeline),
                 );
-                if let Some((node, c)) = scene.get_main_camera() {
+                if let Some((node, c)) = scene.main_camera() {
                     game_renderer.options_mut().clear_color = c.clear_color;
                     let (width, height) = EditorApp::get_physical_size(ctx, *game_size);
                     if width != 0 && height != 0 {
                         game_renderer.resize_textures(width, height);
                     }
-                    let transform = scene.get_world_transform(node);
+                    let transform = scene.world_transform(node);
                     let camera = Camera::new(
                         width as f32 / height as f32,
                         c.fov,
@@ -308,12 +308,14 @@ impl eframe::App for EditorApp {
             self.state.game.resources.time_mut().reset_timer("fps");
         }
 
+        self.state.game.scenes.current_scene_mut().flush_deletes();
         self.state
             .game
-            .scenes
-            .current_scene_mut()
-            .delete_game_objects();
-        self.state.game.assets.asset_registry.read().reload_assets();
+            .assets
+            .registries
+            .assets
+            .read()
+            .reload_assets();
 
         ctx.request_repaint();
     }
@@ -361,7 +363,7 @@ impl EditorApp {
         try_all!(
             None => return;
             let file = Self::pick_scene_open_file();
-            let scene = self.state.game.assets.asset_registry
+            let scene = self.state.game.assets.registries.assets
                 .read()
                 .load_by_path(file.as_path())
                 .ok();

@@ -88,3 +88,100 @@ impl NamedField {
         self.attrs.get(name).copied()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::math::Transform;
+    use crate::reflect::type_registry::TypeRegistry;
+    use crate::reflect::{Reflect, ReflectedType};
+    use nalgebra_glm::Vec3;
+
+    fn transform_registry() -> TypeRegistry {
+        let mut reg = TypeRegistry {
+            types: Default::default(),
+        };
+        Transform::register(&mut reg);
+        reg
+    }
+
+    fn transform_struct_info(reg: &TypeRegistry) -> &StructInfo {
+        match reg.type_info::<Transform>().unwrap() {
+            TypeInfo::Struct(s) => s,
+            _ => panic!("expected StructInfo"),
+        }
+    }
+
+    #[test]
+    fn field_lookup() {
+        let reg = transform_registry();
+        let info = transform_struct_info(&reg);
+        assert!(info.field("position").is_some());
+        assert!(info.field("missing").is_none());
+    }
+
+    #[test]
+    fn all_expected_fields_present() {
+        let reg = transform_registry();
+        let info = transform_struct_info(&reg);
+        for name in ["position", "rotation", "scale"] {
+            assert!(info.field(name).is_some(), "missing field: {name}");
+        }
+    }
+
+    #[test]
+    fn field_getter_returns_correct_value() {
+        let reg = transform_registry();
+        let info = transform_struct_info(&reg);
+        let field = info.field("position").unwrap();
+
+        let t = Transform::from_xyz(1.0, 2.0, 3.0);
+        let pos = field.get::<Vec3>(t.as_reflect()).unwrap();
+        assert_eq!(*pos, Vec3::new(1.0, 2.0, 3.0));
+    }
+
+    #[test]
+    fn field_getter_wrong_type_returns_none() {
+        let reg = transform_registry();
+        let info = transform_struct_info(&reg);
+        let field = info.field("position").unwrap();
+
+        let t = Transform::default();
+        assert!(field.get::<f32>(t.as_reflect()).is_none());
+    }
+
+    #[test]
+    fn field_getter_mut_allows_mutation() {
+        let reg = transform_registry();
+        let info = transform_struct_info(&reg);
+        let field = info.field("position").unwrap();
+
+        let mut t = Transform::from_xyz(0.0, 0.0, 0.0);
+        let pos = field.get_mut::<Vec3>(t.as_reflect_mut()).unwrap();
+        *pos = Vec3::new(9.0, 8.0, 7.0);
+        assert_eq!(t.position, Vec3::new(9.0, 8.0, 7.0));
+    }
+
+    #[test]
+    fn field_setter_updates_value() {
+        let reg = transform_registry();
+        let info = transform_struct_info(&reg);
+        let field = info.field("position").unwrap();
+
+        let mut t = Transform::default();
+        field
+            .set(t.as_reflect_mut(), Vec3::new(5.0, 6.0, 7.0))
+            .unwrap();
+        assert_eq!(t.position, Vec3::new(5.0, 6.0, 7.0));
+    }
+
+    #[test]
+    fn field_setter_wrong_type_returns_none() {
+        let reg = transform_registry();
+        let info = transform_struct_info(&reg);
+        let field = info.field("position").unwrap();
+
+        let mut t = Transform::default();
+        assert!(field.set(t.as_reflect_mut(), 42.0f32).is_none());
+    }
+}

@@ -144,7 +144,7 @@ impl PanelViewport {
 
         if let Some(game_object) = selection
             .first(SelectionType::GameObject)
-            .and_then(|id| game.scenes.simulation_scene().get_game_object_by_uuid(id))
+            .and_then(|id| game.scenes.simulation_scene().find(id))
         {
             let view_matrix = RowMatrix4::from(<DMat4 as Into<ColumnMatrix4<f64>>>::into(
                 nalgebra::convert::<Mat4, DMat4>(app_state.camera.transform.inverse_matrix()),
@@ -170,7 +170,7 @@ impl PanelViewport {
             let transform = game
                 .scenes
                 .simulation_scene()
-                .get_world_transform(game_object);
+                .world_transform(game_object);
             if let Some((result, transforms)) = self.gizmo.interact(ui, &[transform.into()]) {
                 let res: Transform = transforms[0].into();
                 game.scenes

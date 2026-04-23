@@ -9,7 +9,7 @@ use crate::assets::animation_graph::{
 };
 use crate::assets::mesh::BoneTransform;
 use crate::assets::AssetRef;
-use crate::context::ReadOnlyAssetContext;
+use crate::context::ReadOnlyRegistryContext;
 use crate::core::{Time, TimeType};
 use crate::input::Input;
 use crate::math::Transform;
@@ -91,7 +91,7 @@ impl Component for ComponentAnimator {
     fn reset(
         &mut self,
         ComponentEventContext {
-            assets,
+            registries: assets,
             scene,
             game_object,
             ..
@@ -103,7 +103,7 @@ impl Component for ComponentAnimator {
     fn update(
         &mut self,
         ComponentEventContext {
-            assets,
+            registries: assets,
             scene,
             game_object,
         }: ComponentEventContext,
@@ -120,13 +120,13 @@ impl Component for ComponentAnimator {
         if self.draw_debug_skeleton {
             gizmos.set_color(&Vec4::new(1.0, 1.0, 0.0, 1.0));
             let Some(root) = scene
-                .get_descendants_with_component::<ComponentBone>(game_object)
+                .descendants_with::<ComponentBone>(game_object)
                 .next()
             else {
                 return;
             };
-            let transform = scene.get_world_transform(root);
-            for child in scene.get_children(root) {
+            let transform = scene.world_transform(root);
+            for child in scene.children(root) {
                 Self::draw_bones(scene, child, gizmos, transform.position);
             }
         }
@@ -146,7 +146,7 @@ impl ComponentAnimator {
 impl ComponentAnimator {
     pub fn set_parameter(
         &mut self,
-        assets: &ReadOnlyAssetContext,
+        assets: &ReadOnlyRegistryContext,
         name: &str,
         value: AnimationParameterValue,
     ) -> bool {
@@ -157,7 +157,7 @@ impl ComponentAnimator {
         F: FnOnce(Option<AnimationParameterValue>) -> AnimationParameterValue,
     >(
         &mut self,
-        assets: &ReadOnlyAssetContext,
+        assets: &ReadOnlyRegistryContext,
         name: &str,
         setter: F,
     ) -> bool {
@@ -179,7 +179,7 @@ impl ComponentAnimator {
         true
     }
 
-    fn init(&mut self, assets: &ReadOnlyAssetContext) {
+    fn init(&mut self, assets: &ReadOnlyRegistryContext) {
         if !self.parameters.is_empty() {
             return;
         }
@@ -195,7 +195,7 @@ impl ComponentAnimator {
             .and_then(|id| graph.node_indices().find(|n| graph[*n].id == id));
     }
 
-    fn step_fsm(&mut self, assets: &ReadOnlyAssetContext) {
+    fn step_fsm(&mut self, assets: &ReadOnlyRegistryContext) {
         let new_transition;
         let Some(graph_ref) = self.animation_graph.get_ref(assets) else {
             return;
@@ -304,12 +304,12 @@ impl ComponentAnimator {
 
     fn apply_animation_pose(
         &mut self,
-        assets: &ReadOnlyAssetContext,
+        assets: &ReadOnlyRegistryContext,
         scene: &mut Scene,
         game_object: GameObject,
     ) -> Option<TimeType> {
         let skinned_meshes = scene
-            .get_descendants_with_component::<ComponentSkinnedMesh>(game_object)
+            .descendants_with::<ComponentSkinnedMesh>(game_object)
             .collect::<Vec<_>>();
         let animation_graph = self.animation_graph.get_ref(assets)?;
         let animation_graph = animation_graph.read();
@@ -333,7 +333,7 @@ impl ComponentAnimator {
                     transform: Mat4::identity().into(),
                 },
             );
-            let transform = scene.get_transform(root);
+            let transform = scene.transform(root);
             self.traverse_bone_hierarchy(
                 assets,
                 scene,
@@ -370,7 +370,7 @@ impl ComponentAnimator {
         gizmos: &mut Gizmos,
         parent_position: Vec3,
     ) {
-        let transform = scene.get_world_transform(game_object);
+        let transform = scene.world_transform(game_object);
         let is_bone = scene
             .entry(game_object)
             .map(|entry| entry.get_component::<ComponentBone>().is_ok())
@@ -378,7 +378,7 @@ impl ComponentAnimator {
         if is_bone {
             gizmos.line(&parent_position, &transform.position);
         }
-        for child in scene.get_children(game_object) {
+        for child in scene.children(game_object) {
             Self::draw_bones(
                 scene,
                 child,
@@ -394,14 +394,14 @@ impl ComponentAnimator {
 
     fn traverse_bone_hierarchy(
         &mut self,
-        assets: &ReadOnlyAssetContext,
+        assets: &ReadOnlyRegistryContext,
         scene: &mut Scene,
         game_object: GameObject,
         animation_graph: &AnimationGraph,
         global_inverse_transform: &Mat4,
         mut parent_transform: Mat4,
     ) {
-        let mut local_transform = scene.get_transform(game_object).matrix();
+        let mut local_transform = scene.transform(game_object).matrix();
         'calc_bone_transform: {
             let Some(entry) = scene.entry(game_object) else {
                 break 'calc_bone_transform;
@@ -428,7 +428,7 @@ impl ComponentAnimator {
         }
         parent_transform *= local_transform;
         scene.set_transform(game_object, &local_transform);
-        let mut walker = scene.get_children_walker(game_object);
+        let mut walker = scene.children_walker(game_object);
         while let Some(child) = walker.next(scene) {
             self.traverse_bone_hierarchy(
                 assets,
@@ -476,7 +476,7 @@ impl ComponentAnimator {
 
     fn motion_local_bone_transform(
         &self,
-        assets: &ReadOnlyAssetContext,
+        assets: &ReadOnlyRegistryContext,
         motion: &AnimationMotion,
         bone_name: &str,
         time: f32,

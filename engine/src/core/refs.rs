@@ -165,3 +165,47 @@ impl<T: ?Sized> WeakRef<T> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Ref, WeakRef};
+
+    #[test]
+    fn read_write() {
+        let r: Ref<i32> = Ref::new(42);
+        assert_eq!(*r.read(), 42);
+        *r.write() = 99;
+        assert_eq!(*r.read(), 99);
+    }
+
+    #[test]
+    fn clone_shares_data() {
+        let a: Ref<i32> = Ref::new(1);
+        let b = a.clone();
+        *a.write() = 7;
+        assert_eq!(*b.read(), 7);
+    }
+
+    #[test]
+    fn weak_upgrade_and_drop() {
+        let r: Ref<i32> = Ref::new(5);
+        let weak: WeakRef<i32> = r.downgrade();
+        assert!(weak.upgrade().is_some());
+        drop(r);
+        assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
+    fn readonly_ref() {
+        let r: Ref<i32> = Ref::new(10);
+        let ro = r.readonly();
+        assert_eq!(*ro.read(), 10);
+    }
+
+    #[test]
+    fn ptr_id_same_for_clones() {
+        let a: Ref<i32> = Ref::new(0);
+        let b = a.clone();
+        assert_eq!(a.ptr_id(), b.ptr_id());
+    }
+}

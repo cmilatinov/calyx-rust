@@ -118,7 +118,7 @@ impl Widgets {
                         .selected_text(
                             value
                                 .game_object(scene)
-                                .map(|go| scene.get_game_object_name(go))
+                                .map(|go| scene.name(go))
                                 .unwrap_or(String::from("None")),
                         )
                         .show_ui(ui, |ui| {
@@ -136,11 +136,11 @@ impl Widgets {
                                     .selectable_value(&mut game_object_id, Uuid::nil(), "None")
                                     .changed();
                             }
-                            for go in scene.game_objects() {
+                            for go in scene.objects() {
                                 let Some(entry) = scene.entry(go) else {
                                     return;
                                 };
-                                let id = scene.get_game_object_uuid(go);
+                                let id = scene.uuid(go);
                                 let name = entry
                                     .get_component::<ComponentID>()
                                     .map(|c| c.name.as_str())

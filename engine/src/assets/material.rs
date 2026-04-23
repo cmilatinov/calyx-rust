@@ -96,11 +96,15 @@ impl ShaderVariableValue {
         }
     }
 
-    pub fn as_texture(&self, assets: &ReadOnlyAssetContext, default: Ref<Texture>) -> Ref<Texture> {
+    pub fn as_texture(
+        &self,
+        context: &ReadOnlyAssetContext,
+        default: Ref<Texture>,
+    ) -> Ref<Texture> {
         let ShaderVariableValue::Texture2D(texture) = self else {
             return default;
         };
-        texture.get_ref(assets).unwrap_or(default)
+        texture.get_ref(&context.registries).unwrap_or(default)
     }
 }
 
@@ -393,7 +397,7 @@ impl Material {
         self.create_buffers(assets);
     }
 
-    fn update_entries(&mut self, assets: &ReadOnlyAssetContext) {
+    fn update_entries(&mut self, context: &ReadOnlyAssetContext) {
         for var in self.variables.iter() {
             self.bind_group_entries
                 .entry(var.group)
@@ -406,7 +410,7 @@ impl Material {
                     },
                 );
         }
-        let Some(shader_ref) = self.shader.get_ref(assets) else {
+        let Some(shader_ref) = self.shader.get_ref(&context.registries) else {
             return;
         };
         let shader = shader_ref.read();

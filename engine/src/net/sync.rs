@@ -83,7 +83,7 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>> Synchronized<T> {
         let Some((network, time)) = resources.resource_pair_mut::<Network, Time>() else {
             return;
         };
-        if !ctx.scene.is_game_object_owner(ctx.game_object, network) {
+        if !ctx.scene.is_owner(ctx.game_object, network) {
             return;
         }
         let Some(entry) = ctx.scene.entry(ctx.game_object) else {
@@ -96,7 +96,7 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>> Synchronized<T> {
         else {
             return;
         };
-        let Some(self_client_id) = network.client.client_id() else {
+        let Some(self_client_id) = network.local_id else {
             return;
         };
         let Ok(data) = bincode::serde::encode_to_vec(&value, bincode::config::standard()) else {
@@ -128,7 +128,7 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>> Synchronized<T> {
         let Some((network, time)) = resources.resource_pair_mut::<Network, Time>() else {
             return None;
         };
-        if ctx.scene.is_game_object_owner(ctx.game_object, network) {
+        if ctx.scene.is_owner(ctx.game_object, network) {
             return None;
         }
         self.value(time, network.tick_period())

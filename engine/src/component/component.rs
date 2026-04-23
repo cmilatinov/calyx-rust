@@ -5,7 +5,7 @@ use engine_derive::reflect_trait;
 pub use engine_derive::Component;
 
 use crate as engine;
-use crate::context::ReadOnlyAssetContext;
+use crate::context::ReadOnlyRegistryContext;
 use crate::input::Input;
 use crate::reflect::Reflect;
 use crate::render::Gizmos;
@@ -31,7 +31,7 @@ pub trait ComponentInstance: Reflect {
 }
 
 pub struct ComponentEventContext<'a> {
-    pub assets: &'a ReadOnlyAssetContext,
+    pub registries: &'a ReadOnlyRegistryContext,
     pub scene: &'a mut Scene,
     pub game_object: GameObject,
 }

@@ -140,8 +140,8 @@ impl GizmoRenderer {
             circle_list: Vec::new(),
             cube_list: Vec::new(),
 
-            wire_circle_mesh: game.asset_registry.read().wire_circle(),
-            wire_cube_mesh: game.asset_registry.read().wire_cube(),
+            wire_circle_mesh: game.registries.assets.read().wire_circle(),
+            wire_cube_mesh: game.registries.assets.read().wire_cube(),
             lines_mesh: Mesh::new(&game.render_context),
             points_mesh: Mesh::new(&game.render_context),
 
@@ -155,7 +155,7 @@ impl GizmoRenderer {
             circle_instance_buffer,
             cube_instance_buffer,
 
-            component_registry: game.component_registry.clone(),
+            component_registry: game.registries.components.clone(),
         };
         renderer
     }
@@ -229,7 +229,7 @@ impl GizmoRenderer {
                 let mut query = <Entity>::query();
                 let world = &scene.world;
                 for entity in query.iter(world) {
-                    if let Some(game_object) = scene.get_game_object_from_entity(*entity) {
+                    if let Some(game_object) = scene.game_object_from_entity(*entity) {
                         for (_, comp) in registry.components() {
                             if let Some(entry) = scene.entry(game_object) {
                                 if let Some(instance) = comp.get_instance(&entry) {
