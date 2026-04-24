@@ -27,24 +27,22 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
             fn take_instance(
                 &self, entry: &mut legion::world::Entry
             ) -> #FQOption<#FQBox<dyn engine::component::Component>> {
-                let value = entry.get_component::<#name>().ok()
-                    .and_then(|c| serde_json::to_value(c).ok())?;
+                let cloned = entry.get_component::<#name>().ok()?.clone();
                 entry.remove_component::<#name>();
-                let instance: #name = serde_json::from_value(value).ok()?;
-                Some(#FQBox::new(instance))
+                Some(#FQBox::new(cloned))
             }
             fn put_back_instance(
                 &self,
                 entry: &mut legion::world::Entry,
                 instance: #FQBox<dyn engine::component::Component>
             ) {
-                // Round-trip through serialization to recover the concrete type.
-                // The derive macro knows the type is #name but we only have dyn Component.
-                if let Some(value) = instance.serialize() {
-                    if let Ok(concrete) = serde_json::from_value::<#name>(value) {
-                        entry.add_component(concrete);
-                    }
-                }
+                // Safety: take_instance always creates a Box<#name> erased to
+                // Box<dyn Component>. We recover the concrete type here via raw
+                // pointer cast. The data pointer in the fat pointer is valid for
+                // #name because no other concrete type is ever boxed by take_instance.
+                let raw = #FQBox::into_raw(instance);
+                let concrete = unsafe { #FQBox::from_raw(raw as *mut #name) };
+                entry.add_component(*concrete);
             }
             fn bind_instance(
                 &self,

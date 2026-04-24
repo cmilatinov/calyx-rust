@@ -8,7 +8,7 @@ use crate::scene::GameObjectRef;
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use serde::{Deserialize, Serialize};
 
-#[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
+#[derive(Default, Clone, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "bb784426-a5ec-4995-a86a-c40e7e2cb3ab"]
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Skinned Mesh Renderer")]

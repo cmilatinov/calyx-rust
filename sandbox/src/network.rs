@@ -11,7 +11,7 @@ use engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use log::{error, info, trace};
 use serde::{Deserialize, Serialize};
 
-#[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
+#[derive(Default, Clone, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "a7e45032-e721-42f3-87af-7fc5e60cac82"]
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Network Manager", update)]

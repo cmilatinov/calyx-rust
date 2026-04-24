@@ -10,7 +10,7 @@ use crate::try_all;
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use serde::{Deserialize, Serialize};
 
-#[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
+#[derive(Clone, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "9eb02caf-dcf2-4ea4-98bf-5c170230b9a2"]
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Network Transform", update)]

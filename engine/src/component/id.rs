@@ -5,7 +5,7 @@ use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
+#[derive(Clone, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "02289c92-3412-406e-a7e5-3bbb15d7041e"]
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Game Object")]

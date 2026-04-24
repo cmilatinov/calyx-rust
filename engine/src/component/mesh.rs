@@ -7,7 +7,7 @@ use crate::reflect::{Reflect, ReflectDefault};
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use serde::{Deserialize, Serialize};
 
-#[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
+#[derive(Default, Clone, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "93fd32b1-7127-4c88-8e89-893512af58de"]
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Mesh Renderer")]

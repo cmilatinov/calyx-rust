@@ -8,7 +8,7 @@ use egui::Color32;
 use nalgebra_glm::Vec4;
 use serde::{Deserialize, Serialize};
 
-#[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
+#[derive(Clone, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "a85867d2-3e68-42b2-b943-ea78c7c6ddb5"]
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Camera")]

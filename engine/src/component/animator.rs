@@ -40,7 +40,7 @@ struct AnimatorTransition {
     duration: f32,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 #[repr(C)]
 struct AnimatorPose {
     bone_transforms: Vec<BoneTransform>,
@@ -63,7 +63,7 @@ impl Lerp<f32> for AnimationParameters {
     }
 }
 
-#[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
+#[derive(Default, Clone, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "f24db81d-7054-40b8-8f3c-d9740c03948e"]
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Animator", update)]

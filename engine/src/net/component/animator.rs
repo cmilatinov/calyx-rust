@@ -8,7 +8,7 @@ use crate::resource::ResourceMap;
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use serde::{Deserialize, Serialize};
 
-#[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
+#[derive(Clone, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "997d899f-b7ec-48cd-854f-0e3ec07440b6"]
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Network Animator", update)]
