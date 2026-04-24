@@ -1,5 +1,7 @@
 use crate as engine;
-use crate::component::{AnimationParameters, Component, ReflectComponent};
+use crate::component::{
+    AnimationParameters, Component, ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
+};
 use crate::component::{ComponentAnimator, ComponentEventContext};
 use crate::input::Input;
 use crate::net::sync::{SynchronizationOptions, Synchronized};
@@ -10,8 +12,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "997d899f-b7ec-48cd-854f-0e3ec07440b6"]
-#[reflect(Default, TypeUuidDynamic, Component)]
-#[reflect_attr(name = "Network Animator", update)]
+#[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate)]
+#[reflect_attr(name = "Network Animator")]
 #[serde(default)]
 #[repr(C)]
 pub struct ComponentNetworkAnimator {
@@ -36,47 +38,45 @@ impl Default for ComponentNetworkAnimator {
 
 impl Component for ComponentNetworkAnimator {}
 
-fn component_update(
-    mut ctx: ComponentEventContext,
-    resources: &mut ResourceMap,
-    _input: &Input,
-) {
-    let Some(mut net_animator) =
-        ctx.scene.read_component::<ComponentNetworkAnimator, _, _>(ctx.game_object, |c| c.clone())
-    else {
-        return;
-    };
-    if let Some(AnimationParameters(value)) = net_animator.parameters.update(
-        &mut ctx,
-        resources,
-        |ComponentEventContext {
-             scene, game_object, ..
-         }| {
-            let Some(entry) = scene.entry(*game_object) else {
-                return Default::default();
-            };
-            let Ok(c_animator) = entry.get_component::<ComponentAnimator>() else {
-                return Default::default();
-            };
-            AnimationParameters(c_animator.parameters.clone())
-        },
+impl ComponentUpdate for ComponentNetworkAnimator {
+    fn update(
+        &self,
+        mut ctx: ComponentEventContext,
+        resources: &mut ResourceMap,
+        _input: &Input,
     ) {
-        let Some(mut entry) = ctx.scene.entry_mut(ctx.game_object) else {
-            return Default::default();
+        let Some(mut net_animator) = ctx
+            .scene
+            .read_component::<ComponentNetworkAnimator, _, _>(ctx.game_object, |c| c.clone())
+        else {
+            return;
         };
-        let Ok(c_animator) = entry.get_component_mut::<ComponentAnimator>() else {
-            return Default::default();
-        };
-        c_animator.parameters = value;
-    }
-    ctx.scene.write_component::<ComponentNetworkAnimator, _>(ctx.game_object, |c| {
-        *c = net_animator;
-    });
-}
-
-inventory::submit! {
-    engine::ComponentUpdateRegistration {
-        type_uuid: uuid::Uuid::from_bytes(*ComponentNetworkAnimator::UUID),
-        update_fn: component_update,
+        if let Some(AnimationParameters(value)) = net_animator.parameters.update(
+            &mut ctx,
+            resources,
+            |ComponentEventContext {
+                 scene, game_object, ..
+             }| {
+                let Some(entry) = scene.entry(*game_object) else {
+                    return Default::default();
+                };
+                let Ok(c_animator) = entry.get_component::<ComponentAnimator>() else {
+                    return Default::default();
+                };
+                AnimationParameters(c_animator.parameters.clone())
+            },
+        ) {
+            let Some(mut entry) = ctx.scene.entry_mut(ctx.game_object) else {
+                return Default::default();
+            };
+            let Ok(c_animator) = entry.get_component_mut::<ComponentAnimator>() else {
+                return Default::default();
+            };
+            c_animator.parameters = value;
+        }
+        ctx.scene
+            .write_component::<ComponentNetworkAnimator, _>(ctx.game_object, |c| {
+                *c = net_animator;
+            });
     }
 }

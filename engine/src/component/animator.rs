@@ -1,5 +1,6 @@
 use super::{
-    Component, ComponentBone, ComponentEventContext, ComponentSkinnedMesh, ReflectComponent,
+    Component, ComponentBone, ComponentEventContext, ComponentReset, ComponentSkinnedMesh,
+    ComponentUpdate, ReflectComponent, ReflectComponentReset, ReflectComponentUpdate,
 };
 use crate as engine;
 use crate::assets::animation::{AnimationKeyFrames, QuatKeyFrame, VectorKeyFrame};
@@ -65,8 +66,8 @@ impl Lerp<f32> for AnimationParameters {
 
 #[derive(Default, Clone, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "f24db81d-7054-40b8-8f3c-d9740c03948e"]
-#[reflect(Default, TypeUuidDynamic, Component)]
-#[reflect_attr(name = "Animator", update, reset)]
+#[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate, ComponentReset)]
+#[reflect_attr(name = "Animator")]
 #[serde(default)]
 #[repr(C)]
 pub struct ComponentAnimator {
@@ -105,57 +106,46 @@ impl Component for ComponentAnimator {
     }
 }
 
-fn component_reset(
-    ComponentEventContext {
-        registries: assets,
-        scene,
-        game_object,
-    }: ComponentEventContext,
-) {
-    // Take the animator out, apply pose, put it back.
-    let Some(mut animator) =
-        scene.read_component::<ComponentAnimator, _, _>(game_object, |c| c.clone())
-    else {
-        return;
-    };
-    animator.apply_animation_pose(assets, scene, game_object);
-    scene.write_component::<ComponentAnimator, _>(game_object, |c| *c = animator);
-}
-
-fn component_update(
-    ComponentEventContext {
-        registries: assets,
-        scene,
-        game_object,
-    }: ComponentEventContext,
-    resources: &mut ResourceMap,
-    _input: &Input,
-) {
-    // Clone the animator out so we can call methods that need both &mut self and &mut Scene.
-    let Some(mut animator) =
-        scene.read_component::<ComponentAnimator, _, _>(game_object, |c| c.clone())
-    else {
-        return;
-    };
-    animator.init(assets);
-    animator.step_fsm(assets);
-    animator.apply_animation_pose(assets, scene, game_object);
-    animator.update_time(resources.time());
-    // Write the updated state back.
-    scene.write_component::<ComponentAnimator, _>(game_object, |c| *c = animator);
-}
-
-inventory::submit! {
-    engine::ComponentUpdateRegistration {
-        type_uuid: uuid::Uuid::from_bytes(*ComponentAnimator::UUID),
-        update_fn: component_update,
+impl ComponentReset for ComponentAnimator {
+    fn reset(
+        &self,
+        ComponentEventContext {
+            registries: assets,
+            scene,
+            game_object,
+        }: ComponentEventContext,
+    ) {
+        let Some(mut animator) =
+            scene.read_component::<ComponentAnimator, _, _>(game_object, |c| c.clone())
+        else {
+            return;
+        };
+        animator.apply_animation_pose(assets, scene, game_object);
+        scene.write_component::<ComponentAnimator, _>(game_object, |c| *c = animator);
     }
 }
 
-inventory::submit! {
-    engine::ComponentResetRegistration {
-        type_uuid: uuid::Uuid::from_bytes(*ComponentAnimator::UUID),
-        reset_fn: component_reset,
+impl ComponentUpdate for ComponentAnimator {
+    fn update(
+        &self,
+        ComponentEventContext {
+            registries: assets,
+            scene,
+            game_object,
+        }: ComponentEventContext,
+        resources: &mut ResourceMap,
+        _input: &Input,
+    ) {
+        let Some(mut animator) =
+            scene.read_component::<ComponentAnimator, _, _>(game_object, |c| c.clone())
+        else {
+            return;
+        };
+        animator.init(assets);
+        animator.step_fsm(assets);
+        animator.apply_animation_pose(assets, scene, game_object);
+        animator.update_time(resources.time());
+        scene.write_component::<ComponentAnimator, _>(game_object, |c| *c = animator);
     }
 }
 

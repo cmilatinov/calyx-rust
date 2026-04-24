@@ -63,28 +63,10 @@ pub struct ComponentEventContext<'a> {
     pub game_object: GameObject,
 }
 
-/// Type-erased function pointer for per-frame component updates.
-///
-/// Registered in `ComponentRegistry` by `#[derive(Component)]` for types
-/// annotated with `#[reflect_attr(update)]`. The function accesses its own
-/// component state through `scene.write_component::<T>(game_object, ...)`.
-pub type ComponentUpdateFn = fn(ComponentEventContext, &mut ResourceMap, &Input);
-
-/// Type-erased function pointer for component initialization on bind.
-///
-/// Registered in `ComponentRegistry` by `#[derive(Component)]` for types
-/// that implement a `reset` function.
-pub type ComponentResetFn = fn(ComponentEventContext);
-
 /// Defines the lifecycle hooks for a game component.
 ///
-/// `update` and `reset` are dispatched via registered function pointers
-/// (see `ComponentUpdateFn` / `ComponentResetFn`) rather than trait methods,
-/// because they need `&mut Scene` which would alias with `&mut self` if the
-/// component lives inside the Scene's ECS World.
-///
-/// `draw_gizmos` and `destroy` remain on the trait because they are called
-/// infrequently and don't have the same aliasing constraints.
+/// `draw_gizmos` and `destroy` remain on this trait because they are called
+/// infrequently and don't have the aliasing constraints of `update`/`reset`.
 #[allow(unused)]
 #[reflect_trait]
 pub trait Component: TypeUuidDynamic + ComponentInstance {
@@ -92,4 +74,25 @@ pub trait Component: TypeUuidDynamic + ComponentInstance {
     fn destroy(&mut self, ctx: ComponentEventContext) {}
     /// Editor-only: draw debug visualization for this component.
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {}
+}
+
+/// Per-frame update hook, discovered via `#[reflect(ComponentUpdate)]`.
+///
+/// The `&self` receiver is the prototype instance from the registry — not the
+/// actual component on the entity. Implementations access the real component
+/// through `ctx.scene.read_component` / `ctx.scene.write_component`.
+///
+/// This is a separate trait (not on `Component`) because `update` needs
+/// `&mut Scene` which would alias with `&mut self` if the component lived
+/// inside the Scene's ECS World.
+#[reflect_trait]
+pub trait ComponentUpdate: Send + Sync {
+    fn update(&self, ctx: ComponentEventContext, resources: &mut ResourceMap, input: &Input);
+}
+
+/// One-time initialization hook called when a component is bound to a game object.
+/// Discovered via `#[reflect(ComponentReset)]`.
+#[reflect_trait]
+pub trait ComponentReset: Send + Sync {
+    fn reset(&self, ctx: ComponentEventContext);
 }

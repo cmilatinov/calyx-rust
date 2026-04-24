@@ -1,4 +1,6 @@
-use engine::component::{Component, ComponentEventContext, ReflectComponent};
+use engine::component::{
+    Component, ComponentEventContext, ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
+};
 use engine::core::TimeType;
 use engine::input::Input;
 use engine::reflect::{Reflect, ReflectDefault};
@@ -12,8 +14,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "8c4d2976-47c1-403c-a248-6db84a124816"]
-#[reflect(Default, TypeUuidDynamic, Component)]
-#[reflect_attr(name = "Player Controller", update)]
+#[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate)]
+#[reflect_attr(name = "Player Controller")]
 #[repr(C)]
 pub struct ComponentPlayerController {
     pub camera: GameObjectRef,
@@ -35,35 +37,38 @@ impl Default for ComponentPlayerController {
 
 impl Component for ComponentPlayerController {}
 
-fn component_update(
-    ComponentEventContext {
-        scene, game_object, ..
-    }: ComponentEventContext,
-    resources: &mut ResourceMap,
-    input: &Input,
-) {
-    if !scene.is_owner(game_object, resources.network()) {
-        return;
+impl ComponentUpdate for ComponentPlayerController {
+    fn update(
+        &self,
+        ComponentEventContext {
+            scene, game_object, ..
+        }: ComponentEventContext,
+        resources: &mut ResourceMap,
+        input: &Input,
+    ) {
+        if !scene.is_owner(game_object, resources.network()) {
+            return;
+        }
+
+        let Some((camera_ref, move_speed, sprint_multiplier)) =
+            scene.read_component::<ComponentPlayerController, _, _>(game_object, |c| {
+                (c.camera, c.move_speed, c.sprint_multiplier)
+            })
+        else {
+            return;
+        };
+
+        let dt = resources.time().delta_time();
+        update_movement(
+            scene,
+            game_object,
+            input,
+            dt,
+            camera_ref,
+            move_speed,
+            sprint_multiplier,
+        );
     }
-
-    let Some((camera_ref, move_speed, sprint_multiplier)) =
-        scene.read_component::<ComponentPlayerController, _, _>(game_object, |c| {
-            (c.camera, c.move_speed, c.sprint_multiplier)
-        })
-    else {
-        return;
-    };
-
-    let dt = resources.time().delta_time();
-    update_movement(
-        scene,
-        game_object,
-        input,
-        dt,
-        camera_ref,
-        move_speed,
-        sprint_multiplier,
-    );
 }
 
 fn update_movement(
@@ -112,9 +117,3 @@ fn update_movement(
     scene.set_world_transform(game_object, transform.matrix());
 }
 
-inventory::submit! {
-    engine::ComponentUpdateRegistration {
-        type_uuid: uuid::Uuid::from_bytes(*ComponentPlayerController::UUID),
-        update_fn: component_update,
-    }
-}

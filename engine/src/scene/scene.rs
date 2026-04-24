@@ -479,10 +479,10 @@ impl Scene {
         let result = component.bind_instance(&mut entry, default_instance);
         if result {
             drop(entry);
-            // Call the registered reset fn if one exists for this component type.
-            if let Some(reset_fn) = component_registry.reset_fn(type_uuid) {
+            // Call the registered reset if one exists for this component type.
+            if let Some(resetter) = component_registry.reset_component(type_uuid) {
                 let assets = self.registries.clone();
-                reset_fn(ComponentEventContext {
+                resetter.reset(ComponentEventContext {
                     registries: &assets,
                     scene: self,
                     game_object,
@@ -547,14 +547,14 @@ impl Scene {
         let component_registry = component_registry_ref.read();
         let assets = self.registries.clone();
 
-        for (_type_uuid, update_fn) in component_registry.components_with_update() {
+        for (_type_uuid, updater) in component_registry.components_with_update() {
             let game_objects: Vec<GameObject> = <Entity>::query()
                 .iter(&self.world)
                 .filter_map(|e| self.game_object_from_entity(*e))
                 .collect();
 
             for game_object in game_objects {
-                update_fn(
+                updater.update(
                     ComponentEventContext {
                         registries: &assets,
                         scene: self,
