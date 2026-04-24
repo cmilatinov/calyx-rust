@@ -11,7 +11,7 @@ use nalgebra::{UnitQuaternion, Vector3};
 use nalgebra_glm::Mat4;
 use rapier3d::prelude::*;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 #[derive(Default)]
 pub struct PhysicsContext {
@@ -306,15 +306,7 @@ impl PhysicsContext {
     ) {
         self.events.clear();
 
-        let raw_collisions: Arc<Mutex<Vec<rapier3d::geometry::CollisionEvent>>> =
-            Arc::new(Mutex::new(Vec::new()));
-        let raw_forces: Arc<Mutex<Vec<(ColliderHandle, ColliderHandle, f32)>>> =
-            Arc::new(Mutex::new(Vec::new()));
-
-        let collector = PhysicsEventCollector {
-            collisions: Arc::clone(&raw_collisions),
-            forces: Arc::clone(&raw_forces),
-        };
+        let collector = PhysicsEventCollector::default();
 
         self.accumulated_time += time.delta_time * time.time_scale;
         while self.accumulated_time >= Self::TIME_STEP {
@@ -337,26 +329,28 @@ impl PhysicsContext {
             self.accumulated_time -= Self::TIME_STEP;
         }
 
-        drop(collector);
-
-        let collisions = Arc::try_unwrap(raw_collisions)
-            .unwrap()
-            .into_inner()
-            .unwrap();
-        let forces = Arc::try_unwrap(raw_forces)
-            .unwrap()
-            .into_inner()
-            .unwrap();
-        (collisions, forces)
+        collector.take()
     }
 }
 
 /// Collects Rapier physics events during `step_simulation()`.
 ///
-/// Uses `Arc<Mutex<Vec<_>>>` because Rapier's `EventHandler` requires `Send + Sync`.
+/// `Mutex` is needed because Rapier's `EventHandler` requires `Sync`
+/// (the handler is called via `&self`). No `Arc` — the collector owns
+/// the vecs outright and is consumed via `take()` after stepping.
+#[derive(Default)]
 struct PhysicsEventCollector {
-    collisions: Arc<Mutex<Vec<rapier3d::geometry::CollisionEvent>>>,
-    forces: Arc<Mutex<Vec<(ColliderHandle, ColliderHandle, f32)>>>,
+    collisions: Mutex<Vec<rapier3d::geometry::CollisionEvent>>,
+    forces: Mutex<Vec<(ColliderHandle, ColliderHandle, f32)>>,
+}
+
+impl PhysicsEventCollector {
+    fn take(self) -> (Vec<rapier3d::geometry::CollisionEvent>, Vec<(ColliderHandle, ColliderHandle, f32)>) {
+        (
+            self.collisions.into_inner().unwrap(),
+            self.forces.into_inner().unwrap(),
+        )
+    }
 }
 
 impl EventHandler for PhysicsEventCollector {
@@ -367,9 +361,7 @@ impl EventHandler for PhysicsEventCollector {
         event: rapier3d::geometry::CollisionEvent,
         _contact_pair: Option<&ContactPair>,
     ) {
-        if let Ok(mut collisions) = self.collisions.lock() {
-            collisions.push(event);
-        }
+        self.collisions.lock().unwrap().push(event);
     }
 
     fn handle_contact_force_event(
@@ -380,12 +372,10 @@ impl EventHandler for PhysicsEventCollector {
         contact_pair: &ContactPair,
         total_force_magnitude: Real,
     ) {
-        if let Ok(mut forces) = self.forces.lock() {
-            forces.push((
-                contact_pair.collider1,
-                contact_pair.collider2,
-                total_force_magnitude,
-            ));
-        }
+        self.forces.lock().unwrap().push((
+            contact_pair.collider1,
+            contact_pair.collider2,
+            total_force_magnitude,
+        ));
     }
 }
