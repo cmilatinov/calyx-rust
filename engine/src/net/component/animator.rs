@@ -1,5 +1,7 @@
 use crate as engine;
-use crate::component::{AnimationParameters, Component, ReflectComponent};
+use crate::component::{
+    AnimationParameters, Component, ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
+};
 use crate::component::{ComponentAnimator, ComponentEventContext};
 use crate::input::Input;
 use crate::net::sync::{SynchronizationOptions, Synchronized};
@@ -8,10 +10,10 @@ use crate::resource::ResourceMap;
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use serde::{Deserialize, Serialize};
 
-#[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
+#[derive(Clone, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "997d899f-b7ec-48cd-854f-0e3ec07440b6"]
-#[reflect(Default, TypeUuidDynamic, Component)]
-#[reflect_attr(name = "Network Animator", update)]
+#[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate)]
+#[reflect_attr(name = "Network Animator")]
 #[serde(default)]
 #[repr(C)]
 pub struct ComponentNetworkAnimator {
@@ -34,14 +36,22 @@ impl Default for ComponentNetworkAnimator {
     }
 }
 
-impl Component for ComponentNetworkAnimator {
+impl Component for ComponentNetworkAnimator {}
+
+impl ComponentUpdate for ComponentNetworkAnimator {
     fn update(
-        &mut self,
+        &self,
         mut ctx: ComponentEventContext,
         resources: &mut ResourceMap,
         _input: &Input,
     ) {
-        if let Some(AnimationParameters(value)) = self.parameters.update(
+        let Some(mut net_animator) = ctx
+            .scene
+            .read_component::<ComponentNetworkAnimator, _, _>(ctx.game_object, |c| c.clone())
+        else {
+            return;
+        };
+        if let Some(AnimationParameters(value)) = net_animator.parameters.update(
             &mut ctx,
             resources,
             |ComponentEventContext {
@@ -64,5 +74,9 @@ impl Component for ComponentNetworkAnimator {
             };
             c_animator.parameters = value;
         }
+        ctx.scene
+            .write_component::<ComponentNetworkAnimator, _>(ctx.game_object, |c| {
+                *c = net_animator;
+            });
     }
 }

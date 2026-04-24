@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
-#[derive(TypedBuilder)]
+#[derive(Clone, TypedBuilder)]
 pub struct SynchronizationOptions {
     #[builder(default = true)]
     pub interpolate: bool,
@@ -23,6 +23,7 @@ pub struct SynchronizationOptions {
     pub max_ticks: u32,
 }
 
+#[derive(Clone)]
 pub struct Synchronized<T> {
     options: SynchronizationOptions,
     history: BTreeMap<u32, T>,

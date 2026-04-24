@@ -1,6 +1,8 @@
 use egui::{Key, Modifiers};
 use engine::assets::AssetRef;
-use engine::component::{Component, ComponentEventContext, ReflectComponent};
+use engine::component::{
+    Component, ComponentEventContext, ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
+};
 use engine::input::Input;
 use engine::net::Server;
 use engine::reflect::{Reflect, ReflectDefault};
@@ -13,24 +15,34 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "a7e45032-e721-42f3-87af-7fc5e60cac82"]
-#[reflect(Default, TypeUuidDynamic, Component)]
-#[reflect_attr(name = "Network Manager", update)]
+#[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate)]
+#[reflect_attr(name = "Network Manager")]
 #[repr(C)]
 pub struct ComponentNetworkManager {
     pub player_prefab: AssetRef<Prefab>,
 }
 
-impl Component for ComponentNetworkManager {
+impl Component for ComponentNetworkManager {}
+
+impl ComponentUpdate for ComponentNetworkManager {
     fn update(
-        &mut self,
+        &self,
         ComponentEventContext {
             scene,
             registries: assets,
-            ..
+            game_object,
         }: ComponentEventContext,
         resources: &mut ResourceMap,
         input: &Input,
     ) {
+        let Some(player_prefab) =
+            scene.read_component::<ComponentNetworkManager, _, _>(game_object, |c| {
+                c.player_prefab.clone()
+            })
+        else {
+            return;
+        };
+
         let network = resources.network_mut();
 
         'connect_host: {
@@ -58,9 +70,9 @@ impl Component for ComponentNetworkManager {
                     info!("CLIENT - Connecting ...");
                     try_all!(
                         None => return;
-                        let player_prefab = self.player_prefab.get_ref(assets);
+                        let prefab_ref = player_prefab.get_ref(assets);
                     );
-                    network.instantiate_prefab(scene, player_prefab);
+                    network.instantiate_prefab(scene, prefab_ref);
                 }
                 Err(err) => error!("CLIENT - Failed to connect: {}", err),
             }

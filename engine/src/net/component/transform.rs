@@ -1,5 +1,8 @@
 use crate as engine;
-use crate::component::{Component, ComponentEventContext, ComponentTransform, ReflectComponent};
+use crate::component::{
+    Component, ComponentEventContext, ComponentTransform, ComponentUpdate, ReflectComponent,
+    ReflectComponentUpdate,
+};
 use crate::input::Input;
 use crate::math::Transform;
 use crate::net::sync::{SynchronizationOptions, Synchronized};
@@ -10,10 +13,10 @@ use crate::try_all;
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use serde::{Deserialize, Serialize};
 
-#[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
+#[derive(Clone, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "9eb02caf-dcf2-4ea4-98bf-5c170230b9a2"]
-#[reflect(Default, TypeUuidDynamic, Component)]
-#[reflect_attr(name = "Network Transform", update)]
+#[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate)]
+#[reflect_attr(name = "Network Transform")]
 #[serde(default)]
 #[repr(C)]
 pub struct ComponentNetworkTransform {
@@ -36,14 +39,22 @@ impl Default for ComponentNetworkTransform {
     }
 }
 
-impl Component for ComponentNetworkTransform {
+impl Component for ComponentNetworkTransform {}
+
+impl ComponentUpdate for ComponentNetworkTransform {
     fn update(
-        &mut self,
+        &self,
         mut ctx: ComponentEventContext,
         resources: &mut ResourceMap,
         _input: &Input,
     ) {
-        if let Some(value) = self.transform.update(
+        let Some(mut net_transform) = ctx
+            .scene
+            .read_component::<ComponentNetworkTransform, _, _>(ctx.game_object, |c| c.clone())
+        else {
+            return;
+        };
+        if let Some(value) = net_transform.transform.update(
             &mut ctx,
             resources,
             |ComponentEventContext {
@@ -64,5 +75,9 @@ impl Component for ComponentNetworkTransform {
             );
             c_transform.transform = value;
         }
+        ctx.scene
+            .write_component::<ComponentNetworkTransform, _>(ctx.game_object, |c| {
+                *c = net_transform;
+            });
     }
 }

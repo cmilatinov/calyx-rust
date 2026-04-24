@@ -1,5 +1,6 @@
 use super::{
-    Component, ComponentBone, ComponentEventContext, ComponentSkinnedMesh, ReflectComponent,
+    Component, ComponentBone, ComponentEventContext, ComponentReset, ComponentSkinnedMesh,
+    ComponentUpdate, ReflectComponent, ReflectComponentReset, ReflectComponentUpdate,
 };
 use crate as engine;
 use crate::assets::animation::{AnimationKeyFrames, QuatKeyFrame, VectorKeyFrame};
@@ -40,10 +41,30 @@ struct AnimatorTransition {
     duration: f32,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 #[repr(C)]
 struct AnimatorPose {
     bone_transforms: Vec<BoneTransform>,
+}
+
+/// Read-only snapshot of animator state needed for pose computation.
+/// Avoids cloning the entire ComponentAnimator (which includes the pose Vec).
+struct AnimatorSnapshot {
+    time: TimeType,
+    current_state: Option<NodeIndex>,
+    parameters: HashMap<Uuid, AnimationParameterValue>,
+    animation_graph: AssetRef<AnimationGraph>,
+}
+
+impl AnimatorSnapshot {
+    fn from_component(c: &ComponentAnimator) -> Self {
+        Self {
+            time: c.time,
+            current_state: c.current_state,
+            parameters: c.parameters.clone(),
+            animation_graph: c.animation_graph.clone(),
+        }
+    }
 }
 
 #[derive(Default, Clone, Serialize, Deserialize)]
@@ -63,10 +84,10 @@ impl Lerp<f32> for AnimationParameters {
     }
 }
 
-#[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
+#[derive(Default, Clone, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "f24db81d-7054-40b8-8f3c-d9740c03948e"]
-#[reflect(Default, TypeUuidDynamic, Component)]
-#[reflect_attr(name = "Animator", update)]
+#[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate, ComponentReset)]
+#[reflect_attr(name = "Animator")]
 #[serde(default)]
 #[repr(C)]
 pub struct ComponentAnimator {
@@ -88,34 +109,6 @@ pub struct ComponentAnimator {
 }
 
 impl Component for ComponentAnimator {
-    fn reset(
-        &mut self,
-        ComponentEventContext {
-            registries: assets,
-            scene,
-            game_object,
-            ..
-        }: ComponentEventContext,
-    ) {
-        self.apply_animation_pose(assets, scene, game_object);
-    }
-
-    fn update(
-        &mut self,
-        ComponentEventContext {
-            registries: assets,
-            scene,
-            game_object,
-        }: ComponentEventContext,
-        resources: &mut ResourceMap,
-        _input: &Input,
-    ) {
-        self.init(assets);
-        self.step_fsm(assets);
-        self.apply_animation_pose(assets, scene, game_object);
-        self.update_time(resources.time());
-    }
-
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {
         if self.draw_debug_skeleton {
             gizmos.set_color(&Vec4::new(1.0, 1.0, 0.0, 1.0));
@@ -130,6 +123,55 @@ impl Component for ComponentAnimator {
                 Self::draw_bones(scene, child, gizmos, transform.position);
             }
         }
+    }
+}
+
+impl ComponentReset for ComponentAnimator {
+    fn reset(
+        &self,
+        ComponentEventContext {
+            registries: assets,
+            scene,
+            game_object,
+        }: ComponentEventContext,
+    ) {
+        let mut pose = AnimatorPose::default();
+        Self::compute_animation_pose(assets, scene, game_object, &mut pose);
+        scene.write_component::<ComponentAnimator, _>(game_object, |c| {
+            c.current_pose = pose;
+        });
+    }
+}
+
+impl ComponentUpdate for ComponentAnimator {
+    fn update(
+        &self,
+        ComponentEventContext {
+            registries: assets,
+            scene,
+            game_object,
+        }: ComponentEventContext,
+        resources: &mut ResourceMap,
+        _input: &Input,
+    ) {
+        // init and step_fsm only touch animator fields — no Scene needed.
+        scene.write_component::<ComponentAnimator, _>(game_object, |c| {
+            c.init(assets);
+            c.step_fsm(assets);
+        });
+
+        // Compute the animation pose using a temporary buffer.
+        // This reads animator fields from the ECS and writes transforms to the Scene,
+        // but never holds &mut ComponentAnimator and &mut Scene simultaneously.
+        let mut pose = AnimatorPose::default();
+        Self::compute_animation_pose(assets, scene, game_object, &mut pose);
+
+        // Write back the pose and advance time.
+        let time = resources.time();
+        scene.write_component::<ComponentAnimator, _>(game_object, |c| {
+            c.current_pose = pose;
+            c.update_time(time);
+        });
     }
 }
 
@@ -164,7 +206,6 @@ impl ComponentAnimator {
         let Some(animation_graph) = self.animation_graph.get_ref(assets) else {
             return false;
         };
-        // TODO(Cristian): Optimize, maybe store name -> id hashmap in AnimationGraph
         let Some(parameter_id) = animation_graph.read().parameters.iter().find_map(|p| {
             if p.name.as_str() == name {
                 Some(p.id)
@@ -249,7 +290,6 @@ impl ComponentAnimator {
     fn end_transition(&mut self, graph: &AnimationGraph) {
         if let Some(transition) = self.current_transition.take() {
             if let Some((_source, target)) = graph.edge_endpoints(transition.transition) {
-                // let source_duration
                 self.current_state = Some(target);
             }
         }
@@ -302,16 +342,28 @@ impl ComponentAnimator {
             .unwrap_or(false)
     }
 
-    fn apply_animation_pose(
-        &mut self,
+    /// Static method: computes animation pose without holding &mut ComponentAnimator.
+    /// Reads animator state from the ECS via a lightweight snapshot, writes bone
+    /// transforms to the Scene, and returns the computed pose.
+    fn compute_animation_pose(
         assets: &ReadOnlyRegistryContext,
         scene: &mut Scene,
         game_object: GameObject,
-    ) -> Option<TimeType> {
+        pose: &mut AnimatorPose,
+    ) {
+        let Some(snapshot) =
+            scene.read_component::<ComponentAnimator, _, _>(game_object, |c| {
+                AnimatorSnapshot::from_component(c)
+            })
+        else {
+            return;
+        };
         let skinned_meshes = scene
             .descendants_with::<ComponentSkinnedMesh>(game_object)
             .collect::<Vec<_>>();
-        let animation_graph = self.animation_graph.get_ref(assets)?;
+        let Some(animation_graph) = snapshot.animation_graph.get_ref(assets) else {
+            return;
+        };
         let animation_graph = animation_graph.read();
         for skinned_mesh_go in skinned_meshes {
             let Some(entry) = scene.entry(skinned_mesh_go) else {
@@ -327,20 +379,22 @@ impl ComponentAnimator {
                 continue;
             };
             let mesh = mesh_ref.read();
-            self.current_pose.bone_transforms.resize(
+            pose.bone_transforms.resize(
                 mesh.bones.len(),
                 BoneTransform {
                     transform: Mat4::identity().into(),
                 },
             );
             let transform = scene.transform(root);
-            self.traverse_bone_hierarchy(
+            Self::traverse_bone_hierarchy_static(
+                &snapshot,
                 assets,
                 scene,
                 root,
                 &animation_graph,
                 &transform.inverse_matrix(),
                 Mat4::identity(),
+                pose,
             );
             let Some(mut entry) = scene.entry_mut(skinned_mesh_go) else {
                 continue;
@@ -351,9 +405,8 @@ impl ComponentAnimator {
             c_skinned_mesh.bone_transforms.clear();
             c_skinned_mesh
                 .bone_transforms
-                .extend(self.current_pose.bone_transforms.drain(0..));
+                .extend(pose.bone_transforms.drain(0..));
         }
-        None
     }
 
     fn update_time(&mut self, time: &Time) {
@@ -392,14 +445,15 @@ impl ComponentAnimator {
         }
     }
 
-    fn traverse_bone_hierarchy(
-        &mut self,
+    fn traverse_bone_hierarchy_static(
+        snapshot: &AnimatorSnapshot,
         assets: &ReadOnlyRegistryContext,
         scene: &mut Scene,
         game_object: GameObject,
         animation_graph: &AnimationGraph,
         global_inverse_transform: &Mat4,
         mut parent_transform: Mat4,
+        pose: &mut AnimatorPose,
     ) {
         let mut local_transform = scene.transform(game_object).matrix();
         'calc_bone_transform: {
@@ -409,16 +463,21 @@ impl ComponentAnimator {
             let Ok(c_bone) = entry.get_component::<ComponentBone>() else {
                 break 'calc_bone_transform;
             };
-            let Some(node) = self
+            let Some(node) = snapshot
                 .current_state
                 .and_then(|nid| animation_graph.graph.node_weight(nid))
             else {
                 break 'calc_bone_transform;
             };
-            local_transform = self
-                .motion_local_bone_transform(assets, &node.motion, &c_bone.name, self.time)
-                .matrix();
-            self.current_pose.bone_transforms[c_bone.index] = BoneTransform {
+            local_transform = Self::motion_local_bone_transform_static(
+                &snapshot.parameters,
+                assets,
+                &node.motion,
+                &c_bone.name,
+                snapshot.time,
+            )
+            .matrix();
+            pose.bone_transforms[c_bone.index] = BoneTransform {
                 transform: (global_inverse_transform
                     * parent_transform
                     * local_transform
@@ -430,13 +489,15 @@ impl ComponentAnimator {
         scene.set_transform(game_object, &local_transform);
         let mut walker = scene.children_walker(game_object);
         while let Some(child) = walker.next(scene) {
-            self.traverse_bone_hierarchy(
+            Self::traverse_bone_hierarchy_static(
+                snapshot,
                 assets,
                 scene,
                 child,
                 animation_graph,
                 global_inverse_transform,
                 parent_transform,
+                pose,
             );
         }
     }
@@ -474,8 +535,8 @@ impl ComponentAnimator {
         prev.value.slerp(&next.value, progression)
     }
 
-    fn motion_local_bone_transform(
-        &self,
+    fn motion_local_bone_transform_static(
+        parameters: &HashMap<Uuid, AnimationParameterValue>,
         assets: &ReadOnlyRegistryContext,
         motion: &AnimationMotion,
         bone_name: &str,
@@ -497,11 +558,12 @@ impl ComponentAnimator {
                 )
             }
             AnimationMotion::BlendTree1D(tree) => {
-                Transform::nlerp(tree.nearest_neighbors(2, &self.parameters).into_iter().map(
+                Transform::nlerp(tree.nearest_neighbors(2, parameters).into_iter().map(
                     |(weight, neighbor)| {
                         (
                             weight,
-                            self.motion_local_bone_transform(
+                            Self::motion_local_bone_transform_static(
+                                parameters,
                                 assets,
                                 &neighbor.motion,
                                 bone_name,
@@ -512,11 +574,12 @@ impl ComponentAnimator {
                 ))
             }
             AnimationMotion::BlendTree2D(tree) => {
-                Transform::nlerp(tree.nearest_neighbors(4, &self.parameters).into_iter().map(
+                Transform::nlerp(tree.nearest_neighbors(4, parameters).into_iter().map(
                     |(weight, neighbor)| {
                         (
                             weight,
-                            self.motion_local_bone_transform(
+                            Self::motion_local_bone_transform_static(
+                                parameters,
                                 assets,
                                 &neighbor.motion,
                                 bone_name,
