@@ -35,7 +35,7 @@ pub struct ShaderVariable {
 
 impl PartialEq for ShaderVariable {
     fn eq(&self, other: &Self) -> bool {
-        self.group == other.group && self.binding == other.group && self.offset == other.offset
+        self.group == other.group && self.binding == other.binding && self.offset == other.offset
     }
 }
 
