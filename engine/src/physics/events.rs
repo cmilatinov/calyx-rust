@@ -57,25 +57,20 @@ impl CollisionEvents {
         &self.contact_forces
     }
 
-    /// Iterate only collision-start events.
-    pub fn started(&self) -> impl Iterator<Item = &CollisionEvent> {
-        self.collisions
-            .iter()
-            .filter(|e| e.kind == ContactKind::Started)
+    /// Collisions that started this frame involving `object`.
+    pub fn started(&self, object: GameObject) -> impl Iterator<Item = &CollisionEvent> {
+        self.collisions.iter().filter(move |e| {
+            e.kind == ContactKind::Started
+                && (e.object_a == object || e.object_b == object)
+        })
     }
 
-    /// Iterate only collision-stop events.
-    pub fn stopped(&self) -> impl Iterator<Item = &CollisionEvent> {
-        self.collisions
-            .iter()
-            .filter(|e| e.kind == ContactKind::Stopped)
-    }
-
-    /// Check if a specific game object is involved in any collision this frame.
-    pub fn involves(&self, object: GameObject) -> impl Iterator<Item = &CollisionEvent> {
-        self.collisions
-            .iter()
-            .filter(move |e| e.object_a == object || e.object_b == object)
+    /// Collisions that stopped this frame involving `object`.
+    pub fn stopped(&self, object: GameObject) -> impl Iterator<Item = &CollisionEvent> {
+        self.collisions.iter().filter(move |e| {
+            e.kind == ContactKind::Stopped
+                && (e.object_a == object || e.object_b == object)
+        })
     }
 
     pub(crate) fn clear(&mut self) {

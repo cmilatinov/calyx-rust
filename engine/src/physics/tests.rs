@@ -2,7 +2,7 @@
 mod tests {
     use crate::component::{ColliderShape, ComponentCollider, ComponentRigidBody};
     use crate::core::Time;
-    use crate::physics::{ContactKind, PhysicsConfiguration, PhysicsContext};
+    use crate::physics::{PhysicsConfiguration, PhysicsContext};
     use crate::test_utils::test_scene;
     use nalgebra_glm::Vec3;
     use rapier3d::dynamics::RigidBodyType;
@@ -238,10 +238,8 @@ mod tests {
         // Step enough frames for the ball to fall and hit the floor.
         for _ in 0..120 {
             PhysicsContext::update(&mut scene, &time, &config);
-            for event in scene.physics.events.collisions() {
-                if event.kind == ContactKind::Started {
-                    found_start = true;
-                }
+            if scene.physics.events.started(ball_col).count() > 0 {
+                found_start = true;
             }
         }
         assert!(found_start, "expected a collision-start event between ball and floor");
@@ -315,8 +313,7 @@ mod tests {
         let mut found_via_involves = false;
         for _ in 0..120 {
             PhysicsContext::update(&mut scene, &time, &config);
-            // Events reference the collider entity, not the rigid body entity.
-            if scene.physics.events.involves(a_col).count() > 0 {
+            if scene.physics.events.started(a_col).count() > 0 {
                 found_via_involves = true;
             }
         }
