@@ -479,8 +479,13 @@ impl Scene {
         };
         let result = component.bind_instance(&mut entry, default_instance);
         if result {
-            if let Some(mut instance) = component.take_instance(&mut entry) {
-                drop(entry);
+            // Clone the freshly-bound component so we can call reset() with
+            // &mut Scene safely — the clone is not borrowed from the World.
+            drop(entry);
+            let cloned = self
+                .entry(game_object)
+                .and_then(|entry| component.clone_instance(&entry));
+            if let Some(mut instance) = cloned {
                 instance.reset(ComponentEventContext {
                     registries: &assets,
                     scene: self,
@@ -556,10 +561,12 @@ impl Scene {
                 .collect();
 
             for game_object in game_objects {
-                let Some(mut entry) = self.entry_mut(game_object) else {
+                // Clone the component out of the World so we hold an owned value.
+                // The original stays in the ECS — we overwrite it after update().
+                let Some(entry) = self.entry(game_object) else {
                     continue;
                 };
-                let Some(mut instance) = component.take_instance(&mut entry) else {
+                let Some(mut instance) = component.clone_instance(&entry) else {
                     continue;
                 };
                 drop(entry);
@@ -574,6 +581,7 @@ impl Scene {
                     input,
                 );
 
+                // Write the mutated clone back, replacing the stale original.
                 let Some(mut entry) = self.entry_mut(game_object) else {
                     continue;
                 };

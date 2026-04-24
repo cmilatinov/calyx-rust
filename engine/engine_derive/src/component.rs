@@ -24,11 +24,10 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
                 let instance = entry.get_component_mut::<#name>().ok()?;
                 Some(instance)
             }
-            fn take_instance(
-                &self, entry: &mut legion::world::Entry
+            fn clone_instance(
+                &self, entry: &legion::world::EntryRef
             ) -> #FQOption<#FQBox<dyn engine::component::Component>> {
                 let cloned = entry.get_component::<#name>().ok()?.clone();
-                entry.remove_component::<#name>();
                 Some(#FQBox::new(cloned))
             }
             fn put_back_instance(
@@ -36,10 +35,10 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
                 entry: &mut legion::world::Entry,
                 instance: #FQBox<dyn engine::component::Component>
             ) {
-                // Safety: take_instance always creates a Box<#name> erased to
+                // Safety: clone_instance always creates a Box<#name> erased to
                 // Box<dyn Component>. We recover the concrete type here via raw
                 // pointer cast. The data pointer in the fat pointer is valid for
-                // #name because no other concrete type is ever boxed by take_instance.
+                // #name because no other concrete type is ever boxed by clone_instance.
                 let raw = #FQBox::into_raw(instance);
                 let concrete = unsafe { #FQBox::from_raw(raw as *mut #name) };
                 entry.add_component(*concrete);
