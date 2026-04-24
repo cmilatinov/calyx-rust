@@ -24,9 +24,7 @@ pub struct WalkChildren {
 
 impl WalkChildren {
     pub fn next(&mut self, scene: &Scene) -> Option<GameObject> {
-        self.walker
-            .next_node(&scene.graph.arena)
-            .and_then(|node| scene.graph.game_object_from_node(node))
+        scene.graph.walk_next(&mut self.walker)
     }
 }
 
@@ -47,6 +45,13 @@ impl SceneGraph {
         self.arena
             .node_weight(node)
             .map(|e| GameObject { node, entity: *e })
+    }
+
+    /// Advance a detached walker one step, returning the next GameObject if any.
+    pub fn walk_next(&self, walker: &mut WalkNeighbors<DefaultIx>) -> Option<GameObject> {
+        walker
+            .next_node(&self.arena)
+            .and_then(|node| self.game_object_from_node(node))
     }
 
     /// BFS traversal starting from a node, returning all reachable GameObjects

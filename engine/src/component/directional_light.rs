@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{Component, ReflectComponent};
 
-#[derive(Clone, TypeUuid, Serialize, Component, Deserialize, Reflect)]
+#[derive(TypeUuid, Serialize, Component, Deserialize, Reflect)]
 #[uuid = "72b2568a-2ea0-4f58-ae76-e3f655006f0f"]
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Directional Light")]

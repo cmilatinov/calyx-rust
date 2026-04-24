@@ -36,7 +36,7 @@ pub enum ColliderShape {
 
 impl_reflect_value!(ColliderShape());
 
-#[derive(Clone, TypeUuid, Serialize, Deserialize, Component, Reflect)]
+#[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "53a682cb-a207-4c4c-8795-63f38351c7ef"]
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Collider")]

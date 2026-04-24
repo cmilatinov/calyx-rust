@@ -6,7 +6,7 @@ use crate::reflect::{Reflect, ReflectDefault};
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, TypeUuid, Serialize, Deserialize, Component, Reflect)]
+#[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "eb42f81f-45ab-428c-9d07-961696edc5fa"]
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Sky Light")]

@@ -11,8 +11,8 @@ Calyx is a 3D game engine and editor written in Rust, targeting a multiplayer ta
 ### `engine` (library)
 Core runtime. Modules:
 - `assets/` — Asset trait, AssetRegistry (hot-reload via notify file watcher), AssetRef<T> for lazy references. Types: Mesh (russimp-ng OBJ import), Texture (PNG/JPG/WebP via image crate), Shader (WGSL + naga introspection), Material (shader variable binding), Animation, AnimationGraph, Prefab, Skybox.
-- `component/` — Legion ECS components. `Component` trait with lifecycle: reset → update → destroy. `ComponentInstance` for type-erased serialization. Built-in: Transform, Camera, Mesh, Collider, RigidBody, DirectionalLight, PointLight, Animator, Bone, NetworkObject.
-- `scene/` — Scene (god object: World + petgraph hierarchy + PhysicsContext + transform cache). SceneManager for load/save/simulation. Prefab instantiation with UUID remapping. SceneData for serialized representation.
+- `component/` — Legion ECS components. `Component` trait for destroy/draw_gizmos. `ComponentUpdate` and `ComponentReset` as separate reflect_traits for update/reset lifecycle (avoids aliased `&mut Scene`). `ComponentInstance` for type-erased serialization. Built-in: Transform, Camera, Mesh, Collider, RigidBody, DirectionalLight, PointLight, Animator, Bone, NetworkObject.
+- `scene/` — Scene (delegates to SceneGraph for hierarchy, GameObjectStore for entity/UUID mapping, TransformCache for world transforms; holds World + PhysicsContext). SceneManager for load/save/simulation. Prefab instantiation with UUID remapping. SceneData for serialized representation.
 - `render/` — wgpu-based. RenderContext (eframe or headless), SceneRenderer (mesh/skybox/grid/gizmos), ShaderPreprocessor (#include support), PBR pipeline, mip generators, Camera/Lights uniform management.
 - `physics/` — Rapier3D integration. PhysicsContext with fixed timestep (1/60s). Rigid bodies, colliders, query pipeline. Currently passes `&()` for collision event handlers (no events captured).
 - `net/` — Renet networking. Client/Server architecture, NetworkObjectId ownership, GameMessage enum, MessageHandler trait, tick-rate accumulator. Sync module for transform interpolation.

@@ -8,7 +8,7 @@ use egui::Color32;
 use nalgebra_glm::Vec4;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, TypeUuid, Serialize, Deserialize, Component, Reflect)]
+#[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "5fd24d64-6661-40ba-94a5-4fca0d06ead1"]
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Point Light")]

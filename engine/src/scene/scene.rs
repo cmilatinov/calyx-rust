@@ -547,13 +547,15 @@ impl Scene {
         let component_registry = component_registry_ref.read();
         let assets = self.registries.clone();
 
-        for (_type_uuid, updater) in component_registry.components_with_update() {
-            let game_objects: Vec<GameObject> = <Entity>::query()
-                .iter(&self.world)
-                .filter_map(|e| self.game_object_from_entity(*e))
-                .collect();
+        // Collect once — each updater's read_component bails early for entities
+        // that don't have its component type.
+        let game_objects: Vec<GameObject> = <Entity>::query()
+            .iter(&self.world)
+            .filter_map(|e| self.game_object_from_entity(*e))
+            .collect();
 
-            for game_object in game_objects {
+        for (_type_uuid, updater) in component_registry.components_with_update() {
+            for &game_object in &game_objects {
                 updater.update(
                     ComponentEventContext {
                         registries: &assets,

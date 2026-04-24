@@ -12,7 +12,7 @@ use nalgebra::UnitQuaternion;
 use nalgebra_glm::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, TypeUuid, Serialize, Deserialize, Component, Reflect)]
+#[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "8c4d2976-47c1-403c-a248-6db84a124816"]
 #[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate)]
 #[reflect_attr(name = "Player Controller")]
