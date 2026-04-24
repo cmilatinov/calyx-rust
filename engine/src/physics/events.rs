@@ -41,9 +41,6 @@ pub struct ContactForceEvent {
 pub struct CollisionEvents {
     pub(crate) collisions: Vec<CollisionEvent>,
     pub(crate) contact_forces: Vec<ContactForceEvent>,
-    /// Raw entity pairs from step_simulation, resolved to GameObjects in Scene::update.
-    pub(crate) raw_collision_pairs: Vec<(legion::Entity, legion::Entity, ContactKind, bool)>,
-    pub(crate) raw_force_pairs: Vec<(legion::Entity, legion::Entity, f32)>,
 }
 
 impl CollisionEvents {
@@ -76,7 +73,5 @@ impl CollisionEvents {
     pub(crate) fn clear(&mut self) {
         self.collisions.clear();
         self.contact_forces.clear();
-        self.raw_collision_pairs.clear();
-        self.raw_force_pairs.clear();
     }
 }

@@ -226,30 +226,42 @@ impl PhysicsContext {
     }
 
     pub fn update(scene: &mut Scene, time: &Time, config: &PhysicsConfiguration) {
-        scene.physics.step_simulation(time, config);
+        let (raw_collisions, raw_forces) = scene.physics.step_simulation(time, config);
 
-        // Resolve raw entity pairs from step_simulation into GameObjects.
-        let raw_collisions: Vec<_> = scene.physics.events.raw_collision_pairs.drain(..).collect();
-        for (e1, e2, kind, sensor) in raw_collisions {
+        // Resolve raw Rapier events directly to GameObjects.
+        for event in &raw_collisions {
+            let (h1, h2, started, sensor) = match *event {
+                rapier3d::geometry::CollisionEvent::Started(h1, h2, flags) => (
+                    h1, h2, true,
+                    flags.contains(rapier3d::geometry::CollisionEventFlags::SENSOR),
+                ),
+                rapier3d::geometry::CollisionEvent::Stopped(h1, h2, flags) => (
+                    h1, h2, false,
+                    flags.contains(rapier3d::geometry::CollisionEventFlags::SENSOR),
+                ),
+            };
+            let e1 = scene.physics.collider_entity.get(&h1).copied();
+            let e2 = scene.physics.collider_entity.get(&h2).copied();
             if let (Some(a), Some(b)) = (
-                scene.game_object_from_entity(e1),
-                scene.game_object_from_entity(e2),
+                e1.and_then(|e| scene.game_object_from_entity(e)),
+                e2.and_then(|e| scene.game_object_from_entity(e)),
             ) {
                 scene.physics.events.collisions.push(
                     crate::physics::events::CollisionEvent {
                         object_a: a,
                         object_b: b,
-                        kind,
+                        kind: if started { ContactKind::Started } else { ContactKind::Stopped },
                         sensor,
                     },
                 );
             }
         }
-        let raw_forces: Vec<_> = scene.physics.events.raw_force_pairs.drain(..).collect();
-        for (e1, e2, magnitude) in raw_forces {
+        for &(h1, h2, magnitude) in &raw_forces {
+            let e1 = scene.physics.collider_entity.get(&h1).copied();
+            let e2 = scene.physics.collider_entity.get(&h2).copied();
             if let (Some(a), Some(b)) = (
-                scene.game_object_from_entity(e1),
-                scene.game_object_from_entity(e2),
+                e1.and_then(|e| scene.game_object_from_entity(e)),
+                e2.and_then(|e| scene.game_object_from_entity(e)),
             ) {
                 scene.physics.events.contact_forces.push(
                     crate::physics::events::ContactForceEvent {
@@ -284,7 +296,14 @@ impl PhysicsContext {
         scene.clear_transform_cache();
     }
 
-    pub fn step_simulation(&mut self, time: &Time, config: &PhysicsConfiguration) {
+    pub fn step_simulation(
+        &mut self,
+        time: &Time,
+        config: &PhysicsConfiguration,
+    ) -> (
+        Vec<rapier3d::geometry::CollisionEvent>,
+        Vec<(ColliderHandle, ColliderHandle, f32)>,
+    ) {
         self.events.clear();
 
         let raw_collisions: Arc<Mutex<Vec<rapier3d::geometry::CollisionEvent>>> =
@@ -318,47 +337,17 @@ impl PhysicsContext {
             self.accumulated_time -= Self::TIME_STEP;
         }
 
-        // Resolve raw Rapier collision events to entity pairs via collider→entity map.
-        let collisions = raw_collisions.lock().unwrap();
-        for event in collisions.iter() {
-            let (h1, h2, started, sensor) = match *event {
-                rapier3d::geometry::CollisionEvent::Started(h1, h2, flags) => (
-                    h1,
-                    h2,
-                    true,
-                    flags.contains(rapier3d::geometry::CollisionEventFlags::SENSOR),
-                ),
-                rapier3d::geometry::CollisionEvent::Stopped(h1, h2, flags) => (
-                    h1,
-                    h2,
-                    false,
-                    flags.contains(rapier3d::geometry::CollisionEventFlags::SENSOR),
-                ),
-            };
-            if let (Some(&e1), Some(&e2)) = (
-                self.collider_entity.get(&h1),
-                self.collider_entity.get(&h2),
-            ) {
-                let kind = if started {
-                    ContactKind::Started
-                } else {
-                    ContactKind::Stopped
-                };
-                self.events.raw_collision_pairs.push((e1, e2, kind, sensor));
-            }
-        }
+        drop(collector);
 
-        let forces = raw_forces.lock().unwrap();
-        for &(h1, h2, magnitude) in forces.iter() {
-            if let (Some(&e1), Some(&e2)) = (
-                self.collider_entity.get(&h1),
-                self.collider_entity.get(&h2),
-            ) {
-                self.events
-                    .raw_force_pairs
-                    .push((e1, e2, magnitude));
-            }
-        }
+        let collisions = Arc::try_unwrap(raw_collisions)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        let forces = Arc::try_unwrap(raw_forces)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        (collisions, forces)
     }
 }
 
