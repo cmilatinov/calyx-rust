@@ -17,6 +17,11 @@ pub trait ComponentInstance: Reflect {
     fn component_type_id(&self) -> ComponentTypeId;
     fn get_instance<'a>(&self, entry: &'a EntryRef) -> Option<&'a dyn Component>;
     fn get_instance_mut<'a>(&self, entry: &'a mut Entry) -> Option<&'a mut dyn Component>;
+    /// Remove the component from the entity and return it as an owned box.
+    /// Used by the take-out-and-put-back pattern to avoid aliased `&mut`.
+    fn take_instance(&self, entry: &mut Entry) -> Option<Box<dyn Component>>;
+    /// Put a previously taken component back into the entity.
+    fn put_back_instance(&self, entry: &mut Entry, instance: Box<dyn Component>);
     fn bind_instance(&self, entry: &mut Entry, instance: Box<dyn Reflect>) -> bool;
     fn remove_instance(&self, entry: &mut Entry);
     fn serialize(&self) -> Option<serde_json::Value>;

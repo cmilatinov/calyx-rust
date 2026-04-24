@@ -24,6 +24,28 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
                 let instance = entry.get_component_mut::<#name>().ok()?;
                 Some(instance)
             }
+            fn take_instance(
+                &self, entry: &mut legion::world::Entry
+            ) -> #FQOption<#FQBox<dyn engine::component::Component>> {
+                let value = entry.get_component::<#name>().ok()
+                    .and_then(|c| serde_json::to_value(c).ok())?;
+                entry.remove_component::<#name>();
+                let instance: #name = serde_json::from_value(value).ok()?;
+                Some(#FQBox::new(instance))
+            }
+            fn put_back_instance(
+                &self,
+                entry: &mut legion::world::Entry,
+                instance: #FQBox<dyn engine::component::Component>
+            ) {
+                // Round-trip through serialization to recover the concrete type.
+                // The derive macro knows the type is #name but we only have dyn Component.
+                if let Some(value) = instance.serialize() {
+                    if let Ok(concrete) = serde_json::from_value::<#name>(value) {
+                        entry.add_component(concrete);
+                    }
+                }
+            }
             fn bind_instance(
                 &self,
                 entry: &mut legion::world::Entry,

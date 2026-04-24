@@ -594,21 +594,27 @@ impl Scene {
         let Some(component) = component_registry.component(type_uuid) else {
             return;
         };
-        let self_ptr = unsafe { self.as_ptr_mut() };
         let assets = self.registries.clone();
-        self.entry_mut(game_object).map(|mut e| {
-            let result = component.bind_instance(&mut e, meta.default());
-            if result {
-                if let Some(instance) = component.get_instance_mut(&mut e) {
-                    instance.reset(ComponentEventContext {
-                        registries: &assets,
-                        scene: unsafe { &mut *self_ptr },
-                        game_object,
-                    });
+        let default_instance = meta.default();
+        let Some(mut entry) = self.entry_mut(game_object) else {
+            return;
+        };
+        let result = component.bind_instance(&mut entry, default_instance);
+        if result {
+            // Take the component out so we can call reset() with &mut Scene safely.
+            if let Some(mut instance) = component.take_instance(&mut entry) {
+                drop(entry);
+                instance.reset(ComponentEventContext {
+                    registries: &assets,
+                    scene: self,
+                    game_object,
+                });
+                // Put it back.
+                if let Some(mut entry) = self.entry_mut(game_object) {
+                    component.put_back_instance(&mut entry, instance);
                 }
             }
-            result
-        });
+        }
     }
 
     pub unsafe fn get_component_ptr(
@@ -665,36 +671,41 @@ impl Scene {
         PhysicsContext::update(self, resources.time(), &PhysicsConfiguration::default());
         let component_registry_ref = self.registries.components.clone();
         let component_registry = component_registry_ref.read();
-        // No way around this for now, we want component's update method to take &mut self
-        // but there's no way to do that and provide a &mut Scene
-        // At worst, this is a race condition because we can guarantee that
-        // this reference only lives until the end of this function
-        // TODO(Cristian): Refactor the component update(&mut self, ...) into a static
-        // update(...) and just pass the &mut Scene once, and have the component function
-        // mutate itself by accessing the &mut Scene (which is more inconvenient btw)
-        let scene = unsafe { &mut *(self as *mut Self) };
-        let scene2 = unsafe { &mut *(self as *mut Self) };
         let assets = self.registries.clone();
+
         for (_, component) in component_registry.components_update() {
-            for game_object in <Entity>::query()
+            let game_objects: Vec<GameObject> = <Entity>::query()
                 .iter(&self.world)
                 .filter_map(|e| self.game_object_from_entity(*e))
-            {
-                let Some(mut entry) = scene2.entry_mut(game_object) else {
+                .collect();
+
+            for game_object in game_objects {
+                // Take the component out of the World so we hold an owned value.
+                // This eliminates the aliased &mut self UB: the component is no
+                // longer inside the Scene while we pass &mut Scene to update().
+                let Some(mut entry) = self.entry_mut(game_object) else {
                     continue;
                 };
-                let Some(instance) = component.get_instance_mut(&mut entry) else {
+                let Some(mut instance) = component.take_instance(&mut entry) else {
                     continue;
                 };
+                drop(entry);
+
                 instance.update(
                     ComponentEventContext {
                         registries: &assets,
-                        scene,
+                        scene: self,
                         game_object,
                     },
                     resources,
                     input,
                 );
+
+                // Put the component back into the World.
+                let Some(mut entry) = self.entry_mut(game_object) else {
+                    continue;
+                };
+                component.put_back_instance(&mut entry, instance);
             }
         }
     }
@@ -904,12 +915,5 @@ impl Scene {
             return true;
         };
         c_netobj.is_owner(network)
-    }
-}
-
-impl Scene {
-    pub(crate) unsafe fn as_ptr_mut(&self) -> *mut Self {
-        let ptr = self as *const Self;
-        ptr as *mut Self
     }
 }
