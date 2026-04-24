@@ -8,10 +8,10 @@ use super::GameObject;
 /// Manages the mapping between UUIDs, Entities, and NodeIndices,
 /// as well as tracking pending deletions and auto-naming.
 pub struct GameObjectStore {
-    pub(crate) uuid_map: HashMap<Uuid, GameObject>,
-    pub(crate) entity_map: HashMap<Entity, NodeIndex>,
-    pub(crate) objects_to_delete: HashSet<GameObject>,
-    pub(crate) new_index: usize,
+    uuid_map: HashMap<Uuid, GameObject>,
+    entity_map: HashMap<Entity, NodeIndex>,
+    objects_to_delete: HashSet<GameObject>,
+    new_index: usize,
 }
 
 impl Default for GameObjectStore {
@@ -40,6 +40,10 @@ impl GameObjectStore {
     pub fn register(&mut self, id: Uuid, game_object: GameObject) {
         self.uuid_map.insert(id, game_object);
         self.entity_map.insert(game_object.entity, game_object.node);
+    }
+
+    pub fn register_uuid(&mut self, id: Uuid, game_object: GameObject) {
+        self.uuid_map.insert(id, game_object);
     }
 
     pub fn register_entity(&mut self, entity: Entity, node: NodeIndex) {

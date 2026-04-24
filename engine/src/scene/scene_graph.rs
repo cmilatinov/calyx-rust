@@ -15,11 +15,11 @@ pub enum SiblingDir {
 /// Manages the hierarchical parent-child relationships between game objects
 /// using a directed graph (petgraph StableGraph).
 pub struct SceneGraph {
-    pub(crate) arena: StableGraph<Entity, i32>,
+    arena: StableGraph<Entity, i32>,
 }
 
 pub struct WalkChildren {
-    pub(crate) walker: WalkNeighbors<DefaultIx>,
+    walker: WalkNeighbors<DefaultIx>,
 }
 
 impl WalkChildren {
@@ -47,6 +47,15 @@ impl SceneGraph {
         self.arena
             .node_weight(node)
             .map(|e| GameObject { node, entity: *e })
+    }
+
+    /// BFS traversal starting from a node, returning all reachable GameObjects
+    /// (including the start node).
+    pub fn bfs_from(&self, start: NodeIndex) -> Vec<GameObject> {
+        Bfs::new(&self.arena, start)
+            .iter(&self.arena)
+            .filter_map(|node| self.game_object_from_node(node))
+            .collect()
     }
 
     pub fn parent(&self, game_object: GameObject) -> Option<GameObject> {

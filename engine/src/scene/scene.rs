@@ -3,7 +3,6 @@ use legion::world::{Entry, EntryRef};
 use legion::{Entity, EntityStore, IntoQuery, World};
 use log::trace;
 use nalgebra_glm::Mat4;
-use petgraph::visit::{Bfs, Walker};
 use serde::de::DeserializeSeed;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
@@ -70,7 +69,7 @@ impl Scene {
             visible: true,
         });
         let mut store = GameObjectStore::default();
-        store.uuid_map.insert(id, root);
+        store.register_uuid(id, root);
         Self {
             world,
             physics: Default::default(),
@@ -163,7 +162,7 @@ impl From<(&ReadOnlyRegistryContext, SceneData)> for Scene {
                 }
             }
             if let Some(id) = id {
-                scene.store.uuid_map.insert(id, game_object);
+                scene.store.register_uuid(id, game_object);
             }
         }
         for (parent_id, children) in value.hierarchy {
@@ -207,12 +206,10 @@ impl From<&Scene> for SceneData {
 impl From<(&Scene, GameObject)> for SceneData {
     fn from((scene, game_object): (&Scene, GameObject)) -> Self {
         let mut data = Default::default();
-        std::iter::once(game_object.node)
-            .chain(
-                Bfs::new(&scene.graph.arena, game_object.node)
-                    .iter(&scene.graph.arena),
-            )
-            .filter_map(|c| scene.graph.game_object_from_node(c))
+        scene
+            .graph
+            .bfs_from(game_object.node)
+            .into_iter()
             .for_each(|game_object| {
                 let Some(entry) = scene.entry(game_object) else {
                     return;
@@ -293,7 +290,7 @@ impl Scene {
             id.name = self.store.next_name();
         }
         let game_object = self.new_game_object(parent);
-        self.store.uuid_map.insert(id.id, game_object);
+        self.store.register_uuid(id.id, game_object);
         self.bind_component(game_object, id);
         self.bind_component(game_object, ComponentTransform::default());
         game_object
@@ -335,7 +332,7 @@ impl Scene {
         for (game_object_id, _components) in prefab.data.components.iter() {
             let game_object = self.new_game_object(None);
             let new_game_object_id = *id_mapping.get_by_left(game_object_id).unwrap();
-            self.store.uuid_map.insert(new_game_object_id, game_object);
+            self.store.register_uuid(new_game_object_id, game_object);
         }
 
         for (game_object_id, components) in prefab.data.components.iter() {
@@ -593,16 +590,13 @@ impl Scene {
                 .index_in_parent(parent, game_object, SiblingDir::Before)
                 .unwrap();
             self.graph.shift_edge_weights(parent, index, -1);
-            for go in std::iter::once(game_object)
-                .chain(
-                    Bfs::new(&self.graph.arena, game_object.node)
-                        .iter(&self.graph.arena)
-                        .filter_map(|node| self.graph.game_object_from_node(node)),
-                )
-                .collect::<Vec<_>>()
+            let to_delete: Vec<_> = self
+                .graph
+                .bfs_from(game_object.node)
                 .into_iter()
                 .rev()
-            {
+                .collect();
+            for go in to_delete {
                 let uuid = self.uuid(go);
                 self.world.remove(go.entity);
                 self.store.remove(uuid, go.entity);
