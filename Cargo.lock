@@ -6511,6 +6511,7 @@ dependencies = [
  "nalgebra-glm",
  "serde",
  "serde_json",
+ "uuid 1.22.0",
  "winit",
 ]
 

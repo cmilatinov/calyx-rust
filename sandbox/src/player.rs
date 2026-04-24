@@ -1,4 +1,3 @@
-use egui::Key;
 use engine::component::{Component, ComponentEventContext, ReflectComponent};
 use engine::core::TimeType;
 use engine::input::Input;
@@ -34,64 +33,88 @@ impl Default for ComponentPlayerController {
     }
 }
 
-impl Component for ComponentPlayerController {
-    fn update(
-        &mut self,
-        mut ctx: ComponentEventContext,
-        resources: &mut ResourceMap,
-        input: &Input,
-    ) {
-        let dt = resources.time().delta_time();
-        self.update_movement(&mut ctx, resources, input, dt);
+impl Component for ComponentPlayerController {}
+
+fn component_update(
+    ComponentEventContext {
+        scene, game_object, ..
+    }: ComponentEventContext,
+    resources: &mut ResourceMap,
+    input: &Input,
+) {
+    if !scene.is_owner(game_object, resources.network()) {
+        return;
     }
+
+    let Some((camera_ref, move_speed, sprint_multiplier)) =
+        scene.read_component::<ComponentPlayerController, _, _>(game_object, |c| {
+            (c.camera, c.move_speed, c.sprint_multiplier)
+        })
+    else {
+        return;
+    };
+
+    let dt = resources.time().delta_time();
+    update_movement(
+        scene,
+        game_object,
+        input,
+        dt,
+        camera_ref,
+        move_speed,
+        sprint_multiplier,
+    );
 }
 
-impl ComponentPlayerController {
-    fn update_movement(
-        &mut self,
-        ComponentEventContext {
-            scene, game_object, ..
-        }: &mut ComponentEventContext,
-        resources: &ResourceMap,
-        input: &Input,
-        dt: TimeType,
-    ) {
-        if !scene.is_owner(*game_object, resources.network()) {
-            return;
-        }
+fn update_movement(
+    scene: &mut engine::scene::Scene,
+    game_object: engine::scene::GameObject,
+    input: &Input,
+    dt: TimeType,
+    camera_ref: GameObjectRef,
+    move_speed: f32,
+    sprint_multiplier: f32,
+) {
+    use egui::Key;
 
-        let forward = input
-            .input(|i| (i.key_down(Key::W) as i32 - i.key_down(Key::S) as i32) as f32)
-            .unwrap_or_default();
-        let right = input
-            .input(|i| (i.key_down(Key::D) as i32 - i.key_down(Key::A) as i32) as f32)
-            .unwrap_or_default();
-        let run = input.input(|i| i.modifiers.shift).unwrap_or(false);
-        let speed = self.move_speed * if run { self.sprint_multiplier } else { 1.0 } * dt;
+    let forward = input
+        .input(|i| (i.key_down(Key::W) as i32 - i.key_down(Key::S) as i32) as f32)
+        .unwrap_or_default();
+    let right = input
+        .input(|i| (i.key_down(Key::D) as i32 - i.key_down(Key::A) as i32) as f32)
+        .unwrap_or_default();
+    let run = input.input(|i| i.modifiers.shift).unwrap_or(false);
+    let speed = move_speed * if run { sprint_multiplier } else { 1.0 } * dt;
 
-        try_all!(
-            None => return;
-            let camera = self.camera.game_object(scene);
+    try_all!(
+        None => return;
+        let camera = camera_ref.game_object(scene);
+    );
+    let camera_transform = scene.world_transform(camera);
+    let camera_forward = camera_transform.forward().xz().normalize();
+    let camera_right = camera_transform.right().xz().normalize();
+    let move_direction = camera_forward * forward + camera_right * right;
+    let move_vector = Vec3::new(move_direction.x, 0.0, move_direction.y) * speed;
+
+    if move_direction.metric_distance(&Vec2::zeros()) <= f32::EPSILON {
+        return;
+    }
+
+    let mut transform = scene.world_transform(game_object);
+    transform.position += move_vector;
+
+    if let Some(move_dir_2d) = move_direction.try_normalize(f32::EPSILON) {
+        transform.rotation = UnitQuaternion::face_towards(
+            &Vec3::new(move_dir_2d.x, 0.0, move_dir_2d.y),
+            &Vec3::y_axis(),
         );
-        let camera_transform = scene.world_transform(camera);
-        let camera_forward = camera_transform.forward().xz().normalize();
-        let camera_right = camera_transform.right().xz().normalize();
-        let move_direction = camera_forward * forward + camera_right * right;
-        let move_vector = Vec3::new(move_direction.x, 0.0, move_direction.y) * speed;
+    }
+    scene.set_world_transform(game_object, transform.matrix());
+}
 
-        if move_direction.metric_distance(&Vec2::zeros()) <= f32::EPSILON {
-            return;
-        }
-
-        let mut transform = scene.world_transform(*game_object);
-        transform.position += move_vector;
-
-        if let Some(move_dir_2d) = move_direction.try_normalize(f32::EPSILON) {
-            transform.rotation = UnitQuaternion::face_towards(
-                &Vec3::new(move_dir_2d.x, 0.0, move_dir_2d.y),
-                &Vec3::y_axis(),
-            );
-        }
-        scene.set_world_transform(*game_object, transform.matrix());
+inventory::submit! {
+    engine::ComponentUpdateRegistration {
+        type_uuid: uuid::Uuid::from_bytes(*ComponentPlayerController::UUID),
+        update_fn: component_update,
     }
 }

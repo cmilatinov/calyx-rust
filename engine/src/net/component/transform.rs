@@ -36,33 +36,47 @@ impl Default for ComponentNetworkTransform {
     }
 }
 
-impl Component for ComponentNetworkTransform {
-    fn update(
-        &mut self,
-        mut ctx: ComponentEventContext,
-        resources: &mut ResourceMap,
-        _input: &Input,
-    ) {
-        if let Some(value) = self.transform.update(
-            &mut ctx,
-            resources,
-            |ComponentEventContext {
-                 scene, game_object, ..
-             }| {
-                try_all!(
-                    None => return Default::default();
-                    let entry = scene.entry(*game_object);
-                    let c_transform = entry.get_component::<ComponentTransform>().ok();
-                );
-                c_transform.transform
-            },
-        ) {
+impl Component for ComponentNetworkTransform {}
+
+fn component_update(
+    mut ctx: ComponentEventContext,
+    resources: &mut ResourceMap,
+    _input: &Input,
+) {
+    let Some(mut net_transform) =
+        ctx.scene.read_component::<ComponentNetworkTransform, _, _>(ctx.game_object, |c| c.clone())
+    else {
+        return;
+    };
+    if let Some(value) = net_transform.transform.update(
+        &mut ctx,
+        resources,
+        |ComponentEventContext {
+             scene, game_object, ..
+         }| {
             try_all!(
                 None => return Default::default();
-                let mut entry = ctx.scene.entry_mut(ctx.game_object);
-                let c_transform = entry.get_component_mut::<ComponentTransform>().ok();
+                let entry = scene.entry(*game_object);
+                let c_transform = entry.get_component::<ComponentTransform>().ok();
             );
-            c_transform.transform = value;
-        }
+            c_transform.transform
+        },
+    ) {
+        try_all!(
+            None => return Default::default();
+            let mut entry = ctx.scene.entry_mut(ctx.game_object);
+            let c_transform = entry.get_component_mut::<ComponentTransform>().ok();
+        );
+        c_transform.transform = value;
+    }
+    ctx.scene.write_component::<ComponentNetworkTransform, _>(ctx.game_object, |c| {
+        *c = net_transform;
+    });
+}
+
+inventory::submit! {
+    engine::ComponentUpdateRegistration {
+        type_uuid: uuid::Uuid::from_bytes(*ComponentNetworkTransform::UUID),
+        update_fn: component_update,
     }
 }

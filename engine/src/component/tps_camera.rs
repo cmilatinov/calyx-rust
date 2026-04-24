@@ -38,40 +38,62 @@ impl Default for ComponentThirdPersonCamera {
     }
 }
 
-impl Component for ComponentThirdPersonCamera {
-    fn update(
-        &mut self,
-        ComponentEventContext {
-            scene, game_object, ..
-        }: ComponentEventContext,
-        resources: &mut ResourceMap,
-        input: &Input,
-    ) {
-        if !scene.is_owner(game_object, resources.network()) {
-            return;
-        }
-        let delta = input
-            .input(|input| input.pointer.motion().unwrap_or_default())
-            .unwrap_or(egui::Vec2::ZERO);
-        let zoom_delta = input
-            .input(|input| input.smooth_scroll_delta.y)
-            .unwrap_or(0.0);
-        self.distance -= self.zoom_sensitivity * zoom_delta;
-        let rot =
-            Vec2::new(delta.x, delta.y).scale(resources.time().delta_time() * self.sensitivity);
-        self.rotation += rot;
-        self.rotation.y =
-            nalgebra::clamp(self.rotation.y, -89.0f32.to_radians(), 89.0f32.to_radians());
-        let mut transform = scene.world_transform(game_object);
-        let rotation = UnitQuaternion::from_euler_angles(self.rotation.y, self.rotation.x, 0.0);
-        let dir = rotation * Vec3::z_axis();
-        let pos = self
-            .target
-            .game_object(scene)
-            .map(|go| scene.world_transform(go).position)
-            .unwrap_or_default();
-        transform.position = pos - self.distance * (*dir);
-        transform.rotation = UnitQuaternion::face_towards(&dir, &Vec3::y_axis());
-        scene.set_world_transform(game_object, transform.matrix());
+impl Component for ComponentThirdPersonCamera {}
+
+fn component_update(
+    ComponentEventContext {
+        scene, game_object, ..
+    }: ComponentEventContext,
+    resources: &mut ResourceMap,
+    input: &Input,
+) {
+    if !scene.is_owner(game_object, resources.network()) {
+        return;
+    }
+    let delta = input
+        .input(|input| input.pointer.motion().unwrap_or_default())
+        .unwrap_or(egui::Vec2::ZERO);
+    let zoom_delta = input
+        .input(|input| input.smooth_scroll_delta.y)
+        .unwrap_or(0.0);
+
+    // Read current state
+    let Some((target, sensitivity, zoom_sensitivity, distance, rotation)) =
+        scene.read_component::<ComponentThirdPersonCamera, _, _>(game_object, |c| {
+            (c.target, c.sensitivity, c.zoom_sensitivity, c.distance, c.rotation)
+        })
+    else {
+        return;
+    };
+
+    let dt = resources.time().delta_time();
+    let new_distance = distance - zoom_sensitivity * zoom_delta;
+    let rot = Vec2::new(delta.x, delta.y).scale(dt * sensitivity);
+    let mut new_rotation = rotation + rot;
+    new_rotation.y = nalgebra::clamp(new_rotation.y, -89.0f32.to_radians(), 89.0f32.to_radians());
+
+    // Write updated state back
+    scene.write_component::<ComponentThirdPersonCamera, _>(game_object, |c| {
+        c.distance = new_distance;
+        c.rotation = new_rotation;
+    });
+
+    // Update transform
+    let rotation_quat = UnitQuaternion::from_euler_angles(new_rotation.y, new_rotation.x, 0.0);
+    let dir = rotation_quat * Vec3::z_axis();
+    let pos = target
+        .game_object(scene)
+        .map(|go| scene.world_transform(go).position)
+        .unwrap_or_default();
+    let mut transform = scene.world_transform(game_object);
+    transform.position = pos - new_distance * (*dir);
+    transform.rotation = UnitQuaternion::face_towards(&dir, &Vec3::y_axis());
+    scene.set_world_transform(game_object, transform.matrix());
+}
+
+inventory::submit! {
+    engine::ComponentUpdateRegistration {
+        type_uuid: uuid::Uuid::from_bytes(*ComponentThirdPersonCamera::UUID),
+        update_fn: component_update,
     }
 }

@@ -472,28 +472,21 @@ impl Scene {
         let Some(component) = component_registry.component(type_uuid) else {
             return;
         };
-        let assets = self.registries.clone();
         let default_instance = meta.default();
         let Some(mut entry) = self.entry_mut(game_object) else {
             return;
         };
         let result = component.bind_instance(&mut entry, default_instance);
         if result {
-            // Clone the freshly-bound component so we can call reset() with
-            // &mut Scene safely — the clone is not borrowed from the World.
             drop(entry);
-            let cloned = self
-                .entry(game_object)
-                .and_then(|entry| component.clone_instance(&entry));
-            if let Some(mut instance) = cloned {
-                instance.reset(ComponentEventContext {
+            // Call the registered reset fn if one exists for this component type.
+            if let Some(reset_fn) = component_registry.reset_fn(type_uuid) {
+                let assets = self.registries.clone();
+                reset_fn(ComponentEventContext {
                     registries: &assets,
                     scene: self,
                     game_object,
                 });
-                if let Some(mut entry) = self.entry_mut(game_object) {
-                    component.put_back_instance(&mut entry, instance);
-                }
             }
         }
     }
@@ -554,24 +547,14 @@ impl Scene {
         let component_registry = component_registry_ref.read();
         let assets = self.registries.clone();
 
-        for (_, component) in component_registry.components_update() {
+        for (_type_uuid, update_fn) in component_registry.components_with_update() {
             let game_objects: Vec<GameObject> = <Entity>::query()
                 .iter(&self.world)
                 .filter_map(|e| self.game_object_from_entity(*e))
                 .collect();
 
             for game_object in game_objects {
-                // Clone the component out of the World so we hold an owned value.
-                // The original stays in the ECS — we overwrite it after update().
-                let Some(entry) = self.entry(game_object) else {
-                    continue;
-                };
-                let Some(mut instance) = component.clone_instance(&entry) else {
-                    continue;
-                };
-                drop(entry);
-
-                instance.update(
+                update_fn(
                     ComponentEventContext {
                         registries: &assets,
                         scene: self,
@@ -580,12 +563,6 @@ impl Scene {
                     resources,
                     input,
                 );
-
-                // Write the mutated clone back, replacing the stale original.
-                let Some(mut entry) = self.entry_mut(game_object) else {
-                    continue;
-                };
-                component.put_back_instance(&mut entry, instance);
             }
         }
     }

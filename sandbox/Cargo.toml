@@ -24,3 +24,4 @@ winit.workspace = true
 log.workspace = true
 nalgebra.workspace = true
 nalgebra-glm.workspace = true
+uuid.workspace = true

@@ -66,7 +66,7 @@ impl Lerp<f32> for AnimationParameters {
 #[derive(Default, Clone, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "f24db81d-7054-40b8-8f3c-d9740c03948e"]
 #[reflect(Default, TypeUuidDynamic, Component)]
-#[reflect_attr(name = "Animator", update)]
+#[reflect_attr(name = "Animator", update, reset)]
 #[serde(default)]
 #[repr(C)]
 pub struct ComponentAnimator {
@@ -88,34 +88,6 @@ pub struct ComponentAnimator {
 }
 
 impl Component for ComponentAnimator {
-    fn reset(
-        &mut self,
-        ComponentEventContext {
-            registries: assets,
-            scene,
-            game_object,
-            ..
-        }: ComponentEventContext,
-    ) {
-        self.apply_animation_pose(assets, scene, game_object);
-    }
-
-    fn update(
-        &mut self,
-        ComponentEventContext {
-            registries: assets,
-            scene,
-            game_object,
-        }: ComponentEventContext,
-        resources: &mut ResourceMap,
-        _input: &Input,
-    ) {
-        self.init(assets);
-        self.step_fsm(assets);
-        self.apply_animation_pose(assets, scene, game_object);
-        self.update_time(resources.time());
-    }
-
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {
         if self.draw_debug_skeleton {
             gizmos.set_color(&Vec4::new(1.0, 1.0, 0.0, 1.0));
@@ -130,6 +102,60 @@ impl Component for ComponentAnimator {
                 Self::draw_bones(scene, child, gizmos, transform.position);
             }
         }
+    }
+}
+
+fn component_reset(
+    ComponentEventContext {
+        registries: assets,
+        scene,
+        game_object,
+    }: ComponentEventContext,
+) {
+    // Take the animator out, apply pose, put it back.
+    let Some(mut animator) =
+        scene.read_component::<ComponentAnimator, _, _>(game_object, |c| c.clone())
+    else {
+        return;
+    };
+    animator.apply_animation_pose(assets, scene, game_object);
+    scene.write_component::<ComponentAnimator, _>(game_object, |c| *c = animator);
+}
+
+fn component_update(
+    ComponentEventContext {
+        registries: assets,
+        scene,
+        game_object,
+    }: ComponentEventContext,
+    resources: &mut ResourceMap,
+    _input: &Input,
+) {
+    // Clone the animator out so we can call methods that need both &mut self and &mut Scene.
+    let Some(mut animator) =
+        scene.read_component::<ComponentAnimator, _, _>(game_object, |c| c.clone())
+    else {
+        return;
+    };
+    animator.init(assets);
+    animator.step_fsm(assets);
+    animator.apply_animation_pose(assets, scene, game_object);
+    animator.update_time(resources.time());
+    // Write the updated state back.
+    scene.write_component::<ComponentAnimator, _>(game_object, |c| *c = animator);
+}
+
+inventory::submit! {
+    engine::ComponentUpdateRegistration {
+        type_uuid: uuid::Uuid::from_bytes(*ComponentAnimator::UUID),
+        update_fn: component_update,
+    }
+}
+
+inventory::submit! {
+    engine::ComponentResetRegistration {
+        type_uuid: uuid::Uuid::from_bytes(*ComponentAnimator::UUID),
+        reset_fn: component_reset,
     }
 }
 
@@ -164,7 +190,6 @@ impl ComponentAnimator {
         let Some(animation_graph) = self.animation_graph.get_ref(assets) else {
             return false;
         };
-        // TODO(Cristian): Optimize, maybe store name -> id hashmap in AnimationGraph
         let Some(parameter_id) = animation_graph.read().parameters.iter().find_map(|p| {
             if p.name.as_str() == name {
                 Some(p.id)
@@ -249,7 +274,6 @@ impl ComponentAnimator {
     fn end_transition(&mut self, graph: &AnimationGraph) {
         if let Some(transition) = self.current_transition.take() {
             if let Some((_source, target)) = graph.edge_endpoints(transition.transition) {
-                // let source_duration
                 self.current_state = Some(target);
             }
         }

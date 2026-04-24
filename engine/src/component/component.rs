@@ -17,8 +17,7 @@ use crate::utils::TypeUuidDynamic;
 ///
 /// This trait is automatically implemented by `#[derive(Component)]`. It bridges
 /// the gap between Legion's typed storage and the engine's trait-object component
-/// model, enabling serialization, reflection, and the clone-and-put-back pattern
-/// used to safely call `Component::update` without aliased `&mut Scene`.
+/// model, enabling serialization and reflection.
 pub trait ComponentInstance: Reflect {
     /// Returns the Legion `ComponentTypeId` for the concrete component type.
     fn component_type_id(&self) -> ComponentTypeId;
@@ -30,19 +29,6 @@ pub trait ComponentInstance: Reflect {
     /// Returns an exclusive reference to this component type on the given entity,
     /// or `None` if the entity does not have it.
     fn get_instance_mut<'a>(&self, entry: &'a mut Entry) -> Option<&'a mut dyn Component>;
-
-    /// Clone the component out of the entity as an owned trait object.
-    /// The original remains in the ECS — use `put_back_instance` to overwrite
-    /// it after mutation. This avoids the aliased `&mut Scene` UB that would
-    /// occur if we held a `&mut Component` borrowed from inside the Scene
-    /// while also passing `&mut Scene` to `Component::update`.
-    fn clone_instance(&self, entry: &EntryRef) -> Option<Box<dyn Component>>;
-
-    /// Overwrite the component on the entity with a previously cloned instance.
-    /// Uses a raw pointer downcast to recover the concrete type without
-    /// serialization — safe because `clone_instance` always boxes the same
-    /// concrete type that this prototype was derived for.
-    fn put_back_instance(&self, entry: &mut Entry, instance: Box<dyn Component>);
 
     /// Add a new component instance (as `Box<dyn Reflect>`) to the entity.
     /// Returns `true` if the downcast to the concrete type succeeded.
@@ -67,7 +53,7 @@ pub trait ComponentInstance: Reflect {
     }
 }
 
-/// Context passed to component lifecycle methods (`reset`, `update`, `destroy`).
+/// Context passed to component lifecycle functions.
 ///
 /// Provides mutable access to the scene and identifies which game object the
 /// component belongs to. Registry access is included for asset/type lookups.
@@ -77,20 +63,31 @@ pub struct ComponentEventContext<'a> {
     pub game_object: GameObject,
 }
 
+/// Type-erased function pointer for per-frame component updates.
+///
+/// Registered in `ComponentRegistry` by `#[derive(Component)]` for types
+/// annotated with `#[reflect_attr(update)]`. The function accesses its own
+/// component state through `scene.write_component::<T>(game_object, ...)`.
+pub type ComponentUpdateFn = fn(ComponentEventContext, &mut ResourceMap, &Input);
+
+/// Type-erased function pointer for component initialization on bind.
+///
+/// Registered in `ComponentRegistry` by `#[derive(Component)]` for types
+/// that implement a `reset` function.
+pub type ComponentResetFn = fn(ComponentEventContext);
+
 /// Defines the lifecycle hooks for a game component.
 ///
-/// Lifecycle order: `reset` (once, on bind) → `update` (every frame) → `destroy` (on removal).
+/// `update` and `reset` are dispatched via registered function pointers
+/// (see `ComponentUpdateFn` / `ComponentResetFn`) rather than trait methods,
+/// because they need `&mut Scene` which would alias with `&mut self` if the
+/// component lives inside the Scene's ECS World.
 ///
-/// Components that need per-frame updates must be annotated with
-/// `#[reflect_attr(update)]` so the engine includes them in the update loop.
-/// `draw_gizmos` is editor-only and runs outside the normal lifecycle.
+/// `draw_gizmos` and `destroy` remain on the trait because they are called
+/// infrequently and don't have the same aliasing constraints.
 #[allow(unused)]
 #[reflect_trait]
 pub trait Component: TypeUuidDynamic + ComponentInstance {
-    /// Called once when the component is first added to a game object.
-    fn reset(&mut self, ctx: ComponentEventContext) {}
-    /// Called every frame for components marked with `#[reflect_attr(update)]`.
-    fn update(&mut self, ctx: ComponentEventContext, resources: &mut ResourceMap, input: &Input) {}
     /// Called when the component is removed from a game object.
     fn destroy(&mut self, ctx: ComponentEventContext) {}
     /// Editor-only: draw debug visualization for this component.
