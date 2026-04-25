@@ -5,7 +5,7 @@ use log::trace;
 use nalgebra_glm::Mat4;
 use serde::de::DeserializeSeed;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use uuid::Uuid;
 
@@ -206,19 +206,17 @@ impl From<&Scene> for SceneData {
 impl From<(&Scene, GameObject)> for SceneData {
     fn from((scene, game_object): (&Scene, GameObject)) -> Self {
         let mut data = Default::default();
-        scene
-            .graph
-            .bfs_from(game_object.node)
-            .into_iter()
-            .for_each(|game_object| {
-                let Some(entry) = scene.entry(game_object) else {
-                    return;
-                };
-                let Ok(id) = entry.get_component::<ComponentID>() else {
-                    return;
-                };
-                scene.serialize_game_object(game_object, id.id, &mut data);
-            });
+        let game_objects = scene.graph.bfs_from(game_object.node);
+        let subtree = game_objects.iter().copied().collect::<HashSet<_>>();
+        game_objects.into_iter().for_each(|game_object| {
+            let Some(entry) = scene.entry(game_object) else {
+                return;
+            };
+            let Ok(id) = entry.get_component::<ComponentID>() else {
+                return;
+            };
+            scene.serialize_game_object_filtered(game_object, id.id, &mut data, Some(&subtree));
+        });
         data
     }
 }
@@ -234,6 +232,16 @@ impl Scene {
         game_object_id: Uuid,
         data: &mut SceneData,
     ) {
+        self.serialize_game_object_filtered(game_object, game_object_id, data, None);
+    }
+
+    fn serialize_game_object_filtered(
+        &self,
+        game_object: GameObject,
+        game_object_id: Uuid,
+        data: &mut SceneData,
+        parent_filter: Option<&HashSet<GameObject>>,
+    ) {
         'insert_hierarchy: {
             try_all!(
                 None => break 'insert_hierarchy;
@@ -241,6 +249,9 @@ impl Scene {
                 let entry = self.entry(parent);
                 let parent_id = entry.get_component::<ComponentID>().ok();
             );
+            if parent_filter.is_some_and(|filter| !filter.contains(&parent)) {
+                break 'insert_hierarchy;
+            }
             data.hierarchy
                 .entry(parent_id.id)
                 .or_default()
@@ -301,11 +312,9 @@ impl Scene {
     }
 
     pub fn create_prefab(&self, game_object: GameObject) -> Prefab {
-        let data: SceneData = (self, game_object).into();
-
         Prefab {
-            data: data.clone(),
-            scene: (&self.registries, data).into(),
+            data: (self, game_object).into(),
+            root: self.uuid(game_object),
         }
     }
 
@@ -314,8 +323,6 @@ impl Scene {
         prefab: &Prefab,
         parent: Option<GameObject>,
     ) -> Option<GameObject> {
-        let root_node = prefab.scene.prefab_root().unwrap();
-
         let mut id_mapping = prefab
             .data
             .components
@@ -323,8 +330,6 @@ impl Scene {
             .map(|(game_object_id, _id)| (*game_object_id, Uuid::new_v4()))
             .collect::<BiHashMap<_, _>>();
 
-        let asset_registry_ref = self.registries.assets.clone();
-        let asset_registry = asset_registry_ref.read();
         let component_registry_ref = self.registries.components.clone();
         let component_registry = component_registry_ref.read();
         let type_registry_ref = self.registries.types.clone();
@@ -384,7 +389,7 @@ impl Scene {
 
         try_all!(
             None => return None;
-            let prefab_uuid = id_mapping.get_by_left(&prefab.scene.uuid(root_node));
+            let prefab_uuid = id_mapping.get_by_left(&prefab.root);
             let game_object = self.find(*prefab_uuid);
         );
 
