@@ -31,8 +31,8 @@ impl<T> Default for AssetMap<T> {
 }
 
 impl<T> AssetMap<T> {
-    pub fn get(&self, id: AssetId) -> &Ref<T> {
-        self.refs.get(&id).unwrap()
+    pub fn get(&self, id: AssetId) -> Option<&Ref<T>> {
+        self.refs.get(&id)
     }
 
     pub fn lock_read(&self) -> HashMap<AssetId, RwLockReadGuard<'_, T>> {

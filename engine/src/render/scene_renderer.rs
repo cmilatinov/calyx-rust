@@ -378,13 +378,13 @@ impl SceneRenderer {
         let black_texture_2d = self.default_assets.black_texture_2d.read();
         let (irradiance_map, prefilter_map, brdf_map) = self
             .skybox
-            .map(|id| {
-                let skybox = &assets.skybox(id);
-                (
+            .and_then(|id| {
+                let skybox = assets.skybox(id)?;
+                Some((
                     &skybox.irradiance_cubemap,
                     &skybox.prefilter_cubemap,
                     &skybox.brdf_map,
-                )
+                ))
             })
             .unwrap_or((
                 black_texture_cube.deref(),
@@ -414,8 +414,12 @@ impl SceneRenderer {
             });
             let mut last: (AssetId, AssetId, AssetId) = Default::default();
             for (shader_id, mat_id, mesh_id, instances) in draw_list {
-                let shader = assets.shader(shader_id);
-                let mesh = assets.mesh(mesh_id);
+                let Some(shader) = assets.shader(shader_id) else {
+                    continue;
+                };
+                let Some(mesh) = assets.mesh(mesh_id) else {
+                    continue;
+                };
                 if shader_id != last.0 {
                     if let Some(pipeline) = shader.get_pipeline(&options) {
                         render_pass.set_pipeline(pipeline);
@@ -431,7 +435,10 @@ impl SceneRenderer {
                     }
                 }
                 if mesh_id != last.2 {
-                    render_pass.set_bind_group(1, assets.mesh_instance_group(mesh_id), &[]);
+                    let Some(mesh_instance_group) = assets.mesh_instance_group(mesh_id) else {
+                        continue;
+                    };
+                    render_pass.set_bind_group(1, mesh_instance_group, &[]);
                 }
                 RenderUtils::bind_mesh_buffers(&mut render_pass, mesh);
                 RenderUtils::draw_mesh_instanced(&mut render_pass, mesh, instances);
@@ -499,7 +506,7 @@ impl SceneRenderer {
     }
 
     fn render_skybox(&mut self, render_state: &RenderState, encoder: &mut wgpu::CommandEncoder) {
-        if let Some(skybox_ref) = self.skybox.map(|id| self.assets.skybox(id)) {
+        if let Some(skybox_ref) = self.skybox.and_then(|id| self.assets.skybox(id)) {
             let mut skybox = skybox_ref.write();
             skybox.prepare(
                 SkyboxShaders {
@@ -596,7 +603,7 @@ impl SceneRenderer {
         } in self.draw_list.drain(0..)
         {
             if (shader_id, mat_id, mesh_id) != last {
-                mesh = Some(self.assets.mesh(mesh_id).write());
+                mesh = self.assets.mesh(mesh_id).map(|mesh| mesh.write());
                 insert_instance_list(last, instance_count);
                 instance_count = 0;
             }
