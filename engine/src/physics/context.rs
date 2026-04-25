@@ -3,6 +3,7 @@ use crate::component::{
 };
 use crate::core::{Time, TimeType};
 use crate::math::Transform;
+use crate::physics::events::{CollisionEvents, ContactKind};
 use crate::physics::PhysicsConfiguration;
 use crate::scene::{GameObject, Scene};
 use legion::{Entity, IntoQuery};
@@ -10,6 +11,7 @@ use nalgebra::{UnitQuaternion, Vector3};
 use nalgebra_glm::Mat4;
 use rapier3d::prelude::*;
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 #[derive(Default)]
 pub struct PhysicsContext {
@@ -38,8 +40,11 @@ pub struct PhysicsContext {
     /// The integration parameters, controlling various low-level coefficient of the simulation.
     pub integration_parameters: IntegrationParameters,
     pub(crate) entity_rigid_body: HashMap<Entity, RigidBodyHandle>,
-    entity_collider: HashMap<Entity, ColliderHandle>,
+    pub(crate) entity_collider: HashMap<Entity, ColliderHandle>,
+    pub(crate) collider_entity: HashMap<ColliderHandle, Entity>,
     accumulated_time: TimeType,
+    /// Collision and contact-force events from the most recent physics step.
+    pub events: CollisionEvents,
 }
 
 impl PhysicsContext {
@@ -86,6 +91,7 @@ impl PhysicsContext {
             .rotation(Vector3::new(x, y, z))
             .friction(collider.friction)
             .density(collider.density)
+            .active_events(ActiveEvents::COLLISION_EVENTS | ActiveEvents::CONTACT_FORCE_EVENTS)
             .build()
     }
 
@@ -160,6 +166,7 @@ impl PhysicsContext {
                     ),
                 };
                 scene.physics.entity_collider.insert(go.entity, handle);
+                scene.physics.collider_entity.insert(handle, go.entity);
             }
             // Sync properties only when dirty
             if c_collider.dirty {
@@ -219,7 +226,52 @@ impl PhysicsContext {
     }
 
     pub fn update(scene: &mut Scene, time: &Time, config: &PhysicsConfiguration) {
-        scene.physics.step_simulation(time, config);
+        let (raw_collisions, raw_forces) = scene.physics.step_simulation(time, config);
+
+        // Resolve raw Rapier events directly to GameObjects.
+        let collider_entity = &scene.physics.collider_entity;
+        let resolve = |h: ColliderHandle| {
+            collider_entity
+                .get(&h)
+                .and_then(|&e| scene.game_object_from_entity(e))
+        };
+
+        let collisions = raw_collisions
+            .iter()
+            .filter_map(|event| {
+                let (h1, h2, started, sensor) = match *event {
+                    rapier3d::geometry::CollisionEvent::Started(h1, h2, flags) => (
+                        h1, h2, true,
+                        flags.contains(rapier3d::geometry::CollisionEventFlags::SENSOR),
+                    ),
+                    rapier3d::geometry::CollisionEvent::Stopped(h1, h2, flags) => (
+                        h1, h2, false,
+                        flags.contains(rapier3d::geometry::CollisionEventFlags::SENSOR),
+                    ),
+                };
+                Some(crate::physics::events::CollisionEvent {
+                    object_a: resolve(h1)?,
+                    object_b: resolve(h2)?,
+                    kind: if started { ContactKind::Started } else { ContactKind::Stopped },
+                    sensor,
+                })
+            })
+            .collect();
+
+        let contact_forces = raw_forces
+            .iter()
+            .filter_map(|&(h1, h2, magnitude)| {
+                Some(crate::physics::events::ContactForceEvent {
+                    object_a: resolve(h1)?,
+                    object_b: resolve(h2)?,
+                    total_force_magnitude: magnitude,
+                })
+            })
+            .collect();
+
+        scene.physics.events.collisions = collisions;
+        scene.physics.events.contact_forces = contact_forces;
+
         let mut query = <(Entity, &ComponentTransform, &ComponentRigidBody)>::query();
         let mut transforms: HashMap<GameObject, Mat4> = Default::default();
         for (entity, _, _) in query.iter(&scene.world) {
@@ -243,7 +295,18 @@ impl PhysicsContext {
         scene.clear_transform_cache();
     }
 
-    pub fn step_simulation(&mut self, time: &Time, config: &PhysicsConfiguration) {
+    pub fn step_simulation(
+        &mut self,
+        time: &Time,
+        config: &PhysicsConfiguration,
+    ) -> (
+        Vec<rapier3d::geometry::CollisionEvent>,
+        Vec<(ColliderHandle, ColliderHandle, f32)>,
+    ) {
+        self.events.clear();
+
+        let collector = PhysicsEventCollector::default();
+
         self.accumulated_time += time.delta_time * time.time_scale;
         while self.accumulated_time >= Self::TIME_STEP {
             self.integration_parameters.dt = Self::TIME_STEP;
@@ -260,9 +323,58 @@ impl PhysicsContext {
                 &mut self.ccd_solver,
                 Some(&mut self.query_pipeline),
                 &(),
-                &(),
+                &collector,
             );
             self.accumulated_time -= Self::TIME_STEP;
         }
+
+        collector.take()
+    }
+}
+
+/// Collects Rapier physics events during `step_simulation()`.
+///
+/// `Mutex` is needed because Rapier's `EventHandler` requires `Sync`
+/// (the handler is called via `&self`). No `Arc` — the collector owns
+/// the vecs outright and is consumed via `take()` after stepping.
+#[derive(Default)]
+struct PhysicsEventCollector {
+    collisions: Mutex<Vec<rapier3d::geometry::CollisionEvent>>,
+    forces: Mutex<Vec<(ColliderHandle, ColliderHandle, f32)>>,
+}
+
+impl PhysicsEventCollector {
+    fn take(self) -> (Vec<rapier3d::geometry::CollisionEvent>, Vec<(ColliderHandle, ColliderHandle, f32)>) {
+        (
+            self.collisions.into_inner().unwrap(),
+            self.forces.into_inner().unwrap(),
+        )
+    }
+}
+
+impl EventHandler for PhysicsEventCollector {
+    fn handle_collision_event(
+        &self,
+        _bodies: &RigidBodySet,
+        _colliders: &ColliderSet,
+        event: rapier3d::geometry::CollisionEvent,
+        _contact_pair: Option<&ContactPair>,
+    ) {
+        self.collisions.lock().unwrap().push(event);
+    }
+
+    fn handle_contact_force_event(
+        &self,
+        _dt: Real,
+        _bodies: &RigidBodySet,
+        _colliders: &ColliderSet,
+        contact_pair: &ContactPair,
+        total_force_magnitude: Real,
+    ) {
+        self.forces.lock().unwrap().push((
+            contact_pair.collider1,
+            contact_pair.collider2,
+            total_force_magnitude,
+        ));
     }
 }

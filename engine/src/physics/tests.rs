@@ -178,4 +178,145 @@ mod tests {
 
         assert_eq!(scene.physics.colliders.len(), 1);
     }
+
+    #[test]
+    fn collision_events_generated_on_contact() {
+        let mut scene = test_scene();
+
+        // Create a dynamic sphere that will fall onto a static floor.
+        // Rigid body on parent, collider on child — matches engine convention.
+        let ball = scene.create(None, None);
+        scene.set_transform(
+            ball,
+            &nalgebra_glm::translation(&Vec3::new(0.0, 2.0, 0.0)),
+        );
+        scene.add_component(
+            ball,
+            ComponentRigidBody {
+                ty: RigidBodyType::Dynamic,
+                ..Default::default()
+            },
+        );
+        let ball_col = scene.create(None, Some(ball));
+        scene.add_component(
+            ball_col,
+            ComponentCollider {
+                shape: ColliderShape::Sphere { radius: 0.5 },
+                ..Default::default()
+            },
+        );
+
+        let floor = scene.create(None, None);
+        scene.set_transform(
+            floor,
+            &nalgebra_glm::translation(&Vec3::new(0.0, 0.0, 0.0)),
+        );
+        scene.add_component(
+            floor,
+            ComponentRigidBody {
+                ty: RigidBodyType::Fixed,
+                ..Default::default()
+            },
+        );
+        let floor_col = scene.create(None, Some(floor));
+        scene.add_component(
+            floor_col,
+            ComponentCollider {
+                shape: ColliderShape::Cuboid {
+                    half_extents: Vec3::new(10.0, 0.1, 10.0),
+                },
+                ..Default::default()
+            },
+        );
+
+        scene.prepare();
+
+        let time = time_with_delta(1.0 / 60.0);
+        let config = PhysicsConfiguration::default();
+
+        let mut found_start = false;
+        // Step enough frames for the ball to fall and hit the floor.
+        for _ in 0..120 {
+            PhysicsContext::update(&mut scene, &time, &config);
+            if scene.physics.events.started(ball_col).count() > 0 {
+                found_start = true;
+            }
+        }
+        assert!(found_start, "expected a collision-start event between ball and floor");
+    }
+
+    #[test]
+    fn collision_events_cleared_each_step() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        scene.add_component(go, ComponentRigidBody::default());
+        scene.add_component(go, ComponentCollider::default());
+        scene.prepare();
+
+        let time = time_with_delta(1.0 / 60.0);
+        let config = PhysicsConfiguration::default();
+
+        // Step once — events should be empty (no contacts).
+        PhysicsContext::update(&mut scene, &time, &config);
+        assert!(
+            scene.physics.events.collisions().is_empty(),
+            "no collisions expected for a single isolated object"
+        );
+    }
+
+    #[test]
+    fn involves_filter_returns_matching_events() {
+        let mut scene = test_scene();
+
+        let a = scene.create(None, None);
+        scene.set_transform(a, &nalgebra_glm::translation(&Vec3::new(0.0, 2.0, 0.0)));
+        scene.add_component(
+            a,
+            ComponentRigidBody {
+                ty: RigidBodyType::Dynamic,
+                ..Default::default()
+            },
+        );
+        let a_col = scene.create(None, Some(a));
+        scene.add_component(
+            a_col,
+            ComponentCollider {
+                shape: ColliderShape::Sphere { radius: 0.5 },
+                ..Default::default()
+            },
+        );
+
+        let b = scene.create(None, None);
+        scene.add_component(
+            b,
+            ComponentRigidBody {
+                ty: RigidBodyType::Fixed,
+                ..Default::default()
+            },
+        );
+        let b_col = scene.create(None, Some(b));
+        scene.add_component(
+            b_col,
+            ComponentCollider {
+                shape: ColliderShape::Cuboid {
+                    half_extents: Vec3::new(10.0, 0.1, 10.0),
+                },
+                ..Default::default()
+            },
+        );
+
+        scene.prepare();
+
+        let time = time_with_delta(1.0 / 60.0);
+        let config = PhysicsConfiguration::default();
+
+        let mut found_via_involves = false;
+        for _ in 0..120 {
+            PhysicsContext::update(&mut scene, &time, &config);
+            if scene.physics.events.started(a_col).count() > 0 {
+                found_via_involves = true;
+            }
+        }
+        assert!(found_via_involves, "involves() should find events for collider a_col");
+    }
 }
