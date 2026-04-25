@@ -4,7 +4,6 @@ use engine::component::{
     Component, ComponentEventContext, ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
 };
 use engine::input::Input;
-use engine::net::Server;
 use engine::reflect::{Reflect, ReflectDefault};
 use engine::resource::ResourceMap;
 use engine::scene::Prefab;
@@ -12,6 +11,10 @@ use engine::try_all;
 use engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use log::{error, info, trace};
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
+
+/// Default server address for local development.
+const DEV_SERVER_ADDR: &str = "127.0.0.1:54321";
 
 #[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "a7e45032-e721-42f3-87af-7fc5e60cac82"]
@@ -52,8 +55,9 @@ impl ComponentUpdate for ComponentNetworkManager {
             if !connect_host || network.is_host() {
                 break 'connect_host;
             }
-            match network.host(Server::addr()) {
-                Ok(_) => trace!("SERVER - {:?}", Server::addr()),
+            let addr: SocketAddr = DEV_SERVER_ADDR.parse().unwrap();
+            match network.host(addr) {
+                Ok(_) => trace!("SERVER - {:?}", addr),
                 Err(err) => error!("{}", err),
             }
         }
@@ -65,7 +69,8 @@ impl ComponentUpdate for ComponentNetworkManager {
             if !connect_client || network.client.is_connected() {
                 break 'connect_client;
             }
-            match network.client.connect(Server::addr()) {
+            let addr: SocketAddr = DEV_SERVER_ADDR.parse().unwrap();
+            match network.client.connect(addr) {
                 Ok(_) => {
                     info!("CLIENT - Connecting ...");
                     try_all!(

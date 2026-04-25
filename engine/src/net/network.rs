@@ -12,11 +12,12 @@ use crate::scene::{GameObject, Prefab, Scene};
 use crate::try_all;
 use engine_derive::Resource;
 use log::trace;
-use rand::Rng;
 use renet::{ClientId, DefaultChannel};
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::time::{Duration, SystemTime};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::LazyLock;
+use std::time::Duration;
 
 #[derive(Resource)]
 pub struct Network {
@@ -35,17 +36,17 @@ impl Default for Network {
     }
 }
 
+/// Randomized process prefix plus a monotonic counter.
+/// This keeps IDs ordered within a process while avoiding collisions across peers.
+static NETWORK_ID_PREFIX: LazyLock<NetworkObjectId> =
+    LazyLock::new(|| u64::from(rand::random::<u32>()) << 32);
+static NEXT_NETWORK_ID: AtomicU32 = AtomicU32::new(1);
+
 impl Network {
     const DEFAULT_TICK_RATE_HZ: f32 = 30.0;
 
-    fn new_id() -> NetworkObjectId {
-        let now = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let rand_part: u128 = rand::rng().random();
-        let combined = now ^ rand_part;
-        (combined & 0xFFFF_FFFF) as u32
+    pub(crate) fn new_id() -> NetworkObjectId {
+        *NETWORK_ID_PREFIX | u64::from(NEXT_NETWORK_ID.fetch_add(1, Ordering::Relaxed))
     }
 
     pub fn new(tick_rate: f32) -> Self {
@@ -63,7 +64,7 @@ impl Network {
 
     pub fn host(&mut self, socket_addr: SocketAddr) -> Result<(), BoxedError> {
         self.server = Some(Server::new(socket_addr)?);
-        self.local_id = Some(Self::new_id() as u64);
+        self.local_id = Some(Client::generate_client_id());
         Ok(())
     }
 
@@ -75,13 +76,15 @@ impl Network {
             if let Some(server) = &mut self.server {
                 server.update(&mut self.queue, duration);
                 if time.timer("NETWORK_TICK_SYNC") >= 1.0 {
-                    let _ = server.broadcast_message_except(
+                    if let Err(e) = server.broadcast_message_except(
                         0,
                         DefaultChannel::ReliableOrdered,
                         &GameMessage::SyncTime {
                             current_time: time.time,
                         },
-                    );
+                    ) {
+                        log::warn!("Failed to broadcast time sync: {e}");
+                    }
                     time.reset_timer("NETWORK_TICK_SYNC");
                 }
             }
@@ -164,11 +167,13 @@ impl Network {
             None,
             &mut Some(&mut network_object_ids),
         );
-        let _ = self.client.send_message(&GameMessage::SpawnPrefab {
+        if let Err(e) = self.client.send_message(&GameMessage::SpawnPrefab {
             network_object_ids,
             from_client_id: client_id,
             prefab_id: prefab_ref.id(),
-        });
+        }) {
+            log::warn!("Failed to send SpawnPrefab: {e}");
+        }
         Some(prefab_root)
     }
 }
@@ -210,20 +215,24 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                     None => return MessageHandlerResult::Consume;
                     let server = server;
                 );
-                let _ = server.send_message(
+                if let Err(e) = server.send_message(
                     *client_id,
                     DefaultChannel::ReliableOrdered,
                     &GameMessage::SelfConnected {
                         client_ids: server.client_ids(),
                     },
-                );
-                let _ = server.broadcast_message_except(
+                ) {
+                    log::warn!("Failed to send SelfConnected to {client_id}: {e}");
+                }
+                if let Err(e) = server.broadcast_message_except(
                     *client_id,
                     DefaultChannel::ReliableOrdered,
                     &GameMessage::ClientConnected {
                         client_id: *client_id,
                     },
-                );
+                ) {
+                    log::warn!("Failed to broadcast ClientConnected: {e}");
+                }
                 MessageHandlerResult::Consume
             }
             GameMessage::SelfConnected {
@@ -278,7 +287,9 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                         let server = server;
                     );
                     trace!("SERVER - Transferring ownership");
-                    let _ = server.broadcast_message(DefaultChannel::ReliableOrdered, message);
+                    if let Err(e) = server.broadcast_message(DefaultChannel::ReliableOrdered, message) {
+                        log::warn!("Failed to broadcast TransferOwnership: {e}");
+                    }
                 }
                 'client_logic: {
                     try_all!(
@@ -317,11 +328,13 @@ impl MessageHandler<NetworkPrefabSyncContext<'_, '_>, GameMessage> for NetworkPr
                 prefab_id,
             } => {
                 if let Some(server) = server {
-                    let _ = server.broadcast_message_except(
+                    if let Err(e) = server.broadcast_message_except(
                         *from_client_id,
                         DefaultChannel::ReliableOrdered,
                         message,
-                    );
+                    ) {
+                        log::warn!("Failed to broadcast SpawnPrefab: {e}");
+                    }
                     return MessageHandlerResult::Consume;
                 }
                 try_all!(

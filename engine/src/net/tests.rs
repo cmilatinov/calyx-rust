@@ -6,6 +6,7 @@ mod tests {
     };
     use crate::test_harness::TestHarness;
     use crate::test_utils::test_scene;
+    use std::collections::HashSet;
     use std::time::Duration;
 
     const TICK: Duration = Duration::from_millis(16);
@@ -61,6 +62,26 @@ mod tests {
     }
 
     // --- Unit tests ---
+
+    #[test]
+    fn network_ids_are_unique_and_monotonic() {
+        let id1 = Network::new_id();
+        let id2 = Network::new_id();
+        let id3 = Network::new_id();
+        assert_ne!(id1, id2);
+        assert_ne!(id2, id3);
+        assert!(id2 > id1);
+        assert!(id3 > id2);
+    }
+
+    #[test]
+    fn generated_client_ids_are_non_zero_and_unique() {
+        let ids: Vec<_> = (0..32).map(|_| Client::generate_client_id()).collect();
+        assert!(ids.iter().all(|id| *id != 0), "client ID 0 is reserved");
+
+        let unique_ids: HashSet<_> = ids.iter().copied().collect();
+        assert_eq!(unique_ids.len(), ids.len());
+    }
 
     #[test]
     fn network_construction() {

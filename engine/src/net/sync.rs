@@ -111,13 +111,17 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>> Synchronized<T> {
             data,
         };
         if let Some(server) = &mut network.server {
-            let _ = server.broadcast_message_except(
+            if let Err(e) = server.broadcast_message_except(
                 self_client_id,
                 DefaultChannel::ReliableOrdered,
                 &message,
-            );
+            ) {
+                log::warn!("Failed to broadcast SyncComponent: {e}");
+            }
         } else {
-            let _ = network.client.send_message(&message);
+            if let Err(e) = network.client.send_message(&message) {
+                log::warn!("Failed to send SyncComponent: {e}");
+            }
         }
     }
 
