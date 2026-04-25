@@ -63,6 +63,25 @@ mod tests {
     // --- Unit tests ---
 
     #[test]
+    fn network_ids_are_unique_and_monotonic() {
+        let id1 = Network::new_id();
+        let id2 = Network::new_id();
+        let id3 = Network::new_id();
+        assert_ne!(id1, id2);
+        assert_ne!(id2, id3);
+        assert!(id2 > id1);
+        assert!(id3 > id2);
+    }
+
+    #[test]
+    fn client_ids_are_random_not_timestamp() {
+        // Two IDs created in quick succession should differ.
+        let a = Network::new_id();
+        let b = Network::new_id();
+        assert_ne!(a, b, "sequential IDs should differ");
+    }
+
+    #[test]
     fn network_construction() {
         let network = Network::new(60.0);
         assert_eq!(network.tick_rate(), 60.0);

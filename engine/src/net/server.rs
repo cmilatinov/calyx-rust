@@ -14,14 +14,13 @@ pub struct Server {
 }
 
 impl Server {
-    // TODO(Cristian): Remove this, socket address should come from user input
-    pub fn addr() -> SocketAddr {
-        "127.0.0.1:54321".parse().unwrap()
-    }
-
     pub fn new(socket_addr: SocketAddr) -> Result<Self, BoxedError> {
         let socket = UdpSocket::bind(socket_addr).map_err(Box::new)?;
         let bound_addr = socket.local_addr().map_err(Box::new)?;
+
+        #[cfg(debug_assertions)]
+        log::warn!("Using unsecure server authentication (debug build)");
+
         let config = ServerConfig {
             current_time: SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
@@ -29,7 +28,7 @@ impl Server {
             max_clients: 32,
             protocol_id: GameMessage::PROTOCOL_ID,
             public_addresses: vec![bound_addr],
-            authentication: ServerAuthentication::Unsecure,
+            authentication: Self::authentication(),
         };
         let server = RenetServer::new(ConnectionConfig::default());
         let transport = NetcodeServerTransport::new(config, socket).map_err(Box::new)?;
@@ -38,6 +37,17 @@ impl Server {
             transport,
             addr: bound_addr,
         })
+    }
+
+    /// In debug builds, use unsecure authentication for easy local testing.
+    /// Release builds log a warning — replace with secure auth before shipping.
+    fn authentication() -> ServerAuthentication {
+        #[cfg(not(debug_assertions))]
+        log::warn!(
+            "ServerAuthentication::Unsecure used in release build — \
+             replace with secure authentication before shipping"
+        );
+        ServerAuthentication::Unsecure
     }
 
     pub fn update(&mut self, queue: &mut MessageQueue<GameMessage>, duration: Duration) {

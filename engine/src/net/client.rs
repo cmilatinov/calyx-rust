@@ -46,7 +46,7 @@ impl Client {
                 Box::new(e) as Box<dyn std::error::Error + Send + Sync>
             })?;
 
-        let client_id = current_time.as_millis() as u64;
+        let client_id = rand::random::<u64>();
         trace!("Generated client ID: {}", client_id);
 
         let authentication = ClientAuthentication::Unsecure {
