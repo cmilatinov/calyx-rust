@@ -5,10 +5,10 @@ use crate::assets::{Asset, AssetRegistry, LoadedAsset};
 use crate::component::{
     ComponentBone, ComponentID, ComponentMesh, ComponentSkinnedMesh, ComponentTransform,
 };
-use crate::context::{ReadOnlyAssetContext, ReadOnlyRegistryContext};
+use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::math::{self, Transform};
-use crate::scene::{Scene, SceneData};
+use crate::scene::SceneData;
 use crate::utils::TypeUuid;
 use crate::{self as engine, utils};
 use nalgebra_glm::Mat4;
@@ -27,21 +27,21 @@ const AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS: &[u8; 27] = b"IMPORT_FBX_PRESERVE_PI
 #[derive(Serialize, TypeUuid)]
 #[uuid = "960f1d60-3ad4-4f1d-92d3-cceb0e0623d7"]
 pub struct Prefab {
-    #[serde(skip)]
-    pub scene: Scene,
     pub data: SceneData,
+    pub root: Uuid,
 }
 
 #[derive(Deserialize)]
 pub struct PrefabData {
     pub data: SceneData,
+    pub root: Uuid,
 }
 
-impl From<(&ReadOnlyRegistryContext, PrefabData)> for Prefab {
-    fn from((registries, value): (&ReadOnlyRegistryContext, PrefabData)) -> Self {
+impl From<PrefabData> for Prefab {
+    fn from(value: PrefabData) -> Self {
         Self {
-            data: value.data.clone(),
-            scene: (registries, value.data).into(),
+            data: value.data,
+            root: value.root,
         }
     }
 }
@@ -131,8 +131,14 @@ impl Asset for Prefab {
 
             Ok(LoadedAsset {
                 asset: Self {
-                    data: data.clone(),
-                    scene: (game, data).into(),
+                    data,
+                    root: utils::uuid_from_str(
+                        scene
+                            .root
+                            .as_ref()
+                            .map(|root| root.name.as_str())
+                            .unwrap_or("Root"),
+                    ),
                 },
                 sub_assets: meshes
                     .into_iter()
@@ -148,7 +154,7 @@ impl Asset for Prefab {
             let reader = BufReader::new(file);
             let data: PrefabData =
                 serde_json::from_reader(reader).map_err(|_| AssetError::LoadError)?;
-            Ok(LoadedAsset::new((&game.registries, data).into()))
+            Ok(LoadedAsset::new(data.into()))
         }
     }
 }
