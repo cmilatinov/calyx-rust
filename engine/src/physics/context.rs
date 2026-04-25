@@ -229,49 +229,48 @@ impl PhysicsContext {
         let (raw_collisions, raw_forces) = scene.physics.step_simulation(time, config);
 
         // Resolve raw Rapier events directly to GameObjects.
-        for event in &raw_collisions {
-            let (h1, h2, started, sensor) = match *event {
-                rapier3d::geometry::CollisionEvent::Started(h1, h2, flags) => (
-                    h1, h2, true,
-                    flags.contains(rapier3d::geometry::CollisionEventFlags::SENSOR),
-                ),
-                rapier3d::geometry::CollisionEvent::Stopped(h1, h2, flags) => (
-                    h1, h2, false,
-                    flags.contains(rapier3d::geometry::CollisionEventFlags::SENSOR),
-                ),
-            };
-            let e1 = scene.physics.collider_entity.get(&h1).copied();
-            let e2 = scene.physics.collider_entity.get(&h2).copied();
-            if let (Some(a), Some(b)) = (
-                e1.and_then(|e| scene.game_object_from_entity(e)),
-                e2.and_then(|e| scene.game_object_from_entity(e)),
-            ) {
-                scene.physics.events.collisions.push(
-                    crate::physics::events::CollisionEvent {
-                        object_a: a,
-                        object_b: b,
-                        kind: if started { ContactKind::Started } else { ContactKind::Stopped },
-                        sensor,
-                    },
-                );
-            }
-        }
-        for &(h1, h2, magnitude) in &raw_forces {
-            let e1 = scene.physics.collider_entity.get(&h1).copied();
-            let e2 = scene.physics.collider_entity.get(&h2).copied();
-            if let (Some(a), Some(b)) = (
-                e1.and_then(|e| scene.game_object_from_entity(e)),
-                e2.and_then(|e| scene.game_object_from_entity(e)),
-            ) {
-                scene.physics.events.contact_forces.push(
-                    crate::physics::events::ContactForceEvent {
-                        object_a: a,
-                        object_b: b,
-                        total_force_magnitude: magnitude,
-                    },
-                );
-            }
-        }
+        let collider_entity = &scene.physics.collider_entity;
+        let resolve = |h: ColliderHandle| {
+            collider_entity
+                .get(&h)
+                .and_then(|&e| scene.game_object_from_entity(e))
+        };
+
+        let collisions = raw_collisions
+            .iter()
+            .filter_map(|event| {
+                let (h1, h2, started, sensor) = match *event {
+                    rapier3d::geometry::CollisionEvent::Started(h1, h2, flags) => (
+                        h1, h2, true,
+                        flags.contains(rapier3d::geometry::CollisionEventFlags::SENSOR),
+                    ),
+                    rapier3d::geometry::CollisionEvent::Stopped(h1, h2, flags) => (
+                        h1, h2, false,
+                        flags.contains(rapier3d::geometry::CollisionEventFlags::SENSOR),
+                    ),
+                };
+                Some(crate::physics::events::CollisionEvent {
+                    object_a: resolve(h1)?,
+                    object_b: resolve(h2)?,
+                    kind: if started { ContactKind::Started } else { ContactKind::Stopped },
+                    sensor,
+                })
+            })
+            .collect();
+
+        let contact_forces = raw_forces
+            .iter()
+            .filter_map(|&(h1, h2, magnitude)| {
+                Some(crate::physics::events::ContactForceEvent {
+                    object_a: resolve(h1)?,
+                    object_b: resolve(h2)?,
+                    total_force_magnitude: magnitude,
+                })
+            })
+            .collect();
+
+        scene.physics.events.collisions = collisions;
+        scene.physics.events.contact_forces = contact_forces;
 
         let mut query = <(Entity, &ComponentTransform, &ComponentRigidBody)>::query();
         let mut transforms: HashMap<GameObject, Mat4> = Default::default();
