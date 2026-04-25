@@ -41,10 +41,10 @@ pub trait ComponentInstance: Reflect {
     fn serialize(&self) -> Option<serde_json::Value>;
 
     /// Deserialize a component from JSON, returning an owned `Box<dyn Reflect>`.
-    fn deserialize(&self, value: serde_json::Value) -> Option<Box<dyn Reflect>>;
+    fn deserialize(&self, value: &serde_json::Value) -> Option<Box<dyn Reflect>>;
 
     /// Convenience: deserialize JSON and assign the result to `self` in place.
-    fn deserialize_in_place(&mut self, value: serde_json::Value) -> bool {
+    fn deserialize_in_place(&mut self, value: &serde_json::Value) -> bool {
         if let Some(value) = self.deserialize(value) {
             self.assign(value)
         } else {

@@ -31,7 +31,6 @@ impl Default for ComponentNetworkTransform {
             transform: Synchronized::new(
                 SynchronizationOptions::builder()
                     .interpolate(true)
-                    .extrapolate(false)
                     .component_uuid(ComponentTransform::type_uuid())
                     .build(),
             ),
@@ -42,12 +41,7 @@ impl Default for ComponentNetworkTransform {
 impl Component for ComponentNetworkTransform {}
 
 impl ComponentUpdate for ComponentNetworkTransform {
-    fn update(
-        &self,
-        mut ctx: ComponentEventContext,
-        resources: &mut ResourceMap,
-        _input: &Input,
-    ) {
+    fn update(&self, mut ctx: ComponentEventContext, resources: &mut ResourceMap, _input: &Input) {
         let Some(mut net_transform) = ctx
             .scene
             .read_component::<ComponentNetworkTransform, _, _>(ctx.game_object, |c| c.clone())

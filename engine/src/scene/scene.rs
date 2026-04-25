@@ -18,7 +18,7 @@ use crate::context::{ReadOnlyAssetContext, ReadOnlyRegistryContext};
 use crate::input::Input;
 use crate::math::Transform;
 use crate::net::{ComponentNetworkObject, Network};
-use crate::physics::{PhysicsConfiguration, PhysicsContext};
+use crate::physics::PhysicsContext;
 use crate::reflect::{ReflectDefault, TypeInfo};
 use crate::resource::ResourceMap;
 use crate::scene::game_object_store::GameObjectStore;
@@ -150,7 +150,7 @@ impl From<(&ReadOnlyRegistryContext, SceneData)> for Scene {
                 try_all!(
                     None => continue;
                     let component = registry.component(component_id);
-                    let instance = component.deserialize(data);
+                    let instance = component.deserialize(&data);
                     let mut entry = scene.entry_mut(game_object);
                 );
                 let _ = component.bind_instance(&mut entry, instance);
@@ -343,7 +343,7 @@ impl Scene {
                     None => continue;
                     let TypeInfo::Struct(struct_info) = type_registry.type_info_by_id(*component_id);
                     let component = component_registry.component(*component_id);
-                    let mut instance = component.deserialize(data.clone());
+                    let mut instance = component.deserialize(data);
                     let mut entry = self.entry_mut(game_object);
                 );
                 for (name, field) in &struct_info.fields {
@@ -542,7 +542,11 @@ impl Scene {
     }
 
     pub fn update(&mut self, resources: &mut ResourceMap, input: &Input) {
-        PhysicsContext::update(self, resources.time(), &PhysicsConfiguration::default());
+        {
+            let time = resources.time();
+            let physics_config = resources.physics_configuration();
+            PhysicsContext::update(self, time, physics_config);
+        }
         let component_registry_ref = self.registries.components.clone();
         let component_registry = component_registry_ref.read();
         let assets = self.registries.clone();
@@ -725,4 +729,3 @@ impl Scene {
         c_netobj.is_owner(network)
     }
 }
-

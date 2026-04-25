@@ -28,7 +28,6 @@ impl Default for ComponentNetworkAnimator {
             parameters: Synchronized::new(
                 SynchronizationOptions::builder()
                     .interpolate(true)
-                    .extrapolate(false)
                     .component_uuid(ComponentAnimator::type_uuid())
                     .build(),
             ),
@@ -39,12 +38,7 @@ impl Default for ComponentNetworkAnimator {
 impl Component for ComponentNetworkAnimator {}
 
 impl ComponentUpdate for ComponentNetworkAnimator {
-    fn update(
-        &self,
-        mut ctx: ComponentEventContext,
-        resources: &mut ResourceMap,
-        _input: &Input,
-    ) {
+    fn update(&self, mut ctx: ComponentEventContext, resources: &mut ResourceMap, _input: &Input) {
         let Some(mut net_animator) = ctx
             .scene
             .read_component::<ComponentNetworkAnimator, _, _>(ctx.game_object, |c| c.clone())
