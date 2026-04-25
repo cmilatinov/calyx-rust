@@ -32,6 +32,15 @@ impl Client {
         }
     }
 
+    pub(crate) fn generate_client_id() -> ClientId {
+        loop {
+            let client_id = rand::random::<ClientId>();
+            if client_id != 0 {
+                return client_id;
+            }
+        }
+    }
+
     pub fn connect(&mut self, server_addr: SocketAddr) -> Result<(), BoxedError> {
         info!("Connecting to server at {}", server_addr);
         let socket = UdpSocket::bind("127.0.0.1:0").map_err(|e| {
@@ -46,7 +55,7 @@ impl Client {
                 Box::new(e) as Box<dyn std::error::Error + Send + Sync>
             })?;
 
-        let client_id = rand::random::<u64>();
+        let client_id = Self::generate_client_id();
         trace!("Generated client ID: {}", client_id);
 
         let authentication = ClientAuthentication::Unsecure {

@@ -6,6 +6,7 @@ mod tests {
     };
     use crate::test_harness::TestHarness;
     use crate::test_utils::test_scene;
+    use std::collections::HashSet;
     use std::time::Duration;
 
     const TICK: Duration = Duration::from_millis(16);
@@ -74,11 +75,12 @@ mod tests {
     }
 
     #[test]
-    fn client_ids_are_random_not_timestamp() {
-        // Two IDs created in quick succession should differ.
-        let a = Network::new_id();
-        let b = Network::new_id();
-        assert_ne!(a, b, "sequential IDs should differ");
+    fn generated_client_ids_are_non_zero_and_unique() {
+        let ids: Vec<_> = (0..32).map(|_| Client::generate_client_id()).collect();
+        assert!(ids.iter().all(|id| *id != 0), "client ID 0 is reserved");
+
+        let unique_ids: HashSet<_> = ids.iter().copied().collect();
+        assert_eq!(unique_ids.len(), ids.len());
     }
 
     #[test]

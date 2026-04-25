@@ -16,6 +16,7 @@ use renet::{ClientId, DefaultChannel};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::LazyLock;
 use std::time::Duration;
 
 #[derive(Resource)]
@@ -35,14 +36,17 @@ impl Default for Network {
     }
 }
 
-/// Monotonic counter for generating unique network object IDs.
+/// Randomized process prefix plus a monotonic counter.
+/// This keeps IDs ordered within a process while avoiding collisions across peers.
+static NETWORK_ID_PREFIX: LazyLock<NetworkObjectId> =
+    LazyLock::new(|| u64::from(rand::random::<u32>()) << 32);
 static NEXT_NETWORK_ID: AtomicU32 = AtomicU32::new(1);
 
 impl Network {
     const DEFAULT_TICK_RATE_HZ: f32 = 30.0;
 
     pub(crate) fn new_id() -> NetworkObjectId {
-        NEXT_NETWORK_ID.fetch_add(1, Ordering::Relaxed)
+        *NETWORK_ID_PREFIX | u64::from(NEXT_NETWORK_ID.fetch_add(1, Ordering::Relaxed))
     }
 
     pub fn new(tick_rate: f32) -> Self {
@@ -60,7 +64,7 @@ impl Network {
 
     pub fn host(&mut self, socket_addr: SocketAddr) -> Result<(), BoxedError> {
         self.server = Some(Server::new(socket_addr)?);
-        self.local_id = Some(Self::new_id() as u64);
+        self.local_id = Some(Client::generate_client_id());
         Ok(())
     }
 
