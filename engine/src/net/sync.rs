@@ -16,8 +16,6 @@ use uuid::Uuid;
 pub struct SynchronizationOptions {
     #[builder(default = true)]
     pub interpolate: bool,
-    #[builder(default = false)]
-    pub extrapolate: bool,
     pub component_uuid: Uuid,
     #[builder(default = 100)]
     pub max_ticks: u32,
@@ -47,6 +45,9 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>> Synchronized<T> {
         let render_tick = time.time_to_tick(target_time);
         let before = self.history.range(..=render_tick).next_back();
         let after = self.history.range(render_tick..).next();
+        if !self.options.interpolate {
+            return before.map(|(_, value)| value.clone());
+        }
         match (before, after) {
             (Some((&tick_a, a)), Some((&tick_b, b))) if tick_a != tick_b => {
                 let alpha =

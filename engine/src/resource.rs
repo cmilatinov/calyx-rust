@@ -1,6 +1,7 @@
 use crate::background::Background;
 use crate::core::{Ref, Time};
 use crate::net::Network;
+use crate::physics::PhysicsConfiguration;
 use downcast_rs::{impl_downcast, Downcast};
 pub use engine_derive::Resource;
 use paste::paste;
@@ -41,6 +42,7 @@ impl ResourceMap {
         resources.insert_default::<Time>();
         resources.insert::<Ref<Background>>(Background::new());
         resources.insert_default::<Network>();
+        resources.insert_default::<PhysicsConfiguration>();
         resources
     }
 
@@ -90,6 +92,7 @@ impl ResourceMap {
     impl_getter!(mut time, Time);
     impl_getter!(mut background, Ref<Background>);
     impl_getter!(mut network, Network);
+    impl_getter!(mut physics_configuration, PhysicsConfiguration);
 }
 
 #[cfg(test)]
@@ -105,7 +108,9 @@ mod tests {
     impl Resource for Flag {}
 
     fn map_with_counter(n: u32) -> ResourceMap {
-        let mut m = ResourceMap { inner: Default::default() };
+        let mut m = ResourceMap {
+            inner: Default::default(),
+        };
         m.insert(Counter(n));
         m
     }
@@ -131,14 +136,18 @@ mod tests {
 
     #[test]
     fn insert_default() {
-        let mut m = ResourceMap { inner: Default::default() };
+        let mut m = ResourceMap {
+            inner: Default::default(),
+        };
         m.insert_default::<Counter>();
         assert_eq!(m.resource::<Counter>().unwrap().0, 0);
     }
 
     #[test]
     fn resource_pair_mut() {
-        let mut m = ResourceMap { inner: Default::default() };
+        let mut m = ResourceMap {
+            inner: Default::default(),
+        };
         m.insert(Counter(1));
         m.insert(Flag(false));
         let (c, f) = m.resource_pair_mut::<Counter, Flag>().unwrap();

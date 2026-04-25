@@ -44,8 +44,8 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
             fn serialize(&self) -> #FQOption<serde_json::Value> {
                 serde_json::to_value(self).ok()
             }
-            fn deserialize(&self, value: serde_json::Value) -> #FQOption<#FQBox<dyn #FQReflect>> {
-                serde_json::from_value::<#name>(value).ok().map(|v| {
+            fn deserialize(&self, value: &serde_json::Value) -> #FQOption<#FQBox<dyn #FQReflect>> {
+                serde::Deserialize::deserialize(value).ok().map(|v: #name| {
                     let value: Box<dyn Reflect> = Box::new(v);
                     value
                 })
