@@ -1,5 +1,5 @@
 use super::{LockedAssetRenderState, RenderContext};
-use crate::assets::material::Material;
+use crate::assets::material::{Material, MaterialBindGroupCacheKey};
 use crate::assets::mesh::{Instance, Mesh};
 use crate::assets::skybox::SkyboxShaders;
 use crate::assets::texture::Texture;
@@ -122,6 +122,12 @@ pub struct SceneRenderer {
     gizmo_renderer: GizmoRenderer,
     assets: AssetRenderState,
     draw_list: Vec<DrawListElement>,
+    material_bind_group_cache: HashMap<AssetId, CachedMaterialBindGroups>,
+}
+
+struct CachedMaterialBindGroups {
+    key: MaterialBindGroupCacheKey,
+    groups: HashMap<u32, wgpu::BindGroup>,
 }
 
 impl SceneRenderer {
@@ -225,6 +231,7 @@ impl SceneRenderer {
             gizmo_renderer,
             assets: Default::default(),
             draw_list: Default::default(),
+            material_bind_group_cache: Default::default(),
         }
     }
 
@@ -373,7 +380,13 @@ impl SceneRenderer {
         self.build_mesh_data(render_state);
         self.build_light_data(render_state, scene);
         let assets = self.assets.lock(device);
-        let material_bind_groups = self.build_material_bind_groups(device, &assets);
+        let material_bind_groups = Self::build_material_bind_groups(
+            device,
+            &self.asset_context,
+            self.default_assets.missing_texture.clone(),
+            &mut self.material_bind_group_cache,
+            &assets,
+        );
         let black_texture_cube = self.default_assets.black_texture_cube.read();
         let black_texture_2d = self.default_assets.black_texture_2d.read();
         let (irradiance_map, prefilter_map, brdf_map) = self
@@ -766,21 +779,36 @@ impl SceneRenderer {
     }
 
     fn build_material_bind_groups(
-        &self,
         device: &wgpu::Device,
+        asset_context: &ReadOnlyAssetContext,
+        default_texture: Ref<Texture>,
+        cache: &mut HashMap<AssetId, CachedMaterialBindGroups>,
         assets: &LockedAssetRenderState,
     ) -> HashMap<AssetId, HashMap<u32, wgpu::BindGroup>> {
+        let live_materials: HashSet<AssetId> = assets.materials.keys().copied().collect();
+        cache.retain(|mat_id, _| live_materials.contains(mat_id));
+
         let mut bind_groups: HashMap<AssetId, HashMap<u32, wgpu::BindGroup>> = Default::default();
         for (mat_id, mat) in assets.materials.iter() {
-            bind_groups.insert(
-                *mat_id,
-                mat.bind_groups(
-                    device,
-                    &self.asset_context,
-                    assets,
-                    self.default_assets.missing_texture.clone(),
-                ),
-            );
+            let key = mat.bind_group_cache_key(asset_context, default_texture.clone());
+
+            let groups = match cache.get(mat_id) {
+                Some(cached) if cached.key == key => cached.groups.clone(),
+                _ => {
+                    let groups =
+                        mat.bind_groups(device, asset_context, assets, default_texture.clone());
+                    cache.insert(
+                        *mat_id,
+                        CachedMaterialBindGroups {
+                            key,
+                            groups: groups.clone(),
+                        },
+                    );
+                    groups
+                }
+            };
+
+            bind_groups.insert(*mat_id, groups);
         }
         bind_groups
     }
