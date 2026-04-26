@@ -77,7 +77,7 @@ pub struct EditorAppState {
 }
 
 impl EditorAppState {
-    fn new(game: GameContext) -> Self {
+    fn new(game: GameContext, initial_render_size: (u32, u32)) -> Self {
         let asset_context = game.assets.lock_read();
         let inspector_registry = InspectorRegistry::new(&asset_context.registries.types.read());
         Self {
@@ -98,6 +98,7 @@ impl EditorAppState {
                     samples: 1,
                     clear_color: Color32::from_rgb(8, 8, 8),
                 },
+                initial_render_size,
             ),
             game_renderer: SceneRenderer::new(
                 &asset_context,
@@ -105,6 +106,7 @@ impl EditorAppState {
                     clear_color: Color32::from_rgb(0, 0, 0),
                     ..Default::default()
                 },
+                initial_render_size,
             ),
             inspector_registry,
         }
@@ -144,7 +146,7 @@ impl EditorApp {
                 Default::default(),
             ),
             project_manager,
-            state: EditorAppState::new(game),
+            state: EditorAppState::new(game, Self::initial_render_size(&cc.egui_ctx)),
             log: Log::new(
                 DefaultLogger::builder()
                     .app_vendor("Calyx")
@@ -322,6 +324,17 @@ impl eframe::App for EditorApp {
 }
 
 impl EditorApp {
+    fn initial_render_size(ctx: &egui::Context) -> (u32, u32) {
+        let Some(window_size) = ctx.input(|i| i.viewport().inner_rect) else {
+            return (0, 0);
+        };
+        let pixels_per_point = ctx.pixels_per_point();
+        (
+            (window_size.width() * pixels_per_point) as u32,
+            (window_size.height() * pixels_per_point) as u32,
+        )
+    }
+
     fn get_physical_size(ctx: &egui::Context, viewport_size: (f32, f32)) -> (u32, u32) {
         let window_size = ctx
             .input(|i| i.viewport().inner_rect)
