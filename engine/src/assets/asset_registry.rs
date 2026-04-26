@@ -14,6 +14,7 @@ use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 use crate::assets::animation_graph::AnimationGraph;
@@ -30,7 +31,7 @@ use crate::core::{ReadOnlyRef, Ref, WeakRef};
 use crate::error::BoxedError;
 use crate::reflect::type_registry::TypeRegistry;
 use crate::reflect::{AttributeValue, TypeInfo};
-use crate::render::{RenderContext, Shader};
+use crate::render::{RenderContext, Shader, ShaderPreprocessor};
 use crate::scene::{Prefab, Scene};
 use crate::utils;
 use crate::utils::TypeUuid;
@@ -53,6 +54,8 @@ type AssetReload = Box<
         + Sync,
 >;
 type AssetCache = HashMap<Uuid, Ref<dyn Asset>>;
+
+const HOT_RELOAD_DEBOUNCE: Duration = Duration::from_millis(75);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetMeta {
@@ -79,12 +82,21 @@ struct AssetData {
     meta: HashMap<Uuid, AssetMeta>,
     names: HashMap<RelativePathBuf, Uuid>,
     extensions: HashMap<String, (TypeId, Uuid, &'static str)>,
-    dirty: HashSet<Uuid>,
+    dirty: HashMap<Uuid, Instant>,
+    dependencies: HashMap<PathBuf, HashSet<Uuid>>,
+    reload_errors: Vec<AssetReloadError>,
 }
 
 struct AssetConstructors {
     create: AssetConstructor,
     reload: AssetReload,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssetReloadError {
+    pub id: Uuid,
+    pub path: PathBuf,
+    pub error: AssetError,
 }
 
 pub struct AssetRegistry {
@@ -475,7 +487,24 @@ impl AssetRegistry {
     }
 
     fn mark_asset_dirty(&self, id: Uuid) {
-        self.asset_data_mut().dirty.insert(id);
+        self.asset_data_mut().dirty.insert(id, Instant::now());
+    }
+
+    fn mark_path_dirty(&self, path: &Path) {
+        if let Some(id) = self.asset_id_from_path(path) {
+            self.mark_asset_dirty(id);
+        }
+
+        let dependency_path = Self::dependency_path(path);
+        let dependent_ids = self
+            .asset_data()
+            .dependencies
+            .get(&dependency_path)
+            .cloned()
+            .unwrap_or_default();
+        for id in dependent_ids {
+            self.mark_asset_dirty(id);
+        }
     }
 }
 
@@ -539,9 +568,7 @@ impl AssetRegistry {
             }
             EventKind::Modify(_) => {
                 for file in paths_iter {
-                    if let Some(id) = self.asset_id_from_path(file) {
-                        self.mark_asset_dirty(id);
-                    }
+                    self.mark_path_dirty(file);
                 }
             }
             EventKind::Remove(_) => {
@@ -721,7 +748,41 @@ impl AssetRegistry {
         data.meta.insert(id, meta);
         data.names
             .insert(Self::relative_asset_path(asset_path, path), id);
+        drop(data);
+        self.update_asset_dependencies(id, path);
         Ok(())
+    }
+
+    fn update_asset_dependencies(&self, id: Uuid, path: &Path) {
+        let mut data = self.asset_data_mut();
+        for dependents in data.dependencies.values_mut() {
+            dependents.remove(&id);
+        }
+        data.dependencies
+            .retain(|_, dependents| !dependents.is_empty());
+        drop(data);
+
+        if path.extension().and_then(|ext| ext.to_str()) != Some("wgsl") {
+            return;
+        }
+
+        match ShaderPreprocessor::shader_dependencies(self, path) {
+            Ok(dependencies) => {
+                let mut data = self.asset_data_mut();
+                for dependency in dependencies {
+                    data.dependencies.entry(dependency).or_default().insert(id);
+                }
+            }
+            Err(err) => warn!(
+                "Failed to scan shader dependencies for {}: {}",
+                path.display(),
+                err
+            ),
+        }
+    }
+
+    fn dependency_path(path: &Path) -> PathBuf {
+        std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
     }
 
     fn relative_asset_path(asset_path: &Path, path: &Path) -> RelativePathBuf {
@@ -787,13 +848,27 @@ impl AssetRegistry {
     }
 
     pub fn reload_assets(&self) {
-        let cache = self.asset_cache();
-        let reload_ids = self.asset_data_mut().dirty.drain().collect::<Vec<_>>();
+        let now = Instant::now();
+        let reload_ids = {
+            let mut data = self.asset_data_mut();
+            let reload_ids = data
+                .dirty
+                .iter()
+                .filter_map(|(id, dirty_at)| {
+                    (now.duration_since(*dirty_at) >= HOT_RELOAD_DEBOUNCE).then_some(*id)
+                })
+                .collect::<Vec<_>>();
+            for id in &reload_ids {
+                data.dirty.remove(id);
+            }
+            reload_ids
+        };
+
         for id in reload_ids {
             let Some(path) = self.asset_meta_from_id(id).and_then(|meta| meta.path) else {
                 continue;
             };
-            let Some(asset_ref) = cache.get(&id) else {
+            let Some(asset_ref) = self.asset_cache().get(&id).cloned() else {
                 continue;
             };
             let Some(meta) = self.asset_meta_from_id(id) else {
@@ -802,9 +877,36 @@ impl AssetRegistry {
 
             let ctors = self.asset_constructors();
             if let Some(ctor) = ctors.get(&meta.type_uuid) {
-                let _ = (ctor.reload)(self.asset_context(), asset_ref, &path);
+                match (ctor.reload)(self.asset_context(), &asset_ref, &path) {
+                    Ok(loaded) => {
+                        self.load_sub_asset_meta(id, loaded.sub_assets);
+                        self.update_asset_dependencies(id, &path);
+                        self.clear_reload_error(id);
+                    }
+                    Err(error) => {
+                        warn!("Failed to hot-reload {}: {}", path.display(), error);
+                        self.set_reload_error(AssetReloadError { id, path, error });
+                    }
+                }
             }
         }
+    }
+
+    pub fn reload_errors(&self) -> Vec<AssetReloadError> {
+        self.asset_data().reload_errors.clone()
+    }
+
+    fn clear_reload_error(&self, id: Uuid) {
+        self.asset_data_mut()
+            .reload_errors
+            .retain(|error| error.id != id);
+    }
+
+    fn set_reload_error(&self, reload_error: AssetReloadError) {
+        let mut data = self.asset_data_mut();
+        data.reload_errors
+            .retain(|error| error.id != reload_error.id);
+        data.reload_errors.push(reload_error);
     }
 }
 
