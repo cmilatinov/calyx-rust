@@ -1,4 +1,5 @@
 use crate::assets::AssetRegistry;
+use crate::context::ReadOnlyRegistryContext;
 use crate::core::ReadOnlyRef;
 use crate::input::Input;
 use crate::resource::ResourceMap;
@@ -87,13 +88,18 @@ impl SceneManager {
         self.simulation_scene_mut().prepare();
     }
 
-    pub fn update(&mut self, resources: &mut ResourceMap, input: &Input) {
+    pub fn update(
+        &mut self,
+        registries: &ReadOnlyRegistryContext,
+        resources: &mut ResourceMap,
+        input: &Input,
+    ) {
         if !self.simulation_running {
             return;
         }
 
         if let Some(scene) = &mut self.simulation_scene {
-            scene.update(resources, input);
+            scene.update(registries, resources, input);
         }
     }
 

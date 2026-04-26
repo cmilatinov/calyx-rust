@@ -297,10 +297,11 @@ impl eframe::App for EditorApp {
                     last_cursor_pos,
                 },
             );
+            let assets = self.state.game.assets.lock_read();
             let GameContext {
                 scenes, resources, ..
             } = &mut self.state.game;
-            scenes.update(resources, &input);
+            scenes.update(&assets.registries, resources, &input);
         }
 
         self.fps_counter += 1;
