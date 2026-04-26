@@ -1,14 +1,13 @@
 use proc_macro::TokenStream;
 
-use crate::fq::{FQAny, FQAttributeValue, FQBox, FQReflect, FQReflectedType, FQTypeName};
+use crate::fq::FQAttributeValue;
+use crate::reflect_impl::{
+    reflected_type_impl, register_trait_meta_impls, type_name_and_reflect_impls,
+};
+use darling::ast::NestedMeta;
 use proc_macro2::{Ident, Span};
 use quote::quote;
-use syn::parse::{Parse, ParseStream};
-use syn::punctuated::Punctuated;
-use syn::token::Comma;
-use syn::{
-    Attribute, DeriveInput, Expr, ExprLit, Fields, Lit, LitStr, Meta, MetaNameValue, Path, Token,
-};
+use syn::{Attribute, DeriveInput, Expr, ExprLit, Fields, Lit, LitStr, Meta, MetaNameValue, Path};
 
 #[derive(Debug)]
 struct ReflectAttribute {
@@ -16,12 +15,38 @@ struct ReflectAttribute {
     value: Option<Lit>,
 }
 
-impl Parse for ReflectAttribute {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let name = input.parse()?;
-        let _equals: Option<Token![=]> = input.parse()?;
-        let value = input.parse()?;
-        Ok(ReflectAttribute { name, value })
+impl TryFrom<NestedMeta> for ReflectAttribute {
+    type Error = darling::Error;
+
+    fn try_from(value: NestedMeta) -> darling::Result<Self> {
+        match value {
+            NestedMeta::Meta(Meta::Path(path)) => {
+                let Some(name) = path.get_ident().cloned() else {
+                    return Err(darling::Error::custom(
+                        "reflect_attr keys must be identifiers",
+                    ));
+                };
+                Ok(Self { name, value: None })
+            }
+            NestedMeta::Meta(Meta::NameValue(MetaNameValue {
+                path,
+                value: Expr::Lit(ExprLit { lit, .. }),
+                ..
+            })) => {
+                let Some(name) = path.get_ident().cloned() else {
+                    return Err(darling::Error::custom(
+                        "reflect_attr keys must be identifiers",
+                    ));
+                };
+                Ok(Self {
+                    name,
+                    value: Some(lit),
+                })
+            }
+            _ => Err(darling::Error::custom(
+                "reflect_attr entries must be `name` or `name = literal`",
+            )),
+        }
     }
 }
 
@@ -88,14 +113,7 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
                 .iter()
                 .filter_map(|attr| {
                     if attr.path().is_ident("reflect_attr") {
-                        let args = attr
-                            .parse_args_with(
-                                Punctuated::<ReflectAttribute, Comma>::parse_terminated,
-                            )
-                            .unwrap()
-                            .into_iter()
-                            .collect::<Vec<_>>();
-                        Some(attribute_map(args.as_slice()))
+                        Some(attribute_map(&reflect_attributes(attr).unwrap()))
                     } else {
                         None
                     }
@@ -150,84 +168,56 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
     let mut reflect_attrs = quote! { [].into() };
     for attr in attrs {
         if attr.path().is_ident("reflect") {
-            trait_paths = Some(
-                attr.parse_args_with(Punctuated::<Path, Comma>::parse_terminated)
-                    .unwrap(),
-            );
+            trait_paths = Some(reflect_trait_paths(attr).unwrap());
         } else if attr.path().is_ident("reflect_attr") {
-            let args = attr
-                .parse_args_with(Punctuated::<ReflectAttribute, Comma>::parse_terminated)
-                .unwrap()
-                .into_iter()
-                .collect::<Vec<_>>();
-            reflect_attrs = attribute_map(args.as_slice());
+            reflect_attrs = attribute_map(&reflect_attributes(attr).unwrap());
         }
     }
 
-    let mut register_traits_impl = quote! {};
-    if let Some(paths) = trait_paths {
-        for trait_path in paths {
-            let trait_ident = trait_path.segments.last().unwrap().ident.clone();
-            let reflect_trait_ident =
-                Ident::new(&format!("Reflect{}", trait_ident), Span::call_site());
-            let register_trait_impl = quote! {
-                registry.meta_impls::<#name, #reflect_trait_ident>();
-            };
-            register_traits_impl = quote! {
-                #register_traits_impl
-                #register_trait_impl
-            };
-        }
-    }
+    let reflect_impls = type_name_and_reflect_impls(name);
+    let register_traits_impl = register_trait_meta_impls(name, trait_paths.unwrap_or_default());
+    let reflected_type_impl = reflected_type_impl(
+        name,
+        quote! {
+            registry.meta_struct::<#name>(#reflect_attrs)
+                #(#add_field_calls)*;
+            #register_traits_impl
+        },
+        quote! {
+            inventory::submit!(
+                crate::ReflectRegistrationFn {
+                    name: stringify!(#name),
+                    function: <#name as engine::reflect::ReflectedType>::register
+                }
+            );
+        },
+    );
 
     TokenStream::from(quote! {
-        #[automatically_derived]
-        impl #FQTypeName for #name {
-            #[inline]
-            fn type_name() -> &'static str { std::any::type_name::<Self>() }
-            #[inline]
-            fn type_name_short() -> &'static str { stringify!(#name) }
-        }
-
-        #[automatically_derived]
-        impl #FQReflect for #name {
-            #[inline]
-            fn as_any(&self) -> &dyn #FQAny { self }
-            #[inline]
-            fn as_any_mut(&mut self) -> &mut dyn #FQAny { self }
-            #[inline]
-            fn as_reflect(&self) -> &dyn #FQReflect { self }
-            #[inline]
-            fn as_reflect_mut(&mut self) -> &mut dyn #FQReflect { self }
-            #[inline]
-            fn into_any(self: #FQBox<Self>) -> #FQBox<dyn #FQAny> { self }
-            #[inline]
-            fn assign(&mut self, value: #FQBox<dyn #FQReflect>) -> bool {
-                if let Ok(value) = value.downcast::<#name>() {
-                    *self = *value;
-                    true
-                } else {
-                    false
-                }
-            }
-        }
-
-        #[automatically_derived]
-        impl #FQReflectedType for #name {
-            fn register(registry: &mut engine::reflect::type_registry::TypeRegistry) {
-                registry.meta_struct::<#name>(#reflect_attrs)
-                    #(#add_field_calls)*;
-                #register_traits_impl
-            }
-        }
-
-        inventory::submit!(
-            crate::ReflectRegistrationFn {
-                name: stringify!(#name),
-                function: <#name as #FQReflectedType>::register
-            }
-        );
+        #reflect_impls
+        #reflected_type_impl
     })
+}
+
+fn reflect_attributes(attr: &Attribute) -> darling::Result<Vec<ReflectAttribute>> {
+    let list = attr.meta.require_list().map_err(darling::Error::from)?;
+    NestedMeta::parse_meta_list(list.tokens.clone())?
+        .into_iter()
+        .map(ReflectAttribute::try_from)
+        .collect()
+}
+
+fn reflect_trait_paths(attr: &Attribute) -> darling::Result<Vec<Path>> {
+    let list = attr.meta.require_list().map_err(darling::Error::from)?;
+    NestedMeta::parse_meta_list(list.tokens.clone())?
+        .into_iter()
+        .map(|meta| match meta {
+            NestedMeta::Meta(Meta::Path(path)) => Ok(path),
+            _ => Err(darling::Error::custom(
+                "reflect traits must be paths, for example #[reflect(Default)]",
+            )),
+        })
+        .collect()
 }
 
 fn has_repr_c(attrs: &[Attribute]) -> bool {

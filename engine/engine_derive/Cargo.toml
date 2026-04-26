@@ -9,6 +9,7 @@ syn.workspace = true
 quote.workspace = true
 uuid.workspace = true
 sha-1.workspace = true
+darling.workspace = true
 
 [lib]
 proc-macro = true
