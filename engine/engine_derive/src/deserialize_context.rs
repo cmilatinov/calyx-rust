@@ -3,7 +3,7 @@ use proc_macro2::{Ident, Span};
 use quote::{format_ident, quote};
 use syn::{
     parse_macro_input, Data, DeriveInput, Fields, GenericParam, Generics, Lifetime, LifetimeParam,
-    LitStr, Type, TypePath, Variant,
+    Type, TypePath, Variant,
 };
 
 /// The main entry point for the proc macro
@@ -118,10 +118,6 @@ fn generate_struct_impl(
         let field_name = field.ident.as_ref().unwrap();
         let field_type = &field.ty;
 
-        let field_missing = LitStr::new(
-            format!("Missing field '{}'", field_name).as_str(),
-            Span::call_site(),
-        );
         if has_skip_attribute(&field.attrs) {
             field_initializers = quote! {
                 #field_initializers
@@ -135,7 +131,8 @@ fn generate_struct_impl(
             };
             field_initializers = quote! {
                 #field_initializers
-                #field_name: #field_name.expect(#field_missing),
+                #field_name: #field_name
+                    .ok_or_else(|| serde::de::Error::missing_field(stringify!(#field_name)))?,
             };
         }
 
