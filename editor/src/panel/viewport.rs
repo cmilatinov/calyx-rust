@@ -115,6 +115,7 @@ impl PanelViewport {
         let state = InputState {
             is_active: res.dragged_by(PointerButton::Secondary),
             last_cursor_pos: None,
+            ..Default::default()
         };
         let EditorAppState { camera, game, .. } = app_state;
         let input = Input::from_ctx(ui.ctx(), Some(&res), state);
@@ -167,10 +168,7 @@ impl PanelViewport {
                 visuals: GIZMO_VISUALS,
                 pixels_per_point: 0.0,
             });
-            let transform = game
-                .scenes
-                .simulation_scene()
-                .world_transform(game_object);
+            let transform = game.scenes.simulation_scene().world_transform(game_object);
             if let Some((result, transforms)) = self.gizmo.interact(ui, &[transform.into()]) {
                 let res: Transform = transforms[0].into();
                 game.scenes

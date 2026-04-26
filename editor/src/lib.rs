@@ -295,6 +295,7 @@ impl eframe::App for EditorApp {
                 InputState {
                     is_active: self.is_game_focused(),
                     last_cursor_pos,
+                    ..Default::default()
                 },
             );
             let assets = self.state.game.assets.lock_read();
