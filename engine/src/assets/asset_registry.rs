@@ -1,5 +1,6 @@
 use eframe::wgpu;
 use glob::glob;
+use log::warn;
 use nalgebra_glm::{vec2, vec3};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use path_absolutize::Absolutize;
@@ -147,7 +148,6 @@ impl AssetRegistry {
     }
 }
 
-
 #[cfg(test)]
 impl AssetRegistry {
     pub fn new_test(
@@ -158,8 +158,8 @@ impl AssetRegistry {
     ) -> Ref<Self> {
         let path = root_path.into();
         let (tx, _rx) = std::sync::mpsc::channel();
-        let watcher = RecommendedWatcher::new(tx, Config::default())
-            .expect("failed to create watcher");
+        let watcher =
+            RecommendedWatcher::new(tx, Config::default()).expect("failed to create watcher");
         Ref::new_cyclic(|weak| Self {
             render_context,
             asset_registry: weak,
@@ -184,8 +184,8 @@ impl AssetRegistry {
         component_registry: Ref<ComponentRegistry>,
     ) -> Ref<Self> {
         let (tx, _rx) = std::sync::mpsc::channel();
-        let watcher = RecommendedWatcher::new(tx, Config::default())
-            .expect("failed to create watcher");
+        let watcher =
+            RecommendedWatcher::new(tx, Config::default()).expect("failed to create watcher");
         let registry = Ref::new_cyclic(|weak| {
             let mut r = Self {
                 render_context,
@@ -430,7 +430,13 @@ impl AssetRegistry {
                         .filter_map(|id| data.meta.get(id).cloned())
                         .collect(),
                 };
-                let _ = self.write_meta_file(&meta_path, &meta);
+                if let Err(err) = self.write_meta_file(&meta_path, &meta) {
+                    warn!(
+                        "Failed to write asset metadata for {}: {}",
+                        meta_path.display(),
+                        err
+                    );
+                }
             }
         }
         for child_id in &sub_assets {
@@ -502,8 +508,15 @@ impl AssetRegistry {
         match event.kind {
             EventKind::Create(_) => {
                 for file in paths_iter {
-                    let _ =
-                        self.build_asset_meta(self.root_path(), file, &file.with_extension("meta"));
+                    if let Err(err) =
+                        self.build_asset_meta(self.root_path(), file, &file.with_extension("meta"))
+                    {
+                        warn!(
+                            "Failed to build asset metadata for {}: {}",
+                            file.display(),
+                            err
+                        );
+                    }
                 }
             }
             EventKind::Modify(_) => {
@@ -619,16 +632,30 @@ impl AssetRegistry {
 impl AssetRegistry {
     pub fn build_meta(&self) -> Result<(), BoxedError> {
         for asset_path in &self.asset_paths {
-            for path in glob(format!("{}/**/*", asset_path.to_str().unwrap()).as_str())
-                .map_err(Box::new)?
-                .map(|r| r.unwrap())
-                .filter(|p| {
-                    let ext = p.extension().map_or("", |ext| ext.to_str().unwrap_or(""));
-                    !ext.is_empty() && ext != "meta" && ext != "rs"
-                })
+            for path in
+                glob(format!("{}/**/*", asset_path.to_str().unwrap()).as_str()).map_err(Box::new)?
             {
+                let path = match path {
+                    Ok(path) => path,
+                    Err(err) => {
+                        warn!("Skipping asset path while building metadata: {}", err);
+                        continue;
+                    }
+                };
+                let ext = path
+                    .extension()
+                    .map_or("", |ext| ext.to_str().unwrap_or(""));
+                if ext.is_empty() || ext == "meta" || ext == "rs" {
+                    continue;
+                }
                 let meta_path = path.with_extension("meta");
-                self.build_asset_meta(asset_path, &path, &meta_path)?;
+                if let Err(err) = self.build_asset_meta(asset_path, &path, &meta_path) {
+                    warn!(
+                        "Failed to build asset metadata for {}: {}",
+                        path.display(),
+                        err
+                    );
+                }
             }
         }
         Ok(())
@@ -641,7 +668,7 @@ impl AssetRegistry {
         meta_path: &Path,
     ) -> Result<(), BoxedError> {
         let mut meta = if meta_path.exists() {
-            self.load_meta_file(asset_path, meta_path).main
+            self.load_meta_file(asset_path, meta_path)?.main
         } else {
             let display_name = path
                 .file_stem()
@@ -661,7 +688,7 @@ impl AssetRegistry {
                 },
                 inner: Default::default(),
             };
-            self.write_meta_file(meta_path, &meta).map_err(Box::new)?;
+            self.write_meta_file(meta_path, &meta)?;
             meta.main
         };
         meta.type_uuid = self
@@ -686,10 +713,14 @@ impl AssetRegistry {
             .with_extension("")
     }
 
-    fn load_meta_file(&self, asset_path: &Path, meta_path: &Path) -> AssetMetaData {
-        let file = File::open(meta_path).unwrap();
+    fn load_meta_file(
+        &self,
+        asset_path: &Path,
+        meta_path: &Path,
+    ) -> Result<AssetMetaData, BoxedError> {
+        let file = File::open(meta_path).map_err(Box::new)?;
         let reader = BufReader::new(file);
-        let mut meta: AssetMetaData = serde_json::from_reader(reader).unwrap();
+        let mut meta: AssetMetaData = serde_json::from_reader(reader).map_err(Box::new)?;
         let mut data = self.asset_data_mut();
         meta.main.children = meta.inner.iter().map(|m| m.id).collect();
         data.meta.insert(meta.main.id, meta.main.clone());
@@ -705,13 +736,13 @@ impl AssetRegistry {
             data.names
                 .insert(Self::relative_asset_path(asset_path, &path), child.id);
         }
-        meta
+        Ok(meta)
     }
 
-    fn write_meta_file(&self, meta_path: &Path, meta: &AssetMetaData) -> serde_json::Result<()> {
-        let file = File::create(meta_path).unwrap();
+    fn write_meta_file(&self, meta_path: &Path, meta: &AssetMetaData) -> Result<(), BoxedError> {
+        let file = File::create(meta_path).map_err(Box::new)?;
         let writer = BufWriter::new(file);
-        serde_json::to_writer_pretty(writer, meta)
+        Ok(serde_json::to_writer_pretty(writer, meta).map_err(Box::new)?)
     }
 }
 
