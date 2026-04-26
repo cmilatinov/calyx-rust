@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use egui::{Key, PointerButton};
+use egui::{Key, Modifiers, PointerButton};
 
 #[derive(Default)]
 pub struct InputState {
@@ -191,13 +191,52 @@ impl AxisBinding {
 pub enum InputBinding {
     Key(Key),
     PointerButton(PointerButton),
+    ModifiedKey {
+        key: Key,
+        modifiers: ModifierBinding,
+    },
+    ModifiedPointerButton {
+        button: PointerButton,
+        modifiers: ModifierBinding,
+    },
 }
 
 impl InputBinding {
+    pub fn key_combo(key: Key, modifiers: Modifiers) -> Self {
+        Self::ModifiedKey {
+            key,
+            modifiers: ModifierBinding::exact(modifiers),
+        }
+    }
+
+    pub fn pointer_button_combo(button: PointerButton, modifiers: Modifiers) -> Self {
+        Self::ModifiedPointerButton {
+            button,
+            modifiers: ModifierBinding::exact(modifiers),
+        }
+    }
+
+    pub fn key_with_modifiers(key: Key, modifiers: ModifierBinding) -> Self {
+        Self::ModifiedKey { key, modifiers }
+    }
+
+    pub fn pointer_button_with_modifiers(
+        button: PointerButton,
+        modifiers: ModifierBinding,
+    ) -> Self {
+        Self::ModifiedPointerButton { button, modifiers }
+    }
+
     fn is_down(&self, input: &egui::InputState) -> bool {
         match self {
             Self::Key(key) => input.key_down(*key),
             Self::PointerButton(button) => input.pointer.button_down(*button),
+            Self::ModifiedKey { key, modifiers } => {
+                modifiers.matches(input.modifiers) && input.key_down(*key)
+            }
+            Self::ModifiedPointerButton { button, modifiers } => {
+                modifiers.matches(input.modifiers) && input.pointer.button_down(*button)
+            }
         }
     }
 
@@ -213,7 +252,70 @@ impl InputBinding {
                 just_pressed: input.pointer.button_pressed(*button),
                 just_released: input.pointer.button_released(*button),
             },
+            Self::ModifiedKey { key, modifiers } => {
+                if modifiers.matches(input.modifiers) {
+                    ActionState {
+                        pressed: input.key_down(*key),
+                        just_pressed: input.key_pressed(*key),
+                        just_released: input.key_released(*key),
+                    }
+                } else {
+                    ActionState::default()
+                }
+            }
+            Self::ModifiedPointerButton { button, modifiers } => {
+                if modifiers.matches(input.modifiers) {
+                    ActionState {
+                        pressed: input.pointer.button_down(*button),
+                        just_pressed: input.pointer.button_pressed(*button),
+                        just_released: input.pointer.button_released(*button),
+                    }
+                } else {
+                    ActionState::default()
+                }
+            }
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ModifierBinding {
+    pub modifiers: Modifiers,
+    pub allow_extra: bool,
+}
+
+impl ModifierBinding {
+    pub const fn exact(modifiers: Modifiers) -> Self {
+        Self {
+            modifiers,
+            allow_extra: false,
+        }
+    }
+
+    pub const fn requiring(modifiers: Modifiers) -> Self {
+        Self {
+            modifiers,
+            allow_extra: true,
+        }
+    }
+
+    fn matches(self, active: Modifiers) -> bool {
+        let required_match = (!self.modifiers.alt || active.alt)
+            && (!self.modifiers.ctrl || active.ctrl)
+            && (!self.modifiers.shift || active.shift)
+            && (!self.modifiers.mac_cmd || active.mac_cmd)
+            && (!self.modifiers.command || active.command);
+
+        if self.allow_extra {
+            return required_match;
+        }
+
+        required_match
+            && active.alt == self.modifiers.alt
+            && active.ctrl == self.modifiers.ctrl
+            && active.shift == self.modifiers.shift
+            && active.mac_cmd == self.modifiers.mac_cmd
+            && active.command == self.modifiers.command
     }
 }
 
@@ -252,8 +354,8 @@ impl std::ops::BitOr for ActionState {
 
 #[cfg(test)]
 mod tests {
-    use super::{ActionMap, InputBinding};
-    use egui::Key;
+    use super::{ActionMap, InputBinding, ModifierBinding};
+    use egui::{Key, Modifiers};
 
     #[test]
     fn action_bindings_are_configurable() {
@@ -276,5 +378,44 @@ mod tests {
         let axis = &map.axes["move_forward"];
         assert_eq!(axis.positive, InputBinding::Key(Key::W));
         assert_eq!(axis.negative, InputBinding::Key(Key::S));
+    }
+
+    #[test]
+    fn key_combos_store_exact_modifier_requirements() {
+        let binding = InputBinding::key_combo(Key::S, Modifiers::CTRL);
+
+        assert_eq!(
+            binding,
+            InputBinding::ModifiedKey {
+                key: Key::S,
+                modifiers: ModifierBinding::exact(Modifiers::CTRL),
+            }
+        );
+    }
+
+    #[test]
+    fn exact_modifier_bindings_reject_extra_modifiers() {
+        let binding = ModifierBinding::exact(Modifiers::SHIFT);
+        let shift_ctrl = Modifiers {
+            shift: true,
+            ctrl: true,
+            ..Default::default()
+        };
+
+        assert!(binding.matches(Modifiers::SHIFT));
+        assert!(!binding.matches(shift_ctrl));
+    }
+
+    #[test]
+    fn requiring_modifier_bindings_allow_extra_modifiers() {
+        let binding = ModifierBinding::requiring(Modifiers::SHIFT);
+        let shift_ctrl = Modifiers {
+            shift: true,
+            ctrl: true,
+            ..Default::default()
+        };
+
+        assert!(binding.matches(Modifiers::SHIFT));
+        assert!(binding.matches(shift_ctrl));
     }
 }
