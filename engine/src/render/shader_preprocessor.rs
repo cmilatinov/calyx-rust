@@ -20,6 +20,16 @@ impl ShaderPreprocessor {
         Self::load_shader_source_inner(asset_registry, path, &mut include_stack)
     }
 
+    pub fn shader_dependencies(
+        asset_registry: &AssetRegistry,
+        path: &Path,
+    ) -> std::io::Result<HashSet<PathBuf>> {
+        let mut visited = HashSet::new();
+        let mut dependencies = HashSet::new();
+        Self::collect_shader_dependencies(asset_registry, path, &mut visited, &mut dependencies)?;
+        Ok(dependencies)
+    }
+
     fn load_shader_source_inner(
         asset_registry: &AssetRegistry,
         path: &Path,
@@ -70,10 +80,49 @@ impl ShaderPreprocessor {
         include_path: &Path,
         include_stack: &mut HashSet<PathBuf>,
     ) -> io::Result<String> {
+        let full_path = Self::resolve_include(asset_registry, parent_path, include_path)?;
+        Self::load_shader_source_inner(asset_registry, &full_path, include_stack)
+    }
+
+    fn collect_shader_dependencies(
+        asset_registry: &AssetRegistry,
+        path: &Path,
+        visited: &mut HashSet<PathBuf>,
+        dependencies: &mut HashSet<PathBuf>,
+    ) -> io::Result<()> {
+        let path_key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        if !visited.insert(path_key) {
+            return Ok(());
+        }
+
+        let source = std::fs::read_to_string(path)?;
+        for captures in Self::include_regex().captures_iter(&source) {
+            let include_path = captures
+                .get(1)
+                .map(|m| PathBuf::from(m.as_str()))
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("invalid shader include in {}", path.display()),
+                    )
+                })?;
+            let full_path = Self::resolve_include(asset_registry, path, &include_path)?;
+            let dependency = std::fs::canonicalize(&full_path).unwrap_or(full_path);
+            dependencies.insert(dependency.clone());
+            Self::collect_shader_dependencies(asset_registry, &dependency, visited, dependencies)?;
+        }
+        Ok(())
+    }
+
+    fn resolve_include(
+        asset_registry: &AssetRegistry,
+        parent_path: &Path,
+        include_path: &Path,
+    ) -> io::Result<PathBuf> {
         for asset_path in asset_registry.asset_paths().iter() {
             let full_path = asset_path.join(include_path);
             if full_path.exists() {
-                return Self::load_shader_source_inner(asset_registry, &full_path, include_stack);
+                return Ok(full_path);
             }
         }
         Err(io::Error::new(
@@ -159,6 +208,33 @@ mod tests {
             .expect_err("include cycle should error");
 
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        fs::remove_dir_all(asset_path).expect("failed to remove temp shader dir");
+    }
+
+    #[test]
+    fn collects_transitive_shader_dependencies() {
+        let asset_path = std::env::temp_dir().join(format!("calyx-shader-deps-{}", Uuid::new_v4()));
+        fs::create_dir_all(asset_path.join("shaders")).expect("failed to create shader dir");
+        fs::write(asset_path.join("root.wgsl"), "//#include \"nested.wgsl\"")
+            .expect("failed to write root include");
+        fs::write(asset_path.join("nested.wgsl"), "let a = 1u;")
+            .expect("failed to write nested include");
+        fs::write(
+            asset_path.join("shaders/main.wgsl"),
+            "//#include \"root.wgsl\"",
+        )
+        .expect("failed to write shader");
+
+        let registries = test_registries_with_assets(vec![asset_path.clone()]);
+        let registry = registries.assets.read();
+        let dependencies = ShaderPreprocessor::shader_dependencies(
+            &registry,
+            &asset_path.join("shaders/main.wgsl"),
+        )
+        .expect("shader dependencies should collect");
+
+        assert!(dependencies.contains(&fs::canonicalize(asset_path.join("root.wgsl")).unwrap()));
+        assert!(dependencies.contains(&fs::canonicalize(asset_path.join("nested.wgsl")).unwrap()));
         fs::remove_dir_all(asset_path).expect("failed to remove temp shader dir");
     }
 }
