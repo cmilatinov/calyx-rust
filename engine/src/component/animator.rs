@@ -112,10 +112,7 @@ impl Component for ComponentAnimator {
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {
         if self.draw_debug_skeleton {
             gizmos.set_color(&Vec4::new(1.0, 1.0, 0.0, 1.0));
-            let Some(root) = scene
-                .descendants_with::<ComponentBone>(game_object)
-                .next()
-            else {
+            let Some(root) = scene.descendants_with::<ComponentBone>(game_object).next() else {
                 return;
             };
             let transform = scene.world_transform(root);
@@ -203,7 +200,7 @@ impl ComponentAnimator {
         name: &str,
         setter: F,
     ) -> bool {
-        let Some(animation_graph) = self.animation_graph.get_ref(assets) else {
+        let Some(animation_graph) = self.animation_graph.get_or_request_load(assets) else {
             return false;
         };
         let Some(parameter_id) = animation_graph.read().parameters.iter().find_map(|p| {
@@ -224,7 +221,7 @@ impl ComponentAnimator {
         if !self.parameters.is_empty() {
             return;
         }
-        let Some(graph_ref) = self.animation_graph.get_ref(assets) else {
+        let Some(graph_ref) = self.animation_graph.get_or_request_load(assets) else {
             return;
         };
         let graph = graph_ref.read();
@@ -238,7 +235,7 @@ impl ComponentAnimator {
 
     fn step_fsm(&mut self, assets: &ReadOnlyRegistryContext) {
         let new_transition;
-        let Some(graph_ref) = self.animation_graph.get_ref(assets) else {
+        let Some(graph_ref) = self.animation_graph.get_or_request_load(assets) else {
             return;
         };
         let graph = graph_ref.read();
@@ -351,17 +348,15 @@ impl ComponentAnimator {
         game_object: GameObject,
         pose: &mut AnimatorPose,
     ) {
-        let Some(snapshot) =
-            scene.read_component::<ComponentAnimator, _, _>(game_object, |c| {
-                AnimatorSnapshot::from_component(c)
-            })
-        else {
+        let Some(snapshot) = scene.read_component::<ComponentAnimator, _, _>(game_object, |c| {
+            AnimatorSnapshot::from_component(c)
+        }) else {
             return;
         };
         let skinned_meshes = scene
             .descendants_with::<ComponentSkinnedMesh>(game_object)
             .collect::<Vec<_>>();
-        let Some(animation_graph) = snapshot.animation_graph.get_ref(assets) else {
+        let Some(animation_graph) = snapshot.animation_graph.get_or_request_load(assets) else {
             return;
         };
         let animation_graph = animation_graph.read();
@@ -375,7 +370,7 @@ impl ComponentAnimator {
             let Some(root) = c_skinned_mesh.root_bone.game_object(scene) else {
                 continue;
             };
-            let Some(mesh_ref) = c_skinned_mesh.mesh.get_ref(assets) else {
+            let Some(mesh_ref) = c_skinned_mesh.mesh.get_or_request_load(assets) else {
                 continue;
             };
             let mesh = mesh_ref.read();
@@ -544,7 +539,7 @@ impl ComponentAnimator {
     ) -> Transform {
         match motion {
             AnimationMotion::AnimationClip(clip) => {
-                let Some(animation) = clip.animation.get_ref(assets) else {
+                let Some(animation) = clip.animation.get_or_request_load(assets) else {
                     return Default::default();
                 };
                 let animation = animation.read();

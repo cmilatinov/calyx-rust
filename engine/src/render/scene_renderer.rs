@@ -653,7 +653,7 @@ impl SceneRenderer {
         let Some(shader_ref) = mat_ref
             .read()
             .shader
-            .get_ref(&self.asset_context.registries)
+            .get_or_request_load(&self.asset_context.registries)
         else {
             return;
         };
@@ -691,10 +691,16 @@ impl SceneRenderer {
             let Some(game_object) = scene.game_object_from_entity(*entity) else {
                 continue;
             };
-            let Some(mesh_ref) = c_mesh.mesh.get_ref(&self.asset_context.registries) else {
+            let Some(mesh_ref) = c_mesh
+                .mesh
+                .get_or_request_load(&self.asset_context.registries)
+            else {
                 continue;
             };
-            let Some(mat_ref) = c_mesh.material.get_ref(&self.asset_context.registries) else {
+            let Some(mat_ref) = c_mesh
+                .material
+                .get_or_request_load(&self.asset_context.registries)
+            else {
                 continue;
             };
             let transform = scene.world_transform(game_object);
@@ -706,12 +712,15 @@ impl SceneRenderer {
             let Some(game_object) = scene.game_object_from_entity(*entity) else {
                 continue;
             };
-            let Some(mesh_ref) = c_skinned_mesh.mesh.get_ref(&self.asset_context.registries) else {
+            let Some(mesh_ref) = c_skinned_mesh
+                .mesh
+                .get_or_request_load(&self.asset_context.registries)
+            else {
                 continue;
             };
             let Some(mat_ref) = c_skinned_mesh
                 .material
-                .get_ref(&self.asset_context.registries)
+                .get_or_request_load(&self.asset_context.registries)
             else {
                 continue;
             };
@@ -738,7 +747,9 @@ impl SceneRenderer {
         let mut query = <&ComponentSkyLight>::query();
         let mut skybox = None;
         for c_sky_light in query.iter(world).filter(|s| s.active) {
-            let Some(skybox_ref) = c_sky_light.skybox.get_ref(&self.asset_context.registries)
+            let Some(skybox_ref) = c_sky_light
+                .skybox
+                .get_or_request_load(&self.asset_context.registries)
             else {
                 continue;
             };

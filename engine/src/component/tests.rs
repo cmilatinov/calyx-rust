@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::assets::{AssetAccess, AssetRef};
+    use crate::assets::AssetRef;
     use crate::component::*;
     use crate::net::ComponentNetworkObject;
     use crate::scene::SceneData;

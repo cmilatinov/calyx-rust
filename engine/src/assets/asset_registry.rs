@@ -5,6 +5,7 @@ use nalgebra_glm::{vec2, vec3};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use path_absolutize::Absolutize;
 use relative_path::{PathExt, RelativePathBuf};
+use rusty_pool::ThreadPool;
 use serde::{Deserialize, Serialize};
 use std::any::TypeId;
 use std::borrow::Cow;
@@ -23,6 +24,8 @@ use crate::assets::material::Material;
 use crate::assets::mesh::Mesh;
 use crate::assets::texture::Texture;
 use crate::assets::Asset;
+use crate::assets::AssetLoadStatus;
+use crate::assets::AssetRef;
 use crate::assets::LoadedAssetRef;
 use crate::class_registry::ComponentRegistry;
 use crate::component::ComponentMesh;
@@ -55,6 +58,13 @@ type AssetReload = Box<
         + Sync,
 >;
 type AssetCache = HashMap<Uuid, Ref<dyn Asset>>;
+type AssetLoadStates = HashMap<Uuid, AssetLoadState>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AssetLoadState {
+    Loading,
+    Failed(AssetError),
+}
 
 const HOT_RELOAD_DEBOUNCE: Duration = Duration::from_millis(75);
 
@@ -107,8 +117,10 @@ pub struct AssetRegistry {
     component_registry: Ref<ComponentRegistry>,
     asset_paths: Vec<PathBuf>,
     asset_cache: RwLock<AssetCache>,
+    asset_load_states: RwLock<AssetLoadStates>,
     asset_data: RwLock<AssetData>,
     asset_constructors: RwLock<HashMap<Uuid, AssetConstructors>>,
+    asset_load_pool: ThreadPool,
     watcher_thread: Option<JoinHandle<()>>,
     #[allow(dead_code)]
     watcher: RecommendedWatcher,
@@ -140,8 +152,10 @@ impl AssetRegistry {
                 component_registry,
                 asset_paths: asset_paths.into(),
                 asset_cache: Default::default(),
+                asset_load_states: Default::default(),
                 asset_data: Default::default(),
                 asset_constructors: Default::default(),
+                asset_load_pool: Self::asset_load_pool(),
                 watcher_thread: None,
                 watcher,
             };
@@ -180,8 +194,10 @@ impl AssetRegistry {
             component_registry,
             asset_paths: vec![path],
             asset_cache: Default::default(),
+            asset_load_states: Default::default(),
             asset_data: Default::default(),
             asset_constructors: Default::default(),
+            asset_load_pool: Self::asset_load_pool(),
             watcher_thread: None,
             watcher,
         })
@@ -207,8 +223,10 @@ impl AssetRegistry {
                 component_registry,
                 asset_paths,
                 asset_cache: Default::default(),
+                asset_load_states: Default::default(),
                 asset_data: Default::default(),
                 asset_constructors: Default::default(),
+                asset_load_pool: Self::asset_load_pool(),
                 watcher_thread: None,
                 watcher,
             };
@@ -220,6 +238,10 @@ impl AssetRegistry {
     }
 }
 impl AssetRegistry {
+    fn asset_load_pool() -> ThreadPool {
+        ThreadPool::new(1, 4, Duration::from_secs(30))
+    }
+
     fn register_default_asset_types(&mut self) {
         self.register_asset_type::<Mesh>();
         self.register_asset_type::<Shader>();
@@ -289,6 +311,92 @@ impl AssetRegistry {
         self.load_by_id(id)
     }
 
+    pub fn cached_by_id<A: Asset + TypeUuid>(&self, id: Uuid) -> Option<Ref<A>> {
+        self.asset_cache()
+            .get(&id)
+            .and_then(|asset| asset.try_downcast::<A>())
+    }
+
+    pub fn load_status<A: Asset + TypeUuid>(&self, id: Uuid) -> AssetLoadStatus {
+        if self.cached_by_id::<A>(id).is_some() {
+            return AssetLoadStatus::Loaded;
+        }
+        match self.asset_load_states().get(&id) {
+            Some(AssetLoadState::Loading) => AssetLoadStatus::Loading,
+            Some(AssetLoadState::Failed(error)) => AssetLoadStatus::Failed(error.clone()),
+            None => AssetLoadStatus::Unresolved,
+        }
+    }
+
+    pub fn request_load<A: Asset + TypeUuid>(&self, name: &str) -> Result<AssetRef<A>, AssetError> {
+        let id = self
+            .asset_id(name)
+            .ok_or_else(|| AssetError::NotFound.with_source(format!("asset name `{name}`")))?;
+        Ok(self.request_load_by_id(id))
+    }
+
+    pub fn request_load_by_path<A: Asset + TypeUuid>(
+        &self,
+        path: &Path,
+    ) -> Result<AssetRef<A>, AssetError> {
+        let id = self.asset_id_from_path(path).ok_or_else(|| {
+            AssetError::NotFound
+                .with_path(path)
+                .with_type(A::asset_name())
+        })?;
+        Ok(self.request_load_by_id(id))
+    }
+
+    pub fn request_load_by_id<A: Asset + TypeUuid>(&self, id: Uuid) -> AssetRef<A> {
+        let asset_ref = AssetRef::from_id(id);
+        let _ = self.request_ref_load(&asset_ref);
+        asset_ref
+    }
+
+    pub fn request_ref_load<A: Asset + TypeUuid>(
+        &self,
+        asset_ref: &AssetRef<A>,
+    ) -> Result<(), AssetError> {
+        let id = asset_ref.id();
+        if self.asset_meta_from_id(id).is_none() {
+            let error = AssetError::NotFound.with_source(format!("asset id {id}"));
+            self.asset_load_states_mut()
+                .insert(id, AssetLoadState::Failed(error.clone()));
+            return Err(error);
+        }
+
+        if let Some(loaded_asset) = self
+            .asset_cache()
+            .get(&id)
+            .and_then(|asset| asset.try_downcast::<A>())
+        {
+            let _ = loaded_asset;
+            self.asset_load_states_mut().remove(&id);
+            return Ok(());
+        }
+
+        if matches!(
+            self.asset_load_states().get(&id),
+            Some(AssetLoadState::Loading)
+        ) {
+            return Ok(());
+        }
+
+        self.asset_load_states_mut()
+            .insert(id, AssetLoadState::Loading);
+        let registry = self.asset_registry.upgrade().unwrap().readonly();
+        self.asset_load_pool.evaluate(move || {
+            let result = registry.read().load_by_id::<A>(id);
+            if let Err(error) = result {
+                registry
+                    .read()
+                    .asset_load_states_mut()
+                    .insert(id, AssetLoadState::Failed(error));
+            }
+        });
+        Ok(())
+    }
+
     pub fn load_dyn_by_path(&self, path: &Path) -> Result<Ref<dyn Asset>, AssetError> {
         let id = self
             .asset_id_from_path(path)
@@ -311,6 +419,7 @@ impl AssetRegistry {
             .get(&id)
             .and_then(|a| a.try_downcast::<A>())
         {
+            self.asset_load_states_mut().remove(&id);
             return Ok(asset_ref);
         }
 
@@ -318,10 +427,18 @@ impl AssetRegistry {
         let path = self
             .asset_path(id, A::file_extensions())
             .ok_or_else(|| AssetError::NotFound.with_type(A::asset_name()))?;
-        let asset = self.load_asset_file(id, &path)?;
+        let asset = match self.load_asset_file(id, &path) {
+            Ok(asset) => asset,
+            Err(error) => {
+                self.asset_load_states_mut()
+                    .insert(id, AssetLoadState::Failed(error.clone()));
+                return Err(error);
+            }
+        };
 
         // Create ref
         self.asset_cache_mut().insert(id, asset.as_asset());
+        self.asset_load_states_mut().remove(&id);
         Ok(asset)
     }
 
@@ -525,6 +642,14 @@ impl AssetRegistry {
 
     fn asset_cache_mut(&self) -> RwLockWriteGuard<'_, AssetCache> {
         self.asset_cache.write().unwrap()
+    }
+
+    fn asset_load_states(&self) -> RwLockReadGuard<'_, AssetLoadStates> {
+        self.asset_load_states.read().unwrap()
+    }
+
+    fn asset_load_states_mut(&self) -> RwLockWriteGuard<'_, AssetLoadStates> {
+        self.asset_load_states.write().unwrap()
     }
 
     fn asset_constructors(&self) -> RwLockReadGuard<'_, HashMap<Uuid, AssetConstructors>> {

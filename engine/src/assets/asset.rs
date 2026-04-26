@@ -1,4 +1,5 @@
 use std::any::{Any, TypeId};
+use std::marker::PhantomData;
 use std::ops::Deref;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
@@ -62,14 +63,74 @@ impl<T: Asset + TypeUuid> Ref<T> {
 
 pub struct AssetRef<T: Asset + TypeUuid> {
     id: Uuid,
-    inner: Option<Ref<T>>,
+    _marker: PhantomData<T>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AssetLoadStatus {
+    Unresolved,
+    Loading,
+    Loaded,
+    Failed(AssetError),
+}
+
+impl<T: Asset + TypeUuid> Clone for AssetRef<T> {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T: Asset + TypeUuid> AssetRef<T> {
+    pub(crate) fn loaded(asset: Ref<T>) -> Self {
+        Self {
+            id: asset.id(),
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
+
+    pub fn status(&self, context: &ReadOnlyRegistryContext) -> AssetLoadStatus {
+        context.assets.read().load_status::<T>(self.id)
+    }
+
+    pub fn is_loading(&self, context: &ReadOnlyRegistryContext) -> bool {
+        matches!(self.status(context), AssetLoadStatus::Loading)
+    }
+
+    pub fn is_loaded(&self, context: &ReadOnlyRegistryContext) -> bool {
+        matches!(self.status(context), AssetLoadStatus::Loaded)
+    }
+
+    pub fn error(&self, context: &ReadOnlyRegistryContext) -> Option<AssetError> {
+        match self.status(context) {
+            AssetLoadStatus::Failed(error) => Some(error),
+            _ => None,
+        }
+    }
+
+    pub fn result(&self, context: &ReadOnlyRegistryContext) -> Option<Result<Ref<T>, AssetError>> {
+        match self.status(context) {
+            AssetLoadStatus::Unresolved | AssetLoadStatus::Loading => None,
+            AssetLoadStatus::Loaded => self.get(context).map(Ok),
+            AssetLoadStatus::Failed(error) => Some(Err(error)),
+        }
+    }
 }
 
 impl<T: Asset + TypeUuid> From<Option<Ref<T>>> for AssetRef<T> {
     fn from(value: Option<Ref<T>>) -> Self {
-        Self {
-            id: value.clone().map(|r| r.id()).unwrap_or_default(),
-            inner: value,
+        match value {
+            Some(value) => Self::loaded(value),
+            None => Self {
+                id: Uuid::nil(),
+                _marker: PhantomData,
+            },
         }
     }
 }
@@ -78,16 +139,7 @@ impl<T: Asset + TypeUuid> Default for AssetRef<T> {
     fn default() -> Self {
         Self {
             id: Uuid::nil(),
-            inner: None,
-        }
-    }
-}
-
-impl<T: Asset + TypeUuid> Clone for AssetRef<T> {
-    fn clone(&self) -> Self {
-        Self {
-            id: self.id,
-            inner: None,
+            _marker: PhantomData,
         }
     }
 }
@@ -107,17 +159,46 @@ impl<'de, T: Asset + TypeUuid> Deserialize<'de> for AssetRef<T> {
         D: Deserializer<'de>,
     {
         let id = Uuid::deserialize(deserializer)?;
-        Ok(Self { id, inner: None })
+        Ok(Self {
+            id,
+            _marker: PhantomData,
+        })
     }
 }
 
 impl<T: Asset + TypeUuid> AssetRef<T> {
     pub fn from_id(id: Uuid) -> AssetRef<T> {
-        Self { id, inner: None }
+        Self {
+            id,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn get(&self, context: &ReadOnlyRegistryContext) -> Option<Ref<T>> {
+        context.assets.read().cached_by_id(self.id)
     }
 
     pub fn get_ref(&self, context: &ReadOnlyRegistryContext) -> Option<Ref<T>> {
-        context.assets.read().load_by_id(self.id).ok()
+        self.get(context)
+    }
+
+    pub fn request_load(&self, context: &ReadOnlyRegistryContext) -> Result<(), AssetError> {
+        context.assets.read().request_ref_load(self)
+    }
+
+    pub fn get_or_request_load(&self, context: &ReadOnlyRegistryContext) -> Option<Ref<T>> {
+        let loaded = self.get(context);
+        if loaded.is_none() && !self.is_loading(context) {
+            let _ = self.request_load(context);
+        }
+        loaded
+    }
+
+    pub fn load_blocking(&self, context: &ReadOnlyRegistryContext) -> Result<Ref<T>, AssetError> {
+        if let Some(asset) = self.get(context) {
+            return Ok(asset);
+        }
+        context.assets.read().load_by_id(self.id)
     }
 }
 
@@ -137,7 +218,7 @@ impl<T: Asset + TypeUuid> AssetAccess for AssetRef<T> {
     }
 
     fn clear_cache(&mut self) {
-        self.inner.take();
+        // Asset load/cache state is owned by AssetRegistry.
     }
 
     fn id(&self) -> Uuid {
@@ -149,20 +230,17 @@ impl<T: Asset + TypeUuid> AssetAccess for AssetRef<T> {
     }
 
     fn get_asset_ref(&mut self, context: &ReadOnlyAssetContext) -> Option<Ref<dyn Asset>> {
-        let asset_ref = context.registries.assets.read().load_by_id(self.id).ok();
-        self.inner = asset_ref.clone();
-        asset_ref.map(|r| r.as_asset())
+        self.get_ref(&context.registries)
+            .map(|asset| asset.as_asset())
     }
 
     fn set_asset_ref(&mut self, context: &ReadOnlyAssetContext, asset_id: Option<Uuid>) {
         self.clear_cache();
         self.id = asset_id.unwrap_or_default();
-        self.inner = context
-            .registries
-            .assets
-            .read()
-            .load_by_id::<T>(self.id)
-            .ok();
+        if asset_id.is_none() {
+            return;
+        }
+        let _ = self.request_load(&context.registries);
     }
 }
 

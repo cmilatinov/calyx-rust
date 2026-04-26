@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::io::BufReader;
 use std::path::Path;
 
-use super::{AssetAccess, AssetRef, LoadedAsset};
+use super::{AssetRef, LoadedAsset};
 use crate as engine;
 use crate::assets::error::AssetError;
 use crate::assets::texture::Texture;
@@ -105,7 +105,9 @@ impl ShaderVariableValue {
         let ShaderVariableValue::Texture2D(texture) = self else {
             return default;
         };
-        texture.get_ref(&context.registries).unwrap_or(default)
+        texture
+            .get_or_request_load(&context.registries)
+            .unwrap_or(default)
     }
 }
 
@@ -512,7 +514,7 @@ impl Material {
                     },
                 );
         }
-        let Some(shader_ref) = self.shader.get_ref(&context.registries) else {
+        let Some(shader_ref) = self.shader.get_or_request_load(&context.registries) else {
             return;
         };
         let shader = shader_ref.read();

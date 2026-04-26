@@ -38,8 +38,8 @@ impl ComponentUpdate for ComponentNetworkManager {
         resources: &mut ResourceMap,
         input: &Input,
     ) {
-        let Some(player_prefab) =
-            scene.read_component::<ComponentNetworkManager, _, _>(game_object, |c| {
+        let Some(player_prefab) = scene
+            .read_component::<ComponentNetworkManager, _, _>(game_object, |c| {
                 c.player_prefab.clone()
             })
         else {
@@ -75,7 +75,7 @@ impl ComponentUpdate for ComponentNetworkManager {
                     info!("CLIENT - Connecting ...");
                     try_all!(
                         None => return;
-                        let prefab_ref = player_prefab.get_ref(assets);
+                        let prefab_ref = player_prefab.get_or_request_load(assets);
                     );
                     network.instantiate_prefab(scene, prefab_ref);
                 }
