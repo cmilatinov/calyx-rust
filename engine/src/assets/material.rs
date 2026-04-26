@@ -114,6 +114,8 @@ pub struct Material {
     pub shader: AssetRef<Shader>,
     pub variables: Vec<ShaderVariable>,
     #[serde(skip)]
+    variable_indices: HashMap<(u32, u32), usize>,
+    #[serde(skip)]
     pub bind_group_entries: BTreeMap<u32, BTreeMap<u32, BindGroupEntry>>,
     #[serde(skip)]
     pub buffers: HashMap<(u32, u32), wgpu::Buffer>,
@@ -163,6 +165,7 @@ impl Material {
         let mut material = Self {
             shader: Some(shader_ref.clone()).into(),
             variables: Default::default(),
+            variable_indices: Default::default(),
             bind_group_entries: Default::default(),
             buffers: Default::default(),
         };
@@ -207,26 +210,28 @@ impl Material {
         assets: &LockedAssetRenderState,
         default_texture: Ref<Texture>,
     ) -> HashMap<u32, wgpu::BindGroup> {
-        let shader = assets.shader(self.shader.id());
+        let Some(shader) = assets.shader(self.shader.id()) else {
+            return Default::default();
+        };
         self.bind_group_entries
             .iter()
-            .map(|(group, entries)| {
+            .filter_map(|(group, entries)| {
                 let entries = entries
                     .iter()
-                    .map(|(binding, entry)| {
-                        let var = self.find_variable(*group, *binding);
-                        wgpu::BindGroupEntry {
+                    .map(|(binding, entry)| -> Option<wgpu::BindGroupEntry<'_>> {
+                        Some(wgpu::BindGroupEntry {
                             binding: *binding,
                             resource: match &entry.ty {
                                 BindingType::Buffer => {
-                                    self.find_buffer(*group, *binding).as_entire_binding()
+                                    self.find_buffer(*group, *binding)?.as_entire_binding()
                                 }
                                 BindingType::Texture => {
+                                    let var = self.find_variable(*group, *binding)?;
                                     let texture = var
                                         .value
                                         .as_texture(asset_context, default_texture.clone());
                                     wgpu::BindingResource::TextureView(
-                                        &assets.texture(texture.id()).view,
+                                        &assets.texture(texture.id())?.view,
                                     )
                                 }
                                 BindingType::Sampler => {
@@ -237,34 +242,48 @@ impl Material {
                                         default_texture.clone(),
                                     );
                                     wgpu::BindingResource::Sampler(
-                                        &assets.texture(texture.id()).sampler,
+                                        &assets.texture(texture.id())?.sampler,
                                     )
                                 }
                             },
-                        }
+                        })
                     })
-                    .collect::<Vec<_>>();
-                (
+                    .collect::<Option<Vec<_>>>()?;
+                Some((
                     *group,
                     device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: None,
                         layout: &shader.bind_group_layouts[*group as usize],
                         entries: entries.as_slice(),
                     }),
-                )
+                ))
             })
             .collect()
     }
 
-    fn find_variable(&self, group: u32, binding: u32) -> &ShaderVariable {
-        self.variables
-            .iter()
-            .find(|v| v.group == group && v.binding == binding)
-            .unwrap()
+    fn find_variable(&self, group: u32, binding: u32) -> Option<&ShaderVariable> {
+        self.variable_indices
+            .get(&(group, binding))
+            .and_then(|index| self.variables.get(*index))
+            .filter(|v| v.group == group && v.binding == binding)
+            .or_else(|| {
+                self.variables
+                    .iter()
+                    .find(|v| v.group == group && v.binding == binding)
+            })
     }
 
-    fn find_buffer(&self, group: u32, binding: u32) -> &wgpu::Buffer {
-        self.buffers.get(&(group, binding)).unwrap()
+    fn find_buffer(&self, group: u32, binding: u32) -> Option<&wgpu::Buffer> {
+        self.buffers.get(&(group, binding))
+    }
+
+    fn rebuild_variable_indices(&mut self) {
+        self.variable_indices = self
+            .variables
+            .iter()
+            .enumerate()
+            .map(|(index, var)| ((var.group, var.binding), index))
+            .collect();
     }
 
     fn find_closest_texture_in_group(
@@ -289,6 +308,9 @@ impl Material {
                     closest_index = i as isize;
                 }
             }
+        }
+        if closest_index < 0 {
+            return default_texture;
         }
         self.variables[closest_index as usize]
             .value
@@ -393,6 +415,7 @@ impl Material {
 
     #[inline]
     fn init(&mut self, assets: &ReadOnlyAssetContext) {
+        self.rebuild_variable_indices();
         self.update_entries(assets);
         self.create_buffers(assets);
     }
@@ -474,6 +497,7 @@ impl From<(&ReadOnlyAssetContext, MaterialData)> for Material {
         let mut value = Self {
             shader: value.shader,
             variables: value.variables,
+            variable_indices: Default::default(),
             bind_group_entries: Default::default(),
             buffers: Default::default(),
         };

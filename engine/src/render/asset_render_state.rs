@@ -36,19 +36,19 @@ impl AssetRenderState {
             skyboxes: self.skyboxes.lock_read(),
         }
     }
-    pub fn mesh(&self, id: AssetId) -> &Ref<Mesh> {
+    pub fn mesh(&self, id: AssetId) -> Option<&Ref<Mesh>> {
         self.meshes.get(id)
     }
-    pub fn material(&self, id: AssetId) -> &Ref<Material> {
+    pub fn material(&self, id: AssetId) -> Option<&Ref<Material>> {
         self.materials.get(id)
     }
-    pub fn shader(&self, id: AssetId) -> &Ref<Shader> {
+    pub fn shader(&self, id: AssetId) -> Option<&Ref<Shader>> {
         self.shaders.get(id)
     }
-    pub fn texture(&self, id: AssetId) -> &Ref<Texture> {
+    pub fn texture(&self, id: AssetId) -> Option<&Ref<Texture>> {
         self.textures.get(id)
     }
-    pub fn skybox(&self, id: AssetId) -> &Ref<Skybox> {
+    pub fn skybox(&self, id: AssetId) -> Option<&Ref<Skybox>> {
         self.skyboxes.get(id)
     }
 }
@@ -64,22 +64,22 @@ pub(crate) struct LockedAssetRenderState<'a> {
 
 #[allow(unused)]
 impl LockedAssetRenderState<'_> {
-    pub fn mesh(&self, id: AssetId) -> &RwLockReadGuard<'_, Mesh> {
-        self.meshes.get(&id).unwrap()
+    pub fn mesh(&self, id: AssetId) -> Option<&RwLockReadGuard<'_, Mesh>> {
+        self.meshes.get(&id)
     }
-    pub fn mesh_instance_group(&self, id: AssetId) -> &wgpu::BindGroup {
-        self.mesh_instance_groups.get(&id).unwrap()
+    pub fn mesh_instance_group(&self, id: AssetId) -> Option<&wgpu::BindGroup> {
+        self.mesh_instance_groups.get(&id)
     }
-    pub fn material(&self, id: AssetId) -> &RwLockReadGuard<'_, Material> {
-        self.materials.get(&id).unwrap()
+    pub fn material(&self, id: AssetId) -> Option<&RwLockReadGuard<'_, Material>> {
+        self.materials.get(&id)
     }
-    pub fn texture(&self, id: AssetId) -> &RwLockReadGuard<'_, Texture> {
-        self.textures.get(&id).unwrap()
+    pub fn texture(&self, id: AssetId) -> Option<&RwLockReadGuard<'_, Texture>> {
+        self.textures.get(&id)
     }
-    pub fn shader(&self, id: AssetId) -> &RwLockReadGuard<'_, Shader> {
-        self.shaders.get(&id).unwrap()
+    pub fn shader(&self, id: AssetId) -> Option<&RwLockReadGuard<'_, Shader>> {
+        self.shaders.get(&id)
     }
-    pub fn skybox(&self, id: AssetId) -> &RwLockReadGuard<'_, Skybox> {
-        self.skyboxes.get(&id).unwrap()
+    pub fn skybox(&self, id: AssetId) -> Option<&RwLockReadGuard<'_, Skybox>> {
+        self.skyboxes.get(&id)
     }
 }
