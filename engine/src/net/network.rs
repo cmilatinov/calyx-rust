@@ -12,7 +12,7 @@ use crate::scene::{GameObject, Prefab, Scene};
 use crate::try_all;
 use engine_derive::Resource;
 use log::trace;
-use renet::{ClientId, DefaultChannel};
+use renet::ClientId;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -78,7 +78,6 @@ impl Network {
                 if time.timer("NETWORK_TICK_SYNC") >= 1.0 {
                     if let Err(e) = server.broadcast_message_except(
                         0,
-                        DefaultChannel::ReliableOrdered,
                         &GameMessage::SyncTime {
                             current_time: time.time,
                         },
@@ -100,11 +99,22 @@ impl Network {
         assets: &'a ReadOnlyAssetContext,
     ) {
         self.queue.receive_messages(
-            &mut (&mut self.client, &mut self.server, &mut scene, &mut self.local_id),
+            &mut (
+                &mut self.client,
+                &mut self.server,
+                &mut scene,
+                &mut self.local_id,
+            ),
             &mut NetworkSceneSync,
         );
         self.queue.receive_messages(
-            &mut (&mut self.client, &mut self.server, &mut scene, assets, &mut self.local_id),
+            &mut (
+                &mut self.client,
+                &mut self.server,
+                &mut scene,
+                assets,
+                &mut self.local_id,
+            ),
             &mut NetworkPrefabSync,
         );
     }
@@ -217,7 +227,6 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                 );
                 if let Err(e) = server.send_message(
                     *client_id,
-                    DefaultChannel::ReliableOrdered,
                     &GameMessage::SelfConnected {
                         client_ids: server.client_ids(),
                     },
@@ -226,7 +235,6 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                 }
                 if let Err(e) = server.broadcast_message_except(
                     *client_id,
-                    DefaultChannel::ReliableOrdered,
                     &GameMessage::ClientConnected {
                         client_id: *client_id,
                     },
@@ -235,9 +243,7 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                 }
                 MessageHandlerResult::Consume
             }
-            GameMessage::SelfConnected {
-                client_ids,
-            } => {
+            GameMessage::SelfConnected { client_ids } => {
                 #[allow(unused)]
                 'client_logic: {
                     let self_client_id = client.client_id();
@@ -287,7 +293,7 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                         let server = server;
                     );
                     trace!("SERVER - Transferring ownership");
-                    if let Err(e) = server.broadcast_message(DefaultChannel::ReliableOrdered, message) {
+                    if let Err(e) = server.broadcast_message(message) {
                         log::warn!("Failed to broadcast TransferOwnership: {e}");
                     }
                 }
@@ -328,11 +334,7 @@ impl MessageHandler<NetworkPrefabSyncContext<'_, '_>, GameMessage> for NetworkPr
                 prefab_id,
             } => {
                 if let Some(server) = server {
-                    if let Err(e) = server.broadcast_message_except(
-                        *from_client_id,
-                        DefaultChannel::ReliableOrdered,
-                        message,
-                    ) {
+                    if let Err(e) = server.broadcast_message_except(*from_client_id, message) {
                         log::warn!("Failed to broadcast SpawnPrefab: {e}");
                     }
                     return MessageHandlerResult::Consume;

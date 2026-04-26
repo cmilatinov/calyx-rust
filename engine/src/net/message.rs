@@ -1,9 +1,34 @@
 use crate::core::TimeType;
 use crate::net::NetworkObjectId;
-use renet::ClientId;
+use renet::{ClientId, DefaultChannel};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use uuid::Uuid;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GameChannel {
+    Unreliable,
+    ReliableUnordered,
+    ReliableOrdered,
+}
+
+impl GameChannel {
+    pub const ALL: [Self; 3] = [
+        Self::Unreliable,
+        Self::ReliableUnordered,
+        Self::ReliableOrdered,
+    ];
+}
+
+impl From<GameChannel> for u8 {
+    fn from(channel: GameChannel) -> Self {
+        match channel {
+            GameChannel::Unreliable => DefaultChannel::Unreliable.into(),
+            GameChannel::ReliableUnordered => DefaultChannel::ReliableUnordered.into(),
+            GameChannel::ReliableOrdered => DefaultChannel::ReliableOrdered.into(),
+        }
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ServerEvent {
@@ -53,7 +78,48 @@ pub enum GameMessage {
 }
 
 impl GameMessage {
-    pub const PROTOCOL_ID: u64 = 42069;
+    const PROTOCOL_SCHEMA: &str = concat!(
+        "ServerEvent{ClientConnected(client_id:ClientId),",
+        "ClientDisconnected(client_id:ClientId)};",
+        "GameMessage{ServerEvent(ServerEvent),",
+        "SelfConnected(client_ids:Vec<ClientId>),",
+        "ClientConnected(client_id:ClientId),",
+        "ClientDisconnected(client_id:ClientId),",
+        "SyncTime(current_time:TimeType),",
+        "SyncComponent(time:TimeType,network_object_id:NetworkObjectId,",
+        "from_client_id:ClientId,component_uuid:Uuid,data:Vec<u8>),",
+        "TransferOwnership(network_object_id:NetworkObjectId,",
+        "from_client_id:ClientId,to_client_id:ClientId),",
+        "SpawnPrefab(network_object_ids:HashMap<u32,NetworkObjectId>,",
+        "from_client_id:ClientId,prefab_id:Uuid),",
+        "DestroyGameObject(network_object_id:NetworkObjectId,from_client_id:ClientId)}",
+    );
+
+    pub const PROTOCOL_ID: u64 = fnv1a64(Self::PROTOCOL_SCHEMA.as_bytes());
+
+    pub fn channel(&self) -> GameChannel {
+        match self {
+            Self::SyncTime { .. } | Self::SyncComponent { .. } => GameChannel::Unreliable,
+            Self::SelfConnected { .. } => GameChannel::ReliableUnordered,
+            Self::ServerEvent(_)
+            | Self::ClientConnected { .. }
+            | Self::ClientDisconnected { .. }
+            | Self::TransferOwnership { .. }
+            | Self::SpawnPrefab { .. }
+            | Self::DestroyGameObject { .. } => GameChannel::ReliableOrdered,
+        }
+    }
+}
+
+const fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325;
+    let mut index = 0;
+    while index < bytes.len() {
+        hash ^= bytes[index] as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+        index += 1;
+    }
+    hash
 }
 
 #[derive(Debug)]
