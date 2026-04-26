@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::ops::Deref;
 
+use log::warn;
 use uuid::Uuid;
 
 use crate::component::{
@@ -60,29 +61,39 @@ impl ComponentRegistry {
             ReflectComponent,
             ReflectTypeUuidDynamic
         )) {
-            let meta_default = type_registry.trait_meta::<ReflectDefault>(type_id).unwrap();
-            let meta_component = type_registry
-                .trait_meta::<ReflectComponent>(type_id)
-                .unwrap();
+            let Some(meta_default) = type_registry.trait_meta::<ReflectDefault>(type_id) else {
+                warn!("Skipping component {type_id}: missing ReflectDefault metadata");
+                continue;
+            };
+            let Some(meta_component) = type_registry.trait_meta::<ReflectComponent>(type_id) else {
+                warn!("Skipping component {type_id}: missing ReflectComponent metadata");
+                continue;
+            };
             let instance = meta_default.default();
-            let component = meta_component.get_boxed(instance).unwrap();
+            let Ok(component) = meta_component.get_boxed(instance) else {
+                warn!("Skipping component {type_id}: failed to bind Component metadata");
+                continue;
+            };
             self.components.insert(type_id, component);
 
             // Discover ComponentUpdate implementations via reflection
-            if let Some(meta_update) =
-                type_registry.trait_meta::<ReflectComponentUpdate>(type_id)
-            {
+            if let Some(meta_update) = type_registry.trait_meta::<ReflectComponentUpdate>(type_id) {
                 let instance = meta_default.default();
-                let updater = meta_update.get_boxed(instance).unwrap();
-                self.update_components.push((type_id, updater));
+                if let Ok(updater) = meta_update.get_boxed(instance) {
+                    self.update_components.push((type_id, updater));
+                } else {
+                    warn!("Skipping update hook for component {type_id}: failed to bind metadata");
+                }
             }
 
             // Discover ComponentReset implementations via reflection
-            if let Some(meta_reset) = type_registry.trait_meta::<ReflectComponentReset>(type_id)
-            {
+            if let Some(meta_reset) = type_registry.trait_meta::<ReflectComponentReset>(type_id) {
                 let instance = meta_default.default();
-                let resetter = meta_reset.get_boxed(instance).unwrap();
-                self.reset_components.insert(type_id, resetter);
+                if let Ok(resetter) = meta_reset.get_boxed(instance) {
+                    self.reset_components.insert(type_id, resetter);
+                } else {
+                    warn!("Skipping reset hook for component {type_id}: failed to bind metadata");
+                }
             }
         }
     }
