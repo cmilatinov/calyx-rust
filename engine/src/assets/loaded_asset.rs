@@ -32,13 +32,21 @@ where
         let file = std::fs::OpenOptions::new()
             .read(true)
             .open(path)
-            .map_err(|_| AssetError::LoadError)?;
+            .map_err(|err| {
+                AssetError::LoadError
+                    .with_path(path)
+                    .with_type(std::any::type_name::<T>())
+                    .with_source(err)
+            })?;
         let reader = BufReader::new(file);
         let seed = ContextSeed::<ReadOnlyAssetContext, T>::new(game);
         let mut deserializer = serde_json::Deserializer::from_reader(reader);
-        let asset: T = seed
-            .deserialize(&mut deserializer)
-            .map_err(|_| AssetError::LoadError)?;
+        let asset: T = seed.deserialize(&mut deserializer).map_err(|err| {
+            AssetError::LoadError
+                .with_path(path)
+                .with_type(std::any::type_name::<T>())
+                .with_source(err)
+        })?;
         Ok(LoadedAsset::new(asset))
     }
 }
@@ -51,11 +59,21 @@ where
         let file = std::fs::OpenOptions::new()
             .read(true)
             .open(path)
-            .map_err(|_| AssetError::LoadError)?;
+            .map_err(|err| {
+                AssetError::LoadError
+                    .with_path(path)
+                    .with_type(std::any::type_name::<T>())
+                    .with_source(err)
+            })?;
         let reader = BufReader::new(file);
-        Ok(LoadedAsset::new(
-            serde_json::from_reader(reader).map_err(|_| AssetError::LoadError)?,
-        ))
+        Ok(LoadedAsset::new(serde_json::from_reader(reader).map_err(
+            |err| {
+                AssetError::LoadError
+                    .with_path(path)
+                    .with_type(std::any::type_name::<T>())
+                    .with_source(err)
+            },
+        )?))
     }
 }
 

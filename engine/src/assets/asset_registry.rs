@@ -260,23 +260,33 @@ impl AssetRegistry {
     }
 
     pub fn load<A: Asset + TypeUuid>(&self, name: &str) -> Result<Ref<A>, AssetError> {
-        let id = self.asset_id(name).ok_or(AssetError::NotFound)?;
+        let id = self
+            .asset_id(name)
+            .ok_or_else(|| AssetError::NotFound.with_source(format!("asset name `{name}`")))?;
         self.load_by_id(id)
     }
 
     pub fn load_by_path<A: Asset + TypeUuid>(&self, path: &Path) -> Result<Ref<A>, AssetError> {
-        let id = self.asset_id_from_path(path).ok_or(AssetError::NotFound)?;
+        let id = self.asset_id_from_path(path).ok_or_else(|| {
+            AssetError::NotFound
+                .with_path(path)
+                .with_type(A::asset_name())
+        })?;
         self.load_by_id(id)
     }
 
     pub fn load_dyn_by_path(&self, path: &Path) -> Result<Ref<dyn Asset>, AssetError> {
-        let id = self.asset_id_from_path(path).ok_or(AssetError::NotFound)?;
+        let id = self
+            .asset_id_from_path(path)
+            .ok_or_else(|| AssetError::NotFound.with_path(path))?;
         self.load_dyn_by_id(id)
     }
 
     pub fn load_by_id<A: Asset + TypeUuid>(&self, id: Uuid) -> Result<Ref<A>, AssetError> {
         // Load parent asset if any
-        let meta = self.asset_meta_from_id(id).ok_or(AssetError::NotFound)?;
+        let meta = self
+            .asset_meta_from_id(id)
+            .ok_or_else(|| AssetError::NotFound.with_source(format!("asset id {id}")))?;
         if let Some(parent_id) = meta.parent {
             self.load_dyn_by_id(parent_id)?;
         }
@@ -293,7 +303,7 @@ impl AssetRegistry {
         // Load from file
         let path = self
             .asset_path(id, A::file_extensions())
-            .ok_or(AssetError::NotFound)?;
+            .ok_or_else(|| AssetError::NotFound.with_type(A::asset_name()))?;
         let asset = self.load_asset_file(id, &path)?;
 
         // Create ref
@@ -303,7 +313,9 @@ impl AssetRegistry {
 
     pub fn load_dyn_by_id(&self, id: Uuid) -> Result<Ref<dyn Asset>, AssetError> {
         // Load parent asset if any
-        let meta = self.asset_meta_from_id(id).ok_or(AssetError::NotFound)?;
+        let meta = self
+            .asset_meta_from_id(id)
+            .ok_or_else(|| AssetError::NotFound.with_source(format!("asset id {id}")))?;
         if let Some(parent_id) = meta.parent {
             self.load_dyn_by_id(parent_id)?;
         }
@@ -314,9 +326,13 @@ impl AssetRegistry {
         }
 
         // Find constructor & file path
-        let path = meta.path.as_ref().ok_or(AssetError::NotFound)?;
+        let path = meta.path.as_ref().ok_or_else(|| {
+            AssetError::NotFound.with_source(format!("path for asset `{}`", meta.name))
+        })?;
         let ctors = self.asset_constructors();
-        let ctor = ctors.get(&meta.type_uuid).ok_or(AssetError::NotFound)?;
+        let ctor = ctors.get(&meta.type_uuid).ok_or_else(|| {
+            AssetError::NotFound.with_source(format!("constructor for type {}", meta.type_uuid))
+        })?;
         let LoadedAssetRef { asset, sub_assets } = (ctor.create)(self.asset_context(), id, path)?;
 
         // Load from file
@@ -331,7 +347,7 @@ impl AssetRegistry {
         value: A,
     ) -> Result<Ref<A>, AssetError> {
         if self.asset_id(name.as_str()).is_some() {
-            return Err(AssetError::AlreadyExists);
+            return Err(AssetError::AlreadyExists.with_source(format!("asset name `{name}`")));
         }
         let id = utils::uuid_from_str(name.as_str());
         let asset = Ref::from_id_value(id, value);
@@ -411,7 +427,9 @@ impl AssetRegistry {
                             sub_assets,
                         })
                     } else {
-                        Err(AssetError::LoadError)
+                        Err(AssetError::TypeMismatch
+                            .with_path(path)
+                            .with_type(A::asset_name()))
                     }
                 }),
             },

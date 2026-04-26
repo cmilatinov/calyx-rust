@@ -205,10 +205,19 @@ impl Asset for Mesh {
                 PostProcess::FlipWindingOrder,
                 PostProcess::JoinIdenticalVertices,
             ],
-        )?;
+        )
+        .map_err(|err| {
+            AssetError::from(err)
+                .with_path(path)
+                .with_type(Self::asset_name())
+        })?;
 
         // Assuming you want to load the first mesh in the scene
-        let mesh = scene.meshes.first().ok_or(AssetError::NotFound)?;
+        let mesh = scene.meshes.first().ok_or(
+            AssetError::NotFound
+                .with_path(path)
+                .with_type(Self::asset_name()),
+        )?;
         Ok(LoadedAsset::new(Mesh::from_russimp_mesh(
             &game.render_context,
             mesh,

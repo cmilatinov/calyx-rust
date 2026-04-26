@@ -43,7 +43,12 @@ mod tests {
         let registries = asset_registries();
         let registry = registries.assets.read();
         let result = registry.load::<Mesh>("meshes/does_not_exist");
-        assert!(result.is_err());
+        let err = match result {
+            Ok(_) => panic!("missing asset should return an error"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind, crate::assets::error::AssetErrorKind::NotFound);
+        assert!(err.to_string().contains("meshes/does_not_exist"));
     }
 
     #[test]
