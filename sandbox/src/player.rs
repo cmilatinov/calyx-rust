@@ -50,8 +50,8 @@ impl ComponentUpdate for ComponentPlayerController {
             return;
         }
 
-        let Some((camera_ref, move_speed, sprint_multiplier)) =
-            scene.read_component::<ComponentPlayerController, _, _>(game_object, |c| {
+        let Some((camera_ref, move_speed, sprint_multiplier)) = scene
+            .read_component::<ComponentPlayerController, _, _>(game_object, |c| {
                 (c.camera, c.move_speed, c.sprint_multiplier)
             })
         else {
@@ -80,14 +80,8 @@ fn update_movement(
     move_speed: f32,
     sprint_multiplier: f32,
 ) {
-    use egui::Key;
-
-    let forward = input
-        .input(|i| (i.key_down(Key::W) as i32 - i.key_down(Key::S) as i32) as f32)
-        .unwrap_or_default();
-    let right = input
-        .input(|i| (i.key_down(Key::D) as i32 - i.key_down(Key::A) as i32) as f32)
-        .unwrap_or_default();
+    let forward = input.axis("move_forward");
+    let right = input.axis("move_right");
     let run = input.input(|i| i.modifiers.shift).unwrap_or(false);
     let speed = move_speed * if run { sprint_multiplier } else { 1.0 } * dt;
 
@@ -116,4 +110,3 @@ fn update_movement(
     }
     scene.set_world_transform(game_object, transform.matrix());
 }
-

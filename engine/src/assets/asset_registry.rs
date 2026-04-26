@@ -29,6 +29,7 @@ use crate::component::ComponentMesh;
 use crate::context::{ReadOnlyAssetContext, ReadOnlyRegistryContext};
 use crate::core::{ReadOnlyRef, Ref, WeakRef};
 use crate::error::BoxedError;
+use crate::input::ActionMap;
 use crate::reflect::type_registry::TypeRegistry;
 use crate::reflect::{AttributeValue, TypeInfo};
 use crate::render::{RenderContext, Shader, ShaderPreprocessor};
@@ -228,6 +229,7 @@ impl AssetRegistry {
         self.register_asset_type::<Scene>();
         self.register_asset_type::<Skybox>();
         self.register_asset_type::<AnimationGraph>();
+        self.register_asset_type::<ActionMap>();
     }
 }
 
