@@ -1,20 +1,17 @@
 use super::{LockedAssetRenderState, RenderContext};
 use crate::assets::material::{Material, MaterialBindGroupCacheKey};
 use crate::assets::mesh::{Instance, Mesh};
-use crate::assets::skybox::SkyboxShaders;
 use crate::assets::texture::Texture;
 use crate::assets::AssetId;
-use crate::component::{
-    ComponentDirectionalLight, ComponentMesh, ComponentPointLight, ComponentSkinnedMesh,
-    ComponentSkyLight,
-};
+use crate::component::{ComponentMesh, ComponentSkinnedMesh, ComponentSkyLight};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::math::Transform;
 use crate::render::asset_render_state::AssetRenderState;
-use crate::render::buffer::ResizableBuffer;
 use crate::render::render_utils::RenderUtils;
-use crate::render::{Camera, GizmoRenderer, PipelineOptions, Shader};
+use crate::render::{
+    Camera, GizmoRenderer, GridRenderer, LightManager, PipelineOptions, Shader, SkyboxRenderer,
+};
 use crate::scene::Scene;
 use egui::Color32;
 use egui_wgpu::wgpu::util::DeviceExt;
@@ -22,7 +19,7 @@ use egui_wgpu::{wgpu, RenderState};
 use legion::{Entity, IntoQuery};
 use log::warn;
 use nalgebra_glm as glm;
-use nalgebra_glm::{Mat4, Vec3};
+use nalgebra_glm::Mat4;
 use rapier3d::pipeline::DebugRenderPipeline;
 use std::collections::{HashMap, HashSet};
 use std::default::Default;
@@ -55,24 +52,6 @@ impl Default for CameraUniform {
             _padding: [0.0; 2],
         }
     }
-}
-
-#[repr(C)]
-#[derive(Default, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct PointLight {
-    position: [f32; 3],
-    radius: f32,
-    color: [f32; 3],
-    _padding: f32,
-}
-
-#[repr(C)]
-#[derive(Default, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct DirectionalLight {
-    direction: [f32; 3],
-    _padding: f32,
-    color: [f32; 3],
-    _padding2: f32,
 }
 
 #[derive(Default)]
@@ -108,18 +87,10 @@ pub struct SceneRenderer {
     scene_depth_texture: Texture,
     scene_texture_msaa: Texture,
     scene_shader: Ref<Shader>,
-    camera_bind_group: wgpu::BindGroup,
-    grid_shader: Ref<Shader>,
-    skybox: Option<Uuid>,
-    skybox_shader: Ref<Shader>,
-    skybox_cubemap_shader: Ref<Shader>,
-    skybox_irradiance_cubemap_shader: Ref<Shader>,
-    skybox_prefilter_cubemap_shader: Ref<Shader>,
-    skybox_brdf_shader: Ref<Shader>,
-    skybox_cubemap_mip_shader: Ref<Shader>,
+    grid_renderer: GridRenderer,
+    skybox_renderer: SkyboxRenderer,
     camera_uniform_buffer: wgpu::Buffer,
-    point_light_storage_buffer: ResizableBuffer,
-    directional_light_storage_buffer: ResizableBuffer,
+    light_manager: LightManager,
     gizmo_renderer: GizmoRenderer,
     assets: AssetRenderState,
     draw_list: Vec<DrawListElement>,
@@ -160,27 +131,7 @@ impl SceneRenderer {
         let scene_shader = asset_registry
             .load::<Shader>("shaders/pbr")
             .expect("missing scene_shader");
-        let grid_shader = asset_registry
-            .load::<Shader>("shaders/grid")
-            .expect("missing grid_shader");
-        let skybox_shader = asset_registry
-            .load::<Shader>("shaders/environment/skybox")
-            .expect("missing skybox_shader");
-        let skybox_cubemap_shader = asset_registry
-            .load::<Shader>("shaders/environment/cubemap")
-            .expect("missing skybox_cubemap_shader");
-        let skybox_irradiance_cubemap_shader = asset_registry
-            .load::<Shader>("shaders/environment/irradiance")
-            .expect("missing skybox_irradiance_cubemap_shader");
-        let skybox_prefilter_cubemap_shader = asset_registry
-            .load::<Shader>("shaders/environment/prefilter")
-            .expect("missing skybox_prefilter_cubemap_shader");
-        let skybox_brdf_shader = asset_registry
-            .load::<Shader>("shaders/environment/brdf")
-            .expect("missing skybox_brdf_shader");
-        let skybox_cubemap_mip_shader = asset_registry
-            .load::<Shader>("shaders/mip_generator_cube")
-            .expect("missing skybox_cubemap_mip_shader");
+        let skybox_renderer = SkyboxRenderer::new(context);
 
         let camera_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("camera_uniform_buffer"),
@@ -188,19 +139,7 @@ impl SceneRenderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("camera_bind_group"),
-            layout: &grid_shader.read().bind_group_layouts[0],
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera_uniform_buffer.as_entire_binding(),
-            }],
-        });
-
-        let point_light_storage_buffer =
-            ResizableBuffer::new(wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
-        let directional_light_storage_buffer =
-            ResizableBuffer::new(wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
+        let grid_renderer = GridRenderer::new(context, device, &camera_uniform_buffer);
 
         let gizmo_renderer = GizmoRenderer::new(context, &camera_uniform_buffer, options.samples);
 
@@ -225,18 +164,10 @@ impl SceneRenderer {
             scene_texture,
             scene_depth_texture,
             scene_shader,
-            camera_bind_group,
-            grid_shader,
-            skybox: None,
-            skybox_shader,
-            skybox_cubemap_shader,
-            skybox_irradiance_cubemap_shader,
-            skybox_prefilter_cubemap_shader,
-            skybox_brdf_shader,
-            skybox_cubemap_mip_shader,
+            grid_renderer,
+            skybox_renderer,
             camera_uniform_buffer,
-            point_light_storage_buffer,
-            directional_light_storage_buffer,
+            light_manager: Default::default(),
             gizmo_renderer,
             assets: Default::default(),
             draw_list: Default::default(),
@@ -278,9 +209,25 @@ impl SceneRenderer {
             label: Some("encoder"),
         });
         self.render_meshes(render_state, scene, &mut encoder);
-        self.render_skybox(render_state, &mut encoder);
+        self.skybox_renderer.render(
+            render_state,
+            &mut encoder,
+            &self.assets,
+            &self.default_assets.cube,
+            &self.scene_texture_msaa,
+            &self.scene_depth_texture,
+            self.grid_renderer.camera_bind_group(),
+            self.options.samples,
+        );
         if self.options.grid {
-            self.render_grid(render_state, &mut encoder);
+            self.grid_renderer.render(
+                render_state,
+                &mut encoder,
+                &self.default_assets.screen_space_quad,
+                &self.scene_texture_msaa,
+                &self.scene_depth_texture,
+                self.options.samples,
+            );
         }
 
         // Resolve MSAA texture
@@ -346,29 +293,6 @@ impl SceneRenderer {
         })
     }
 
-    fn light_storage_bind_group(&self, device: &wgpu::Device) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("light_storage_bind_group"),
-            layout: &self.scene_shader.read().bind_group_layouts[2],
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self
-                        .point_light_storage_buffer
-                        .get_wgpu_buffer()
-                        .as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self
-                        .directional_light_storage_buffer
-                        .get_wgpu_buffer()
-                        .as_entire_binding(),
-                },
-            ],
-        })
-    }
-
     fn render_meshes(
         &mut self,
         render_state: &RenderState,
@@ -387,7 +311,7 @@ impl SceneRenderer {
         self.build_asset_data(render_state, scene, &options);
         let draw_list = self.build_draw_list();
         self.build_mesh_data(render_state);
-        self.build_light_data(render_state, scene);
+        self.light_manager.build_data(render_state, scene);
         let assets = self.assets.lock(device);
         let material_bind_groups = Self::build_material_bind_groups(
             device,
@@ -399,7 +323,8 @@ impl SceneRenderer {
         let black_texture_cube = self.default_assets.black_texture_cube.read();
         let black_texture_2d = self.default_assets.black_texture_2d.read();
         let (irradiance_map, prefilter_map, brdf_map) = self
-            .skybox
+            .skybox_renderer
+            .skybox_id()
             .and_then(|id| {
                 let skybox = assets.skybox(id)?;
                 Some((
@@ -415,7 +340,10 @@ impl SceneRenderer {
             ));
         let scene_bind_group =
             self.scene_bind_group(device, irradiance_map, prefilter_map, brdf_map);
-        let light_storage_bind_group = self.light_storage_bind_group(device);
+        let light_storage_bind_group = {
+            let scene_shader = self.scene_shader.read();
+            self.light_manager.storage_bind_group(device, &scene_shader)
+        };
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Viewport Scene"),
@@ -471,133 +399,6 @@ impl SceneRenderer {
             if self.options.gizmos {
                 self.gizmo_renderer
                     .render_gizmos(self.scene_texture_msaa.descriptor.format, &mut render_pass);
-            }
-        }
-    }
-
-    fn render_grid(&mut self, render_state: &RenderState, encoder: &mut wgpu::CommandEncoder) {
-        let device = &render_state.device;
-        let queue = &render_state.queue;
-        let mut quad_mesh = self.default_assets.screen_space_quad.write();
-        let mut grid_shader = self.grid_shader.write();
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Scene Grid"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.scene_texture_msaa.view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.scene_depth_texture.view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-            // Render grid
-            let options = PipelineOptions::builder()
-                .samples(self.options.samples)
-                .fragment_targets(vec![Some(RenderUtils::color_alpha_blending(
-                    self.scene_texture_msaa.descriptor.format,
-                ))])
-                .build();
-            grid_shader.build_pipeline(&options);
-            if let Some(pipeline) = grid_shader.get_pipeline(&options) {
-                render_pass.set_pipeline(pipeline);
-                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                quad_mesh.instances.resize(
-                    1,
-                    Instance {
-                        bone_transform_index: -1,
-                        _padding: Default::default(),
-                        transform: Mat4::identity().into(),
-                    },
-                );
-                RenderUtils::render_mesh(device, queue, &mut render_pass, &mut quad_mesh);
-            }
-        }
-    }
-
-    fn render_skybox(&mut self, render_state: &RenderState, encoder: &mut wgpu::CommandEncoder) {
-        if let Some(skybox_ref) = self.skybox.and_then(|id| self.assets.skybox(id)) {
-            let mut skybox = skybox_ref.write();
-            skybox.prepare(
-                SkyboxShaders {
-                    cubemap_shader: &self.skybox_cubemap_shader,
-                    irradiance_cubemap_shader: &self.skybox_irradiance_cubemap_shader,
-                    prefilter_cubemap_shader: &self.skybox_prefilter_cubemap_shader,
-                    brdf_shader: &self.skybox_brdf_shader,
-                    cubemap_mip_shader: &self.skybox_cubemap_mip_shader,
-                },
-                render_state,
-                encoder,
-            );
-
-            let device = &render_state.device;
-            let mut shader = self.skybox_shader.write();
-            let cube_mesh = self.default_assets.cube.read();
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &shader.bind_group_layouts[1],
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&skybox.cubemap.view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&skybox.cubemap.sampler),
-                    },
-                ],
-            });
-            {
-                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("Skybox"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &self.scene_texture_msaa.view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &self.scene_depth_texture.view,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-                let options = PipelineOptions::builder()
-                    .fragment_targets(vec![Some(wgpu::ColorTargetState {
-                        format: self.scene_texture_msaa.descriptor.format,
-                        blend: None,
-                        write_mask: Default::default(),
-                    })])
-                    .samples(self.options.samples)
-                    .cull_mode(Some(wgpu::Face::Front))
-                    .build();
-                shader.build_pipeline(&options);
-                if let Some(pipeline) = shader.get_pipeline(&options) {
-                    render_pass.set_pipeline(pipeline);
-                    render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                    render_pass.set_bind_group(1, &bind_group, &[]);
-                    RenderUtils::bind_mesh_buffers(&mut render_pass, &cube_mesh);
-                    RenderUtils::draw_mesh_instanced(&mut render_pass, &cube_mesh, 0..1);
-                }
             }
         }
     }
@@ -757,7 +558,7 @@ impl SceneRenderer {
                 .or_insert(self.default_assets.screen_space_quad.clone());
             skybox = Some(skybox_id);
         }
-        self.skybox = skybox;
+        self.skybox_renderer.set_skybox(skybox);
         for (_, mut mesh) in self.assets.meshes.lock_write() {
             mesh.instances.clear();
         }
@@ -826,94 +627,6 @@ impl SceneRenderer {
         for (_, mut mesh) in self.assets.meshes.lock_write() {
             RenderUtils::rebuild_mesh_data(&render_state.device, &render_state.queue, &mut mesh);
         }
-    }
-
-    fn build_light_data(&mut self, render_state: &RenderState, scene: &Scene) {
-        let device = &render_state.device;
-        let queue = &render_state.queue;
-
-        let point_lights = Self::collect_point_lights(scene);
-        let size =
-            (16 + std::cmp::max(point_lights.len(), 1) * std::mem::size_of::<PointLight>()) as u64;
-        self.point_light_storage_buffer.resize(device, size);
-        self.point_light_storage_buffer.write_buffer(
-            device,
-            queue,
-            &[point_lights.len() as u32],
-            None,
-        );
-        if !point_lights.is_empty() {
-            self.point_light_storage_buffer.write_buffer(
-                device,
-                queue,
-                point_lights.as_slice(),
-                Some(16),
-            );
-        }
-
-        let directional_lights = Self::collect_directional_lights(scene);
-        let size = (16
-            + std::cmp::max(directional_lights.len(), 1) * std::mem::size_of::<DirectionalLight>())
-            as u64;
-        self.directional_light_storage_buffer.resize(device, size);
-        self.directional_light_storage_buffer.write_buffer(
-            device,
-            queue,
-            &[directional_lights.len() as u32],
-            None,
-        );
-        if !directional_lights.is_empty() {
-            self.directional_light_storage_buffer.write_buffer(
-                device,
-                queue,
-                directional_lights.as_slice(),
-                Some(16),
-            );
-        }
-    }
-
-    fn collect_point_lights(scene: &Scene) -> Vec<PointLight> {
-        let mut point_lights = Vec::new();
-        let mut query = <(Entity, &ComponentPointLight)>::query();
-        for (game_object, light) in query
-            .iter(&scene.world)
-            .filter(|(_, light)| light.active)
-            .filter_map(|(entity, light)| {
-                scene.game_object_from_entity(*entity).map(|go| (go, light))
-            })
-        {
-            let color = light.color.to_normalized_gamma_f32();
-            point_lights.push(PointLight {
-                color: [color[0], color[1], color[2]],
-                radius: light.radius,
-                position: scene.world_transform(game_object).position.into(),
-                ..Default::default()
-            });
-        }
-        point_lights
-    }
-
-    fn collect_directional_lights(scene: &Scene) -> Vec<DirectionalLight> {
-        let mut directional_lights = Vec::new();
-        let mut query = <(Entity, &ComponentDirectionalLight)>::query();
-        for (game_object, light) in query
-            .iter(&scene.world)
-            .filter(|(_, light)| light.active)
-            .filter_map(|(entity, light)| {
-                scene.game_object_from_entity(*entity).map(|go| (go, light))
-            })
-        {
-            let color = light.color.to_normalized_gamma_f32();
-            directional_lights.push(DirectionalLight {
-                color: [color[0], color[1], color[2]],
-                direction: scene
-                    .world_transform(game_object)
-                    .transform_direction(&Vec3::z_axis())
-                    .into(),
-                ..Default::default()
-            })
-        }
-        directional_lights
     }
 
     pub fn scene_texture(&self) -> &Texture {
