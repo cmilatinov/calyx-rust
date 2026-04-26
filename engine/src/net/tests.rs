@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
     use crate::net::{
-        Client, ComponentNetworkObject, GameMessage, MessageHandler, MessageHandlerResult,
-        MessageQueue, Network, NetworkSceneSync, Server,
+        Client, ComponentNetworkObject, GameChannel, GameMessage, MessageHandler,
+        MessageHandlerResult, MessageQueue, Network, NetworkSceneSync, Server,
     };
     use crate::test_harness::TestHarness;
     use crate::test_utils::test_scene;
@@ -144,6 +144,50 @@ mod tests {
     }
 
     #[test]
+    fn protocol_id_is_schema_derived() {
+        assert_ne!(GameMessage::PROTOCOL_ID, 42069);
+        assert_eq!(GameMessage::PROTOCOL_ID, 0xf2e2_c2bd_c6d8_de9e);
+    }
+
+    #[test]
+    fn messages_choose_delivery_channels() {
+        assert_eq!(
+            GameMessage::SyncTime { current_time: 1.0 }.channel(),
+            GameChannel::Unreliable
+        );
+
+        assert_eq!(
+            GameMessage::SyncComponent {
+                time: 1.0,
+                network_object_id: 7,
+                from_client_id: 1,
+                component_uuid: uuid::Uuid::nil(),
+                data: Vec::new(),
+            }
+            .channel(),
+            GameChannel::Unreliable
+        );
+
+        assert_eq!(
+            GameMessage::SelfConnected {
+                client_ids: Vec::new()
+            }
+            .channel(),
+            GameChannel::ReliableUnordered
+        );
+
+        assert_eq!(
+            GameMessage::TransferOwnership {
+                network_object_id: 7,
+                from_client_id: 1,
+                to_client_id: 2,
+            }
+            .channel(),
+            GameChannel::ReliableOrdered
+        );
+    }
+
+    #[test]
     fn network_object_component() {
         let mut scene = test_scene();
         let go = scene.create(None, None);
@@ -239,11 +283,7 @@ mod tests {
             .server
             .as_mut()
             .unwrap()
-            .send_message(
-                client_id,
-                renet::DefaultChannel::ReliableOrdered,
-                &GameMessage::SyncTime { current_time: 99.0 },
-            )
+            .send_message(client_id, &GameMessage::SyncTime { current_time: 99.0 })
             .unwrap();
 
         // Pump to deliver
@@ -311,11 +351,7 @@ mod tests {
             .server
             .as_mut()
             .unwrap()
-            .send_message(
-                client_net_id,
-                renet::DefaultChannel::ReliableOrdered,
-                &GameMessage::SyncTime { current_time: 42.0 },
-            )
+            .send_message(client_net_id, &GameMessage::SyncTime { current_time: 42.0 })
             .unwrap();
 
         // Pump transport only (not full update, which would consume SyncTime)

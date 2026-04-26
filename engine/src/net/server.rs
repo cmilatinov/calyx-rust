@@ -1,8 +1,8 @@
 use crate::error::BoxedError;
-use crate::net::message::GameMessage;
+use crate::net::message::{GameChannel, GameMessage};
 use crate::net::{MessageQueue, ServerEvent};
 use log::{error, info};
-use renet::{ClientId, ConnectionConfig, DefaultChannel, RenetServer};
+use renet::{ClientId, ConnectionConfig, RenetServer};
 use renet_netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig};
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, SystemTime};
@@ -80,21 +80,24 @@ impl Server {
         }
 
         for client_id in server.clients_id() {
-            while let Some((message, _)) = server
-                .receive_message(client_id, DefaultChannel::ReliableOrdered)
-                .and_then(|bytes| {
-                    bincode::serde::decode_from_slice::<GameMessage, _>(
-                        &bytes,
-                        bincode::config::standard(),
-                    )
-                    .map_err(|e| {
-                        error!("Failed to decode message from client {}: {}", client_id, e);
-                        e
-                    })
-                    .ok()
-                })
-            {
-                queue.queue_message(message);
+            for channel in GameChannel::ALL {
+                while let Some((message, _)) =
+                    server
+                        .receive_message(client_id, channel)
+                        .and_then(|bytes| {
+                            bincode::serde::decode_from_slice::<GameMessage, _>(
+                                &bytes,
+                                bincode::config::standard(),
+                            )
+                            .map_err(|e| {
+                                error!("Failed to decode message from client {}: {}", client_id, e);
+                                e
+                            })
+                            .ok()
+                        })
+                {
+                    queue.queue_message(message);
+                }
             }
         }
 
@@ -108,37 +111,31 @@ impl Server {
         )
     }
 
-    pub fn broadcast_message<I: Into<u8>>(
-        &mut self,
-        channel_id: I,
-        message: &GameMessage,
-    ) -> Result<(), BoxedError> {
+    pub fn broadcast_message(&mut self, message: &GameMessage) -> Result<(), BoxedError> {
         let bytes = Self::serialize_message(message)?;
-        self.server.broadcast_message(channel_id.into(), bytes);
+        self.server.broadcast_message(message.channel(), bytes);
         Ok(())
     }
 
-    pub fn broadcast_message_except<I: Into<u8>>(
+    pub fn broadcast_message_except(
         &mut self,
         except_id: ClientId,
-        channel_id: I,
         message: &GameMessage,
     ) -> Result<(), BoxedError> {
         let bytes = Self::serialize_message(message)?;
         self.server
-            .broadcast_message_except(except_id, channel_id.into(), bytes);
+            .broadcast_message_except(except_id, message.channel(), bytes);
         Ok(())
     }
 
-    pub fn send_message<I: Into<u8>>(
+    pub fn send_message(
         &mut self,
         client_id: ClientId,
-        channel_id: I,
         message: &GameMessage,
     ) -> Result<(), BoxedError> {
         let bytes = Self::serialize_message(message)?;
         self.server
-            .send_message(client_id, channel_id.into(), bytes);
+            .send_message(client_id, message.channel(), bytes);
         Ok(())
     }
 

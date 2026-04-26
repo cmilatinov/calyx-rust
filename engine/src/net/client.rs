@@ -1,8 +1,8 @@
 use crate::error::BoxedError;
-use crate::net::message::GameMessage;
+use crate::net::message::{GameChannel, GameMessage};
 use crate::net::MessageQueue;
 use log::{error, info, trace};
-use renet::{ClientId, DefaultChannel, RenetClient};
+use renet::{ClientId, RenetClient};
 use renet_netcode::{ClientAuthentication, NetcodeClientTransport};
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, SystemTime};
@@ -93,9 +93,8 @@ impl Client {
             }
         }
 
-        while let Some((message, _)) = client
-            .receive_message(DefaultChannel::ReliableOrdered)
-            .and_then(|bytes| {
+        for channel in GameChannel::ALL {
+            while let Some((message, _)) = client.receive_message(channel).and_then(|bytes| {
                 bincode::serde::decode_from_slice::<GameMessage, _>(
                     &bytes,
                     bincode::config::standard(),
@@ -105,9 +104,9 @@ impl Client {
                     e
                 })
                 .ok()
-            })
-        {
-            queue.queue_message(message);
+            }) {
+                queue.queue_message(message);
+            }
         }
     }
 
@@ -118,8 +117,7 @@ impl Client {
                 Box::new(e) as Box<dyn std::error::Error + Send + Sync>
             })?;
 
-        self.client
-            .send_message(DefaultChannel::ReliableOrdered, bytes);
+        self.client.send_message(message.channel(), bytes);
         Ok(())
     }
 

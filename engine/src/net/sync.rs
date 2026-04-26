@@ -5,7 +5,6 @@ use crate::net::{
 };
 use crate::resource::ResourceMap;
 use lerp::Lerp;
-use renet::DefaultChannel;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -112,11 +111,7 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>> Synchronized<T> {
             data,
         };
         if let Some(server) = &mut network.server {
-            if let Err(e) = server.broadcast_message_except(
-                self_client_id,
-                DefaultChannel::ReliableOrdered,
-                &message,
-            ) {
+            if let Err(e) = server.broadcast_message_except(self_client_id, &message) {
                 log::warn!("Failed to broadcast SyncComponent: {e}");
             }
         } else {
