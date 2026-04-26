@@ -129,12 +129,13 @@ impl eframe::App for GameApp {
                 };
                 rect = response.rect;
                 let input = Input::from_ctx(ui.ctx(), Some(&response), state);
+                let assets = self.game.assets.lock_read();
                 let GameContext {
                     scenes, resources, ..
                 } = &mut self.game;
                 let scene = scenes.current_scene_mut();
                 scene.prepare();
-                scene.update(resources, &input);
+                scene.update(&assets.registries, resources, &input);
                 ui.painter().text(
                     Pos2::new(0.0, ui.max_rect().height()),
                     Align2::LEFT_BOTTOM,

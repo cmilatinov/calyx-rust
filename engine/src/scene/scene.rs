@@ -558,15 +558,18 @@ impl Scene {
         PhysicsContext::prepare(self);
     }
 
-    pub fn update(&mut self, resources: &mut ResourceMap, input: &Input) {
+    pub fn update(
+        &mut self,
+        registries: &ReadOnlyRegistryContext,
+        resources: &mut ResourceMap,
+        input: &Input,
+    ) {
         {
             let time = resources.time();
             let physics_config = resources.physics_configuration();
             PhysicsContext::update(self, time, physics_config);
         }
-        let component_registry_ref = self.registries.components.clone();
-        let component_registry = component_registry_ref.read();
-        let assets = self.registries.clone();
+        let component_registry = registries.components.read();
 
         // Collect once — each updater's read_component bails early for entities
         // that don't have its component type.
@@ -579,7 +582,7 @@ impl Scene {
             for &game_object in &game_objects {
                 updater.update(
                     ComponentEventContext {
-                        registries: &assets,
+                        registries,
                         scene: self,
                         game_object,
                     },
