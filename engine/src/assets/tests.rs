@@ -4,7 +4,9 @@ mod tests {
     use crate::assets::texture::Texture;
     use crate::test_utils::test_registries_with_assets;
     use crate::utils::TypeUuid;
+    use std::fs;
     use std::path::PathBuf;
+    use uuid::Uuid;
 
     fn asset_registries() -> crate::context::ReadOnlyRegistryContext {
         let assets_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets");
@@ -54,6 +56,21 @@ mod tests {
         assert!(meta.is_some());
         let meta = meta.unwrap();
         assert_eq!(meta.type_uuid, Mesh::type_uuid());
+    }
+
+    #[test]
+    fn corrupt_meta_file_is_skipped() {
+        let asset_path =
+            std::env::temp_dir().join(format!("calyx-corrupt-meta-{}", Uuid::new_v4()));
+        fs::create_dir_all(&asset_path).expect("failed to create temp asset directory");
+        fs::write(asset_path.join("broken.cxmat"), "{}").expect("failed to write test asset");
+        fs::write(asset_path.join("broken.meta"), "not json").expect("failed to write bad meta");
+
+        let registries = test_registries_with_assets(vec![asset_path.clone()]);
+        let registry = registries.assets.read();
+        assert!(registry.asset_id("broken").is_none());
+
+        fs::remove_dir_all(asset_path).expect("failed to remove temp asset directory");
     }
 
     #[test]
