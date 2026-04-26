@@ -1,6 +1,13 @@
 use std::collections::HashMap;
+use std::io::Error;
+use std::path::Path;
 
+use crate as engine;
+use crate::assets::{Asset, AssetRegistry, LoadedAsset};
+use crate::context::ReadOnlyAssetContext;
+use crate::utils::TypeUuid;
 use egui::{Key, Modifiers, PointerButton};
+use serde::{Deserialize, Serialize};
 
 #[derive(Default)]
 pub struct InputState {
@@ -100,10 +107,41 @@ impl<'a> Input<'a> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize, TypeUuid)]
+#[uuid = "ff8bf335-7c0b-4e70-a2f9-4d64d2c2d12d"]
 pub struct ActionMap {
     actions: HashMap<String, Vec<InputBinding>>,
     axes: HashMap<String, AxisBinding>,
+}
+
+impl Asset for ActionMap {
+    fn asset_name() -> &'static str
+    where
+        Self: Sized,
+    {
+        "Action Map"
+    }
+
+    fn file_extensions() -> &'static [&'static str]
+    where
+        Self: Sized,
+    {
+        &["cxinput"]
+    }
+
+    fn from_file(
+        _assets: &ReadOnlyAssetContext,
+        path: &Path,
+    ) -> Result<LoadedAsset<Self>, crate::assets::error::AssetError>
+    where
+        Self: Sized,
+    {
+        LoadedAsset::<Self>::from_json_file(path)
+    }
+
+    fn to_file(&self, path: &Path) -> Result<(), Error> {
+        AssetRegistry::write_to_file(self, path)
+    }
 }
 
 impl Default for ActionMap {
@@ -173,7 +211,7 @@ impl ActionMap {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AxisBinding {
     pub positive: InputBinding,
     pub negative: InputBinding,
@@ -187,7 +225,7 @@ impl AxisBinding {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InputBinding {
     Key(Key),
     PointerButton(PointerButton),
@@ -278,7 +316,7 @@ impl InputBinding {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModifierBinding {
     pub modifiers: Modifiers,
     pub allow_extra: bool,
@@ -355,7 +393,9 @@ impl std::ops::BitOr for ActionState {
 #[cfg(test)]
 mod tests {
     use super::{ActionMap, InputBinding, ModifierBinding};
+    use crate::assets::{Asset, LoadedAsset};
     use egui::{Key, Modifiers};
+    use uuid::Uuid;
 
     #[test]
     fn action_bindings_are_configurable() {
@@ -417,5 +457,25 @@ mod tests {
 
         assert!(binding.matches(Modifiers::SHIFT));
         assert!(binding.matches(shift_ctrl));
+    }
+
+    #[test]
+    fn action_maps_load_from_asset_files() {
+        let asset_path =
+            std::env::temp_dir().join(format!("calyx-input-{}.cxinput", Uuid::new_v4()));
+        let mut map = ActionMap::new();
+        map.bind_action("save", InputBinding::key_combo(Key::S, Modifiers::CTRL));
+        serde_json::to_writer_pretty(
+            std::fs::File::create(&asset_path).expect("failed to create action map asset"),
+            &map,
+        )
+        .expect("failed to write action map asset");
+
+        let loaded =
+            LoadedAsset::<ActionMap>::from_json_file(&asset_path).expect("action map should load");
+
+        assert_eq!(ActionMap::file_extensions(), &["cxinput"]);
+        assert_eq!(loaded.asset.actions["save"].len(), 1);
+        std::fs::remove_file(asset_path).expect("failed to remove temp action map asset");
     }
 }
