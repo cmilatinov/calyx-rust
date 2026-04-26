@@ -5,6 +5,7 @@ use log::trace;
 use nalgebra_glm::Mat4;
 use serde::de::DeserializeSeed;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use uuid::Uuid;
@@ -412,6 +413,7 @@ impl Scene {
     ) {
         let parent = parent.unwrap_or(self.root);
         self.graph.set_parent(game_object, parent, sibling);
+        self.transforms.mark_dirty_subtree(game_object, &self.graph);
     }
 
     pub fn index_in_parent(
@@ -464,6 +466,9 @@ impl Scene {
     ) {
         self.entry_mut(game_object)
             .map(|mut e| e.add_component(component));
+        if TypeId::of::<T>() == TypeId::of::<ComponentTransform>() {
+            self.transforms.mark_dirty_subtree(game_object, &self.graph);
+        }
     }
 
     pub fn bind_component_dyn(&mut self, game_object: GameObject, type_uuid: Uuid) {
@@ -484,6 +489,9 @@ impl Scene {
         let result = component.bind_instance(&mut entry, default_instance);
         if result {
             drop(entry);
+            if type_uuid == ComponentTransform::type_uuid() {
+                self.transforms.mark_dirty_subtree(game_object, &self.graph);
+            }
             // Call the registered reset if one exists for this component type.
             if let Some(resetter) = component_registry.reset_component(type_uuid) {
                 let assets = self.registries.clone();
@@ -528,21 +536,25 @@ impl Scene {
             .map(reader)
     }
 
-    pub fn write_component<T: Component, F: FnOnce(&mut T)>(
+    pub fn write_component<T: Component + 'static, F: FnOnce(&mut T)>(
         &mut self,
         game_object: GameObject,
         writer: F,
     ) -> Option<()> {
         let mut entry = self.entry_mut(game_object);
-        entry
+        let result = entry
             .as_mut()
             .and_then(|entry| entry.get_component_mut::<T>().ok())
-            .map(writer)
+            .map(writer);
+        drop(entry);
+        if result.is_some() && TypeId::of::<T>() == TypeId::of::<ComponentTransform>() {
+            self.transforms.mark_dirty_subtree(game_object, &self.graph);
+        }
+        result
     }
 
     pub fn prepare(&mut self) {
         self.flush_deletes();
-        self.clear_transform_cache();
         PhysicsContext::prepare(self);
     }
 
@@ -674,6 +686,7 @@ impl Scene {
             return;
         };
         c_transform.transform.set_local_matrix(matrix);
+        self.transforms.mark_dirty_subtree(game_object, &self.graph);
     }
 
     pub fn set_world_transform(&mut self, game_object: GameObject, matrix: impl Into<Mat4>) {

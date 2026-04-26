@@ -4,8 +4,8 @@ use petgraph::stable_graph::{DefaultIx, NodeIndex, WalkNeighbors};
 use petgraph::visit::{Bfs, Walker};
 use petgraph::Direction;
 
-use super::GameObject;
 use super::scene::Scene;
+use super::GameObject;
 
 pub enum SiblingDir {
     Before,
@@ -111,6 +111,10 @@ impl SceneGraph {
             .filter_map(|node| self.game_object_from_node(node))
     }
 
+    pub fn descendant_nodes(&self, node: NodeIndex) -> impl Iterator<Item = NodeIndex> + '_ {
+        Bfs::new(&self.arena, node).iter(&self.arena)
+    }
+
     pub fn is_descendant(&self, parent: GameObject, game_object: GameObject) -> bool {
         std::iter::once(parent)
             .chain(self.descendants(parent))
@@ -202,8 +206,7 @@ impl SceneGraph {
         let mut insert_index = None;
         if let Some((sibling, dir)) = sibling {
             if let Some(index) = self.index_in_parent(parent, sibling, dir) {
-                if let Some(current) =
-                    self.index_in_parent(parent, game_object, SiblingDir::Before)
+                if let Some(current) = self.index_in_parent(parent, game_object, SiblingDir::Before)
                 {
                     self.swap_edge_weights(parent, current, index);
                     return;
