@@ -1,5 +1,5 @@
 use super::{LockedAssetRenderState, RenderContext};
-use crate::assets::material::Material;
+use crate::assets::material::{Material, MaterialBindGroupCacheKey};
 use crate::assets::mesh::{Instance, Mesh};
 use crate::assets::skybox::SkyboxShaders;
 use crate::assets::texture::Texture;
@@ -23,6 +23,7 @@ use legion::{Entity, IntoQuery};
 use nalgebra_glm as glm;
 use nalgebra_glm::{Mat4, Vec3};
 use rapier3d::pipeline::DebugRenderPipeline;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::default::Default;
 use std::ops::Deref;
@@ -122,6 +123,12 @@ pub struct SceneRenderer {
     gizmo_renderer: GizmoRenderer,
     assets: AssetRenderState,
     draw_list: Vec<DrawListElement>,
+    material_bind_group_cache: RefCell<HashMap<AssetId, CachedMaterialBindGroups>>,
+}
+
+struct CachedMaterialBindGroups {
+    key: MaterialBindGroupCacheKey,
+    groups: HashMap<u32, wgpu::BindGroup>,
 }
 
 impl SceneRenderer {
@@ -225,6 +232,7 @@ impl SceneRenderer {
             gizmo_renderer,
             assets: Default::default(),
             draw_list: Default::default(),
+            material_bind_group_cache: Default::default(),
         }
     }
 
@@ -770,17 +778,38 @@ impl SceneRenderer {
         device: &wgpu::Device,
         assets: &LockedAssetRenderState,
     ) -> HashMap<AssetId, HashMap<u32, wgpu::BindGroup>> {
+        let live_materials: HashSet<AssetId> = assets.materials.keys().copied().collect();
+        let mut cache = self.material_bind_group_cache.borrow_mut();
+        cache.retain(|mat_id, _| live_materials.contains(mat_id));
+
         let mut bind_groups: HashMap<AssetId, HashMap<u32, wgpu::BindGroup>> = Default::default();
         for (mat_id, mat) in assets.materials.iter() {
-            bind_groups.insert(
-                *mat_id,
-                mat.bind_groups(
-                    device,
-                    &self.asset_context,
-                    assets,
-                    self.default_assets.missing_texture.clone(),
-                ),
+            let key = mat.bind_group_cache_key(
+                &self.asset_context,
+                self.default_assets.missing_texture.clone(),
             );
+
+            let groups = match cache.get(mat_id) {
+                Some(cached) if cached.key == key => cached.groups.clone(),
+                _ => {
+                    let groups = mat.bind_groups(
+                        device,
+                        &self.asset_context,
+                        assets,
+                        self.default_assets.missing_texture.clone(),
+                    );
+                    cache.insert(
+                        *mat_id,
+                        CachedMaterialBindGroups {
+                            key,
+                            groups: groups.clone(),
+                        },
+                    );
+                    groups
+                }
+            };
+
+            bind_groups.insert(*mat_id, groups);
         }
         bind_groups
     }

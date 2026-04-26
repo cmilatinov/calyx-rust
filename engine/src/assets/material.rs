@@ -7,7 +7,7 @@ use super::{AssetAccess, AssetRef, LoadedAsset};
 use crate as engine;
 use crate::assets::error::AssetError;
 use crate::assets::texture::Texture;
-use crate::assets::Asset;
+use crate::assets::{Asset, AssetId};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::{AssetMap, LockedAssetRenderState, Shader};
@@ -17,6 +17,7 @@ use egui_wgpu::{wgpu, RenderState};
 use naga::{ImageDimension, Scalar, ScalarKind, TypeInner, VectorSize};
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum BindingType {
     Buffer,
     Sampler,
@@ -124,6 +125,26 @@ pub struct Material {
 pub struct BindGroupEntry {
     ty: BindingType,
     size: Option<u32>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct MaterialBindGroupCacheKey {
+    shader_id: AssetId,
+    entries: Vec<MaterialBindGroupCacheEntry>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct MaterialBindGroupCacheEntry {
+    group: u32,
+    binding: u32,
+    value: MaterialBindGroupCacheValue,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+enum MaterialBindGroupCacheValue {
+    Buffer { size: Option<u32> },
+    Texture { texture_id: AssetId },
+    Sampler { texture_id: AssetId },
 }
 
 impl Asset for Material {
@@ -259,6 +280,55 @@ impl Material {
                 ))
             })
             .collect()
+    }
+
+    pub(crate) fn bind_group_cache_key(
+        &self,
+        asset_context: &ReadOnlyAssetContext,
+        default_texture: Ref<Texture>,
+    ) -> MaterialBindGroupCacheKey {
+        let entries = self
+            .bind_group_entries
+            .iter()
+            .flat_map(|(group, entries)| {
+                entries.iter().filter_map(|(binding, entry)| {
+                    let value = match entry.ty {
+                        BindingType::Buffer => {
+                            MaterialBindGroupCacheValue::Buffer { size: entry.size }
+                        }
+                        BindingType::Texture => {
+                            let texture_id = self
+                                .find_variable(*group, *binding)?
+                                .value
+                                .as_texture(asset_context, default_texture.clone())
+                                .id();
+                            MaterialBindGroupCacheValue::Texture { texture_id }
+                        }
+                        BindingType::Sampler => {
+                            let texture_id = self
+                                .find_closest_texture_in_group(
+                                    asset_context,
+                                    *group,
+                                    *binding,
+                                    default_texture.clone(),
+                                )
+                                .id();
+                            MaterialBindGroupCacheValue::Sampler { texture_id }
+                        }
+                    };
+                    Some(MaterialBindGroupCacheEntry {
+                        group: *group,
+                        binding: *binding,
+                        value,
+                    })
+                })
+            })
+            .collect();
+
+        MaterialBindGroupCacheKey {
+            shader_id: self.shader.id(),
+            entries,
+        }
     }
 
     fn find_variable(&self, group: u32, binding: u32) -> Option<&ShaderVariable> {
