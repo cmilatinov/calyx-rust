@@ -126,6 +126,7 @@ impl eframe::App for GameApp {
                 let state = InputState {
                     is_active: true,
                     last_cursor_pos: None,
+                    ..Default::default()
                 };
                 rect = response.rect;
                 let input = Input::from_ctx(ui.ctx(), Some(&response), state);
