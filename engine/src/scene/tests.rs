@@ -644,4 +644,38 @@ mod tests {
             assert!(cloned_names.contains(name));
         }
     }
+
+    #[test]
+    fn scene_snapshot_restores_equivalent_scene() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+
+        let parent = scene.create(
+            Some(ComponentID {
+                name: "Snapshot Parent".into(),
+                ..Default::default()
+            }),
+            None,
+        );
+        scene.create(
+            Some(ComponentID {
+                name: "Snapshot Child".into(),
+                ..Default::default()
+            }),
+            Some(parent),
+        );
+
+        let restored = scene.snapshot().into_scene(&registries);
+
+        let restored_parent = restored
+            .objects()
+            .find(|go| restored.name(*go) == "Snapshot Parent")
+            .expect("missing restored parent");
+        let restored_child = restored
+            .children_ordered(restored_parent)
+            .find(|go| restored.name(*go) == "Snapshot Child")
+            .expect("missing restored child");
+
+        assert_eq!(restored.parent(restored_child), Some(restored_parent));
+    }
 }

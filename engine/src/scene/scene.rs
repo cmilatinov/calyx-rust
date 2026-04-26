@@ -43,6 +43,11 @@ pub struct SceneData {
     pub hierarchy: HashMap<Uuid, Vec<Uuid>>,
 }
 
+#[derive(Clone)]
+pub struct SceneSnapshot {
+    data: SceneData,
+}
+
 #[derive(TypeUuid)]
 #[uuid = "9946a2e7-e022-447e-8e60-528da548087f"]
 pub struct Scene {
@@ -136,8 +141,13 @@ impl<'de> DeserializeSeed<'de> for ContextSeed<'de, ReadOnlyAssetContext, Scene>
 
 impl Clone for Scene {
     fn clone(&self) -> Self {
-        let data: SceneData = self.into();
-        (&self.registries, data).into()
+        self.snapshot().into_scene(&self.registries)
+    }
+}
+
+impl SceneSnapshot {
+    pub fn into_scene(self, registries: &ReadOnlyRegistryContext) -> Scene {
+        (registries, self.data).into()
     }
 }
 
@@ -223,6 +233,14 @@ impl From<(&Scene, GameObject)> for SceneData {
 }
 
 impl Scene {
+    pub fn snapshot(&self) -> SceneSnapshot {
+        SceneSnapshot { data: self.into() }
+    }
+
+    pub fn restore_snapshot(&self, snapshot: SceneSnapshot) -> Self {
+        snapshot.into_scene(&self.registries)
+    }
+
     pub(crate) fn game_object_from_entity(&self, entity: Entity) -> Option<GameObject> {
         self.store.game_object_from_entity(entity)
     }
