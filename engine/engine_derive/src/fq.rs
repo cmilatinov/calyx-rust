@@ -1,106 +1,28 @@
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
 
-pub(crate) struct FQAny;
+macro_rules! fq_path {
+    ($name:ident => $path:path) => {
+        pub(crate) struct $name;
 
-pub(crate) struct FQBox;
-
-pub(crate) struct FQClone;
-
-pub(crate) struct FQOption;
-
-pub(crate) struct FQResult;
-
-pub(crate) struct FQReflect;
-
-pub(crate) struct FQReflectedType;
-
-pub(crate) struct FQTraitMeta;
-
-pub(crate) struct FQTraitMetaFrom;
-
-pub(crate) struct FQAttributeValue;
-
-pub(crate) struct FQTypeName;
-
-pub(crate) struct FQTypeUuid;
-
-pub(crate) struct FQResource;
-
-impl ToTokens for FQAny {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        quote!(::core::any::Any).to_tokens(tokens);
-    }
+        impl ToTokens for $name {
+            fn to_tokens(&self, tokens: &mut TokenStream) {
+                quote!($path).to_tokens(tokens);
+            }
+        }
+    };
 }
 
-impl ToTokens for FQBox {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        quote!(::std::boxed::Box).to_tokens(tokens);
-    }
-}
-
-impl ToTokens for FQClone {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        quote!(::core::clone::Clone).to_tokens(tokens);
-    }
-}
-
-impl ToTokens for FQOption {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        quote!(::core::option::Option).to_tokens(tokens);
-    }
-}
-
-impl ToTokens for FQResult {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        quote!(::core::result::Result).to_tokens(tokens);
-    }
-}
-
-impl ToTokens for FQReflect {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        quote!(engine::reflect::Reflect).to_tokens(tokens)
-    }
-}
-
-impl ToTokens for FQReflectedType {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        quote!(engine::reflect::ReflectedType).to_tokens(tokens)
-    }
-}
-
-impl ToTokens for FQTraitMeta {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        quote!(engine::reflect::TraitMeta).to_tokens(tokens)
-    }
-}
-
-impl ToTokens for FQTraitMetaFrom {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        quote!(engine::reflect::TraitMetaFrom).to_tokens(tokens)
-    }
-}
-
-impl ToTokens for FQAttributeValue {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        quote!(engine::reflect::AttributeValue).to_tokens(tokens)
-    }
-}
-
-impl ToTokens for FQTypeName {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        quote!(engine::reflect::TypeName).to_tokens(tokens)
-    }
-}
-
-impl ToTokens for FQTypeUuid {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        quote!(engine::utils::TypeUuid).to_tokens(tokens)
-    }
-}
-
-impl ToTokens for FQResource {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        quote!(engine::resource::Resource).to_tokens(tokens)
-    }
-}
+fq_path!(FQAny => ::core::any::Any);
+fq_path!(FQBox => ::std::boxed::Box);
+fq_path!(FQClone => ::core::clone::Clone);
+fq_path!(FQOption => ::core::option::Option);
+fq_path!(FQResult => ::core::result::Result);
+fq_path!(FQReflect => engine::reflect::Reflect);
+fq_path!(FQReflectedType => engine::reflect::ReflectedType);
+fq_path!(FQTraitMeta => engine::reflect::TraitMeta);
+fq_path!(FQTraitMetaFrom => engine::reflect::TraitMetaFrom);
+fq_path!(FQAttributeValue => engine::reflect::AttributeValue);
+fq_path!(FQTypeName => engine::reflect::TypeName);
+fq_path!(FQTypeUuid => engine::utils::TypeUuid);
+fq_path!(FQResource => engine::resource::Resource);
