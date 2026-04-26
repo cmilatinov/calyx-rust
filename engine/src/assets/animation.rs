@@ -53,7 +53,7 @@ impl Asset for Animation {
         _assets: &ReadOnlyAssetContext,
         _path: &Path,
     ) -> Result<LoadedAsset<Self>, AssetError> {
-        todo!()
+        Err(AssetError::NotFound)
     }
 }
 
@@ -103,5 +103,21 @@ impl Animation {
             duration,
             ticks_per_second,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Animation;
+    use crate::assets::error::AssetError;
+    use crate::assets::Asset;
+    use crate::test_utils::test_game_context;
+    use std::path::Path;
+
+    #[test]
+    fn from_file_returns_error_instead_of_panicking() {
+        let context = test_game_context().assets.lock_read();
+        let result = Animation::from_file(&context, Path::new("missing.cxanim"));
+        assert!(matches!(result, Err(AssetError::NotFound)));
     }
 }
