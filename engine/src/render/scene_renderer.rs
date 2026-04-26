@@ -1,5 +1,5 @@
-use super::{LockedAssetRenderState, RenderContext};
-use crate::assets::material::{Material, MaterialBindGroupCacheKey};
+use super::RenderContext;
+use crate::assets::material::Material;
 use crate::assets::mesh::{Instance, Mesh};
 use crate::assets::texture::Texture;
 use crate::assets::AssetId;
@@ -10,7 +10,8 @@ use crate::math::Transform;
 use crate::render::asset_render_state::AssetRenderState;
 use crate::render::render_utils::RenderUtils;
 use crate::render::{
-    Camera, GizmoRenderer, GridRenderer, LightManager, PipelineOptions, Shader, SkyboxRenderer,
+    Camera, GizmoRenderer, GridRenderer, LightManager, MeshRenderDefaults, MeshRenderTargets,
+    MeshRenderer, PipelineOptions, SkyboxRenderer,
 };
 use crate::scene::Scene;
 use egui::Color32;
@@ -23,7 +24,6 @@ use nalgebra_glm::Mat4;
 use rapier3d::pipeline::DebugRenderPipeline;
 use std::collections::{HashMap, HashSet};
 use std::default::Default;
-use std::ops::Deref;
 use std::ops::Range;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -86,7 +86,7 @@ pub struct SceneRenderer {
     scene_texture: Texture,
     scene_depth_texture: Texture,
     scene_texture_msaa: Texture,
-    scene_shader: Ref<Shader>,
+    mesh_renderer: MeshRenderer,
     grid_renderer: GridRenderer,
     skybox_renderer: SkyboxRenderer,
     camera_uniform_buffer: wgpu::Buffer,
@@ -94,12 +94,6 @@ pub struct SceneRenderer {
     gizmo_renderer: GizmoRenderer,
     assets: AssetRenderState,
     draw_list: Vec<DrawListElement>,
-    material_bind_group_cache: HashMap<AssetId, CachedMaterialBindGroups>,
-}
-
-struct CachedMaterialBindGroups {
-    key: MaterialBindGroupCacheKey,
-    groups: HashMap<u32, wgpu::BindGroup>,
 }
 
 impl SceneRenderer {
@@ -127,10 +121,7 @@ impl SceneRenderer {
             options.samples,
         );
 
-        // Shaders
-        let scene_shader = asset_registry
-            .load::<Shader>("shaders/pbr")
-            .expect("missing scene_shader");
+        let mesh_renderer = MeshRenderer::new(context);
         let skybox_renderer = SkyboxRenderer::new(context);
 
         let camera_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -163,7 +154,7 @@ impl SceneRenderer {
             scene_texture_msaa,
             scene_texture,
             scene_depth_texture,
-            scene_shader,
+            mesh_renderer,
             grid_renderer,
             skybox_renderer,
             camera_uniform_buffer,
@@ -171,7 +162,6 @@ impl SceneRenderer {
             gizmo_renderer,
             assets: Default::default(),
             draw_list: Default::default(),
-            material_bind_group_cache: Default::default(),
         }
     }
 
@@ -250,49 +240,6 @@ impl SceneRenderer {
         queue.submit(Some(encoder.finish()));
     }
 
-    fn scene_bind_group(
-        &self,
-        device: &wgpu::Device,
-        irradiance_map: &Texture,
-        prefilter_map: &Texture,
-        brdf_map: &Texture,
-    ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("scene_bind_group"),
-            layout: &self.scene_shader.read().bind_group_layouts[0],
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.camera_uniform_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&irradiance_map.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&irradiance_map.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&prefilter_map.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::Sampler(&prefilter_map.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: wgpu::BindingResource::TextureView(&brdf_map.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: wgpu::BindingResource::Sampler(&brdf_map.sampler),
-                },
-            ],
-        })
-    }
-
     fn render_meshes(
         &mut self,
         render_state: &RenderState,
@@ -313,94 +260,30 @@ impl SceneRenderer {
         self.build_mesh_data(render_state);
         self.light_manager.build_data(render_state, scene);
         let assets = self.assets.lock(device);
-        let material_bind_groups = Self::build_material_bind_groups(
-            device,
-            &self.asset_context,
-            self.default_assets.missing_texture.clone(),
-            &mut self.material_bind_group_cache,
-            &assets,
-        );
         let black_texture_cube = self.default_assets.black_texture_cube.read();
         let black_texture_2d = self.default_assets.black_texture_2d.read();
-        let (irradiance_map, prefilter_map, brdf_map) = self
-            .skybox_renderer
-            .skybox_id()
-            .and_then(|id| {
-                let skybox = assets.skybox(id)?;
-                Some((
-                    &skybox.irradiance_cubemap,
-                    &skybox.prefilter_cubemap,
-                    &skybox.brdf_map,
-                ))
-            })
-            .unwrap_or((
-                black_texture_cube.deref(),
-                black_texture_cube.deref(),
-                black_texture_2d.deref(),
-            ));
-        let scene_bind_group =
-            self.scene_bind_group(device, irradiance_map, prefilter_map, brdf_map);
-        let light_storage_bind_group = {
-            let scene_shader = self.scene_shader.read();
-            self.light_manager.storage_bind_group(device, &scene_shader)
-        };
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Viewport Scene"),
-                color_attachments: &[Some(RenderUtils::color_attachment(
-                    &self.scene_texture_msaa.view,
-                    self.options.clear_color,
-                ))],
-                depth_stencil_attachment: Some(RenderUtils::depth_stencil_attachment(
-                    &self.scene_depth_texture.view,
-                    1.0,
-                    Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                )),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            let mut last: (AssetId, AssetId, AssetId) = Default::default();
-            for (shader_id, mat_id, mesh_id, instances) in draw_list {
-                let Some(shader) = assets.shader(shader_id) else {
-                    continue;
-                };
-                let Some(mesh) = assets.mesh(mesh_id) else {
-                    continue;
-                };
-                if shader_id != last.0 {
-                    if let Some(pipeline) = shader.get_pipeline(&options) {
-                        render_pass.set_pipeline(pipeline);
-                        render_pass.set_bind_group(0, &scene_bind_group, &[]);
-                        render_pass.set_bind_group(2, &light_storage_bind_group, &[]);
-                    }
-                }
-                if mat_id != last.1 {
-                    if let Some(groups) = material_bind_groups.get(&mat_id) {
-                        for (index, group) in groups {
-                            render_pass.set_bind_group(*index, group, &[]);
-                        }
-                    }
-                }
-                if mesh_id != last.2 {
-                    let Some(mesh_instance_group) = assets.mesh_instance_group(mesh_id) else {
-                        continue;
-                    };
-                    render_pass.set_bind_group(1, mesh_instance_group, &[]);
-                }
-                RenderUtils::bind_mesh_buffers(&mut render_pass, mesh);
-                RenderUtils::draw_mesh_instanced(&mut render_pass, mesh, instances);
-                last = (shader_id, mat_id, mesh_id);
-            }
-
-            // Render gizmos
-            if self.options.gizmos {
-                self.gizmo_renderer
-                    .render_gizmos(self.scene_texture_msaa.descriptor.format, &mut render_pass);
-            }
-        }
+        self.mesh_renderer.render(
+            device,
+            encoder,
+            &self.asset_context,
+            &assets,
+            MeshRenderDefaults {
+                missing_texture: self.default_assets.missing_texture.clone(),
+                black_texture_2d: &black_texture_2d,
+                black_texture_cube: &black_texture_cube,
+            },
+            MeshRenderTargets {
+                color: &self.scene_texture_msaa,
+                depth: &self.scene_depth_texture,
+            },
+            &self.light_manager,
+            &self.camera_uniform_buffer,
+            self.options.clear_color,
+            &options,
+            self.skybox_renderer.skybox_id(),
+            draw_list,
+            self.options.gizmos.then_some(&mut self.gizmo_renderer),
+        );
     }
 
     fn build_draw_list(&mut self) -> Vec<(AssetId, AssetId, AssetId, Range<u32>)> {
@@ -586,41 +469,6 @@ impl SceneRenderer {
                  ..
              }| (*shader_id, *mat_id, *mesh_id),
         );
-    }
-
-    fn build_material_bind_groups(
-        device: &wgpu::Device,
-        asset_context: &ReadOnlyAssetContext,
-        default_texture: Ref<Texture>,
-        cache: &mut HashMap<AssetId, CachedMaterialBindGroups>,
-        assets: &LockedAssetRenderState,
-    ) -> HashMap<AssetId, HashMap<u32, wgpu::BindGroup>> {
-        let live_materials: HashSet<AssetId> = assets.materials.keys().copied().collect();
-        cache.retain(|mat_id, _| live_materials.contains(mat_id));
-
-        let mut bind_groups: HashMap<AssetId, HashMap<u32, wgpu::BindGroup>> = Default::default();
-        for (mat_id, mat) in assets.materials.iter() {
-            let key = mat.bind_group_cache_key(asset_context, default_texture.clone());
-
-            let groups = match cache.get(mat_id) {
-                Some(cached) if cached.key == key => cached.groups.clone(),
-                _ => {
-                    let groups =
-                        mat.bind_groups(device, asset_context, assets, default_texture.clone());
-                    cache.insert(
-                        *mat_id,
-                        CachedMaterialBindGroups {
-                            key,
-                            groups: groups.clone(),
-                        },
-                    );
-                    groups
-                }
-            };
-
-            bind_groups.insert(*mat_id, groups);
-        }
-        bind_groups
     }
 
     fn build_mesh_data(&mut self, render_state: &RenderState) {
