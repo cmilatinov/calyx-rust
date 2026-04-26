@@ -49,13 +49,15 @@ impl SceneManager {
 
     pub fn load_default_scene(&mut self) {
         self.stop_simulation();
-        self.current_scene = self.default_scene.read().clone();
+        let snapshot = self.default_scene.read().snapshot();
+        self.current_scene = self.current_scene.restore_snapshot(snapshot);
     }
 
     pub fn load_scene(&mut self, scene: ReadOnlyRef<Scene>) {
         self.stop_simulation();
 
-        self.current_scene = scene.read().clone();
+        let snapshot = scene.read().snapshot();
+        self.current_scene = self.current_scene.restore_snapshot(snapshot);
         if let Some(asset_meta) = self.asset_registry.read().asset_meta_from_ref(&scene) {
             self.current_scene_meta = SceneMeta {
                 file: asset_meta.path.clone(),
@@ -69,7 +71,8 @@ impl SceneManager {
 
     pub fn start_simulation(&mut self) {
         if self.simulation_scene.is_none() {
-            self.simulation_scene = Some(self.current_scene.clone());
+            let snapshot = self.current_scene.snapshot();
+            self.simulation_scene = Some(self.current_scene.restore_snapshot(snapshot));
         }
 
         self.simulation_running = true;
