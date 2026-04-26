@@ -99,3 +99,29 @@ impl GridRenderer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::test_asset_context_with_assets;
+    use egui_wgpu::wgpu::util::DeviceExt;
+    use std::path::PathBuf;
+
+    #[test]
+    fn creates_camera_bind_group_from_grid_shader_layout() {
+        let assets_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets");
+        let assets_path = dunce::canonicalize(assets_path).expect("assets dir not found");
+        let context = test_asset_context_with_assets(vec![assets_path]);
+        let read_only_context = context.lock_read();
+        let device = read_only_context.render_context.device();
+        let camera_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("test_camera_uniform_buffer"),
+            contents: &[0; 272],
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let renderer = GridRenderer::new(&read_only_context, device, &camera_uniform_buffer);
+
+        let _ = renderer.camera_bind_group();
+    }
+}

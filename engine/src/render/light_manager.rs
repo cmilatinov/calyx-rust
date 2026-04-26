@@ -157,3 +157,73 @@ impl LightManager {
         directional_lights
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::component::{ComponentDirectionalLight, ComponentPointLight};
+    use crate::test_utils::test_scene;
+    use egui::Color32;
+    use nalgebra_glm::{translation, vec3};
+
+    #[test]
+    fn collect_point_lights_includes_active_lights() {
+        let mut scene = test_scene();
+        let active = scene.create(None, None);
+        scene.set_world_transform(active, translation(&vec3(1.0, 2.0, 3.0)));
+        scene.add_component(
+            active,
+            ComponentPointLight {
+                radius: 7.5,
+                color: Color32::RED,
+                ..Default::default()
+            },
+        );
+
+        let inactive = scene.create(None, None);
+        scene.add_component(
+            inactive,
+            ComponentPointLight {
+                active: false,
+                radius: 99.0,
+                color: Color32::BLUE,
+            },
+        );
+
+        let lights = LightManager::collect_point_lights(&scene);
+
+        assert_eq!(lights.len(), 1);
+        assert_eq!(lights[0].position, [1.0, 2.0, 3.0]);
+        assert_eq!(lights[0].radius, 7.5);
+        assert_eq!(lights[0].color, [1.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn collect_directional_lights_includes_active_lights() {
+        let mut scene = test_scene();
+        let active = scene.create(None, None);
+        scene.add_component(
+            active,
+            ComponentDirectionalLight {
+                color: Color32::GREEN,
+                ..Default::default()
+            },
+        );
+
+        let inactive = scene.create(None, None);
+        scene.add_component(
+            inactive,
+            ComponentDirectionalLight {
+                active: false,
+                color: Color32::BLUE,
+                ..Default::default()
+            },
+        );
+
+        let lights = LightManager::collect_directional_lights(&scene);
+
+        assert_eq!(lights.len(), 1);
+        assert_eq!(lights[0].direction, [0.0, 0.0, 1.0]);
+        assert_eq!(lights[0].color, [0.0, 1.0, 0.0]);
+    }
+}

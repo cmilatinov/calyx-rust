@@ -20,9 +20,8 @@ pub fn test_render_context() -> Arc<RenderContext> {
         force_fallback_adapter: false,
     }))
     .expect("no wgpu adapter found");
-    let (device, queue) =
-        pollster::block_on(adapter.request_device(&Default::default(), None))
-            .expect("failed to create wgpu device");
+    let (device, queue) = pollster::block_on(adapter.request_device(&Default::default(), None))
+        .expect("failed to create wgpu device");
     Arc::new(RenderContext::headless(Arc::new(device), Arc::new(queue)))
 }
 
@@ -65,6 +64,26 @@ pub fn test_registries_with_assets(asset_paths: Vec<PathBuf>) -> ReadOnlyRegistr
         assets: asset_registry.readonly(),
         types: type_registry.readonly(),
         components: component_registry.readonly(),
+    }
+}
+
+pub fn test_asset_context_with_assets(asset_paths: Vec<PathBuf>) -> AssetContext {
+    let render_context = test_render_context();
+    let type_registry = build_type_registry();
+    let component_registry = Ref::new(ComponentRegistry::new(&type_registry.read()));
+    let asset_registry = AssetRegistry::new_test_with_assets(
+        asset_paths,
+        render_context.clone(),
+        type_registry.clone(),
+        component_registry.clone(),
+    );
+    AssetContext {
+        render_context,
+        registries: RegistryContext {
+            types: type_registry,
+            components: component_registry,
+            assets: asset_registry,
+        },
     }
 }
 
