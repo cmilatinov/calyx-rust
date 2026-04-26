@@ -20,6 +20,7 @@ use egui::Color32;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::{wgpu, RenderState};
 use legion::{Entity, IntoQuery};
+use log::warn;
 use nalgebra_glm as glm;
 use nalgebra_glm::{Mat4, Vec3};
 use rapier3d::pipeline::DebugRenderPipeline;
@@ -131,12 +132,20 @@ struct CachedMaterialBindGroups {
 }
 
 impl SceneRenderer {
-    pub fn new(context: &ReadOnlyAssetContext, mut options: SceneRendererOptions) -> Self {
+    pub fn new(
+        context: &ReadOnlyAssetContext,
+        mut options: SceneRendererOptions,
+        initial_size: (u32, u32),
+    ) -> Self {
         let render_state = context.render_context.render_state();
         let asset_registry = context.registries.assets.read();
         let device = &render_state.device;
-        let width = 1280;
-        let height = 720;
+        let (width, height) = if initial_size.0 == 0 || initial_size.1 == 0 {
+            warn!("SceneRenderer created before a valid render size was available; using 1x1 initial textures");
+            (1, 1)
+        } else {
+            initial_size
+        };
         options.samples = options.samples.max(1);
 
         // Textures
@@ -870,9 +879,7 @@ impl SceneRenderer {
             .iter(&scene.world)
             .filter(|(_, light)| light.active)
             .filter_map(|(entity, light)| {
-                scene
-                    .game_object_from_entity(*entity)
-                    .map(|go| (go, light))
+                scene.game_object_from_entity(*entity).map(|go| (go, light))
             })
         {
             let color = light.color.to_normalized_gamma_f32();
@@ -893,9 +900,7 @@ impl SceneRenderer {
             .iter(&scene.world)
             .filter(|(_, light)| light.active)
             .filter_map(|(entity, light)| {
-                scene
-                    .game_object_from_entity(*entity)
-                    .map(|go| (go, light))
+                scene.game_object_from_entity(*entity).map(|go| (go, light))
             })
         {
             let color = light.color.to_normalized_gamma_f32();

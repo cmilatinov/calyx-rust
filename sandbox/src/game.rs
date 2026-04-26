@@ -63,6 +63,7 @@ impl GameApp {
                     grid: true,
                     ..Default::default()
                 },
+                Self::initial_render_size(&cc.egui_ctx),
             ),
             fps_counter: 0,
             fps: 0,
@@ -80,6 +81,17 @@ impl GameApp {
         (
             (pixels_per_point * rect.width()) as u32,
             (pixels_per_point * rect.height()) as u32,
+        )
+    }
+
+    fn initial_render_size(ctx: &Context) -> (u32, u32) {
+        let Some(window_size) = ctx.input(|i| i.viewport().inner_rect) else {
+            return (0, 0);
+        };
+        let pixels_per_point = ctx.pixels_per_point();
+        (
+            (pixels_per_point * window_size.width()) as u32,
+            (pixels_per_point * window_size.height()) as u32,
         )
     }
 }
