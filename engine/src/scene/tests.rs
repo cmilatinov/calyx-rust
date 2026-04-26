@@ -380,6 +380,22 @@ mod tests {
         assert!((t.position - Vec3::new(1.0, 0.0, 0.0)).norm() < 1e-5);
     }
 
+    #[test]
+    fn transform_cache_marks_descendants_dirty() {
+        let mut scene = test_scene();
+        let parent = scene.create(None, None);
+        let child = scene.create(None, Some(parent));
+
+        scene.set_transform(parent, &glm::translation(&Vec3::new(1.0, 0.0, 0.0)));
+        scene.set_transform(child, &glm::translation(&Vec3::new(0.0, 1.0, 0.0)));
+        let world = scene.world_transform(child);
+        assert!((world.position - Vec3::new(1.0, 1.0, 0.0)).norm() < 1e-5);
+
+        scene.set_transform(parent, &glm::translation(&Vec3::new(5.0, 0.0, 0.0)));
+        let world = scene.world_transform(child);
+        assert!((world.position - Vec3::new(5.0, 1.0, 0.0)).norm() < 1e-5);
+    }
+
     // --- Components ---
 
     #[test]
