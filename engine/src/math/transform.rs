@@ -1,6 +1,6 @@
 use nalgebra::{Quaternion, Unit, UnitQuaternion};
 use nalgebra_glm as glm;
-use nalgebra_glm::{DQuat, DVec3, Mat3, Mat4, Quat, Vec3, Vec4};
+use nalgebra_glm::{DQuat, DVec3, Mat4, Quat, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 
 use crate as engine;
@@ -146,32 +146,7 @@ impl Transform {
     pub fn inverse_matrix(&self) -> Mat4 {
         let inv_scale = Vec3::new(1.0 / self.scale.x, 1.0 / self.scale.y, 1.0 / self.scale.z);
         let inv_rot = self.rotation.conjugate();
-
-        // Build inverse matrix directly
-        let rot_mat = inv_rot.to_rotation_matrix();
-        let scaled_rot = rot_mat.matrix() * Mat3::from_diagonal(&inv_scale);
-
-        // Apply inverse translation
-        let inv_translation = -(scaled_rot * self.position);
-
-        Mat4::new(
-            scaled_rot[(0, 0)],
-            scaled_rot[(0, 1)],
-            scaled_rot[(0, 2)],
-            inv_translation.x,
-            scaled_rot[(1, 0)],
-            scaled_rot[(1, 1)],
-            scaled_rot[(1, 2)],
-            inv_translation.y,
-            scaled_rot[(2, 0)],
-            scaled_rot[(2, 1)],
-            scaled_rot[(2, 2)],
-            inv_translation.z,
-            0.0,
-            0.0,
-            0.0,
-            1.0,
-        )
+        glm::scaling(&inv_scale) * glm::quat_to_mat4(&inv_rot) * glm::translation(&-self.position)
     }
 
     pub fn nlerp(transforms: impl Iterator<Item = (f32, Transform)>) -> Transform {
@@ -287,7 +262,7 @@ mod tests {
         let t = Transform::from_components(
             Vec3::new(3.0, -1.0, 2.0),
             UnitQuaternion::from_euler_angles(0.5, -0.3, 0.1),
-            Vec3::new(1.0, 1.0, 1.0),
+            Vec3::new(2.0, 3.0, 4.0),
         );
         let identity = t.matrix() * t.inverse_matrix();
         for i in 0..4 {

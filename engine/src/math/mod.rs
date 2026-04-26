@@ -1,6 +1,6 @@
 use approx::AbsDiffEq;
 use mint::Vector2;
-use nalgebra::UnitQuaternion;
+use nalgebra::{Matrix3, UnitQuaternion};
 use nalgebra_glm as glm;
 use nalgebra_glm::{vec3, Mat4, Vec3};
 
@@ -22,12 +22,29 @@ pub fn decompose_transform(
     scale: &mut Vec3,
 ) {
     *translation = vec3(matrix.m14, matrix.m24, matrix.m34);
-    let sx = glm::length(&vec3(matrix.m11, matrix.m21, matrix.m31));
-    let sy = glm::length(&vec3(matrix.m12, matrix.m22, matrix.m32));
-    let sz = glm::length(&vec3(matrix.m13, matrix.m23, matrix.m33));
+    let mut x_axis = vec3(matrix.m11, matrix.m21, matrix.m31);
+    let mut y_axis = vec3(matrix.m12, matrix.m22, matrix.m32);
+    let mut z_axis = vec3(matrix.m13, matrix.m23, matrix.m33);
+    let mut sx = glm::length(&x_axis);
+    let sy = glm::length(&y_axis);
+    let sz = glm::length(&z_axis);
+    if sx > 0.0 {
+        x_axis /= sx;
+    }
+    if sy > 0.0 {
+        y_axis /= sy;
+    }
+    if sz > 0.0 {
+        z_axis /= sz;
+    }
+    if Matrix3::from_columns(&[x_axis, y_axis, z_axis]).determinant() < 0.0 {
+        sx = -sx;
+        x_axis = -x_axis;
+    }
     *scale = vec3(sx, sy, sz);
+    let rotation_matrix = Matrix3::from_columns(&[x_axis, y_axis, z_axis]);
     *rotation = UnitQuaternion::from_matrix_eps(
-        &glm::mat4_to_mat3(matrix),
+        &rotation_matrix,
         f32::default_epsilon(),
         100,
         UnitQuaternion::identity(),
@@ -76,7 +93,26 @@ mod tests {
     fn compose_decompose_round_trip() {
         let pos = vec3(1.0f32, 2.0, 3.0);
         let rot = UnitQuaternion::from_euler_angles(0.1, 0.2, 0.3);
-        let scale = vec3(1.0f32, 1.0, 1.0);
+        let scale = vec3(2.0f32, 3.0, 4.0);
+
+        let mat = compose_transform(&pos, &rot, &scale);
+
+        let mut out_pos = Vec3::zeros();
+        let mut out_rot = UnitQuaternion::identity();
+        let mut out_scale = Vec3::zeros();
+        decompose_transform(&mat, &mut out_pos, &mut out_rot, &mut out_scale);
+
+        assert_abs_diff_eq!(out_pos, pos, epsilon = 1e-5);
+        assert_abs_diff_eq!(out_scale, scale, epsilon = 1e-5);
+        let dot = rot.quaternion().dot(out_rot.quaternion()).abs();
+        assert_abs_diff_eq!(dot, 1.0, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn decompose_transform_preserves_negative_scale() {
+        let pos = vec3(1.0f32, 2.0, 3.0);
+        let rot = UnitQuaternion::from_euler_angles(0.1, 0.2, 0.3);
+        let scale = vec3(-2.0f32, 3.0, 4.0);
 
         let mat = compose_transform(&pos, &rot, &scale);
 
