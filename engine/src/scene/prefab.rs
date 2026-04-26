@@ -150,10 +150,19 @@ impl Asset for Prefab {
             let file = std::fs::OpenOptions::new()
                 .read(true)
                 .open(path)
-                .map_err(|_| AssetError::LoadError)?;
+                .map_err(|err| {
+                    AssetError::LoadError
+                        .with_path(path)
+                        .with_type(Self::asset_name())
+                        .with_source(err)
+                })?;
             let reader = BufReader::new(file);
-            let data: PrefabData =
-                serde_json::from_reader(reader).map_err(|_| AssetError::LoadError)?;
+            let data: PrefabData = serde_json::from_reader(reader).map_err(|err| {
+                AssetError::LoadError
+                    .with_path(path)
+                    .with_type(Self::asset_name())
+                    .with_source(err)
+            })?;
             Ok(LoadedAsset::new(data.into()))
         }
     }

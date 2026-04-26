@@ -57,18 +57,29 @@ impl Asset for Shader {
             .unwrap_or("shader")
             .to_string();
         let source = ShaderPreprocessor::load_shader_source(&game.registries.assets.read(), path)
-            .map_err(|_| AssetError::LoadError)?;
+            .map_err(|err| {
+            AssetError::LoadError
+                .with_path(path)
+                .with_type(Self::asset_name())
+                .with_source(err)
+        })?;
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(
-                path.file_stem()
-                    .and_then(|f| f.to_str())
-                    .ok_or(AssetError::LoadError)?,
+                path.file_stem().and_then(|f| f.to_str()).ok_or(
+                    AssetError::LoadError
+                        .with_path(path)
+                        .with_type(Self::asset_name()),
+                )?,
             ),
             source: ShaderSource::Wgsl(Cow::Borrowed(source.as_str())),
         });
 
-        let module =
-            naga::front::wgsl::parse_str(source.as_str()).map_err(|_| AssetError::LoadError)?;
+        let module = naga::front::wgsl::parse_str(source.as_str()).map_err(|err| {
+            AssetError::LoadError
+                .with_path(path)
+                .with_type(Self::asset_name())
+                .with_source(err.emit_to_string(source.as_str()))
+        })?;
 
         let ty = Self::shader_type(&module);
         let bind_group_entries = Self::bind_group_entries(&module);

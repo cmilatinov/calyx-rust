@@ -40,9 +40,13 @@ impl Asset for Texture {
         game: &ReadOnlyAssetContext,
         path: &Path,
     ) -> Result<LoadedAsset<Self>, AssetError> {
-        let reader = ImageReader::open(path).map_err(|_| AssetError::LoadError)?;
-        let texture_data =
-            Self::transform_texture(reader.decode().map_err(|_| AssetError::LoadError)?);
+        let reader = ImageReader::open(path)
+            .map_err(|err| AssetError::LoadError.with_path(path).with_source(err))?;
+        let texture_data = Self::transform_texture(
+            reader
+                .decode()
+                .map_err(|err| AssetError::LoadError.with_path(path).with_source(err))?,
+        );
         let texture_depth = texture_data.color().bytes_per_pixel() as u32;
         let texture_format = Self::texture_format(texture_data.color());
         let texture_name = path.file_name().unwrap().to_str().unwrap();
