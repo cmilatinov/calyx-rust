@@ -17,12 +17,13 @@ pub mod reflect;
 pub mod render;
 pub mod resource;
 pub mod scene;
+pub mod test_support;
 pub mod utils;
 
 #[cfg(test)]
-pub mod test_utils;
-#[cfg(test)]
 pub mod test_harness;
+#[cfg(test)]
+pub mod test_utils;
 
 pub use engine_derive::*;
 use inventory::collect;

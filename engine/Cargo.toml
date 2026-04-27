@@ -55,6 +55,6 @@ log.workspace = true
 dirs.workspace = true
 env_logger.workspace = true
 russimp-ng.workspace = true
+pollster.workspace = true
 
 [dev-dependencies]
-pollster.workspace = true

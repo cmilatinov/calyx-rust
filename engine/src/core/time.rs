@@ -58,6 +58,13 @@ impl Time {
         self.last_time = Instant::now();
     }
 
+    pub fn advance_by(&mut self, delta: TimeType) {
+        self.static_delta_time = delta;
+        self.static_time += delta;
+        self.delta_time = delta * self.time_scale;
+        self.time += self.delta_time;
+    }
+
     pub fn timer(&self, name: &'static str) -> TimeType {
         let mut timers = self.timers.borrow_mut();
         let instant = timers.entry(name).or_insert(Instant::now());

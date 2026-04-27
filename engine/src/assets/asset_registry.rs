@@ -161,7 +161,6 @@ impl AssetRegistry {
     }
 }
 
-#[cfg(test)]
 impl AssetRegistry {
     pub fn new_test(
         root_path: impl Into<PathBuf>,
@@ -188,7 +187,6 @@ impl AssetRegistry {
     }
 }
 
-#[cfg(test)]
 impl AssetRegistry {
     pub fn new_test_with_assets(
         asset_paths: Vec<PathBuf>,

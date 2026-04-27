@@ -237,6 +237,10 @@ impl Scene {
         SceneSnapshot { data: self.into() }
     }
 
+    pub(crate) fn registries(&self) -> &ReadOnlyRegistryContext {
+        &self.registries
+    }
+
     pub fn restore_snapshot(&self, snapshot: SceneSnapshot) -> Self {
         snapshot.into_scene(&self.registries)
     }
