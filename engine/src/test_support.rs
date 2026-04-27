@@ -13,7 +13,7 @@ use egui_wgpu::wgpu;
 use nalgebra_glm::{distance, Mat4, Vec3};
 use std::fmt::Debug;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 const DEFAULT_TEST_SCREEN_SIZE: Vec2 = Vec2::new(1280.0, 720.0);
@@ -22,19 +22,29 @@ const MAX_CONNECT_ITERS: usize = 100;
 pub const FIXED_TEST_STEP_SECONDS: f32 = 1.0 / 60.0;
 
 pub fn test_render_context() -> Arc<RenderContext> {
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::all(),
-        ..Default::default()
-    });
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::LowPower,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    }))
-    .expect("no wgpu adapter found");
-    let (device, queue) = pollster::block_on(adapter.request_device(&Default::default(), None))
-        .expect("failed to create wgpu device");
-    Arc::new(RenderContext::headless(Arc::new(device), Arc::new(queue)))
+    static RENDER_CONTEXT: OnceLock<Arc<RenderContext>> = OnceLock::new();
+    RENDER_CONTEXT
+        .get_or_init(|| {
+            let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+                backends: wgpu::Backends::all(),
+                ..Default::default()
+            });
+            let request_adapter = |force_fallback_adapter| {
+                pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::LowPower,
+                    compatible_surface: None,
+                    force_fallback_adapter,
+                }))
+            };
+            let adapter = request_adapter(false)
+                .or_else(|| request_adapter(true))
+                .expect("no wgpu adapter found, including fallback adapter");
+            let (device, queue) =
+                pollster::block_on(adapter.request_device(&Default::default(), None))
+                    .expect("failed to create wgpu device");
+            Arc::new(RenderContext::headless(Arc::new(device), Arc::new(queue)))
+        })
+        .clone()
 }
 
 fn build_type_registry() -> Ref<TypeRegistry> {
