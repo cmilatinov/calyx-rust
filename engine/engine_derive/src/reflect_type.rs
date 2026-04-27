@@ -7,7 +7,9 @@ use crate::reflect_impl::{
 use darling::ast::NestedMeta;
 use proc_macro2::{Ident, Span};
 use quote::quote;
-use syn::{Attribute, DeriveInput, Expr, ExprLit, Fields, Lit, LitStr, Meta, MetaNameValue, Path};
+use syn::{
+    Attribute, Data, DeriveInput, Expr, ExprLit, Fields, Lit, LitStr, Meta, MetaNameValue, Path,
+};
 
 #[derive(Debug)]
 struct ReflectAttribute {
@@ -77,17 +79,57 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
     let name = &ast.ident;
     let attrs = &ast.attrs;
 
-    if !has_repr_c(&attrs) {
-        panic!("Reflect requires #[repr(C)]");
+    let mut trait_paths = None;
+    let mut reflect_attrs = quote! { [].into() };
+    for attr in attrs {
+        if attr.path().is_ident("reflect") {
+            trait_paths = Some(reflect_trait_paths(attr).unwrap());
+        } else if attr.path().is_ident("reflect_attr") {
+            reflect_attrs = attribute_map(&reflect_attributes(attr).unwrap());
+        }
     }
 
-    let fields = match &ast.data {
-        syn::Data::Struct(s) => &s.fields,
-        _ => panic!("Reflect only works on structs!"),
+    let reflect_impls = type_name_and_reflect_impls(name);
+    let register_traits_impl = register_trait_meta_impls(name, trait_paths.unwrap_or_default());
+    let register_type_info = match &ast.data {
+        Data::Struct(s) => {
+            if !has_repr_c(attrs) {
+                panic!("Reflect requires #[repr(C)]");
+            }
+            struct_type_info(name, &s.fields, &reflect_attrs)
+        }
+        Data::Enum(e) => enum_type_info(name, e.variants.iter(), &reflect_attrs),
+        _ => panic!("Reflect only works on structs and enums!"),
     };
+    let reflected_type_impl = reflected_type_impl(
+        name,
+        quote! {
+            #register_type_info
+            #register_traits_impl
+        },
+        quote! {
+            inventory::submit!(
+                crate::ReflectRegistrationFn {
+                    name: stringify!(#name),
+                    function: <#name as engine::reflect::ReflectedType>::register
+                }
+            );
+        },
+    );
 
+    TokenStream::from(quote! {
+        #reflect_impls
+        #reflected_type_impl
+    })
+}
+
+fn struct_type_info(
+    name: &Ident,
+    fields: &Fields,
+    reflect_attrs: &proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
     let mut field_info = Vec::new();
-    if let Fields::Named(named) = &fields {
+    if let Fields::Named(named) = fields {
         for field in &named.named {
             let doc = match field
                 .attrs
@@ -164,39 +206,60 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
         }
     });
 
-    let mut trait_paths = None;
-    let mut reflect_attrs = quote! { [].into() };
-    for attr in attrs {
-        if attr.path().is_ident("reflect") {
-            trait_paths = Some(reflect_trait_paths(attr).unwrap());
-        } else if attr.path().is_ident("reflect_attr") {
-            reflect_attrs = attribute_map(&reflect_attributes(attr).unwrap());
-        }
+    quote! {
+        registry.meta_struct::<#name>(#reflect_attrs)
+            #(#add_field_calls)*;
     }
+}
 
-    let reflect_impls = type_name_and_reflect_impls(name);
-    let register_traits_impl = register_trait_meta_impls(name, trait_paths.unwrap_or_default());
-    let reflected_type_impl = reflected_type_impl(
-        name,
+fn enum_type_info<'a>(
+    name: &Ident,
+    variants: impl Iterator<Item = &'a syn::Variant>,
+    reflect_attrs: &proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    let add_variant_calls = variants.map(|variant| {
+        let variant_name = variant.ident.to_string();
+        let variant_name = LitStr::new(variant_name.as_str(), Span::call_site());
+        let fields = enum_variant_fields(&variant.fields);
         quote! {
-            registry.meta_struct::<#name>(#reflect_attrs)
-                #(#add_field_calls)*;
-            #register_traits_impl
-        },
-        quote! {
-            inventory::submit!(
-                crate::ReflectRegistrationFn {
-                    name: stringify!(#name),
-                    function: <#name as engine::reflect::ReflectedType>::register
+            .variant(#variant_name, vec![#(#fields),*])
+        }
+    });
+
+    quote! {
+        registry.meta_enum::<#name>(#reflect_attrs)
+            #(#add_variant_calls)*;
+    }
+}
+
+fn enum_variant_fields(fields: &Fields) -> Vec<proc_macro2::TokenStream> {
+    fields
+        .iter()
+        .enumerate()
+        .map(|(index, field)| {
+            let ty = &field.ty;
+            let name = field
+                .ident
+                .as_ref()
+                .map(|ident| {
+                    let name = ident.to_string();
+                    let name = LitStr::new(name.as_str(), Span::call_site());
+                    quote! { Some(#name) }
+                })
+                .unwrap_or_else(|| {
+                    let _ = index;
+                    quote! { None }
+                });
+            quote! {
+                engine::reflect::EnumVariantFieldInfo {
+                    name: #name,
+                    type_id: std::any::TypeId::of::<#ty>(),
+                    type_uuid: <#ty as engine::utils::TypeUuid>::type_uuid(),
+                    type_name: std::any::type_name::<#ty>(),
                 }
-            );
-        },
-    );
-
-    TokenStream::from(quote! {
-        #reflect_impls
-        #reflected_type_impl
-    })
+            }
+        })
+        .collect()
 }
 
 fn reflect_attributes(attr: &Attribute) -> darling::Result<Vec<ReflectAttribute>> {
