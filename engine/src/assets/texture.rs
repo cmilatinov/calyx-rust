@@ -8,7 +8,7 @@ use crate::assets::error::AssetError;
 use crate::assets::Asset;
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
-use crate::render::{RenderContext, Shader};
+use crate::render::{PipelineOptions, RenderContext, RenderUtils, Shader};
 use crate::utils::TypeUuid;
 use crate::{self as engine};
 
@@ -55,12 +55,13 @@ impl Asset for Texture {
             height: texture_data.height(),
             depth_or_array_layers: 1,
         };
+        let mip_level_count = Self::mip_level_count(texture_size.width, texture_size.height);
         let texture = Self::new(
             game.render_context.clone(),
             &wgpu::TextureDescriptor {
                 label: Some(texture_name),
                 size: texture_size,
-                mip_level_count: 1,
+                mip_level_count,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: texture_format,
@@ -98,12 +99,17 @@ impl Asset for Texture {
             },
             texture_size,
         );
+        texture.generate_2d_mips(game)?;
         Ok(LoadedAsset::new(texture))
     }
 }
 
 impl Texture {
     const WORKGROUP_SIZE: f32 = 8.0;
+
+    fn mip_level_count(width: u32, height: u32) -> u32 {
+        width.max(height).ilog2() + 1
+    }
 
     pub fn new(
         render_context: Arc<RenderContext>,
@@ -190,6 +196,86 @@ impl Texture {
             mip_level_count: Some(1),
             ..Default::default()
         })
+    }
+
+    fn generate_2d_mips(&self, context: &ReadOnlyAssetContext) -> Result<(), AssetError> {
+        if self.descriptor.dimension != wgpu::TextureDimension::D2
+            || self.descriptor.size.depth_or_array_layers != 1
+            || self.descriptor.mip_level_count <= 1
+        {
+            return Ok(());
+        }
+
+        let (mip_shader_ref, screen_space_quad_ref) = {
+            let asset_registry = context.registries.assets.read();
+            (
+                asset_registry.load::<Shader>("shaders/mip_generator_2d")?,
+                asset_registry
+                    .screen_space_quad()
+                    .ok_or_else(|| AssetError::NotFound.with_source("screen_space_quad"))?,
+            )
+        };
+        let device = context.render_context.device();
+        let queue = context.render_context.queue();
+        let mut mip_shader = mip_shader_ref.write();
+        let mut screen_space_quad = screen_space_quad_ref.write();
+        let options = PipelineOptions::builder()
+            .fragment_targets(vec![Some(wgpu::ColorTargetState {
+                format: self.descriptor.format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })])
+            .depth_stencil(None)
+            .build();
+        mip_shader.build_pipeline(&options);
+        let Some(pipeline) = mip_shader.get_pipeline(&options) else {
+            return Ok(());
+        };
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("texture_mip_encoder"),
+        });
+        let mut src_view = self.create_mip_view(0);
+
+        for mip_level in 1..self.descriptor.mip_level_count {
+            let dst_view = self.create_mip_view(mip_level);
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("texture_mip_bind_group"),
+                layout: &mip_shader.bind_group_layouts[0],
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&src_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                ],
+            });
+            {
+                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Texture 2D Mip Generation"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &dst_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, &bind_group, &[]);
+                RenderUtils::render_mesh(device, queue, &mut render_pass, &mut screen_space_quad);
+            }
+            src_view = dst_view;
+        }
+
+        queue.submit(Some(encoder.finish()));
+        Ok(())
     }
 
     pub fn create_cubemap_array_view(&self, mip_level: Option<u32>) -> wgpu::TextureView {
@@ -320,5 +406,24 @@ impl Drop for Texture {
             let renderer = self.render_context.renderer();
             renderer.write().free_texture(&handle.id());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Texture;
+
+    #[test]
+    fn mip_level_count_includes_base_level() {
+        assert_eq!(Texture::mip_level_count(1, 1), 1);
+        assert_eq!(Texture::mip_level_count(2, 2), 2);
+        assert_eq!(Texture::mip_level_count(4, 4), 3);
+    }
+
+    #[test]
+    fn mip_level_count_uses_largest_dimension() {
+        assert_eq!(Texture::mip_level_count(8, 4), 4);
+        assert_eq!(Texture::mip_level_count(4, 8), 4);
+        assert_eq!(Texture::mip_level_count(7, 3), 3);
     }
 }

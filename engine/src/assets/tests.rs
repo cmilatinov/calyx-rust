@@ -36,6 +36,8 @@ mod tests {
             "failed to load white texture: {:?}",
             texture.err()
         );
+        let texture = texture.unwrap();
+        assert!(texture.read().descriptor.mip_level_count > 1);
     }
 
     #[test]
