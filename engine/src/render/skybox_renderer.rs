@@ -1,4 +1,5 @@
 use crate::assets::mesh::Mesh;
+use crate::assets::skybox::Skybox;
 use crate::assets::skybox::SkyboxShaders;
 use crate::assets::texture::Texture;
 use crate::assets::AssetId;
@@ -54,6 +55,13 @@ impl SkyboxRenderer {
         self.skybox = skybox;
     }
 
+    fn selected_skybox_ref<'a>(
+        skybox: Option<Uuid>,
+        assets: &'a AssetRenderState,
+    ) -> Option<&'a Ref<Skybox>> {
+        skybox.and_then(|id| assets.skybox(id))
+    }
+
     pub fn render(
         &mut self,
         render_state: &RenderState,
@@ -65,7 +73,7 @@ impl SkyboxRenderer {
         camera_bind_group: &wgpu::BindGroup,
         samples: u32,
     ) {
-        if let Some(skybox_ref) = self.skybox.and_then(|id| assets.skybox(id)) {
+        if let Some(skybox_ref) = Self::selected_skybox_ref(self.skybox, assets) {
             let mut skybox = skybox_ref.write();
             skybox.prepare(
                 SkyboxShaders {
@@ -135,5 +143,25 @@ impl SkyboxRenderer {
                 RenderUtils::draw_mesh_instanced(&mut render_pass, &cube_mesh, 0..1);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selected_skybox_ref_returns_none_without_selection() {
+        let assets = AssetRenderState::default();
+
+        assert!(SkyboxRenderer::selected_skybox_ref(None, &assets).is_none());
+    }
+
+    #[test]
+    fn selected_skybox_ref_returns_none_for_missing_asset() {
+        let assets = AssetRenderState::default();
+        let skybox_id = Uuid::new_v4();
+
+        assert!(SkyboxRenderer::selected_skybox_ref(Some(skybox_id), &assets).is_none());
     }
 }
