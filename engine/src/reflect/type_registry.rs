@@ -1,5 +1,8 @@
 use crate::reflect::trait_meta::TraitMeta;
-use crate::reflect::type_info::{FieldGetter, FieldSetter, NamedField, StructInfo, TypeInfo};
+use crate::reflect::type_info::{
+    EnumInfo, EnumVariantFieldInfo, EnumVariantInfo, FieldGetter, FieldSetter, ListInfo, MapInfo,
+    NamedField, OptionInfo, StructInfo, TypeDescriptor, TypeInfo,
+};
 use crate::reflect::{AttributeMap, FieldGetterMut, Reflect, ReflectedType, TraitMetaFrom};
 use crate::utils::TypeUuid;
 use inventory::collect;
@@ -73,6 +76,73 @@ impl TypeRegistry {
         }
     }
 
+    pub fn meta_enum<T: TypeUuid + 'static>(&mut self, attrs: AttributeMap) -> EnumInfoBuilder<'_> {
+        let type_uuid = T::type_uuid();
+        self.types.insert(
+            type_uuid,
+            TypeRegistration {
+                trait_meta: HashMap::new(),
+                type_info: TypeInfo::Enum(EnumInfo {
+                    type_name: std::any::type_name::<T>(),
+                    type_id: TypeId::of::<T>(),
+                    attrs,
+                    variants: Vec::new(),
+                }),
+            },
+        );
+        let registration = self.types.get_mut(&type_uuid).unwrap();
+        if let TypeInfo::Enum(ref mut type_info) = registration.type_info {
+            EnumInfoBuilder { type_info }
+        } else {
+            unreachable!()
+        }
+    }
+
+    pub fn meta_list<T: TypeUuid + 'static, E: TypeUuid + 'static>(&mut self) {
+        self.types.insert(
+            T::type_uuid(),
+            TypeRegistration {
+                trait_meta: HashMap::new(),
+                type_info: TypeInfo::List(ListInfo {
+                    type_name: std::any::type_name::<T>(),
+                    type_id: TypeId::of::<T>(),
+                    element: TypeDescriptor::of::<E>(),
+                }),
+            },
+        );
+    }
+
+    pub fn meta_option<T: TypeUuid + 'static, V: TypeUuid + 'static>(&mut self) {
+        self.types.insert(
+            T::type_uuid(),
+            TypeRegistration {
+                trait_meta: HashMap::new(),
+                type_info: TypeInfo::Option(OptionInfo {
+                    type_name: std::any::type_name::<T>(),
+                    type_id: TypeId::of::<T>(),
+                    value: TypeDescriptor::of::<V>(),
+                }),
+            },
+        );
+    }
+
+    pub fn meta_map<T: TypeUuid + 'static, K: TypeUuid + 'static, V: TypeUuid + 'static>(
+        &mut self,
+    ) {
+        self.types.insert(
+            T::type_uuid(),
+            TypeRegistration {
+                trait_meta: HashMap::new(),
+                type_info: TypeInfo::Map(MapInfo {
+                    type_name: std::any::type_name::<T>(),
+                    type_id: TypeId::of::<T>(),
+                    key: TypeDescriptor::of::<K>(),
+                    value: TypeDescriptor::of::<V>(),
+                }),
+            },
+        );
+    }
+
     pub fn meta_impls<
         T: Reflect + TypeUuid + 'static,
         M: TraitMeta + TraitMetaFrom<T> + TypeUuid + 'static,
@@ -129,6 +199,16 @@ impl TypeRegistry {
     }
 }
 
+impl TypeDescriptor {
+    pub fn of<T: TypeUuid + 'static>() -> Self {
+        Self {
+            type_id: TypeId::of::<T>(),
+            type_uuid: T::type_uuid(),
+            type_name: std::any::type_name::<T>(),
+        }
+    }
+}
+
 pub struct StructInfoBuilder<'a> {
     type_info: &'a mut StructInfo,
 }
@@ -161,6 +241,23 @@ impl<'a> StructInfoBuilder<'a> {
     }
 }
 
+pub struct EnumInfoBuilder<'a> {
+    type_info: &'a mut EnumInfo,
+}
+
+impl<'a> EnumInfoBuilder<'a> {
+    pub fn variant(
+        &mut self,
+        name: &'static str,
+        fields: Vec<EnumVariantFieldInfo>,
+    ) -> &mut EnumInfoBuilder<'a> {
+        self.type_info
+            .variants
+            .push(EnumVariantInfo { name, fields });
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,6 +275,18 @@ mod tests {
     struct Foo {
         data: f32,
     }
+
+    #[derive(TypeUuid)]
+    #[uuid = "57f8272e-6073-4308-acf3-b1f51d3a35bf"]
+    struct ListWrapper;
+
+    #[derive(TypeUuid)]
+    #[uuid = "277cb37f-71c9-4323-9a87-f3accb887f5f"]
+    struct OptionWrapper;
+
+    #[derive(TypeUuid)]
+    #[uuid = "6dd3cd58-2854-4421-82e6-f1e0b7ea7efd"]
+    struct MapWrapper;
 
     fn empty_registry() -> TypeRegistry {
         TypeRegistry {
@@ -239,5 +348,39 @@ mod tests {
 
         let result = reg.all_of(type_uuids!(ReflectDefault));
         assert!(result.contains(&Foo::type_uuid()));
+    }
+
+    #[test]
+    fn meta_list_stores_element_type() {
+        let mut reg = empty_registry();
+        reg.meta_list::<ListWrapper, f32>();
+
+        let TypeInfo::List(info) = reg.type_info::<ListWrapper>().unwrap() else {
+            panic!("expected list info");
+        };
+        assert_eq!(info.element.type_uuid, f32::type_uuid());
+    }
+
+    #[test]
+    fn meta_option_stores_value_type() {
+        let mut reg = empty_registry();
+        reg.meta_option::<OptionWrapper, u32>();
+
+        let TypeInfo::Option(info) = reg.type_info::<OptionWrapper>().unwrap() else {
+            panic!("expected option info");
+        };
+        assert_eq!(info.value.type_uuid, u32::type_uuid());
+    }
+
+    #[test]
+    fn meta_map_stores_key_and_value_types() {
+        let mut reg = empty_registry();
+        reg.meta_map::<MapWrapper, String, f32>();
+
+        let TypeInfo::Map(info) = reg.type_info::<MapWrapper>().unwrap() else {
+            panic!("expected map info");
+        };
+        assert_eq!(info.key.type_uuid, String::type_uuid());
+        assert_eq!(info.value.type_uuid, f32::type_uuid());
     }
 }

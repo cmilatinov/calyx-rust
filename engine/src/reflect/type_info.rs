@@ -23,7 +23,18 @@ pub type AttributeMap = HashMap<&'static str, AttributeValue>;
 #[repr(C)]
 pub enum TypeInfo {
     Struct(StructInfo),
+    Enum(EnumInfo),
+    List(ListInfo),
+    Option(OptionInfo),
+    Map(MapInfo),
     None,
+}
+
+#[repr(C)]
+pub struct TypeDescriptor {
+    pub type_id: TypeId,
+    pub type_uuid: Uuid,
+    pub type_name: &'static str,
 }
 
 #[repr(C)]
@@ -42,6 +53,60 @@ impl StructInfo {
     pub fn attr(&self, name: &str) -> Option<AttributeValue> {
         self.attrs.get(name).copied()
     }
+}
+
+#[repr(C)]
+pub struct EnumInfo {
+    pub type_name: &'static str,
+    pub type_id: TypeId,
+    pub attrs: AttributeMap,
+    pub variants: Vec<EnumVariantInfo>,
+}
+
+impl EnumInfo {
+    pub fn variant(&self, name: &str) -> Option<&EnumVariantInfo> {
+        self.variants.iter().find(|variant| variant.name == name)
+    }
+
+    pub fn attr(&self, name: &str) -> Option<AttributeValue> {
+        self.attrs.get(name).copied()
+    }
+}
+
+#[repr(C)]
+pub struct EnumVariantInfo {
+    pub name: &'static str,
+    pub fields: Vec<EnumVariantFieldInfo>,
+}
+
+#[repr(C)]
+pub struct EnumVariantFieldInfo {
+    pub name: Option<&'static str>,
+    pub type_id: TypeId,
+    pub type_uuid: Uuid,
+    pub type_name: &'static str,
+}
+
+#[repr(C)]
+pub struct ListInfo {
+    pub type_name: &'static str,
+    pub type_id: TypeId,
+    pub element: TypeDescriptor,
+}
+
+#[repr(C)]
+pub struct OptionInfo {
+    pub type_name: &'static str,
+    pub type_id: TypeId,
+    pub value: TypeDescriptor,
+}
+
+#[repr(C)]
+pub struct MapInfo {
+    pub type_name: &'static str,
+    pub type_id: TypeId,
+    pub key: TypeDescriptor,
+    pub value: TypeDescriptor,
 }
 
 #[repr(C)]
@@ -92,9 +157,11 @@ impl NamedField {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate as engine;
     use crate::math::Transform;
     use crate::reflect::type_registry::TypeRegistry;
     use crate::reflect::{Reflect, ReflectedType};
+    use crate::utils::TypeUuid;
     use nalgebra_glm::Vec3;
 
     fn transform_registry() -> TypeRegistry {
@@ -110,6 +177,29 @@ mod tests {
             TypeInfo::Struct(s) => s,
             _ => panic!("expected StructInfo"),
         }
+    }
+
+    #[derive(TypeUuid, Reflect)]
+    #[allow(dead_code)]
+    enum ExampleEnum {
+        Unit,
+        Named { value: f32 },
+        Tuple(Vec3),
+    }
+
+    #[test]
+    fn enum_type_info_stores_variants() {
+        let mut reg = TypeRegistry {
+            types: Default::default(),
+        };
+        ExampleEnum::register(&mut reg);
+
+        let TypeInfo::Enum(info) = reg.type_info::<ExampleEnum>().unwrap() else {
+            panic!("expected enum info");
+        };
+        assert!(info.variant("Unit").is_some());
+        assert_eq!(info.variant("Named").unwrap().fields[0].name, Some("value"));
+        assert_eq!(info.variant("Tuple").unwrap().fields[0].name, None);
     }
 
     #[test]
