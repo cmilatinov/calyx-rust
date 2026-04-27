@@ -202,8 +202,7 @@ impl MeshRenderer {
         assets: &LockedAssetRenderState,
     ) -> HashMap<AssetId, HashMap<u32, wgpu::BindGroup>> {
         let live_materials: HashSet<AssetId> = assets.materials.keys().copied().collect();
-        self.material_bind_group_cache
-            .retain(|mat_id, _| live_materials.contains(mat_id));
+        self.prune_material_bind_group_cache(&live_materials);
 
         let mut bind_groups: HashMap<AssetId, HashMap<u32, wgpu::BindGroup>> = Default::default();
         for (mat_id, mat) in assets.materials.iter() {
@@ -228,5 +227,63 @@ impl MeshRenderer {
             bind_groups.insert(*mat_id, groups);
         }
         bind_groups
+    }
+
+    fn prune_material_bind_group_cache(&mut self, live_materials: &HashSet<AssetId>) {
+        self.material_bind_group_cache
+            .retain(|mat_id, _| live_materials.contains(mat_id));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::assets::material::Material;
+    use crate::test_utils::test_asset_context_with_assets;
+    use std::path::PathBuf;
+    use uuid::Uuid;
+
+    fn assets_path() -> PathBuf {
+        let assets_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets");
+        dunce::canonicalize(assets_path).expect("assets dir not found")
+    }
+
+    #[test]
+    fn prunes_material_bind_group_cache_to_live_materials() {
+        let context = test_asset_context_with_assets(vec![assets_path()]);
+        let read_only_context = context.lock_read();
+        let asset_registry = read_only_context.registries.assets.read();
+        let shader = asset_registry
+            .load::<Shader>("shaders/pbr")
+            .expect("missing pbr shader");
+        let default_texture = asset_registry
+            .missing_texture()
+            .expect("missing default texture");
+        drop(asset_registry);
+
+        let material = Material::from_shader(&read_only_context, shader);
+        let key = material.bind_group_cache_key(&read_only_context, default_texture);
+        let live_id = Uuid::new_v4();
+        let stale_id = Uuid::new_v4();
+        let mut renderer = MeshRenderer::new(&read_only_context);
+        renderer.material_bind_group_cache.insert(
+            live_id,
+            CachedMaterialBindGroups {
+                key: key.clone(),
+                groups: Default::default(),
+            },
+        );
+        renderer.material_bind_group_cache.insert(
+            stale_id,
+            CachedMaterialBindGroups {
+                key,
+                groups: Default::default(),
+            },
+        );
+
+        renderer.prune_material_bind_group_cache(&HashSet::from([live_id]));
+
+        assert!(renderer.material_bind_group_cache.contains_key(&live_id));
+        assert!(!renderer.material_bind_group_cache.contains_key(&stale_id));
     }
 }
