@@ -3,6 +3,7 @@ use crate::resource::Resource;
 use nalgebra_glm::Vec3;
 
 #[derive(Resource)]
+#[repr(C)]
 pub struct PhysicsConfiguration {
     pub gravity: Vec3,
     pub physics_pipeline_active: bool,

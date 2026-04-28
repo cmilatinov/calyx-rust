@@ -1,7 +1,6 @@
 use crate as engine;
 use crate::component::{
-    Component, ComponentEventContext, ComponentReset, ComponentUpdate, ReflectComponent,
-    ReflectComponentReset, ReflectComponentUpdate,
+    Component, ComponentEventContext, ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
 };
 use crate::input::Input;
 use crate::reflect::{Reflect, ReflectDefault};

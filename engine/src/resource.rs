@@ -2,17 +2,42 @@ use crate::background::Background;
 use crate::core::{Ref, Time};
 use crate::net::Network;
 use crate::physics::PhysicsConfiguration;
-use downcast_rs::{impl_downcast, Downcast};
 pub use engine_derive::Resource;
 use paste::paste;
-use std::any::{Any, TypeId};
 use std::collections::HashMap;
+use uuid::Uuid;
 
-pub trait Resource: Downcast + Any + 'static {}
-impl_downcast!(Resource);
+pub trait Resource: 'static {
+    fn resource_uuid(&self) -> Uuid;
+    fn resource_uuid_static() -> Uuid
+    where
+        Self: Sized;
+}
+
+impl dyn Resource {
+    pub fn is<T: Resource>(&self) -> bool {
+        self.resource_uuid() == T::resource_uuid_static()
+    }
+
+    pub fn downcast_ref<T: Resource>(&self) -> Option<&T> {
+        if self.is::<T>() {
+            unsafe { Some(&*(self as *const dyn Resource as *const T)) }
+        } else {
+            None
+        }
+    }
+
+    pub fn downcast_mut<T: Resource>(&mut self) -> Option<&mut T> {
+        if self.is::<T>() {
+            unsafe { Some(&mut *(self as *mut dyn Resource as *mut T)) }
+        } else {
+            None
+        }
+    }
+}
 
 pub struct ResourceMap {
-    inner: HashMap<TypeId, Box<dyn Resource>>,
+    inner: HashMap<Uuid, Box<dyn Resource>>,
 }
 
 macro_rules! impl_getter {
@@ -48,7 +73,7 @@ impl ResourceMap {
 
     #[inline]
     pub fn insert<T: Resource>(&mut self, resource: T) {
-        self.inner.insert(TypeId::of::<T>(), Box::new(resource));
+        self.inner.insert(T::resource_uuid_static(), Box::new(resource));
     }
 
     #[inline]
@@ -59,23 +84,22 @@ impl ResourceMap {
     #[inline]
     pub fn resource<T: Resource>(&self) -> Option<&T> {
         self.inner
-            .get(&TypeId::of::<T>())
+            .get(&T::resource_uuid_static())
             .and_then(|r| r.downcast_ref())
     }
 
     #[inline]
     pub fn resource_mut<T: Resource>(&mut self) -> Option<&mut T> {
         self.inner
-            .get_mut(&TypeId::of::<T>())
+            .get_mut(&T::resource_uuid_static())
             .and_then(|r| r.downcast_mut())
     }
 
     #[inline]
     pub fn resource_pair_mut<T1: Resource, T2: Resource>(&mut self) -> Option<(&mut T1, &mut T2)> {
-        match self
-            .inner
-            .get_disjoint_mut([&TypeId::of::<T1>(), &TypeId::of::<T2>()])
-        {
+        let id1 = T1::resource_uuid_static();
+        let id2 = T2::resource_uuid_static();
+        match self.inner.get_disjoint_mut([&id1, &id2]) {
             [Some(value1), Some(value2)] => {
                 if let (Some(value1), Some(value2)) =
                     (value1.downcast_mut::<T1>(), value2.downcast_mut::<T2>())
@@ -97,15 +121,17 @@ impl ResourceMap {
 
 #[cfg(test)]
 mod tests {
+    use crate as engine;
     use super::{Resource, ResourceMap};
+    use crate::core::Ref;
 
-    #[derive(Default)]
+    #[derive(Default, Resource)]
+    #[repr(C)]
     struct Counter(u32);
-    impl Resource for Counter {}
 
-    #[derive(Default)]
+    #[derive(Default, Resource)]
+    #[repr(C)]
     struct Flag(bool);
-    impl Resource for Flag {}
 
     fn map_with_counter(n: u32) -> ResourceMap {
         let mut m = ResourceMap {
@@ -155,5 +181,30 @@ mod tests {
         f.0 = true;
         assert_eq!(m.resource::<Counter>().unwrap().0, 10);
         assert!(m.resource::<Flag>().unwrap().0);
+    }
+
+    #[test]
+    fn new_registers_builtin_resources() {
+        let resources = ResourceMap::new();
+        assert!(resources.resource::<crate::core::Time>().is_some());
+        assert!(resources.resource::<crate::net::Network>().is_some());
+        assert!(resources.resource::<crate::physics::PhysicsConfiguration>().is_some());
+        assert!(resources.resource::<crate::core::Ref<crate::background::Background>>().is_some());
+    }
+
+    #[test]
+    fn resource_lookup_works_for_ref_wrappers() {
+        let counter = Ref::new(Counter(5));
+        let mut m = ResourceMap {
+            inner: Default::default(),
+        };
+        m.insert(counter.clone());
+
+        let restored = m.resource::<Ref<Counter>>().unwrap();
+        assert_eq!(restored.ptr_id(), counter.ptr_id());
+        assert_ne!(
+            Counter::resource_uuid_static(),
+            Ref::<Counter>::resource_uuid_static()
+        );
     }
 }

@@ -20,6 +20,7 @@ use std::sync::LazyLock;
 use std::time::Duration;
 
 #[derive(Resource)]
+#[repr(C)]
 pub struct Network {
     pub client: Client,
     pub server: Option<Server>,

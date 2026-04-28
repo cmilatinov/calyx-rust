@@ -25,4 +25,5 @@ fq_path!(FQTraitMetaFrom => engine::reflect::TraitMetaFrom);
 fq_path!(FQAttributeValue => engine::reflect::AttributeValue);
 fq_path!(FQTypeName => engine::reflect::TypeName);
 fq_path!(FQTypeUuid => engine::utils::TypeUuid);
+fq_path!(FQUuidFromStr => engine::utils::uuid_from_str);
 fq_path!(FQResource => engine::resource::Resource);

@@ -491,6 +491,7 @@ mod tests {
     use serde::{Deserialize, Serialize};
 
     #[derive(Default, Resource)]
+    #[repr(C)]
     struct InputProbe {
         shoot_presses: usize,
         forward_axis: f32,

@@ -7,6 +7,7 @@ use crate::resource::Resource;
 use rusty_pool::{JoinHandle, ThreadPool};
 
 #[derive(Resource)]
+#[repr(C)]
 pub struct Background {
     thread_pool: ThreadPool,
     task_list: HashSet<isize>,

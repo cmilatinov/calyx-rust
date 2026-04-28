@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 pub type TimeType = f32;
 
 #[derive(Resource)]
+#[repr(C)]
 pub struct Time {
     timers: RefCell<HashMap<&'static str, Instant>>,
     last_time: Instant,
