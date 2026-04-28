@@ -4,7 +4,7 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::time::SystemTime;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::task_id::TaskId;
 use engine::background::Background;
@@ -23,6 +23,7 @@ pub struct ProjectManager {
     target_profile_dir: String,
     runtime_target_dir: PathBuf,
     engine_fingerprint: Option<SystemTime>,
+    loaded_assembly_path: Option<PathBuf>,
     assembly: Option<Lib>,
     context: AssetContext,
     background: Ref<Background>,
@@ -45,6 +46,7 @@ impl ProjectManager {
             target_profile_dir,
             runtime_target_dir,
             engine_fingerprint,
+            loaded_assembly_path: None,
             assembly: None,
             context,
             background,
@@ -142,6 +144,52 @@ impl ProjectManager {
         Self::engine_fingerprint(self.current_project.root_directory()) != self.engine_fingerprint
     }
 
+    fn ensure_dll_search_path(dir: &Path) {
+        #[cfg(windows)]
+        {
+            let Ok(current_path) = env::var("PATH") else {
+                return;
+            };
+            let mut paths: Vec<PathBuf> = env::split_paths(&current_path).collect();
+            if paths.iter().any(|path| path == dir) {
+                return;
+            }
+            paths.insert(0, dir.to_path_buf());
+            if let Ok(updated_path) = env::join_paths(paths) {
+                env::set_var("PATH", updated_path);
+            }
+        }
+    }
+
+    fn stage_assembly(build_artifact: &Path) -> Result<PathBuf, BoxedError> {
+        let output_dir = build_artifact.parent().ok_or("Missing assembly output directory")?;
+        let staged_dir = output_dir.join("loaded");
+        fs::create_dir_all(&staged_dir).map_err(Box::new)?;
+
+        let stem = build_artifact
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .ok_or("Missing assembly file stem")?;
+        let extension = build_artifact
+            .extension()
+            .and_then(|value| value.to_str())
+            .ok_or("Missing assembly file extension")?;
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(Box::new)?
+            .as_nanos();
+        let staged_path = staged_dir.join(format!("{stem}-{unique}.{extension}"));
+        fs::copy(build_artifact, &staged_path).map_err(Box::new)?;
+
+        let pdb_path = build_artifact.with_extension("pdb");
+        if pdb_path.exists() {
+            let staged_pdb = staged_path.with_extension("pdb");
+            let _ = fs::copy(pdb_path, staged_pdb);
+        }
+
+        Ok(staged_path)
+    }
+
     fn pipe_stdout(child: &mut Child) {
         let stdout = child.stdout.as_mut().unwrap();
         let mut reader = BufReader::new(stdout);
@@ -191,13 +239,21 @@ impl ProjectManager {
     }
 
     pub fn load_assemblies(&mut self) {
-        let mut target = self.runtime_target_dir.clone();
-        target.push(&self.target_profile_dir);
-        target.push(engine::utils::lib_file_name(
+        let mut build_artifact = self.runtime_target_dir.clone();
+        build_artifact.push(&self.target_profile_dir);
+        Self::ensure_dll_search_path(&build_artifact);
+        build_artifact.push(engine::utils::lib_file_name(
             self.current_project().name().as_str(),
         ));
+        let staged_path = match Self::stage_assembly(&build_artifact) {
+            Ok(path) => path,
+            Err(err) => {
+                eprintln!("{err}");
+                return;
+            }
+        };
         unsafe {
-            match Lib::new(target) {
+            match Lib::new(&staged_path) {
                 Ok(lib) => {
                     if let Ok(load_fn) =
                         lib.find_func::<extern "C" fn(&mut TypeRegistry), &str>("plugin_main")
@@ -210,7 +266,13 @@ impl ProjectManager {
                             }
                         }
                     }
-                    self.assembly = Some(lib);
+                    let previous_path = self.loaded_assembly_path.replace(staged_path);
+                    let previous_lib = self.assembly.replace(lib);
+                    drop(previous_lib);
+                    if let Some(previous_path) = previous_path {
+                        let _ = fs::remove_file(&previous_path);
+                        let _ = fs::remove_file(previous_path.with_extension("pdb"));
+                    }
                     let component_registry_ref = self.context.registries.components.clone();
                     component_registry_ref
                         .write()
