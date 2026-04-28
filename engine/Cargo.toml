@@ -8,7 +8,7 @@ default = []
 log_file = []
 
 [lib]
-crate-type = ["rlib"]
+crate-type = ["rlib", "dylib"]
 
 [dependencies]
 engine_derive = { path = "./engine_derive" }
