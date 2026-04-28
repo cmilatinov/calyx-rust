@@ -1,8 +1,10 @@
 use sharedlib::{Lib, Symbol};
 use std::env;
+use std::fs;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::time::SystemTime;
 
 use crate::task_id::TaskId;
 use engine::background::Background;
@@ -14,12 +16,13 @@ use engine::reflect::TypeInfo;
 use log::trace;
 use project::Project;
 use rusty_pool::JoinHandle;
-use serde_json::Value;
 
 pub struct ProjectManager {
     current_project: Project,
     cargo_profile: String,
     target_profile_dir: String,
+    runtime_target_dir: PathBuf,
+    engine_fingerprint: Option<SystemTime>,
     assembly: Option<Lib>,
     context: AssetContext,
     background: Ref<Background>,
@@ -34,11 +37,14 @@ impl ProjectManager {
     ) -> Result<Ref<Self>, BoxedError> {
         let project_directory = dunce::canonicalize(project_directory.into()).map_err(Box::new)?;
         let current_project = Project::load(project_directory)?;
-        let (cargo_profile, target_profile_dir) = Self::infer_build_profile();
+        let (cargo_profile, target_profile_dir, runtime_target_dir) = Self::infer_build_profile();
+        let engine_fingerprint = Self::engine_fingerprint(current_project.root_directory());
         Ok(Ref::new_cyclic(move |weak| Self {
             current_project,
             cargo_profile,
             target_profile_dir,
+            runtime_target_dir,
+            engine_fingerprint,
             assembly: None,
             context,
             background,
@@ -59,11 +65,12 @@ impl ProjectManager {
         self.current_project.root_directory().clone()
     }
 
-    fn infer_build_profile() -> (String, String) {
+    fn infer_build_profile() -> (String, String, PathBuf) {
         let current_exe = env::current_exe().ok();
+        let profile_dir = current_exe.as_ref().and_then(|path| path.parent());
         let profile = current_exe
             .as_ref()
-            .and_then(|path| path.parent())
+            .and_then(|_| profile_dir)
             .and_then(|path| path.file_name())
             .and_then(|name| name.to_str())
             .filter(|name| !name.is_empty())
@@ -81,7 +88,58 @@ impl ProjectManager {
             other => other.to_string(),
         };
 
-        (cargo_profile, profile)
+        let runtime_target_dir = profile_dir
+            .and_then(|path| path.parent())
+            .map(|path| path.join("editor-runtime"))
+            .unwrap_or_else(|| PathBuf::from("target").join("editor-runtime"));
+
+        (cargo_profile, profile, runtime_target_dir)
+    }
+
+    fn newest_modified_at(path: &Path) -> Option<SystemTime> {
+        let metadata = fs::metadata(path).ok()?;
+        if metadata.is_file() {
+            return metadata.modified().ok();
+        }
+
+        let mut newest = metadata.modified().ok();
+        let entries = fs::read_dir(path).ok()?;
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+            if let Some(modified) = Self::newest_modified_at(&entry_path) {
+                newest = Some(match newest {
+                    Some(current) => current.max(modified),
+                    None => modified,
+                });
+            }
+        }
+        newest
+    }
+
+    fn engine_fingerprint(project_root: &Path) -> Option<SystemTime> {
+        let workspace_root = project_root.parent()?;
+        let watch_paths = [
+            workspace_root.join("Cargo.toml"),
+            workspace_root.join("Cargo.lock"),
+            workspace_root.join(".cargo"),
+            workspace_root.join("engine"),
+        ];
+
+        let mut newest: Option<SystemTime> = None;
+        for path in watch_paths {
+            let Some(modified) = Self::newest_modified_at(&path) else {
+                continue;
+            };
+            newest = Some(match newest {
+                Some(current) => current.max(modified),
+                None => modified,
+            });
+        }
+        newest
+    }
+
+    fn engine_changed_since_start(&self) -> bool {
+        Self::engine_fingerprint(self.current_project.root_directory()) != self.engine_fingerprint
     }
 
     fn pipe_stdout(child: &mut Child) {
@@ -98,14 +156,24 @@ impl ProjectManager {
     }
 
     pub fn build_assemblies(&self) -> JoinHandle<()> {
+        if self.engine_changed_since_start() {
+            return self.background.write().execute(TaskId::Build, move || {
+                eprintln!(
+                    "Engine files changed while the editor is running. Restart the editor before rebuilding the sandbox plugin."
+                );
+            });
+        }
+
         let root = self.root_project_dir();
         let package = self.current_project().name().clone();
         let profile = self.cargo_profile.clone();
+        let runtime_target_dir = self.runtime_target_dir.clone();
         let project_manager_ref = self.project_manager.upgrade().unwrap();
         self.background.write().execute(TaskId::Build, move || {
             // std::thread::sleep(Duration::from_secs(10));
             let mut build = Command::new("cargo")
                 .current_dir(root)
+                .env("CARGO_TARGET_DIR", &runtime_target_dir)
                 .args([
                     "build",
                     "--package",
@@ -123,14 +191,7 @@ impl ProjectManager {
     }
 
     pub fn load_assemblies(&mut self) {
-        let root = self.root_project_dir();
-        let meta_output = Command::new("cargo")
-            .current_dir(root)
-            .arg("metadata")
-            .output()
-            .expect("");
-        let json: Value = serde_json::from_slice(&meta_output.stdout).unwrap();
-        let mut target = PathBuf::from(json["target_directory"].as_str().unwrap());
+        let mut target = self.runtime_target_dir.clone();
         target.push(&self.target_profile_dir);
         target.push(engine::utils::lib_file_name(
             self.current_project().name().as_str(),
