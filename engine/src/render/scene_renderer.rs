@@ -11,7 +11,7 @@ use crate::render::asset_render_state::AssetRenderState;
 use crate::render::render_utils::RenderUtils;
 use crate::render::{
     Camera, GizmoRenderer, GridRenderer, LightManager, MeshRenderDefaults, MeshRenderTargets,
-    MeshRenderer, PipelineOptions, SkyboxRenderer,
+    MeshRenderer, ParticleRenderer, PipelineOptions, SkyboxRenderer,
 };
 use crate::scene::Scene;
 use egui::Color32;
@@ -92,6 +92,7 @@ pub struct SceneRenderer {
     camera_uniform_buffer: wgpu::Buffer,
     light_manager: LightManager,
     gizmo_renderer: GizmoRenderer,
+    particle_renderer: ParticleRenderer,
     assets: AssetRenderState,
     draw_list: Vec<DrawListElement>,
 }
@@ -133,6 +134,7 @@ impl SceneRenderer {
         let grid_renderer = GridRenderer::new(context, device, &camera_uniform_buffer);
 
         let gizmo_renderer = GizmoRenderer::new(context, &camera_uniform_buffer, options.samples);
+        let particle_renderer = ParticleRenderer::new(context);
 
         // Default assets
         let cube = asset_registry.cube().unwrap();
@@ -160,6 +162,7 @@ impl SceneRenderer {
             camera_uniform_buffer,
             light_manager: Default::default(),
             gizmo_renderer,
+            particle_renderer,
             assets: Default::default(),
             draw_list: Default::default(),
         }
@@ -207,6 +210,17 @@ impl SceneRenderer {
             &self.scene_texture_msaa,
             &self.scene_depth_texture,
             self.grid_renderer.camera_bind_group(),
+            self.options.samples,
+        );
+        self.particle_renderer.render(
+            render_state,
+            &mut encoder,
+            &self.asset_context,
+            scene,
+            &camera_transform.position,
+            &self.camera_uniform_buffer,
+            &self.scene_texture_msaa,
+            &self.scene_depth_texture,
             self.options.samples,
         );
         if self.options.grid {
@@ -503,7 +517,7 @@ impl SceneRenderer {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rg11b10Ufloat,
+                format: wgpu::TextureFormat::Rgba16Float,
                 usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             },
@@ -523,7 +537,7 @@ impl SceneRenderer {
                 mip_level_count: 1,
                 sample_count: samples,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rg11b10Ufloat,
+                format: wgpu::TextureFormat::Rgba16Float,
                 usage: wgpu::TextureUsages::COPY_SRC
                     | wgpu::TextureUsages::RENDER_ATTACHMENT
                     | wgpu::TextureUsages::TEXTURE_BINDING,
