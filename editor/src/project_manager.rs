@@ -1,5 +1,4 @@
 use sharedlib::{Lib, Symbol};
-use std::env;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -18,8 +17,6 @@ use serde_json::Value;
 
 pub struct ProjectManager {
     current_project: Project,
-    cargo_profile: String,
-    target_profile_dir: String,
     assembly: Option<Lib>,
     context: AssetContext,
     background: Ref<Background>,
@@ -34,11 +31,8 @@ impl ProjectManager {
     ) -> Result<Ref<Self>, BoxedError> {
         let project_directory = dunce::canonicalize(project_directory.into()).map_err(Box::new)?;
         let current_project = Project::load(project_directory)?;
-        let (cargo_profile, target_profile_dir) = Self::infer_build_profile();
         Ok(Ref::new_cyclic(move |weak| Self {
             current_project,
-            cargo_profile,
-            target_profile_dir,
             assembly: None,
             context,
             background,
@@ -59,31 +53,6 @@ impl ProjectManager {
         self.current_project.root_directory().clone()
     }
 
-    fn infer_build_profile() -> (String, String) {
-        let current_exe = env::current_exe().ok();
-        let profile = current_exe
-            .as_ref()
-            .and_then(|path| path.parent())
-            .and_then(|path| path.file_name())
-            .and_then(|name| name.to_str())
-            .filter(|name| !name.is_empty())
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(|| {
-                if cfg!(debug_assertions) {
-                    "debug".to_string()
-                } else {
-                    "release".to_string()
-                }
-            });
-
-        let cargo_profile = match profile.as_str() {
-            "debug" => "dev".to_string(),
-            other => other.to_string(),
-        };
-
-        (cargo_profile, profile)
-    }
-
     fn pipe_stdout(child: &mut Child) {
         let stdout = child.stdout.as_mut().unwrap();
         let mut reader = BufReader::new(stdout);
@@ -99,21 +68,12 @@ impl ProjectManager {
 
     pub fn build_assemblies(&self) -> JoinHandle<()> {
         let root = self.root_project_dir();
-        let package = self.current_project().name().clone();
-        let profile = self.cargo_profile.clone();
         let project_manager_ref = self.project_manager.upgrade().unwrap();
         self.background.write().execute(TaskId::Build, move || {
             // std::thread::sleep(Duration::from_secs(10));
             let mut build = Command::new("cargo")
                 .current_dir(root)
-                .args([
-                    "build",
-                    "--package",
-                    package.as_str(),
-                    "--lib",
-                    "--profile",
-                    profile.as_str(),
-                ])
+                .args(["build", "--profile", "release-with-debug"])
                 .stdout(Stdio::piped())
                 .spawn()
                 .unwrap();
@@ -131,7 +91,7 @@ impl ProjectManager {
             .expect("");
         let json: Value = serde_json::from_slice(&meta_output.stdout).unwrap();
         let mut target = PathBuf::from(json["target_directory"].as_str().unwrap());
-        target.push(&self.target_profile_dir);
+        target.push("release-with-debug");
         target.push(engine::utils::lib_file_name(
             self.current_project().name().as_str(),
         ));
