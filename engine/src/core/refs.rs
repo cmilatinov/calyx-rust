@@ -98,10 +98,8 @@ impl<T: TypeName> TypeName for Ref<T> {
 }
 
 impl<T: Resource + ?Sized> TypeUuid for Ref<T> {
-    const UUID: &'static [u8; 16] = &[0; 16];
-
-    fn type_uuid() -> Uuid {
-        uuid_from_str(std::any::type_name::<Self>())
+    fn uuid_bytes() -> [u8; 16] {
+        *uuid_from_str(std::any::type_name::<Self>()).as_bytes()
     }
 }
 
@@ -159,10 +157,8 @@ impl<T: ?Sized> Clone for ReadOnlyRef<T> {
 }
 
 impl<T: Resource + ?Sized> TypeUuid for ReadOnlyRef<T> {
-    const UUID: &'static [u8; 16] = &[0; 16];
-
-    fn type_uuid() -> Uuid {
-        uuid_from_str(std::any::type_name::<Self>())
+    fn uuid_bytes() -> [u8; 16] {
+        *uuid_from_str(std::any::type_name::<Self>()).as_bytes()
     }
 }
 

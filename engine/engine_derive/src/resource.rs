@@ -29,10 +29,8 @@ pub fn derive_resource(input: TokenStream) -> TokenStream {
     let struct_name = &input.ident;
     TokenStream::from(quote! {
         impl #FQTypeUuid for #struct_name {
-            const UUID: &'static [u8; 16] = &[0; 16];
-
-            fn type_uuid() -> uuid::Uuid {
-                #FQUuidFromStr(::core::any::type_name::<Self>())
+            fn uuid_bytes() -> [u8; 16] {
+                *#FQUuidFromStr(::core::any::type_name::<Self>()).as_bytes()
             }
         }
 
