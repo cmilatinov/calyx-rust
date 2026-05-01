@@ -154,11 +154,7 @@ mod tests {
         particle_system.max_particles = 64;
         particle_system.emission_duration = 2.0;
         particle_system.lifetime = ParticleScalarRange { min: 0.5, max: 1.5 };
-        particle_system.spawn_shape = ParticleSpawnShape {
-            kind: ParticleSpawnShapeKind::Sphere,
-            radius: 2.0,
-            extents: Vec3::new(1.0, 2.0, 3.0),
-        };
+        particle_system.spawn_shape = ParticleSpawnShape::Sphere { radius: 2.0 };
         particle_system.initial_velocity = Vec3::new(0.0, 5.0, 0.0);
         particle_system.velocity_randomness = Vec3::new(1.0, 1.0, 1.0);
         particle_system.acceleration = Vec3::new(0.0, -9.8, 0.0);
@@ -234,7 +230,7 @@ mod tests {
                     c.burst_count,
                     c.max_particles,
                     c.texture.id(),
-                    c.spawn_shape.kind,
+                    c.spawn_shape,
                     c.start_color,
                     c.local_space,
                 )
@@ -244,7 +240,7 @@ mod tests {
                 3,
                 64,
                 particle_texture_id,
-                ParticleSpawnShapeKind::Sphere,
+                ParticleSpawnShape::Sphere { radius: 2.0 },
                 Color32::RED,
                 true,
             ))

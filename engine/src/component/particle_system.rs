@@ -13,7 +13,6 @@ use crate::resource::ResourceMap;
 use crate::scene::{GameObject, Scene};
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use egui::Color32;
-use engine_derive::impl_reflect_value;
 use nalgebra_glm::{vec3, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -22,40 +21,17 @@ use uuid::Uuid;
 const MIN_PARTICLE_LIFETIME: f32 = 0.01;
 const DEFAULT_RNG_SEED: u64 = 0x9e37_79b9_7f4a_7c15;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TypeUuid)]
-#[uuid = "650c1e93-c304-4321-9f3f-a10ecb4abe77"]
-#[repr(C)]
-pub enum ParticleSpawnShapeKind {
-    Point,
-    Sphere,
-    Box,
-}
-
-impl Default for ParticleSpawnShapeKind {
-    fn default() -> Self {
-        Self::Point
-    }
-}
-
-impl_reflect_value!(ParticleSpawnShapeKind());
-
-#[derive(Clone, Copy, Serialize, Deserialize, TypeUuid, Reflect)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "37c707d9-f6e8-4dc1-b2b1-159ceff99082"]
-#[serde(default)]
 #[repr(C)]
-pub struct ParticleSpawnShape {
-    pub kind: ParticleSpawnShapeKind,
-    pub radius: f32,
-    pub extents: Vec3,
+pub enum ParticleSpawnShape {
+    Sphere { radius: f32 },
+    Box { extents: Vec3 },
 }
 
 impl Default for ParticleSpawnShape {
     fn default() -> Self {
-        Self {
-            kind: ParticleSpawnShapeKind::Point,
-            radius: 0.5,
-            extents: Vec3::from_element(0.5),
-        }
+        Self::Sphere { radius: 0.5 }
     }
 }
 
@@ -114,13 +90,7 @@ pub(crate) struct ParticleRenderInstance {
 
 #[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "5214cd04-62ac-48e0-8f0b-4030d2102931"]
-#[reflect(
-    Default,
-    TypeUuidDynamic,
-    Component,
-    ComponentUpdate,
-    ComponentReset
-)]
+#[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate, ComponentReset)]
 #[reflect_attr(name = "Particle System")]
 #[serde(default)]
 #[repr(C)]
@@ -195,15 +165,12 @@ impl Component for ComponentParticleSystem {
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {
         let transform = scene.world_transform(game_object);
         gizmos.set_color(&Vec4::new(1.0, 0.6, 0.2, 1.0));
-        match self.spawn_shape.kind {
-            ParticleSpawnShapeKind::Point => {
-                gizmos.point(&transform.position);
+        match self.spawn_shape {
+            ParticleSpawnShape::Sphere { radius } => {
+                gizmos.wire_sphere(&transform.position, radius.max(0.0));
             }
-            ParticleSpawnShapeKind::Sphere => {
-                gizmos.wire_sphere(&transform.position, self.spawn_shape.radius.max(0.0));
-            }
-            ParticleSpawnShapeKind::Box => {
-                gizmos.wire_cube(&transform.position, &(self.spawn_shape.extents * 2.0));
+            ParticleSpawnShape::Box { extents } => {
+                gizmos.wire_cube(&transform.position, &(extents * 2.0));
             }
         }
     }
@@ -388,15 +355,12 @@ impl ComponentParticleSystem {
     }
 
     fn sample_spawn_position(&mut self) -> Vec3 {
-        match self.spawn_shape.kind {
-            ParticleSpawnShapeKind::Point => Vec3::zeros(),
-            ParticleSpawnShapeKind::Sphere => {
-                self.random_in_unit_sphere() * self.spawn_shape.radius
-            }
-            ParticleSpawnShapeKind::Box => vec3(
-                self.random_signed() * self.spawn_shape.extents.x,
-                self.random_signed() * self.spawn_shape.extents.y,
-                self.random_signed() * self.spawn_shape.extents.z,
+        match self.spawn_shape {
+            ParticleSpawnShape::Sphere { radius } => self.random_in_unit_sphere() * radius,
+            ParticleSpawnShape::Box { extents } => vec3(
+                self.random_signed() * extents.x,
+                self.random_signed() * extents.y,
+                self.random_signed() * extents.z,
             ),
         }
     }
@@ -433,7 +397,7 @@ impl ComponentParticleSystem {
         self.rng_state ^= self.rng_state << 13;
         self.rng_state ^= self.rng_state >> 7;
         self.rng_state ^= self.rng_state << 17;
-        ((self.rng_state >> 40) as u32) as f32 / (u32::MAX as f32)
+        ((self.rng_state >> 32) as u32) as f32 / (u32::MAX as f32)
     }
 
     fn random_signed(&mut self) -> f32 {
@@ -528,10 +492,7 @@ mod tests {
                 initial_velocity: Vec3::zeros(),
                 velocity_randomness: Vec3::zeros(),
                 acceleration: Vec3::zeros(),
-                spawn_shape: ParticleSpawnShape {
-                    kind: ParticleSpawnShapeKind::Point,
-                    ..Default::default()
-                },
+                spawn_shape: ParticleSpawnShape::Sphere { radius: 0.0 },
                 ..Default::default()
             },
         );
@@ -553,5 +514,108 @@ mod tests {
             .unwrap();
 
         assert!((moved_position[0] - expected_x).abs() < 1e-5);
+    }
+
+    #[test]
+    fn particle_velocity_randomness_varies_per_particle() {
+        let registries = test_registries();
+        let mut scene = registries.scene();
+        let go = scene.create(None, None);
+        scene.add_component(
+            go,
+            ComponentParticleSystem {
+                local_space: true,
+                spawn_rate: 0.0,
+                burst_count: 4,
+                lifetime: ParticleScalarRange { min: 1.0, max: 1.0 },
+                size: ParticleSizeCurve {
+                    start: 1.0,
+                    end: 1.0,
+                    randomness: 0.0,
+                },
+                initial_velocity: Vec3::zeros(),
+                velocity_randomness: Vec3::from_element(1.0),
+                acceleration: Vec3::zeros(),
+                ..Default::default()
+            },
+        );
+
+        let emitter_transform = scene.world_transform(go);
+        let seed = scene.uuid(go);
+        scene.write_component::<ComponentParticleSystem, _>(go, |system| {
+            system.reset_runtime(seed);
+            system.step(0.0, &emitter_transform);
+        });
+
+        let distinct_velocities = scene
+            .read_component::<ComponentParticleSystem, _, _>(go, |system| {
+                let mut distinct = Vec::<Vec3>::new();
+                for particle in &system.particles {
+                    if distinct
+                        .iter()
+                        .all(|existing| (particle.velocity - *existing).norm() > 1e-4)
+                    {
+                        distinct.push(particle.velocity);
+                    }
+                }
+                distinct.len()
+            })
+            .unwrap_or_default();
+
+        assert!(
+            distinct_velocities > 1,
+            "expected multiple distinct particle velocities"
+        );
+    }
+
+    #[test]
+    fn particle_size_changes_over_time() {
+        let registries = test_registries();
+        let mut scene = registries.scene();
+        let go = scene.create(None, None);
+        scene.add_component(
+            go,
+            ComponentParticleSystem {
+                local_space: true,
+                spawn_rate: 0.0,
+                burst_count: 1,
+                lifetime: ParticleScalarRange { min: 1.0, max: 1.0 },
+                size: ParticleSizeCurve {
+                    start: 1.0,
+                    end: 0.25,
+                    randomness: 0.0,
+                },
+                initial_velocity: Vec3::zeros(),
+                velocity_randomness: Vec3::zeros(),
+                acceleration: Vec3::zeros(),
+                ..Default::default()
+            },
+        );
+
+        let emitter_transform = scene.world_transform(go);
+        let seed = scene.uuid(go);
+        scene.write_component::<ComponentParticleSystem, _>(go, |system| {
+            system.reset_runtime(seed);
+            system.step(0.0, &emitter_transform);
+        });
+
+        let initial_size = scene
+            .read_component::<ComponentParticleSystem, _, _>(go, |system| {
+                system.render_instances(&emitter_transform, &Vec3::zeros())[0].size
+            })
+            .unwrap();
+
+        scene.write_component::<ComponentParticleSystem, _>(go, |system| {
+            system.step(0.5, &emitter_transform);
+        });
+
+        let later_size = scene
+            .read_component::<ComponentParticleSystem, _, _>(go, |system| {
+                system.render_instances(&emitter_transform, &Vec3::zeros())[0].size
+            })
+            .unwrap();
+
+        assert!(later_size < initial_size);
+        assert!((later_size - 0.625).abs() < 1e-5);
     }
 }
