@@ -149,7 +149,7 @@ impl eframe::App for GameApp {
         {
             let GameApp { game, renderer, .. } = self;
             let render_state = frame.wgpu_render_state().unwrap();
-            let scene = game.scenes.current_scene();
+            let scene = game.scenes.current_scene_mut();
             let (width, height) = Self::physical_size(ctx, &rect);
             if width != 0 && height != 0 {
                 renderer.resize_textures(width, height);

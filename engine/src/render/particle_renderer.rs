@@ -1,14 +1,13 @@
 use crate::assets::texture::Texture;
-use crate::component::ComponentParticleSystem;
+use crate::component::{ComponentParticleSystem, Particle};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::buffer::{wgpu_buffer_init_desc, BufferLayout, ResizableBuffer};
 use crate::render::{RenderUtils, Shader};
-use crate::scene::Scene;
+use crate::scene::{GameObject, Scene};
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::RenderState;
-use legion::{Entity, IntoQuery};
 use nalgebra_glm::Vec3;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -29,19 +28,12 @@ impl BufferLayout for ParticleVertex {
     const ATTRIBS: &'static [wgpu::VertexAttribute] = &Self::ATTRIBUTES;
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct GpuParticleInstance {
-    position_size: [f32; 4],
-    color: [f32; 4],
-}
-
-impl GpuParticleInstance {
+impl Particle {
     const ATTRIBUTES: [wgpu::VertexAttribute; 2] =
         wgpu::vertex_attr_array![2 => Float32x4, 3 => Float32x4];
 }
 
-impl BufferLayout for GpuParticleInstance {
+impl BufferLayout for Particle {
     const ATTRIBS: &'static [wgpu::VertexAttribute] = &Self::ATTRIBUTES;
 }
 
@@ -59,6 +51,7 @@ pub struct ParticleRenderer {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     instance_buffer: ResizableBuffer,
+    game_objects: Vec<GameObject>,
     pipeline: Option<wgpu::RenderPipeline>,
     pipeline_signature: Option<PipelineSignature>,
 }
@@ -110,6 +103,7 @@ impl ParticleRenderer {
             instance_buffer: ResizableBuffer::new(
                 wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::VERTEX,
             ),
+            game_objects: Vec::new(),
             pipeline: None,
             pipeline_signature: None,
         }
@@ -121,7 +115,7 @@ impl ParticleRenderer {
         render_state: &RenderState,
         encoder: &mut wgpu::CommandEncoder,
         asset_context: &ReadOnlyAssetContext,
-        scene: &Scene,
+        scene: &mut Scene,
         camera_position: &Vec3,
         camera_uniform_buffer: &wgpu::Buffer,
         color_target: &Texture,
@@ -152,31 +146,29 @@ impl ParticleRenderer {
             })
         };
 
-        let mut query = <(Entity, &ComponentParticleSystem)>::query();
-        for (entity, system) in query.iter(&scene.world) {
-            let Some(game_object) = scene.game_object_from_entity(*entity) else {
+        self.game_objects.clear();
+        self.game_objects.extend(scene.objects());
+        let particle_system_marker = ComponentParticleSystem::default();
+
+        for game_object in self.game_objects.iter().copied() {
+            let emitter_transform = scene.world_transform(game_object);
+            let Some(system) = (unsafe {
+                scene
+                    .get_component_ptr(game_object, &particle_system_marker)
+                    .map(|ptr| &mut *(ptr as *mut ComponentParticleSystem))
+            }) else {
                 continue;
             };
-            let emitter_transform = scene.world_transform(game_object);
-            let instances = system.render_instances(&emitter_transform, camera_position);
-            if instances.is_empty() {
+            let particle_count = system.prepare_render_data(&emitter_transform, camera_position);
+            if particle_count == 0 {
                 continue;
             }
-
-            let gpu_instances = instances
-                .iter()
-                .map(|instance| GpuParticleInstance {
-                    position_size: [
-                        instance.position[0],
-                        instance.position[1],
-                        instance.position[2],
-                        instance.size,
-                    ],
-                    color: instance.color,
-                })
-                .collect::<Vec<_>>();
-            self.instance_buffer
-                .write_buffer(device, queue, &gpu_instances, None);
+            self.instance_buffer.write_buffer(
+                device,
+                queue,
+                system.render_particles(particle_count),
+                None,
+            );
 
             let texture = system
                 .texture
@@ -211,7 +203,7 @@ impl ParticleRenderer {
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_vertex_buffer(1, self.instance_buffer.get_wgpu_buffer().slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.draw_indexed(0..6, 0, 0..gpu_instances.len() as u32);
+            render_pass.draw_indexed(0..6, 0, 0..particle_count as u32);
         }
     }
 
@@ -246,7 +238,7 @@ impl ParticleRenderer {
                     entry_point: Some("vs_main"),
                     buffers: &[
                         ParticleVertex::layout(wgpu::VertexStepMode::Vertex),
-                        GpuParticleInstance::layout(wgpu::VertexStepMode::Instance),
+                        Particle::layout(wgpu::VertexStepMode::Instance),
                     ],
                     compilation_options: Default::default(),
                 },
