@@ -1,6 +1,6 @@
 use crate::reflect::TypeName;
 use crate::resource::Resource;
-use crate::utils::uuid_from_str;
+use crate::utils::{uuid_from_str, TypeUuid};
 use std::fmt::{Debug, Formatter};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak};
 use uuid::Uuid;
@@ -97,16 +97,17 @@ impl<T: TypeName> TypeName for Ref<T> {
     }
 }
 
+impl<T: Resource + ?Sized> TypeUuid for Ref<T> {
+    const UUID: &'static [u8; 16] = &[0; 16];
+
+    fn type_uuid() -> Uuid {
+        uuid_from_str(std::any::type_name::<Self>())
+    }
+}
+
 impl<T: Resource + ?Sized> Resource for Ref<T> {
     fn resource_uuid(&self) -> Uuid {
-        Self::resource_uuid_static()
-    }
-
-    fn resource_uuid_static() -> Uuid
-    where
-        Self: Sized,
-    {
-        uuid_from_str(std::any::type_name::<Self>())
+        Self::type_uuid()
     }
 }
 
@@ -157,16 +158,17 @@ impl<T: ?Sized> Clone for ReadOnlyRef<T> {
     }
 }
 
+impl<T: Resource + ?Sized> TypeUuid for ReadOnlyRef<T> {
+    const UUID: &'static [u8; 16] = &[0; 16];
+
+    fn type_uuid() -> Uuid {
+        uuid_from_str(std::any::type_name::<Self>())
+    }
+}
+
 impl<T: Resource + ?Sized> Resource for ReadOnlyRef<T> {
     fn resource_uuid(&self) -> Uuid {
-        Self::resource_uuid_static()
-    }
-
-    fn resource_uuid_static() -> Uuid
-    where
-        Self: Sized,
-    {
-        uuid_from_str(std::any::type_name::<Self>())
+        Self::type_uuid()
     }
 }
 

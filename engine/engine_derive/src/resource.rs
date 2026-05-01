@@ -1,4 +1,4 @@
-use crate::fq::{FQResource, FQUuidFromStr};
+use crate::fq::{FQResource, FQTypeUuid, FQUuidFromStr};
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, Data, DeriveInput, Path};
@@ -28,16 +28,17 @@ pub fn derive_resource(input: TokenStream) -> TokenStream {
     }
     let struct_name = &input.ident;
     TokenStream::from(quote! {
+        impl #FQTypeUuid for #struct_name {
+            const UUID: &'static [u8; 16] = &[0; 16];
+
+            fn type_uuid() -> uuid::Uuid {
+                #FQUuidFromStr(::core::any::type_name::<Self>())
+            }
+        }
+
         impl #FQResource for #struct_name {
             fn resource_uuid(&self) -> uuid::Uuid {
-                Self::resource_uuid_static()
-            }
-
-            fn resource_uuid_static() -> uuid::Uuid
-            where
-                Self: Sized,
-            {
-                #FQUuidFromStr(::core::any::type_name::<Self>())
+                <Self as #FQTypeUuid>::type_uuid()
             }
         }
     })
