@@ -244,7 +244,7 @@ impl ParticleRenderer {
         }
 
         let mut depth_stencil = RenderUtils::depth_default(depth_format);
-        depth_stencil.depth_write_enabled = false;
+        depth_stencil.depth_write_enabled = true;
 
         self.pipeline = Some(
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {

@@ -41,5 +41,8 @@ fn fs_main(input: VsOutput) -> @location(0) vec4f {
     let centered_uv = input.uv * 2.0 - vec2f(1.0, 1.0);
     let radial_mask = clamp(1.0 - length(centered_uv), 0.0, 1.0);
     let alpha = sampled.a * input.color.a * radial_mask;
+    if alpha <= 0.001 {
+        discard;
+    }
     return vec4f(sampled.rgb * input.color.rgb, alpha);
 }
