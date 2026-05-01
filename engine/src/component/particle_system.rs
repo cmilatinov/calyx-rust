@@ -70,99 +70,22 @@ impl Default for ParticleSizeCurve {
     }
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Particle {
-    pub position_size: [f32; 4],
-    pub color: [f32; 4],
-    simulation_position_age: [f32; 4],
-    velocity_lifetime: [f32; 4],
-    acceleration_size_randomness: [f32; 4],
+    pub position: Vec3,
+    pub velocity: Vec3,
+    pub acceleration: Vec3,
+    pub age: f32,
+    pub lifetime: f32,
+    pub size_randomness: f32,
 }
 
-impl Particle {
-    fn simulation_position(&self) -> Vec3 {
-        vec3(
-            self.simulation_position_age[0],
-            self.simulation_position_age[1],
-            self.simulation_position_age[2],
-        )
-    }
-
-    fn set_simulation_position(&mut self, position: Vec3) {
-        self.simulation_position_age[0] = position.x;
-        self.simulation_position_age[1] = position.y;
-        self.simulation_position_age[2] = position.z;
-    }
-
-    fn velocity(&self) -> Vec3 {
-        vec3(
-            self.velocity_lifetime[0],
-            self.velocity_lifetime[1],
-            self.velocity_lifetime[2],
-        )
-    }
-
-    fn set_velocity(&mut self, velocity: Vec3) {
-        self.velocity_lifetime[0] = velocity.x;
-        self.velocity_lifetime[1] = velocity.y;
-        self.velocity_lifetime[2] = velocity.z;
-    }
-
-    fn acceleration(&self) -> Vec3 {
-        vec3(
-            self.acceleration_size_randomness[0],
-            self.acceleration_size_randomness[1],
-            self.acceleration_size_randomness[2],
-        )
-    }
-
-    fn set_acceleration(&mut self, acceleration: Vec3) {
-        self.acceleration_size_randomness[0] = acceleration.x;
-        self.acceleration_size_randomness[1] = acceleration.y;
-        self.acceleration_size_randomness[2] = acceleration.z;
-    }
-
-    fn age(&self) -> f32 {
-        self.simulation_position_age[3]
-    }
-
-    fn set_age(&mut self, age: f32) {
-        self.simulation_position_age[3] = age;
-    }
-
-    fn lifetime(&self) -> f32 {
-        self.velocity_lifetime[3]
-    }
-
-    fn set_lifetime(&mut self, lifetime: f32) {
-        self.velocity_lifetime[3] = lifetime;
-    }
-
-    fn size_randomness(&self) -> f32 {
-        self.acceleration_size_randomness[3]
-    }
-
-    fn set_size_randomness(&mut self, size_randomness: f32) {
-        self.acceleration_size_randomness[3] = size_randomness;
-    }
-
-    fn render_position(&self) -> Vec3 {
-        vec3(
-            self.position_size[0],
-            self.position_size[1],
-            self.position_size[2],
-        )
-    }
-
-    fn set_render_data(&mut self, position: Vec3, size: f32, color: [f32; 4]) {
-        self.position_size = [position.x, position.y, position.z, size];
-        self.color = color;
-    }
-
-    fn render_size(&self) -> f32 {
-        self.position_size[3]
-    }
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct ParticleRenderInstance {
+    pub position_size: [f32; 4],
+    pub color: [f32; 4],
+    pub distance_sq: f32,
 }
 
 #[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
@@ -285,56 +208,39 @@ impl ComponentUpdate for ComponentParticleSystem {
 }
 
 impl ComponentParticleSystem {
-    pub(crate) fn prepare_render_data(
-        &mut self,
+    pub(crate) fn fill_render_buffer(
+        &self,
         emitter_transform: &Transform,
         camera_position: &Vec3,
-    ) -> usize {
-        let size_start = self.size.start;
-        let size_end = self.size.end;
-        let start_color = self.start_color;
-        let end_color = self.end_color;
-        let local_space = self.local_space;
-        for particle in &mut self.particles {
-            let lifetime = particle.lifetime().max(MIN_PARTICLE_LIFETIME);
-            let t = (particle.age() / lifetime).clamp(0.0, 1.0);
-            let size_randomness = particle.size_randomness();
-            let start = (size_start + size_randomness).max(0.0);
-            let end = (size_end + size_randomness).max(0.0);
-            let size = start + (end - start) * t;
-            let simulation_position = particle.simulation_position();
-            let world_position = if local_space {
-                emitter_transform.transform_position(&simulation_position)
+        out: &mut Vec<ParticleRenderInstance>,
+    ) {
+        out.clear();
+        for particle in &self.particles {
+            let lifetime = particle.lifetime.max(MIN_PARTICLE_LIFETIME);
+            let t = (particle.age / lifetime).clamp(0.0, 1.0);
+            let size = self.size_at(particle.size_randomness, t);
+            if size <= 0.0 {
+                continue;
+            }
+            let world_position = if self.local_space {
+                emitter_transform.transform_position(&particle.position)
             } else {
-                simulation_position
+                particle.position
             };
-            particle.set_render_data(
-                world_position,
-                size.max(0.0),
-                Self::lerp_color(start_color, end_color, t),
-            );
+            let offset = world_position - *camera_position;
+            out.push(ParticleRenderInstance {
+                position_size: [world_position.x, world_position.y, world_position.z, size],
+                color: Self::lerp_color(self.start_color, self.end_color, t),
+                distance_sq: offset.dot(&offset),
+            });
         }
 
-        self.particles.sort_by(|left, right| {
-            let left_visible = left.render_size() > 0.0;
-            let right_visible = right.render_size() > 0.0;
-            right_visible.cmp(&left_visible).then_with(|| {
-                let right_offset = right.render_position() - *camera_position;
-                let left_offset = left.render_position() - *camera_position;
-                right_offset
-                    .dot(&right_offset)
-                    .partial_cmp(&left_offset.dot(&left_offset))
-                    .unwrap_or(Ordering::Equal)
-            })
+        out.sort_by(|left, right| {
+            right
+                .distance_sq
+                .partial_cmp(&left.distance_sq)
+                .unwrap_or(Ordering::Equal)
         });
-        self.particles
-            .iter()
-            .take_while(|particle| particle.render_size() > 0.0)
-            .count()
-    }
-
-    pub(crate) fn render_particles(&self, count: usize) -> &[Particle] {
-        &self.particles[..count]
     }
 
     pub(crate) fn step(&mut self, delta_time: f32, emitter_transform: &Transform) {
@@ -423,27 +329,25 @@ impl ComponentParticleSystem {
             let lifetime = self.sample_range(self.lifetime).max(MIN_PARTICLE_LIFETIME);
             let size_randomness = self.random_signed() * self.size.randomness.max(0.0);
 
-            let mut particle = Particle::default();
-            particle.set_simulation_position(position);
-            particle.set_velocity(velocity);
-            particle.set_acceleration(acceleration);
-            particle.set_age(0.0);
-            particle.set_lifetime(lifetime);
-            particle.set_size_randomness(size_randomness);
-            self.particles.push(particle);
+            self.particles.push(Particle {
+                position,
+                velocity,
+                acceleration,
+                age: 0.0,
+                lifetime,
+                size_randomness,
+            });
         }
     }
 
     fn update_particles(&mut self, delta_time: f32) {
         for particle in &mut self.particles {
-            particle.set_age(particle.age() + delta_time);
-            let velocity = particle.velocity() + particle.acceleration() * delta_time;
-            let position = particle.simulation_position() + velocity * delta_time;
-            particle.set_velocity(velocity);
-            particle.set_simulation_position(position);
+            particle.age += delta_time;
+            particle.velocity += particle.acceleration * delta_time;
+            particle.position += particle.velocity * delta_time;
         }
         self.particles
-            .retain(|particle| particle.age() < particle.lifetime().max(MIN_PARTICLE_LIFETIME));
+            .retain(|particle| particle.age < particle.lifetime.max(MIN_PARTICLE_LIFETIME));
     }
 
     fn sample_spawn_position(&mut self) -> Vec3 {
@@ -455,6 +359,12 @@ impl ComponentParticleSystem {
                 self.random_signed() * extents.z,
             ),
         }
+    }
+
+    fn size_at(&self, random_offset: f32, t: f32) -> f32 {
+        let start = (self.size.start + random_offset).max(0.0);
+        let end = (self.size.end + random_offset).max(0.0);
+        start + (end - start) * t
     }
 
     fn sample_range(&mut self, range: ParticleScalarRange) -> f32 {
@@ -592,13 +502,12 @@ mod tests {
         scene.set_world_transform(go, Transform::from_xyz(5.0, 0.0, 0.0).matrix());
 
         let expected_x = scene.world_transform(go).position.x;
-        let transform = scene.world_transform(go);
-        scene.write_component::<ComponentParticleSystem, _>(go, |system| {
-            system.prepare_render_data(&transform, &Vec3::zeros());
-        });
         let moved_position = scene
             .read_component::<ComponentParticleSystem, _, _>(go, |system| {
-                system.render_particles(1)[0].position_size
+                let mut render_buffer = Vec::new();
+                let transform = scene.world_transform(go);
+                system.fill_render_buffer(&transform, &Vec3::zeros(), &mut render_buffer);
+                render_buffer[0].position_size
             })
             .unwrap();
 
@@ -642,9 +551,9 @@ mod tests {
                 for particle in &system.particles {
                     if distinct
                         .iter()
-                        .all(|existing| (particle.velocity() - *existing).norm() > 1e-4)
+                        .all(|existing| (particle.velocity - *existing).norm() > 1e-4)
                     {
-                        distinct.push(particle.velocity());
+                        distinct.push(particle.velocity);
                     }
                 }
                 distinct.len()
@@ -688,12 +597,11 @@ mod tests {
             system.step(0.0, &emitter_transform);
         });
 
-        scene.write_component::<ComponentParticleSystem, _>(go, |system| {
-            system.prepare_render_data(&emitter_transform, &Vec3::zeros());
-        });
         let initial_size = scene
             .read_component::<ComponentParticleSystem, _, _>(go, |system| {
-                system.render_particles(1)[0].render_size()
+                let mut render_buffer = Vec::new();
+                system.fill_render_buffer(&emitter_transform, &Vec3::zeros(), &mut render_buffer);
+                render_buffer[0].position_size[3]
             })
             .unwrap();
 
@@ -701,12 +609,11 @@ mod tests {
             system.step(0.5, &emitter_transform);
         });
 
-        scene.write_component::<ComponentParticleSystem, _>(go, |system| {
-            system.prepare_render_data(&emitter_transform, &Vec3::zeros());
-        });
         let later_size = scene
             .read_component::<ComponentParticleSystem, _, _>(go, |system| {
-                system.render_particles(1)[0].render_size()
+                let mut render_buffer = Vec::new();
+                system.fill_render_buffer(&emitter_transform, &Vec3::zeros(), &mut render_buffer);
+                render_buffer[0].position_size[3]
             })
             .unwrap();
 

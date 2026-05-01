@@ -181,7 +181,7 @@ impl SceneRenderer {
         render_state: &RenderState,
         camera: &Camera,
         camera_transform: &Transform,
-        scene: &mut Scene,
+        scene: &Scene,
         physics_debug_pipeline: Option<&mut DebugRenderPipeline>,
     ) {
         let queue = &render_state.queue;

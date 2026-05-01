@@ -229,7 +229,7 @@ impl eframe::App for EditorApp {
             camera.update_projection();
 
             {
-                let scene = scenes.simulation_scene_mut();
+                let scene = scenes.simulation_scene();
                 scene_renderer.render_scene(
                     render_state,
                     camera,
