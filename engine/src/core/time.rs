@@ -1,12 +1,14 @@
 use crate as engine;
 use crate::resource::Resource;
+use crate::utils::TypeUuid;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 pub type TimeType = f32;
 
-#[derive(Resource)]
+#[derive(Resource, TypeUuid)]
+#[uuid = "b0a01abf-afee-4107-94e8-6e2fbab21f72"]
 #[repr(C)]
 pub struct Time {
     timers: RefCell<HashMap<&'static str, Instant>>,

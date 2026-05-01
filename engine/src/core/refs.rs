@@ -97,17 +97,13 @@ impl<T: TypeName> TypeName for Ref<T> {
     }
 }
 
-impl<T: Resource + ?Sized> TypeUuid for Ref<T> {
+impl<T: Resource> TypeUuid for Ref<T> {
     fn uuid_bytes() -> [u8; 16] {
-        *uuid_from_str(std::any::type_name::<Self>()).as_bytes()
+        *uuid_from_str(format!("Ref<{}>", T::type_uuid()).as_str()).as_bytes()
     }
 }
 
-impl<T: Resource + ?Sized> Resource for Ref<T> {
-    fn resource_uuid(&self) -> Uuid {
-        Self::type_uuid()
-    }
-}
+impl<T: Resource> Resource for Ref<T> {}
 
 #[repr(C)]
 pub struct ReadOnlyRef<T: ?Sized> {
@@ -156,17 +152,13 @@ impl<T: ?Sized> Clone for ReadOnlyRef<T> {
     }
 }
 
-impl<T: Resource + ?Sized> TypeUuid for ReadOnlyRef<T> {
+impl<T: Resource> TypeUuid for ReadOnlyRef<T> {
     fn uuid_bytes() -> [u8; 16] {
-        *uuid_from_str(std::any::type_name::<Self>()).as_bytes()
+        *uuid_from_str(format!("ReadOnlyRef<{}>", T::type_uuid()).as_str()).as_bytes()
     }
 }
 
-impl<T: Resource + ?Sized> Resource for ReadOnlyRef<T> {
-    fn resource_uuid(&self) -> Uuid {
-        Self::type_uuid()
-    }
-}
+impl<T: Resource> Resource for ReadOnlyRef<T> {}
 
 #[repr(C)]
 pub struct WeakRef<T: ?Sized> {

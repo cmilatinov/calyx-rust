@@ -48,7 +48,7 @@ pub fn derive_type_uuid(input: TokenStream) -> TokenStream {
             #[automatically_derived]
             impl #impl_generics engine::utils::TypeUuid for #name #ty_generics #where_clause {
                 fn uuid_bytes() -> [u8; 16] {
-                    *engine::utils::uuid_from_str(::core::any::type_name::<Self>()).as_bytes()
+                    *engine::utils::uuid_from_str(stringify!(#name)).as_bytes()
                 }
             }
         }

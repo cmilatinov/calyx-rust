@@ -4,9 +4,11 @@ use std::time::Duration;
 use crate as engine;
 use crate::core::{Ref, WeakRef};
 use crate::resource::Resource;
+use crate::utils::TypeUuid;
 use rusty_pool::{JoinHandle, ThreadPool};
 
-#[derive(Resource)]
+#[derive(Resource, TypeUuid)]
+#[uuid = "38c4c3b8-07c7-4858-a754-d34c6ad1ebc1"]
 #[repr(C)]
 pub struct Background {
     thread_pool: ThreadPool,

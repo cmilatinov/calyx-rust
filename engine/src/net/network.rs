@@ -10,6 +10,7 @@ use crate::net::{
 };
 use crate::scene::{GameObject, Prefab, Scene};
 use crate::try_all;
+use crate::utils::TypeUuid;
 use engine_derive::Resource;
 use log::trace;
 use renet::ClientId;
@@ -19,7 +20,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::LazyLock;
 use std::time::Duration;
 
-#[derive(Resource)]
+#[derive(Resource, TypeUuid)]
+#[uuid = "657869ba-a509-4340-89ae-f07d1eddf0db"]
 #[repr(C)]
 pub struct Network {
     pub client: Client,

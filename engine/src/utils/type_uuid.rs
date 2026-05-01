@@ -5,9 +5,14 @@ use uuid::Uuid;
 pub use engine_derive::{reflect_trait, TypeUuid};
 
 pub trait TypeUuid {
-    fn uuid_bytes() -> [u8; 16];
+    fn uuid_bytes() -> [u8; 16]
+    where
+        Self: Sized;
 
-    fn type_uuid() -> Uuid {
+    fn type_uuid() -> Uuid
+    where
+        Self: Sized,
+    {
         Uuid::from_bytes(Self::uuid_bytes())
     }
 }
@@ -39,24 +44,24 @@ pub fn uuid_from_str(value: &str) -> Uuid {
 
 #[cfg(test)]
 mod tests {
-    use crate as engine;
     use super::{uuid_from_str, TypeUuid};
+    use crate as engine;
     use uuid::Uuid;
 
     #[derive(TypeUuid)]
     struct Plain;
 
     mod left {
-        use crate as engine;
         use super::TypeUuid;
+        use crate as engine;
 
         #[derive(TypeUuid)]
         pub struct Collision;
     }
 
     mod right {
-        use crate as engine;
         use super::TypeUuid;
+        use crate as engine;
 
         #[derive(TypeUuid)]
         pub struct Collision;
@@ -80,24 +85,8 @@ mod tests {
     }
 
     #[test]
-    fn derived_type_uuid_uses_fully_qualified_type_name() {
-        assert_eq!(
-            Plain::type_uuid(),
-            uuid_from_str(std::any::type_name::<Plain>())
-        );
-    }
-
-    #[test]
-    fn derived_type_uuid_distinguishes_same_ident_in_different_modules() {
-        assert_eq!(
-            left::Collision::type_uuid(),
-            uuid_from_str(std::any::type_name::<left::Collision>())
-        );
-        assert_eq!(
-            right::Collision::type_uuid(),
-            uuid_from_str(std::any::type_name::<right::Collision>())
-        );
-        assert_ne!(left::Collision::type_uuid(), right::Collision::type_uuid());
+    fn derived_type_uuid_uses_type_identifier_by_default() {
+        assert_eq!(Plain::type_uuid(), uuid_from_str("Plain"));
     }
 
     #[test]
@@ -110,5 +99,10 @@ mod tests {
             Explicit::type_uuid(),
             Uuid::parse_str("d3a50f0b-0aa3-41ed-a4de-ff5f0d1740f8").unwrap()
         );
+    }
+
+    #[test]
+    fn identical_identifiers_share_default_uuid() {
+        assert_eq!(left::Collision::type_uuid(), right::Collision::type_uuid());
     }
 }

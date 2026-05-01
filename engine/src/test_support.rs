@@ -490,7 +490,8 @@ mod tests {
     use egui::Key;
     use serde::{Deserialize, Serialize};
 
-    #[derive(Default, Resource)]
+    #[derive(Default, Resource, TypeUuid)]
+    #[uuid = "c5fa8823-a151-4543-8559-5307172cd255"]
     #[repr(C)]
     struct InputProbe {
         shoot_presses: usize,
