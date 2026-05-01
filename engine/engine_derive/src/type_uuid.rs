@@ -17,57 +17,48 @@ fn uuid_from_str(value: &str) -> Uuid {
     Uuid::from_bytes(bytes)
 }
 
+fn uuid_lits(uuid: Uuid) -> Vec<LitInt> {
+    uuid.as_bytes()
+        .iter()
+        .map(|byte| format!("{:#X}", byte))
+        .map(|byte_str| syn::parse_str::<LitInt>(&byte_str).unwrap())
+        .collect()
+}
+
+fn derive_uuid_attr(input: &DeriveInput) -> Option<Uuid> {
+    for attr in &input.attrs {
+        if !attr.path().is_ident("uuid") {
+            continue;
+        }
+        if let Meta::NameValue(MetaNameValue {
+            value: Expr::Lit(ExprLit {
+                lit: Lit::Str(lit), ..
+            }),
+            ..
+        }) = &attr.meta
+        {
+            return Uuid::parse_str(lit.value().as_str()).ok();
+        }
+    }
+    None
+}
+
 pub fn derive_type_uuid(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
     let generics = &input.generics;
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
-    let mut uuid = None;
-    for attr in input.attrs.iter() {
-        if attr.path().is_ident("uuid") {
-            if let Meta::NameValue(MetaNameValue {
-                value:
-                    Expr::Lit(ExprLit {
-                        lit: Lit::Str(lit), ..
-                    }),
-                ..
-            }) = &attr.meta
-            {
-                uuid = Uuid::parse_str(lit.value().as_str()).ok();
-            }
+    let uuid = derive_uuid_attr(&input).unwrap_or_else(|| uuid_from_str(name.to_string().as_str()));
+    let bytes = uuid_lits(uuid);
+    quote! {
+        #[automatically_derived]
+        impl #impl_generics engine::utils::TypeUuid for #name #ty_generics #where_clause {
+            const UUID: &'static [u8; 16] = &[
+                #( #bytes ),*
+            ];
         }
     }
-    let expanded = if let Some(uuid) = uuid {
-        let bytes = uuid
-            .as_bytes()
-            .iter()
-            .map(|byte| format!("{:#X}", byte))
-            .map(|byte_str| syn::parse_str::<LitInt>(&byte_str).unwrap());
-        quote! {
-            #[automatically_derived]
-            impl #impl_generics engine::utils::TypeUuid for #name #ty_generics #where_clause {
-                const UUID: &'static [u8; 16] = &[
-                    #( #bytes ),*
-                ];
-            }
-        }
-    } else {
-        let uuid = uuid_from_str(name.to_string().as_str());
-        let bytes = uuid
-            .as_bytes()
-            .iter()
-            .map(|byte| format!("{:#X}", byte))
-            .map(|byte_str| syn::parse_str::<LitInt>(&byte_str).unwrap());
-        quote! {
-            #[automatically_derived]
-            impl #impl_generics engine::utils::TypeUuid for #name #ty_generics #where_clause {
-                const UUID: &'static [u8; 16] = &[
-                    #( #bytes ),*
-                ];
-            }
-        }
-    };
-    expanded.into()
+    .into()
 }
 
 struct ExternTypeUuidInput {
@@ -90,11 +81,7 @@ pub fn extern_type_uuid(input: TokenStream) -> TokenStream {
     let ExternTypeUuidInput { path, uuid_str, .. } =
         parse_macro_input!(input as ExternTypeUuidInput);
     let uuid = Uuid::parse_str(&uuid_str.value()).expect("Value was not a valid UUID");
-    let bytes = uuid
-        .as_bytes()
-        .iter()
-        .map(|byte| format!("{:#X}", byte))
-        .map(|byte_str| syn::parse_str::<LitInt>(&byte_str).unwrap());
+    let bytes = uuid_lits(uuid);
     (quote! {
         #[automatically_derived]
         impl engine::utils::TypeUuid for #path {
