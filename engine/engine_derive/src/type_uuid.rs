@@ -8,7 +8,7 @@ use syn::{
 };
 use uuid::Uuid;
 
-use crate::fq::{FQTypeUuid, FQTypeUuidDynamic, FQUuid};
+use crate::fq::FQTypeUuid;
 
 fn uuid_from_str(value: &str) -> Uuid {
     let mut hasher = sha1::Sha1::new();
@@ -53,25 +53,12 @@ pub fn derive_type_uuid(input: TokenStream) -> TokenStream {
     let uuid = derive_uuid_attr(&input).unwrap_or_else(|| uuid_from_str(name.to_string().as_str()));
     let bytes = uuid_lits(uuid);
     let fq_type_uuid = FQTypeUuid;
-    let fq_type_uuid_dynamic = FQTypeUuidDynamic;
-    let fq_uuid = FQUuid;
     quote! {
         #[automatically_derived]
         impl #impl_generics #fq_type_uuid for #name #ty_generics #where_clause {
             const UUID: &'static [u8; 16] = &[
                 #( #bytes ),*
             ];
-        }
-
-        #[automatically_derived]
-        impl #impl_generics #fq_type_uuid_dynamic for #name #ty_generics #where_clause {
-            fn uuid_bytes(&self) -> &'static [u8; 16] {
-                <Self as #fq_type_uuid>::UUID
-            }
-
-            fn uuid(&self) -> #fq_uuid {
-                <Self as #fq_type_uuid>::type_uuid()
-            }
         }
     }
     .into()
@@ -99,25 +86,12 @@ pub fn extern_type_uuid(input: TokenStream) -> TokenStream {
     let uuid = Uuid::parse_str(&uuid_str.value()).expect("Value was not a valid UUID");
     let bytes = uuid_lits(uuid);
     let fq_type_uuid = FQTypeUuid;
-    let fq_type_uuid_dynamic = FQTypeUuidDynamic;
-    let fq_uuid = FQUuid;
     (quote! {
         #[automatically_derived]
         impl #fq_type_uuid for #path {
             const UUID: &'static [u8; 16] = &[
                 #( #bytes ),*
             ];
-        }
-
-        #[automatically_derived]
-        impl #fq_type_uuid_dynamic for #path {
-            fn uuid_bytes(&self) -> &'static [u8; 16] {
-                <Self as #fq_type_uuid>::UUID
-            }
-
-            fn uuid(&self) -> #fq_uuid {
-                <Self as #fq_type_uuid>::type_uuid()
-            }
         }
     })
     .into()

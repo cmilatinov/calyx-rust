@@ -17,6 +17,16 @@ pub trait TypeUuidDynamic {
     fn uuid(&self) -> Uuid;
 }
 
+impl<T: TypeUuid> TypeUuidDynamic for T {
+    fn uuid_bytes(&self) -> &'static [u8; 16] {
+        Self::UUID
+    }
+
+    fn uuid(&self) -> Uuid {
+        Self::type_uuid()
+    }
+}
+
 pub fn uuid_from_str(value: &str) -> Uuid {
     let mut hasher = sha1::Sha1::new();
     hasher.update(value.as_bytes());

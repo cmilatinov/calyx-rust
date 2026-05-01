@@ -123,17 +123,7 @@ impl<T: TypeUuid> TypeUuid for Ref<T> {
     }
 }
 
-impl<T: Resource> TypeUuidDynamic for Ref<T> {
-    fn uuid_bytes(&self) -> &'static [u8; 16] {
-        &REF_WRAPPER_UUID
-    }
-
-    fn uuid(&self) -> Uuid {
-        wrapper_type_uuid(&REF_WRAPPER_UUID, self.read().uuid())
-    }
-}
-
-impl<T: Resource> Resource for Ref<T> {}
+impl<T: Resource> Resource for Ref<T> where Ref<T>: TypeUuidDynamic {}
 
 #[repr(C)]
 pub struct ReadOnlyRef<T: ?Sized> {
@@ -190,17 +180,7 @@ impl<T: TypeUuid> TypeUuid for ReadOnlyRef<T> {
     }
 }
 
-impl<T: Resource> TypeUuidDynamic for ReadOnlyRef<T> {
-    fn uuid_bytes(&self) -> &'static [u8; 16] {
-        &READ_ONLY_REF_WRAPPER_UUID
-    }
-
-    fn uuid(&self) -> Uuid {
-        wrapper_type_uuid(&READ_ONLY_REF_WRAPPER_UUID, self.read().uuid())
-    }
-}
-
-impl<T: Resource> Resource for ReadOnlyRef<T> {}
+impl<T: Resource> Resource for ReadOnlyRef<T> where ReadOnlyRef<T>: TypeUuidDynamic {}
 
 #[repr(C)]
 pub struct WeakRef<T: ?Sized> {
