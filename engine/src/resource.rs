@@ -8,14 +8,14 @@ use paste::paste;
 use std::collections::HashMap;
 use uuid::Uuid;
 
-pub trait Resource: TypeUuid + TypeUuidDynamic + 'static {}
+pub trait Resource: TypeUuidDynamic + 'static {}
 
 impl dyn Resource {
-    pub fn is<T: Resource>(&self) -> bool {
+    pub fn is<T: Resource + TypeUuid>(&self) -> bool {
         self.uuid() == T::type_uuid()
     }
 
-    pub fn downcast_ref<T: Resource>(&self) -> Option<&T> {
+    pub fn downcast_ref<T: Resource + TypeUuid>(&self) -> Option<&T> {
         if self.is::<T>() {
             unsafe { Some(&*(self as *const dyn Resource as *const T)) }
         } else {
@@ -23,7 +23,7 @@ impl dyn Resource {
         }
     }
 
-    pub fn downcast_mut<T: Resource>(&mut self) -> Option<&mut T> {
+    pub fn downcast_mut<T: Resource + TypeUuid>(&mut self) -> Option<&mut T> {
         if self.is::<T>() {
             unsafe { Some(&mut *(self as *mut dyn Resource as *mut T)) }
         } else {
@@ -68,38 +68,40 @@ impl ResourceMap {
     }
 
     #[inline]
-    pub fn insert<T: Resource>(&mut self, resource: T) {
+    pub fn insert<T: Resource + TypeUuid>(&mut self, resource: T) {
         self.inner.insert(T::type_uuid(), Box::new(resource));
     }
 
     #[inline]
-    pub fn insert_default<T: Resource + Default>(&mut self) {
+    pub fn insert_default<T: Resource + Default + TypeUuid>(&mut self) {
         self.insert(T::default());
     }
 
     #[inline]
-    pub fn remove<T: Resource>(&mut self) -> Option<T> {
+    pub fn remove<T: Resource + TypeUuid>(&mut self) -> Option<T> {
         let resource = self.inner.remove(&T::type_uuid())?;
         let raw = Box::into_raw(resource);
         unsafe { Some(*Box::from_raw(raw as *mut T)) }
     }
 
     #[inline]
-    pub fn resource<T: Resource>(&self) -> Option<&T> {
+    pub fn resource<T: Resource + TypeUuid>(&self) -> Option<&T> {
         self.inner
             .get(&T::type_uuid())
             .and_then(|r| r.downcast_ref())
     }
 
     #[inline]
-    pub fn resource_mut<T: Resource>(&mut self) -> Option<&mut T> {
+    pub fn resource_mut<T: Resource + TypeUuid>(&mut self) -> Option<&mut T> {
         self.inner
             .get_mut(&T::type_uuid())
             .and_then(|r| r.downcast_mut())
     }
 
     #[inline]
-    pub fn resource_pair_mut<T1: Resource, T2: Resource>(&mut self) -> Option<(&mut T1, &mut T2)> {
+    pub fn resource_pair_mut<T1: Resource + TypeUuid, T2: Resource + TypeUuid>(
+        &mut self,
+    ) -> Option<(&mut T1, &mut T2)> {
         let id1 = T1::type_uuid();
         let id2 = T2::type_uuid();
         match self.inner.get_disjoint_mut([&id1, &id2]) {

@@ -1,11 +1,21 @@
 use proc_macro::TokenStream;
 use quote::quote;
+use sha1::Digest;
 use syn::parse::{Parse, ParseStream};
 use syn::{
     parse_macro_input, DeriveInput, Expr, ExprLit, Lit, LitInt, LitStr, Meta, MetaNameValue, Path,
     Token,
 };
 use uuid::Uuid;
+
+fn uuid_from_str(value: &str) -> Uuid {
+    let mut hasher = sha1::Sha1::new();
+    hasher.update(value.as_bytes());
+    let hash = hasher.finalize();
+    let mut bytes: uuid::Bytes = [0; 16];
+    bytes.copy_from_slice(&hash.as_slice()[0..16]);
+    Uuid::from_bytes(bytes)
+}
 
 pub fn derive_type_uuid(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -36,20 +46,24 @@ pub fn derive_type_uuid(input: TokenStream) -> TokenStream {
         quote! {
             #[automatically_derived]
             impl #impl_generics engine::utils::TypeUuid for #name #ty_generics #where_clause {
-                fn uuid_bytes() -> [u8; 16] {
-                    [
-                        #( #bytes ),*
-                    ]
-                }
+                const UUID: &'static [u8; 16] = &[
+                    #( #bytes ),*
+                ];
             }
         }
     } else {
+        let uuid = uuid_from_str(name.to_string().as_str());
+        let bytes = uuid
+            .as_bytes()
+            .iter()
+            .map(|byte| format!("{:#X}", byte))
+            .map(|byte_str| syn::parse_str::<LitInt>(&byte_str).unwrap());
         quote! {
             #[automatically_derived]
             impl #impl_generics engine::utils::TypeUuid for #name #ty_generics #where_clause {
-                fn uuid_bytes() -> [u8; 16] {
-                    *engine::utils::uuid_from_str(stringify!(#name)).as_bytes()
-                }
+                const UUID: &'static [u8; 16] = &[
+                    #( #bytes ),*
+                ];
             }
         }
     };
@@ -84,11 +98,9 @@ pub fn extern_type_uuid(input: TokenStream) -> TokenStream {
     (quote! {
         #[automatically_derived]
         impl engine::utils::TypeUuid for #path {
-            fn uuid_bytes() -> [u8; 16] {
-                [
-                    #( #bytes ),*
-                ]
-            }
+            const UUID: &'static [u8; 16] = &[
+                #( #bytes ),*
+            ];
         }
     })
     .into()

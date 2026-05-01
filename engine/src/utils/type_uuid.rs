@@ -5,27 +5,21 @@ use uuid::Uuid;
 pub use engine_derive::{reflect_trait, TypeUuid};
 
 pub trait TypeUuid {
-    fn uuid_bytes() -> [u8; 16]
-    where
-        Self: Sized;
-
-    fn type_uuid() -> Uuid
-    where
-        Self: Sized,
-    {
-        Uuid::from_bytes(Self::uuid_bytes())
+    const UUID: &'static [u8; 16];
+    fn type_uuid() -> Uuid {
+        Uuid::from_bytes(*Self::UUID)
     }
 }
 
 #[reflect_trait]
 pub trait TypeUuidDynamic {
-    fn uuid_bytes(&self) -> [u8; 16];
+    fn uuid_bytes(&self) -> &'static [u8; 16];
     fn uuid(&self) -> Uuid;
 }
 
 impl<T: TypeUuid> TypeUuidDynamic for T {
-    fn uuid_bytes(&self) -> [u8; 16] {
-        Self::uuid_bytes()
+    fn uuid_bytes(&self) -> &'static [u8; 16] {
+        Self::UUID
     }
 
     fn uuid(&self) -> Uuid {
