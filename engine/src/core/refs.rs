@@ -1,9 +1,29 @@
 use crate::reflect::TypeName;
 use crate::resource::Resource;
+use crate::utils::{TypeUuid, TypeUuidDynamic};
+use sha1::Digest;
 use std::fmt::{Debug, Formatter};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak};
 use uuid::Uuid;
 
+const REF_WRAPPER_UUID: [u8; 16] = [
+    0x0C, 0xFC, 0xB5, 0xED, 0xA9, 0xF5, 0x41, 0xEC, 0x87, 0x4B, 0x24, 0xCD, 0x3F, 0x01, 0xB1, 0x2A,
+];
+const READ_ONLY_REF_WRAPPER_UUID: [u8; 16] = [
+    0x17, 0xEF, 0x5A, 0xE1, 0x2C, 0xD0, 0x42, 0x9F, 0x84, 0x52, 0xA0, 0x21, 0x65, 0x55, 0xB0, 0x6A,
+];
+
+fn wrapper_type_uuid(wrapper_uuid: &[u8; 16], inner_uuid: Uuid) -> Uuid {
+    let mut hasher = sha1::Sha1::new();
+    hasher.update(wrapper_uuid);
+    hasher.update(inner_uuid.as_bytes());
+    let hash = hasher.finalize();
+    let mut bytes = [0; 16];
+    bytes.copy_from_slice(&hash.as_slice()[0..16]);
+    Uuid::from_bytes(bytes)
+}
+
+#[repr(C)]
 pub struct Ref<T: ?Sized> {
     pub(crate) id: Uuid,
     pub(crate) inner: Arc<RwLock<T>>,
@@ -95,8 +115,17 @@ impl<T: TypeName> TypeName for Ref<T> {
     }
 }
 
-impl<T: Resource> Resource for Ref<T> {}
+impl<T: TypeUuid> TypeUuid for Ref<T> {
+    const UUID: &'static [u8; 16] = &[0; 16];
 
+    fn type_uuid() -> Uuid {
+        wrapper_type_uuid(&REF_WRAPPER_UUID, T::type_uuid())
+    }
+}
+
+impl<T: Resource> Resource for Ref<T> where Ref<T>: TypeUuidDynamic {}
+
+#[repr(C)]
 pub struct ReadOnlyRef<T: ?Sized> {
     inner: Ref<T>,
 }
@@ -143,8 +172,17 @@ impl<T: ?Sized> Clone for ReadOnlyRef<T> {
     }
 }
 
-impl<T: Resource> Resource for ReadOnlyRef<T> {}
+impl<T: TypeUuid> TypeUuid for ReadOnlyRef<T> {
+    const UUID: &'static [u8; 16] = &[0; 16];
 
+    fn type_uuid() -> Uuid {
+        wrapper_type_uuid(&READ_ONLY_REF_WRAPPER_UUID, T::type_uuid())
+    }
+}
+
+impl<T: Resource> Resource for ReadOnlyRef<T> where ReadOnlyRef<T>: TypeUuidDynamic {}
+
+#[repr(C)]
 pub struct WeakRef<T: ?Sized> {
     id: Uuid,
     inner: Weak<RwLock<T>>,
@@ -168,7 +206,15 @@ impl<T: ?Sized> WeakRef<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Ref, WeakRef};
+    use super::{ReadOnlyRef, Ref, WeakRef};
+    use crate as engine;
+    use crate::resource::Resource;
+    use crate::utils::TypeUuid;
+
+    #[derive(Default, Resource, TypeUuid)]
+    #[uuid = "f13a97c5-8d80-42d0-ae95-f4f0bd42d390"]
+    #[repr(C)]
+    struct DummyResource(u32);
 
     #[test]
     fn read_write() {
@@ -207,5 +253,21 @@ mod tests {
         let a: Ref<i32> = Ref::new(0);
         let b = a.clone();
         assert_eq!(a.ptr_id(), b.ptr_id());
+    }
+
+    #[test]
+    fn wrapper_type_uuids_are_stable_and_distinct() {
+        assert_ne!(
+            DummyResource::type_uuid(),
+            Ref::<DummyResource>::type_uuid()
+        );
+        assert_ne!(
+            Ref::<DummyResource>::type_uuid(),
+            ReadOnlyRef::<DummyResource>::type_uuid()
+        );
+        assert_eq!(
+            Ref::<DummyResource>::type_uuid(),
+            Ref::<DummyResource>::type_uuid()
+        );
     }
 }
