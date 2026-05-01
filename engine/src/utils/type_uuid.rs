@@ -1,6 +1,6 @@
 use crate as engine;
 use sha1::Digest;
-use uuid::Uuid;
+pub use uuid::Uuid;
 
 pub use engine_derive::{reflect_trait, TypeUuid};
 
@@ -15,16 +15,6 @@ pub trait TypeUuid {
 pub trait TypeUuidDynamic {
     fn uuid_bytes(&self) -> &'static [u8; 16];
     fn uuid(&self) -> Uuid;
-}
-
-impl<T: TypeUuid> TypeUuidDynamic for T {
-    fn uuid_bytes(&self) -> &'static [u8; 16] {
-        Self::UUID
-    }
-
-    fn uuid(&self) -> Uuid {
-        Self::type_uuid()
-    }
 }
 
 pub fn uuid_from_str(value: &str) -> Uuid {

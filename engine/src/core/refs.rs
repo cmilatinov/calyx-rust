@@ -1,6 +1,6 @@
 use crate::reflect::TypeName;
 use crate::resource::Resource;
-use crate::utils::TypeUuid;
+use crate::utils::{TypeUuid, TypeUuidDynamic};
 use sha1::Digest;
 use std::fmt::{Debug, Formatter};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak};
@@ -115,7 +115,7 @@ impl<T: TypeName> TypeName for Ref<T> {
     }
 }
 
-impl<T: Resource + TypeUuid> TypeUuid for Ref<T> {
+impl<T: TypeUuid> TypeUuid for Ref<T> {
     const UUID: &'static [u8; 16] = &[0; 16];
 
     fn type_uuid() -> Uuid {
@@ -123,7 +123,17 @@ impl<T: Resource + TypeUuid> TypeUuid for Ref<T> {
     }
 }
 
-impl<T: Resource + TypeUuid> Resource for Ref<T> {}
+impl<T: Resource> TypeUuidDynamic for Ref<T> {
+    fn uuid_bytes(&self) -> &'static [u8; 16] {
+        &REF_WRAPPER_UUID
+    }
+
+    fn uuid(&self) -> Uuid {
+        wrapper_type_uuid(&REF_WRAPPER_UUID, self.read().uuid())
+    }
+}
+
+impl<T: Resource> Resource for Ref<T> {}
 
 #[repr(C)]
 pub struct ReadOnlyRef<T: ?Sized> {
@@ -172,7 +182,7 @@ impl<T: ?Sized> Clone for ReadOnlyRef<T> {
     }
 }
 
-impl<T: Resource + TypeUuid> TypeUuid for ReadOnlyRef<T> {
+impl<T: TypeUuid> TypeUuid for ReadOnlyRef<T> {
     const UUID: &'static [u8; 16] = &[0; 16];
 
     fn type_uuid() -> Uuid {
@@ -180,7 +190,17 @@ impl<T: Resource + TypeUuid> TypeUuid for ReadOnlyRef<T> {
     }
 }
 
-impl<T: Resource + TypeUuid> Resource for ReadOnlyRef<T> {}
+impl<T: Resource> TypeUuidDynamic for ReadOnlyRef<T> {
+    fn uuid_bytes(&self) -> &'static [u8; 16] {
+        &READ_ONLY_REF_WRAPPER_UUID
+    }
+
+    fn uuid(&self) -> Uuid {
+        wrapper_type_uuid(&READ_ONLY_REF_WRAPPER_UUID, self.read().uuid())
+    }
+}
+
+impl<T: Resource> Resource for ReadOnlyRef<T> {}
 
 #[repr(C)]
 pub struct WeakRef<T: ?Sized> {
