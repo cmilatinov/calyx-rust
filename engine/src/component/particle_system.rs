@@ -31,7 +31,21 @@ pub enum ParticleSpawnShape {
 
 impl Default for ParticleSpawnShape {
     fn default() -> Self {
-        Self::Sphere { radius: 0.5 }
+        Self::Sphere { radius: 1.0 }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TypeUuid, Reflect)]
+#[uuid = "444a8eaa-3d18-486b-96bb-7d038b1979bc"]
+#[repr(C)]
+pub enum ParticleBlendMode {
+    Alpha,
+    Additive,
+}
+
+impl Default for ParticleBlendMode {
+    fn default() -> Self {
+        Self::Additive
     }
 }
 
@@ -63,9 +77,9 @@ pub struct ParticleSizeCurve {
 impl Default for ParticleSizeCurve {
     fn default() -> Self {
         Self {
-            start: 0.25,
+            start: 0.6,
             end: 0.0,
-            randomness: 0.05,
+            randomness: 0.3,
         }
     }
 }
@@ -112,6 +126,7 @@ pub struct ComponentParticleSystem {
     pub size: ParticleSizeCurve,
     pub start_color: Color32,
     pub end_color: Color32,
+    pub blend_mode: ParticleBlendMode,
     pub texture: AssetRef<Texture>,
     #[serde(skip)]
     #[reflect_skip]
@@ -136,21 +151,22 @@ impl Default for ComponentParticleSystem {
             active: true,
             looping: true,
             local_space: false,
-            spawn_rate: 16.0,
+            spawn_rate: 256.0,
             burst_count: 0,
             max_particles: 256,
             emission_duration: 0.0,
             lifetime: ParticleScalarRange {
-                min: 0.35,
-                max: 0.9,
+                min: 0.4,
+                max: 1.1,
             },
             spawn_shape: Default::default(),
-            initial_velocity: vec3(0.0, 1.0, 0.0),
-            velocity_randomness: vec3(0.5, 0.5, 0.5),
-            acceleration: vec3(0.0, -1.5, 0.0),
+            initial_velocity: vec3(0.0, 5.0, 0.0),
+            velocity_randomness: vec3(1.0, 1.5, 1.0),
+            acceleration: vec3(0.0, 5.0, 0.0),
             size: Default::default(),
-            start_color: Color32::WHITE,
-            end_color: Color32::from_rgba_unmultiplied(255, 255, 255, 0),
+            start_color: Color32::from_rgba_unmultiplied(255, 4, 0, 255),
+            end_color: Color32::from_rgba_unmultiplied(255, 169, 0, 84),
+            blend_mode: Default::default(),
             texture: Default::default(),
             particles: Vec::new(),
             spawn_accumulator: 0.0,
@@ -409,13 +425,13 @@ impl ComponentParticleSystem {
     }
 
     fn lerp_color(start: Color32, end: Color32, t: f32) -> [f32; 4] {
-        let start = start.to_normalized_gamma_f32();
-        let end = end.to_normalized_gamma_f32();
+        let start = start.to_srgba_unmultiplied();
+        let end = end.to_srgba_unmultiplied();
         [
-            start[0] + (end[0] - start[0]) * t,
-            start[1] + (end[1] - start[1]) * t,
-            start[2] + (end[2] - start[2]) * t,
-            start[3] + (end[3] - start[3]) * t,
+            (start[0] as f32 + (end[0] as f32 - start[0] as f32) * t) / 255.0,
+            (start[1] as f32 + (end[1] as f32 - start[1] as f32) * t) / 255.0,
+            (start[2] as f32 + (end[2] as f32 - start[2] as f32) * t) / 255.0,
+            (start[3] as f32 + (end[3] as f32 - start[3] as f32) * t) / 255.0,
         ]
     }
 }
@@ -619,5 +635,19 @@ mod tests {
 
         assert!(later_size < initial_size);
         assert!((later_size - 0.625).abs() < 1e-5);
+    }
+
+    #[test]
+    fn particle_color_lerp_uses_unmultiplied_alpha() {
+        let color = ComponentParticleSystem::lerp_color(
+            Color32::from_rgba_unmultiplied(255, 169, 0, 84),
+            Color32::from_rgba_unmultiplied(255, 169, 0, 84),
+            0.5,
+        );
+
+        assert!(color[0] > 0.9, "expected red to stay unpremultiplied");
+        assert!(color[1] > 0.55, "expected green to stay unpremultiplied");
+        assert!(color[2] < 0.05, "expected blue to stay near zero");
+        assert!((color[3] - (84.0 / 255.0)).abs() < 0.02);
     }
 }

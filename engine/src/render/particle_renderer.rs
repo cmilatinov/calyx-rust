@@ -1,5 +1,5 @@
 use crate::assets::texture::Texture;
-use crate::component::{ComponentParticleSystem, ParticleRenderInstance};
+use crate::component::{ComponentParticleSystem, ParticleBlendMode, ParticleRenderInstance};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::buffer::{wgpu_buffer_init_desc, BufferLayout, ResizableBuffer};
@@ -51,6 +51,11 @@ struct PipelineSignature {
     shader_hash: u64,
 }
 
+struct ParticlePipelines {
+    alpha: wgpu::RenderPipeline,
+    additive: wgpu::RenderPipeline,
+}
+
 pub struct ParticleRenderer {
     shader: Ref<Shader>,
     default_texture: Ref<Texture>,
@@ -59,7 +64,7 @@ pub struct ParticleRenderer {
     instance_buffer: ResizableBuffer,
     game_objects: Vec<GameObject>,
     particle_systems: HashMap<GameObject, ParticleSystemRenderState>,
-    pipeline: Option<wgpu::RenderPipeline>,
+    pipelines: Option<ParticlePipelines>,
     pipeline_signature: Option<PipelineSignature>,
 }
 
@@ -112,7 +117,7 @@ impl ParticleRenderer {
             ),
             game_objects: Vec::new(),
             particle_systems: HashMap::new(),
-            pipeline: None,
+            pipelines: None,
             pipeline_signature: None,
         }
     }
@@ -138,7 +143,7 @@ impl ParticleRenderer {
             color_target.descriptor.format,
             depth_target.descriptor.format,
         );
-        let Some(pipeline) = self.pipeline.as_ref() else {
+        let Some(pipelines) = self.pipelines.as_ref() else {
             return;
         };
 
@@ -183,15 +188,22 @@ impl ParticleRenderer {
                 continue;
             }
 
-            let texture = scene
+            let (texture, blend_mode) = scene
                 .read_component::<ComponentParticleSystem, _, _>(game_object, |system| {
-                    system
-                        .texture
-                        .get_ref(&asset_context.registries)
-                        .unwrap_or_else(|| self.default_texture.clone())
+                    (
+                        system
+                            .texture
+                            .get_ref(&asset_context.registries)
+                            .unwrap_or_else(|| self.default_texture.clone()),
+                        system.blend_mode,
+                    )
                 })
-                .unwrap_or_else(|| self.default_texture.clone());
+                .unwrap_or_else(|| (self.default_texture.clone(), ParticleBlendMode::default()));
             let texture_bind_group = self.texture_bind_group(device, &texture);
+            let pipeline = match blend_mode {
+                ParticleBlendMode::Alpha => &pipelines.alpha,
+                ParticleBlendMode::Additive => &pipelines.additive,
+            };
 
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Particle Pass"),
@@ -244,11 +256,11 @@ impl ParticleRenderer {
         }
 
         let mut depth_stencil = RenderUtils::depth_default(depth_format);
-        depth_stencil.depth_write_enabled = true;
+        depth_stencil.depth_write_enabled = false;
 
-        self.pipeline = Some(
+        let create_pipeline = |label: &str, target: wgpu::ColorTargetState| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("particle_pipeline"),
+                label: Some(label),
                 layout: Some(&shader.pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &shader.shader,
@@ -262,7 +274,7 @@ impl ParticleRenderer {
                 fragment: Some(wgpu::FragmentState {
                     module: &shader.shader,
                     entry_point: Some("fs_main"),
-                    targets: &[Some(RenderUtils::color_alpha_blending(color_format))],
+                    targets: &[Some(target)],
                     compilation_options: Default::default(),
                 }),
                 primitive: wgpu::PrimitiveState {
@@ -271,12 +283,23 @@ impl ParticleRenderer {
                     cull_mode: None,
                     ..Default::default()
                 },
-                depth_stencil: Some(depth_stencil),
+                depth_stencil: Some(depth_stencil.clone()),
                 multisample: RenderUtils::multisample_default(samples),
                 multiview: None,
                 cache: None,
-            }),
-        );
+            })
+        };
+
+        self.pipelines = Some(ParticlePipelines {
+            alpha: create_pipeline(
+                "particle_pipeline_alpha",
+                RenderUtils::color_alpha_blending(color_format),
+            ),
+            additive: create_pipeline(
+                "particle_pipeline_additive",
+                RenderUtils::color_additive_blending(color_format),
+            ),
+        });
         self.pipeline_signature = Some(signature);
     }
 
@@ -330,6 +353,6 @@ mod tests {
             TextureFormat::Rgba16Float,
             TextureFormat::Depth32Float,
         );
-        assert!(renderer.pipeline.is_some());
+        assert!(renderer.pipelines.is_some());
     }
 }

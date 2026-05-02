@@ -13,6 +13,8 @@ struct VsOutput {
     @location(1) color: vec4f,
 };
 
+const MIN_PARTICLE_DIAMETER_PX: f32 = 6.0;
+
 @group(1) @binding(0)
 var particle_texture: texture_2d<f32>;
 
@@ -21,15 +23,26 @@ var particle_sampler: sampler;
 
 @vertex
 fn vs_main(input: VsInput) -> VsOutput {
-    let right = normalize(camera.inverse_view[0].xyz);
-    let up = normalize(camera.inverse_view[1].xyz);
-    let world_center = input.position_size.xyz;
-    let world_position = world_center
-        + right * (input.local_position.x * input.position_size.w)
-        + up * (input.local_position.y * input.position_size.w);
+    let clip_center = camera.projection * camera.view * vec4f(input.position_size.xyz, 1.0);
+    let clip_w = max(abs(clip_center.w), 1e-5);
+    let size_ndc = vec2f(
+        abs(camera.projection[0][0]) * input.position_size.w / clip_w,
+        abs(camera.projection[1][1]) * input.position_size.w / clip_w,
+    );
+    let min_size_ndc = vec2f(
+        2.0 * MIN_PARTICLE_DIAMETER_PX / max(camera.viewport_size.x, 1.0),
+        2.0 * MIN_PARTICLE_DIAMETER_PX / max(camera.viewport_size.y, 1.0),
+    );
+    let clamped_size_ndc = max(size_ndc, min_size_ndc);
+    let clip_offset = vec4f(
+        input.local_position.x * clamped_size_ndc.x * clip_w,
+        input.local_position.y * clamped_size_ndc.y * clip_w,
+        0.0,
+        0.0,
+    );
 
     var output: VsOutput;
-    output.clip_position = camera.projection * camera.view * vec4f(world_position, 1.0);
+    output.clip_position = clip_center + clip_offset;
     output.uv = input.uv;
     output.color = input.color;
     return output;
@@ -37,12 +50,11 @@ fn vs_main(input: VsInput) -> VsOutput {
 
 @fragment
 fn fs_main(input: VsOutput) -> @location(0) vec4f {
-    let sampled = textureSample(particle_texture, particle_sampler, input.uv);
+    let sampled = textureSampleLevel(particle_texture, particle_sampler, input.uv, 0.0);
     let centered_uv = input.uv * 2.0 - vec2f(1.0, 1.0);
-    let radial_mask = clamp(1.0 - length(centered_uv), 0.0, 1.0);
-    let alpha = sampled.a * input.color.a * radial_mask;
-    if alpha <= 0.001 {
+    let radius = length(centered_uv);
+    if radius > 1.0 || sampled.a <= 0.001 {
         discard;
     }
-    return vec4f(sampled.rgb * input.color.rgb, alpha);
+    return vec4f(sampled.rgb * input.color.rgb, sampled.a * input.color.a);
 }
