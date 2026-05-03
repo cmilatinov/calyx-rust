@@ -10,9 +10,7 @@ use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::RenderState;
 use legion::{Entity, IntoQuery};
 use nalgebra_glm::Vec3;
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -49,7 +47,6 @@ struct PipelineSignature {
     samples: u32,
     color_format: wgpu::TextureFormat,
     depth_format: wgpu::TextureFormat,
-    shader_hash: u64,
 }
 
 struct ParticlePipelines {
@@ -232,12 +229,10 @@ impl ParticleRenderer {
         depth_format: wgpu::TextureFormat,
     ) {
         let shader = self.shader.read();
-        let shader_hash = Self::shader_hash(&shader);
         let signature = PipelineSignature {
             samples,
             color_format,
             depth_format,
-            shader_hash,
         };
         if self.pipeline_signature == Some(signature) {
             return;
@@ -308,12 +303,6 @@ impl ParticleRenderer {
                 },
             ],
         })
-    }
-
-    fn shader_hash(shader: &Shader) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        shader.source.hash(&mut hasher);
-        hasher.finish()
     }
 }
 
