@@ -1,0 +1,653 @@
+use super::{
+    Component, ComponentEventContext, ComponentReset, ComponentUpdate, ReflectComponent,
+    ReflectComponentReset, ReflectComponentUpdate,
+};
+use crate as engine;
+use crate::assets::texture::Texture;
+use crate::assets::AssetRef;
+use crate::input::Input;
+use crate::math::Transform;
+use crate::reflect::{Reflect, ReflectDefault};
+use crate::render::Gizmos;
+use crate::resource::ResourceMap;
+use crate::scene::{GameObject, Scene};
+use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
+use egui::Color32;
+use nalgebra_glm::{vec3, Vec3, Vec4};
+use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
+use uuid::Uuid;
+
+const MIN_PARTICLE_LIFETIME: f32 = 0.01;
+const DEFAULT_RNG_SEED: u64 = 0x9e37_79b9_7f4a_7c15;
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
+#[uuid = "37c707d9-f6e8-4dc1-b2b1-159ceff99082"]
+#[repr(C)]
+pub enum ParticleSpawnShape {
+    Sphere { radius: f32 },
+    Box { extents: Vec3 },
+}
+
+impl Default for ParticleSpawnShape {
+    fn default() -> Self {
+        Self::Sphere { radius: 1.0 }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TypeUuid, Reflect)]
+#[uuid = "444a8eaa-3d18-486b-96bb-7d038b1979bc"]
+#[repr(C)]
+pub enum ParticleBlendMode {
+    Alpha,
+    Additive,
+}
+
+impl Default for ParticleBlendMode {
+    fn default() -> Self {
+        Self::Additive
+    }
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize, TypeUuid, Reflect)]
+#[uuid = "6c5546bb-496e-4b68-8c1f-1d288b7665f5"]
+#[serde(default)]
+#[repr(C)]
+pub struct ParticleScalarRange {
+    pub min: f32,
+    pub max: f32,
+}
+
+impl Default for ParticleScalarRange {
+    fn default() -> Self {
+        Self { min: 1.0, max: 1.0 }
+    }
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize, TypeUuid, Reflect)]
+#[uuid = "5af8ac8a-9652-477b-9487-68a077b3a6b3"]
+#[serde(default)]
+#[repr(C)]
+pub struct ParticleSizeCurve {
+    pub start: f32,
+    pub end: f32,
+    pub randomness: f32,
+}
+
+impl Default for ParticleSizeCurve {
+    fn default() -> Self {
+        Self {
+            start: 0.6,
+            end: 0.0,
+            randomness: 0.3,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Particle {
+    pub position: Vec3,
+    pub velocity: Vec3,
+    pub acceleration: Vec3,
+    pub age: f32,
+    pub lifetime: f32,
+    pub size_randomness: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct ParticleRenderInstance {
+    pub position_size: [f32; 4],
+    pub color: [f32; 4],
+    pub distance_sq: f32,
+}
+
+#[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
+#[uuid = "5214cd04-62ac-48e0-8f0b-4030d2102931"]
+#[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate, ComponentReset)]
+#[reflect_attr(name = "Particle System")]
+#[serde(default)]
+#[repr(C)]
+pub struct ComponentParticleSystem {
+    pub active: bool,
+    pub looping: bool,
+    pub local_space: bool,
+    #[reflect_attr(min = 0.0, speed = 0.1)]
+    pub spawn_rate: f32,
+    pub burst_count: u32,
+    pub max_particles: u32,
+    #[reflect_attr(min = 0.0, speed = 0.1)]
+    pub emission_duration: f32,
+    pub lifetime: ParticleScalarRange,
+    pub spawn_shape: ParticleSpawnShape,
+    pub initial_velocity: Vec3,
+    pub velocity_randomness: Vec3,
+    pub acceleration: Vec3,
+    pub size: ParticleSizeCurve,
+    pub start_color: Color32,
+    pub end_color: Color32,
+    pub blend_mode: ParticleBlendMode,
+    pub texture: AssetRef<Texture>,
+    #[serde(skip)]
+    #[reflect_skip]
+    particles: Vec<Particle>,
+    #[serde(skip)]
+    #[reflect_skip]
+    spawn_accumulator: f32,
+    #[serde(skip)]
+    #[reflect_skip]
+    elapsed_time: f32,
+    #[serde(skip)]
+    #[reflect_skip]
+    burst_emitted: bool,
+    #[serde(skip)]
+    #[reflect_skip]
+    rng_state: u64,
+}
+
+impl Default for ComponentParticleSystem {
+    fn default() -> Self {
+        Self {
+            active: true,
+            looping: true,
+            local_space: false,
+            spawn_rate: 256.0,
+            burst_count: 0,
+            max_particles: 256,
+            emission_duration: 0.0,
+            lifetime: ParticleScalarRange {
+                min: 0.4,
+                max: 1.1,
+            },
+            spawn_shape: Default::default(),
+            initial_velocity: vec3(0.0, 5.0, 0.0),
+            velocity_randomness: vec3(1.0, 1.5, 1.0),
+            acceleration: vec3(0.0, 5.0, 0.0),
+            size: Default::default(),
+            start_color: Color32::from_rgba_unmultiplied(255, 4, 0, 255),
+            end_color: Color32::from_rgba_unmultiplied(255, 169, 0, 84),
+            blend_mode: Default::default(),
+            texture: Default::default(),
+            particles: Vec::new(),
+            spawn_accumulator: 0.0,
+            elapsed_time: 0.0,
+            burst_emitted: false,
+            rng_state: DEFAULT_RNG_SEED,
+        }
+    }
+}
+
+impl Component for ComponentParticleSystem {
+    fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {
+        let transform = scene.world_transform(game_object);
+        gizmos.set_color(&Vec4::new(1.0, 0.6, 0.2, 1.0));
+        match self.spawn_shape {
+            ParticleSpawnShape::Sphere { radius } => {
+                gizmos.wire_sphere(&transform.position, radius.max(0.0));
+            }
+            ParticleSpawnShape::Box { extents } => {
+                gizmos.wire_cube(&transform.position, &(extents * 2.0));
+            }
+        }
+    }
+}
+
+impl ComponentReset for ComponentParticleSystem {
+    fn reset(
+        &self,
+        ComponentEventContext {
+            scene, game_object, ..
+        }: ComponentEventContext,
+    ) {
+        let seed = scene.uuid(game_object);
+        scene.write_component::<ComponentParticleSystem, _>(game_object, |system| {
+            system.reset_runtime(seed);
+        });
+    }
+}
+
+impl ComponentUpdate for ComponentParticleSystem {
+    fn update(
+        &self,
+        ComponentEventContext {
+            scene, game_object, ..
+        }: ComponentEventContext,
+        resources: &mut ResourceMap,
+        _input: &Input,
+    ) {
+        let emitter_transform = scene.world_transform(game_object);
+        let delta_time = resources.time().delta_time();
+        scene.write_component::<ComponentParticleSystem, _>(game_object, |system| {
+            system.step(delta_time, &emitter_transform);
+        });
+    }
+}
+
+impl ComponentParticleSystem {
+    pub(crate) fn fill_render_buffer(
+        &self,
+        emitter_transform: &Transform,
+        camera_position: &Vec3,
+        out: &mut Vec<ParticleRenderInstance>,
+    ) {
+        out.clear();
+        for particle in &self.particles {
+            let lifetime = particle.lifetime.max(MIN_PARTICLE_LIFETIME);
+            let t = (particle.age / lifetime).clamp(0.0, 1.0);
+            let size = self.size_at(particle.size_randomness, t);
+            if size <= 0.0 {
+                continue;
+            }
+            let world_position = if self.local_space {
+                emitter_transform.transform_position(&particle.position)
+            } else {
+                particle.position
+            };
+            let offset = world_position - *camera_position;
+            out.push(ParticleRenderInstance {
+                position_size: [world_position.x, world_position.y, world_position.z, size],
+                color: Self::lerp_color(self.start_color, self.end_color, t),
+                distance_sq: offset.dot(&offset),
+            });
+        }
+
+        out.sort_by(|left, right| {
+            right
+                .distance_sq
+                .partial_cmp(&left.distance_sq)
+                .unwrap_or(Ordering::Equal)
+        });
+    }
+
+    pub(crate) fn step(&mut self, delta_time: f32, emitter_transform: &Transform) {
+        if delta_time <= 0.0 {
+            if self.active && !self.burst_emitted {
+                self.emit_burst(emitter_transform);
+            }
+            return;
+        }
+
+        self.update_particles(delta_time);
+
+        if !self.active {
+            return;
+        }
+
+        let emission_delta_time = self.advance_emission_time(delta_time);
+        if !self.burst_emitted {
+            self.emit_burst(emitter_transform);
+        }
+
+        if emission_delta_time > 0.0 && self.spawn_rate > 0.0 {
+            self.spawn_accumulator += emission_delta_time * self.spawn_rate.max(0.0);
+            let particles_to_spawn = self.spawn_accumulator.floor() as u32;
+            if particles_to_spawn > 0 {
+                self.spawn_accumulator -= particles_to_spawn as f32;
+                self.spawn_particles(particles_to_spawn, emitter_transform);
+            }
+        }
+    }
+
+    fn advance_emission_time(&mut self, delta_time: f32) -> f32 {
+        if self.emission_duration <= 0.0 {
+            self.elapsed_time += delta_time;
+            return delta_time;
+        }
+
+        let previous_elapsed = self.elapsed_time;
+        self.elapsed_time += delta_time;
+
+        if self.looping {
+            while self.elapsed_time >= self.emission_duration {
+                self.elapsed_time -= self.emission_duration;
+                self.burst_emitted = false;
+            }
+            delta_time
+        } else {
+            (self.emission_duration - previous_elapsed).clamp(0.0, delta_time)
+        }
+    }
+
+    fn emit_burst(&mut self, emitter_transform: &Transform) {
+        self.burst_emitted = true;
+        if self.burst_count > 0 {
+            self.spawn_particles(self.burst_count, emitter_transform);
+        }
+    }
+
+    fn spawn_particles(&mut self, count: u32, emitter_transform: &Transform) {
+        let available = self
+            .max_particles
+            .saturating_sub(self.particles.len() as u32) as usize;
+        for _ in 0..available.min(count as usize) {
+            let local_position = self.sample_spawn_position();
+            let local_velocity = self.initial_velocity
+                + vec3(
+                    self.random_signed() * self.velocity_randomness.x,
+                    self.random_signed() * self.velocity_randomness.y,
+                    self.random_signed() * self.velocity_randomness.z,
+                );
+            let position = if self.local_space {
+                local_position
+            } else {
+                emitter_transform.transform_position(&local_position)
+            };
+            let velocity = if self.local_space {
+                local_velocity
+            } else {
+                emitter_transform.transform_direction(&local_velocity)
+            };
+            let acceleration = if self.local_space {
+                self.acceleration
+            } else {
+                emitter_transform.transform_direction(&self.acceleration)
+            };
+            let lifetime = self.sample_range(self.lifetime).max(MIN_PARTICLE_LIFETIME);
+            let size_randomness = self.random_signed() * self.size.randomness.max(0.0);
+
+            self.particles.push(Particle {
+                position,
+                velocity,
+                acceleration,
+                age: 0.0,
+                lifetime,
+                size_randomness,
+            });
+        }
+    }
+
+    fn update_particles(&mut self, delta_time: f32) {
+        for particle in &mut self.particles {
+            particle.age += delta_time;
+            particle.velocity += particle.acceleration * delta_time;
+            particle.position += particle.velocity * delta_time;
+        }
+        self.particles
+            .retain(|particle| particle.age < particle.lifetime.max(MIN_PARTICLE_LIFETIME));
+    }
+
+    fn sample_spawn_position(&mut self) -> Vec3 {
+        match self.spawn_shape {
+            ParticleSpawnShape::Sphere { radius } => self.random_in_unit_sphere() * radius,
+            ParticleSpawnShape::Box { extents } => vec3(
+                self.random_signed() * extents.x,
+                self.random_signed() * extents.y,
+                self.random_signed() * extents.z,
+            ),
+        }
+    }
+
+    fn size_at(&self, random_offset: f32, t: f32) -> f32 {
+        let start = (self.size.start + random_offset).max(0.0);
+        let end = (self.size.end + random_offset).max(0.0);
+        start + (end - start) * t
+    }
+
+    fn sample_range(&mut self, range: ParticleScalarRange) -> f32 {
+        if (range.max - range.min).abs() <= f32::EPSILON {
+            range.min
+        } else {
+            range.min + self.random_scalar() * (range.max - range.min)
+        }
+    }
+
+    fn random_in_unit_sphere(&mut self) -> Vec3 {
+        for _ in 0..16 {
+            let point = vec3(
+                self.random_signed(),
+                self.random_signed(),
+                self.random_signed(),
+            );
+            if point.dot(&point) <= 1.0 {
+                return point;
+            }
+        }
+        Vec3::zeros()
+    }
+
+    fn random_scalar(&mut self) -> f32 {
+        self.rng_state ^= self.rng_state << 13;
+        self.rng_state ^= self.rng_state >> 7;
+        self.rng_state ^= self.rng_state << 17;
+        ((self.rng_state >> 32) as u32) as f32 / (u32::MAX as f32)
+    }
+
+    fn random_signed(&mut self) -> f32 {
+        self.random_scalar() * 2.0 - 1.0
+    }
+
+    pub(crate) fn reset_runtime(&mut self, seed: Uuid) {
+        self.particles.clear();
+        self.spawn_accumulator = 0.0;
+        self.elapsed_time = 0.0;
+        self.burst_emitted = false;
+        self.rng_state = seed.as_u128() as u64 ^ DEFAULT_RNG_SEED;
+    }
+
+    fn lerp_color(start: Color32, end: Color32, t: f32) -> [f32; 4] {
+        let start = start.to_srgba_unmultiplied();
+        let end = end.to_srgba_unmultiplied();
+        [
+            (start[0] as f32 + (end[0] as f32 - start[0] as f32) * t) / 255.0,
+            (start[1] as f32 + (end[1] as f32 - start[1] as f32) * t) / 255.0,
+            (start[2] as f32 + (end[2] as f32 - start[2] as f32) * t) / 255.0,
+            (start[3] as f32 + (end[3] as f32 - start[3] as f32) * t) / 255.0,
+        ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scene::Scene;
+    use crate::test_utils::test_registries;
+    use nalgebra_glm::Vec3;
+
+    fn add_particle_system(scene: &mut Scene, game_object: GameObject) {
+        scene.add_component(
+            game_object,
+            ComponentParticleSystem {
+                spawn_rate: 4.0,
+                burst_count: 2,
+                lifetime: ParticleScalarRange { min: 1.0, max: 1.0 },
+                size: ParticleSizeCurve {
+                    start: 1.0,
+                    end: 0.0,
+                    randomness: 0.0,
+                },
+                initial_velocity: Vec3::zeros(),
+                velocity_randomness: Vec3::zeros(),
+                acceleration: Vec3::zeros(),
+                max_particles: 16,
+                ..Default::default()
+            },
+        );
+    }
+
+    #[test]
+    fn particle_system_emits_burst_and_rate_particles() {
+        let registries = test_registries();
+        let mut scene = registries.scene();
+        let go = scene.create(None, None);
+        add_particle_system(&mut scene, go);
+
+        let emitter_transform = scene.world_transform(go);
+        let seed = scene.uuid(go);
+        scene.write_component::<ComponentParticleSystem, _>(go, |system| {
+            system.reset_runtime(seed);
+            system.step(0.5, &emitter_transform);
+        });
+
+        let particle_count = scene
+            .read_component::<ComponentParticleSystem, _, _>(go, |system| system.particles.len())
+            .unwrap_or_default();
+        assert_eq!(particle_count, 4);
+    }
+
+    #[test]
+    fn local_space_particles_follow_emitter_transform() {
+        let registries = test_registries();
+        let mut scene = registries.scene();
+        let go = scene.create(None, None);
+        scene.add_component(
+            go,
+            ComponentParticleSystem {
+                local_space: true,
+                spawn_rate: 0.0,
+                burst_count: 1,
+                lifetime: ParticleScalarRange { min: 1.0, max: 1.0 },
+                size: ParticleSizeCurve {
+                    start: 1.0,
+                    end: 1.0,
+                    randomness: 0.0,
+                },
+                initial_velocity: Vec3::zeros(),
+                velocity_randomness: Vec3::zeros(),
+                acceleration: Vec3::zeros(),
+                spawn_shape: ParticleSpawnShape::Sphere { radius: 0.0 },
+                ..Default::default()
+            },
+        );
+
+        let emitter_transform = scene.world_transform(go);
+        let seed = scene.uuid(go);
+        scene.write_component::<ComponentParticleSystem, _>(go, |system| {
+            system.reset_runtime(seed);
+            system.step(0.0, &emitter_transform);
+        });
+        scene.set_world_transform(go, Transform::from_xyz(5.0, 0.0, 0.0).matrix());
+
+        let expected_x = scene.world_transform(go).position.x;
+        let moved_position = scene
+            .read_component::<ComponentParticleSystem, _, _>(go, |system| {
+                let mut render_buffer = Vec::new();
+                let transform = scene.world_transform(go);
+                system.fill_render_buffer(&transform, &Vec3::zeros(), &mut render_buffer);
+                render_buffer[0].position_size
+            })
+            .unwrap();
+
+        assert!((moved_position[0] - expected_x).abs() < 1e-5);
+    }
+
+    #[test]
+    fn particle_velocity_randomness_varies_per_particle() {
+        let registries = test_registries();
+        let mut scene = registries.scene();
+        let go = scene.create(None, None);
+        scene.add_component(
+            go,
+            ComponentParticleSystem {
+                local_space: true,
+                spawn_rate: 0.0,
+                burst_count: 4,
+                lifetime: ParticleScalarRange { min: 1.0, max: 1.0 },
+                size: ParticleSizeCurve {
+                    start: 1.0,
+                    end: 1.0,
+                    randomness: 0.0,
+                },
+                initial_velocity: Vec3::zeros(),
+                velocity_randomness: Vec3::from_element(1.0),
+                acceleration: Vec3::zeros(),
+                ..Default::default()
+            },
+        );
+
+        let emitter_transform = scene.world_transform(go);
+        let seed = scene.uuid(go);
+        scene.write_component::<ComponentParticleSystem, _>(go, |system| {
+            system.reset_runtime(seed);
+            system.step(0.0, &emitter_transform);
+        });
+
+        let distinct_velocities = scene
+            .read_component::<ComponentParticleSystem, _, _>(go, |system| {
+                let mut distinct = Vec::<Vec3>::new();
+                for particle in &system.particles {
+                    if distinct
+                        .iter()
+                        .all(|existing| (particle.velocity - *existing).norm() > 1e-4)
+                    {
+                        distinct.push(particle.velocity);
+                    }
+                }
+                distinct.len()
+            })
+            .unwrap_or_default();
+
+        assert!(
+            distinct_velocities > 1,
+            "expected multiple distinct particle velocities"
+        );
+    }
+
+    #[test]
+    fn particle_size_changes_over_time() {
+        let registries = test_registries();
+        let mut scene = registries.scene();
+        let go = scene.create(None, None);
+        scene.add_component(
+            go,
+            ComponentParticleSystem {
+                local_space: true,
+                spawn_rate: 0.0,
+                burst_count: 1,
+                lifetime: ParticleScalarRange { min: 1.0, max: 1.0 },
+                size: ParticleSizeCurve {
+                    start: 1.0,
+                    end: 0.25,
+                    randomness: 0.0,
+                },
+                initial_velocity: Vec3::zeros(),
+                velocity_randomness: Vec3::zeros(),
+                acceleration: Vec3::zeros(),
+                ..Default::default()
+            },
+        );
+
+        let emitter_transform = scene.world_transform(go);
+        let seed = scene.uuid(go);
+        scene.write_component::<ComponentParticleSystem, _>(go, |system| {
+            system.reset_runtime(seed);
+            system.step(0.0, &emitter_transform);
+        });
+
+        let initial_size = scene
+            .read_component::<ComponentParticleSystem, _, _>(go, |system| {
+                let mut render_buffer = Vec::new();
+                system.fill_render_buffer(&emitter_transform, &Vec3::zeros(), &mut render_buffer);
+                render_buffer[0].position_size[3]
+            })
+            .unwrap();
+
+        scene.write_component::<ComponentParticleSystem, _>(go, |system| {
+            system.step(0.5, &emitter_transform);
+        });
+
+        let later_size = scene
+            .read_component::<ComponentParticleSystem, _, _>(go, |system| {
+                let mut render_buffer = Vec::new();
+                system.fill_render_buffer(&emitter_transform, &Vec3::zeros(), &mut render_buffer);
+                render_buffer[0].position_size[3]
+            })
+            .unwrap();
+
+        assert!(later_size < initial_size);
+        assert!((later_size - 0.625).abs() < 1e-5);
+    }
+
+    #[test]
+    fn particle_color_lerp_uses_unmultiplied_alpha() {
+        let color = ComponentParticleSystem::lerp_color(
+            Color32::from_rgba_unmultiplied(255, 169, 0, 84),
+            Color32::from_rgba_unmultiplied(255, 169, 0, 84),
+            0.5,
+        );
+
+        assert!(color[0] > 0.9, "expected red to stay unpremultiplied");
+        assert!(color[1] > 0.55, "expected green to stay unpremultiplied");
+        assert!(color[2] < 0.05, "expected blue to stay near zero");
+        assert!((color[3] - (84.0 / 255.0)).abs() < 0.02);
+    }
+}

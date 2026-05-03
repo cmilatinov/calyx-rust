@@ -15,10 +15,10 @@ use engine::assets::animation_graph::AnimationGraph;
 use engine::component::{ComponentID, ComponentTransform};
 use engine::context::ReadOnlyRegistryContext;
 use engine::reflect::type_registry::TypeRegistry;
-use engine::reflect::{AttributeValue, NamedField, Reflect, TypeInfo};
+use engine::reflect::{AttributeValue, NamedField, Reflect, StructInfo, TypeInfo};
 use engine::scene::{GameObject, SceneManager};
 use engine::utils::TypeUuid;
-use re_ui::list_item::{LabelContent, ListItem};
+use re_ui::list_item::{LabelContent, ListItem, PropertyContent};
 use re_ui::{DesignTokens, UiExt};
 use uuid::Uuid;
 
@@ -219,10 +219,18 @@ impl PanelInspector {
         type_registry
             .type_info_by_id(instance.uuid())
             .and_then(|info| {
-                if let TypeInfo::Struct(info) = info {
-                    if let Some(AttributeValue::String(str)) = info.attr("name") {
-                        return Some(str);
+                match info {
+                    TypeInfo::Struct(info) => {
+                        if let Some(AttributeValue::String(str)) = info.attr("name") {
+                            return Some(str);
+                        }
                     }
+                    TypeInfo::Enum(info) => {
+                        if let Some(AttributeValue::String(str)) = info.attr("name") {
+                            return Some(str);
+                        }
+                    }
+                    _ => {}
                 }
                 None
             })
@@ -292,15 +300,25 @@ impl PanelInspector {
         ctx: &InspectorContext,
         instance: &mut dyn Reflect,
     ) {
-        if let Some(TypeInfo::Struct(info)) =
-            ctx.assets.types.read().type_info_by_id(instance.uuid())
-        {
-            for (_, field) in info.fields.iter() {
-                let mut ctx = *ctx;
-                ctx.field_name = Some(field.name);
-                if let Some(value) = field.get_reflect_mut(instance.as_reflect_mut()) {
-                    self.show_default_inspector_field(ui, registry, &ctx, field, value);
-                }
+        let type_registry = ctx.assets.types.read();
+        if let Some(TypeInfo::Struct(info)) = type_registry.type_info_by_id(instance.uuid()) {
+            self.show_default_struct_inspector(ui, registry, ctx, instance, info);
+        }
+    }
+
+    fn show_default_struct_inspector(
+        &self,
+        ui: &mut Ui,
+        registry: &InspectorRegistry,
+        ctx: &InspectorContext,
+        instance: &mut dyn Reflect,
+        info: &StructInfo,
+    ) {
+        for (_, field) in info.fields.iter() {
+            let mut field_ctx = *ctx;
+            field_ctx.field_name = Some(field.name);
+            if let Some(value) = field.get_reflect_mut(instance.as_reflect_mut()) {
+                self.show_default_inspector_field(ui, registry, &field_ctx, field, value);
             }
         }
     }
@@ -315,9 +333,47 @@ impl PanelInspector {
     ) {
         let mut name = Self::field_display_name(field);
         name.push(' ');
+        let type_registry = ctx.assets.types.read();
         if let Some(inspector) = registry.type_inspector_lookup(instance.uuid()) {
+            if matches!(
+                type_registry.type_info_by_id(instance.uuid()),
+                Some(TypeInfo::Enum(_))
+            ) {
+                inspector.show_inspector(ui, ctx, instance);
+                return;
+            }
             Widgets::inspector_prop_value(ui, name, |ui, _| {
                 inspector.show_inspector(ui, ctx, instance);
+            });
+            return;
+        }
+        if let Some(TypeInfo::Struct(info)) = type_registry.type_info_by_id(instance.uuid()) {
+            let mut nested_ctx = *ctx;
+            nested_ctx.field_name = None;
+            nested_ctx.type_info = info;
+            ListItem::new()
+                .interactive(false)
+                .show_hierarchical_with_children(
+                    ui,
+                    Id::new((ctx.type_info.type_name, field.name, field.type_uuid)),
+                    true,
+                    PropertyContent::new(name).show_only_when_collapsed(false),
+                    |ui| {
+                        self.show_default_struct_inspector(
+                            ui,
+                            registry,
+                            &nested_ctx,
+                            instance,
+                            info,
+                        );
+                    },
+                );
+            return;
+        }
+
+        if type_registry.type_info_by_id(instance.uuid()).is_some() {
+            Widgets::inspector_prop_value(ui, name, |ui, _| {
+                ui.label(instance.type_name_short());
             });
         }
     }

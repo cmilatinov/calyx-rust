@@ -58,6 +58,21 @@ impl RenderUtils {
         }
     }
 
+    pub fn color_additive_blending(format: wgpu::TextureFormat) -> wgpu::ColorTargetState {
+        wgpu::ColorTargetState {
+            format,
+            blend: Some(wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::SrcAlpha,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+                alpha: wgpu::BlendComponent::OVER,
+            }),
+            write_mask: wgpu::ColorWrites::ALL,
+        }
+    }
+
     pub fn color_default(texture_format: wgpu::TextureFormat) -> wgpu::ColorTargetState {
         texture_format.into()
     }

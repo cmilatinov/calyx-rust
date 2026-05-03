@@ -11,7 +11,7 @@ use crate::render::asset_render_state::AssetRenderState;
 use crate::render::render_utils::RenderUtils;
 use crate::render::{
     Camera, GizmoRenderer, GridRenderer, LightManager, MeshRenderDefaults, MeshRenderTargets,
-    MeshRenderer, PipelineOptions, SkyboxRenderer,
+    MeshRenderer, ParticleRenderer, PipelineOptions, SkyboxRenderer,
 };
 use crate::scene::Scene;
 use egui::Color32;
@@ -37,7 +37,7 @@ struct CameraUniform {
     pub inverse_view: [[f32; 4]; 4],
     pub near_plane: f32,
     pub far_plane: f32,
-    _padding: [f32; 2],
+    pub viewport_size: [f32; 2],
 }
 
 impl Default for CameraUniform {
@@ -49,7 +49,7 @@ impl Default for CameraUniform {
             inverse_projection: Mat4::identity().into(),
             near_plane: 0.0,
             far_plane: 0.0,
-            _padding: [0.0; 2],
+            viewport_size: [1.0, 1.0],
         }
     }
 }
@@ -92,6 +92,7 @@ pub struct SceneRenderer {
     camera_uniform_buffer: wgpu::Buffer,
     light_manager: LightManager,
     gizmo_renderer: GizmoRenderer,
+    particle_renderer: ParticleRenderer,
     assets: AssetRenderState,
     draw_list: Vec<DrawListElement>,
 }
@@ -133,6 +134,7 @@ impl SceneRenderer {
         let grid_renderer = GridRenderer::new(context, device, &camera_uniform_buffer);
 
         let gizmo_renderer = GizmoRenderer::new(context, &camera_uniform_buffer, options.samples);
+        let particle_renderer = ParticleRenderer::new(context);
 
         // Default assets
         let cube = asset_registry.cube().unwrap();
@@ -160,6 +162,7 @@ impl SceneRenderer {
             camera_uniform_buffer,
             light_manager: Default::default(),
             gizmo_renderer,
+            particle_renderer,
             assets: Default::default(),
             draw_list: Default::default(),
         }
@@ -219,6 +222,17 @@ impl SceneRenderer {
                 self.options.samples,
             );
         }
+        self.particle_renderer.render(
+            render_state,
+            &mut encoder,
+            &self.asset_context,
+            scene,
+            &camera_transform.position,
+            &self.camera_uniform_buffer,
+            &self.scene_texture_msaa,
+            &self.scene_depth_texture,
+            self.options.samples,
+        );
 
         // Resolve MSAA texture
         encoder.copy_texture_to_texture(
@@ -503,7 +517,7 @@ impl SceneRenderer {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rg11b10Ufloat,
+                format: wgpu::TextureFormat::Rgba16Float,
                 usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             },
@@ -523,7 +537,7 @@ impl SceneRenderer {
                 mip_level_count: 1,
                 sample_count: samples,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rg11b10Ufloat,
+                format: wgpu::TextureFormat::Rgba16Float,
                 usage: wgpu::TextureUsages::COPY_SRC
                     | wgpu::TextureUsages::RENDER_ATTACHMENT
                     | wgpu::TextureUsages::TEXTURE_BINDING,
@@ -577,6 +591,10 @@ impl SceneRenderer {
             .clone_from_slice(glm::inverse(&view).as_mut());
         camera_uniform.near_plane = camera.near_plane;
         camera_uniform.far_plane = camera.far_plane;
+        camera_uniform.viewport_size = [
+            self.scene_texture_msaa.descriptor.size.width as f32,
+            self.scene_texture_msaa.descriptor.size.height as f32,
+        ];
         queue.write_buffer(
             &self.camera_uniform_buffer,
             0,

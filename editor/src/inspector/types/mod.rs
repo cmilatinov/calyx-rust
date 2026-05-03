@@ -1,10 +1,12 @@
 mod asset_ref_inspector;
+mod blend_mode_inspector;
 mod bool_inspector;
 mod collider_inspector;
 mod color_inspector;
 mod float_inspector;
 mod game_object_ref_inspector;
 mod integer_inspector;
+mod particle_spawn_shape_inspector;
 mod rigid_body_inspector;
 mod string_inspector;
 mod transform_inspector;
