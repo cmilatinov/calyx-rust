@@ -1,3 +1,9 @@
+//! Scene authoring and runtime APIs.
+//!
+//! The scene module exposes the high-level handles and managers that editor and
+//! game code use to build, traverse, serialize, and simulate hierarchies of
+//! game objects.
+
 pub use self::error::*;
 pub use self::game_object_ref::*;
 pub use self::game_object_store::*;
