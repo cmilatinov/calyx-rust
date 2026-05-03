@@ -54,15 +54,21 @@ impl Default for CameraUniform {
     }
 }
 
+/// Scene renderer feature toggles and default clear settings.
 #[derive(Default)]
 pub struct SceneRendererOptions {
+    /// Whether to draw the editor grid.
     pub grid: bool,
+    /// Whether to draw debug gizmos.
     pub gizmos: bool,
+    /// Clear color used for the scene color target.
     pub clear_color: Color32,
     // TODO: figure out why GTX 970 isn't supporting MSAA
+    /// MSAA sample count used for offscreen scene rendering.
     pub samples: u32,
 }
 
+/// One draw-list entry emitted while collecting scene meshes.
 pub struct DrawListElement {
     shader_id: AssetId,
     mat_id: AssetId,
@@ -79,6 +85,8 @@ struct SceneRendererAssets {
     missing_texture: Ref<Texture>,
 }
 
+/// High-level scene renderer that prepares assets and renders the scene into an
+/// offscreen texture.
 pub struct SceneRenderer {
     asset_context: ReadOnlyAssetContext,
     default_assets: SceneRendererAssets,
@@ -98,6 +106,7 @@ pub struct SceneRenderer {
 }
 
 impl SceneRenderer {
+    /// Creates a scene renderer for `context` with `options`.
     pub fn new(
         context: &ReadOnlyAssetContext,
         mut options: SceneRendererOptions,
@@ -168,14 +177,17 @@ impl SceneRenderer {
         }
     }
 
+    /// Returns the current renderer options.
     pub fn options(&self) -> &SceneRendererOptions {
         &self.options
     }
 
+    /// Returns the current renderer options mutably.
     pub fn options_mut(&mut self) -> &mut SceneRendererOptions {
         &mut self.options
     }
 
+    /// Renders `scene` from `camera` into the internal scene textures.
     pub fn render_scene(
         &mut self,
         render_state: &RenderState,
@@ -491,10 +503,13 @@ impl SceneRenderer {
         }
     }
 
+    /// Returns the resolved scene color texture.
     pub fn scene_texture(&self) -> &Texture {
         &self.scene_texture
     }
 
+    /// Returns the egui texture handle for the scene color texture, when
+    /// available.
     pub fn scene_texture_handle(&self) -> Option<&egui::TextureHandle> {
         self.scene_texture.handle.as_ref()
     }
@@ -602,6 +617,7 @@ impl SceneRenderer {
         );
     }
 
+    /// Resizes the internal scene color and depth textures.
     pub fn resize_textures(&mut self, width: u32, height: u32) {
         if self.scene_texture.descriptor.size.width == width
             && self.scene_texture.descriptor.size.height == height

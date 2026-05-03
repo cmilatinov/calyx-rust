@@ -7,6 +7,7 @@ use nalgebra::UnitQuaternion;
 use nalgebra_glm as glm;
 use nalgebra_glm::{vec2, vec3, Mat4, Vec3, Vec4};
 
+/// Immediate-mode helper used by components to emit debug gizmo geometry.
 pub struct Gizmos<'a> {
     pub(crate) camera_transform: &'a Transform,
     pub(crate) color: Vec4,
@@ -18,6 +19,7 @@ pub struct Gizmos<'a> {
 }
 
 impl Gizmos<'_> {
+    /// Emits a wireframe sphere centered at `center`.
     pub fn wire_sphere(&mut self, center: &Vec3, radius: f32) {
         let translation = glm::translate(&Mat4::identity(), center);
         let scale = vec3(radius, radius, radius);
@@ -49,6 +51,7 @@ impl Gizmos<'_> {
         self.circle_list.push(self.gizmo_instance(t, false));
     }
 
+    /// Emits a wireframe cube centered at `position`.
     pub fn wire_cube(&mut self, position: &Vec3, size: &Vec3) {
         self.cube_list.push(self.gizmo_instance(
             compose_transform(position, &UnitQuaternion::identity(), size),
@@ -56,6 +59,7 @@ impl Gizmos<'_> {
         ));
     }
 
+    /// Emits a wireframe frustum from camera projection parameters.
     pub fn wire_frustum(
         &mut self,
         transform: &Transform,
@@ -98,6 +102,7 @@ impl Gizmos<'_> {
         self.line(&f4, &n4);
     }
 
+    /// Emits a colored line segment.
     pub fn line(&mut self, start: &Vec3, end: &Vec3) {
         self.lines_mesh.vertices.push(*start);
         self.lines_mesh.vertices.push(*end);
@@ -105,16 +110,19 @@ impl Gizmos<'_> {
         self.lines_mesh.uvs[1].extend(iter::repeat(vec2(self.color.z, self.color.w)).take(2));
     }
 
+    /// Emits a colored point.
     pub fn point(&mut self, point: &Vec3) {
         self.points_mesh.vertices.push(*point);
         self.points_mesh.uvs[0].push(self.color.xy());
         self.points_mesh.uvs[1].push(vec2(self.color.z, self.color.w));
     }
 
+    /// Sets the active gizmo color.
     pub fn set_color(&mut self, color: &Vec4) {
         self.color = *color;
     }
 
+    /// Enables or disables depth testing for subsequently emitted gizmos.
     pub fn set_depth_test_enabled(&mut self, enabled: bool) {
         self.depth_test_enabled = enabled;
     }

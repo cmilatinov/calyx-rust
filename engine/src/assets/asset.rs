@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use std::any::{Any, TypeId};
 use std::ops::Deref;
 use std::path::Path;
@@ -26,33 +28,40 @@ use crate::utils::{ContextSeed, TypeUuid};
 use super::animation::Animation;
 use super::skybox::Skybox;
 
+/// Stable UUID used to identify an asset instance.
 pub type AssetId = Uuid;
 
+/// Trait implemented by loadable asset types.
 pub trait Asset: Any + Send + Sync {
+    /// Returns the display name for this asset type.
     fn asset_name() -> &'static str
     where
         Self: Sized,
     {
         std::any::type_name::<Self>()
     }
+    /// Returns the file extensions handled by this asset type.
     fn file_extensions() -> &'static [&'static str]
     where
         Self: Sized,
     {
         &[]
     }
+    /// Loads an asset value from `path`.
     fn from_file(
         assets: &ReadOnlyAssetContext,
         path: &Path,
     ) -> Result<LoadedAsset<Self>, AssetError>
     where
         Self: Sized;
+    /// Writes the asset back to disk when supported.
     fn to_file(&self, _path: &Path) -> Result<(), std::io::Error> {
         Ok(())
     }
 }
 
 impl<T: Asset + TypeUuid> Ref<T> {
+    /// Converts a typed asset reference into a type-erased asset reference.
     pub fn as_asset(&self) -> Ref<dyn Asset> {
         let inner =
             unsafe { Arc::from_raw(Arc::into_raw(self.inner.clone()) as *const RwLock<dyn Asset>) };
@@ -60,6 +69,7 @@ impl<T: Asset + TypeUuid> Ref<T> {
     }
 }
 
+/// Serializable reference to an asset of type `T`.
 pub struct AssetRef<T: Asset + TypeUuid> {
     id: Uuid,
     inner: Option<Ref<T>>,
@@ -112,22 +122,33 @@ impl<'de, T: Asset + TypeUuid> Deserialize<'de> for AssetRef<T> {
 }
 
 impl<T: Asset + TypeUuid> AssetRef<T> {
+    /// Creates an unresolved asset reference from a known asset UUID.
     pub fn from_id(id: Uuid) -> AssetRef<T> {
         Self { id, inner: None }
     }
 
+    /// Resolves this asset reference through `context`.
     pub fn get_ref(&self, context: &ReadOnlyRegistryContext) -> Option<Ref<T>> {
         context.assets.read().load_by_id(self.id).ok()
     }
 }
 
+#[allow(missing_docs)]
 #[reflect_trait]
+/// Object-safe access to typed asset references used by reflection and the
+/// editor.
 pub trait AssetAccess: Any + Send + Sync {
+    /// Returns the referenced asset type UUID.
     fn asset_type_uuid(&self) -> Uuid;
+    /// Clears any cached resolved asset handle.
     fn clear_cache(&mut self);
+    /// Returns the referenced asset UUID.
     fn id(&self) -> Uuid;
+    /// Returns the referenced asset UUID mutably.
     fn id_mut(&mut self) -> &mut Uuid;
+    /// Resolves the reference as a type-erased asset handle.
     fn get_asset_ref(&mut self, context: &ReadOnlyAssetContext) -> Option<Ref<dyn Asset>>;
+    /// Replaces the referenced asset UUID and refreshes the cache.
     fn set_asset_ref(&mut self, context: &ReadOnlyAssetContext, asset_id: Option<Uuid>);
 }
 
@@ -167,6 +188,7 @@ impl<T: Asset + TypeUuid> AssetAccess for AssetRef<T> {
 }
 
 impl Ref<dyn Asset> {
+    /// Attempts to downcast this type-erased asset reference to `A`.
     pub fn try_downcast<A: Asset>(&self) -> Option<Ref<A>> {
         if self.read().deref().type_id() == TypeId::of::<A>() {
             let inner =

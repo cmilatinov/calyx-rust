@@ -21,16 +21,23 @@ use crate::scene::Scene;
 use super::buffer::wgpu_buffer_init_desc;
 use super::{PipelineOptions, Shader};
 
+/// Per-instance draw data for gizmo rendering.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GizmoInstance {
+    /// Instance transform.
     pub transform: [[f32; 4]; 4],
+    /// Instance color.
     pub color: [f32; 4],
+    /// Whether circle gizmos should face the camera.
     pub enable_normals: i32,
+    /// Whether vertex UVs should be interpreted as colors.
     pub use_uv_colors: i32,
+    /// Padding for alignment.
     pub _padding: [u32; 2],
 }
 
+/// Collects and renders debug gizmos for scenes and physics.
 pub struct GizmoRenderer {
     component_registry: ReadOnlyRef<ComponentRegistry>,
 
@@ -55,6 +62,7 @@ pub struct GizmoRenderer {
 }
 
 impl GizmoRenderer {
+    /// Creates a gizmo renderer bound to `camera_uniform_buffer`.
     pub fn new(
         game: &ReadOnlyAssetContext,
         camera_uniform_buffer: &wgpu::Buffer,
@@ -199,6 +207,7 @@ impl GizmoRenderer {
         self.points_mesh.rebuild_mesh_data(device);
     }
 
+    /// Returns a gizmo command recorder for the current frame.
     pub fn gizmos<'a>(&'a mut self, camera_transform: &'a Transform) -> Gizmos<'a> {
         self.clear();
         Gizmos {
@@ -212,6 +221,7 @@ impl GizmoRenderer {
         }
     }
 
+    /// Collects gizmos from components and optional physics debug rendering.
     pub fn draw_gizmos(
         &mut self,
         device: &wgpu::Device,
@@ -255,6 +265,7 @@ impl GizmoRenderer {
         self.load_buffers(device, queue);
     }
 
+    /// Renders all collected gizmos into the current render pass.
     pub fn render_gizmos<'a>(
         &'a mut self,
         target_format: wgpu::TextureFormat,

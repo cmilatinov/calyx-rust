@@ -5,6 +5,7 @@ use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use rapier3d::dynamics::RigidBodyType;
 use serde::{Deserialize, Serialize};
 
+/// Physics rigid-body component for dynamic or kinematic simulation.
 #[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "8cac1bae-e3c3-4ee6-b672-7689e9c10f7e"]
 #[reflect(Default, TypeUuidDynamic, Component)]
@@ -12,13 +13,19 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 #[repr(C)]
 pub struct ComponentRigidBody {
+    /// Whether this rigid body is active.
     pub enabled: bool,
+    /// Rapier rigid-body type.
     #[reflect_attr(name = "Type")]
     pub ty: RigidBodyType,
+    /// Mass value used by the physics backend.
     pub mass: f32,
+    /// Gravity multiplier applied to this rigid body.
     #[reflect_attr(min = 0.0, speed = 0.01)]
     pub gravity_scale: f32,
+    /// Whether the body may enter Rapier's sleep state.
     pub can_sleep: bool,
+    /// Internal dirty flag that requests a physics rebuild.
     #[serde(skip)]
     #[reflect_skip]
     pub dirty: bool,

@@ -3,11 +3,17 @@ use crate::input::Input;
 use crate::math;
 use nalgebra_glm::Mat4;
 
+/// Render camera projection data derived from scene camera components.
 pub struct Camera {
+    /// Projection matrix.
     pub projection: Mat4,
+    /// Aspect ratio used to build the projection.
     pub aspect: f32,
+    /// Horizontal field of view in radians.
     pub fov_x: f32,
+    /// Near clipping plane distance.
     pub near_plane: f32,
+    /// Far clipping plane distance.
     pub far_plane: f32,
 }
 
@@ -18,6 +24,7 @@ impl Default for Camera {
 }
 
 impl Camera {
+    /// Creates a camera projection with the supplied parameters.
     pub fn new(aspect: f32, fov_x: f32, near_plane: f32, far_plane: f32) -> Self {
         let mut camera = Self {
             projection: Mat4::identity(),
@@ -30,6 +37,7 @@ impl Camera {
         camera
     }
 
+    /// Rebuilds the projection matrix from the current camera parameters.
     pub fn update_projection(&mut self) {
         self.projection = nalgebra_glm::perspective_lh::<f32>(
             self.aspect,
@@ -40,6 +48,8 @@ impl Camera {
     }
 }
 
+/// Trait for camera controllers that update from time and input.
 pub trait CameraLike {
+    /// Updates the camera/controller state for one frame.
     fn update(&mut self, time: &Time, input: &Input);
 }

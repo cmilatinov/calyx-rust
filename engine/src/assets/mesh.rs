@@ -18,6 +18,7 @@ use crate::{self as engine, math};
 
 const CX_MESH_NUM_UV_CHANNELS: usize = 4;
 
+/// Packed GPU vertex layout used by mesh rendering.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
@@ -48,43 +49,64 @@ impl BufferLayout for Vertex {
     const ATTRIBS: &'static [wgpu::VertexAttribute] = &Vertex::ATTRIBUTES;
 }
 
+/// Uniform payload uploaded for mesh instance and skinning data.
 #[repr(C)]
 #[derive(Default, Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct MeshUniforms {
+    /// Number of bones stored in the bone buffer.
     pub num_bones: u32,
+    /// Padding for alignment.
     pub _padding: [u32; 3],
+    /// Per-instance transform data.
     pub instances: [Instance; Mesh::MAX_INSTANCES],
 }
 
+/// Per-instance mesh draw data.
 #[repr(C)]
 #[derive(Default, Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Instance {
+    /// Starting index into the shared bone transform buffer.
     pub bone_transform_index: i32,
+    /// Padding for alignment.
     pub _padding: [u32; 3],
+    /// Model transform matrix.
     pub transform: [[f32; 4]; 4],
 }
 
+/// Skinning transform uploaded for one bone.
 #[repr(C)]
 #[derive(Default, Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct BoneTransform {
+    /// Final bone matrix used by the skinning shader.
     pub transform: [[f32; 4]; 4],
 }
 
+/// Skeleton metadata for one mesh bone.
 #[derive(Debug)]
 pub struct BoneInfo {
+    /// Bone index in the mesh skeleton.
     pub index: usize,
+    /// Inverse bind pose matrix.
     pub inverse_bind_transform: Mat4,
 }
 
+/// Mesh asset containing geometry, skinning, and GPU upload state.
 #[derive(TypeUuid)]
 #[uuid = "792d264b-de6f-4431-b59f-76f18fdb3bfe"]
 pub struct Mesh {
+    /// Triangle index buffer.
     pub indices: Vec<u32>,
+    /// Vertex positions.
     pub vertices: Vec<Vec3>,
+    /// Vertex normals.
     pub normals: Vec<Vec3>,
+    /// Up to four UV channels.
     pub uvs: [Vec<Vec2>; CX_MESH_NUM_UV_CHANNELS],
+    /// Bone indices per vertex.
     pub bone_indices: Vec<IVec4>,
+    /// Bone weights per vertex.
     pub bone_weights: Vec<Vec4>,
+    /// Bone metadata keyed by bone name.
     pub bones: HashMap<String, BoneInfo>,
 
     pub(crate) dirty: bool,
@@ -99,7 +121,9 @@ pub struct Mesh {
 }
 
 impl Mesh {
+    /// Maximum instanced draws packed into one uniform buffer update.
     pub const MAX_INSTANCES: usize = 30;
+    /// Maximum number of bones expected by the skinning path.
     pub const MAX_BONES: usize = 100;
     // const ATTRIBUTE_VERTEX: u32 = 0;
     // const ATTRIBUTE_NORMAL: u32 = 1;
@@ -116,6 +140,8 @@ impl Mesh {
 }
 
 impl Mesh {
+    /// Creates an empty mesh with GPU-side buffers initialized for
+    /// `render_context`.
     pub fn new(render_context: &RenderContext) -> Self {
         let device = render_context.device();
 
@@ -247,6 +273,7 @@ impl Mesh {
         }
     }
 
+    /// Builds a mesh asset from a Russimp mesh.
     pub fn from_russimp_mesh(
         render_context: &RenderContext,
         mesh: &russimp_ng::mesh::Mesh,
@@ -335,6 +362,7 @@ impl Mesh {
 }
 
 impl Mesh {
+    /// Clears all CPU-side geometry arrays.
     pub fn clear(&mut self) {
         self.indices.clear();
         self.vertices.clear();
@@ -345,6 +373,7 @@ impl Mesh {
         }
     }
 
+    /// Rebuilds the GPU index buffer from `self.indices`.
     pub fn rebuild_index_buffer(&mut self, device: &wgpu::Device) {
         self.index_buffer = Some(device.create_buffer_init(&wgpu_buffer_init_desc(
             wgpu::BufferUsages::INDEX,
@@ -440,6 +469,7 @@ impl Mesh {
         })
     }
 
+    /// Marks the mesh so its GPU buffers are rebuilt on the next render pass.
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
     }

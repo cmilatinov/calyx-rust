@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use engine_derive::reflect_trait;
 
 use crate as engine;

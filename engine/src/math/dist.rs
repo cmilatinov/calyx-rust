@@ -1,6 +1,8 @@
 use nalgebra_glm::{Vec2, Vec3, Vec4};
 
+/// Distance metric implemented for scalars and common vector types.
 pub trait Distance {
+    /// Returns the distance from `self` to `other`.
     fn distance(&self, other: &Self) -> f32
     where
         Self: Sized;
@@ -71,6 +73,9 @@ mod tests {
 
     #[test]
     fn vec4_distance() {
-        assert_abs_diff_eq!(vec4(0.0f32, 0.0, 0.0, 0.0).distance(&vec4(1.0, 0.0, 0.0, 0.0)), 1.0);
+        assert_abs_diff_eq!(
+            vec4(0.0f32, 0.0, 0.0, 0.0).distance(&vec4(1.0, 0.0, 0.0, 0.0)),
+            1.0
+        );
     }
 }

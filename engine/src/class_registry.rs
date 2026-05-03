@@ -13,6 +13,7 @@ use crate::reflect::ReflectDefault;
 use crate::type_uuids;
 use crate::utils::ReflectTypeUuidDynamic;
 
+/// Registry of reflected component types and their optional lifecycle hooks.
 pub struct ComponentRegistry {
     components: HashMap<Uuid, Box<dyn Component>>,
     update_components: Vec<(Uuid, Box<dyn ComponentUpdate>)>,
@@ -20,6 +21,7 @@ pub struct ComponentRegistry {
 }
 
 impl ComponentRegistry {
+    /// Builds a component registry from the current reflection type registry.
     pub fn new(type_registry: &TypeRegistry) -> Self {
         let mut registry = Self {
             components: Default::default(),
@@ -32,24 +34,30 @@ impl ComponentRegistry {
 }
 
 impl ComponentRegistry {
+    /// Returns the reflected component binder for `id`.
     pub fn component(&self, id: Uuid) -> Option<&dyn Component> {
         self.components.get(&id).map(|b| b.deref())
     }
 
+    /// Iterates components that implement [`ComponentUpdate`].
     pub fn components_with_update(&self) -> impl Iterator<Item = (Uuid, &dyn ComponentUpdate)> {
         self.update_components
             .iter()
             .map(|(id, updater)| (*id, updater.deref()))
     }
 
+    /// Returns the reset hook registered for `id`, if any.
     pub fn reset_component(&self, id: Uuid) -> Option<&dyn ComponentReset> {
         self.reset_components.get(&id).map(|b| b.deref())
     }
 
+    /// Iterates every registered component binder keyed by type UUID.
     pub fn components(&self) -> impl Iterator<Item = (&Uuid, &Box<dyn Component>)> {
         self.components.iter()
     }
 
+    /// Rebuilds the component, update, and reset lookup tables from
+    /// `type_registry`.
     pub fn refresh_class_lists(&mut self, type_registry: &TypeRegistry) {
         use crate as engine;
         self.components.clear();

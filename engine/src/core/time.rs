@@ -5,8 +5,10 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+/// Floating-point time representation used across the engine.
 pub type TimeType = f32;
 
+/// Frame timer and fixed-tick conversion utility.
 #[derive(Resource, TypeUuid)]
 #[uuid = "b0a01abf-afee-4107-94e8-6e2fbab21f72"]
 #[repr(C)]
@@ -15,15 +17,21 @@ pub struct Time {
     last_time: Instant,
     tick_rate: TimeType,
     tick_period: TimeType,
+    /// Scaled elapsed runtime in seconds.
     pub time: TimeType,
+    /// Unscaled elapsed runtime in seconds.
     pub static_time: TimeType,
+    /// Scaled frame delta in seconds.
     pub delta_time: TimeType,
+    /// Unscaled frame delta in seconds.
     pub static_delta_time: TimeType,
+    /// Multiplier applied to scaled time accumulation.
     pub time_scale: TimeType,
 }
 
 macro_rules! time_member_getter {
     ($member:ident) => {
+        #[doc = concat!("Returns `self.", stringify!($member), "`.")]
         pub fn $member(&self) -> TimeType {
             self.$member
         }
@@ -39,6 +47,7 @@ impl Default for Time {
 impl Time {
     const DEFAULT_TICK_RATE_HZ: TimeType = 120.0;
 
+    /// Creates a timer with the given fixed tick rate.
     pub fn new(tick_rate: TimeType) -> Self {
         Self {
             timers: RefCell::new(HashMap::new()),
@@ -53,6 +62,7 @@ impl Time {
         }
     }
 
+    /// Advances the timer using wall-clock elapsed time since the last update.
     pub fn update_time(&mut self) {
         self.static_delta_time = self.last_time.elapsed().as_secs_f32();
         self.static_time += self.static_delta_time;
@@ -61,6 +71,7 @@ impl Time {
         self.last_time = Instant::now();
     }
 
+    /// Advances the timer by an explicit `delta` in seconds.
     pub fn advance_by(&mut self, delta: TimeType) {
         self.static_delta_time = delta;
         self.static_time += delta;
@@ -68,28 +79,35 @@ impl Time {
         self.time += self.delta_time;
     }
 
+    /// Returns the elapsed time since the named timer was first observed or
+    /// last reset.
     pub fn timer(&self, name: &'static str) -> TimeType {
         let mut timers = self.timers.borrow_mut();
         let instant = timers.entry(name).or_insert(Instant::now());
         instant.elapsed().as_secs_f32()
     }
 
+    /// Resets the named timer to the current instant.
     pub fn reset_timer(&self, name: &'static str) {
         self.timers.borrow_mut().insert(name, Instant::now());
     }
 
+    /// Returns the unscaled frame delta as a [`Duration`].
     pub fn static_duration(&self) -> Duration {
         Duration::from_secs_f32(self.static_delta_time)
     }
 
+    /// Returns the configured fixed tick rate in hertz.
     pub fn tick_rate(&self) -> TimeType {
         self.tick_rate
     }
 
+    /// Returns the current fixed-tick index for scaled time.
     pub fn current_tick(&self) -> u32 {
         (self.time / self.tick_period) as u32
     }
 
+    /// Converts `time` in seconds into a fixed-tick index.
     pub fn time_to_tick(&self, time: TimeType) -> u32 {
         (time / self.tick_period) as u32
     }

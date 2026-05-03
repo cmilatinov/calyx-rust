@@ -15,28 +15,44 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::Arc;
 
+/// Bind-group layout entries grouped by bind-group index.
 pub type BindGroupEntries = BTreeMap<u32, Vec<wgpu::BindGroupLayoutEntry>>;
+/// Ordered bind-group layouts created from shader reflection.
 pub type BindGroupLayouts = Vec<wgpu::BindGroupLayout>;
 
+/// High-level shader pipeline kind.
 #[derive(PartialEq, Eq)]
 pub enum ShaderType {
+    /// Shader contains vertex and fragment entry points.
     VertexFragment,
+    /// Shader contains a compute entry point.
     Compute,
 }
 
+/// Reflected WGSL shader asset with cached pipelines.
 #[derive(TypeUuid)]
 #[uuid = "00415831-a64c-4dc2-b573-5e112f99b674"]
 pub struct Shader {
     pub(crate) render_context: Arc<RenderContext>,
+    /// Shader stage category.
     pub ty: ShaderType,
+    /// Human-readable shader name.
     pub name: String,
+    /// Fully preprocessed WGSL source.
     pub source: String,
+    /// Backing wgpu shader module.
     pub shader: wgpu::ShaderModule,
+    /// Bind-group layouts derived from reflection.
     pub bind_group_layouts: BindGroupLayouts,
+    /// Raw bind-group entries derived from reflection.
     pub bind_group_entries: BindGroupEntries,
+    /// Pipeline layout built from `bind_group_layouts`.
     pub pipeline_layout: wgpu::PipelineLayout,
+    /// Cached compute pipeline when `ty` is [`ShaderType::Compute`].
     pub compute_pipeline: Option<wgpu::ComputePipeline>,
+    /// Cached render pipelines keyed by pipeline options.
     pub pipelines: HashMap<PipelineOptions, wgpu::RenderPipeline>,
+    /// Parsed Naga module used for reflection.
     pub module: naga::Module,
 }
 
@@ -349,6 +365,8 @@ impl Shader {
             .collect()
     }
 
+    /// Rebuilds the shader pipeline layout from the current bind-group
+    /// layouts.
     pub fn rebuild_pipeline_layout(&mut self) {
         let device = self.render_context.device();
         self.pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -363,6 +381,7 @@ impl Shader {
         self.pipelines.clear();
     }
 
+    /// Builds and caches a render pipeline for `options`.
     pub fn build_pipeline(&mut self, options: &PipelineOptions) {
         if self.pipelines.contains_key(options) {
             return;
@@ -404,10 +423,12 @@ impl Shader {
         self.pipelines.insert(options.clone(), pipeline);
     }
 
+    /// Returns the cached render pipeline for `options`.
     pub fn get_pipeline(&self, options: &PipelineOptions) -> Option<&wgpu::RenderPipeline> {
         self.pipelines.get(options)
     }
 
+    /// Returns the cached compute pipeline, if any.
     pub fn get_compute_pipeline(&self) -> Option<&wgpu::ComputePipeline> {
         self.compute_pipeline.as_ref()
     }

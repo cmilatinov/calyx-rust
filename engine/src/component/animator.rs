@@ -67,6 +67,7 @@ impl AnimatorSnapshot {
     }
 }
 
+/// Serializable animation parameter map stored on [`ComponentAnimator`].
 #[derive(Default, Clone, Serialize, Deserialize)]
 #[repr(transparent)]
 pub struct AnimationParameters(pub HashMap<Uuid, AnimationParameterValue>);
@@ -84,6 +85,7 @@ impl Lerp<f32> for AnimationParameters {
     }
 }
 
+/// Animation state-machine component that drives skinned meshes.
 #[derive(Default, Clone, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "f24db81d-7054-40b8-8f3c-d9740c03948e"]
 #[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate, ComponentReset)]
@@ -91,8 +93,11 @@ impl Lerp<f32> for AnimationParameters {
 #[serde(default)]
 #[repr(C)]
 pub struct ComponentAnimator {
+    /// Playback time in seconds.
     pub time: TimeType,
+    /// Whether to draw the bone hierarchy as debug gizmos.
     pub draw_debug_skeleton: bool,
+    /// Animation graph asset driving this animator.
     pub animation_graph: AssetRef<AnimationGraph>,
     #[reflect_skip]
     #[serde(skip)]
@@ -103,6 +108,7 @@ pub struct ComponentAnimator {
     #[reflect_skip]
     #[serde(skip)]
     current_pose: AnimatorPose,
+    /// Runtime parameter values keyed by parameter UUID.
     #[reflect_skip]
     #[serde(skip)]
     pub parameters: HashMap<Uuid, AnimationParameterValue>,
@@ -112,10 +118,7 @@ impl Component for ComponentAnimator {
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {
         if self.draw_debug_skeleton {
             gizmos.set_color(&Vec4::new(1.0, 1.0, 0.0, 1.0));
-            let Some(root) = scene
-                .descendants_with::<ComponentBone>(game_object)
-                .next()
-            else {
+            let Some(root) = scene.descendants_with::<ComponentBone>(game_object).next() else {
                 return;
             };
             let transform = scene.world_transform(root);
@@ -176,16 +179,19 @@ impl ComponentUpdate for ComponentAnimator {
 }
 
 impl ComponentAnimator {
+    /// Returns the animator parameter map.
     pub fn parameters(&self) -> &HashMap<Uuid, AnimationParameterValue> {
         &self.parameters
     }
 
+    /// Returns the mutable animator parameter map.
     pub fn parameters_mut(&mut self) -> &mut HashMap<Uuid, AnimationParameterValue> {
         &mut self.parameters
     }
 }
 
 impl ComponentAnimator {
+    /// Sets a named animation parameter to `value`.
     pub fn set_parameter(
         &mut self,
         assets: &ReadOnlyRegistryContext,
@@ -195,6 +201,7 @@ impl ComponentAnimator {
         self.set_parameter_with(assets, name, |_| value)
     }
 
+    /// Updates a named animation parameter using `setter`.
     pub fn set_parameter_with<
         F: FnOnce(Option<AnimationParameterValue>) -> AnimationParameterValue,
     >(
@@ -351,11 +358,9 @@ impl ComponentAnimator {
         game_object: GameObject,
         pose: &mut AnimatorPose,
     ) {
-        let Some(snapshot) =
-            scene.read_component::<ComponentAnimator, _, _>(game_object, |c| {
-                AnimatorSnapshot::from_component(c)
-            })
-        else {
+        let Some(snapshot) = scene.read_component::<ComponentAnimator, _, _>(game_object, |c| {
+            AnimatorSnapshot::from_component(c)
+        }) else {
             return;
         };
         let skinned_meshes = scene

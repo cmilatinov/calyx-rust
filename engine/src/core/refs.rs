@@ -23,6 +23,7 @@ fn wrapper_type_uuid(wrapper_uuid: &[u8; 16], inner_uuid: Uuid) -> Uuid {
     Uuid::from_bytes(bytes)
 }
 
+/// Reference-counted, lock-protected shared pointer used throughout the engine.
 #[repr(C)]
 pub struct Ref<T: ?Sized> {
     pub(crate) id: Uuid,
@@ -30,6 +31,7 @@ pub struct Ref<T: ?Sized> {
 }
 
 impl<T> Ref<T> {
+    /// Creates a new shared reference with an explicit persistent identifier.
     pub fn from_id_value(id: Uuid, value: T) -> Self {
         Self {
             id,
@@ -37,6 +39,7 @@ impl<T> Ref<T> {
         }
     }
 
+    /// Creates a new shared reference with a nil identifier.
     pub fn new(value: T) -> Self {
         Self {
             id: Uuid::nil(),
@@ -44,6 +47,8 @@ impl<T> Ref<T> {
         }
     }
 
+    /// Creates a cyclic shared reference, passing a weak handle into the
+    /// constructor.
     pub fn new_cyclic<F: FnOnce(WeakRef<T>) -> T>(data_fn: F) -> Self {
         Self {
             id: Uuid::nil(),
@@ -56,6 +61,11 @@ impl<T> Ref<T> {
         }
     }
 
+    /// Rebuilds a [`Ref`] from a raw `RwLock` pointer.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must have been produced by [`Arc::into_raw`] for the same `T`.
     pub unsafe fn from_raw(ptr: *const RwLock<T>) -> Self {
         Self {
             id: Uuid::nil(),
@@ -65,26 +75,32 @@ impl<T> Ref<T> {
 }
 
 impl<T: ?Sized> Ref<T> {
+    /// Returns a non-owning weak reference to the same value.
     pub fn downgrade(&self) -> WeakRef<T> {
         WeakRef::new(self)
     }
 
+    /// Acquires a read lock.
     pub fn read(&self) -> RwLockReadGuard<'_, T> {
         self.inner.read().unwrap()
     }
 
+    /// Acquires a write lock.
     pub fn write(&self) -> RwLockWriteGuard<'_, T> {
         self.inner.write().unwrap()
     }
 
+    /// Converts this shared reference into a read-only wrapper.
     pub fn readonly(&self) -> ReadOnlyRef<T> {
         ReadOnlyRef::from_ref(self.clone())
     }
 
+    /// Returns the persistent identifier attached to this reference.
     pub fn id(&self) -> Uuid {
         self.id
     }
 
+    /// Returns the address identity of the shared allocation.
     pub fn ptr_id(&self) -> usize {
         &*self.inner as *const _ as *const () as usize
     }
@@ -125,24 +141,29 @@ impl<T: TypeUuid> TypeUuid for Ref<T> {
 
 impl<T: Resource> Resource for Ref<T> where Ref<T>: TypeUuidDynamic {}
 
+/// Read-only wrapper around a [`Ref`] that exposes only shared access.
 #[repr(C)]
 pub struct ReadOnlyRef<T: ?Sized> {
     inner: Ref<T>,
 }
 
 impl<T: ?Sized> ReadOnlyRef<T> {
+    /// Wraps an existing [`Ref`] as read-only.
     pub fn from_ref(inner: Ref<T>) -> Self {
         Self { inner }
     }
 
+    /// Acquires a read lock.
     pub fn read(&self) -> RwLockReadGuard<'_, T> {
         self.inner.read()
     }
 
+    /// Returns the persistent identifier attached to the underlying reference.
     pub fn id(&self) -> Uuid {
         self.inner.id
     }
 
+    /// Returns the address identity of the shared allocation.
     pub fn ptr_id(&self) -> usize {
         self.inner.ptr_id()
     }
@@ -182,6 +203,7 @@ impl<T: TypeUuid> TypeUuid for ReadOnlyRef<T> {
 
 impl<T: Resource> Resource for ReadOnlyRef<T> where ReadOnlyRef<T>: TypeUuidDynamic {}
 
+/// Non-owning weak handle produced from a [`Ref`].
 #[repr(C)]
 pub struct WeakRef<T: ?Sized> {
     id: Uuid,
@@ -189,6 +211,7 @@ pub struct WeakRef<T: ?Sized> {
 }
 
 impl<T: ?Sized> WeakRef<T> {
+    /// Creates a weak handle from `value_ref`.
     pub fn new(value_ref: &Ref<T>) -> Self {
         Self {
             id: value_ref.id,
@@ -196,6 +219,7 @@ impl<T: ?Sized> WeakRef<T> {
         }
     }
 
+    /// Attempts to upgrade this weak handle into a strong [`Ref`].
     pub fn upgrade(&self) -> Option<Ref<T>> {
         self.inner.upgrade().map(|arc| Ref {
             id: self.id,

@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use legion::storage::ComponentTypeId;
 use legion::world::{Entry, EntryRef};
 
@@ -112,7 +114,7 @@ pub struct ComponentEventContext<'a> {
 /// `draw_gizmos` is editor/debug rendering only. It should visualize state and
 /// avoid mutating gameplay data. Runtime gameplay should live in
 /// `ComponentUpdate`, not in gizmo drawing.
-#[allow(unused)]
+#[allow(unused, missing_docs)]
 #[reflect_trait]
 pub trait Component: TypeUuidDynamic + ComponentInstance {
     /// Called when the component is removed from a game object.
@@ -163,6 +165,7 @@ pub trait Component: TypeUuidDynamic + ComponentInstance {
 ///     }
 /// }
 /// ```
+#[allow(missing_docs)]
 #[reflect_trait]
 pub trait ComponentUpdate: Send + Sync {
     /// Runs once per simulated frame for components whose type reflects this
@@ -183,6 +186,7 @@ pub trait ComponentUpdate: Send + Sync {
 /// `reset` runs after binding, before normal per-frame updates. It may also run
 /// when editor tooling rebinds or reconstructs a component, so implementations
 /// should be idempotent where possible.
+#[allow(missing_docs)]
 #[reflect_trait]
 pub trait ComponentReset: Send + Sync {
     /// Initialize scene-side state for the component's owning game object.

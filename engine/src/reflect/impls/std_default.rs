@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use crate as engine;
 use crate::reflect::{Reflect, TraitMeta, TraitMetaFrom};
 use engine_derive::TypeUuid;

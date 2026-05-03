@@ -7,6 +7,7 @@ use crate::resource::Resource;
 use crate::utils::TypeUuid;
 use rusty_pool::{JoinHandle, ThreadPool};
 
+/// Shared background task executor used by editor and runtime systems.
 #[derive(Resource, TypeUuid)]
 #[uuid = "38c4c3b8-07c7-4858-a754-d34c6ad1ebc1"]
 #[repr(C)]
@@ -17,6 +18,7 @@ pub struct Background {
 }
 
 impl Background {
+    /// Creates the default background executor resource.
     pub fn new() -> Ref<Self> {
         Ref::new_cyclic(|background| Self {
             thread_pool: ThreadPool::new(1, 10, Duration::from_secs(30)),
@@ -25,14 +27,18 @@ impl Background {
         })
     }
 
+    /// Returns the set of task identifiers currently queued or running.
     pub fn task_list(&self) -> &HashSet<isize> {
         &self.task_list
     }
 
+    /// Returns the underlying thread pool.
     pub fn thread_pool(&self) -> &ThreadPool {
         &self.thread_pool
     }
 
+    /// Schedules `task` on the background pool and tracks it by `id` until the
+    /// task completes.
     pub fn execute<F: FnOnce() + Send + 'static>(
         &mut self,
         id: impl Into<isize>,

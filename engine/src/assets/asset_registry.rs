@@ -58,23 +58,34 @@ type AssetCache = HashMap<Uuid, Ref<dyn Asset>>;
 
 const HOT_RELOAD_DEBOUNCE: Duration = Duration::from_millis(75);
 
+/// Serialized metadata for one asset entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetMeta {
+    /// Stable asset UUID.
     pub id: Uuid,
+    /// Canonical asset name relative to an asset root.
     pub name: String,
+    /// User-facing display name.
     pub display_name: String,
+    /// Asset type UUID resolved from the file extension.
     pub type_uuid: Uuid,
     #[serde(skip)]
+    /// Parent asset UUID when this metadata entry describes a sub-asset.
     pub parent: Option<Uuid>,
     #[serde(skip)]
+    /// Child asset UUIDs when this entry owns sub-assets.
     pub children: Vec<Uuid>,
     #[serde(skip)]
+    /// Absolute source path for the asset file.
     pub path: Option<PathBuf>,
 }
 
+/// On-disk metadata bundle for one asset file and its sub-assets.
 #[derive(Serialize, Deserialize)]
 pub struct AssetMetaData {
+    /// Primary asset metadata entry.
     main: AssetMeta,
+    /// Metadata for any sub-assets stored under the main asset.
     inner: Vec<AssetMeta>,
 }
 
@@ -93,13 +104,18 @@ struct AssetConstructors {
     reload: AssetReload,
 }
 
+/// Error captured while hot-reloading an already loaded asset.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssetReloadError {
+    /// Asset UUID that failed to reload.
     pub id: Uuid,
+    /// Source path that triggered the reload failure.
     pub path: PathBuf,
+    /// Underlying reload error.
     pub error: AssetError,
 }
 
+/// Central asset registry for metadata, loading, caching, and hot reload.
 pub struct AssetRegistry {
     render_context: Arc<RenderContext>,
     asset_registry: WeakRef<AssetRegistry>,
@@ -115,6 +131,8 @@ pub struct AssetRegistry {
 }
 
 impl AssetRegistry {
+    /// Creates a full asset registry rooted at `root_path` and the shared
+    /// workspace `assets` directory.
     pub fn new(
         root_path: impl Into<PathBuf>,
         render_context: Arc<RenderContext>,
@@ -162,6 +180,7 @@ impl AssetRegistry {
 }
 
 impl AssetRegistry {
+    /// Creates a test registry with one asset root and no file-watcher thread.
     pub fn new_test(
         root_path: impl Into<PathBuf>,
         render_context: Arc<RenderContext>,
@@ -188,6 +207,7 @@ impl AssetRegistry {
 }
 
 impl AssetRegistry {
+    /// Creates a test registry backed by multiple asset roots.
     pub fn new_test_with_assets(
         asset_paths: Vec<PathBuf>,
         render_context: Arc<RenderContext>,
@@ -232,14 +252,17 @@ impl AssetRegistry {
 }
 
 impl AssetRegistry {
+    /// Returns the primary project asset root.
     pub fn root_path(&self) -> &PathBuf {
         &self.asset_paths[0]
     }
 
+    /// Returns all asset roots searched by the registry.
     pub fn asset_paths(&self) -> &Vec<PathBuf> {
         &self.asset_paths
     }
 
+    /// Writes an asset value to `path` as pretty-printed JSON.
     pub fn write_to_file<A: Asset + Serialize>(
         asset: &A,
         path: &Path,
@@ -255,6 +278,7 @@ impl AssetRegistry {
             })
     }
 
+    /// Persists a loaded asset back to its source file when possible.
     pub fn persist(&self, id: Uuid) -> bool {
         let Some(AssetMeta {
             path: Some(asset_path),
@@ -271,6 +295,7 @@ impl AssetRegistry {
         result.is_ok()
     }
 
+    /// Loads an asset by canonical asset name.
     pub fn load<A: Asset + TypeUuid>(&self, name: &str) -> Result<Ref<A>, AssetError> {
         let id = self
             .asset_id(name)
@@ -278,6 +303,7 @@ impl AssetRegistry {
         self.load_by_id(id)
     }
 
+    /// Loads an asset by filesystem path.
     pub fn load_by_path<A: Asset + TypeUuid>(&self, path: &Path) -> Result<Ref<A>, AssetError> {
         let id = self.asset_id_from_path(path).ok_or_else(|| {
             AssetError::NotFound
@@ -287,6 +313,7 @@ impl AssetRegistry {
         self.load_by_id(id)
     }
 
+    /// Loads an asset by filesystem path as a type-erased handle.
     pub fn load_dyn_by_path(&self, path: &Path) -> Result<Ref<dyn Asset>, AssetError> {
         let id = self
             .asset_id_from_path(path)
@@ -294,6 +321,7 @@ impl AssetRegistry {
         self.load_dyn_by_id(id)
     }
 
+    /// Loads an asset by UUID as a typed handle.
     pub fn load_by_id<A: Asset + TypeUuid>(&self, id: Uuid) -> Result<Ref<A>, AssetError> {
         // Load parent asset if any
         let meta = self
@@ -323,6 +351,7 @@ impl AssetRegistry {
         Ok(asset)
     }
 
+    /// Loads an asset by UUID as a type-erased handle.
     pub fn load_dyn_by_id(&self, id: Uuid) -> Result<Ref<dyn Asset>, AssetError> {
         // Load parent asset if any
         let meta = self
@@ -353,6 +382,7 @@ impl AssetRegistry {
         Ok(asset)
     }
 
+    /// Creates a new in-memory asset entry with the provided `name`.
     pub fn create<A: Asset + TypeUuid>(
         &self,
         name: String,
@@ -391,6 +421,7 @@ impl AssetRegistry {
         Ok(asset)
     }
 
+    /// Loads `name` when it exists, otherwise creates it from `create_fn`.
     pub fn load_or_create<A: Asset + TypeUuid, F: FnOnce() -> A>(
         &self,
         name: &str,
@@ -403,6 +434,7 @@ impl AssetRegistry {
         self.create(name.into(), asset).ok()
     }
 
+    /// Registers a loadable asset type and its file extensions.
     pub fn register_asset_type<A: Asset + TypeUuid>(&self) {
         let type_uuid = A::type_uuid();
         let mut data = self.asset_data_mut();
@@ -599,21 +631,25 @@ impl AssetRegistry {
             .filter_map(|(ext, f)| if ext != "meta" { Some(f) } else { None })
     }
 
+    /// Returns the asset UUID for `name`, if known.
     pub fn asset_id(&self, name: &str) -> Option<Uuid> {
         let path = RelativePathBuf::from(name).normalize();
         self.asset_data().names.get(&path).copied()
     }
 
+    /// Returns the canonical asset name for `id`.
     pub fn asset_name(&self, id: Uuid) -> String {
         self.asset_meta_from_id(id)
             .map(|meta| meta.name.clone())
             .unwrap_or_default()
     }
 
+    /// Resolves a canonical asset name from a filesystem path.
     pub fn asset_name_from_path(&self, path: &Path) -> Option<String> {
         self.asset_id_from_path(path).map(|id| self.asset_name(id))
     }
 
+    /// Resolves an asset UUID from a filesystem path.
     pub fn asset_id_from_path(&self, path: &Path) -> Option<Uuid> {
         for root_path in &self.asset_paths {
             if common_path::common_path(root_path, path)
@@ -629,30 +665,37 @@ impl AssetRegistry {
         None
     }
 
+    /// Returns metadata for the asset named `name`.
     pub fn asset_meta(&self, name: &str) -> Option<AssetMeta> {
         let id = self.asset_id(name)?;
         self.asset_meta_from_id(id)
     }
 
+    /// Returns metadata for the asset at `path`.
     pub fn asset_meta_from_path(&self, path: &Path) -> Option<AssetMeta> {
         self.asset_id_from_path(path)
             .and_then(|id| self.asset_meta_from_id(id))
     }
 
+    /// Returns metadata for the asset UUID `id`.
     pub fn asset_meta_from_id(&self, id: Uuid) -> Option<AssetMeta> {
         self.asset_data().meta.get(&id).cloned()
     }
 
+    /// Returns metadata for a typed asset reference.
     #[inline]
     pub fn asset_meta_from_ref<A: Asset>(&self, reference: &ReadOnlyRef<A>) -> Option<AssetMeta> {
         self.asset_meta_from_id(reference.id())
     }
 
     #[inline]
+    /// Returns metadata for a type-erased asset reference.
     pub fn asset_meta_from_ref_dyn(&self, reference: &ReadOnlyRef<dyn Asset>) -> Option<AssetMeta> {
         self.asset_meta_from_id(reference.id())
     }
 
+    /// Returns the source path for `id` when its extension matches
+    /// `extensions`.
     pub fn asset_path(&self, id: Uuid, extensions: &[&str]) -> Option<PathBuf> {
         let meta = self.asset_meta_from_id(id)?;
         let path = meta.path?;
@@ -666,6 +709,7 @@ impl AssetRegistry {
         }
     }
 
+    /// Returns the registered asset type UUID for a file extension.
     pub fn asset_type_uuid_from_ext(&self, ext: &str) -> Option<Uuid> {
         self.asset_data()
             .extensions
@@ -675,6 +719,7 @@ impl AssetRegistry {
 }
 
 impl AssetRegistry {
+    /// Rebuilds metadata for every asset file under every asset root.
     pub fn build_meta(&self) -> Result<(), BoxedError> {
         for asset_path in &self.asset_paths {
             for path in
@@ -826,6 +871,7 @@ impl AssetRegistry {
 }
 
 impl AssetRegistry {
+    /// Searches metadata entries by display name and optional asset type.
     pub fn search_assets(
         &self,
         search_term: &str,
@@ -847,6 +893,8 @@ impl AssetRegistry {
         }
     }
 
+    /// Applies any pending hot-reload operations whose debounce window has
+    /// elapsed.
     pub fn reload_assets(&self) {
         let now = Instant::now();
         let reload_ids = {
@@ -892,6 +940,7 @@ impl AssetRegistry {
         }
     }
 
+    /// Returns the current list of asset hot-reload failures.
     pub fn reload_errors(&self) -> Vec<AssetReloadError> {
         self.asset_data().reload_errors.clone()
     }
@@ -916,10 +965,12 @@ impl AssetRegistry {
     const BLACK_TEXTURE_CUBE: &'static str = "black_texture_cube";
     const DEFAULT_SCENE: &'static str = "default_scene";
 
+    /// Returns the built-in "missing texture" asset when available.
     pub fn missing_texture(&self) -> Option<Ref<Texture>> {
         self.load::<Texture>("textures/missing").ok()
     }
 
+    /// Returns or creates a 2D black fallback texture.
     pub fn black_texture_2d(&self) -> Option<Ref<Texture>> {
         self.load_or_create(Self::BLACK_TEXTURE_2D, || {
             Texture::new(
@@ -945,6 +996,7 @@ impl AssetRegistry {
         })
     }
 
+    /// Returns or creates a cubemap black fallback texture.
     pub fn black_texture_cube(&self) -> Option<Ref<Texture>> {
         self.load_or_create(Self::BLACK_TEXTURE_CUBE, || {
             Texture::new(
@@ -973,18 +1025,22 @@ impl AssetRegistry {
         })
     }
 
+    /// Returns the built-in cube mesh.
     pub fn cube(&self) -> Option<Ref<Mesh>> {
         self.load::<Mesh>("meshes/cube").ok()
     }
 
+    /// Returns the built-in sphere mesh.
     pub fn sphere(&self) -> Option<Ref<Mesh>> {
         self.load::<Mesh>("meshes/sphere").ok()
     }
 
+    /// Returns the built-in cylinder mesh.
     pub fn cylinder(&self) -> Option<Ref<Mesh>> {
         self.load::<Mesh>("meshes/cylinder").ok()
     }
 
+    /// Returns or creates a fullscreen quad mesh.
     pub fn screen_space_quad(&self) -> Option<Ref<Mesh>> {
         self.load_or_create(Self::SCREEN_SPACE_QUAD, || {
             let mut quad = Mesh {
@@ -1019,6 +1075,7 @@ impl AssetRegistry {
         })
     }
 
+    /// Builds a wireframe circle mesh used by gizmo rendering.
     pub fn wire_circle(&self) -> Mesh {
         const RESOLUTION: usize = 72;
         let mut circle = Mesh::new(&self.render_context);
@@ -1036,6 +1093,7 @@ impl AssetRegistry {
         circle
     }
 
+    /// Builds a wireframe cube mesh used by gizmo rendering.
     pub fn wire_cube(&self) -> Mesh {
         let mut cube = Mesh {
             indices: vec![
@@ -1067,10 +1125,12 @@ impl AssetRegistry {
         cube
     }
 
+    /// Creates a new empty scene bound to this registry's type contexts.
     pub fn new_empty_scene(&self) -> Scene {
         self.registry_context().scene()
     }
 
+    /// Returns or creates the default scene asset.
     pub fn default_scene(&self) -> Option<Ref<Scene>> {
         self.load_or_create(Self::DEFAULT_SCENE, || {
             let mut scene = self.new_empty_scene();

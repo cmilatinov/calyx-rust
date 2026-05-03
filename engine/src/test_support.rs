@@ -16,11 +16,14 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+/// Fixed viewport size used by headless test input helpers.
 const DEFAULT_TEST_SCREEN_SIZE: Vec2 = Vec2::new(1280.0, 720.0);
 const MAX_CONNECT_ITERS: usize = 100;
 
+/// Default fixed simulation step used by headless test runners.
 pub const FIXED_TEST_STEP_SECONDS: f32 = 1.0 / 60.0;
 
+/// Returns a shared headless render context suitable for tests.
 pub fn test_render_context() -> Arc<RenderContext> {
     static RENDER_CONTEXT: OnceLock<Arc<RenderContext>> = OnceLock::new();
     RENDER_CONTEXT
@@ -55,6 +58,7 @@ fn build_type_registry() -> Ref<TypeRegistry> {
     Ref::new(type_registry)
 }
 
+/// Builds a registry context with the default engine registrations.
 pub fn test_registries() -> ReadOnlyRegistryContext {
     let render_context = test_render_context();
     let type_registry = build_type_registry();
@@ -72,6 +76,7 @@ pub fn test_registries() -> ReadOnlyRegistryContext {
     }
 }
 
+/// Builds a registry context backed by the provided asset roots.
 pub fn test_registries_with_assets(asset_paths: Vec<PathBuf>) -> ReadOnlyRegistryContext {
     let render_context = test_render_context();
     let type_registry = build_type_registry();
@@ -89,6 +94,7 @@ pub fn test_registries_with_assets(asset_paths: Vec<PathBuf>) -> ReadOnlyRegistr
     }
 }
 
+/// Builds an asset context backed by the provided asset roots.
 pub fn test_asset_context_with_assets(asset_paths: Vec<PathBuf>) -> AssetContext {
     let render_context = test_render_context();
     let type_registry = build_type_registry();
@@ -109,10 +115,12 @@ pub fn test_asset_context_with_assets(asset_paths: Vec<PathBuf>) -> AssetContext
     }
 }
 
+/// Returns an empty test scene bound to default registries.
 pub fn test_scene() -> Scene {
     test_registries().scene()
 }
 
+/// Returns a test game context with default resources and registries.
 pub fn test_game_context() -> GameContext {
     let render_context = test_render_context();
     let type_registry = build_type_registry();
@@ -134,25 +142,30 @@ pub fn test_game_context() -> GameContext {
     GameContext::new(assets)
 }
 
+/// Builder for small scene setups used in tests.
 pub struct SceneBuilder {
     scene: Scene,
 }
 
 impl SceneBuilder {
+    /// Creates a builder bound to `registries`.
     pub fn new(registries: ReadOnlyRegistryContext) -> Self {
         Self {
             scene: registries.scene(),
         }
     }
 
+    /// Spawns a root-level game object with `name`.
     pub fn spawn(&mut self, name: impl Into<String>) -> GameObject {
         self.spawn_with_parent(None, name)
     }
 
+    /// Spawns a child game object with `name`.
     pub fn spawn_child(&mut self, parent: GameObject, name: impl Into<String>) -> GameObject {
         self.spawn_with_parent(Some(parent), name)
     }
 
+    /// Adds `component` to `game_object`.
     pub fn add_component<T: Component + Send + Sync + 'static>(
         &mut self,
         game_object: GameObject,
@@ -162,19 +175,23 @@ impl SceneBuilder {
         self
     }
 
+    /// Sets the local transform matrix for `game_object`.
     pub fn set_transform(&mut self, game_object: GameObject, matrix: impl Into<Mat4>) -> &mut Self {
         self.scene.set_transform(game_object, &matrix.into());
         self
     }
 
+    /// Returns the current scene by shared reference.
     pub fn scene(&self) -> &Scene {
         &self.scene
     }
 
+    /// Returns the current scene by mutable reference.
     pub fn scene_mut(&mut self) -> &mut Scene {
         &mut self.scene
     }
 
+    /// Finishes building and returns the scene.
     pub fn finish(self) -> Scene {
         self.scene
     }
@@ -192,6 +209,7 @@ impl SceneBuilder {
     }
 }
 
+/// Headless scene driver for deterministic update and input tests.
 pub struct HeadlessSceneRunner {
     registries: ReadOnlyRegistryContext,
     resources: ResourceMap,
@@ -206,10 +224,12 @@ pub struct HeadlessSceneRunner {
 }
 
 impl HeadlessSceneRunner {
+    /// Creates a runner with a fresh test scene.
     pub fn new() -> Self {
         Self::from_scene(test_scene())
     }
 
+    /// Creates a runner for an existing scene.
     pub fn from_scene(scene: Scene) -> Self {
         Self {
             registries: scene.registries().clone(),
@@ -225,47 +245,58 @@ impl HeadlessSceneRunner {
         }
     }
 
+    /// Replaces the currently loaded scene.
     pub fn load_scene(&mut self, scene: Scene) {
         self.registries = scene.registries().clone();
         self.scene = scene;
     }
 
+    /// Returns the active scene.
     pub fn scene(&self) -> &Scene {
         &self.scene
     }
 
+    /// Returns the active scene mutably.
     pub fn scene_mut(&mut self) -> &mut Scene {
         &mut self.scene
     }
 
+    /// Returns the runner resource map.
     pub fn resources(&self) -> &ResourceMap {
         &self.resources
     }
 
+    /// Returns the runner resource map mutably.
     pub fn resources_mut(&mut self) -> &mut ResourceMap {
         &mut self.resources
     }
 
+    /// Returns the mutable action map used for synthetic input.
     pub fn action_map_mut(&mut self) -> &mut ActionMap {
         &mut self.action_map
     }
 
+    /// Enables or disables input processing.
     pub fn set_input_active(&mut self, active: bool) {
         self.input_active = active;
     }
 
+    /// Overrides the fixed step duration in seconds.
     pub fn set_step_seconds(&mut self, seconds: f32) {
         self.step_seconds = seconds;
     }
 
+    /// Sets active keyboard modifiers for queued events.
     pub fn set_modifiers(&mut self, modifiers: Modifiers) {
         self.modifiers = modifiers;
     }
 
+    /// Queues a raw egui input event for the next step.
     pub fn enqueue_event(&mut self, event: Event) {
         self.pending_events.push(event);
     }
 
+    /// Queues a key press.
     pub fn press_key(&mut self, key: Key) {
         self.enqueue_event(Event::Key {
             key,
@@ -276,6 +307,7 @@ impl HeadlessSceneRunner {
         });
     }
 
+    /// Queues a key release.
     pub fn release_key(&mut self, key: Key) {
         self.enqueue_event(Event::Key {
             key,
@@ -286,10 +318,12 @@ impl HeadlessSceneRunner {
         });
     }
 
+    /// Queues a pointer move.
     pub fn move_pointer(&mut self, position: Pos2) {
         self.enqueue_event(Event::PointerMoved(position));
     }
 
+    /// Queues a pointer button press.
     pub fn press_pointer_button(&mut self, position: Pos2, button: PointerButton) {
         self.enqueue_event(Event::PointerButton {
             pos: position,
@@ -299,6 +333,7 @@ impl HeadlessSceneRunner {
         });
     }
 
+    /// Queues a pointer button release.
     pub fn release_pointer_button(&mut self, position: Pos2, button: PointerButton) {
         self.enqueue_event(Event::PointerButton {
             pos: position,
@@ -308,10 +343,12 @@ impl HeadlessSceneRunner {
         });
     }
 
+    /// Runs scene preparation only.
     pub fn prepare(&mut self) {
         self.scene.prepare();
     }
 
+    /// Advances the scene by one fixed step.
     pub fn step(&mut self) {
         self.prepare();
         self.resources.time_mut().advance_by(self.step_seconds);
@@ -340,6 +377,7 @@ impl HeadlessSceneRunner {
         let _ = self.input_context.end_pass();
     }
 
+    /// Advances the scene by `step_count` fixed steps.
     pub fn step_many(&mut self, step_count: usize) {
         for _ in 0..step_count {
             self.step();
@@ -347,11 +385,14 @@ impl HeadlessSceneRunner {
     }
 }
 
+/// Convenience harness that spins up one host and multiple network clients.
 pub struct NetworkTestHarness {
+    /// Host followed by all client contexts.
     pub contexts: Vec<GameContext>,
 }
 
 impl NetworkTestHarness {
+    /// Creates a host and `client_count` connected client contexts.
     pub fn new(client_count: usize) -> Self {
         let mut host = test_game_context();
         host.resources
@@ -381,28 +422,34 @@ impl NetworkTestHarness {
         Self { contexts }
     }
 
+    /// Returns the host context.
     pub fn host(&self) -> &GameContext {
         &self.contexts[0]
     }
 
+    /// Returns the host context mutably.
     pub fn host_mut(&mut self) -> &mut GameContext {
         &mut self.contexts[0]
     }
 
+    /// Returns the client context at `index`.
     pub fn client(&self, index: usize) -> &GameContext {
         &self.contexts[index + 1]
     }
 
+    /// Returns the client context at `index` mutably.
     pub fn client_mut(&mut self, index: usize) -> &mut GameContext {
         &mut self.contexts[index + 1]
     }
 
+    /// Advances networking for every context once.
     pub fn pump(&mut self) {
         for ctx in &mut self.contexts {
             ctx.update();
         }
     }
 
+    /// Pumps networking until all clients report connected or a timeout occurs.
     pub fn wait_connected(&mut self) -> bool {
         for _ in 0..MAX_CONNECT_ITERS {
             self.pump();
@@ -417,11 +464,13 @@ impl NetworkTestHarness {
         false
     }
 
+    /// Returns the number of client contexts.
     pub fn client_count(&self) -> usize {
         self.contexts.len() - 1
     }
 }
 
+/// Asserts that `game_object` still exists in `scene`.
 pub fn assert_entity_exists(scene: &Scene, game_object: GameObject) {
     assert!(
         scene.entry(game_object).is_some(),
@@ -430,6 +479,7 @@ pub fn assert_entity_exists(scene: &Scene, game_object: GameObject) {
     );
 }
 
+/// Asserts that `game_object` is within `tolerance` of `expected`.
 pub fn assert_position_near(
     scene: &Scene,
     game_object: GameObject,
@@ -448,6 +498,7 @@ pub fn assert_position_near(
     );
 }
 
+/// Asserts that a component-derived value equals `expected`.
 pub fn assert_component_value<T, V, F>(
     scene: &Scene,
     game_object: GameObject,

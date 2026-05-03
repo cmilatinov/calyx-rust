@@ -4,17 +4,19 @@ use crate::net::Network;
 use crate::physics::PhysicsConfiguration;
 use crate::utils::{TypeUuid, TypeUuidDynamic};
 pub use engine_derive::Resource;
-use paste::paste;
 use std::collections::HashMap;
 use uuid::Uuid;
 
+/// Marker trait for values stored inside a [`ResourceMap`].
 pub trait Resource: TypeUuidDynamic + 'static {}
 
 impl dyn Resource {
+    /// Returns `true` when this resource is a `T`.
     pub fn is<T: Resource + TypeUuid>(&self) -> bool {
         self.uuid() == T::type_uuid()
     }
 
+    /// Downcasts this resource to `T` by shared reference.
     pub fn downcast_ref<T: Resource + TypeUuid>(&self) -> Option<&T> {
         if self.is::<T>() {
             unsafe { Some(&*(self as *const dyn Resource as *const T)) }
@@ -23,6 +25,7 @@ impl dyn Resource {
         }
     }
 
+    /// Downcasts this resource to `T` by mutable reference.
     pub fn downcast_mut<T: Resource + TypeUuid>(&mut self) -> Option<&mut T> {
         if self.is::<T>() {
             unsafe { Some(&mut *(self as *mut dyn Resource as *mut T)) }
@@ -32,30 +35,13 @@ impl dyn Resource {
     }
 }
 
+/// Type-indexed runtime resource storage used by the engine loop.
 pub struct ResourceMap {
     inner: HashMap<Uuid, Box<dyn Resource>>,
 }
 
-macro_rules! impl_getter {
-    ($ident:ident, $ty:ty) => {
-        #[inline]
-        pub fn $ident(&self) -> &$ty {
-            self.resource::<$ty>().unwrap()
-        }
-    };
-    (mut $ident:ident, $ty:ty) => {
-        paste! {
-            impl_getter!($ident, $ty);
-
-            #[inline]
-            pub fn [<$ident _mut>](&mut self) -> &mut $ty {
-                self.resource_mut::<$ty>().unwrap()
-            }
-        }
-    };
-}
-
 impl ResourceMap {
+    /// Creates a resource map populated with the built-in engine resources.
     pub fn new() -> Self {
         let mut resources = Self {
             inner: Default::default(),
@@ -68,16 +54,19 @@ impl ResourceMap {
     }
 
     #[inline]
+    /// Inserts `resource`, replacing any existing value of the same type.
     pub fn insert<T: Resource + TypeUuid>(&mut self, resource: T) {
         self.inner.insert(T::type_uuid(), Box::new(resource));
     }
 
     #[inline]
+    /// Inserts `T::default()`.
     pub fn insert_default<T: Resource + Default + TypeUuid>(&mut self) {
         self.insert(T::default());
     }
 
     #[inline]
+    /// Removes and returns the resource of type `T`.
     pub fn remove<T: Resource + TypeUuid>(&mut self) -> Option<T> {
         let resource = self.inner.remove(&T::type_uuid())?;
         let raw = Box::into_raw(resource);
@@ -85,6 +74,7 @@ impl ResourceMap {
     }
 
     #[inline]
+    /// Returns the resource of type `T`.
     pub fn resource<T: Resource + TypeUuid>(&self) -> Option<&T> {
         self.inner
             .get(&T::type_uuid())
@@ -92,6 +82,7 @@ impl ResourceMap {
     }
 
     #[inline]
+    /// Returns the mutable resource of type `T`.
     pub fn resource_mut<T: Resource + TypeUuid>(&mut self) -> Option<&mut T> {
         self.inner
             .get_mut(&T::type_uuid())
@@ -99,6 +90,7 @@ impl ResourceMap {
     }
 
     #[inline]
+    /// Returns mutable references to two distinct resources when both exist.
     pub fn resource_pair_mut<T1: Resource + TypeUuid, T2: Resource + TypeUuid>(
         &mut self,
     ) -> Option<(&mut T1, &mut T2)> {
@@ -118,10 +110,53 @@ impl ResourceMap {
         }
     }
 
-    impl_getter!(mut time, Time);
-    impl_getter!(mut background, Ref<Background>);
-    impl_getter!(mut network, Network);
-    impl_getter!(mut physics_configuration, PhysicsConfiguration);
+    /// Returns the global time resource.
+    #[inline]
+    pub fn time(&self) -> &Time {
+        self.resource::<Time>().unwrap()
+    }
+
+    /// Returns the global time resource mutably.
+    #[inline]
+    pub fn time_mut(&mut self) -> &mut Time {
+        self.resource_mut::<Time>().unwrap()
+    }
+
+    /// Returns the background task resource.
+    #[inline]
+    pub fn background(&self) -> &Ref<Background> {
+        self.resource::<Ref<Background>>().unwrap()
+    }
+
+    /// Returns the background task resource mutably.
+    #[inline]
+    pub fn background_mut(&mut self) -> &mut Ref<Background> {
+        self.resource_mut::<Ref<Background>>().unwrap()
+    }
+
+    /// Returns the networking resource.
+    #[inline]
+    pub fn network(&self) -> &Network {
+        self.resource::<Network>().unwrap()
+    }
+
+    /// Returns the networking resource mutably.
+    #[inline]
+    pub fn network_mut(&mut self) -> &mut Network {
+        self.resource_mut::<Network>().unwrap()
+    }
+
+    /// Returns the physics configuration resource.
+    #[inline]
+    pub fn physics_configuration(&self) -> &PhysicsConfiguration {
+        self.resource::<PhysicsConfiguration>().unwrap()
+    }
+
+    /// Returns the physics configuration resource mutably.
+    #[inline]
+    pub fn physics_configuration_mut(&mut self) -> &mut PhysicsConfiguration {
+        self.resource_mut::<PhysicsConfiguration>().unwrap()
+    }
 }
 
 #[cfg(test)]
