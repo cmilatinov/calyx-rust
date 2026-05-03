@@ -8,6 +8,7 @@ use crate::scene::{GameObject, Scene};
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::RenderState;
+use legion::{Entity, IntoQuery};
 use nalgebra_glm::Vec3;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
@@ -62,7 +63,6 @@ pub struct ParticleRenderer {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     instance_buffer: ResizableBuffer,
-    game_objects: Vec<GameObject>,
     particle_systems: HashMap<GameObject, ParticleSystemRenderState>,
     pipelines: Option<ParticlePipelines>,
     pipeline_signature: Option<PipelineSignature>,
@@ -115,7 +115,6 @@ impl ParticleRenderer {
             instance_buffer: ResizableBuffer::new(
                 wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::VERTEX,
             ),
-            game_objects: Vec::new(),
             particle_systems: HashMap::new(),
             pipelines: None,
             pipeline_signature: None,
@@ -159,24 +158,19 @@ impl ParticleRenderer {
             })
         };
 
-        self.game_objects.clear();
-        self.game_objects.extend(scene.objects());
-
-        for game_object in self.game_objects.iter().copied() {
+        let mut query = <(Entity, &ComponentParticleSystem)>::query();
+        for (entity, system) in query.iter(&scene.world) {
+            let Some(game_object) = scene.game_object_from_entity(*entity) else {
+                continue;
+            };
             let emitter_transform = scene.world_transform(game_object);
             let particle_count = {
                 let state = self.particle_systems.entry(game_object).or_default();
-                let Some(()) =
-                    scene.read_component::<ComponentParticleSystem, _, _>(game_object, |system| {
-                        system.fill_render_buffer(
-                            &emitter_transform,
-                            camera_position,
-                            &mut state.render_buffer,
-                        );
-                    })
-                else {
-                    continue;
-                };
+                system.fill_render_buffer(
+                    &emitter_transform,
+                    camera_position,
+                    &mut state.render_buffer,
+                );
                 if state.render_buffer.is_empty() {
                     continue;
                 }
@@ -188,17 +182,11 @@ impl ParticleRenderer {
                 continue;
             }
 
-            let (texture, blend_mode) = scene
-                .read_component::<ComponentParticleSystem, _, _>(game_object, |system| {
-                    (
-                        system
-                            .texture
-                            .get_ref(&asset_context.registries)
-                            .unwrap_or_else(|| self.default_texture.clone()),
-                        system.blend_mode,
-                    )
-                })
-                .unwrap_or_else(|| (self.default_texture.clone(), ParticleBlendMode::default()));
+            let texture = system
+                .texture
+                .get_ref(&asset_context.registries)
+                .unwrap_or_else(|| self.default_texture.clone());
+            let blend_mode = system.blend_mode;
             let texture_bind_group = self.texture_bind_group(device, &texture);
             let pipeline = match blend_mode {
                 ParticleBlendMode::Alpha => &pipelines.alpha,
