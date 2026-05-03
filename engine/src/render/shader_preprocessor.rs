@@ -9,9 +9,11 @@ use regex::Regex;
 
 use crate::assets::AssetRegistry;
 
+/// WGSL preprocessor that expands `//#include` directives.
 pub struct ShaderPreprocessor;
 
 impl ShaderPreprocessor {
+    /// Loads shader source and expands transitive includes.
     pub fn load_shader_source(
         asset_registry: &AssetRegistry,
         path: &Path,
@@ -20,6 +22,7 @@ impl ShaderPreprocessor {
         Self::load_shader_source_inner(asset_registry, path, &mut include_stack)
     }
 
+    /// Returns the transitive include dependency set for `path`.
     pub fn shader_dependencies(
         asset_registry: &AssetRegistry,
         path: &Path,

@@ -8,22 +8,35 @@ use super::{error::AssetError, texture::Texture, Asset, LoadedAsset};
 use crate::context::ReadOnlyAssetContext;
 use crate::{self as engine, core::Ref, render::Shader};
 
+/// Environment map asset with precomputed lighting textures.
 #[derive(TypeUuid)]
 #[uuid = "bdb5dd3a-cca4-453d-8260-ff2bdf2a05b2"]
 pub struct Skybox {
+    /// Source lat-long or HDR texture.
     pub texture: Texture,
+    /// Converted environment cubemap.
     pub cubemap: Texture,
+    /// Irradiance cubemap for diffuse image-based lighting.
     pub irradiance_cubemap: Texture,
+    /// Prefiltered cubemap for specular image-based lighting.
     pub prefilter_cubemap: Texture,
+    /// BRDF integration lookup texture.
     pub brdf_map: Texture,
+    /// Whether derived textures need to be regenerated.
     pub dirty: bool,
 }
 
+/// Shader set required to prepare a [`Skybox`] asset.
 pub struct SkyboxShaders<'a> {
+    /// Equirectangular-to-cubemap shader.
     pub cubemap_shader: &'a Ref<Shader>,
+    /// Irradiance convolution shader.
     pub irradiance_cubemap_shader: &'a Ref<Shader>,
+    /// Specular prefilter shader.
     pub prefilter_cubemap_shader: &'a Ref<Shader>,
+    /// BRDF integration shader.
     pub brdf_shader: &'a Ref<Shader>,
+    /// Cubemap mip generation shader.
     pub cubemap_mip_shader: &'a Ref<Shader>,
 }
 

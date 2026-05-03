@@ -9,4 +9,5 @@ mod impls;
 mod reflect;
 mod trait_meta;
 mod type_info;
+/// Reflection type registration and metadata builders.
 pub mod type_registry;

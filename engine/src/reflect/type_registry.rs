@@ -10,21 +10,28 @@ use std::any::TypeId;
 use std::collections::HashMap;
 use uuid::Uuid;
 
+/// Inventory entry that registers reflected types into a [`TypeRegistry`].
 pub struct TypeRegistrationFn(pub fn(&mut TypeRegistry));
 collect!(TypeRegistrationFn);
 
+/// Stored metadata for one reflected type.
 #[repr(C)]
 pub struct TypeRegistration {
+    /// Trait metadata keyed by reflected trait UUID.
     pub trait_meta: HashMap<Uuid, Box<dyn TraitMeta>>,
+    /// Structural type information for the reflected type.
     pub type_info: TypeInfo,
 }
 
+/// Central registry of reflected types and trait metadata.
 #[repr(C)]
 pub struct TypeRegistry {
+    /// Registered types keyed by stable type UUID.
     pub types: HashMap<Uuid, TypeRegistration>,
 }
 
 impl TypeRegistry {
+    /// Builds a registry and runs all inventory-based registration functions.
     pub fn new() -> Self {
         let mut registry = Self {
             types: Default::default(),
@@ -37,10 +44,12 @@ impl TypeRegistry {
 }
 
 impl TypeRegistry {
+    /// Registers a reflected type explicitly.
     pub fn register<T: ReflectedType + 'static>(&mut self) {
         T::register(self)
     }
 
+    /// Creates a placeholder registration entry for `T`.
     pub fn meta<T: TypeUuid + 'static>(&mut self) {
         self.types.insert(
             T::type_uuid(),
@@ -51,6 +60,7 @@ impl TypeRegistry {
         );
     }
 
+    /// Begins building struct metadata for `T`.
     pub fn meta_struct<T: TypeUuid + 'static>(
         &mut self,
         attrs: AttributeMap,
@@ -76,6 +86,7 @@ impl TypeRegistry {
         }
     }
 
+    /// Begins building enum metadata for `T`.
     pub fn meta_enum<T: TypeUuid + 'static>(&mut self, attrs: AttributeMap) -> EnumInfoBuilder<'_> {
         let type_uuid = T::type_uuid();
         self.types.insert(
@@ -98,6 +109,7 @@ impl TypeRegistry {
         }
     }
 
+    /// Registers list metadata for `T` with element type `E`.
     pub fn meta_list<T: TypeUuid + 'static, E: TypeUuid + 'static>(&mut self) {
         self.types.insert(
             T::type_uuid(),
@@ -112,6 +124,7 @@ impl TypeRegistry {
         );
     }
 
+    /// Registers option metadata for `T` with wrapped value type `V`.
     pub fn meta_option<T: TypeUuid + 'static, V: TypeUuid + 'static>(&mut self) {
         self.types.insert(
             T::type_uuid(),
@@ -126,6 +139,7 @@ impl TypeRegistry {
         );
     }
 
+    /// Registers map metadata for `T` with key `K` and value `V`.
     pub fn meta_map<T: TypeUuid + 'static, K: TypeUuid + 'static, V: TypeUuid + 'static>(
         &mut self,
     ) {
@@ -143,6 +157,7 @@ impl TypeRegistry {
         );
     }
 
+    /// Attaches reflected trait metadata `M` to `T`.
     pub fn meta_impls<
         T: Reflect + TypeUuid + 'static,
         M: TraitMeta + TraitMetaFrom<T> + TypeUuid + 'static,
@@ -158,30 +173,36 @@ impl TypeRegistry {
             });
     }
 
+    /// Looks up type info for `T`.
     pub fn type_info<T: TypeUuid + 'static>(&self) -> Option<&TypeInfo> {
         self.type_info_by_id(T::type_uuid())
     }
 
+    /// Looks up type info by stable type UUID.
     pub fn type_info_by_id(&self, type_uuid: Uuid) -> Option<&TypeInfo> {
         self.types
             .get(&type_uuid)
             .map(|registration| &registration.type_info)
     }
 
+    /// Looks up the full registration entry for `T`.
     pub fn type_registration<T: TypeUuid + 'static>(&self) -> Option<&TypeRegistration> {
         self.type_registration_by_id(T::type_uuid())
     }
 
+    /// Looks up the full registration entry by stable type UUID.
     pub fn type_registration_by_id(&self, type_uuid: Uuid) -> Option<&TypeRegistration> {
         self.types.get(&type_uuid)
     }
 
+    /// Looks up attached trait metadata `T` for the given reflected type UUID.
     pub fn trait_meta<T: TraitMeta + TypeUuid>(&self, type_uuid: Uuid) -> Option<&T> {
         self.type_registration_by_id(type_uuid)
             .and_then(|registration| registration.trait_meta.get(&T::type_uuid()))
             .and_then(|meta| unsafe { Some(&*(meta.as_ref() as *const dyn TraitMeta as *const T)) })
     }
 
+    /// Lists types that implement reflected trait metadata `T`.
     pub fn list_types<T: TraitMeta + TypeUuid>(&self) -> Vec<Uuid> {
         self.types
             .iter()
@@ -190,6 +211,7 @@ impl TypeRegistry {
             .collect()
     }
 
+    /// Lists types that implement all trait UUIDs in `traits`.
     pub fn all_of(&self, traits: Vec<Uuid>) -> Vec<Uuid> {
         self.types
             .iter()
@@ -200,6 +222,7 @@ impl TypeRegistry {
 }
 
 impl TypeDescriptor {
+    /// Builds a descriptor for type `T`.
     pub fn of<T: TypeUuid + 'static>() -> Self {
         Self {
             type_id: TypeId::of::<T>(),
@@ -209,11 +232,13 @@ impl TypeDescriptor {
     }
 }
 
+/// Builder used to populate [`StructInfo`] field metadata.
 pub struct StructInfoBuilder<'a> {
     type_info: &'a mut StructInfo,
 }
 
 impl<'a> StructInfoBuilder<'a> {
+    /// Registers one named field on the target struct metadata.
     pub fn field<T: TypeUuid + 'static>(
         &mut self,
         name: &'static str,
@@ -241,11 +266,13 @@ impl<'a> StructInfoBuilder<'a> {
     }
 }
 
+/// Builder used to populate [`EnumInfo`] variant metadata.
 pub struct EnumInfoBuilder<'a> {
     type_info: &'a mut EnumInfo,
 }
 
 impl<'a> EnumInfoBuilder<'a> {
+    /// Registers one enum variant with its field descriptors.
     pub fn variant(
         &mut self,
         name: &'static str,

@@ -21,12 +21,21 @@ use uuid::Uuid;
 const MIN_PARTICLE_LIFETIME: f32 = 0.01;
 const DEFAULT_RNG_SEED: u64 = 0x9e37_79b9_7f4a_7c15;
 
+/// Spawn volumes supported by [`ComponentParticleSystem`].
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "37c707d9-f6e8-4dc1-b2b1-159ceff99082"]
 #[repr(C)]
 pub enum ParticleSpawnShape {
-    Sphere { radius: f32 },
-    Box { extents: Vec3 },
+    /// Uniform sphere centered on the emitter.
+    Sphere {
+        /// Sphere radius.
+        radius: f32,
+    },
+    /// Axis-aligned box centered on the emitter.
+    Box {
+        /// Positive half extents on each axis.
+        extents: Vec3,
+    },
 }
 
 impl Default for ParticleSpawnShape {
@@ -35,11 +44,14 @@ impl Default for ParticleSpawnShape {
     }
 }
 
+/// Supported particle blending modes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "444a8eaa-3d18-486b-96bb-7d038b1979bc"]
 #[repr(C)]
 pub enum ParticleBlendMode {
+    /// Standard alpha blending.
     Alpha,
+    /// Additive blending for emissive effects.
     Additive,
 }
 
@@ -49,12 +61,15 @@ impl Default for ParticleBlendMode {
     }
 }
 
+/// Inclusive scalar range sampled for per-particle values.
 #[derive(Clone, Copy, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "6c5546bb-496e-4b68-8c1f-1d288b7665f5"]
 #[serde(default)]
 #[repr(C)]
 pub struct ParticleScalarRange {
+    /// Minimum sampled value.
     pub min: f32,
+    /// Maximum sampled value.
     pub max: f32,
 }
 
@@ -64,13 +79,17 @@ impl Default for ParticleScalarRange {
     }
 }
 
+/// Start/end size curve used to scale particles over lifetime.
 #[derive(Clone, Copy, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "5af8ac8a-9652-477b-9487-68a077b3a6b3"]
 #[serde(default)]
 #[repr(C)]
 pub struct ParticleSizeCurve {
+    /// Size at the start of particle life.
     pub start: f32,
+    /// Size at the end of particle life.
     pub end: f32,
+    /// Random offset applied to both endpoints.
     pub randomness: f32,
 }
 
@@ -102,6 +121,7 @@ pub(crate) struct ParticleRenderInstance {
     pub distance_sq: f32,
 }
 
+/// Configurable particle emitter component.
 #[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "5214cd04-62ac-48e0-8f0b-4030d2102931"]
 #[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate, ComponentReset)]
@@ -109,24 +129,41 @@ pub(crate) struct ParticleRenderInstance {
 #[serde(default)]
 #[repr(C)]
 pub struct ComponentParticleSystem {
+    /// Whether the emitter is currently active.
     pub active: bool,
+    /// Whether timed emission loops after `emission_duration`.
     pub looping: bool,
+    /// Whether particles simulate in emitter-local space.
     pub local_space: bool,
+    /// Continuous emission rate in particles per second.
     #[reflect_attr(min = 0.0, speed = 0.1)]
     pub spawn_rate: f32,
+    /// One-shot burst count emitted when the system starts.
     pub burst_count: u32,
+    /// Maximum live particle count.
     pub max_particles: u32,
+    /// Loop duration for timed emission. `0.0` means unbounded.
     #[reflect_attr(min = 0.0, speed = 0.1)]
     pub emission_duration: f32,
+    /// Lifetime range sampled per particle.
     pub lifetime: ParticleScalarRange,
+    /// Spawn volume for new particles.
     pub spawn_shape: ParticleSpawnShape,
+    /// Base local-space spawn velocity.
     pub initial_velocity: Vec3,
+    /// Random velocity variation per axis.
     pub velocity_randomness: Vec3,
+    /// Constant acceleration applied to particles.
     pub acceleration: Vec3,
+    /// Size curve over normalized particle lifetime.
     pub size: ParticleSizeCurve,
+    /// Color at birth.
     pub start_color: Color32,
+    /// Color at death.
     pub end_color: Color32,
+    /// Blend mode used by the renderer.
     pub blend_mode: ParticleBlendMode,
+    /// Optional texture asset for billboard rendering.
     pub texture: AssetRef<Texture>,
     #[serde(skip)]
     #[reflect_skip]
@@ -155,10 +192,7 @@ impl Default for ComponentParticleSystem {
             burst_count: 0,
             max_particles: 256,
             emission_duration: 0.0,
-            lifetime: ParticleScalarRange {
-                min: 0.4,
-                max: 1.1,
-            },
+            lifetime: ParticleScalarRange { min: 0.4, max: 1.1 },
             spawn_shape: Default::default(),
             initial_velocity: vec3(0.0, 5.0, 0.0),
             velocity_randomness: vec3(1.0, 1.5, 1.0),

@@ -7,12 +7,16 @@ use std::io::BufReader;
 use std::path::Path;
 use uuid::Uuid;
 
+/// Asset value loaded from disk together with any discovered sub-assets.
 pub struct LoadedAsset<T> {
+    /// Loaded asset value.
     pub asset: T,
+    /// UUIDs of sub-assets generated or referenced during load.
     pub sub_assets: Vec<Uuid>,
 }
 
 impl<T> LoadedAsset<T> {
+    /// Wraps an already constructed asset value.
     pub fn new(asset: T) -> LoadedAsset<T> {
         Self {
             asset,
@@ -25,6 +29,8 @@ impl<'de, T> LoadedAsset<T>
 where
     ContextSeed<'de, ReadOnlyAssetContext, T>: DeserializeSeed<'de, Value = T>,
 {
+    /// Loads a JSON asset that requires a [`ReadOnlyAssetContext`] during
+    /// deserialization.
     pub fn from_json_file_ctx(
         game: &'de ReadOnlyAssetContext,
         path: &Path,
@@ -55,6 +61,8 @@ impl<T> LoadedAsset<T>
 where
     T: DeserializeOwned,
 {
+    /// Loads a plain JSON asset that does not require context-aware
+    /// deserialization.
     pub fn from_json_file(path: &Path) -> Result<LoadedAsset<T>, AssetError> {
         let file = std::fs::OpenOptions::new()
             .read(true)
@@ -77,12 +85,17 @@ where
     }
 }
 
+/// Shared reference returned by the asset registry after assigning a stable
+/// asset UUID.
 pub struct LoadedAssetRef<T: ?Sized> {
+    /// Shared asset reference.
     pub asset: Ref<T>,
+    /// UUIDs of sub-assets generated or referenced during load.
     pub sub_assets: Vec<Uuid>,
 }
 
 impl<T> LoadedAssetRef<T> {
+    /// Attaches `id` to a freshly loaded asset value.
     pub fn new(id: Uuid, LoadedAsset { asset, sub_assets }: LoadedAsset<T>) -> Self {
         Self {
             asset: Ref::from_id_value(id, asset),

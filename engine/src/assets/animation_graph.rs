@@ -15,25 +15,35 @@ use std::ops::{Deref, DerefMut};
 use std::path::Path;
 use uuid::Uuid;
 
+/// Blend-tree motion entry keyed by a threshold value.
 #[derive(Default, Clone, Serialize, Deserialize)]
 #[repr(C)]
 pub struct BlendTreeMotion<T: Default + Clone> {
+    /// Threshold or coordinate used to weight this motion.
     pub threshold: T,
+    /// Motion played when this threshold is selected.
     pub motion: AnimationMotion,
 }
 
+/// Motion node stored inside an animation graph.
 #[derive(Clone, Serialize, Deserialize)]
 #[repr(C)]
 pub enum AnimationMotion {
+    /// Direct animation clip playback.
     AnimationClip(AnimationClip),
+    /// One-dimensional blend tree.
     BlendTree1D(BlendTree<1>),
+    /// Two-dimensional blend tree.
     BlendTree2D(BlendTree<2>),
 }
 
+/// Leaf motion that plays one animation clip at a configurable speed.
 #[derive(Clone, Serialize, Deserialize)]
 #[repr(C)]
 pub struct AnimationClip {
+    /// Playback speed multiplier.
     pub speed: f32,
+    /// Referenced animation clip asset.
     pub animation: AssetRef<Animation>,
 }
 
@@ -46,13 +56,16 @@ impl Default for AnimationClip {
     }
 }
 
+/// Generic N-dimensional blend tree.
 #[derive(Default, Clone, Serialize, Deserialize)]
 #[repr(C)]
 pub struct BlendTree<const N: usize>
 where
     [f32; N]: Default + Serialize + for<'a> Deserialize<'a>,
 {
+    /// Parameter UUIDs used to populate the blend-tree coordinate.
     pub parameters: Vec<Uuid>,
+    /// Thresholded motions evaluated by the tree.
     pub motions: Vec<BlendTreeMotion<[f32; N]>>,
 }
 
@@ -60,6 +73,7 @@ impl<const N: usize> BlendTree<N>
 where
     [f32; N]: Default + Serialize + for<'a> Deserialize<'a>,
 {
+    /// Returns the dimensionality of the blend tree.
     pub const fn dimensions() -> usize
     where
         [f32; N]: Default + Serialize + for<'a> Deserialize<'a>,
@@ -72,6 +86,7 @@ impl<const N: usize> BlendTree<N>
 where
     [f32; N]: Default + Serialize + for<'a> Deserialize<'a>,
 {
+    /// Returns up to `n` weighted neighbors for the current parameter values.
     pub fn nearest_neighbors(
         &self,
         n: usize,
@@ -126,35 +141,49 @@ impl Default for AnimationMotion {
     }
 }
 
+/// One state node in an [`AnimationGraph`].
 #[derive(Clone, Serialize, Deserialize)]
 pub struct AnimationNode {
+    /// Stable node UUID.
     pub id: Uuid,
+    /// Display name shown in editor tooling.
     pub name: String,
+    /// Motion played by this node.
     pub motion: AnimationMotion,
+    /// Editor graph position.
     pub position: Pos2,
 }
 
+/// Runtime animation parameter value.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum AnimationParameterValue {
+    /// Floating-point parameter.
     Float(f32),
+    /// Integer parameter.
     Int(i32),
+    /// Boolean parameter.
     Bool(bool),
+    /// Trigger-style parameter.
     Trigger,
 }
 
 impl AnimationParameterValue {
+    /// Returns `true` when this value is [`AnimationParameterValue::Float`].
     pub fn is_float(&self) -> bool {
         matches!(self, Self::Float(_))
     }
 
+    /// Returns `true` when this value is [`AnimationParameterValue::Int`].
     pub fn is_int(&self) -> bool {
         matches!(self, Self::Int(_))
     }
 
+    /// Returns `true` when this value is [`AnimationParameterValue::Bool`].
     pub fn is_bool(&self) -> bool {
         matches!(self, Self::Bool(_))
     }
 
+    /// Returns `true` when this value is [`AnimationParameterValue::Trigger`].
     pub fn is_trigger(&self) -> bool {
         matches!(self, Self::Trigger)
     }
@@ -177,56 +206,87 @@ impl Lerp<f32> for AnimationParameterValue {
     }
 }
 
+/// Transition edge between two animation nodes.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct AnimationTransition {
+    /// Stable transition UUID.
     pub id: Uuid,
+    /// Display name shown in editor tooling.
     pub name: String,
+    /// Whether the transition waits for an exit time on the source state.
     pub has_exit_time: bool,
+    /// Normalized exit time on the source state.
     pub exit_time: f32,
+    /// Transition blend duration in seconds.
     pub duration: f32,
+    /// Conditions that must pass for the transition to trigger.
     pub conditions: Vec<AnimationParameterCondition>,
 }
 
+/// One parameter comparison used by an animation transition.
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct AnimationParameterCondition {
+    /// Parameter UUID to inspect.
     pub parameter: Uuid,
+    /// Comparison applied to that parameter.
     pub condition: AnimationCondition,
 }
 
+/// Supported transition condition kinds.
 #[derive(Default, Clone, Copy, Serialize, Deserialize)]
 pub enum AnimationCondition {
     #[default]
+    /// No condition.
     None,
+    /// Floating-point comparison.
     Float(FloatCondition),
+    /// Integer comparison.
     Int(IntCondition),
+    /// Boolean comparison.
     Bool(BoolCondition),
+    /// Trigger condition.
     Trigger,
 }
 
+/// Floating-point comparisons supported by transition conditions.
 #[derive(Clone, Copy, Serialize, Deserialize)]
 pub enum FloatCondition {
+    /// Passes when the parameter is less than the threshold.
     Less(f32),
+    /// Passes when the parameter is greater than the threshold.
     Greater(f32),
 }
 
+/// Integer comparisons supported by transition conditions.
 #[derive(Clone, Copy, Serialize, Deserialize)]
 pub enum IntCondition {
+    /// Passes when the parameter is less than the threshold.
     Less(i32),
+    /// Passes when the parameter is greater than the threshold.
     Greater(i32),
+    /// Passes when the parameter equals the threshold.
     Equal(i32),
+    /// Passes when the parameter does not equal the threshold.
     NotEqual(i32),
 }
 
+/// Boolean comparisons supported by transition conditions.
 #[derive(Clone, Copy, Serialize, Deserialize)]
 pub enum BoolCondition {
+    /// Passes when the parameter is `true`.
     True,
+    /// Passes when the parameter is `false`.
     False,
 }
 
+/// Named animation parameter definition.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct AnimationParameter {
+    /// Stable parameter UUID.
     pub id: Uuid,
+    /// Display name shown in editor tooling.
     pub name: String,
+    /// Default runtime value.
     pub value: AnimationParameterValue,
 }
 
@@ -240,11 +300,15 @@ impl Default for AnimationParameter {
     }
 }
 
+/// Serializable animation state machine asset.
 #[derive(TypeUuid, Default, Clone, Serialize, Deserialize)]
 #[uuid = "5796ef05-4a2c-4cbf-b70a-4e6e1f2c418a"]
 pub struct AnimationGraph {
+    /// Graph of animation states and transitions.
     pub graph: StableGraph<AnimationNode, AnimationTransition>,
+    /// Parameter definitions used by conditions and blend trees.
     pub parameters: Vec<AnimationParameter>,
+    /// Optional UUID of the start node.
     pub start_node: Option<Uuid>,
 }
 

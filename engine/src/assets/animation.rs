@@ -13,30 +13,44 @@ use serde::{Deserialize, Serialize};
 use super::error::AssetError;
 use super::{Asset, LoadedAsset};
 
+/// Position or scale keyframe sampled from an animation channel.
 #[derive(Debug)]
 pub struct VectorKeyFrame {
+    /// Sampled vector value.
     pub value: Vec3,
+    /// Keyframe time in animation ticks.
     pub time: f64,
 }
 
+/// Rotation keyframe sampled from an animation channel.
 #[derive(Debug)]
 pub struct QuatKeyFrame {
+    /// Sampled quaternion value.
     pub value: Unit<Quat>,
+    /// Keyframe time in animation ticks.
     pub time: f64,
 }
 
+/// Per-node animation channel data.
 #[derive(Debug)]
 pub struct AnimationKeyFrames {
+    /// Translation keys.
     pub positions: Vec<VectorKeyFrame>,
+    /// Rotation keys.
     pub rotations: Vec<QuatKeyFrame>,
+    /// Scale keys.
     pub scaling: Vec<VectorKeyFrame>,
 }
 
+/// Standalone skeletal animation clip asset.
 #[derive(Default, TypeUuid)]
 #[uuid = "627dee5d-c2d6-4e3e-9b9e-80e3e601848d"]
 pub struct Animation {
+    /// Animation channels keyed by node name.
     pub node_keyframes: HashMap<String, AnimationKeyFrames>,
+    /// Clip duration in animation ticks.
     pub duration: f64,
+    /// Tick frequency used by the source animation.
     pub ticks_per_second: f64,
 }
 
@@ -79,6 +93,7 @@ impl Asset for Animation {
 }
 
 impl Animation {
+    /// Converts a Russimp animation into the engine's standalone clip format.
     pub fn from_russimp_animation(animation: &russimp_ng::animation::Animation) -> Self {
         let ticks_per_second = animation.ticks_per_second;
         let duration = animation.duration;

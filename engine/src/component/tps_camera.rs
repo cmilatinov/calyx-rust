@@ -11,16 +11,21 @@ use nalgebra::UnitQuaternion;
 use nalgebra_glm::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
+/// Camera follow component that orbits around a target object.
 #[derive(Clone, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate)]
 #[reflect_attr(name = "Third Person Camera")]
 #[repr(C)]
 pub struct ComponentThirdPersonCamera {
+    /// Target object followed by the camera.
     pub target: GameObjectRef,
+    /// Mouse-look sensitivity multiplier.
     #[reflect_attr(speed = 0.01, min = 0.0)]
     pub sensitivity: f32,
+    /// Scroll-wheel zoom sensitivity multiplier.
     #[reflect_attr(speed = 0.01, min = 0.0)]
     pub zoom_sensitivity: f32,
+    /// Desired camera distance from the target.
     #[reflect_attr(min = 0.0)]
     pub distance: f32,
     #[serde(skip)]
@@ -63,7 +68,13 @@ impl ComponentUpdate for ComponentThirdPersonCamera {
 
         let Some((target, sensitivity, zoom_sensitivity, distance, rotation)) =
             scene.read_component::<ComponentThirdPersonCamera, _, _>(game_object, |c| {
-                (c.target, c.sensitivity, c.zoom_sensitivity, c.distance, c.rotation)
+                (
+                    c.target,
+                    c.sensitivity,
+                    c.zoom_sensitivity,
+                    c.distance,
+                    c.rotation,
+                )
             })
         else {
             return;
@@ -81,8 +92,7 @@ impl ComponentUpdate for ComponentThirdPersonCamera {
             c.rotation = new_rotation;
         });
 
-        let rotation_quat =
-            UnitQuaternion::from_euler_angles(new_rotation.y, new_rotation.x, 0.0);
+        let rotation_quat = UnitQuaternion::from_euler_angles(new_rotation.y, new_rotation.x, 0.0);
         let dir = rotation_quat * Vec3::z_axis();
         let pos = target
             .game_object(scene)

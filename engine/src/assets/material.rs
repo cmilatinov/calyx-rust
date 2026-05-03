@@ -17,20 +17,31 @@ use egui_wgpu::{wgpu, RenderState};
 use naga::{ImageDimension, Scalar, ScalarKind, TypeInner, VectorSize};
 use serde::{Deserialize, Serialize};
 
+/// High-level categories of shader bindings exposed through materials.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum BindingType {
+    /// Uniform or storage buffer binding.
     Buffer,
+    /// Sampler binding.
     Sampler,
+    /// Sampled texture binding.
     Texture,
 }
 
+/// One editable shader variable exposed by a material asset.
 #[derive(Serialize, Deserialize)]
 pub struct ShaderVariable {
+    /// Bind group index.
     pub group: u32,
+    /// Binding slot inside the bind group.
     pub binding: u32,
+    /// Optional byte offset for struct members packed into a buffer binding.
     pub offset: Option<u32>,
+    /// Display name for the variable.
     pub name: String,
+    /// Optional byte size for buffer-backed variables.
     pub span: Option<u32>,
+    /// Stored runtime/editor value.
     pub value: ShaderVariableValue,
 }
 
@@ -57,22 +68,35 @@ impl Ord for ShaderVariable {
     }
 }
 
+/// Editable value payload for a [`ShaderVariable`].
 #[derive(Serialize, Deserialize)]
 pub enum ShaderVariableValue {
+    /// Signed integer value.
     Int(i32),
+    /// Unsigned integer value.
     Uint(u32),
+    /// Floating-point value.
     Float(f32),
+    /// Boolean value.
     Bool(bool),
+    /// RGBA color.
     Color(Color32),
+    /// 2D vector.
     Vec2([f32; 2]),
+    /// 3D vector.
     Vec3([f32; 3]),
+    /// 4D vector.
     Vec4([f32; 4]),
+    /// 4x4 matrix.
     Mat4([[f32; 4]; 4]),
+    /// 2D texture asset reference.
     Texture2D(AssetRef<Texture>),
+    /// Texture sampler slot.
     Sampler,
 }
 
 impl ShaderVariableValue {
+    /// Returns the bindable resource category for this value.
     pub fn binding_type(&self) -> BindingType {
         match self {
             ShaderVariableValue::Sampler => BindingType::Sampler,
@@ -81,6 +105,7 @@ impl ShaderVariableValue {
         }
     }
 
+    /// Returns the raw bytes written into a buffer binding for this value.
     pub fn as_slice(&self) -> &[u8] {
         match self {
             ShaderVariableValue::Int(value) => bytemuck::cast_slice(std::slice::from_ref(value)),
@@ -97,6 +122,7 @@ impl ShaderVariableValue {
         }
     }
 
+    /// Resolves the texture referenced by this value or returns `default`.
     pub fn as_texture(
         &self,
         context: &ReadOnlyAssetContext,
@@ -109,19 +135,25 @@ impl ShaderVariableValue {
     }
 }
 
+/// Material asset that binds a shader and its editable variables.
 #[derive(TypeUuid, Serialize)]
 #[uuid = "f98a7f41-84d4-482d-b7af-a670b07035ae"]
 pub struct Material {
+    /// Shader asset used by this material.
     pub shader: AssetRef<Shader>,
+    /// Editable shader variables.
     pub variables: Vec<ShaderVariable>,
     #[serde(skip)]
     variable_indices: HashMap<(u32, u32), usize>,
     #[serde(skip)]
+    /// Cached bind-group entry metadata keyed by group and binding.
     pub bind_group_entries: BTreeMap<u32, BTreeMap<u32, BindGroupEntry>>,
     #[serde(skip)]
+    /// GPU buffers created for buffer-backed shader variables.
     pub buffers: HashMap<(u32, u32), wgpu::Buffer>,
 }
 
+/// Cached metadata for one bind-group entry.
 pub struct BindGroupEntry {
     ty: BindingType,
     size: Option<u32>,
@@ -191,6 +223,8 @@ impl Asset for Material {
 }
 
 impl Material {
+    /// Builds a default material from a shader asset by reflecting its exposed
+    /// variables.
     pub fn from_shader(assets: &ReadOnlyAssetContext, shader_ref: Ref<Shader>) -> Self {
         let mut material = Self {
             shader: Some(shader_ref.clone()).into(),

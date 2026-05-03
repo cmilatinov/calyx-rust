@@ -5,9 +5,11 @@ use egui_wgpu::wgpu;
 
 use crate::assets::mesh::Mesh;
 
+/// Small helpers for common render-pass and mesh-submission operations.
 pub struct RenderUtils;
 
 impl RenderUtils {
+    /// Builds a color attachment that clears to `clear_color`.
     pub fn color_attachment(
         view: &wgpu::TextureView,
         clear_color: Color32,
@@ -28,6 +30,7 @@ impl RenderUtils {
         }
     }
 
+    /// Builds a depth/stencil attachment that clears depth to `clear_value`.
     pub fn depth_stencil_attachment(
         view: &wgpu::TextureView,
         clear_value: f32,
@@ -43,6 +46,7 @@ impl RenderUtils {
         }
     }
 
+    /// Returns a color target state configured for alpha blending.
     pub fn color_alpha_blending(format: wgpu::TextureFormat) -> wgpu::ColorTargetState {
         wgpu::ColorTargetState {
             format,
@@ -58,6 +62,7 @@ impl RenderUtils {
         }
     }
 
+    /// Returns a color target state configured for additive blending.
     pub fn color_additive_blending(format: wgpu::TextureFormat) -> wgpu::ColorTargetState {
         wgpu::ColorTargetState {
             format,
@@ -73,10 +78,12 @@ impl RenderUtils {
         }
     }
 
+    /// Returns a default color target state for `texture_format`.
     pub fn color_default(texture_format: wgpu::TextureFormat) -> wgpu::ColorTargetState {
         texture_format.into()
     }
 
+    /// Returns a default depth state for `format`.
     pub fn depth_default(format: wgpu::TextureFormat) -> wgpu::DepthStencilState {
         wgpu::DepthStencilState {
             format,
@@ -87,6 +94,7 @@ impl RenderUtils {
         }
     }
 
+    /// Returns a default multisample state for `samples`.
     pub fn multisample_default(samples: u32) -> wgpu::MultisampleState {
         wgpu::MultisampleState {
             count: samples,
@@ -94,6 +102,7 @@ impl RenderUtils {
         }
     }
 
+    /// Rebuilds mesh CPU/GPU data as needed before drawing.
     pub fn rebuild_mesh_data(device: &wgpu::Device, queue: &wgpu::Queue, mesh: &mut Mesh) {
         if mesh.dirty {
             mesh.rebuild_mesh_data(device);
@@ -102,6 +111,7 @@ impl RenderUtils {
         mesh.rebuild_instance_data(device, queue);
     }
 
+    /// Binds the mesh vertex and index buffers on `render_pass`.
     pub fn bind_mesh_buffers<'a>(render_pass: &mut wgpu::RenderPass<'a>, mesh: &'a Mesh) {
         if !mesh.indices.is_empty() {
             render_pass.set_index_buffer(
@@ -112,6 +122,7 @@ impl RenderUtils {
         render_pass.set_vertex_buffer(0, mesh.vertex_buffer.as_ref().unwrap().slice(..));
     }
 
+    /// Issues an indexed instanced draw for `mesh`.
     pub fn draw_mesh_instanced<'a>(
         render_pass: &mut wgpu::RenderPass<'a>,
         mesh: &'a Mesh,
@@ -120,6 +131,7 @@ impl RenderUtils {
         render_pass.draw_indexed(0..(mesh.indices.len() as u32), 0, instances);
     }
 
+    /// Rebuilds buffers if needed and renders the mesh once.
     pub fn render_mesh<'a>(
         device: &wgpu::Device,
         queue: &wgpu::Queue,

@@ -12,15 +12,22 @@ use crate::render::{PipelineOptions, RenderContext, RenderUtils, Shader};
 use crate::utils::TypeUuid;
 use crate::{self as engine};
 
+/// GPU texture asset with optional egui handle and mip helpers.
 #[derive(TypeUuid)]
 #[uuid = "8ba4ccec-85ab-45f5-b4ee-2e803ef548a2"]
 pub struct Texture {
     render_context: Arc<RenderContext>,
+    /// Backing wgpu texture.
     pub texture: wgpu::Texture,
+    /// Default view used for sampling.
     pub view: wgpu::TextureView,
+    /// Default sampler used for sampling.
     pub sampler: wgpu::Sampler,
+    /// Optional egui texture handle for UI rendering.
     pub handle: Option<egui::TextureHandle>,
+    /// Stored texture descriptor used to recreate derived views.
     pub descriptor: wgpu::TextureDescriptor<'static>,
+    /// Stored view descriptor used to recreate derived views.
     pub view_descriptor: wgpu::TextureViewDescriptor<'static>,
 }
 
@@ -111,6 +118,8 @@ impl Texture {
         width.max(height).ilog2() + 1
     }
 
+    /// Creates a texture asset from an explicit descriptor and optional view and
+    /// sampler settings.
     pub fn new(
         render_context: Arc<RenderContext>,
         texture_desc: &wgpu::TextureDescriptor,
@@ -190,6 +199,7 @@ impl Texture {
         }
     }
 
+    /// Creates a texture view for a single mip level.
     pub fn create_mip_view(&self, mip: u32) -> wgpu::TextureView {
         self.texture.create_view(&wgpu::TextureViewDescriptor {
             base_mip_level: mip,
@@ -278,6 +288,7 @@ impl Texture {
         Ok(())
     }
 
+    /// Creates a D2-array view suitable for cubemap compute passes.
     pub fn create_cubemap_array_view(&self, mip_level: Option<u32>) -> wgpu::TextureView {
         self.texture.create_view(&wgpu::TextureViewDescriptor {
             dimension: Some(wgpu::TextureViewDimension::D2Array),
@@ -287,6 +298,7 @@ impl Texture {
         })
     }
 
+    /// Creates one 2D view per cubemap face.
     pub fn create_cubemap_views(&self, mip_level: Option<u32>) -> [wgpu::TextureView; 6] {
         let base_mip_level = mip_level.unwrap_or_default();
         [
@@ -341,6 +353,7 @@ impl Texture {
         ]
     }
 
+    /// Generates cubemap mip levels using `mip_shader_ref`.
     pub fn generate_cubemap_mips(
         &self,
         render_state: &egui_wgpu::RenderState,

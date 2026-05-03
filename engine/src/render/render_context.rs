@@ -15,11 +15,13 @@ enum RenderBackend {
     },
 }
 
+/// Rendering backend abstraction used by asset loading and scene rendering.
 pub struct RenderContext {
     backend: RenderBackend,
 }
 
 impl RenderContext {
+    /// Wraps the wgpu render state exposed by an eframe creation context.
     pub fn from_eframe(cc: &eframe::CreationContext) -> Self {
         Self {
             backend: RenderBackend::Eframe {
@@ -32,12 +34,14 @@ impl RenderContext {
         }
     }
 
+    /// Creates a headless render context from an explicit device and queue.
     pub fn headless(device: Arc<wgpu::Device>, queue: Arc<wgpu::Queue>) -> Self {
         Self {
             backend: RenderBackend::Headless { device, queue },
         }
     }
 
+    /// Returns the underlying wgpu device.
     pub fn device(&self) -> &wgpu::Device {
         match &self.backend {
             RenderBackend::Eframe { render_state, .. } => &render_state.device,
@@ -45,6 +49,7 @@ impl RenderContext {
         }
     }
 
+    /// Returns the underlying wgpu queue.
     pub fn queue(&self) -> &wgpu::Queue {
         match &self.backend {
             RenderBackend::Eframe { render_state, .. } => &render_state.queue,
@@ -52,6 +57,7 @@ impl RenderContext {
         }
     }
 
+    /// Returns the default color target format for this backend.
     pub fn target_format(&self) -> wgpu::TextureFormat {
         match &self.backend {
             RenderBackend::Eframe { render_state, .. } => render_state.target_format,
@@ -59,10 +65,12 @@ impl RenderContext {
         }
     }
 
+    /// Returns `true` when this context is headless.
     pub fn is_headless(&self) -> bool {
         matches!(&self.backend, RenderBackend::Headless { .. })
     }
 
+    /// Returns the eframe render state.
     pub fn render_state(&self) -> &egui_wgpu::RenderState {
         match &self.backend {
             RenderBackend::Eframe { render_state, .. } => render_state,
@@ -70,19 +78,25 @@ impl RenderContext {
         }
     }
 
+    /// Returns the shared egui-wgpu renderer.
     pub fn renderer(&self) -> Arc<epaint::mutex::RwLock<Renderer>> {
         self.render_state().renderer.clone()
     }
 
+    /// Returns the egui texture manager.
     pub fn texture_manager(&self) -> Arc<epaint::mutex::RwLock<epaint::TextureManager>> {
         match &self.backend {
-            RenderBackend::Eframe { texture_manager, .. } => texture_manager.clone(),
+            RenderBackend::Eframe {
+                texture_manager, ..
+            } => texture_manager.clone(),
             RenderBackend::Headless { .. } => {
                 panic!("texture_manager unavailable in headless mode")
             }
         }
     }
 
+    /// Returns a [`PipelineOptions`] builder pre-populated for this render
+    /// target format.
     pub fn pipeline_options_builder(
         &self,
     ) -> PipelineOptionsBuilder<((), (), (), (Vec<Option<ColorTargetState>>,), (), ())> {

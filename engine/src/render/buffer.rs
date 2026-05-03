@@ -1,5 +1,6 @@
 use egui_wgpu::wgpu;
 
+/// Builds a `BufferInitDescriptor` from typed POD data.
 pub fn wgpu_buffer_init_desc<T: bytemuck::Pod>(
     usage: wgpu::BufferUsages,
     contents: &[T],
@@ -11,8 +12,11 @@ pub fn wgpu_buffer_init_desc<T: bytemuck::Pod>(
     }
 }
 
+/// Trait for vertex-like types that can describe their buffer layout.
 pub trait BufferLayout {
+    /// Vertex attributes exposed by the type.
     const ATTRIBS: &'static [wgpu::VertexAttribute];
+    /// Builds a wgpu vertex buffer layout for this type.
     fn layout(step_mode: wgpu::VertexStepMode) -> wgpu::VertexBufferLayout<'static>
     where
         Self: Sized,
@@ -25,6 +29,7 @@ pub trait BufferLayout {
     }
 }
 
+/// GPU buffer that grows on demand while preserving usage flags.
 pub struct ResizableBuffer {
     usage: wgpu::BufferUsages,
     size: u64,
@@ -32,6 +37,7 @@ pub struct ResizableBuffer {
 }
 
 impl ResizableBuffer {
+    /// Creates an empty resizable buffer with the provided `usage`.
     pub fn new(usage: wgpu::BufferUsages) -> Self {
         Self {
             usage,
@@ -40,6 +46,7 @@ impl ResizableBuffer {
         }
     }
 
+    /// Ensures the buffer is at least `size` bytes long.
     pub fn resize(&mut self, device: &wgpu::Device, size: u64) {
         if self.size >= size {
             return;
@@ -62,6 +69,7 @@ impl ResizableBuffer {
         self.size = new_size;
     }
 
+    /// Writes typed POD data into the buffer, growing it when needed.
     pub fn write_buffer<T: bytemuck::Pod>(
         &mut self,
         device: &wgpu::Device,
@@ -77,6 +85,7 @@ impl ResizableBuffer {
         }
     }
 
+    /// Writes raw bytes into the buffer, growing it when needed.
     pub fn write_buffer_bytes(
         &mut self,
         device: &wgpu::Device,
@@ -92,6 +101,7 @@ impl ResizableBuffer {
         }
     }
 
+    /// Returns the backing wgpu buffer.
     pub fn get_wgpu_buffer(&self) -> &wgpu::Buffer {
         self.buffer.as_ref().unwrap()
     }

@@ -4,12 +4,14 @@ use std::fs::File;
 use std::path::PathBuf;
 use typed_builder::TypedBuilder;
 
+/// Initializes the global logger using a concrete logger implementation.
 pub struct Log<T: LoggerImplementation> {
     #[allow(unused)]
     logger: T,
 }
 
 impl<T: LoggerImplementation> Log<T> {
+    /// Builds and installs the process-wide logger.
     pub fn new(logger: T) -> Self {
         let mut builder =
             env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("off"));
@@ -29,11 +31,15 @@ impl<T: LoggerImplementation> Log<T> {
     }
 }
 
+/// Supplies log output destinations for [`Log`].
 pub trait LoggerImplementation {
+    /// Returns the directory where log files should be created.
     fn log_dir(&self) -> std::io::Result<PathBuf>;
+    /// Returns the log file to write to, or `None` to keep logging on stdout.
     fn log_file(&self) -> Option<File>;
 }
 
+/// Default filesystem-backed logger configuration.
 #[derive(TypedBuilder)]
 pub struct DefaultLogger {
     #[builder]

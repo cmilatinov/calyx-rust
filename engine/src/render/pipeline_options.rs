@@ -2,6 +2,7 @@ use crate::render::RenderUtils;
 use egui_wgpu::wgpu;
 use typed_builder::TypedBuilder;
 
+/// Render-pipeline configuration used when building shader pipelines.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, TypedBuilder)]
 pub struct PipelineOptions {
     #[builder(default = wgpu::PrimitiveTopology::TriangleList)]

@@ -4,17 +4,21 @@ use nalgebra::{Matrix3, UnitQuaternion};
 use nalgebra_glm as glm;
 use nalgebra_glm::{vec3, Mat4, Vec3};
 
+/// Distance traits and helper implementations for common math types.
 pub use dist::*;
 use russimp_ng::Matrix4x4;
+/// Transform type and helpers for local and world-space math.
 pub use transform::*;
 
 mod dist;
 mod transform;
 
+/// Composes a transform matrix from translation, rotation, and scale.
 pub fn compose_transform(translation: &Vec3, rotation: &UnitQuaternion<f32>, scale: &Vec3) -> Mat4 {
     glm::translation(translation) * glm::quat_to_mat4(rotation) * glm::scaling(scale)
 }
 
+/// Decomposes `matrix` into translation, rotation, and scale components.
 pub fn decompose_transform(
     matrix: &Mat4,
     translation: &mut Vec3,
@@ -51,14 +55,19 @@ pub fn decompose_transform(
     );
 }
 
+/// Converts a vertical field of view to a horizontal field of view for
+/// `aspect`.
 pub fn to_fov_x(aspect: f32, fov_y: f32) -> f32 {
     2.0 * ((fov_y * 0.5).tan() * aspect).atan()
 }
 
+/// Converts a horizontal field of view to a vertical field of view for
+/// `aspect`.
 pub fn to_fov_y(aspect: f32, fov_x: f32) -> f32 {
     2.0 * ((fov_x * 0.5).tan() / aspect).atan()
 }
 
+/// Fits a rectangle with aspect ratio `aspect` inside `available`.
 pub fn fit_aspect(aspect: f32, available: impl Into<Vector2<f32>>) -> Vector2<f32> {
     let available: Vector2<f32> = available.into();
     let available_aspect = available.x / available.y;
@@ -75,6 +84,7 @@ pub fn fit_aspect(aspect: f32, available: impl Into<Vector2<f32>>) -> Vector2<f3
     }
 }
 
+/// Converts a Russimp matrix into the engine's `Mat4` representation.
 pub fn mat4_from_russimp(matrix: &Matrix4x4) -> Mat4 {
     Mat4::from_row_slice(&[
         matrix.a1, matrix.a2, matrix.a3, matrix.a4, matrix.b1, matrix.b2, matrix.b3, matrix.b4,

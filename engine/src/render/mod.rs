@@ -17,6 +17,7 @@ pub(crate) use skybox_renderer::*;
 
 mod asset_map;
 mod asset_render_state;
+/// Buffer-layout helpers and resizable GPU buffers.
 pub mod buffer;
 mod camera;
 mod gizmo_renderer;
@@ -26,6 +27,7 @@ mod light_manager;
 mod mesh_renderer;
 mod particle_renderer;
 mod pipeline_options;
+/// Post-processing rendering modules.
 pub mod postprocess;
 mod render_context;
 mod render_utils;

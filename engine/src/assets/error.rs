@@ -3,29 +3,44 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 
+/// Broad asset error categories surfaced by loading and registry operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssetErrorKind {
+    /// Requested asset metadata or file was not found.
     NotFound,
+    /// Asset data could not be decoded or initialized.
     LoadError,
+    /// Attempted to create an asset that already exists.
     AlreadyExists,
+    /// Loaded asset type did not match the expected type.
     TypeMismatch,
 }
 
+/// Structured asset error with optional path, type, and source context.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssetError {
+    /// Broad error category.
     pub kind: AssetErrorKind,
+    /// Asset path involved in the failure, when known.
     pub path: Option<PathBuf>,
+    /// Asset type involved in the failure, when known.
     pub asset_type: Option<&'static str>,
+    /// Displayable source error string, when available.
     pub source: Option<String>,
 }
 
 #[allow(non_upper_case_globals)]
 impl AssetError {
+    /// Prebuilt `NotFound` error value.
     pub const NotFound: Self = Self::new(AssetErrorKind::NotFound);
+    /// Prebuilt `LoadError` error value.
     pub const LoadError: Self = Self::new(AssetErrorKind::LoadError);
+    /// Prebuilt `AlreadyExists` error value.
     pub const AlreadyExists: Self = Self::new(AssetErrorKind::AlreadyExists);
+    /// Prebuilt `TypeMismatch` error value.
     pub const TypeMismatch: Self = Self::new(AssetErrorKind::TypeMismatch);
 
+    /// Creates a new asset error of `kind`.
     pub const fn new(kind: AssetErrorKind) -> Self {
         Self {
             kind,
@@ -35,16 +50,19 @@ impl AssetError {
         }
     }
 
+    /// Attaches a filesystem path to the error.
     pub fn with_path(mut self, path: impl AsRef<Path>) -> Self {
         self.path = Some(path.as_ref().to_path_buf());
         self
     }
 
+    /// Attaches an asset type label to the error.
     pub fn with_type(mut self, asset_type: &'static str) -> Self {
         self.asset_type = Some(asset_type);
         self
     }
 
+    /// Attaches a source error string.
     pub fn with_source(mut self, source: impl Display) -> Self {
         self.source = Some(source.to_string());
         self

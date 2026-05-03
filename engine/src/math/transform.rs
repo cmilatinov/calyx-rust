@@ -10,11 +10,15 @@ use crate::utils::TypeUuid;
 
 use super::{compose_transform, decompose_transform};
 
+/// Position, rotation, and scale stored as decomposed transform components.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, TypeUuid, Reflect)]
 #[repr(C)]
 pub struct Transform {
+    /// Local-space translation.
     pub position: Vec3,
+    /// Local-space orientation.
     pub rotation: UnitQuaternion<f32>,
+    /// Local-space non-uniform scale.
     pub scale: Vec3,
 }
 
@@ -66,6 +70,7 @@ impl From<Transform> for Mat4 {
 }
 
 impl Transform {
+    /// Builds a transform from explicit components.
     pub fn from_components(position: Vec3, rotation: UnitQuaternion<f32>, scale: Vec3) -> Self {
         Transform {
             position,
@@ -74,6 +79,7 @@ impl Transform {
         }
     }
 
+    /// Builds a transform with identity rotation and unit scale.
     pub fn from_xyz(x: f32, y: f32, z: f32) -> Self {
         Transform {
             position: Vec3::new(x, y, z),
@@ -82,6 +88,7 @@ impl Transform {
         }
     }
 
+    /// Rotates this transform to face `position`.
     pub fn look_at(&mut self, position: &Vec3) {
         let diff = self.position - position;
         if glm::length(&diff) <= 0.000001f32 {
@@ -90,65 +97,79 @@ impl Transform {
         self.rotation = UnitQuaternion::look_at_rh(&diff.normalize(), &Vec3::y_axis());
     }
 
+    /// Transforms a point from local space into parent space.
     pub fn transform_position(&self, position: &Vec3) -> Vec3 {
         let transformed = self.matrix() * glm::vec4(position.x, position.y, position.z, 1.0);
         glm::vec3(transformed.x, transformed.y, transformed.z)
     }
 
+    /// Transforms a direction from local space into parent space.
     pub fn transform_direction(&self, direction: &Vec3) -> Vec3 {
         let matrix = glm::mat4_to_mat3(&self.matrix());
         matrix * direction
     }
 
+    /// Transforms a point from parent space into local space.
     pub fn inverse_transform_position(&self, position: &Vec3) -> Vec3 {
         let transformed =
             self.inverse_matrix() * Vec4::new(position.x, position.y, position.z, 1.0);
         Vec3::new(transformed.x, transformed.y, transformed.z)
     }
 
+    /// Transforms a direction from parent space into local space.
     pub fn inverse_transform_direction(&self, direction: &Vec3) -> Vec3 {
         let matrix = glm::mat4_to_mat3(&self.inverse_matrix());
         matrix * direction
     }
 
+    /// Replaces this transform with the decomposition of `matrix`.
     pub fn set_local_matrix(&mut self, matrix: &Mat4) {
         *self = matrix.into();
     }
 
+    /// Adds `translation` to the current position.
     pub fn translate(&mut self, translation: &Vec3) {
         self.position += translation;
     }
 
+    /// Post-multiplies the current rotation by `rotation`.
     pub fn rotate(&mut self, rotation: &UnitQuaternion<f32>) {
         self.rotation *= rotation;
     }
 
+    /// Multiplies the current scale component-wise by `scale`.
     pub fn scale(&mut self, scale: &Vec3) {
         self.scale = self.scale.component_mul(scale);
     }
 
+    /// Returns the local forward axis in parent space.
     pub fn forward(&self) -> Vec3 {
         self.transform_direction(&glm::vec3(0.0, 0.0, 1.0))
     }
 
+    /// Returns the local right axis in parent space.
     pub fn right(&self) -> Vec3 {
         self.transform_direction(&glm::vec3(1.0, 0.0, 0.0))
     }
 
+    /// Returns the local up axis in parent space.
     pub fn up(&self) -> Vec3 {
         self.transform_direction(&glm::vec3(0.0, 1.0, 0.0))
     }
 
+    /// Returns the composed transform matrix.
     pub fn matrix(&self) -> Mat4 {
         compose_transform(&self.position, &self.rotation, &self.scale)
     }
 
+    /// Returns the inverse of the composed transform matrix.
     pub fn inverse_matrix(&self) -> Mat4 {
         let inv_scale = Vec3::new(1.0 / self.scale.x, 1.0 / self.scale.y, 1.0 / self.scale.z);
         let inv_rot = self.rotation.conjugate();
         glm::scaling(&inv_scale) * glm::quat_to_mat4(&inv_rot) * glm::translation(&-self.position)
     }
 
+    /// Blends weighted transforms using normalized linear interpolation.
     pub fn nlerp(transforms: impl Iterator<Item = (f32, Transform)>) -> Transform {
         let mut position = Vec3::zeros();
         let mut rotation = Quat::new(0.0, 0.0, 0.0, 0.0);
