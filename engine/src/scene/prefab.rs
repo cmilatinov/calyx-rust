@@ -24,16 +24,22 @@ use uuid::Uuid;
 
 const AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS: &[u8; 27] = b"IMPORT_FBX_PRESERVE_PIVOTS\0";
 
+/// Serialized subtree asset that can be instantiated into a [`crate::scene::Scene`].
 #[derive(Serialize, TypeUuid)]
 #[uuid = "960f1d60-3ad4-4f1d-92d3-cceb0e0623d7"]
 pub struct Prefab {
+    /// Serialized scene subtree.
     pub data: SceneData,
+    /// UUID of the root object inside `data`.
     pub root: Uuid,
 }
 
+/// Helper type used when loading a prefab from JSON.
 #[derive(Deserialize)]
 pub struct PrefabData {
+    /// Serialized scene subtree.
     pub data: SceneData,
+    /// UUID of the root object inside `data`.
     pub root: Uuid,
 }
 

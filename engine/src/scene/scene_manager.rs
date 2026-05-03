@@ -6,11 +6,16 @@ use crate::resource::ResourceMap;
 use crate::scene::Scene;
 use std::path::PathBuf;
 
+/// Metadata tracked alongside the current authoring scene.
 #[derive(Default)]
 pub struct SceneMeta {
+    /// Source file for the loaded scene asset, when the scene originated from
+    /// disk.
     pub file: Option<PathBuf>,
 }
 
+/// Owns the editable scene and the optional simulation copy used while the game
+/// is running in-editor.
 pub struct SceneManager {
     simulation_running: bool,
     current_scene: Scene,
@@ -21,6 +26,8 @@ pub struct SceneManager {
 }
 
 impl SceneManager {
+    /// Creates a manager with an empty authoring scene and the project's
+    /// default scene cached for resets.
     pub fn new(asset_registry_ref: ReadOnlyRef<AssetRegistry>) -> Self {
         let current_scene;
         let default_scene;
@@ -42,17 +49,22 @@ impl SceneManager {
         }
     }
 
+    /// Replaces the current authoring scene with a fresh empty scene.
     pub fn load_empty_scene(&mut self) {
         self.stop_simulation();
         self.current_scene = self.asset_registry.read().new_empty_scene();
     }
 
+    /// Replaces the current authoring scene with a clone of the configured
+    /// default scene asset.
     pub fn load_default_scene(&mut self) {
         self.stop_simulation();
         let snapshot = self.default_scene.read().snapshot();
         self.current_scene = self.current_scene.restore_snapshot(snapshot);
     }
 
+    /// Loads `scene` into the authoring slot and records its asset path when
+    /// available.
     pub fn load_scene(&mut self, scene: ReadOnlyRef<Scene>) {
         self.stop_simulation();
 
@@ -65,10 +77,12 @@ impl SceneManager {
         }
     }
 
+    /// Drops the simulation copy without modifying the authoring scene.
     pub fn unload_current_scene(&mut self) {
         self.simulation_scene = None;
     }
 
+    /// Starts simulation, cloning the current authoring scene on first run.
     pub fn start_simulation(&mut self) {
         if self.simulation_scene.is_none() {
             let snapshot = self.current_scene.snapshot();
@@ -78,19 +92,23 @@ impl SceneManager {
         self.simulation_running = true;
     }
 
+    /// Pauses simulation updates while preserving the simulation scene.
     pub fn pause_simulation(&mut self) {
         self.simulation_running = false;
     }
 
+    /// Stops simulation and discards the simulation scene.
     pub fn stop_simulation(&mut self) {
         self.simulation_scene = None;
         self.simulation_running = false;
     }
 
+    /// Runs scene preparation on the active simulation target.
     pub fn prepare(&mut self) {
         self.simulation_scene_mut().prepare();
     }
 
+    /// Advances the simulation scene when simulation is running.
     pub fn update(
         &mut self,
         registries: &ReadOnlyRegistryContext,
@@ -106,14 +124,18 @@ impl SceneManager {
         }
     }
 
+    /// Returns `true` when a simulation copy currently exists.
     pub fn has_simulation_scene(&self) -> bool {
         self.simulation_scene.is_some()
     }
 
+    /// Returns `true` when simulation updates are enabled.
     pub fn is_simulating(&self) -> bool {
         self.simulation_running
     }
 
+    /// Returns the simulation scene when present, otherwise the authoring
+    /// scene.
     pub fn simulation_scene(&self) -> &Scene {
         if let Some(scene) = &self.simulation_scene {
             return scene;
@@ -121,6 +143,7 @@ impl SceneManager {
         &self.current_scene
     }
 
+    /// Returns the mutable scene targeted by editor actions during simulation.
     pub fn simulation_scene_mut(&mut self) -> &mut Scene {
         if let Some(scene) = &mut self.simulation_scene {
             return scene;
@@ -128,14 +151,17 @@ impl SceneManager {
         &mut self.current_scene
     }
 
+    /// Returns metadata about the current authoring scene.
     pub fn current_scene_meta(&self) -> &SceneMeta {
         &self.current_scene_meta
     }
 
+    /// Returns the current authoring scene.
     pub fn current_scene(&self) -> &Scene {
         &self.current_scene
     }
 
+    /// Returns the current authoring scene mutably.
     pub fn current_scene_mut(&mut self) -> &mut Scene {
         &mut self.current_scene
     }

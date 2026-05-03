@@ -31,27 +31,45 @@ use crate::utils::{ContextSeed, TypeUuid};
 
 use super::scene_graph::{self, SiblingDir};
 
+/// Lightweight handle to a game object stored inside a [`Scene`].
+///
+/// The handle contains both the Legion entity and the scene-graph node index so
+/// hierarchy and ECS lookups can stay cheap. Persist this handle only for the
+/// lifetime of the scene instance; for serialized references use
+/// [`GameObjectRef`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GameObject {
+    /// Internal scene-graph node for hierarchy operations.
     pub node: petgraph::stable_graph::NodeIndex,
+    /// Legion entity that stores the object's components.
     pub entity: Entity,
 }
 
+/// Serializable representation of a scene or subtree.
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct SceneData {
+    /// Component payloads keyed by game object UUID and then component type
+    /// UUID.
     pub components: HashMap<Uuid, HashMap<Uuid, serde_json::Value>>,
+    /// Parent-child relationships keyed by parent UUID.
     pub hierarchy: HashMap<Uuid, Vec<Uuid>>,
 }
 
+/// Detached snapshot of a scene that can be restored later against a registry
+/// context.
 #[derive(Clone)]
 pub struct SceneSnapshot {
     data: SceneData,
 }
 
+/// Runtime scene containing ECS state, hierarchy state, and physics state for a
+/// collection of game objects.
 #[derive(TypeUuid)]
 #[uuid = "9946a2e7-e022-447e-8e60-528da548087f"]
 pub struct Scene {
+    /// Legion world that stores all scene components.
     pub world: World,
+    /// Physics state coupled to the scene.
     pub physics: PhysicsContext,
     pub(crate) graph: SceneGraph,
     pub(crate) store: GameObjectStore,
@@ -62,6 +80,7 @@ pub struct Scene {
 }
 
 impl Scene {
+    /// Creates an empty scene with a generated root object.
     pub fn new(assets: ReadOnlyRegistryContext) -> Self {
         let mut world: World = Default::default();
         let mut graph = SceneGraph::default();
@@ -146,6 +165,8 @@ impl Clone for Scene {
 }
 
 impl SceneSnapshot {
+    /// Restores this snapshot into a new [`Scene`] using `registries` to
+    /// deserialize components.
     pub fn into_scene(self, registries: &ReadOnlyRegistryContext) -> Scene {
         (registries, self.data).into()
     }
@@ -233,6 +254,7 @@ impl From<(&Scene, GameObject)> for SceneData {
 }
 
 impl Scene {
+    /// Captures a serializable clone of the current scene state.
     pub fn snapshot(&self) -> SceneSnapshot {
         SceneSnapshot { data: self.into() }
     }
@@ -241,6 +263,8 @@ impl Scene {
         &self.registries
     }
 
+    /// Restores `snapshot` into a new scene using this scene's registry
+    /// context.
     pub fn restore_snapshot(&self, snapshot: SceneSnapshot) -> Self {
         snapshot.into_scene(&self.registries)
     }
@@ -301,22 +325,31 @@ impl Scene {
 
 #[allow(unused)]
 impl Scene {
+    /// Returns the synthetic root object that owns all top-level objects.
     pub fn root(&self) -> GameObject {
         self.root
     }
 
+    /// Returns the UUID assigned to the synthetic root object.
     pub fn root_id(&self) -> Uuid {
         self.uuid(self.root)
     }
 
+    /// Iterates direct children of the root in sibling order.
     pub fn root_objects(&self) -> impl Iterator<Item = GameObject> + '_ {
         self.children_ordered(self.root)
     }
 
+    /// Returns the first root object, which is typically the authored prefab
+    /// root for imported scenes.
     pub fn prefab_root(&self) -> Option<GameObject> {
         self.root_objects().next()
     }
 
+    /// Creates a new game object under `parent`.
+    ///
+    /// When `id` is `None`, the scene generates a fresh [`ComponentID`] and a
+    /// default [`ComponentTransform`].
     pub fn create(&mut self, id: Option<ComponentID>, parent: Option<GameObject>) -> GameObject {
         let is_default_id = id.is_none();
         let mut id = id.unwrap_or_default();
@@ -330,10 +363,13 @@ impl Scene {
         game_object
     }
 
+    /// Marks `game_object` and its descendants for deletion on the next
+    /// [`Scene::flush_deletes`] or [`Scene::prepare`] call.
     pub fn delete(&mut self, game_object: GameObject) {
         self.store.mark_for_deletion(game_object);
     }
 
+    /// Serializes `game_object` and its descendants into a prefab asset.
     pub fn create_prefab(&self, game_object: GameObject) -> Prefab {
         Prefab {
             data: (self, game_object).into(),
@@ -341,6 +377,8 @@ impl Scene {
         }
     }
 
+    /// Instantiates `prefab` into the scene and remaps any embedded
+    /// [`GameObjectRef`] values to the newly created objects.
     pub fn instantiate_prefab(
         &mut self,
         prefab: &Prefab,
@@ -423,10 +461,13 @@ impl Scene {
         Some(game_object)
     }
 
+    /// Reparents `game_object` under `parent`, appending it after existing
+    /// siblings.
     pub fn set_parent(&mut self, game_object: GameObject, parent: Option<GameObject>) {
         self.set_parent_with_sibling(game_object, parent, None);
     }
 
+    /// Reparents `game_object` and optionally inserts it relative to `sibling`.
     pub fn set_parent_with_sibling(
         &mut self,
         game_object: GameObject,
@@ -438,6 +479,8 @@ impl Scene {
         self.transforms.mark_dirty_subtree(game_object, &self.graph);
     }
 
+    /// Returns the insertion index that would place `sibling` before or after
+    /// `dir` under `parent`.
     pub fn index_in_parent(
         &self,
         parent: GameObject,
@@ -447,6 +490,10 @@ impl Scene {
         self.graph.index_in_parent(parent, sibling, dir)
     }
 
+    /// Returns the active camera object for rendering.
+    ///
+    /// When an explicit camera override has not been selected, the first enabled
+    /// [`ComponentCamera`] in the scene is returned.
     pub fn main_camera(&self) -> Option<(GameObject, &ComponentCamera)> {
         let mut query = <(Entity, &ComponentTransform, &ComponentCamera)>::query();
         query
@@ -473,6 +520,7 @@ impl Scene {
         game_object
     }
 
+    /// Adds a concrete component instance to `game_object`.
     pub fn add_component<T: Component + Send + Sync + 'static>(
         &mut self,
         game_object: GameObject,
@@ -493,6 +541,10 @@ impl Scene {
         }
     }
 
+    /// Creates and binds a component by reflected type UUID.
+    ///
+    /// If the component type has a registered reset hook, the hook is executed
+    /// after the instance is bound.
     pub fn bind_component_dyn(&mut self, game_object: GameObject, type_uuid: Uuid) {
         let type_registry_ref = self.registries.types.clone();
         let type_registry = type_registry_ref.read();
@@ -526,6 +578,13 @@ impl Scene {
         }
     }
 
+    /// Returns a raw mutable pointer to a component instance.
+    ///
+    /// # Safety
+    ///
+    /// The returned pointer is tied to the current contents of the Legion
+    /// world. Callers must not hold it across scene mutations that could move or
+    /// remove the component, and they must uphold Rust aliasing rules manually.
     pub unsafe fn get_component_ptr(
         &mut self,
         game_object: GameObject,
@@ -538,14 +597,17 @@ impl Scene {
         })
     }
 
+    /// Returns the immutable Legion entry for `game_object`.
     pub fn entry(&self, game_object: GameObject) -> Option<EntryRef<'_>> {
         self.world.entry_ref(game_object.entity).ok()
     }
 
+    /// Returns the mutable Legion entry for `game_object`.
     pub fn entry_mut(&mut self, game_object: GameObject) -> Option<Entry<'_>> {
         self.world.entry(game_object.entity)
     }
 
+    /// Reads component `T` from `game_object` and maps it through `reader`.
     pub fn read_component<T: Component, R, F: FnOnce(&T) -> R>(
         &self,
         game_object: GameObject,
@@ -558,6 +620,10 @@ impl Scene {
             .map(reader)
     }
 
+    /// Mutates component `T` on `game_object`.
+    ///
+    /// Transform writes invalidate cached world transforms for the object's
+    /// subtree.
     pub fn write_component<T: Component + 'static, F: FnOnce(&mut T)>(
         &mut self,
         game_object: GameObject,
@@ -575,11 +641,15 @@ impl Scene {
         result
     }
 
+    /// Flushes pending deletions and prepares the physics scene for the next
+    /// frame.
     pub fn prepare(&mut self) {
         self.flush_deletes();
         PhysicsContext::prepare(self);
     }
 
+    /// Advances physics and all registered component update hooks for one
+    /// frame.
     pub fn update(
         &mut self,
         registries: &ReadOnlyRegistryContext,
@@ -615,6 +685,7 @@ impl Scene {
         }
     }
 
+    /// Applies all queued deletions immediately.
     pub fn flush_deletes(&mut self) {
         for game_object in self.store.drain_deletions() {
             let parent = self.parent(game_object).unwrap_or(self.root);
@@ -638,10 +709,12 @@ impl Scene {
         }
     }
 
+    /// Iterates every non-root object in the scene.
     pub fn objects(&self) -> impl Iterator<Item = GameObject> + '_ {
         self.graph.objects(self.root)
     }
 
+    /// Returns the display name stored in [`ComponentID`] for `game_object`.
     pub fn name(&self, game_object: GameObject) -> String {
         self.entry(game_object)
             .and_then(|e| {
@@ -652,32 +725,40 @@ impl Scene {
             .unwrap_or_default()
     }
 
+    /// Returns the persistent UUID stored in [`ComponentID`] for `game_object`.
     pub fn uuid(&self, game_object: GameObject) -> Uuid {
         self.entry(game_object)
             .and_then(|e| e.get_component::<ComponentID>().ok().map(|id| id.id))
             .unwrap_or_default()
     }
 
+    /// Resolves a game object by persistent UUID.
     pub fn find(&self, id: Uuid) -> Option<GameObject> {
         self.store.find(id)
     }
 
+    /// Returns the direct parent of `game_object`, if any.
     pub fn parent(&self, game_object: GameObject) -> Option<GameObject> {
         self.graph.parent(game_object)
     }
 
+    /// Returns the UUID of `game_object`'s parent, if any.
     pub fn parent_uuid(&self, game_object: GameObject) -> Option<Uuid> {
         self.parent(game_object).map(|parent| self.uuid(parent))
     }
 
+    /// Iterates direct children of `game_object` without preserving authored
+    /// order.
     pub fn children(&self, game_object: GameObject) -> impl Iterator<Item = GameObject> + '_ {
         self.graph.children(game_object)
     }
 
+    /// Returns a detached walker for incremental traversal of direct children.
     pub fn children_walker(&self, game_object: GameObject) -> scene_graph::WalkChildren {
         self.graph.children_walker(game_object)
     }
 
+    /// Iterates direct children of `game_object` in sibling order.
     pub fn children_ordered(
         &self,
         game_object: GameObject,
@@ -685,14 +766,21 @@ impl Scene {
         self.graph.children_ordered(game_object)
     }
 
+    /// Returns the child stored at `index` under `game_object`.
     pub fn child_at(&self, game_object: GameObject, index: i32) -> Option<GameObject> {
         self.graph.child_at(game_object, index)
     }
 
+    /// Returns `true` when `game_object` belongs to the subtree rooted at
+    /// `parent`.
     pub fn is_descendant(&self, parent: GameObject, game_object: GameObject) -> bool {
         self.graph.is_descendant(parent, game_object)
     }
 
+    /// Returns the local transform stored on `game_object`.
+    ///
+    /// When the object has no [`ComponentTransform`], the identity transform is
+    /// returned.
     pub fn transform(&self, game_object: GameObject) -> Transform {
         let Some(entry) = self.entry(game_object) else {
             return Default::default();
@@ -703,6 +791,7 @@ impl Scene {
         c_transform.transform
     }
 
+    /// Sets the local transform matrix for `game_object`.
     pub fn set_transform(&mut self, game_object: GameObject, matrix: &Mat4) {
         let Some(mut entry) = self.entry_mut(game_object) else {
             return;
@@ -714,6 +803,8 @@ impl Scene {
         self.transforms.mark_dirty_subtree(game_object, &self.graph);
     }
 
+    /// Sets `game_object`'s world transform by converting through its parent
+    /// space.
     pub fn set_world_transform(&mut self, game_object: GameObject, matrix: impl Into<Mat4>) {
         let parent_transform = self.parent(game_object).map_or(Mat4::identity(), |go| {
             self.world_transform(go).inverse_matrix()
@@ -721,17 +812,20 @@ impl Scene {
         self.set_transform(game_object, &(parent_transform * matrix.into()));
     }
 
+    /// Returns the cached or computed world transform for `game_object`.
     pub fn world_transform(&self, game_object: GameObject) -> Transform {
         self.transforms
             .world_transform(game_object, &self.world, &self.graph)
     }
 
+    /// Returns `game_object`'s transform relative to `parent`.
     pub fn transform_relative_to(&self, game_object: GameObject, parent: GameObject) -> Transform {
         let transform = self.world_transform(game_object);
         let parent_transform = self.world_transform(parent);
         (parent_transform.inverse_matrix() * transform.matrix()).into()
     }
 
+    /// Invalidates every cached world transform in the scene.
     pub fn clear_transform_cache(&self) {
         self.transforms.clear();
     }
@@ -741,10 +835,12 @@ impl Scene {
             .and_then(|e| e.get_component::<T>().ok().map(|_| game_object))
     }
 
+    /// Iterates `game_object` and every descendant in breadth-first order.
     pub fn descendants(&self, game_object: GameObject) -> impl Iterator<Item = GameObject> + '_ {
         self.graph.descendants(game_object)
     }
 
+    /// Iterates descendants that contain component `T`.
     pub fn descendants_with<T: Component>(
         &self,
         game_object: GameObject,
@@ -753,15 +849,22 @@ impl Scene {
             .filter_map(|go| self.map_has_component::<T>(go))
     }
 
+    /// Iterates ancestors from the direct parent upward.
     pub fn ancestors(&self, game_object: GameObject) -> impl Iterator<Item = GameObject> + '_ {
         self.graph.ancestors(game_object)
     }
 
+    /// Returns the first ancestor that contains component `T`.
     pub fn ancestor_with<T: Component>(&self, game_object: GameObject) -> Option<GameObject> {
         self.ancestors(game_object)
             .find_map(|go| self.map_has_component::<T>(go))
     }
 
+    /// Returns whether the local peer owns `game_object` for networking
+    /// purposes.
+    ///
+    /// Objects without a [`ComponentNetworkObject`] are treated as locally
+    /// owned.
     pub fn is_owner(&self, game_object: GameObject, network: &Network) -> bool {
         let Some(entry) = self.entry(game_object) else {
             return false;

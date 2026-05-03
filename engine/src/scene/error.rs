@@ -1,9 +1,13 @@
 use std::fmt;
 
+/// Errors produced by scene-specific operations.
 #[derive(Debug)]
 pub enum SceneError {
+    /// The requested node did not exist in the scene graph.
     InvalidNodeId,
+    /// The requested component was not attached to the target object.
     ComponentNotBound,
+    /// Prefab creation could not be completed.
     UnableToCreatePrefab,
 }
 
