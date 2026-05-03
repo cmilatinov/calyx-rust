@@ -8,10 +8,22 @@ use lazy_static::lazy_static;
 use nalgebra_glm::{Vec2, Vec3, Vec4};
 use re_ui::list_item::{ListItemContent, ListVisuals};
 use re_ui::UiExt;
+use std::cell::RefCell;
 use std::sync::RwLock;
 use uuid::Uuid;
 
 pub struct Widgets;
+
+pub enum PropChildrenPhase<'a> {
+    Value {
+        ui: &'a mut Ui,
+        #[allow(unused)]
+        visuals: ListVisuals,
+    },
+    Children {
+        ui: &'a mut Ui,
+    },
+}
 
 struct SelectState {
     search: String,
@@ -242,12 +254,14 @@ impl Widgets {
         );
     }
 
-    pub fn inspector_prop_value_children<F: FnOnce(&mut Ui, ListVisuals), C: FnOnce(&mut Ui)>(
+    pub fn inspector_prop_value_children<F>(
         ui: &mut Ui,
         text: impl Into<WidgetText>,
-        add_value: F,
-        add_children: C,
-    ) {
+        add_contents: F,
+    ) where
+        F: FnMut(PropChildrenPhase<'_>),
+    {
+        let add_contents = RefCell::new(add_contents);
         re_ui::list_item::ListItem::new()
             .interactive(false)
             .show_hierarchical_with_children(
@@ -256,8 +270,15 @@ impl Widgets {
                 true,
                 re_ui::list_item::PropertyContent::new(text)
                     .show_only_when_collapsed(false)
-                    .value_fn(add_value),
-                add_children,
+                    .value_fn(|ui, visuals| {
+                        add_contents.borrow_mut()(PropChildrenPhase::Value {
+                            ui,
+                            visuals,
+                        });
+                    }),
+                |ui| {
+                    add_contents.borrow_mut()(PropChildrenPhase::Children { ui });
+                },
             );
     }
 }

@@ -1,13 +1,11 @@
 use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
-use crate::inspector::widgets::Widgets;
+use crate::inspector::widgets::{PropChildrenPhase, Widgets};
 use convert_case::{Case, Casing};
 use egui::{Id, Ui};
 use engine::component::ParticleSpawnShape;
-use engine::core::Ref;
 use engine::reflect::{Reflect, ReflectDefault};
 use engine::utils::TypeUuid;
 use nalgebra_glm::Vec3;
-use std::ops::DerefMut;
 use uuid::Uuid;
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
@@ -22,59 +20,46 @@ impl ParticleSpawnShapeInspector {
             .field_name
             .map(|name| name.from_case(Case::Snake).to_case(Case::Title))
             .unwrap_or_else(|| String::from("Particle Spawn Shape"));
-        struct State<'a> {
-            value: &'a mut ParticleSpawnShape,
-        }
-
-        let ref1 = Ref::new(State { value });
-        let ref2 = ref1.clone();
-        Widgets::inspector_prop_value_children(
-            ui,
-            label,
-            move |ui, _| {
-                let mut state = ref1.write();
+        Widgets::inspector_prop_value_children(ui, label, |phase| match phase {
+            PropChildrenPhase::Value { ui, .. } => {
                 let id = Id::new(ctx.game_object.node).with(ctx.field_name);
                 egui::ComboBox::from_id_salt(id)
-                    .selected_text(match state.value {
+                    .selected_text(match value {
                         ParticleSpawnShape::Sphere { .. } => "Sphere",
                         ParticleSpawnShape::Box { .. } => "Box",
                     })
                     .show_ui(ui, |ui| {
                         ui.selectable_value(
-                            state.value,
+                            value,
                             ParticleSpawnShape::Sphere { radius: 0.5 },
                             "Sphere",
                         );
                         ui.selectable_value(
-                            state.value,
+                            value,
                             ParticleSpawnShape::Box {
                                 extents: Vec3::from_element(0.5),
                             },
                             "Box",
                         );
                     });
-            },
-            |ui| {
-                let mut state_binding = ref2.write();
-                let state = state_binding.deref_mut();
-                match state.value {
-                    ParticleSpawnShape::Sphere { radius } => {
-                        Widgets::inspector_prop_value(ui, "Radius", |ui, _| {
-                            ui.add(
-                                egui::DragValue::new(radius)
-                                    .speed(0.1)
-                                    .range(0.0..=f32::MAX),
-                            );
-                        });
-                    }
-                    ParticleSpawnShape::Box { extents } => {
-                        Widgets::inspector_prop_value(ui, "Extents", |ui, _| {
-                            Widgets::drag_float3(ui, 0.1, extents);
-                        });
-                    }
+            }
+            PropChildrenPhase::Children { ui } => match value {
+                ParticleSpawnShape::Sphere { radius } => {
+                    Widgets::inspector_prop_value(ui, "Radius", |ui, _| {
+                        ui.add(
+                            egui::DragValue::new(radius)
+                                .speed(0.1)
+                                .range(0.0..=f32::MAX),
+                        );
+                    });
+                }
+                ParticleSpawnShape::Box { extents } => {
+                    Widgets::inspector_prop_value(ui, "Extents", |ui, _| {
+                        Widgets::drag_float3(ui, 0.1, extents);
+                    });
                 }
             },
-        );
+        });
     }
 }
 

@@ -1,13 +1,13 @@
 //#include "shaders/camera.wgsl"
 
-struct VsInput {
+struct VertexIn {
     @location(0) local_position: vec2f,
     @location(1) uv: vec2f,
     @location(2) position_size: vec4f,
     @location(3) color: vec4f,
 };
 
-struct VsOutput {
+struct VertexOut {
     @builtin(position) clip_position: vec4f,
     @location(0) uv: vec2f,
     @location(1) color: vec4f,
@@ -22,7 +22,7 @@ var particle_texture: texture_2d<f32>;
 var particle_sampler: sampler;
 
 @vertex
-fn vs_main(input: VsInput) -> VsOutput {
+fn vs_main(input: VertexIn) -> VertexOut {
     let clip_center = camera.projection * camera.view * vec4f(input.position_size.xyz, 1.0);
     let clip_w = max(abs(clip_center.w), 1e-5);
     let size_ndc = vec2f(
@@ -41,7 +41,7 @@ fn vs_main(input: VsInput) -> VsOutput {
         0.0,
     );
 
-    var output: VsOutput;
+    var output: VertexOut;
     output.clip_position = clip_center + clip_offset;
     output.uv = input.uv;
     output.color = input.color;
@@ -49,7 +49,7 @@ fn vs_main(input: VsInput) -> VsOutput {
 }
 
 @fragment
-fn fs_main(input: VsOutput) -> @location(0) vec4f {
+fn fs_main(input: VertexOut) -> @location(0) vec4f {
     let sampled = textureSampleLevel(particle_texture, particle_sampler, input.uv, 0.0);
     let centered_uv = input.uv * 2.0 - vec2f(1.0, 1.0);
     let radius = length(centered_uv);
