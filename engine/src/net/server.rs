@@ -7,6 +7,7 @@ use renet_netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig};
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, SystemTime};
 
+/// Local authoritative server plus its netcode transport.
 pub struct Server {
     server: RenetServer,
     transport: NetcodeServerTransport,
@@ -14,6 +15,7 @@ pub struct Server {
 }
 
 impl Server {
+    /// Binds a server socket and starts listening on `socket_addr`.
     pub fn new(socket_addr: SocketAddr) -> Result<Self, BoxedError> {
         let socket = UdpSocket::bind(socket_addr).map_err(Box::new)?;
         let bound_addr = socket.local_addr().map_err(Box::new)?;
@@ -50,6 +52,8 @@ impl Server {
         ServerAuthentication::Unsecure
     }
 
+    /// Advances the server, emits connection events, and queues any received
+    /// client messages.
     pub fn update(&mut self, queue: &mut MessageQueue<GameMessage>, duration: Duration) {
         let Self {
             server, transport, ..
@@ -104,6 +108,7 @@ impl Server {
         transport.send_packets(server);
     }
 
+    /// Serializes one protocol message into bytes suitable for Renet.
     fn serialize_message(message: &GameMessage) -> Result<Vec<u8>, BoxedError> {
         Ok(
             bincode::serde::encode_to_vec(message, bincode::config::standard())
@@ -111,12 +116,14 @@ impl Server {
         )
     }
 
+    /// Broadcasts `message` to every connected client.
     pub fn broadcast_message(&mut self, message: &GameMessage) -> Result<(), BoxedError> {
         let bytes = Self::serialize_message(message)?;
         self.server.broadcast_message(message.channel(), bytes);
         Ok(())
     }
 
+    /// Broadcasts `message` to every client except `except_id`.
     pub fn broadcast_message_except(
         &mut self,
         except_id: ClientId,
@@ -128,6 +135,7 @@ impl Server {
         Ok(())
     }
 
+    /// Sends `message` to one client.
     pub fn send_message(
         &mut self,
         client_id: ClientId,
@@ -139,18 +147,22 @@ impl Server {
         Ok(())
     }
 
+    /// Returns a snapshot of all connected client IDs.
     pub fn client_ids(&self) -> Vec<ClientId> {
         self.server.clients_id()
     }
 
+    /// Iterates connected client IDs without allocating a vector.
     pub fn client_ids_iter<'a>(&'a self) -> impl Iterator<Item = ClientId> + 'a {
         self.server.clients_id_iter()
     }
 
+    /// Returns the public addresses reported by the netcode transport.
     pub fn addresses(&self) -> Vec<SocketAddr> {
         self.transport.addresses()
     }
 
+    /// Returns the bound local socket address.
     pub fn bound_addr(&self) -> SocketAddr {
         self.addr
     }

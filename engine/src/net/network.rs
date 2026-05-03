@@ -20,13 +20,19 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::LazyLock;
 use std::time::Duration;
 
+/// High-level networking resource that owns the active client, optional host
+/// server, protocol queue, and replication tick state.
 #[derive(Resource, TypeUuid)]
 #[uuid = "657869ba-a509-4340-89ae-f07d1eddf0db"]
 #[repr(C)]
 pub struct Network {
+    /// Local client connection and transport state.
     pub client: Client,
+    /// Local host server when running in listen-server mode.
     pub server: Option<Server>,
+    /// Shared queue of decoded protocol messages.
     pub queue: MessageQueue<GameMessage>,
+    /// Client ID assigned to the local peer once connected or hosting.
     pub local_id: Option<ClientId>,
     tick_rate: TimeType,
     tick_period: TimeType,
@@ -52,6 +58,7 @@ impl Network {
         *NETWORK_ID_PREFIX | u64::from(NEXT_NETWORK_ID.fetch_add(1, Ordering::Relaxed))
     }
 
+    /// Creates a network resource with a fixed replication tick rate.
     pub fn new(tick_rate: f32) -> Self {
         assert!(tick_rate > 0.0);
         Self {
@@ -65,12 +72,16 @@ impl Network {
         }
     }
 
+    /// Starts a local host server and assigns a local client ID for the host
+    /// peer.
     pub fn host(&mut self, socket_addr: SocketAddr) -> Result<(), BoxedError> {
         self.server = Some(Server::new(socket_addr)?);
         self.local_id = Some(Client::generate_client_id());
         Ok(())
     }
 
+    /// Advances the networking tick loop and dispatches global protocol
+    /// messages such as time sync.
     pub fn update(&mut self, time: &mut Time) {
         self.accumulated_time += time.static_duration().as_secs_f32();
         while self.accumulated_time >= self.tick_period {
@@ -96,6 +107,10 @@ impl Network {
             .receive_messages(&mut (&mut time.time, self.tick_rate), &mut NetworkTimeSync);
     }
 
+    /// Applies queued scene-related replication messages.
+    ///
+    /// This consumes ownership, connection, and prefab-spawn messages against
+    /// `scene`. Call this after [`Network::update`] in the main simulation loop.
     pub fn update_scene<'a>(
         &'a mut self,
         mut scene: &'a mut Scene,
@@ -122,14 +137,17 @@ impl Network {
         );
     }
 
+    /// Returns whether this network resource is hosting a local server.
     pub fn is_host(&self) -> bool {
         self.server.is_some()
     }
 
+    /// Returns the fixed tick period in seconds.
     pub fn tick_period(&self) -> TimeType {
         self.tick_period
     }
 
+    /// Returns the fixed tick rate in hertz.
     pub fn tick_rate(&self) -> TimeType {
         self.tick_rate
     }
@@ -162,6 +180,8 @@ impl Network {
         }
     }
 
+    /// Instantiates `prefab_ref` locally, assigns network object IDs, and
+    /// broadcasts the spawn to other peers.
     pub fn instantiate_prefab(
         &mut self,
         scene: &mut Scene,
@@ -208,6 +228,11 @@ impl MessageHandler<(&mut TimeType, TimeType), GameMessage> for NetworkTimeSync 
     }
 }
 
+/// Message handler that applies connection lifecycle and ownership-transfer
+/// messages to scene and client state.
+///
+/// Most callers should use [`Network::update_scene`] instead of invoking this
+/// handler directly.
 pub struct NetworkSceneSync;
 type NetworkSceneSyncContext<'a, 'b> = (
     &'a mut Client,
