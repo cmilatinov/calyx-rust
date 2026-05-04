@@ -67,8 +67,10 @@ pub struct MeshUniforms {
 pub struct Instance {
     /// Starting index into the shared bone transform buffer.
     pub bone_transform_index: i32,
+    /// Editor/runtime object id associated with this draw instance.
+    pub object_id: u32,
     /// Padding for alignment.
-    pub _padding: [u32; 3],
+    pub _padding: [u32; 2],
     /// Model transform matrix.
     pub transform: [[f32; 4]; 4],
 }
@@ -472,5 +474,55 @@ impl Mesh {
     /// Marks the mesh so its GPU buffers are rebuilt on the next render pass.
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
+    }
+
+    /// Returns the local-space axis-aligned bounds of this mesh.
+    pub fn local_bounds(&self) -> Option<(Vec3, Vec3)> {
+        local_bounds_for_vertices(&self.vertices)
+    }
+}
+
+fn local_bounds_for_vertices(vertices: &[Vec3]) -> Option<(Vec3, Vec3)> {
+    let mut vertices = vertices.iter().copied();
+    let first = vertices.next()?;
+    let (min, max) = vertices.fold((first, first), |(min, max), vertex| {
+        (
+            vec3(
+                min.x.min(vertex.x),
+                min.y.min(vertex.y),
+                min.z.min(vertex.z),
+            ),
+            vec3(
+                max.x.max(vertex.x),
+                max.y.max(vertex.y),
+                max.z.max(vertex.z),
+            ),
+        )
+    });
+    Some((min, max))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::local_bounds_for_vertices;
+    use nalgebra_glm::vec3;
+
+    #[test]
+    fn local_bounds_cover_all_vertices() {
+        let vertices = vec![
+            vec3(4.0, -1.0, 2.0),
+            vec3(-2.5, 3.0, 0.5),
+            vec3(1.25, 1.0, -6.0),
+        ];
+
+        let (min, max) = local_bounds_for_vertices(&vertices).unwrap();
+
+        assert_eq!(min, vec3(-2.5, -1.0, -6.0));
+        assert_eq!(max, vec3(4.0, 3.0, 2.0));
+    }
+
+    #[test]
+    fn local_bounds_are_none_for_empty_meshes() {
+        assert_eq!(local_bounds_for_vertices(&[]), None);
     }
 }

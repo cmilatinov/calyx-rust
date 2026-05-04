@@ -110,7 +110,7 @@ impl PanelViewport {
                 id: texture_id,
                 size: ui.available_size() - egui::Vec2::new(0.0, 1.0),
             }))
-            .sense(Sense::drag()),
+            .sense(Sense::click_and_drag()),
         );
         let state = InputState {
             is_active: res.dragged_by(PointerButton::Secondary),
@@ -138,14 +138,18 @@ impl PanelViewport {
         } else {
             DEFAULT_SNAP_ANGLE / 2.0
         };
+        let hovered_game_object = self.hovered_game_object(viewport_response, app_state);
+        app_state.hovered_game_object = hovered_game_object;
+        if viewport_response.clicked_by(PointerButton::Primary) {
+            app_state.selection = hovered_game_object
+                .map(|id| crate::selection::Selection::from_id(SelectionType::GameObject, id))
+                .unwrap_or_else(crate::selection::Selection::none);
+        }
 
-        let EditorAppState {
-            selection, game, ..
-        } = app_state;
-
-        if let Some(game_object) = selection
+        if let Some(game_object) = app_state
+            .selection
             .first(SelectionType::GameObject)
-            .and_then(|id| game.scenes.simulation_scene().find(id))
+            .and_then(|id| app_state.game.scenes.simulation_scene().find(id))
         {
             let view_matrix = RowMatrix4::from(<DMat4 as Into<ColumnMatrix4<f64>>>::into(
                 nalgebra::convert::<Mat4, DMat4>(app_state.camera.transform.inverse_matrix()),
@@ -168,10 +172,16 @@ impl PanelViewport {
                 visuals: GIZMO_VISUALS,
                 pixels_per_point: 0.0,
             });
-            let transform = game.scenes.simulation_scene().world_transform(game_object);
+            let transform = app_state
+                .game
+                .scenes
+                .simulation_scene()
+                .world_transform(game_object);
             if let Some((result, transforms)) = self.gizmo.interact(ui, &[transform.into()]) {
                 let res: Transform = transforms[0].into();
-                game.scenes
+                app_state
+                    .game
+                    .scenes
                     .simulation_scene_mut()
                     .set_world_transform(game_object, res.matrix());
                 self.gizmo_status(ui, &result);
@@ -197,6 +207,33 @@ impl PanelViewport {
                 GizmoOrientation::Global
             };
         }
+    }
+
+    fn hovered_game_object(
+        &self,
+        viewport_response: &Response,
+        app_state: &EditorAppState,
+    ) -> Option<uuid::Uuid> {
+        if viewport_response.dragged_by(PointerButton::Secondary) {
+            return None;
+        }
+        let pointer_pos = viewport_response.hover_pos()?;
+        let (width, height) = app_state.scene_renderer.scene_texture_size();
+        if width == 0
+            || height == 0
+            || viewport_response.rect.width() <= 0.0
+            || viewport_response.rect.height() <= 0.0
+        {
+            return None;
+        }
+
+        let x = ((pointer_pos.x - viewport_response.rect.left()) / viewport_response.rect.width())
+            .clamp(0.0, 0.999_999);
+        let y = ((pointer_pos.y - viewport_response.rect.top()) / viewport_response.rect.height())
+            .clamp(0.0, 0.999_999);
+        let pixel_x = (x * width as f32).floor() as u32;
+        let pixel_y = (y * height as f32).floor() as u32;
+        app_state.scene_renderer.pick_game_object(pixel_x, pixel_y)
     }
 
     fn gizmo_status(&self, ui: &Ui, response: &GizmoResult) {

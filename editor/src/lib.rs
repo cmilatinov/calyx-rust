@@ -69,6 +69,7 @@ pub struct EditorAppState {
     pub camera: EditorCamera,
     pub game_aspect: Option<(u32, u32)>,
     pub selection: Selection,
+    pub hovered_game_object: Option<uuid::Uuid>,
     pub viewport_size: (f32, f32),
     pub game_response: Option<egui::Response>,
     pub game_size: (f32, f32),
@@ -85,6 +86,7 @@ impl EditorAppState {
             camera: Default::default(),
             game_aspect: None,
             selection: Default::default(),
+            hovered_game_object: None,
             viewport_size: Default::default(),
             game_size: Default::default(),
             game_response: Default::default(),
@@ -227,6 +229,7 @@ impl eframe::App for EditorApp {
                 camera.aspect = width as f32 / height as f32;
             }
             camera.update_projection();
+            scene_renderer.set_hovered_game_object(self.state.hovered_game_object);
 
             {
                 let scene = scenes.simulation_scene();

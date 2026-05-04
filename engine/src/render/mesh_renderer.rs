@@ -13,6 +13,7 @@ use std::ops::Range;
 
 pub struct MeshRenderer {
     scene_shader: Ref<Shader>,
+    object_id_shader: Ref<Shader>,
     material_bind_group_cache: HashMap<AssetId, CachedMaterialBindGroups>,
 }
 
@@ -41,6 +42,12 @@ impl MeshRenderer {
                 .read()
                 .load::<Shader>("shaders/pbr")
                 .expect("missing scene_shader"),
+            object_id_shader: context
+                .registries
+                .assets
+                .read()
+                .load::<Shader>("shaders/object_id")
+                .expect("missing object_id_shader"),
             material_bind_group_cache: Default::default(),
         }
     }
@@ -59,7 +66,7 @@ impl MeshRenderer {
         clear_color: Color32,
         pipeline_options: &PipelineOptions,
         skybox_id: Option<AssetId>,
-        draw_list: Vec<(AssetId, AssetId, AssetId, Range<u32>)>,
+        draw_list: &[(AssetId, AssetId, AssetId, Range<u32>)],
         gizmo_renderer: Option<&mut GizmoRenderer>,
     ) {
         let material_bind_groups = self.build_material_bind_groups(
@@ -113,7 +120,7 @@ impl MeshRenderer {
         });
 
         let mut last: (AssetId, AssetId, AssetId) = Default::default();
-        for (shader_id, mat_id, mesh_id, instances) in draw_list {
+        for &(shader_id, mat_id, mesh_id, ref instances) in draw_list {
             let Some(shader) = assets.shader(shader_id) else {
                 continue;
             };
@@ -141,7 +148,7 @@ impl MeshRenderer {
                 render_pass.set_bind_group(1, mesh_instance_group, &[]);
             }
             RenderUtils::bind_mesh_buffers(&mut render_pass, mesh);
-            RenderUtils::draw_mesh_instanced(&mut render_pass, mesh, instances);
+            RenderUtils::draw_mesh_instanced(&mut render_pass, mesh, instances.clone());
             last = (shader_id, mat_id, mesh_id);
         }
 
@@ -192,6 +199,75 @@ impl MeshRenderer {
                 },
             ],
         })
+    }
+
+    pub fn render_object_ids(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        assets: &LockedAssetRenderState,
+        targets: MeshRenderTargets<'_>,
+        camera_uniform_buffer: &wgpu::Buffer,
+        draw_list: &[(AssetId, AssetId, AssetId, Range<u32>)],
+    ) {
+        let options = PipelineOptions::builder()
+            .samples(1)
+            .fragment_targets(vec![Some(wgpu::ColorTargetState {
+                format: targets.color.descriptor.format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::RED,
+            })])
+            .build();
+        let mut shader = self.object_id_shader.write();
+        shader.build_pipeline(&options);
+        let Some(pipeline) = shader.get_pipeline(&options) else {
+            return;
+        };
+        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("object_id_camera_bind_group"),
+            layout: &shader.bind_group_layouts[0],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_uniform_buffer.as_entire_binding(),
+            }],
+        });
+
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Viewport Object IDs"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &targets.color.view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(RenderUtils::depth_stencil_attachment(
+                &targets.depth.view,
+                1.0,
+                None,
+            )),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        render_pass.set_pipeline(pipeline);
+        render_pass.set_bind_group(0, &camera_bind_group, &[]);
+
+        let mut last_mesh_id = AssetId::default();
+        for &(_, _, mesh_id, ref instances) in draw_list {
+            let Some(mesh) = assets.mesh(mesh_id) else {
+                continue;
+            };
+            if mesh_id != last_mesh_id {
+                let Some(mesh_instance_group) = assets.mesh_instance_group(mesh_id) else {
+                    continue;
+                };
+                render_pass.set_bind_group(1, mesh_instance_group, &[]);
+                RenderUtils::bind_mesh_buffers(&mut render_pass, mesh);
+                last_mesh_id = mesh_id;
+            }
+            RenderUtils::draw_mesh_instanced(&mut render_pass, mesh, instances.clone());
+        }
     }
 
     fn build_material_bind_groups(

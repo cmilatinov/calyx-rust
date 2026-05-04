@@ -74,6 +74,7 @@ pub struct DrawListElement {
     mat_id: AssetId,
     mesh_id: AssetId,
     bone_transform_index: i32,
+    object_id: u32,
     transform: [[f32; 4]; 4],
 }
 
@@ -94,6 +95,9 @@ pub struct SceneRenderer {
     scene_texture: Texture,
     scene_depth_texture: Texture,
     scene_texture_msaa: Texture,
+    scene_object_id_texture: Texture,
+    scene_object_id_depth_texture: Texture,
+    scene_object_id_readback: wgpu::Buffer,
     mesh_renderer: MeshRenderer,
     grid_renderer: GridRenderer,
     skybox_renderer: SkyboxRenderer,
@@ -103,6 +107,8 @@ pub struct SceneRenderer {
     particle_renderer: ParticleRenderer,
     assets: AssetRenderState,
     draw_list: Vec<DrawListElement>,
+    object_ids: Vec<Uuid>,
+    hovered_game_object: Option<Uuid>,
 }
 
 impl SceneRenderer {
@@ -124,12 +130,19 @@ impl SceneRenderer {
         options.samples = options.samples.max(1);
 
         // Textures
-        let (scene_texture, scene_texture_msaa, scene_depth_texture) = Self::create_textures(
+        let (
+            scene_texture,
+            scene_texture_msaa,
+            scene_depth_texture,
+            scene_object_id_texture,
+            scene_object_id_depth_texture,
+        ) = Self::create_textures(
             context.render_context.clone(),
             width,
             height,
             options.samples,
         );
+        let scene_object_id_readback = Self::create_object_id_readback_buffer(device);
 
         let mesh_renderer = MeshRenderer::new(context);
         let skybox_renderer = SkyboxRenderer::new(context);
@@ -165,6 +178,9 @@ impl SceneRenderer {
             scene_texture_msaa,
             scene_texture,
             scene_depth_texture,
+            scene_object_id_texture,
+            scene_object_id_depth_texture,
+            scene_object_id_readback,
             mesh_renderer,
             grid_renderer,
             skybox_renderer,
@@ -174,6 +190,8 @@ impl SceneRenderer {
             particle_renderer,
             assets: Default::default(),
             draw_list: Default::default(),
+            object_ids: Default::default(),
+            hovered_game_object: None,
         }
     }
 
@@ -185,6 +203,11 @@ impl SceneRenderer {
     /// Returns the current renderer options mutably.
     pub fn options_mut(&mut self) -> &mut SceneRendererOptions {
         &mut self.options
+    }
+
+    /// Sets the hovered game object used for editor highlight overlays.
+    pub fn set_hovered_game_object(&mut self, hovered_game_object: Option<Uuid>) {
+        self.hovered_game_object = hovered_game_object;
     }
 
     /// Renders `scene` from `camera` into the internal scene textures.
@@ -201,6 +224,8 @@ impl SceneRenderer {
 
         self.load_camera_uniforms(queue, camera, camera_transform);
         if self.options.gizmos {
+            self.gizmo_renderer
+                .set_highlighted_game_objects(self.hovered_game_object);
             self.gizmo_renderer.draw_gizmos(
                 device,
                 queue,
@@ -213,7 +238,54 @@ impl SceneRenderer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("encoder"),
         });
-        self.render_meshes(render_state, scene, &mut encoder);
+        let options = PipelineOptions::builder()
+            .samples(self.options.samples)
+            .fragment_targets(vec![Some(wgpu::ColorTargetState {
+                format: self.scene_texture_msaa.descriptor.format,
+                blend: None,
+                write_mask: Default::default(),
+            })])
+            .build();
+        self.build_asset_data(render_state, scene, &options);
+        let draw_list = self.build_draw_list();
+        self.build_mesh_data(render_state);
+        self.light_manager.build_data(render_state, scene);
+        let assets = self.assets.lock(device);
+        let black_texture_cube = self.default_assets.black_texture_cube.read();
+        let black_texture_2d = self.default_assets.black_texture_2d.read();
+        self.mesh_renderer.render(
+            device,
+            &mut encoder,
+            &self.asset_context,
+            &assets,
+            MeshRenderDefaults {
+                missing_texture: self.default_assets.missing_texture.clone(),
+                black_texture_2d: &black_texture_2d,
+                black_texture_cube: &black_texture_cube,
+            },
+            MeshRenderTargets {
+                color: &self.scene_texture_msaa,
+                depth: &self.scene_depth_texture,
+            },
+            &self.light_manager,
+            &self.camera_uniform_buffer,
+            self.options.clear_color,
+            &options,
+            self.skybox_renderer.skybox_id(),
+            &draw_list,
+            self.options.gizmos.then_some(&mut self.gizmo_renderer),
+        );
+        self.mesh_renderer.render_object_ids(
+            device,
+            &mut encoder,
+            &assets,
+            MeshRenderTargets {
+                color: &self.scene_object_id_texture,
+                depth: &self.scene_object_id_depth_texture,
+            },
+            &self.camera_uniform_buffer,
+            &draw_list,
+        );
         self.skybox_renderer.render(
             render_state,
             &mut encoder,
@@ -266,52 +338,6 @@ impl SceneRenderer {
         queue.submit(Some(encoder.finish()));
     }
 
-    fn render_meshes(
-        &mut self,
-        render_state: &RenderState,
-        scene: &Scene,
-        encoder: &mut wgpu::CommandEncoder,
-    ) {
-        let device = &render_state.device;
-        let options = PipelineOptions::builder()
-            .samples(self.options.samples)
-            .fragment_targets(vec![Some(wgpu::ColorTargetState {
-                format: self.scene_texture_msaa.descriptor.format,
-                blend: None,
-                write_mask: Default::default(),
-            })])
-            .build();
-        self.build_asset_data(render_state, scene, &options);
-        let draw_list = self.build_draw_list();
-        self.build_mesh_data(render_state);
-        self.light_manager.build_data(render_state, scene);
-        let assets = self.assets.lock(device);
-        let black_texture_cube = self.default_assets.black_texture_cube.read();
-        let black_texture_2d = self.default_assets.black_texture_2d.read();
-        self.mesh_renderer.render(
-            device,
-            encoder,
-            &self.asset_context,
-            &assets,
-            MeshRenderDefaults {
-                missing_texture: self.default_assets.missing_texture.clone(),
-                black_texture_2d: &black_texture_2d,
-                black_texture_cube: &black_texture_cube,
-            },
-            MeshRenderTargets {
-                color: &self.scene_texture_msaa,
-                depth: &self.scene_depth_texture,
-            },
-            &self.light_manager,
-            &self.camera_uniform_buffer,
-            self.options.clear_color,
-            &options,
-            self.skybox_renderer.skybox_id(),
-            draw_list,
-            self.options.gizmos.then_some(&mut self.gizmo_renderer),
-        );
-    }
-
     fn build_draw_list(&mut self) -> Vec<(AssetId, AssetId, AssetId, Range<u32>)> {
         let mut last: (AssetId, AssetId, AssetId) = Default::default();
         let mut mesh_instances: HashMap<AssetId, u32> = Default::default();
@@ -331,6 +357,7 @@ impl SceneRenderer {
             mat_id,
             mesh_id,
             bone_transform_index,
+            object_id,
             transform,
         } in self.draw_list.drain(0..)
         {
@@ -342,6 +369,7 @@ impl SceneRenderer {
             if let Some(ref mut mesh) = &mut mesh {
                 mesh.instances.push(Instance {
                     bone_transform_index,
+                    object_id,
                     _padding: Default::default(),
                     transform,
                 });
@@ -357,6 +385,7 @@ impl SceneRenderer {
         &mut self,
         mesh_ref: &Ref<Mesh>,
         mat_ref: &Ref<Material>,
+        game_object_id: Uuid,
         bone_transform_index: Option<i32>,
         transform: [[f32; 4]; 4],
     ) {
@@ -367,11 +396,13 @@ impl SceneRenderer {
         else {
             return;
         };
+        let object_id = self.register_object_id(game_object_id);
         self.draw_list.push(DrawListElement {
             shader_id: shader_ref.id(),
             mat_id: mat_ref.id(),
             mesh_id: mesh_ref.id(),
             bone_transform_index: bone_transform_index.unwrap_or(-1),
+            object_id,
             transform,
         });
         self.assets
@@ -388,6 +419,14 @@ impl SceneRenderer {
             .or_insert(shader_ref);
     }
 
+    fn register_object_id(&mut self, game_object_id: Uuid) -> u32 {
+        if let Some(index) = self.object_ids.iter().position(|id| *id == game_object_id) {
+            return (index + 1) as u32;
+        }
+        self.object_ids.push(game_object_id);
+        self.object_ids.len() as u32
+    }
+
     fn build_asset_data(
         &mut self,
         render_state: &RenderState,
@@ -396,6 +435,7 @@ impl SceneRenderer {
     ) {
         let world = &scene.world;
         self.draw_list.clear();
+        self.object_ids.clear();
         let mut query = <(Entity, &ComponentMesh)>::query();
         for (entity, c_mesh) in query.iter(world) {
             let Some(game_object) = scene.game_object_from_entity(*entity) else {
@@ -408,7 +448,13 @@ impl SceneRenderer {
                 continue;
             };
             let transform = scene.world_transform(game_object);
-            self.insert_draw_list_entry(&mesh_ref, &mat_ref, None, transform.matrix().into());
+            self.insert_draw_list_entry(
+                &mesh_ref,
+                &mat_ref,
+                scene.uuid(game_object),
+                None,
+                transform.matrix().into(),
+            );
         }
         let mut skinned_meshes: HashSet<Uuid> = Default::default();
         let mut query = <(Entity, &ComponentSkinnedMesh)>::query();
@@ -441,6 +487,7 @@ impl SceneRenderer {
             self.insert_draw_list_entry(
                 &mesh_ref,
                 &mat_ref,
+                scene.uuid(game_object),
                 Some(bone_transform_index as i32),
                 transform.matrix().into(),
             );
@@ -514,12 +561,76 @@ impl SceneRenderer {
         self.scene_texture.handle.as_ref()
     }
 
+    /// Returns the current pixel size of the scene render target.
+    pub fn scene_texture_size(&self) -> (u32, u32) {
+        (
+            self.scene_texture.descriptor.size.width,
+            self.scene_texture.descriptor.size.height,
+        )
+    }
+
+    /// Returns the rendered game object under the given scene-texture pixel.
+    pub fn pick_game_object(&self, x: u32, y: u32) -> Option<Uuid> {
+        let (width, height) = self.scene_texture_size();
+        if x >= width || y >= height {
+            return None;
+        }
+
+        let device = self.asset_context.render_context.device();
+        let queue = self.asset_context.render_context.queue();
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("scene_object_id_readback"),
+        });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.scene_object_id_texture.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x, y, z: 0 },
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &self.scene_object_id_readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(256),
+                    rows_per_image: Some(1),
+                },
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        let submission_index = queue.submit(Some(encoder.finish()));
+
+        let slice = self.scene_object_id_readback.slice(..4);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+        let _ = device.poll(wgpu::Maintain::WaitForSubmissionIndex(submission_index));
+        rx.recv().ok()?.ok()?;
+
+        let data = slice.get_mapped_range();
+        let bytes: [u8; 4] = data.get(..4)?.try_into().ok()?;
+        let object_id = u32::from_ne_bytes(bytes);
+        drop(data);
+        self.scene_object_id_readback.unmap();
+
+        if object_id == 0 {
+            None
+        } else {
+            self.object_ids.get((object_id - 1) as usize).copied()
+        }
+    }
+
     fn create_textures(
         render_context: Arc<RenderContext>,
         width: u32,
         height: u32,
         samples: u32,
-    ) -> (Texture, Texture, Texture) {
+    ) -> (Texture, Texture, Texture, Texture, Texture) {
         let scene_texture = Texture::new(
             render_context.clone(),
             &wgpu::TextureDescriptor {
@@ -582,7 +693,62 @@ impl SceneRenderer {
             None,
             false,
         );
-        (scene_texture, scene_texture_msaa, scene_depth_texture)
+        let scene_object_id_texture = Texture::new(
+            render_context.clone(),
+            &wgpu::TextureDescriptor {
+                label: Some("scene_object_id_texture"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R32Uint,
+                usage: wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            },
+            None,
+            None,
+            false,
+        );
+        let scene_object_id_depth_texture = Texture::new(
+            render_context.clone(),
+            &wgpu::TextureDescriptor {
+                label: Some("scene_object_id_depth_texture"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Depth32Float,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            },
+            None,
+            None,
+            false,
+        );
+        (
+            scene_texture,
+            scene_texture_msaa,
+            scene_depth_texture,
+            scene_object_id_texture,
+            scene_object_id_depth_texture,
+        )
+    }
+
+    fn create_object_id_readback_buffer(device: &wgpu::Device) -> wgpu::Buffer {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("scene_object_id_readback"),
+            size: 256,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        })
     }
 
     fn load_camera_uniforms(
@@ -628,6 +794,8 @@ impl SceneRenderer {
             self.scene_texture,
             self.scene_texture_msaa,
             self.scene_depth_texture,
+            self.scene_object_id_texture,
+            self.scene_object_id_depth_texture,
         ) = Self::create_textures(
             self.asset_context.render_context.clone(),
             width,

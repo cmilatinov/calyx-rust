@@ -3,6 +3,8 @@ const MAX_BONE_INFLUENCE = 4u;
 
 struct Instance {
     bone_transform_index: i32,
+    object_id: u32,
+    padding: vec2u,
     transform: mat4x4f,
 };
 
