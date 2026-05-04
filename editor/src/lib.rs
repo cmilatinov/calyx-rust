@@ -198,75 +198,8 @@ impl EditorApp {
 
 impl eframe::App for EditorApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        {
-            let Self {
-                physics_debug_pipeline,
-                state:
-                    EditorAppState {
-                        game:
-                            GameContext {
-                                scenes, resources, ..
-                            },
-                        scene_renderer,
-                        game_renderer,
-                        game_response,
-                        game_size,
-                        camera:
-                            EditorCamera {
-                                camera, transform, ..
-                            },
-                        ..
-                    },
-                ..
-            } = self;
-
-            resources.time_mut().update_time();
-            *game_response = None;
-            let render_state = frame.wgpu_render_state().unwrap();
-            let (width, height) = EditorApp::get_physical_size(ctx, self.state.viewport_size);
-            if width != 0 && height != 0 {
-                scene_renderer.resize_textures(width, height);
-                camera.aspect = width as f32 / height as f32;
-            }
-            camera.update_projection();
-            scene_renderer.set_hovered_game_object(self.state.hovered_game_object);
-            scene_renderer
-                .set_selected_game_object(self.state.selection.first(SelectionType::GameObject));
-
-            {
-                let scene = scenes.simulation_scene();
-                scene_renderer.render_scene(
-                    render_state,
-                    camera,
-                    transform,
-                    scene,
-                    Some(physics_debug_pipeline),
-                );
-                if let Some((node, c)) = scene.main_camera() {
-                    game_renderer.options_mut().clear_color = c.clear_color;
-                    let (width, height) = EditorApp::get_physical_size(ctx, *game_size);
-                    if width != 0 && height != 0 {
-                        game_renderer.resize_textures(width, height);
-                    }
-                    let transform = scene.world_transform(node);
-                    let camera = Camera::new(
-                        width as f32 / height as f32,
-                        c.fov,
-                        c.near_plane,
-                        c.far_plane,
-                    );
-                    game_renderer.render_scene(render_state, &camera, &transform, scene, None)
-                } else {
-                    let device = &render_state.device;
-                    let queue = &render_state.queue;
-                    let mut encoder = device
-                        .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-                    encoder
-                        .clear_texture(&game_renderer.scene_texture().texture, &Default::default());
-                    queue.submit(Some(encoder.finish()));
-                }
-            }
-        }
+        self.state.game.resources.time_mut().update_time();
+        self.state.game_response = None;
 
         self.menu_bar(ctx);
 
@@ -286,6 +219,8 @@ impl eframe::App for EditorApp {
             });
 
         self.status_bar(ctx);
+
+        self.render_views(ctx, frame);
 
         {
             self.state.game.scenes.prepare();
@@ -331,6 +266,69 @@ impl eframe::App for EditorApp {
 }
 
 impl EditorApp {
+    fn render_views(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        let Self {
+            physics_debug_pipeline,
+            state:
+                EditorAppState {
+                    game:
+                        GameContext {
+                            scenes, resources: _, ..
+                        },
+                    scene_renderer,
+                    game_renderer,
+                    game_size,
+                    camera:
+                        EditorCamera {
+                            camera, transform, ..
+                        },
+                    ..
+                },
+            ..
+        } = self;
+
+        let render_state = frame.wgpu_render_state().unwrap();
+        let (width, height) = Self::get_physical_size(ctx, self.state.viewport_size);
+        if width != 0 && height != 0 {
+            scene_renderer.resize_textures(width, height);
+            camera.aspect = width as f32 / height as f32;
+        }
+        camera.update_projection();
+        scene_renderer.set_hovered_game_object(self.state.hovered_game_object);
+        scene_renderer.set_selected_game_object(self.state.selection.first(SelectionType::GameObject));
+
+        let scene = scenes.simulation_scene();
+        scene_renderer.render_scene(
+            render_state,
+            camera,
+            transform,
+            scene,
+            Some(physics_debug_pipeline),
+        );
+        if let Some((node, c)) = scene.main_camera() {
+            game_renderer.options_mut().clear_color = c.clear_color;
+            let (width, height) = Self::get_physical_size(ctx, *game_size);
+            if width != 0 && height != 0 {
+                game_renderer.resize_textures(width, height);
+            }
+            let transform = scene.world_transform(node);
+            let camera = Camera::new(
+                width as f32 / height as f32,
+                c.fov,
+                c.near_plane,
+                c.far_plane,
+            );
+            game_renderer.render_scene(render_state, &camera, &transform, scene, None)
+        } else {
+            let device = &render_state.device;
+            let queue = &render_state.queue;
+            let mut encoder =
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            encoder.clear_texture(&game_renderer.scene_texture().texture, &Default::default());
+            queue.submit(Some(encoder.finish()));
+        }
+    }
+
     fn initial_render_size(ctx: &egui::Context) -> (u32, u32) {
         let Some(window_size) = ctx.input(|i| i.viewport().inner_rect) else {
             return (0, 0);
