@@ -11,7 +11,7 @@ use crate::render::asset_render_state::AssetRenderState;
 use crate::render::render_utils::RenderUtils;
 use crate::render::{
     Camera, GizmoRenderer, GridRenderer, LightManager, MeshRenderDefaults, MeshRenderTargets,
-    MeshRenderer, ParticleRenderer, PipelineOptions, SkyboxRenderer,
+    MeshRenderer, OutlineRenderer, ParticleRenderer, PipelineOptions, SkyboxRenderer,
 };
 use crate::scene::Scene;
 use egui::Color32;
@@ -104,10 +104,12 @@ pub struct SceneRenderer {
     camera_uniform_buffer: wgpu::Buffer,
     light_manager: LightManager,
     gizmo_renderer: GizmoRenderer,
+    outline_renderer: OutlineRenderer,
     particle_renderer: ParticleRenderer,
     assets: AssetRenderState,
     draw_list: Vec<DrawListElement>,
     object_ids: Vec<Uuid>,
+    selected_game_object: Option<Uuid>,
     hovered_game_object: Option<Uuid>,
 }
 
@@ -156,6 +158,7 @@ impl SceneRenderer {
         let grid_renderer = GridRenderer::new(context, device, &camera_uniform_buffer);
 
         let gizmo_renderer = GizmoRenderer::new(context, &camera_uniform_buffer, options.samples);
+        let outline_renderer = OutlineRenderer::new(context, device);
         let particle_renderer = ParticleRenderer::new(context);
 
         // Default assets
@@ -187,10 +190,12 @@ impl SceneRenderer {
             camera_uniform_buffer,
             light_manager: Default::default(),
             gizmo_renderer,
+            outline_renderer,
             particle_renderer,
             assets: Default::default(),
             draw_list: Default::default(),
             object_ids: Default::default(),
+            selected_game_object: None,
             hovered_game_object: None,
         }
     }
@@ -210,6 +215,11 @@ impl SceneRenderer {
         self.hovered_game_object = hovered_game_object;
     }
 
+    /// Sets the selected game object used for editor highlight overlays.
+    pub fn set_selected_game_object(&mut self, selected_game_object: Option<Uuid>) {
+        self.selected_game_object = selected_game_object;
+    }
+
     /// Renders `scene` from `camera` into the internal scene textures.
     pub fn render_scene(
         &mut self,
@@ -224,8 +234,6 @@ impl SceneRenderer {
 
         self.load_camera_uniforms(queue, camera, camera_transform);
         if self.options.gizmos {
-            self.gizmo_renderer
-                .set_highlighted_game_objects(self.hovered_game_object);
             self.gizmo_renderer.draw_gizmos(
                 device,
                 queue,
@@ -315,6 +323,18 @@ impl SceneRenderer {
             &self.camera_uniform_buffer,
             &self.scene_texture_msaa,
             &self.scene_depth_texture,
+            self.options.samples,
+        );
+        self.outline_renderer
+            .set_selected_object_id(self.object_id_for_game_object(self.selected_game_object));
+        self.outline_renderer
+            .set_hovered_object_id(self.object_id_for_game_object(self.hovered_game_object));
+        self.outline_renderer.render(
+            render_state,
+            &mut encoder,
+            &self.default_assets.screen_space_quad,
+            &self.scene_texture_msaa,
+            &self.scene_object_id_texture,
             self.options.samples,
         );
 
@@ -425,6 +445,17 @@ impl SceneRenderer {
         }
         self.object_ids.push(game_object_id);
         self.object_ids.len() as u32
+    }
+
+    fn object_id_for_game_object(&self, game_object_id: Option<Uuid>) -> u32 {
+        let Some(game_object_id) = game_object_id else {
+            return 0;
+        };
+        self.object_ids
+            .iter()
+            .position(|id| *id == game_object_id)
+            .map(|index| (index + 1) as u32)
+            .unwrap_or_default()
     }
 
     fn build_asset_data(
@@ -706,7 +737,9 @@ impl SceneRenderer {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::R32Uint,
-                usage: wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                usage: wgpu::TextureUsages::COPY_SRC
+                    | wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             },
             None,

@@ -230,6 +230,8 @@ impl eframe::App for EditorApp {
             }
             camera.update_projection();
             scene_renderer.set_hovered_game_object(self.state.hovered_game_object);
+            scene_renderer
+                .set_selected_game_object(self.state.selection.first(SelectionType::GameObject));
 
             {
                 let scene = scenes.simulation_scene();

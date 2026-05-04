@@ -14,6 +14,7 @@ pub use scene_renderer::*;
 pub use shader::*;
 pub use shader_preprocessor::*;
 pub(crate) use skybox_renderer::*;
+pub(crate) use outline_renderer::*;
 
 mod asset_map;
 mod asset_render_state;
@@ -25,6 +26,7 @@ mod gizmos;
 mod grid_renderer;
 mod light_manager;
 mod mesh_renderer;
+mod outline_renderer;
 mod particle_renderer;
 mod pipeline_options;
 /// Post-processing rendering modules.
