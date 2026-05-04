@@ -1,5 +1,4 @@
-mod network;
-mod player;
+mod tank;
 
 use engine::reflect::type_registry::TypeRegistry;
 
