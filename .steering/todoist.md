@@ -60,6 +60,7 @@ Treat multiplayer, Steam integration, powerups, destruction, and polish as later
 - Every PR must reference at least one Todoist task from the `Calyx` project.
 - Every PR should reference at most three Todoist tasks, and those tasks must be related by feature, system boundary, or implementation scope.
 - Reference tasks by Todoist task title and, when available, task id in the PR body.
+- Include a concise "Architectural Decisions" section in the PR body when the code makes or changes a relevant design decision. Keep it brief and omit the section if there is no meaningful architecture impact.
 - If no existing Todoist item matches the PR changes, create a new task in the most appropriate `Calyx` section before opening the PR.
 - For maintenance-only changes, use `Codebase Improvements` unless another section is clearly more specific.
 - For repo/process/steering changes, create or use a `Codebase Improvements` task.
