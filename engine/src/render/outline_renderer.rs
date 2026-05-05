@@ -11,11 +11,10 @@ use nalgebra_glm::Mat4;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 struct OutlineUniform {
-    selected_object_id: u32,
-    hovered_object_id: u32,
+    target_object_id: u32,
+    outline_radius: u32,
     _padding: [u32; 2],
-    selected_color: [f32; 4],
-    hovered_color: [f32; 4],
+    outline_color: [f32; 4],
 }
 
 pub struct OutlineRenderer {
@@ -28,6 +27,9 @@ pub struct OutlineRenderer {
 }
 
 impl OutlineRenderer {
+    const SELECTED_OUTLINE_RADIUS: u32 = 1;
+    const HOVERED_OUTLINE_RADIUS: u32 = 2;
+
     pub fn new(context: &ReadOnlyAssetContext, device: &wgpu::Device) -> Self {
         let shader = context
             .registries
@@ -47,7 +49,7 @@ impl OutlineRenderer {
             selected_object_id: 0,
             hovered_object_id: 0,
             selected_color: Color32::from_rgb(255, 149, 0),
-            hovered_color: Color32::from_rgb(72, 184, 255),
+            hovered_color: Color32::from_rgba_unmultiplied(143, 214, 255, 220),
         }
     }
 
@@ -73,37 +75,8 @@ impl OutlineRenderer {
         }
 
         let device = &render_state.device;
-        let queue = &render_state.queue;
         let mut quad_mesh = screen_space_quad.write();
         let mut shader = self.shader.write();
-        let uniform = OutlineUniform {
-            selected_object_id: self.selected_object_id,
-            hovered_object_id: self.hovered_object_id,
-            _padding: Default::default(),
-            selected_color: color32_to_linear(self.selected_color),
-            hovered_color: color32_to_linear(self.hovered_color),
-        };
-        queue.write_buffer(
-            &self.outline_uniform_buffer,
-            0,
-            bytemuck::bytes_of(&uniform),
-        );
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("outline_bind_group"),
-            layout: &shader.bind_group_layouts[0],
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&scene_object_id_texture.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.outline_uniform_buffer.as_entire_binding(),
-                },
-            ],
-        });
-
         let options = PipelineOptions::builder()
             .samples(samples)
             .fragment_targets(vec![Some(RenderUtils::color_alpha_blending(
@@ -115,11 +88,99 @@ impl OutlineRenderer {
         let Some(pipeline) = shader.get_pipeline(&options) else {
             return;
         };
+        let pipeline = pipeline.clone();
+        let bind_group_layout = shader.bind_group_layouts[0].clone();
+        drop(shader);
+
+        quad_mesh.instances.resize(
+            1,
+            Instance {
+                bone_transform_index: -1,
+                object_id: 0,
+                _padding: Default::default(),
+                transform: Mat4::identity().into(),
+            },
+        );
+        RenderUtils::rebuild_mesh_data(device, &render_state.queue, &mut quad_mesh);
+
+        if self.hovered_object_id != 0 {
+            self.render_pass(
+                render_state,
+                encoder,
+                &scene_texture_msaa.view,
+                &scene_object_id_texture.view,
+                &pipeline,
+                &bind_group_layout,
+                &quad_mesh,
+                self.hovered_object_id,
+                self.hovered_color,
+                Self::HOVERED_OUTLINE_RADIUS,
+            );
+        }
+
+        if self.selected_object_id != 0 {
+            self.render_pass(
+                render_state,
+                encoder,
+                &scene_texture_msaa.view,
+                &scene_object_id_texture.view,
+                &pipeline,
+                &bind_group_layout,
+                &quad_mesh,
+                self.selected_object_id,
+                self.selected_color,
+                Self::SELECTED_OUTLINE_RADIUS,
+            );
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_pass(
+        &mut self,
+        render_state: &RenderState,
+        encoder: &mut wgpu::CommandEncoder,
+        scene_texture_view: &wgpu::TextureView,
+        object_id_texture_view: &wgpu::TextureView,
+        pipeline: &wgpu::RenderPipeline,
+        bind_group_layout: &wgpu::BindGroupLayout,
+        quad_mesh: &Mesh,
+        target_object_id: u32,
+        outline_color: Color32,
+        outline_radius: u32,
+    ) {
+        let device = &render_state.device;
+        let queue = &render_state.queue;
+        let uniform = OutlineUniform {
+            target_object_id,
+            outline_radius,
+            _padding: Default::default(),
+            outline_color: color32_to_linear(outline_color),
+        };
+        queue.write_buffer(
+            &self.outline_uniform_buffer,
+            0,
+            bytemuck::bytes_of(&uniform),
+        );
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("outline_bind_group"),
+            layout: bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(object_id_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.outline_uniform_buffer.as_entire_binding(),
+                },
+            ],
+        });
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Scene Outline"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &scene_texture_msaa.view,
+                view: scene_texture_view,
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
@@ -132,16 +193,8 @@ impl OutlineRenderer {
         });
         render_pass.set_pipeline(pipeline);
         render_pass.set_bind_group(0, &bind_group, &[]);
-        quad_mesh.instances.resize(
-            1,
-            Instance {
-                bone_transform_index: -1,
-                object_id: 0,
-                _padding: Default::default(),
-                transform: Mat4::identity().into(),
-            },
-        );
-        RenderUtils::render_mesh(device, queue, &mut render_pass, &mut quad_mesh);
+        RenderUtils::bind_mesh_buffers(&mut render_pass, quad_mesh);
+        RenderUtils::draw_mesh_instanced(&mut render_pass, quad_mesh, 0..1);
     }
 }
 
