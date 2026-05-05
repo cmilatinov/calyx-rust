@@ -4,6 +4,8 @@ Use the steering files in this repository as standing project instructions:
 
 - [.steering/gitflow.md](.steering/gitflow.md) - required Gitflow branching model and commit title prefixes.
 - [.steering/project.md](.steering/project.md) - Calyx workspace architecture, crate map, and project conventions.
+- [.steering/todoist.md](.steering/todoist.md) - Todoist planning, task selection, and PR reference rules.
+- [.steering/code-review.md](.steering/code-review.md) - senior-developer review checklist and keep/skip workflow.
 
 When making repository changes, follow the Gitflow rules in `.steering/gitflow.md`. Commit titles must start with exactly one of `refactor:`, `feat:`, `fix:`, `chore:`, or `docs:`.
 
