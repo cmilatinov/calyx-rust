@@ -61,6 +61,8 @@ pub struct SceneRendererOptions {
     pub grid: bool,
     /// Whether to draw debug gizmos.
     pub gizmos: bool,
+    /// Whether the resolved scene texture should be deferred to a later pass.
+    pub defer_resolve: bool,
     /// Clear color used for the scene color target.
     pub clear_color: Color32,
     // TODO: figure out why GTX 970 isn't supporting MSAA
@@ -328,10 +330,10 @@ impl SceneRenderer {
             &self.scene_depth_texture,
             self.options.samples,
         );
-        self.render_outline_to_scene(render_state, &mut encoder);
-
-        // Resolve MSAA texture
-        Self::resolve_scene_texture(&self.scene_texture_msaa, &self.scene_texture, &mut encoder);
+        if !self.options.defer_resolve {
+            self.render_outline_to_scene(render_state, &mut encoder);
+            Self::resolve_scene_texture(&self.scene_texture_msaa, &self.scene_texture, &mut encoder);
+        }
 
         queue.submit(Some(encoder.finish()));
     }

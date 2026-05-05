@@ -97,6 +97,7 @@ impl EditorAppState {
                 SceneRendererOptions {
                     grid: true,
                     gizmos: true,
+                    defer_resolve: true,
                     samples: 1,
                     clear_color: Color32::from_rgb(8, 8, 8),
                 },
