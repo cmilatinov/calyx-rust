@@ -186,10 +186,7 @@ mod tests {
         // Create a dynamic sphere that will fall onto a static floor.
         // Rigid body on parent, collider on child — matches engine convention.
         let ball = scene.create(None, None);
-        scene.set_transform(
-            ball,
-            &nalgebra_glm::translation(&Vec3::new(0.0, 2.0, 0.0)),
-        );
+        scene.set_transform(ball, &nalgebra_glm::translation(&Vec3::new(0.0, 2.0, 0.0)));
         scene.add_component(
             ball,
             ComponentRigidBody {
@@ -207,10 +204,7 @@ mod tests {
         );
 
         let floor = scene.create(None, None);
-        scene.set_transform(
-            floor,
-            &nalgebra_glm::translation(&Vec3::new(0.0, 0.0, 0.0)),
-        );
+        scene.set_transform(floor, &nalgebra_glm::translation(&Vec3::new(0.0, 0.0, 0.0)));
         scene.add_component(
             floor,
             ComponentRigidBody {
@@ -242,7 +236,10 @@ mod tests {
                 found_start = true;
             }
         }
-        assert!(found_start, "expected a collision-start event between ball and floor");
+        assert!(
+            found_start,
+            "expected a collision-start event between ball and floor"
+        );
     }
 
     #[test]
@@ -317,6 +314,9 @@ mod tests {
                 found_via_involves = true;
             }
         }
-        assert!(found_via_involves, "involves() should find events for collider a_col");
+        assert!(
+            found_via_involves,
+            "involves() should find events for collider a_col"
+        );
     }
 }

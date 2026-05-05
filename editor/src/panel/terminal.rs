@@ -6,10 +6,7 @@ use crate::panel::Panel;
 use crate::EditorAppState;
 
 #[derive(Default)]
-pub struct PanelTerminal {
-    // input: String,
-    history: Vec<String>,
-}
+pub struct PanelTerminal;
 
 impl Panel for PanelTerminal {
     fn name() -> &'static str
@@ -19,7 +16,7 @@ impl Panel for PanelTerminal {
         "Console"
     }
 
-    fn ui(&mut self, ui: &mut Ui, state: &mut EditorAppState) {
+    fn ui(&mut self, _ui: &mut Ui, _state: &mut EditorAppState) {
         // let mut scroll_area = ScrollArea::new([false, true]);
         // scroll_area = scroll_area.stick_to_bottom(true);
         //

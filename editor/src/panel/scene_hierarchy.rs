@@ -189,10 +189,7 @@ impl PanelSceneHierarchy {
         visibility_response: Option<&Response>,
     ) {
         if response.double_clicked() {
-            *selection = Selection::from_id(
-                SelectionType::GameObject,
-                scene.uuid(game_object),
-            );
+            *selection = Selection::from_id(SelectionType::GameObject, scene.uuid(game_object));
             if let Some(state) = egui::collapsing_header::CollapsingState::load(ui.ctx(), id) {
                 state.store(ui.ctx());
             }
@@ -200,16 +197,10 @@ impl PanelSceneHierarchy {
             *selection = if is_selected {
                 Selection::none()
             } else {
-                Selection::from_id(
-                    SelectionType::GameObject,
-                    scene.uuid(game_object),
-                )
+                Selection::from_id(SelectionType::GameObject, scene.uuid(game_object))
             };
         } else if response.secondary_clicked() {
-            *selection = Selection::from_id(
-                SelectionType::GameObject,
-                scene.uuid(game_object),
-            );
+            *selection = Selection::from_id(SelectionType::GameObject, scene.uuid(game_object));
         }
         if visibility_response.map(|r| r.changed()).unwrap_or(false) {
             scene.write_component::<ComponentID, _>(game_object, |c| {
@@ -244,10 +235,7 @@ impl PanelSceneHierarchy {
             }
             if ui.button("New Game Object").clicked() {
                 let child = scene.create(None, Some(game_object));
-                *selection = Selection::from_id(
-                    SelectionType::GameObject,
-                    scene.uuid(child),
-                );
+                *selection = Selection::from_id(SelectionType::GameObject, scene.uuid(child));
                 ui.close_menu();
             }
         });
@@ -358,8 +346,7 @@ impl PanelSceneHierarchy {
         drop_target: DropTarget<Uuid>,
         dragged_game_object: GameObject,
     ) {
-        let Some(target_parent) = scene.find(drop_target.target_parent_id)
-        else {
+        let Some(target_parent) = scene.find(drop_target.target_parent_id) else {
             return;
         };
 

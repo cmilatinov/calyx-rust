@@ -58,7 +58,7 @@ pub struct EditorApp {
     physics_debug_pipeline: DebugRenderPipeline,
     project_manager: Ref<ProjectManager>,
     state: EditorAppState,
-    log: Log<DefaultLogger>,
+    _log: Log<DefaultLogger>,
 }
 
 pub struct EditorAppState {
@@ -147,7 +147,7 @@ impl EditorApp {
             ),
             project_manager,
             state: EditorAppState::new(game, Self::initial_render_size(&cc.egui_ctx)),
-            log: Log::new(
+            _log: Log::new(
                 DefaultLogger::builder()
                     .app_vendor("Calyx")
                     .app_name("Editor")

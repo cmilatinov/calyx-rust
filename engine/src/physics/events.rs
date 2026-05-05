@@ -57,16 +57,14 @@ impl CollisionEvents {
     /// Collisions that started this frame involving `object`.
     pub fn started(&self, object: GameObject) -> impl Iterator<Item = &CollisionEvent> {
         self.collisions.iter().filter(move |e| {
-            e.kind == ContactKind::Started
-                && (e.object_a == object || e.object_b == object)
+            e.kind == ContactKind::Started && (e.object_a == object || e.object_b == object)
         })
     }
 
     /// Collisions that stopped this frame involving `object`.
     pub fn stopped(&self, object: GameObject) -> impl Iterator<Item = &CollisionEvent> {
         self.collisions.iter().filter(move |e| {
-            e.kind == ContactKind::Stopped
-                && (e.object_a == object || e.object_b == object)
+            e.kind == ContactKind::Stopped && (e.object_a == object || e.object_b == object)
         })
     }
 

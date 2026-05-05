@@ -241,18 +241,26 @@ impl PhysicsContext {
             .filter_map(|event| {
                 let (h1, h2, started, sensor) = match *event {
                     rapier3d::geometry::CollisionEvent::Started(h1, h2, flags) => (
-                        h1, h2, true,
+                        h1,
+                        h2,
+                        true,
                         flags.contains(rapier3d::geometry::CollisionEventFlags::SENSOR),
                     ),
                     rapier3d::geometry::CollisionEvent::Stopped(h1, h2, flags) => (
-                        h1, h2, false,
+                        h1,
+                        h2,
+                        false,
                         flags.contains(rapier3d::geometry::CollisionEventFlags::SENSOR),
                     ),
                 };
                 Some(crate::physics::events::CollisionEvent {
                     object_a: resolve(h1)?,
                     object_b: resolve(h2)?,
-                    kind: if started { ContactKind::Started } else { ContactKind::Stopped },
+                    kind: if started {
+                        ContactKind::Started
+                    } else {
+                        ContactKind::Stopped
+                    },
                     sensor,
                 })
             })
@@ -344,7 +352,12 @@ struct PhysicsEventCollector {
 }
 
 impl PhysicsEventCollector {
-    fn take(self) -> (Vec<rapier3d::geometry::CollisionEvent>, Vec<(ColliderHandle, ColliderHandle, f32)>) {
+    fn take(
+        self,
+    ) -> (
+        Vec<rapier3d::geometry::CollisionEvent>,
+        Vec<(ColliderHandle, ColliderHandle, f32)>,
+    ) {
         (
             self.collisions.into_inner().unwrap(),
             self.forces.into_inner().unwrap(),

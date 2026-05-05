@@ -1,5 +1,6 @@
 /target
 /.fleet
 /.kiro
+/.vscode
 /.codex
 **/*.meta

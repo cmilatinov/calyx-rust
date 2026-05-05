@@ -38,8 +38,8 @@ impl ComponentUpdate for ComponentNetworkManager {
         resources: &mut ResourceMap,
         input: &Input,
     ) {
-        let Some(player_prefab) =
-            scene.read_component::<ComponentNetworkManager, _, _>(game_object, |c| {
+        let Some(player_prefab) = scene
+            .read_component::<ComponentNetworkManager, _, _>(game_object, |c| {
                 c.player_prefab.clone()
             })
         else {
