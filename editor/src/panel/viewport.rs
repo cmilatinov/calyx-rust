@@ -138,7 +138,7 @@ impl PanelViewport {
         } else {
             DEFAULT_SNAP_ANGLE / 2.0
         };
-        let hovered_game_object = self.hovered_game_object(viewport_response, app_state);
+        let hovered_game_object = self.hovered_game_object(ui, viewport_response, app_state);
         app_state.hovered_game_object = hovered_game_object;
         if viewport_response.clicked_by(PointerButton::Primary) {
             app_state.selection = hovered_game_object
@@ -211,13 +211,17 @@ impl PanelViewport {
 
     fn hovered_game_object(
         &self,
+        ui: &Ui,
         viewport_response: &Response,
         app_state: &EditorAppState,
     ) -> Option<uuid::Uuid> {
         if viewport_response.dragged_by(PointerButton::Secondary) {
             return None;
         }
-        let pointer_pos = viewport_response.hover_pos()?;
+        if !ui.rect_contains_pointer(viewport_response.rect) {
+            return None;
+        }
+        let pointer_pos = ui.ctx().pointer_hover_pos()?;
         let (width, height) = app_state.scene_renderer.scene_texture_size();
         if width == 0
             || height == 0
