@@ -1,0 +1,48 @@
+---
+inclusion: auto
+---
+
+# Git Workflow - Gitflow
+
+Always use the Gitflow branching model for this project.
+
+## Branches
+
+- `main` - production-ready code. Only receives merges from `staging` (release) or `hotfix/*` branches.
+- `staging` - integration branch. All non-hotfix branches merge here. This is the default working branch.
+- `feature/*` - new features. Branch from `staging`, merge back into `staging`.
+- `fix/*` - bug fixes. Branch from `staging`, merge back into `staging`.
+- `chore/*` - maintenance, dependencies, tooling, and cleanup. Branch from `staging`, merge back into `staging`.
+- `hotfix/*` - urgent production fixes. Branch from `main`, merge into both `main` and `staging`.
+- `release/*` - release prep. Branch from `staging`, merge into `main` and back into `staging`.
+
+## Commit Title Prefixes
+
+All commit titles must start with exactly one of these prefixes:
+
+- `refactor:` - code restructuring with no behavior change
+- `feat:` - new feature or capability
+- `fix:` - bug fix
+- `chore:` - maintenance, dependencies, tooling, CI
+- `docs:` - documentation only changes
+
+Format: `<prefix> <concise description in imperative mood>`
+
+Examples:
+- `refactor: decompose Scene into SceneGraph and TransformSystem`
+- `feat: add Rapier collision event callbacks`
+- `fix: correct ShaderVariable PartialEq comparing binding against group`
+- `chore: update wgpu to 0.20`
+- `docs: add Component trait lifecycle documentation`
+
+## Rules
+
+- Never commit directly to `main`.
+- Always create or use a Gitflow branch for changes: `feature/*`, `fix/*`, `chore/*`, `hotfix/*`, or `release/*`.
+- Never use git worktrees for this project.
+- If there are uncommitted changes and a branch switch is needed, stash the changes instead of creating a worktree.
+- All non-hotfix work targets `staging`.
+- Keep commits atomic - one logical change per commit.
+- Use feature/fix/chore branches for multi-commit work.
+- After a branch has been pushed or a PR has been opened, make review updates as normal follow-up commits on the same branch.
+- Do not amend, rebase, or force-push a published branch unless the user explicitly asks for history rewriting.

@@ -39,7 +39,7 @@ impl TypeInspector for RigidBodyInspector {
             });
             Widgets::inspector_prop_value(ui, "Type", |ui, _| {
                 let id = Id::new(ctx.game_object.node).with(ComponentRigidBody::type_uuid());
-                egui::ComboBox::from_id_salt(ctx.game_object.node)
+                egui::ComboBox::from_id_salt(id)
                     .selected_text(Self::rigid_body_type_label(value.ty))
                     .show_ui(ui, |ui| {
                         changed |= ui

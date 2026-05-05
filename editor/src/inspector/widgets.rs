@@ -271,10 +271,7 @@ impl Widgets {
                 re_ui::list_item::PropertyContent::new(text)
                     .show_only_when_collapsed(false)
                     .value_fn(|ui, visuals| {
-                        add_contents.borrow_mut()(PropChildrenPhase::Value {
-                            ui,
-                            visuals,
-                        });
+                        add_contents.borrow_mut()(PropChildrenPhase::Value { ui, visuals });
                     }),
                 |ui| {
                     add_contents.borrow_mut()(PropChildrenPhase::Children { ui });

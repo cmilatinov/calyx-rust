@@ -131,6 +131,7 @@ pub struct List<'a, K, T> {
     indented: bool,
 }
 
+#[allow(dead_code)]
 impl<'a, K: Default + Debug + Copy + Send + Sync + 'static, T: Default> List<'a, K, T> {
     pub fn new<F: FnMut(&T) -> K + 'a>(
         label: impl Into<String>,
