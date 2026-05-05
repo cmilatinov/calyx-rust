@@ -46,6 +46,7 @@ impl TypeInspector for TransformInspector {
                 t_comp
                     .transform
                     .set_local_matrix(&(parent_transform.inverse_matrix() * transform.matrix()));
+                ctx.scene.clear_transform_cache();
             }
         }
     }
@@ -65,6 +66,7 @@ impl TypeInspector for TransformInspector {
                 t_comp
                     .transform
                     .set_local_matrix(&parent_transform.inverse_matrix());
+                ctx.scene.clear_transform_cache();
                 ui.close_menu()
             }
         }
