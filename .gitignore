@@ -3,4 +3,8 @@
 /.kiro
 /.vscode
 /.codex
+/assets/*.meta
+/assets/**/*.meta
+/sandbox/assets/*.meta
+/sandbox/assets/**/*.meta
 **/*.meta
