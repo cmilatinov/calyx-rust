@@ -65,3 +65,10 @@ Treat multiplayer, Steam integration, powerups, destruction, and polish as later
 - For maintenance-only changes, use `Codebase Improvements` unless another section is clearly more specific.
 - For repo/process/steering changes, create or use a `Codebase Improvements` task.
 - Mention created tasks explicitly in the PR body so the planning history remains connected to the code change.
+
+## Merged PR Housekeeping
+
+- When working on the project, check whether relevant PRs have been merged.
+- For merged PRs, update or close the corresponding Todoist tasks referenced by the PR.
+- Close a Todoist task only when the merged PR satisfies the task's stated goal or acceptance criteria.
+- If the PR only completes part of a larger task, leave the task open and add a Todoist comment summarizing the merged slice and remaining work.

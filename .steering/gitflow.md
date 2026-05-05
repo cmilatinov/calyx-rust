@@ -54,3 +54,4 @@ Examples:
 - Include a concise "Architectural Decisions" section in the PR body for relevant design choices made in the code. Omit it when the change has no meaningful architecture impact.
 - If no existing Todoist task matches the changes, create a new task in the appropriate `Calyx` section before opening the PR, then reference that new task in the PR body.
 - For maintenance-only, repo process, or steering changes, use or create a task in `Codebase Improvements` unless another section is clearly more specific.
+- When relevant PRs are merged, update or close the corresponding Todoist tasks. Close tasks only when the merged PR satisfies their stated goal or acceptance criteria.
