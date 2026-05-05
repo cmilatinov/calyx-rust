@@ -200,6 +200,7 @@ impl EditorApp {
 impl eframe::App for EditorApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.state.game.resources.time_mut().update_time();
+        self.update_game(ctx);
         self.state.game_response = None;
         self.render_views(ctx, frame);
 
@@ -224,29 +225,6 @@ impl eframe::App for EditorApp {
 
         self.render_view_outline(frame);
 
-        {
-            self.state.game.scenes.prepare();
-            let last_cursor_pos = self
-                .state
-                .game_response
-                .as_ref()
-                .map(|res| res.rect.center());
-            let input = Input::from_ctx(
-                ctx,
-                self.state.game_response.as_ref(),
-                InputState {
-                    is_active: self.is_game_focused(),
-                    last_cursor_pos,
-                    ..Default::default()
-                },
-            );
-            let assets = self.state.game.assets.lock_read();
-            let GameContext {
-                scenes, resources, ..
-            } = &mut self.state.game;
-            scenes.update(&assets.registries, resources, &input);
-        }
-
         self.fps_counter += 1;
         if self.state.game.resources.time().timer("fps") >= 1.0 {
             self.fps = self.fps_counter;
@@ -268,6 +246,29 @@ impl eframe::App for EditorApp {
 }
 
 impl EditorApp {
+    fn update_game(&mut self, ctx: &egui::Context) {
+        self.state.game.scenes.prepare();
+        let last_cursor_pos = self
+            .state
+            .game_response
+            .as_ref()
+            .map(|res| res.rect.center());
+        let input = Input::from_ctx(
+            ctx,
+            self.state.game_response.as_ref(),
+            InputState {
+                is_active: self.is_game_focused(),
+                last_cursor_pos,
+                ..Default::default()
+            },
+        );
+        let assets = self.state.game.assets.lock_read();
+        let GameContext {
+            scenes, resources, ..
+        } = &mut self.state.game;
+        scenes.update(&assets.registries, resources, &input);
+    }
+
     fn render_view_outline(&mut self, frame: &mut eframe::Frame) {
         self.state
             .scene_renderer
