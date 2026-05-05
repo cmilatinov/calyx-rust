@@ -46,3 +46,9 @@ Examples:
 - Use feature/fix/chore branches for multi-commit work.
 - After a branch has been pushed or a PR has been opened, make review updates as normal follow-up commits on the same branch.
 - Do not amend, rebase, or force-push a published branch unless the user explicitly asks for history rewriting.
+
+## Pull Requests
+
+- Every PR must reference at least one Todoist task from the `Calyx` project.
+- If no existing Todoist task matches the changes, create a new task in the appropriate `Calyx` section before opening the PR, then reference that new task in the PR body.
+- For maintenance-only, repo process, or steering changes, use or create a task in `Codebase Improvements` unless another section is clearly more specific.
