@@ -50,5 +50,6 @@ Examples:
 ## Pull Requests
 
 - Every PR must reference at least one Todoist task from the `Calyx` project.
+- Every PR should reference at most three Todoist tasks, and the referenced tasks must be related by feature, system boundary, or implementation scope.
 - If no existing Todoist task matches the changes, create a new task in the appropriate `Calyx` section before opening the PR, then reference that new task in the PR body.
 - For maintenance-only, repo process, or steering changes, use or create a task in `Codebase Improvements` unless another section is clearly more specific.

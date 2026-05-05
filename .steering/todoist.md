@@ -50,6 +50,7 @@ Treat multiplayer, Steam integration, powerups, destruction, and polish as later
 - For user-selected work, use the named Todoist task even if it is not the highest priority.
 - For general "next task" requests, start with `Codebase Improvements` only when the user is asking for maintenance/refactor work; otherwise prefer the first-playable gameplay path.
 - Group tasks only when they share the same files or system boundary and can be reviewed as one coherent change.
+- A PR should cover at most three Todoist items. If more than three tasks are involved, split the work into separate PRs unless the user explicitly approves a larger scope.
 - Do not mix unrelated gameplay, editor, engine, and cleanup tasks in the same PR.
 - If a task is too broad, implement a clearly reviewable slice and leave the Todoist item open unless the completed slice satisfies its acceptance criteria.
 - Use task descriptions and acceptance notes as requirements; do not silently narrow scope below the task's stated goal.
@@ -57,6 +58,7 @@ Treat multiplayer, Steam integration, powerups, destruction, and polish as later
 ## PR Reference Rules
 
 - Every PR must reference at least one Todoist task from the `Calyx` project.
+- Every PR should reference at most three Todoist tasks, and those tasks must be related by feature, system boundary, or implementation scope.
 - Reference tasks by Todoist task title and, when available, task id in the PR body.
 - If no existing Todoist item matches the PR changes, create a new task in the most appropriate `Calyx` section before opening the PR.
 - For maintenance-only changes, use `Codebase Improvements` unless another section is clearly more specific.
