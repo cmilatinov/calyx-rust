@@ -2,7 +2,6 @@ use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::wgpu::BufferUsages;
 use legion::{Entity, IntoQuery};
-use nalgebra::UnitQuaternion;
 use nalgebra_glm::{vec4, Mat4};
 use rapier3d::pipeline::DebugRenderPipeline;
 use std::default::Default;
@@ -11,7 +10,6 @@ use std::path::Path;
 use crate::assets::mesh::Mesh;
 use crate::assets::Asset;
 use crate::class_registry::ComponentRegistry;
-use crate::component::{ComponentMesh, ComponentSkinnedMesh};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::ReadOnlyRef;
 use crate::math::Transform;
@@ -19,7 +17,6 @@ use crate::physics::PhysicsDebugRenderer;
 use crate::render::gizmos::Gizmos;
 use crate::render::render_utils::RenderUtils;
 use crate::scene::Scene;
-use uuid::Uuid;
 
 use super::buffer::wgpu_buffer_init_desc;
 use super::{PipelineOptions, Shader};
@@ -62,8 +59,6 @@ pub struct GizmoRenderer {
 
     circle_instance_buffer: wgpu::Buffer,
     cube_instance_buffer: wgpu::Buffer,
-
-    highlighted_game_objects: Vec<Uuid>,
 }
 
 impl GizmoRenderer {
@@ -169,7 +164,6 @@ impl GizmoRenderer {
             cube_instance_buffer,
 
             component_registry: game.registries.components.clone(),
-            highlighted_game_objects: Vec::new(),
         };
         renderer
     }
@@ -227,14 +221,6 @@ impl GizmoRenderer {
         }
     }
 
-    /// Replaces the current list of highlighted game objects.
-    pub fn set_highlighted_game_objects(
-        &mut self,
-        highlighted_game_objects: impl IntoIterator<Item = Uuid>,
-    ) {
-        self.highlighted_game_objects = highlighted_game_objects.into_iter().collect();
-    }
-
     /// Collects gizmos from components and optional physics debug rendering.
     pub fn draw_gizmos(
         &mut self,
@@ -276,63 +262,7 @@ impl GizmoRenderer {
                 );
             }
         }
-        self.draw_highlights(camera_transform, scene);
         self.load_buffers(device, queue);
-    }
-
-    fn draw_highlights(&mut self, camera_transform: &Transform, scene: &Scene) {
-        if self.highlighted_game_objects.is_empty() {
-            return;
-        }
-
-        let mut gizmos = Gizmos {
-            camera_transform,
-            color: vec4(1.0, 0.84, 0.0, 1.0),
-            depth_test_enabled: true,
-            circle_list: &mut self.circle_list,
-            cube_list: &mut self.cube_list,
-            lines_mesh: &mut self.lines_mesh,
-            points_mesh: &mut self.points_mesh,
-        };
-
-        for highlighted_id in &self.highlighted_game_objects {
-            let Some(game_object) = scene.find(*highlighted_id) else {
-                continue;
-            };
-            let Some(entry) = scene.entry(game_object) else {
-                continue;
-            };
-            if let Ok(component) = entry.get_component::<ComponentMesh>() {
-                if let Some(mesh_ref) = component.mesh.get_ref(scene.registries()) {
-                    Self::draw_mesh_highlight(
-                        &mut gizmos,
-                        scene.world_transform(game_object),
-                        &mesh_ref.read(),
-                    );
-                }
-                continue;
-            }
-            if let Ok(component) = entry.get_component::<ComponentSkinnedMesh>() {
-                if let Some(mesh_ref) = component.mesh.get_ref(scene.registries()) {
-                    Self::draw_mesh_highlight(
-                        &mut gizmos,
-                        scene.world_transform(game_object),
-                        &mesh_ref.read(),
-                    );
-                }
-            }
-        }
-    }
-
-    fn draw_mesh_highlight(gizmos: &mut Gizmos<'_>, transform: Transform, mesh: &Mesh) {
-        let Some((min, max)) = mesh.local_bounds() else {
-            return;
-        };
-        let center = (min + max) * 0.5;
-        let size = max - min;
-        let cube_transform = transform.matrix()
-            * crate::math::compose_transform(&center, &UnitQuaternion::identity(), &size);
-        gizmos.wire_cube_transform(cube_transform);
     }
 
     /// Renders all collected gizmos into the current render pass.
