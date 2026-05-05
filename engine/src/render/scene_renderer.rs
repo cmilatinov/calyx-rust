@@ -259,30 +259,32 @@ impl SceneRenderer {
         self.build_mesh_data(render_state);
         self.light_manager.build_data(render_state, scene);
         let assets = self.assets.lock(device);
-        let black_texture_cube = self.default_assets.black_texture_cube.read();
-        let black_texture_2d = self.default_assets.black_texture_2d.read();
-        self.mesh_renderer.render(
-            device,
-            &mut encoder,
-            &self.asset_context,
-            &assets,
-            MeshRenderDefaults {
-                missing_texture: self.default_assets.missing_texture.clone(),
-                black_texture_2d: &black_texture_2d,
-                black_texture_cube: &black_texture_cube,
-            },
-            MeshRenderTargets {
-                color: &self.scene_texture_msaa,
-                depth: &self.scene_depth_texture,
-            },
-            &self.light_manager,
-            &self.camera_uniform_buffer,
-            self.options.clear_color,
-            &options,
-            self.skybox_renderer.skybox_id(),
-            &draw_list,
-            self.options.gizmos.then_some(&mut self.gizmo_renderer),
-        );
+        {
+            let black_texture_cube = self.default_assets.black_texture_cube.read();
+            let black_texture_2d = self.default_assets.black_texture_2d.read();
+            self.mesh_renderer.render(
+                device,
+                &mut encoder,
+                &self.asset_context,
+                &assets,
+                MeshRenderDefaults {
+                    missing_texture: self.default_assets.missing_texture.clone(),
+                    black_texture_2d: &black_texture_2d,
+                    black_texture_cube: &black_texture_cube,
+                },
+                MeshRenderTargets {
+                    color: &self.scene_texture_msaa,
+                    depth: &self.scene_depth_texture,
+                },
+                &self.light_manager,
+                &self.camera_uniform_buffer,
+                self.options.clear_color,
+                &options,
+                self.skybox_renderer.skybox_id(),
+                &draw_list,
+                self.options.gizmos.then_some(&mut self.gizmo_renderer),
+            );
+        }
         self.mesh_renderer.render_object_ids(
             device,
             &mut encoder,
@@ -294,6 +296,7 @@ impl SceneRenderer {
             &self.camera_uniform_buffer,
             &draw_list,
         );
+        drop(assets);
         self.skybox_renderer.render(
             render_state,
             &mut encoder,
@@ -325,36 +328,23 @@ impl SceneRenderer {
             &self.scene_depth_texture,
             self.options.samples,
         );
-        self.outline_renderer
-            .set_selected_object_id(self.object_id_for_game_object(self.selected_game_object));
-        self.outline_renderer
-            .set_hovered_object_id(self.object_id_for_game_object(self.hovered_game_object));
-        self.outline_renderer.render(
-            render_state,
-            &mut encoder,
-            &self.default_assets.screen_space_quad,
-            &self.scene_texture_msaa,
-            &self.scene_object_id_texture,
-            self.options.samples,
-        );
+        self.render_outline_to_scene(render_state, &mut encoder);
 
         // Resolve MSAA texture
-        encoder.copy_texture_to_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.scene_texture_msaa.texture,
-                mip_level: 0,
-                origin: Default::default(),
-                aspect: Default::default(),
-            },
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.scene_texture.texture,
-                mip_level: 0,
-                origin: Default::default(),
-                aspect: Default::default(),
-            },
-            self.scene_texture.descriptor.size,
-        );
+        Self::resolve_scene_texture(&self.scene_texture_msaa, &self.scene_texture, &mut encoder);
 
+        queue.submit(Some(encoder.finish()));
+    }
+
+    /// Re-renders only the hover/selection outline on top of the current scene color target.
+    pub fn render_outline(&mut self, render_state: &RenderState) {
+        let device = &render_state.device;
+        let queue = &render_state.queue;
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("scene_outline_encoder"),
+        });
+        self.render_outline_to_scene(render_state, &mut encoder);
+        Self::resolve_scene_texture(&self.scene_texture_msaa, &self.scene_texture, &mut encoder);
         queue.submit(Some(encoder.finish()));
     }
 
@@ -456,6 +446,25 @@ impl SceneRenderer {
             .position(|id| *id == game_object_id)
             .map(|index| (index + 1) as u32)
             .unwrap_or_default()
+    }
+
+    fn render_outline_to_scene(
+        &mut self,
+        render_state: &RenderState,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
+        self.outline_renderer
+            .set_selected_object_id(self.object_id_for_game_object(self.selected_game_object));
+        self.outline_renderer
+            .set_hovered_object_id(self.object_id_for_game_object(self.hovered_game_object));
+        self.outline_renderer.render(
+            render_state,
+            encoder,
+            &self.default_assets.screen_space_quad,
+            &self.scene_texture_msaa,
+            &self.scene_object_id_texture,
+            self.options.samples,
+        );
     }
 
     fn build_asset_data(
@@ -813,6 +822,28 @@ impl SceneRenderer {
             &self.camera_uniform_buffer,
             0,
             bytemuck::cast_slice(&[camera_uniform]),
+        );
+    }
+
+    fn resolve_scene_texture(
+        scene_texture_msaa: &Texture,
+        scene_texture: &Texture,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &scene_texture_msaa.texture,
+                mip_level: 0,
+                origin: Default::default(),
+                aspect: Default::default(),
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture: &scene_texture.texture,
+                mip_level: 0,
+                origin: Default::default(),
+                aspect: Default::default(),
+            },
+            scene_texture.descriptor.size,
         );
     }
 

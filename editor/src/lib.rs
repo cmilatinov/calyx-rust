@@ -200,6 +200,7 @@ impl eframe::App for EditorApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.state.game.resources.time_mut().update_time();
         self.state.game_response = None;
+        self.render_views(ctx, frame);
 
         self.menu_bar(ctx);
 
@@ -220,7 +221,7 @@ impl eframe::App for EditorApp {
 
         self.status_bar(ctx);
 
-        self.render_views(ctx, frame);
+        self.render_view_outline(frame);
 
         {
             self.state.game.scenes.prepare();
@@ -266,6 +267,17 @@ impl eframe::App for EditorApp {
 }
 
 impl EditorApp {
+    fn render_view_outline(&mut self, frame: &mut eframe::Frame) {
+        self.state
+            .scene_renderer
+            .set_hovered_game_object(self.state.hovered_game_object);
+        self.state
+            .scene_renderer
+            .set_selected_game_object(self.state.selection.first(SelectionType::GameObject));
+        let render_state = frame.wgpu_render_state().unwrap();
+        self.state.scene_renderer.render_outline(render_state);
+    }
+
     fn render_views(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let Self {
             physics_debug_pipeline,
@@ -294,8 +306,8 @@ impl EditorApp {
             camera.aspect = width as f32 / height as f32;
         }
         camera.update_projection();
-        scene_renderer.set_hovered_game_object(self.state.hovered_game_object);
-        scene_renderer.set_selected_game_object(self.state.selection.first(SelectionType::GameObject));
+        scene_renderer.set_hovered_game_object(None);
+        scene_renderer.set_selected_game_object(None);
 
         let scene = scenes.simulation_scene();
         scene_renderer.render_scene(
