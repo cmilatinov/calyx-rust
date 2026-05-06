@@ -1,11 +1,12 @@
 use crate::panel::Panel;
 use crate::selection::SelectionType;
 use crate::{icons, EditorAppState};
+use egui::epaint::Vertex;
 use egui::load::SizedTexture;
 use egui::Ui;
 use egui::{
-    Align2, Color32, Image, ImageSource, Key, Modifiers, PointerButton, Pos2, Response, Sense,
-    TextStyle,
+    Align2, Color32, Image, ImageSource, Key, Mesh, Modifiers, PointerButton, Pos2, Response, Rgba,
+    Sense, TextStyle,
 };
 use engine::input::{Input, InputState};
 use engine::math::Transform;
@@ -16,9 +17,8 @@ use re_ui::Icon;
 use std::any::Any;
 use transform_gizmo_egui::config::DEFAULT_SNAP_ANGLE;
 use transform_gizmo_egui::mint::RowMatrix4;
-use transform_gizmo_egui::GizmoExt;
 use transform_gizmo_egui::{
-    Gizmo, GizmoConfig, GizmoMode, GizmoOrientation, GizmoResult, GizmoVisuals,
+    Gizmo, GizmoConfig, GizmoInteraction, GizmoMode, GizmoOrientation, GizmoResult, GizmoVisuals,
 };
 
 pub struct PanelViewport {
@@ -86,7 +86,7 @@ impl PanelViewport {
             ui.add(
                 egui::DragValue::new(&mut degrees)
                     .speed(1.0)
-                    .suffix("°")
+                    .suffix("Â°")
                     .range(30..=160),
             );
             ui.label("FOV");
@@ -138,13 +138,11 @@ impl PanelViewport {
         } else {
             DEFAULT_SNAP_ANGLE / 2.0
         };
+
+        let mut gizmo_focused = false;
+        let pointer_in_viewport = ui.rect_contains_pointer(viewport_response.rect);
         let hovered_game_object = self.hovered_game_object(ui, viewport_response, app_state);
         app_state.hovered_game_object = hovered_game_object;
-        if viewport_response.clicked_by(PointerButton::Primary) {
-            app_state.selection = hovered_game_object
-                .map(|id| crate::selection::Selection::from_id(SelectionType::GameObject, id))
-                .unwrap_or_else(crate::selection::Selection::none);
-        }
 
         if let Some(game_object) = app_state
             .selection
@@ -170,14 +168,19 @@ impl PanelViewport {
                 snap_distance,
                 snap_scale: snap_distance,
                 visuals: GIZMO_VISUALS,
-                pixels_per_point: 0.0,
+                pixels_per_point: ui.ctx().pixels_per_point(),
             });
             let transform = app_state
                 .game
                 .scenes
                 .simulation_scene()
                 .world_transform(game_object);
-            if let Some((result, transforms)) = self.gizmo.interact(ui, &[transform.into()]) {
+            if let Some((result, transforms)) = self.interact_gizmo(
+                ui,
+                viewport_response,
+                pointer_in_viewport,
+                &[transform.into()],
+            ) {
                 let res: Transform = transforms[0].into();
                 app_state
                     .game
@@ -186,6 +189,18 @@ impl PanelViewport {
                     .set_world_transform(game_object, res.matrix());
                 self.gizmo_status(ui, &result);
             }
+            gizmo_focused = self.gizmo.is_focused();
+        }
+
+        if viewport_response.clicked_by(PointerButton::Primary) && !gizmo_focused {
+            let clicked_game_object = self
+                .viewport_pixel(ui, viewport_response, app_state)
+                .and_then(|(pixel_x, pixel_y)| {
+                    app_state.scene_renderer.pick_game_object(pixel_x, pixel_y)
+                });
+            app_state.selection = clicked_game_object
+                .map(|id| crate::selection::Selection::from_id(SelectionType::GameObject, id))
+                .unwrap_or_else(crate::selection::Selection::none);
         }
         if viewport_response.dragged_by(PointerButton::Secondary) {
             return;
@@ -213,8 +228,20 @@ impl PanelViewport {
         &self,
         ui: &Ui,
         viewport_response: &Response,
-        app_state: &EditorAppState,
+        app_state: &mut EditorAppState,
     ) -> Option<uuid::Uuid> {
+        let (pixel_x, pixel_y) = self.viewport_pixel(ui, viewport_response, app_state)?;
+        app_state
+            .scene_renderer
+            .request_pick_game_object(pixel_x, pixel_y)
+    }
+
+    fn viewport_pixel(
+        &self,
+        ui: &Ui,
+        viewport_response: &Response,
+        app_state: &EditorAppState,
+    ) -> Option<(u32, u32)> {
         if viewport_response.dragged_by(PointerButton::Secondary) {
             return None;
         }
@@ -237,13 +264,53 @@ impl PanelViewport {
             .clamp(0.0, 0.999_999);
         let pixel_x = (x * width as f32).floor() as u32;
         let pixel_y = (y * height as f32).floor() as u32;
-        app_state.scene_renderer.pick_game_object(pixel_x, pixel_y)
+        Some((pixel_x, pixel_y))
+    }
+
+    fn interact_gizmo(
+        &mut self,
+        ui: &Ui,
+        viewport_response: &Response,
+        pointer_in_viewport: bool,
+        transforms: &[transform_gizmo_egui::math::Transform],
+    ) -> Option<(GizmoResult, Vec<transform_gizmo_egui::math::Transform>)> {
+        let cursor_pos = ui.ctx().pointer_hover_pos().unwrap_or_default();
+        let hovered = pointer_in_viewport
+            && !ui.input(|input| input.pointer.button_down(PointerButton::Secondary));
+        let gizmo_result = self.gizmo.update(
+            GizmoInteraction {
+                cursor_pos: (cursor_pos.x, cursor_pos.y),
+                hovered,
+                drag_started: hovered
+                    && ui.input(|input| input.pointer.button_pressed(PointerButton::Primary)),
+                dragging: hovered
+                    && ui.input(|input| input.pointer.button_down(PointerButton::Primary)),
+            },
+            transforms,
+        );
+
+        let draw_data = self.gizmo.draw();
+        let mut mesh = Mesh::default();
+        mesh.indices = draw_data.indices;
+        mesh.vertices = draw_data
+            .vertices
+            .into_iter()
+            .zip(draw_data.colors)
+            .map(|(pos, [r, g, b, a])| Vertex {
+                pos: pos.into(),
+                uv: Pos2::default(),
+                color: Rgba::from_rgba_premultiplied(r, g, b, a).into(),
+            })
+            .collect();
+        ui.painter_at(viewport_response.rect).add(mesh);
+
+        gizmo_result
     }
 
     fn gizmo_status(&self, ui: &Ui, response: &GizmoResult) {
         let text = match response {
             GizmoResult::Rotation { total, .. } => {
-                format!("{:.1}°, {:.2} rad", total.to_degrees(), total)
+                format!("{:.1}Â°, {:.2} rad", total.to_degrees(), total)
             }
             GizmoResult::Translation { total, .. } => {
                 format!("dX: {:.2}, dY: {:.2}, dZ: {:.2}", total.x, total.y, total.z)

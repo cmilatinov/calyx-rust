@@ -25,7 +25,7 @@ use rapier3d::pipeline::DebugRenderPipeline;
 use std::collections::{HashMap, HashSet};
 use std::default::Default;
 use std::ops::Range;
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 use uuid::Uuid;
 
 #[repr(C)]
@@ -80,6 +80,18 @@ pub struct DrawListElement {
     transform: [[f32; 4]; 4],
 }
 
+struct PendingObjectIdReadback {
+    receiver: mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
+    object_ids: Vec<Uuid>,
+    pixel: (u32, u32),
+}
+
+#[derive(Clone, Copy)]
+struct CompletedObjectPick {
+    pixel: (u32, u32),
+    game_object: Option<Uuid>,
+}
+
 struct SceneRendererAssets {
     cube: Ref<Mesh>,
     screen_space_quad: Ref<Mesh>,
@@ -111,6 +123,8 @@ pub struct SceneRenderer {
     assets: AssetRenderState,
     draw_list: Vec<DrawListElement>,
     object_ids: Vec<Uuid>,
+    pending_object_id_readback: Option<PendingObjectIdReadback>,
+    completed_object_pick: Option<CompletedObjectPick>,
     selected_game_object: Option<Uuid>,
     hovered_game_object: Option<Uuid>,
 }
@@ -197,6 +211,8 @@ impl SceneRenderer {
             assets: Default::default(),
             draw_list: Default::default(),
             object_ids: Default::default(),
+            pending_object_id_readback: None,
+            completed_object_pick: None,
             selected_game_object: None,
             hovered_game_object: None,
         }
@@ -248,6 +264,7 @@ impl SceneRenderer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("encoder"),
         });
+        self.poll_object_id_readback();
         let options = PipelineOptions::builder()
             .samples(self.options.samples)
             .fragment_targets(vec![Some(wgpu::ColorTargetState {
@@ -332,7 +349,11 @@ impl SceneRenderer {
         );
         if !self.options.defer_resolve {
             self.render_outline_to_scene(render_state, &mut encoder);
-            Self::resolve_scene_texture(&self.scene_texture_msaa, &self.scene_texture, &mut encoder);
+            Self::resolve_scene_texture(
+                &self.scene_texture_msaa,
+                &self.scene_texture,
+                &mut encoder,
+            );
         }
 
         queue.submit(Some(encoder.finish()));
@@ -611,18 +632,53 @@ impl SceneRenderer {
         )
     }
 
-    /// Returns the rendered game object under the given scene-texture pixel.
-    pub fn pick_game_object(&self, x: u32, y: u32) -> Option<Uuid> {
+    /// Requests an object-id readback for the scene-texture pixel and returns
+    /// the latest completed value for that exact pixel.
+    pub fn request_pick_game_object(&mut self, x: u32, y: u32) -> Option<Uuid> {
+        self.finish_pending_object_id_readback(false);
+
         let (width, height) = self.scene_texture_size();
         if x >= width || y >= height {
             return None;
         }
 
+        if self.pending_object_id_readback.is_none() {
+            self.submit_object_id_readback(x, y);
+        }
+
+        match self.completed_object_pick {
+            Some(CompletedObjectPick { pixel, game_object }) if pixel == (x, y) => game_object,
+            _ => None,
+        }
+    }
+
+    /// Returns the rendered game object under the given scene-texture pixel.
+    ///
+    /// This waits for the readback to complete, so use it for authoritative
+    /// click selection rather than per-frame hover updates.
+    pub fn pick_game_object(&mut self, x: u32, y: u32) -> Option<Uuid> {
+        let (width, height) = self.scene_texture_size();
+        if x >= width || y >= height {
+            return None;
+        }
+
+        self.finish_pending_object_id_readback(true);
+        self.submit_object_id_readback(x, y);
+        self.finish_pending_object_id_readback(true);
+
+        match self.completed_object_pick {
+            Some(CompletedObjectPick { pixel, game_object }) if pixel == (x, y) => game_object,
+            _ => None,
+        }
+    }
+
+    fn submit_object_id_readback(&mut self, x: u32, y: u32) {
         let device = self.asset_context.render_context.device();
         let queue = self.asset_context.render_context.queue();
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("scene_object_id_readback"),
         });
+
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
                 texture: &self.scene_object_id_texture.texture,
@@ -644,27 +700,64 @@ impl SceneRenderer {
                 depth_or_array_layers: 1,
             },
         );
-        let submission_index = queue.submit(Some(encoder.finish()));
+        queue.submit(Some(encoder.finish()));
 
         let slice = self.scene_object_id_readback.slice(..4);
-        let (tx, rx) = std::sync::mpsc::channel();
+        let (tx, rx) = mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = tx.send(result);
         });
-        let _ = device.poll(wgpu::Maintain::WaitForSubmissionIndex(submission_index));
-        rx.recv().ok()?.ok()?;
 
+        self.pending_object_id_readback = Some(PendingObjectIdReadback {
+            receiver: rx,
+            object_ids: self.object_ids.clone(),
+            pixel: (x, y),
+        });
+    }
+
+    fn poll_object_id_readback(&mut self) {
+        self.finish_pending_object_id_readback(false);
+    }
+
+    fn finish_pending_object_id_readback(&mut self, wait: bool) {
+        let device = self.asset_context.render_context.device();
+        loop {
+            let Some(pending) = self.pending_object_id_readback.as_ref() else {
+                return;
+            };
+
+            let _ = device.poll(wgpu::Maintain::Poll);
+            match pending.receiver.try_recv() {
+                Ok(Ok(())) => break,
+                Ok(Err(_)) | Err(mpsc::TryRecvError::Disconnected) => {
+                    self.pending_object_id_readback = None;
+                    self.completed_object_pick = None;
+                    return;
+                }
+                Err(mpsc::TryRecvError::Empty) if wait => continue,
+                Err(mpsc::TryRecvError::Empty) => return,
+            }
+        }
+
+        let pending = self.pending_object_id_readback.take().unwrap();
+        let slice = self.scene_object_id_readback.slice(..4);
         let data = slice.get_mapped_range();
-        let bytes: [u8; 4] = data.get(..4)?.try_into().ok()?;
-        let object_id = u32::from_ne_bytes(bytes);
+        let object_id = data
+            .get(..size_of::<u32>())
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(u32::from_ne_bytes)
+            .unwrap_or_default();
         drop(data);
         self.scene_object_id_readback.unmap();
 
-        if object_id == 0 {
-            None
-        } else {
-            self.object_ids.get((object_id - 1) as usize).copied()
-        }
+        self.completed_object_pick = Some(CompletedObjectPick {
+            pixel: pending.pixel,
+            game_object: if object_id == 0 {
+                None
+            } else {
+                pending.object_ids.get((object_id - 1) as usize).copied()
+            },
+        });
     }
 
     fn create_textures(
@@ -868,5 +961,7 @@ impl SceneRenderer {
             height,
             self.options.samples,
         );
+        self.pending_object_id_readback = None;
+        self.completed_object_pick = None;
     }
 }
