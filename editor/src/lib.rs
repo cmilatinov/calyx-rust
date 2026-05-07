@@ -200,7 +200,6 @@ impl EditorApp {
 impl eframe::App for EditorApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.state.game.resources.time_mut().update_time();
-        self.update_game(ctx);
         self.state.game_response = None;
         self.render_views(ctx, frame);
 
@@ -223,6 +222,7 @@ impl eframe::App for EditorApp {
 
         self.status_bar(ctx);
 
+        self.update_game(ctx);
         self.render_view_outline(frame);
 
         self.fps_counter += 1;
@@ -287,7 +287,9 @@ impl EditorApp {
                 EditorAppState {
                     game:
                         GameContext {
-                            scenes, resources: _, ..
+                            scenes,
+                            resources: _,
+                            ..
                         },
                     scene_renderer,
                     game_renderer,

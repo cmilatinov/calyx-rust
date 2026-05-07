@@ -86,7 +86,7 @@ impl PanelViewport {
             ui.add(
                 egui::DragValue::new(&mut degrees)
                     .speed(1.0)
-                    .suffix("Â°")
+                    .suffix(" deg")
                     .range(30..=160),
             );
             ui.label("FOV");
@@ -310,7 +310,7 @@ impl PanelViewport {
     fn gizmo_status(&self, ui: &Ui, response: &GizmoResult) {
         let text = match response {
             GizmoResult::Rotation { total, .. } => {
-                format!("{:.1}Â°, {:.2} rad", total.to_degrees(), total)
+                format!("{:.1} deg, {:.2} rad", total.to_degrees(), total)
             }
             GizmoResult::Translation { total, .. } => {
                 format!("dX: {:.2}, dY: {:.2}, dZ: {:.2}", total.x, total.y, total.z)

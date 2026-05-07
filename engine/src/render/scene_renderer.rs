@@ -633,7 +633,7 @@ impl SceneRenderer {
     }
 
     /// Requests an object-id readback for the scene-texture pixel and returns
-    /// the latest completed value for that exact pixel.
+    /// the latest completed value while keeping one readback in flight.
     pub fn request_pick_game_object(&mut self, x: u32, y: u32) -> Option<Uuid> {
         self.finish_pending_object_id_readback(false);
 
@@ -646,10 +646,8 @@ impl SceneRenderer {
             self.submit_object_id_readback(x, y);
         }
 
-        match self.completed_object_pick {
-            Some(CompletedObjectPick { pixel, game_object }) if pixel == (x, y) => game_object,
-            _ => None,
-        }
+        self.completed_object_pick
+            .and_then(|CompletedObjectPick { game_object, .. }| game_object)
     }
 
     /// Returns the rendered game object under the given scene-texture pixel.
