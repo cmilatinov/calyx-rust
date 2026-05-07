@@ -82,7 +82,7 @@ pub struct DrawListElement {
 
 struct PendingObjectIdReadback {
     receiver: mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
-    object_ids: Vec<Uuid>,
+    object_ids: Arc<[Uuid]>,
     pixel: (u32, u32),
 }
 
@@ -122,7 +122,9 @@ pub struct SceneRenderer {
     particle_renderer: ParticleRenderer,
     assets: AssetRenderState,
     draw_list: Vec<DrawListElement>,
-    object_ids: Vec<Uuid>,
+    object_ids: Arc<[Uuid]>,
+    object_ids_build: Vec<Uuid>,
+    object_id_lookup: HashMap<Uuid, u32>,
     pending_object_id_readback: Option<PendingObjectIdReadback>,
     completed_object_pick: Option<CompletedObjectPick>,
     selected_game_object: Option<Uuid>,
@@ -211,6 +213,8 @@ impl SceneRenderer {
             assets: Default::default(),
             draw_list: Default::default(),
             object_ids: Default::default(),
+            object_ids_build: Default::default(),
+            object_id_lookup: Default::default(),
             pending_object_id_readback: None,
             completed_object_pick: None,
             selected_game_object: None,
@@ -453,21 +457,22 @@ impl SceneRenderer {
     }
 
     fn register_object_id(&mut self, game_object_id: Uuid) -> u32 {
-        if let Some(index) = self.object_ids.iter().position(|id| *id == game_object_id) {
-            return (index + 1) as u32;
+        if let Some(object_id) = self.object_id_lookup.get(&game_object_id) {
+            return *object_id;
         }
-        self.object_ids.push(game_object_id);
-        self.object_ids.len() as u32
+        self.object_ids_build.push(game_object_id);
+        let object_id = self.object_ids_build.len() as u32;
+        self.object_id_lookup.insert(game_object_id, object_id);
+        object_id
     }
 
     fn object_id_for_game_object(&self, game_object_id: Option<Uuid>) -> u32 {
         let Some(game_object_id) = game_object_id else {
             return 0;
         };
-        self.object_ids
-            .iter()
-            .position(|id| *id == game_object_id)
-            .map(|index| (index + 1) as u32)
+        self.object_id_lookup
+            .get(&game_object_id)
+            .copied()
             .unwrap_or_default()
     }
 
@@ -498,7 +503,8 @@ impl SceneRenderer {
     ) {
         let world = &scene.world;
         self.draw_list.clear();
-        self.object_ids.clear();
+        self.object_ids_build.clear();
+        self.object_id_lookup.clear();
         let mut query = <(Entity, &ComponentMesh)>::query();
         for (entity, c_mesh) in query.iter(world) {
             let Some(game_object) = scene.game_object_from_entity(*entity) else {
@@ -605,6 +611,7 @@ impl SceneRenderer {
                  ..
              }| (*shader_id, *mat_id, *mesh_id),
         );
+        self.object_ids = Arc::from(std::mem::take(&mut self.object_ids_build));
     }
 
     fn build_mesh_data(&mut self, render_state: &RenderState) {
@@ -708,7 +715,7 @@ impl SceneRenderer {
 
         self.pending_object_id_readback = Some(PendingObjectIdReadback {
             receiver: rx,
-            object_ids: self.object_ids.clone(),
+            object_ids: Arc::clone(&self.object_ids),
             pixel: (x, y),
         });
     }
