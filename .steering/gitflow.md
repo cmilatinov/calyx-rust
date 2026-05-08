@@ -23,6 +23,7 @@ All commit titles must start with exactly one of these prefixes:
 - `refactor:` - code restructuring with no behavior change
 - `feat:` - new feature or capability
 - `fix:` - bug fix
+- `perf:` - performance improvement
 - `chore:` - maintenance, dependencies, tooling, CI
 - `docs:` - documentation only changes
 
@@ -32,6 +33,7 @@ Examples:
 - `refactor: decompose Scene into SceneGraph and TransformSystem`
 - `feat: add Rapier collision event callbacks`
 - `fix: correct ShaderVariable PartialEq comparing binding against group`
+- `perf: speed up object ID lookup`
 - `chore: update wgpu to 0.20`
 - `docs: add Component trait lifecycle documentation`
 

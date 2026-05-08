@@ -53,10 +53,16 @@ impl Gizmos<'_> {
 
     /// Emits a wireframe cube centered at `position`.
     pub fn wire_cube(&mut self, position: &Vec3, size: &Vec3) {
-        self.cube_list.push(self.gizmo_instance(
-            compose_transform(position, &UnitQuaternion::identity(), size),
-            false,
+        self.wire_cube_transform(compose_transform(
+            position,
+            &UnitQuaternion::identity(),
+            size,
         ));
+    }
+
+    /// Emits a wireframe cube with an explicit transform.
+    pub fn wire_cube_transform(&mut self, transform: Mat4) {
+        self.cube_list.push(self.gizmo_instance(transform, false));
     }
 
     /// Emits a wireframe frustum from camera projection parameters.

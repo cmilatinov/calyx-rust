@@ -91,6 +91,7 @@ impl GridRenderer {
                 1,
                 Instance {
                     bone_transform_index: -1,
+                    object_id: 0,
                     _padding: Default::default(),
                     transform: Mat4::identity().into(),
                 },

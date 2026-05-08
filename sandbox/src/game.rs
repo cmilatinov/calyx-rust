@@ -163,7 +163,8 @@ impl eframe::App for GameApp {
                     c_camera.near_plane,
                     c_camera.far_plane,
                 );
-                renderer.render_scene(render_state, &camera, &transform, scene, None);
+                renderer.render_scene_base(render_state, &camera, &transform, scene, None);
+                renderer.finalize_scene(render_state);
             }
         }
 

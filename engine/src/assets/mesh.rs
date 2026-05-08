@@ -67,8 +67,10 @@ pub struct MeshUniforms {
 pub struct Instance {
     /// Starting index into the shared bone transform buffer.
     pub bone_transform_index: i32,
+    /// Editor/runtime object id associated with this draw instance.
+    pub object_id: u32,
     /// Padding for alignment.
-    pub _padding: [u32; 3],
+    pub _padding: [u32; 2],
     /// Model transform matrix.
     pub transform: [[f32; 4]; 4],
 }
