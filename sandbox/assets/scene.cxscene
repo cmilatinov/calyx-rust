@@ -96,8 +96,6 @@
         "reverse_speed": 4.5,
         "hull_turn_speed": 2.8,
         "turret_turn_speed": 12.0,
-        "camera_height": 16.0,
-        "camera_distance": 10.0,
         "camera_smoothing": 10.0
       }
     },
@@ -208,10 +206,10 @@
             -10.0
           ],
           "rotation": [
+            0.70710677,
             0.0,
             0.0,
-            0.0,
-            1.0
+            0.70710677
           ],
           "scale": [
             1.0,
