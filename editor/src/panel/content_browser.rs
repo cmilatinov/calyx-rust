@@ -13,7 +13,7 @@ use relative_path::PathExt;
 use std::any::Any;
 use std::fs::{DirEntry, OpenOptions, ReadDir};
 use std::io::BufWriter;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::{fs, io};
 
 pub struct PanelContentBrowser {
@@ -144,6 +144,9 @@ impl Panel for PanelContentBrowser {
                             if is_selected && is_dir && res.double_clicked() {
                                 self.set_selected_folder(&mut state.selection, node.clone());
                             }
+                            if !is_dir {
+                                self.asset_context_menu(state, &res, node);
+                            }
                             if idx % num_nodes_per_row == num_nodes_per_row - 1 {
                                 let remaining_width =
                                     width - num_nodes_per_row as f32 * TOTAL_WIDTH - 1.0;
@@ -153,30 +156,6 @@ impl Panel for PanelContentBrowser {
                                         ui.available_height(),
                                     ));
                                     self.empty_space_interaction(ui, rect);
-                                }
-                            }
-                            if !is_dir {
-                                let ext = node
-                                    .extension()
-                                    .and_then(|e| e.to_str())
-                                    .unwrap_or_default();
-                                let registry = state.game.assets.registries.assets.read();
-                                let Some(type_uuid) = registry.asset_type_uuid_from_ext(ext) else {
-                                    continue;
-                                };
-                                let Some(asset_id) = registry.asset_id_from_path(node) else {
-                                    continue;
-                                };
-                                drop(registry);
-                                let Some(inspector) =
-                                    state.inspector_registry.asset_inspector_lookup(type_uuid)
-                                else {
-                                    continue;
-                                };
-                                if inspector.has_context_menu() {
-                                    res.context_menu(|ui| {
-                                        inspector.show_context_menu(ui, &mut state.game, asset_id);
-                                    });
                                 }
                             }
                         }
@@ -223,6 +202,37 @@ impl PanelContentBrowser {
                     ui.close_menu();
                 }
             });
+        });
+    }
+
+    fn asset_context_menu(&mut self, state: &mut EditorAppState, response: &Response, path: &Path) {
+        let (asset_id, type_uuid) = {
+            let registry = state.game.assets.registries.assets.read();
+            let asset_id = registry.asset_id_from_path(path);
+            let type_uuid = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .and_then(|ext| registry.asset_type_uuid_from_ext(ext));
+            (asset_id, type_uuid)
+        };
+        let Some(asset_id) = asset_id else {
+            return;
+        };
+
+        let inspector_registry = &state.inspector_registry;
+        let game = &mut state.game;
+        response.context_menu(|ui| {
+            let Some(inspector) = type_uuid
+                .and_then(|type_uuid| inspector_registry.asset_inspector_lookup(type_uuid))
+            else {
+                ui.label("No actions available");
+                return;
+            };
+            if inspector.has_context_menu() {
+                inspector.show_context_menu(ui, game, asset_id);
+            } else {
+                ui.label("No actions available");
+            }
         });
     }
 
