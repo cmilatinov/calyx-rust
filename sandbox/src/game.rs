@@ -11,8 +11,8 @@ use engine::error::DynError;
 use engine::input::{Input, InputState};
 use engine::logging::{DefaultLogger, Log};
 use engine::render::{Camera, SceneRenderer, SceneRendererOptions};
-use engine::scene::Scene;
-use sandbox::plugin_main;
+use engine::scene::{GameObject, GameObjectRef, Prefab, Scene};
+use sandbox::{plugin_main, ComponentTankController};
 use std::path::PathBuf;
 use std::sync::Arc;
 #[cfg(unix)]
@@ -53,7 +53,14 @@ impl GameApp {
             .read()
             .load::<Scene>("scene")
             .unwrap();
+        let tank_prefab = assets
+            .registries
+            .assets
+            .read()
+            .load::<Prefab>("prefabs/tank")
+            .unwrap();
         game.scenes.load_scene(scene.readonly());
+        Self::spawn_local_tank(&mut game, &tank_prefab.read());
         Ok(Self {
             game,
             renderer: SceneRenderer::new(
@@ -74,6 +81,27 @@ impl GameApp {
                     .build(),
             ),
         })
+    }
+
+    fn spawn_local_tank(game: &mut GameContext, tank_prefab: &Prefab) {
+        let scene = game.scenes.current_scene_mut();
+        let Some(_player) = scene.instantiate_prefab(tank_prefab, None) else {
+            return;
+        };
+
+        let crosshair_ref = Self::find_object_by_name(scene, "Crosshair")
+            .map(|crosshair| GameObjectRef::new(scene.uuid(crosshair)))
+            .unwrap_or_default();
+        let Some(tank) = Self::find_object_by_name(scene, "Tank") else {
+            return;
+        };
+        let _ = scene.write_component::<ComponentTankController, _>(tank, |controller| {
+            controller.crosshair = crosshair_ref;
+        });
+    }
+
+    fn find_object_by_name(scene: &Scene, name: &str) -> Option<GameObject> {
+        scene.objects().find(|game_object| scene.name(*game_object) == name)
     }
 
     fn physical_size(ctx: &Context, rect: &Rect) -> (u32, u32) {
