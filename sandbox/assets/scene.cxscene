@@ -61,6 +61,7 @@
       "21b467c0-9409-4a7f-b750-418809609eb1": {
         "turret": "fd0e2a37-e81e-4b18-af5d-b71c0b2a6825",
         "camera": "9985d281-6c72-4fd1-83e2-1abf2a495f77",
+        "crosshair": "36fd779f-b09b-4912-83de-16fce6365981",
         "move_speed": 7.0,
         "reverse_speed": 4.5,
         "hull_turn_speed": 2.8,
@@ -198,12 +199,44 @@
         "fov": 1.2217305,
         "near_plane": 0.1
       }
+    },
+    "36fd779f-b09b-4912-83de-16fce6365981": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "36fd779f-b09b-4912-83de-16fce6365981",
+        "name": "Crosshair",
+        "visible": true
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.5,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            0.25,
+            0.25,
+            0.25
+          ]
+        }
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263",
+        "material": "c35634f8-fdee-c217-bc6b-22ab01eac817"
+      }
     }
   },
   "hierarchy": {
     "9a71cfab-2e0b-486a-83aa-37f1caebc71a": [
       "a0e5ad62-7bb8-4b12-9160-c2bd84f5d4dd",
       "9985d281-6c72-4fd1-83e2-1abf2a495f77",
+      "36fd779f-b09b-4912-83de-16fce6365981",
       "24b73614-e397-4e80-a669-3e64b910c53a"
     ],
     "a0e5ad62-7bb8-4b12-9160-c2bd84f5d4dd": [

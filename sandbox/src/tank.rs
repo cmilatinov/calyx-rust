@@ -26,6 +26,7 @@ use crate::ReflectRegistrationFn;
 pub struct ComponentTankController {
     pub turret: GameObjectRef,
     pub camera: GameObjectRef,
+    pub crosshair: GameObjectRef,
     pub move_speed: f32,
     pub reverse_speed: f32,
     pub hull_turn_speed: f32,
@@ -37,6 +38,7 @@ impl Default for ComponentTankController {
         Self {
             turret: Default::default(),
             camera: Default::default(),
+            crosshair: Default::default(),
             move_speed: 7.0,
             reverse_speed: 4.5,
             hull_turn_speed: 2.8,
@@ -65,7 +67,14 @@ impl ComponentUpdate for ComponentTankController {
         let dt = resources.time().delta_time();
         let previous_tank_transform = scene.world_transform(game_object);
         let tank_transform = update_hull(scene, game_object, input, dt, &controller);
-        update_turret(scene, input, dt, &controller, &tank_transform);
+        let aim_point = cursor_ground_intersection(
+            scene,
+            input,
+            &controller,
+            tank_transform.position.y,
+        );
+        update_crosshair(scene, &controller, aim_point);
+        update_turret(scene, dt, &controller, &tank_transform, aim_point);
         update_camera(scene, &controller, &previous_tank_transform, &tank_transform);
     }
 }
@@ -105,18 +114,16 @@ fn update_hull(
 
 fn update_turret(
     scene: &mut engine::scene::Scene,
-    input: &Input,
     dt: TimeType,
     controller: &ComponentTankController,
     tank_transform: &Transform,
+    aim_point: Option<Vec3>,
 ) {
     let Some(turret_object) = controller.turret.game_object(scene) else {
         return;
     };
 
-    let Some(aim_point) =
-        cursor_ground_intersection(scene, input, controller, tank_transform.position.y)
-    else {
+    let Some(aim_point) = aim_point else {
         return;
     };
 
@@ -135,6 +142,23 @@ fn update_turret(
             .rotation
             .slerp(&desired_local_rotation, blend);
     });
+}
+
+fn update_crosshair(
+    scene: &mut engine::scene::Scene,
+    controller: &ComponentTankController,
+    aim_point: Option<Vec3>,
+) {
+    let Some(crosshair_object) = controller.crosshair.game_object(scene) else {
+        return;
+    };
+    let Some(aim_point) = aim_point else {
+        return;
+    };
+
+    let mut transform = scene.world_transform(crosshair_object);
+    transform.position = aim_point;
+    scene.set_world_transform(crosshair_object, transform.matrix());
 }
 
 fn update_camera(
