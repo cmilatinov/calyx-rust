@@ -56,6 +56,7 @@
         },
         "21b467c0-9409-4a7f-b750-418809609eb1": {
           "turret": "fd0e2a37-e81e-4b18-af5d-b71c0b2a6825",
+          "barrel": "a4e9c1eb-a8bc-4b3f-b3d6-d588fe769a76",
           "camera": "9985d281-6c72-4fd1-83e2-1abf2a495f77",
           "move_speed": 7.0,
           "reverse_speed": 4.5,

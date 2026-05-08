@@ -1,7 +1,7 @@
 use egui::Rect;
 use engine::component::{
-    Component, ComponentCamera, ComponentEventContext, ComponentTransform, ComponentUpdate,
-    ReflectComponent, ReflectComponentUpdate,
+    Component, ComponentCamera, ComponentEventContext, ComponentID, ComponentMesh,
+    ComponentTransform, ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
 };
 use engine::core::TimeType;
 use engine::input::Input;
@@ -23,29 +23,106 @@ use serde::{Deserialize, Serialize};
 #[repr(C)]
 pub struct ComponentTankController {
     pub turret: GameObjectRef,
+    pub barrel: GameObjectRef,
     pub camera: GameObjectRef,
     pub crosshair: GameObjectRef,
     pub move_speed: f32,
     pub reverse_speed: f32,
     pub hull_turn_speed: f32,
     pub turret_turn_speed: f32,
+    pub projectile_speed: f32,
+    pub projectile_lifetime: f32,
+    pub projectile_radius: f32,
+    pub muzzle_offset: f32,
+    pub fire_cooldown: f32,
+    #[serde(skip)]
+    #[reflect_skip]
+    pub fire_cooldown_remaining: f32,
 }
 
 impl Default for ComponentTankController {
     fn default() -> Self {
         Self {
             turret: Default::default(),
+            barrel: Default::default(),
             camera: Default::default(),
             crosshair: Default::default(),
             move_speed: 7.0,
             reverse_speed: 4.5,
             hull_turn_speed: 2.8,
             turret_turn_speed: 12.0,
+            projectile_speed: 28.0,
+            projectile_lifetime: 2.0,
+            projectile_radius: 0.18,
+            muzzle_offset: 1.0,
+            fire_cooldown: 0.35,
+            fire_cooldown_remaining: 0.0,
         }
     }
 }
 
 impl Component for ComponentTankController {}
+
+#[derive(Clone, Copy, TypeUuid, Serialize, Deserialize, Component, Reflect)]
+#[uuid = "951b5a6f-c3bb-46ed-b938-3909a2f439d1"]
+#[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate)]
+#[reflect_attr(name = "Projectile")]
+#[serde(default)]
+#[repr(C)]
+pub struct ComponentProjectile {
+    pub direction: Vec3,
+    pub speed: f32,
+    pub lifetime_remaining: f32,
+    pub radius: f32,
+}
+
+impl Default for ComponentProjectile {
+    fn default() -> Self {
+        Self {
+            direction: vec3(0.0, 0.0, 1.0),
+            speed: 28.0,
+            lifetime_remaining: 2.0,
+            radius: 0.18,
+        }
+    }
+}
+
+impl Component for ComponentProjectile {}
+
+impl ComponentUpdate for ComponentProjectile {
+    fn update(
+        &self,
+        ComponentEventContext {
+            scene, game_object, ..
+        }: ComponentEventContext,
+        resources: &mut ResourceMap,
+        _input: &Input,
+    ) {
+        update_projectile(scene, game_object, resources.time().delta_time());
+    }
+}
+
+#[derive(Clone, Copy, TypeUuid, Serialize, Deserialize, Component, Reflect)]
+#[uuid = "f2c31eb5-c999-4125-9cb0-a72a238eca2e"]
+#[reflect(Default, TypeUuidDynamic, Component)]
+#[reflect_attr(name = "Projectile Target")]
+#[serde(default)]
+#[repr(C)]
+pub struct ComponentProjectileTarget {
+    pub hit_radius: f32,
+    pub hit_count: u32,
+}
+
+impl Default for ComponentProjectileTarget {
+    fn default() -> Self {
+        Self {
+            hit_radius: 1.0,
+            hit_count: 0,
+        }
+    }
+}
+
+impl Component for ComponentProjectileTarget {}
 
 impl ComponentUpdate for ComponentTankController {
     fn update(
@@ -56,7 +133,7 @@ impl ComponentUpdate for ComponentTankController {
         resources: &mut ResourceMap,
         input: &Input,
     ) {
-        let Some(controller) = scene
+        let Some(mut controller) = scene
             .read_component::<ComponentTankController, _, _>(game_object, |component| *component)
         else {
             return;
@@ -69,12 +146,16 @@ impl ComponentUpdate for ComponentTankController {
             cursor_ground_intersection(scene, input, &controller, tank_transform.position.y);
         update_crosshair(scene, &controller, aim_point);
         update_turret(scene, dt, &controller, &tank_transform, aim_point);
+        update_shooting(scene, input, dt, &mut controller);
         update_camera(
             scene,
             &controller,
             &previous_tank_transform,
             &tank_transform,
         );
+        let _ = scene.write_component::<ComponentTankController, _>(game_object, |component| {
+            component.fire_cooldown_remaining = controller.fire_cooldown_remaining;
+        });
     }
 }
 
@@ -179,6 +260,168 @@ fn update_camera(
     scene.set_world_transform(camera_object, camera_transform.matrix());
 }
 
+fn update_shooting(
+    scene: &mut engine::scene::Scene,
+    input: &Input,
+    dt: TimeType,
+    controller: &mut ComponentTankController,
+) {
+    controller.fire_cooldown_remaining =
+        advance_fire_cooldown(controller.fire_cooldown_remaining, dt);
+    if !can_fire(
+        input.action("shoot").pressed(),
+        controller.fire_cooldown_remaining,
+    ) {
+        return;
+    }
+
+    if spawn_projectile(scene, controller) {
+        controller.fire_cooldown_remaining = controller.fire_cooldown;
+    }
+}
+
+fn advance_fire_cooldown(remaining: f32, dt: f32) -> f32 {
+    (remaining - dt).max(0.0)
+}
+
+fn can_fire(shoot_pressed: bool, cooldown_remaining: f32) -> bool {
+    shoot_pressed && cooldown_remaining <= f32::EPSILON
+}
+
+fn spawn_projectile(
+    scene: &mut engine::scene::Scene,
+    controller: &ComponentTankController,
+) -> bool {
+    let Some(barrel_object) = controller.barrel.game_object(scene) else {
+        return false;
+    };
+
+    let barrel_transform = scene.world_transform(barrel_object);
+    let direction = flatten_xz(barrel_transform.forward());
+    if direction.magnitude_squared() <= f32::EPSILON {
+        return false;
+    }
+
+    let visual = scene.read_component::<ComponentMesh, _, _>(barrel_object, |mesh| ComponentMesh {
+        mesh: mesh.mesh.clone(),
+        material: mesh.material.clone(),
+    });
+    let projectile_object = scene.create(
+        Some(ComponentID {
+            name: "Projectile".to_string(),
+            ..Default::default()
+        }),
+        None,
+    );
+    let projectile_transform = Transform::from_components(
+        barrel_transform.position + direction * controller.muzzle_offset,
+        yaw_rotation(&direction),
+        vec3(
+            controller.projectile_radius * 2.0,
+            controller.projectile_radius * 2.0,
+            controller.projectile_radius * 2.0,
+        ),
+    );
+    scene.set_world_transform(projectile_object, projectile_transform.matrix());
+    scene.add_component(
+        projectile_object,
+        ComponentProjectile {
+            direction,
+            speed: controller.projectile_speed,
+            lifetime_remaining: controller.projectile_lifetime,
+            radius: controller.projectile_radius,
+        },
+    );
+    if let Some(visual) = visual {
+        scene.add_component(projectile_object, visual);
+    }
+    true
+}
+
+fn update_projectile(
+    scene: &mut engine::scene::Scene,
+    game_object: engine::scene::GameObject,
+    dt: f32,
+) {
+    let Some(mut projectile) =
+        scene.read_component::<ComponentProjectile, _, _>(game_object, |component| *component)
+    else {
+        return;
+    };
+
+    if projectile.lifetime_remaining <= f32::EPSILON {
+        scene.delete(game_object);
+        return;
+    }
+
+    let direction = flatten_xz(projectile.direction);
+    if direction.magnitude_squared() <= f32::EPSILON {
+        scene.delete(game_object);
+        return;
+    }
+
+    let travel_time = projectile.lifetime_remaining.min(dt.max(0.0));
+    let mut transform = scene.world_transform(game_object);
+    let start = transform.position;
+    let end = start + direction * projectile.speed * travel_time;
+
+    if let Some(target) = first_projectile_hit(scene, game_object, start, end, projectile.radius) {
+        let _ = scene.write_component::<ComponentProjectileTarget, _>(target, |target| {
+            target.hit_count = target.hit_count.saturating_add(1);
+        });
+        scene.delete(game_object);
+        return;
+    }
+
+    projectile.direction = direction;
+    projectile.lifetime_remaining -= travel_time;
+    if projectile.lifetime_remaining <= f32::EPSILON {
+        scene.delete(game_object);
+        return;
+    }
+
+    transform.position = end;
+    scene.set_world_transform(game_object, transform.matrix());
+    let _ = scene.write_component::<ComponentProjectile, _>(game_object, |component| {
+        component.direction = projectile.direction;
+        component.lifetime_remaining = projectile.lifetime_remaining;
+    });
+}
+
+fn first_projectile_hit(
+    scene: &engine::scene::Scene,
+    projectile_object: engine::scene::GameObject,
+    start: Vec3,
+    end: Vec3,
+    projectile_radius: f32,
+) -> Option<engine::scene::GameObject> {
+    scene.objects().find(|&candidate| {
+        candidate != projectile_object
+            && scene
+                .read_component::<ComponentProjectileTarget, _, _>(candidate, |target| {
+                    let target_transform = scene.world_transform(candidate);
+                    segment_intersects_sphere(
+                        start,
+                        end,
+                        target_transform.position,
+                        projectile_radius + target.hit_radius,
+                    )
+                })
+                .unwrap_or(false)
+    })
+}
+
+fn segment_intersects_sphere(start: Vec3, end: Vec3, center: Vec3, radius: f32) -> bool {
+    let segment = end - start;
+    let segment_length_squared = segment.magnitude_squared();
+    if segment_length_squared <= f32::EPSILON {
+        return (start - center).magnitude_squared() <= radius * radius;
+    }
+    let t = ((center - start).dot(&segment) / segment_length_squared).clamp(0.0, 1.0);
+    let closest = start + segment * t;
+    (closest - center).magnitude_squared() <= radius * radius
+}
+
 fn follow_camera_xz(
     camera_transform: &mut Transform,
     previous_tank_transform: &Transform,
@@ -272,7 +515,10 @@ fn yaw_rotation(direction: &Vec3) -> UnitQuaternion<f32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{clip_from_screen, flatten_xz, follow_camera_xz, screen_to_ground, yaw_rotation};
+    use super::{
+        advance_fire_cooldown, can_fire, clip_from_screen, flatten_xz, follow_camera_xz,
+        screen_to_ground, segment_intersects_sphere, yaw_rotation,
+    };
     use engine::math::Transform;
     use engine::render::Camera;
     use nalgebra::UnitQuaternion;
@@ -348,5 +594,34 @@ mod tests {
         assert!((camera_transform.position.y - 16.0).abs() < 1e-6);
         assert!((camera_transform.position.z - -3.0).abs() < 1e-6);
         assert_eq!(camera_transform.rotation, rotation);
+    }
+
+    #[test]
+    fn fire_cooldown_counts_down_to_zero() {
+        assert!((advance_fire_cooldown(0.35, 0.1) - 0.25).abs() < 1e-6);
+        assert_eq!(advance_fire_cooldown(0.1, 0.35), 0.0);
+    }
+
+    #[test]
+    fn fire_gate_requires_input_and_expired_cooldown() {
+        assert!(can_fire(true, 0.0));
+        assert!(!can_fire(false, 0.0));
+        assert!(!can_fire(true, 0.1));
+    }
+
+    #[test]
+    fn projectile_segment_hits_sphere_between_frames() {
+        assert!(segment_intersects_sphere(
+            vec3(0.0, 0.0, 0.0),
+            vec3(0.0, 0.0, 10.0),
+            vec3(0.0, 0.0, 5.0),
+            0.5,
+        ));
+        assert!(!segment_intersects_sphere(
+            vec3(0.0, 0.0, 0.0),
+            vec3(0.0, 0.0, 10.0),
+            vec3(2.0, 0.0, 5.0),
+            0.5,
+        ));
     }
 }
