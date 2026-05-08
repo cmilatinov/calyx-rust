@@ -1,7 +1,5 @@
 mod tank;
 
-pub use tank::ComponentTankController;
-
 use engine::reflect::type_registry::TypeRegistry;
 
 pub struct ReflectRegistrationFn {
