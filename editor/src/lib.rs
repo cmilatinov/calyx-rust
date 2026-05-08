@@ -97,7 +97,6 @@ impl EditorAppState {
                 SceneRendererOptions {
                     grid: true,
                     gizmos: true,
-                    defer_resolve: true,
                     samples: 1,
                     clear_color: Color32::from_rgb(8, 8, 8),
                 },
@@ -277,7 +276,7 @@ impl EditorApp {
             .scene_renderer
             .set_selected_game_object(self.state.selection.first(SelectionType::GameObject));
         let render_state = frame.wgpu_render_state().unwrap();
-        self.state.scene_renderer.render_outline(render_state);
+        self.state.scene_renderer.finalize_scene(render_state);
     }
 
     fn render_views(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
@@ -314,7 +313,7 @@ impl EditorApp {
         scene_renderer.set_selected_game_object(None);
 
         let scene = scenes.simulation_scene();
-        scene_renderer.render_scene(
+        scene_renderer.render_scene_base(
             render_state,
             camera,
             transform,
@@ -334,7 +333,8 @@ impl EditorApp {
                 c.near_plane,
                 c.far_plane,
             );
-            game_renderer.render_scene(render_state, &camera, &transform, scene, None)
+            game_renderer.render_scene_base(render_state, &camera, &transform, scene, None);
+            game_renderer.finalize_scene(render_state);
         } else {
             let device = &render_state.device;
             let queue = &render_state.queue;
