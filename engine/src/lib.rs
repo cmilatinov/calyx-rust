@@ -2,6 +2,8 @@
 //! systems shared across the Calyx workspace.
 
 #![allow(clippy::module_inception)]
+extern crate self as engine;
+
 /// Asset types, asset handles, and asset registry infrastructure.
 pub mod assets;
 /// Background task scheduling utilities.

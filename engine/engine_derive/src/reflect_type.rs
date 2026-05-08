@@ -109,7 +109,7 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
         },
         quote! {
             inventory::submit!(
-                crate::ReflectRegistrationFn {
+                engine::ReflectRegistrationFn {
                     name: stringify!(#name),
                     function: <#name as engine::reflect::ReflectedType>::register
                 }

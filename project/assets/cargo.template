@@ -11,3 +11,4 @@ crate-type = ["cdylib"]
 reflect = \{ git = "https://github.com/cmilatinov/calyx-rust", package = "reflect" }
 engine = \{ git = "https://github.com/cmilatinov/calyx-rust", package = "engine" }
 editor = \{ git = "https://github.com/cmilatinov/calyx-rust", package = "editor" }
+inventory = "0.3.12"

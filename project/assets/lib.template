@@ -1,11 +1,8 @@
-use reflect::type_registry::TypeRegistry;
-
-pub struct ReflectRegistrationFn(pub fn(&mut TypeRegistry));
-engine::inventory::collect!(ReflectRegistrationFn);
+use engine::reflect::type_registry::TypeRegistry;
 
 #[no_mangle]
 pub extern "C" fn plugin_main(registry: &mut TypeRegistry) {
-    for f in engine::inventory::iter::<ReflectRegistrationFn>() {
-        (f.0)(registry);
+    for f in inventory::iter::<engine::ReflectRegistrationFn>() {
+        (f.function)(registry);
     }
 }

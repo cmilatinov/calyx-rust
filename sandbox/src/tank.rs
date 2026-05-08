@@ -15,8 +15,6 @@ use nalgebra::UnitQuaternion;
 use nalgebra_glm::{vec3, vec4, Mat4, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 
-use crate::ReflectRegistrationFn;
-
 #[derive(Clone, Copy, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "21b467c0-9409-4a7f-b750-418809609eb1"]
 #[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate)]
@@ -67,15 +65,16 @@ impl ComponentUpdate for ComponentTankController {
         let dt = resources.time().delta_time();
         let previous_tank_transform = scene.world_transform(game_object);
         let tank_transform = update_hull(scene, game_object, input, dt, &controller);
-        let aim_point = cursor_ground_intersection(
-            scene,
-            input,
-            &controller,
-            tank_transform.position.y,
-        );
+        let aim_point =
+            cursor_ground_intersection(scene, input, &controller, tank_transform.position.y);
         update_crosshair(scene, &controller, aim_point);
         update_turret(scene, dt, &controller, &tank_transform, aim_point);
-        update_camera(scene, &controller, &previous_tank_transform, &tank_transform);
+        update_camera(
+            scene,
+            &controller,
+            &previous_tank_transform,
+            &tank_transform,
+        );
     }
 }
 
@@ -172,7 +171,11 @@ fn update_camera(
     };
 
     let mut camera_transform = scene.world_transform(camera_object);
-    follow_camera_xz(&mut camera_transform, previous_tank_transform, tank_transform);
+    follow_camera_xz(
+        &mut camera_transform,
+        previous_tank_transform,
+        tank_transform,
+    );
     scene.set_world_transform(camera_object, camera_transform.matrix());
 }
 
@@ -267,15 +270,6 @@ fn yaw_rotation(direction: &Vec3) -> UnitQuaternion<f32> {
     UnitQuaternion::from_euler_angles(0.0, direction.x.atan2(direction.z), 0.0)
 }
 
-inventory::submit! {
-    ReflectRegistrationFn {
-        name: "ComponentTankController",
-        function: |registry| {
-            registry.register::<ComponentTankController>();
-        },
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{clip_from_screen, flatten_xz, follow_camera_xz, screen_to_ground, yaw_rotation};
@@ -321,8 +315,7 @@ mod tests {
         assert!(camera_forward.y < 0.0);
         assert!(camera_forward.z > 0.0);
 
-        let rect =
-            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1280.0, 720.0));
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1280.0, 720.0));
         let camera = Camera::new(rect.aspect_ratio(), 70.0f32.to_radians(), 0.1, 1000.0);
         let hit = screen_to_ground(
             &camera_transform,
