@@ -7,7 +7,7 @@ Use the steering files in this repository as standing project instructions:
 - [.steering/todoist.md](.steering/todoist.md) - Todoist planning, task selection, and PR reference rules.
 - [.steering/code-review.md](.steering/code-review.md) - senior-developer review checklist and keep/skip workflow.
 
-When making repository changes, follow the Gitflow rules in `.steering/gitflow.md`. Commit titles must start with exactly one of `refactor:`, `feat:`, `fix:`, `chore:`, or `docs:`.
+When making repository changes, follow the Gitflow rules in `.steering/gitflow.md`. Commit titles must start with exactly one of `refactor:`, `feat:`, `fix:`, `perf:`, `chore:`, or `docs:`.
 
 After a branch has been pushed or a PR has been opened, make review updates as normal follow-up commits on the same branch. Do not amend, rebase, or force-push a published branch unless the user explicitly asks for history rewriting.
 
