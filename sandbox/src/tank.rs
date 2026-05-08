@@ -30,7 +30,6 @@ pub struct ComponentTankController {
     pub reverse_speed: f32,
     pub hull_turn_speed: f32,
     pub turret_turn_speed: f32,
-    pub camera_smoothing: f32,
 }
 
 impl Default for ComponentTankController {
@@ -42,7 +41,6 @@ impl Default for ComponentTankController {
             reverse_speed: 4.5,
             hull_turn_speed: 2.8,
             turret_turn_speed: 12.0,
-            camera_smoothing: 10.0,
         }
     }
 }
@@ -68,13 +66,7 @@ impl ComponentUpdate for ComponentTankController {
         let previous_tank_transform = scene.world_transform(game_object);
         let tank_transform = update_hull(scene, game_object, input, dt, &controller);
         update_turret(scene, input, dt, &controller, &tank_transform);
-        update_camera(
-            scene,
-            dt,
-            &controller,
-            &previous_tank_transform,
-            &tank_transform,
-        );
+        update_camera(scene, &controller, &previous_tank_transform, &tank_transform);
     }
 }
 
@@ -147,7 +139,6 @@ fn update_turret(
 
 fn update_camera(
     scene: &mut engine::scene::Scene,
-    dt: TimeType,
     controller: &ComponentTankController,
     previous_tank_transform: &Transform,
     tank_transform: &Transform,
@@ -157,13 +148,7 @@ fn update_camera(
     };
 
     let mut camera_transform = scene.world_transform(camera_object);
-    let blend = (controller.camera_smoothing * dt).clamp(0.0, 1.0);
-    follow_camera_xz(
-        &mut camera_transform,
-        previous_tank_transform,
-        tank_transform,
-        blend,
-    );
+    follow_camera_xz(&mut camera_transform, previous_tank_transform, tank_transform);
     scene.set_world_transform(camera_object, camera_transform.matrix());
 }
 
@@ -171,11 +156,10 @@ fn follow_camera_xz(
     camera_transform: &mut Transform,
     previous_tank_transform: &Transform,
     tank_transform: &Transform,
-    blend: f32,
 ) {
     let tank_delta = tank_transform.position - previous_tank_transform.position;
-    camera_transform.position.x += tank_delta.x * blend;
-    camera_transform.position.z += tank_delta.z * blend;
+    camera_transform.position.x += tank_delta.x;
+    camera_transform.position.z += tank_delta.z;
 }
 
 fn cursor_ground_intersection(
@@ -305,12 +289,13 @@ mod tests {
         let tank_transform = Transform::from_xyz(0.0, 0.5, 0.0);
         let camera_transform = Transform::from_components(
             vec3(0.0, 16.0, -10.0),
-            UnitQuaternion::from_euler_angles(std::f32::consts::FRAC_PI_2, 0.0, 0.0),
+            UnitQuaternion::from_euler_angles(std::f32::consts::FRAC_PI_3, 0.0, 0.0),
             vec3(1.0, 1.0, 1.0),
         );
         let camera_forward = camera_transform.forward();
 
         assert!(camera_forward.y < 0.0);
+        assert!(camera_forward.z > 0.0);
 
         let rect =
             egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1280.0, 720.0));
@@ -340,7 +325,6 @@ mod tests {
             &mut camera_transform,
             &previous_tank_transform,
             &tank_transform,
-            1.0,
         );
 
         assert!((camera_transform.position.x - 5.0).abs() < 1e-6);
