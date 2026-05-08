@@ -157,7 +157,7 @@ fn update_camera(
     let mut camera_transform = scene.world_transform(camera_object);
     let blend = (controller.camera_smoothing * dt).clamp(0.0, 1.0);
     camera_transform.position += (desired_transform.position - camera_transform.position) * blend;
-    camera_transform.look_at(&(tank_transform.position + vec3(0.0, 0.75, 0.0)));
+    face_towards(&mut camera_transform, &(tank_transform.position + vec3(0.0, 0.75, 0.0)));
     scene.set_world_transform(camera_object, camera_transform.matrix());
 }
 
@@ -170,8 +170,16 @@ fn desired_camera_transform(
         tank_transform.position.y + controller.camera_height,
         tank_transform.position.z - controller.camera_distance,
     );
-    transform.look_at(&(tank_transform.position + vec3(0.0, 0.75, 0.0)));
+    face_towards(&mut transform, &(tank_transform.position + vec3(0.0, 0.75, 0.0)));
     transform
+}
+
+fn face_towards(transform: &mut Transform, target: &Vec3) {
+    let direction = target - transform.position;
+    if direction.magnitude_squared() <= f32::EPSILON {
+        return;
+    }
+    transform.rotation = UnitQuaternion::face_towards(&direction.normalize(), &Vec3::y_axis());
 }
 
 fn cursor_ground_intersection(
@@ -210,7 +218,7 @@ fn screen_to_ground(
     let clip = clip_from_screen(rect, cursor);
     let inv_view_projection = inverse_view_projection(camera_transform, camera)?;
 
-    let near = world_from_clip(&inv_view_projection, vec4(clip.x, clip.y, -1.0, 1.0))?;
+    let near = world_from_clip(&inv_view_projection, vec4(clip.x, clip.y, 0.0, 1.0))?;
     let far = world_from_clip(&inv_view_projection, vec4(clip.x, clip.y, 1.0, 1.0))?;
     let direction = far - near;
     if direction.y.abs() <= f32::EPSILON {
@@ -266,7 +274,12 @@ inventory::submit! {
 
 #[cfg(test)]
 mod tests {
-    use super::{clip_from_screen, flatten_xz, yaw_rotation};
+    use super::{
+        clip_from_screen, desired_camera_transform, flatten_xz, screen_to_ground, yaw_rotation,
+        ComponentTankController,
+    };
+    use engine::math::Transform;
+    use engine::render::Camera;
     use nalgebra_glm::vec3;
 
     #[test]
@@ -291,5 +304,33 @@ mod tests {
         assert!(flattened.y.abs() < 1e-6);
         assert!((flattened.x - 0.6).abs() < 1e-4);
         assert!((flattened.z - 0.8).abs() < 1e-4);
+    }
+
+    #[test]
+    fn desired_camera_faces_down_toward_tank() {
+        let tank_transform = Transform::from_xyz(0.0, 0.5, 0.0);
+        let controller = ComponentTankController::default();
+        let camera_transform = desired_camera_transform(&tank_transform, &controller);
+        let target = tank_transform.position + vec3(0.0, 0.75, 0.0);
+        let target_direction = (target - camera_transform.position).normalize();
+        let camera_forward = camera_transform.forward().normalize();
+
+        assert!(camera_forward.y < 0.0);
+        assert!(camera_forward.dot(&target_direction) > 0.999);
+
+        let rect =
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1280.0, 720.0));
+        let camera = Camera::new(rect.aspect_ratio(), 70.0f32.to_radians(), 0.1, 1000.0);
+        let hit = screen_to_ground(
+            &camera_transform,
+            &camera,
+            rect,
+            rect.center(),
+            tank_transform.position.y,
+        )
+        .expect("center ray should intersect the tank ground plane");
+
+        assert!((hit.x - tank_transform.position.x).abs() < 1e-3);
+        assert!((hit.y - tank_transform.position.y).abs() < 1e-3);
     }
 }
