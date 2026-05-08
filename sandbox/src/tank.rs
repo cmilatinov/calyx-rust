@@ -519,10 +519,15 @@ mod tests {
         advance_fire_cooldown, can_fire, clip_from_screen, flatten_xz, follow_camera_xz,
         screen_to_ground, segment_intersects_sphere, yaw_rotation,
     };
+    use engine::component::{ComponentID, ComponentTransform};
     use engine::math::Transform;
     use engine::render::Camera;
     use nalgebra::UnitQuaternion;
     use nalgebra_glm::vec3;
+    use serde_json::Value;
+
+    const COMPONENT_ID_TYPE: &str = "02289c92-3412-406e-a7e5-3bbb15d7041e";
+    const COMPONENT_TRANSFORM_TYPE: &str = "c5b3b71f-1f14-4b5b-9881-436118684d29";
 
     #[test]
     fn yaw_rotation_faces_positive_x() {
@@ -574,6 +579,33 @@ mod tests {
 
         assert!((hit.x - tank_transform.position.x).abs() < 1e-3);
         assert!((hit.y - tank_transform.position.y).abs() < 1e-3);
+    }
+
+    #[test]
+    fn sandbox_scene_camera_points_down_at_arena() {
+        let scene: Value = serde_json::from_str(include_str!("../assets/scene.cxscene"))
+            .expect("sandbox scene should be valid JSON");
+        let components = scene["components"]
+            .as_object()
+            .expect("sandbox scene should contain component data");
+        let camera_components = components
+            .values()
+            .find(|components| {
+                components
+                    .get(COMPONENT_ID_TYPE)
+                    .and_then(|value| serde_json::from_value::<ComponentID>(value.clone()).ok())
+                    .is_some_and(|id| id.name == "Camera")
+            })
+            .expect("sandbox scene should contain a Camera object");
+        let camera_transform = serde_json::from_value::<ComponentTransform>(
+            camera_components[COMPONENT_TRANSFORM_TYPE].clone(),
+        )
+        .expect("sandbox Camera should have a transform")
+        .transform;
+        let camera_forward = camera_transform.forward();
+
+        assert!(camera_forward.y < -0.5);
+        assert!(camera_forward.z > 0.45);
     }
 
     #[test]
