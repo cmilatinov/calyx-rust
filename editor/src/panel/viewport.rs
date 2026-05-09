@@ -161,7 +161,7 @@ impl PanelViewport {
                 viewport: viewport_response.rect,
                 modes: app_state.gizmo_modes,
                 mode_override: None,
-                orientation: GizmoOrientation::Global,
+                orientation: app_state.gizmo_orientation,
                 pivot_point: Default::default(),
                 snapping: snap,
                 snap_angle,
