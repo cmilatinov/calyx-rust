@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "9d37ee2c-6027-5091-af9e-7d189b572d64",
+    "name": "meshes/tank_game/body",
+    "display_name": "body",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}

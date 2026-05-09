@@ -1,12 +1,11 @@
 # Third-Party Sandbox Assets
 
-## FREE stylized tank 3D model
+## tank-game Tank_002 mesh
 
-- Author: MrEliptik
-- Source: https://mreliptik.itch.io/free-lowpoly-tank-3d-model
+- Source repository: https://github.com/cmilatinov/tank-game
+- Source file: `Assets/Plugins/Tank_Controller/Art/Objects/Tank/Tank_002.fbx`
 - Files:
-  - `assets/models/mreliptik_tank/tank_1_green.fbx`
-  - `assets/models/mreliptik_tank/tank_1_bw.fbx`
-  - `assets/meshes/mreliptik_tank/*.obj`
-  - `assets/materials/mreliptik_tank/*.cxmat`
-- Usage terms from the source page: free for personal or commercial projects; credit appreciated.
+  - `assets/models/tank_game/Tank_002.fbx`
+  - `assets/meshes/tank_game/*.obj`
+  - `assets/materials/tank_game/*.cxmat`
+- Notes: exported from the source FBX into OBJ parts for the Calyx mesh loader; the source repository does not include an explicit license file.

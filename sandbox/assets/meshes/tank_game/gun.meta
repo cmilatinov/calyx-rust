@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "f8a12e80-8f16-5965-b549-d1dfa1bddead",
+    "name": "meshes/tank_game/gun",
+    "display_name": "gun",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}

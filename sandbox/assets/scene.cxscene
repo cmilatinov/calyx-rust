@@ -124,162 +124,8 @@
         "move_speed": 7.0,
         "reverse_speed": 4.5,
         "hull_turn_speed": 2.8,
-        "turret_turn_speed": 12.0
-      }
-    },
-    "4cd11c7b-4d12-4d2e-8dcf-acde0d677b26": {
-      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
-        "id": "4cd11c7b-4d12-4d2e-8dcf-acde0d677b26",
-        "name": "Hull",
-        "visible": true
-      },
-      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
-        "transform": {
-          "position": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "rotation": [
-            0.0,
-            0.0,
-            0.0,
-            1.0
-          ],
-          "scale": [
-            1.0,
-            1.0,
-            1.0
-          ]
-        }
-      },
-      "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "mesh": "7c83d606-022a-f877-0c71-120afafff60e",
-        "material": "4d44d3b2-a480-fd8c-969a-d6f64e7e8a27"
-      }
-    },
-    "30c0e2db-1518-a549-a451-a720bd44b4f3": {
-      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
-        "id": "30c0e2db-1518-a549-a451-a720bd44b4f3",
-        "name": "Tracks",
-        "visible": true
-      },
-      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
-        "transform": {
-          "position": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "rotation": [
-            0.0,
-            0.0,
-            0.0,
-            1.0
-          ],
-          "scale": [
-            1.0,
-            1.0,
-            1.0
-          ]
-        }
-      },
-      "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "mesh": "ba76b350-3fbd-30c7-7d99-db95a6a9e4c5",
-        "material": "0b90da62-df89-b912-f547-aeb5b1ca08a1"
-      }
-    },
-    "9f97b442-c308-bd7c-b20d-9400548a3925": {
-      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
-        "id": "9f97b442-c308-bd7c-b20d-9400548a3925",
-        "name": "Lights",
-        "visible": true
-      },
-      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
-        "transform": {
-          "position": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "rotation": [
-            0.0,
-            0.0,
-            0.0,
-            1.0
-          ],
-          "scale": [
-            1.0,
-            1.0,
-            1.0
-          ]
-        }
-      },
-      "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "mesh": "69227d59-5b32-0662-f562-b215fe6a8eea",
-        "material": "f7a56dda-9f90-8c4e-335f-6e02b73890d9"
-      }
-    },
-    "fd0e2a37-e81e-4b18-af5d-b71c0b2a6825": {
-      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
-        "id": "fd0e2a37-e81e-4b18-af5d-b71c0b2a6825",
-        "name": "Turret",
-        "visible": true
-      },
-      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
-        "transform": {
-          "position": [
-            -0.0031347102,
-            1.6749798,
-            -0.09607724
-          ],
-          "rotation": [
-            0.0,
-            0.0,
-            0.0,
-            1.0
-          ],
-          "scale": [
-            1.0,
-            1.0,
-            1.0
-          ]
-        }
-      },
-      "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "mesh": "402fd102-0260-f79f-851d-ba6216b4a7f3",
-        "material": "4d44d3b2-a480-fd8c-969a-d6f64e7e8a27"
-      }
-    },
-    "a4e9c1eb-a8bc-4b3f-b3d6-d588fe769a76": {
-      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
-        "id": "a4e9c1eb-a8bc-4b3f-b3d6-d588fe769a76",
-        "name": "Barrel",
-        "visible": true
-      },
-      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
-        "transform": {
-          "position": [
-            0.0031679063,
-            0.11848426,
-            0.7255289
-          ],
-          "rotation": [
-            0.0,
-            0.0,
-            0.0,
-            1.0
-          ],
-          "scale": [
-            1.0,
-            1.0,
-            1.0
-          ]
-        }
-      },
-      "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "mesh": "2d278e93-5893-b08c-e9e2-1a78b1ec04a1",
-        "material": "0b90da62-df89-b912-f547-aeb5b1ca08a1"
+        "turret_turn_speed": 12.0,
+        "muzzle_offset": 3.5
       }
     },
     "9985d281-6c72-4fd1-83e2-1abf2a495f77": {
@@ -390,6 +236,281 @@
         "hit_radius": 1.0,
         "hit_count": 0
       }
+    },
+    "4cd11c7b-4d12-4d2e-8dcf-acde0d677b26": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "4cd11c7b-4d12-4d2e-8dcf-acde0d677b26",
+        "name": "Body",
+        "visible": true
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "mesh": "9d37ee2c-6027-5091-af9e-7d189b572d64",
+        "material": "4d44d3b2-a480-fd8c-969a-d6f64e7e8a27"
+      }
+    },
+    "30c0e2db-1518-a549-a451-a720bd44b4f3": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "30c0e2db-1518-a549-a451-a720bd44b4f3",
+        "name": "Tracks Right",
+        "visible": true
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "mesh": "6a778530-16fe-5121-bb00-078816d0de61",
+        "material": "0b90da62-df89-b912-f547-aeb5b1ca08a1"
+      }
+    },
+    "9f97b442-c308-bd7c-b20d-9400548a3925": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "9f97b442-c308-bd7c-b20d-9400548a3925",
+        "name": "Wheels Right",
+        "visible": true
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "mesh": "59a9bb63-279a-58e6-9104-78de7dccf757",
+        "material": "f7a56dda-9f90-8c4e-335f-6e02b73890d9"
+      }
+    },
+    "0c61c5b4-34ef-54eb-afce-bcaed93b9cc2": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "0c61c5b4-34ef-54eb-afce-bcaed93b9cc2",
+        "name": "Tracks Left",
+        "visible": true
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "mesh": "cdee48d9-df64-58ac-9cca-fad23de51bd5",
+        "material": "0b90da62-df89-b912-f547-aeb5b1ca08a1"
+      }
+    },
+    "4de34f1d-7cbc-5f73-be21-d1737c1e80ff": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "4de34f1d-7cbc-5f73-be21-d1737c1e80ff",
+        "name": "Wheels Left",
+        "visible": true
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "mesh": "4d796fc9-5fbe-5d29-9b77-0d192eb6d5d3",
+        "material": "f7a56dda-9f90-8c4e-335f-6e02b73890d9"
+      }
+    },
+    "fd0e2a37-e81e-4b18-af5d-b71c0b2a6825": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "fd0e2a37-e81e-4b18-af5d-b71c0b2a6825",
+        "name": "Turret",
+        "visible": true
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            2.4498035,
+            0.14193174
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    "8dd51911-1d24-5025-8ab2-c371d0c6fdea": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "8dd51911-1d24-5025-8ab2-c371d0c6fdea",
+        "name": "Turret Pivot",
+        "visible": true
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            -0.014329132,
+            0.28285215,
+            0.14327431
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "mesh": "2ede3d56-dd0f-5aab-ae0d-b83db8f18ede",
+        "material": "4d44d3b2-a480-fd8c-969a-d6f64e7e8a27"
+      }
+    },
+    "f80c0819-9a7f-5a24-9a56-64f32933b336": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "f80c0819-9a7f-5a24-9a56-64f32933b336",
+        "name": "Turret Head",
+        "visible": true
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            1.5667041,
+            -0.51275578
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "mesh": "a330e477-435e-5208-8040-e1857c4fe324",
+        "material": "4d44d3b2-a480-fd8c-969a-d6f64e7e8a27"
+      }
+    },
+    "a4e9c1eb-a8bc-4b3f-b3d6-d588fe769a76": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "a4e9c1eb-a8bc-4b3f-b3d6-d588fe769a76",
+        "name": "Gun",
+        "visible": true
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.012641166,
+            1.1204625,
+            1.0884886
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "mesh": "f8a12e80-8f16-5965-b549-d1dfa1bddead",
+        "material": "0b90da62-df89-b912-f547-aeb5b1ca08a1"
+      }
     }
   },
   "hierarchy": {
@@ -408,9 +529,13 @@
       "4cd11c7b-4d12-4d2e-8dcf-acde0d677b26",
       "30c0e2db-1518-a549-a451-a720bd44b4f3",
       "9f97b442-c308-bd7c-b20d-9400548a3925",
+      "0c61c5b4-34ef-54eb-afce-bcaed93b9cc2",
+      "4de34f1d-7cbc-5f73-be21-d1737c1e80ff",
       "fd0e2a37-e81e-4b18-af5d-b71c0b2a6825"
     ],
     "fd0e2a37-e81e-4b18-af5d-b71c0b2a6825": [
+      "8dd51911-1d24-5025-8ab2-c371d0c6fdea",
+      "f80c0819-9a7f-5a24-9a56-64f32933b336",
       "a4e9c1eb-a8bc-4b3f-b3d6-d588fe769a76"
     ]
   }

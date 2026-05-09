@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "f7a56dda-9f90-8c4e-335f-6e02b73890d9",
+    "name": "materials/tank_game/tank_light",
+    "display_name": "tank_light",
+    "type_uuid": "f98a7f41-84d4-482d-b7af-a670b07035ae"
+  },
+  "inner": []
+}
