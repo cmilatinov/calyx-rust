@@ -8,7 +8,7 @@
       "name": "texture_diffuse",
       "span": null,
       "value": {
-        "Texture2D": "2f2bcfbc-9755-f963-dc52-c2786cba242e"
+        "Texture2D": "d2863902-8a4c-8f5b-2fef-8df1e3cf693e"
       }
     },
     {
@@ -23,6 +23,21 @@
       "group": 3,
       "binding": 2,
       "offset": 0,
+      "name": "base_color",
+      "span": 16,
+      "value": {
+        "Color": [
+          0.9019608,
+          0.78431374,
+          0.36078432,
+          1.0
+        ]
+      }
+    },
+    {
+      "group": 3,
+      "binding": 2,
+      "offset": 16,
       "name": "metallic",
       "span": 4,
       "value": {
@@ -32,7 +47,7 @@
     {
       "group": 3,
       "binding": 2,
-      "offset": 4,
+      "offset": 20,
       "name": "roughness",
       "span": 4,
       "value": {
@@ -42,7 +57,7 @@
     {
       "group": 3,
       "binding": 2,
-      "offset": 8,
+      "offset": 24,
       "name": "ambient_occlusion",
       "span": 4,
       "value": {

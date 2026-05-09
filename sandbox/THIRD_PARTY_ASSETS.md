@@ -8,6 +8,5 @@
   - `assets/models/mreliptik_tank/tank_1_green.fbx`
   - `assets/models/mreliptik_tank/tank_1_bw.fbx`
   - `assets/meshes/mreliptik_tank/*.obj`
-  - `assets/textures/mreliptik_tank/*.png`
   - `assets/materials/mreliptik_tank/*.cxmat`
 - Usage terms from the source page: free for personal or commercial projects; credit appreciated.

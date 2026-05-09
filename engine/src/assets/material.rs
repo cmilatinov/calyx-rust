@@ -12,7 +12,6 @@ use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::{AssetMap, LockedAssetRenderState, Shader};
 use crate::utils::TypeUuid;
-use egui::Color32;
 use egui_wgpu::{wgpu, RenderState};
 use naga::{ImageDimension, Scalar, ScalarKind, TypeInner, VectorSize};
 use serde::{Deserialize, Serialize};
@@ -79,8 +78,8 @@ pub enum ShaderVariableValue {
     Float(f32),
     /// Boolean value.
     Bool(bool),
-    /// RGBA color.
-    Color(Color32),
+    /// RGBA color written to shader buffers as four 32-bit floats.
+    Color([f32; 4]),
     /// 2D vector.
     Vec2([f32; 2]),
     /// 3D vector.
@@ -473,6 +472,9 @@ impl Material {
                     var.value = match size {
                         VectorSize::Bi => ShaderVariableValue::Vec2(Default::default()),
                         VectorSize::Tri => ShaderVariableValue::Vec3(Default::default()),
+                        VectorSize::Quad if Self::is_color_variable(&var.name) => {
+                            ShaderVariableValue::Color([1.0, 1.0, 1.0, 1.0])
+                        }
                         VectorSize::Quad => ShaderVariableValue::Vec4(Default::default()),
                     };
                     variables.push(var);
@@ -524,6 +526,14 @@ impl Material {
             }
             _ => {}
         }
+    }
+
+    fn is_color_variable(name: &str) -> bool {
+        let name = name.to_ascii_lowercase();
+        name == "color"
+            || name.ends_with("_color")
+            || name.ends_with(" color")
+            || name.contains("albedo")
     }
 
     #[inline]
@@ -616,5 +626,24 @@ impl From<(&ReadOnlyAssetContext, MaterialData)> for Material {
         };
         value.init(assets);
         value
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Material, ShaderVariableValue};
+
+    #[test]
+    fn color_values_are_buffer_backed_as_vec4_f32() {
+        let value = ShaderVariableValue::Color([0.25, 0.5, 0.75, 1.0]);
+
+        assert_eq!(value.as_slice().len(), 16);
+    }
+
+    #[test]
+    fn color_named_vec4_variables_use_color_editor_values() {
+        assert!(Material::is_color_variable("base_color"));
+        assert!(Material::is_color_variable("albedo"));
+        assert!(!Material::is_color_variable("clip_plane"));
     }
 }
