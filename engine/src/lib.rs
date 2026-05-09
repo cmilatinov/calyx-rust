@@ -57,6 +57,10 @@ use reflect::type_registry::TypeRegistry;
 /// Inventory entry used by plugins and engine modules to register reflected
 /// types at startup.
 pub struct ReflectRegistrationFn {
+    /// Crate that produced this registration.
+    pub crate_name: &'static str,
+    /// Module path that produced this registration.
+    pub module_path: &'static str,
     /// Debug-friendly name for the registration source.
     pub name: &'static str,
     /// Callback that inserts one or more types into a [`TypeRegistry`].
