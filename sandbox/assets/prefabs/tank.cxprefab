@@ -48,9 +48,9 @@
               1.0
             ],
             "scale": [
-              1.0,
-              1.0,
-              1.0
+              0.45,
+              0.45,
+              0.45
             ]
           }
         },
@@ -62,7 +62,7 @@
           "reverse_speed": 4.5,
           "hull_turn_speed": 2.8,
           "turret_turn_speed": 12.0,
-          "muzzle_offset": 3.5
+          "muzzle_offset": 1.575
         }
       },
       "9985d281-6c72-4fd1-83e2-1abf2a495f77": {
