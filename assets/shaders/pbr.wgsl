@@ -19,6 +19,11 @@ struct MaterialProperties {
     ambient_occlusion: f32,
 };
 
+struct EnvironmentProperties {
+    sky_light_intensity: f32,
+    _padding: vec3f,
+};
+
 @group(0) @binding(1)
 var irradiance_texture: texture_cube<f32>;
 
@@ -36,6 +41,9 @@ var brdf_texture: texture_2d<f32>;
 
 @group(0) @binding(6)
 var brdf_sampler: sampler;
+
+@group(0) @binding(7)
+var<uniform> environment: EnvironmentProperties;
 
 @group(3) @binding(0)
 var diffuse_texture: texture_2d<f32>;
@@ -125,16 +133,19 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     let ks = f(f0, v, n, material.roughness);
     let kd = (1.0 - ks) * (1.0 - material.metallic);
 
-    let irradiance = textureSample(irradiance_texture, irradiance_sampler, n).rgb;
+    let irradiance =
+        environment.sky_light_intensity * textureSample(irradiance_texture, irradiance_sampler, n).rgb;
     let diffuse = kd * irradiance * albedo.rgb;
 
     let r = reflect(-v, n);
-    let prefiltered_color = textureSampleLevel(
-        prefilter_texture,
-        prefilter_sampler,
-        r,
-        material.roughness * f32(textureNumLevels(prefilter_texture) - 1u)
-    ).rgb;
+    let prefiltered_color =
+        environment.sky_light_intensity *
+        textureSampleLevel(
+            prefilter_texture,
+            prefilter_sampler,
+            r,
+            material.roughness * f32(textureNumLevels(prefilter_texture) - 1u)
+        ).rgb;
     let brdf = textureSample(
         brdf_texture,
         brdf_sampler,

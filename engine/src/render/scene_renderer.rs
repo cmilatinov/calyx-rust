@@ -127,6 +127,7 @@ pub struct SceneRenderer {
     completed_object_pick: Option<CompletedObjectPick>,
     selected_game_object: Option<Uuid>,
     hovered_game_object: Option<Uuid>,
+    sky_light_intensity: f32,
 }
 
 impl SceneRenderer {
@@ -217,6 +218,7 @@ impl SceneRenderer {
             completed_object_pick: None,
             selected_game_object: None,
             hovered_game_object: None,
+            sky_light_intensity: 0.0,
         }
     }
 
@@ -297,11 +299,13 @@ impl SceneRenderer {
                     color: &self.scene_texture_msaa,
                     depth: &self.scene_depth_texture,
                 },
+                queue,
                 &self.light_manager,
                 &self.camera_uniform_buffer,
                 self.options.clear_color,
                 &options,
                 self.skybox_renderer.skybox_id(),
+                self.sky_light_intensity,
                 &draw_list,
                 self.options.gizmos.then_some(&mut self.gizmo_renderer),
             );
@@ -552,6 +556,7 @@ impl SceneRenderer {
         }
         let mut query = <&ComponentSkyLight>::query();
         let mut skybox = None;
+        let mut sky_light_intensity = 0.0;
         for c_sky_light in query.iter(world).filter(|s| s.active) {
             let Some(skybox_ref) = c_sky_light.skybox.get_ref(&self.asset_context.registries)
             else {
@@ -571,8 +576,10 @@ impl SceneRenderer {
                 .entry(self.default_assets.screen_space_quad.id())
                 .or_insert(self.default_assets.screen_space_quad.clone());
             skybox = Some(skybox_id);
+            sky_light_intensity = c_sky_light.intensity.max(0.0);
         }
         self.skybox_renderer.set_skybox(skybox);
+        self.sky_light_intensity = sky_light_intensity;
         for (_, mut mesh) in self.assets.meshes.lock_write() {
             mesh.instances.clear();
         }

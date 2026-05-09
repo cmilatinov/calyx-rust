@@ -8,12 +8,21 @@ use crate::render::render_utils::RenderUtils;
 use crate::render::{GizmoRenderer, LightManager, PipelineOptions, Shader};
 use egui::Color32;
 use egui_wgpu::wgpu;
+use egui_wgpu::wgpu::util::DeviceExt;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
+
+#[repr(C)]
+#[derive(Default, Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct EnvironmentUniform {
+    sky_light_intensity: f32,
+    _padding: [f32; 3],
+}
 
 pub struct MeshRenderer {
     scene_shader: Ref<Shader>,
     object_id_shader: Ref<Shader>,
+    environment_uniform_buffer: wgpu::Buffer,
     material_bind_group_cache: HashMap<AssetId, CachedMaterialBindGroups>,
 }
 
@@ -48,6 +57,13 @@ impl MeshRenderer {
                 .read()
                 .load::<Shader>("shaders/object_id")
                 .expect("missing object_id_shader"),
+            environment_uniform_buffer: context.render_context.device().create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("environment_uniform_buffer"),
+                    contents: bytemuck::cast_slice(&[EnvironmentUniform::default()]),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                },
+            ),
             material_bind_group_cache: Default::default(),
         }
     }
@@ -61,11 +77,13 @@ impl MeshRenderer {
         assets: &LockedAssetRenderState,
         defaults: MeshRenderDefaults<'_>,
         targets: MeshRenderTargets<'_>,
+        queue: &wgpu::Queue,
         light_manager: &LightManager,
         camera_uniform_buffer: &wgpu::Buffer,
         clear_color: Color32,
         pipeline_options: &PipelineOptions,
         skybox_id: Option<AssetId>,
+        sky_light_intensity: f32,
         draw_list: &[(AssetId, AssetId, AssetId, Range<u32>)],
         gizmo_renderer: Option<&mut GizmoRenderer>,
     ) {
@@ -89,6 +107,14 @@ impl MeshRenderer {
                 defaults.black_texture_cube,
                 defaults.black_texture_2d,
             ));
+        queue.write_buffer(
+            &self.environment_uniform_buffer,
+            0,
+            bytemuck::cast_slice(&[EnvironmentUniform {
+                sky_light_intensity,
+                ..Default::default()
+            }]),
+        );
         let scene_bind_group = self.scene_bind_group(
             device,
             camera_uniform_buffer,
@@ -196,6 +222,10 @@ impl MeshRenderer {
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: wgpu::BindingResource::Sampler(&brdf_map.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: self.environment_uniform_buffer.as_entire_binding(),
                 },
             ],
         })
