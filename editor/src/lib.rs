@@ -394,15 +394,31 @@ impl EditorApp {
     }
 
     fn open_interaction(&mut self) {
-        try_all!(
-            None => return;
-            let file = Self::pick_scene_open_file();
-            let scene = self.state.game.assets.registries.assets
-                .read()
-                .load_by_path(file.as_path())
-                .ok();
-        );
+        let Some(file) = Self::pick_scene_open_file() else {
+            return;
+        };
+        let scene = match self
+            .state
+            .game
+            .assets
+            .registries
+            .assets
+            .read()
+            .reload_by_path(file.as_path())
+        {
+            Ok(scene) => scene,
+            Err(error) => {
+                let message = format!("Failed to open scene {}: {}", file.display(), error);
+                log::error!("{message}");
+                eprintln!("{message}");
+                return;
+            }
+        };
         self.state.game.scenes.load_scene(scene.readonly());
+        let object_count = self.state.game.scenes.current_scene().objects().count();
+        let message = format!("Opened scene {} ({} objects)", file.display(), object_count);
+        log::info!("{message}");
+        eprintln!("{message}");
     }
 
     fn save_interaction(&mut self, save_as: bool) {

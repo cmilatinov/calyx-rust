@@ -609,6 +609,47 @@ mod tests {
     }
 
     #[test]
+    fn sandbox_scene_deserializes_objects() {
+        let assets = engine::test_support::test_asset_context_with_assets(vec![
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),
+            std::env::current_dir().unwrap().join("assets"),
+        ]);
+        let scene_ref = assets
+            .registries
+            .assets
+            .read()
+            .reload_by_path::<engine::scene::Scene>(
+                &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("assets")
+                    .join("scene.cxscene"),
+            )
+            .expect("sandbox scene should load");
+
+        let scene = scene_ref.read();
+        let object_count = scene.objects().count();
+        let named_object_count = scene
+            .objects()
+            .filter(|game_object| !scene.name(*game_object).is_empty())
+            .count();
+
+        assert!(
+            object_count > 0,
+            "sandbox scene should deserialize graph objects"
+        );
+        assert!(
+            named_object_count > 0,
+            "sandbox scene should deserialize ComponentID data"
+        );
+
+        let mut game = engine::context::GameContext::new(assets);
+        game.scenes.load_scene(scene_ref.readonly());
+        assert!(
+            game.scenes.current_scene().objects().count() > 0,
+            "scene manager should install deserialized scene objects"
+        );
+    }
+
+    #[test]
     fn camera_follow_only_moves_xz_axes() {
         let rotation = UnitQuaternion::from_euler_angles(std::f32::consts::FRAC_PI_2, 0.2, 0.0);
         let mut camera_transform =

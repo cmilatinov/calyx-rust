@@ -1,6 +1,9 @@
 #[cfg(test)]
 mod tests {
+    use crate::class_registry::ComponentRegistry;
     use crate::component::{ComponentCamera, ComponentID};
+    use crate::core::Ref;
+    use crate::reflect::type_registry::TypeRegistry;
     use crate::scene::{GameObject, Scene, SceneData, SiblingDir};
     use crate::test_utils::test_scene;
     use nalgebra_glm::{self as glm, Vec3};
@@ -677,5 +680,31 @@ mod tests {
             .expect("missing restored child");
 
         assert_eq!(restored.parent(restored_child), Some(restored_parent));
+    }
+
+    #[test]
+    fn scene_snapshot_preserves_core_ids_without_component_registry() {
+        let mut registries = crate::test_utils::test_registries();
+        let empty_types = Ref::new(TypeRegistry::new());
+        let empty_components = Ref::new(ComponentRegistry::new(&empty_types.read()));
+        registries.types = empty_types.readonly();
+        registries.components = empty_components.readonly();
+
+        let mut scene = registries.scene();
+        scene.create(
+            Some(ComponentID {
+                name: "Registry Independent".into(),
+                ..Default::default()
+            }),
+            None,
+        );
+
+        let restored = scene.snapshot().into_scene(&registries);
+        let names = restored
+            .objects()
+            .map(|game_object| restored.name(game_object))
+            .collect::<Vec<_>>();
+
+        assert_eq!(names, vec!["Registry Independent"]);
     }
 }

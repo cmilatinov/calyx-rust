@@ -313,6 +313,16 @@ impl AssetRegistry {
         self.load_by_id(id)
     }
 
+    /// Reloads an asset by filesystem path, replacing the cached value.
+    pub fn reload_by_path<A: Asset + TypeUuid>(&self, path: &Path) -> Result<Ref<A>, AssetError> {
+        let id = self.asset_id_from_path(path).ok_or_else(|| {
+            AssetError::NotFound
+                .with_path(path)
+                .with_type(A::asset_name())
+        })?;
+        self.reload_by_id(id)
+    }
+
     /// Loads an asset by filesystem path as a type-erased handle.
     pub fn load_dyn_by_path(&self, path: &Path) -> Result<Ref<dyn Asset>, AssetError> {
         let id = self
@@ -348,6 +358,26 @@ impl AssetRegistry {
 
         // Create ref
         self.asset_cache_mut().insert(id, asset.as_asset());
+        Ok(asset)
+    }
+
+    /// Reloads an asset by UUID as a typed handle, replacing the cached value.
+    pub fn reload_by_id<A: Asset + TypeUuid>(&self, id: Uuid) -> Result<Ref<A>, AssetError> {
+        let meta = self
+            .asset_meta_from_id(id)
+            .ok_or_else(|| AssetError::NotFound.with_source(format!("asset id {id}")))?;
+        if let Some(parent_id) = meta.parent {
+            self.load_dyn_by_id(parent_id)?;
+        }
+
+        let path = self
+            .asset_path(id, A::file_extensions())
+            .ok_or_else(|| AssetError::NotFound.with_type(A::asset_name()))?;
+        let asset = self.load_asset_file(id, &path)?;
+
+        self.asset_cache_mut().insert(id, asset.as_asset());
+        self.update_asset_dependencies(id, &path);
+        self.clear_reload_error(id);
         Ok(asset)
     }
 
