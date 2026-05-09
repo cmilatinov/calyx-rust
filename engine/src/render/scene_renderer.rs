@@ -713,6 +713,13 @@ impl SceneRenderer {
         self.finish_pending_object_id_readback(false);
     }
 
+    fn cancel_pending_object_id_readback(&mut self) {
+        if self.pending_object_id_readback.take().is_some() {
+            self.scene_object_id_readback.unmap();
+        }
+        self.completed_object_pick = None;
+    }
+
     fn finish_pending_object_id_readback(&mut self, wait: bool) {
         let device = self.asset_context.render_context.device();
         loop {
@@ -943,6 +950,7 @@ impl SceneRenderer {
         {
             return;
         }
+        self.cancel_pending_object_id_readback();
         (
             self.scene_texture,
             self.scene_texture_msaa,
@@ -955,7 +963,5 @@ impl SceneRenderer {
             height,
             self.options.samples,
         );
-        self.pending_object_id_readback = None;
-        self.completed_object_pick = None;
     }
 }
