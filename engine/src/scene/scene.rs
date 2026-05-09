@@ -179,18 +179,6 @@ impl From<(&ReadOnlyRegistryContext, SceneData)> for Scene {
         for (_, components) in value.components {
             let game_object = scene.new_game_object(None);
             for (component_id, data) in components {
-                if component_id == ComponentID::type_uuid() {
-                    if let Ok(component) = serde_json::from_value::<ComponentID>(data) {
-                        scene.bind_component(game_object, component);
-                    }
-                    continue;
-                }
-                if component_id == ComponentTransform::type_uuid() {
-                    if let Ok(component) = serde_json::from_value::<ComponentTransform>(data) {
-                        scene.bind_component(game_object, component);
-                    }
-                    continue;
-                }
                 try_all!(
                     None => continue;
                     let component = registry.component(component_id);
@@ -301,25 +289,6 @@ impl Scene {
         data: &mut SceneData,
         parent_filter: Option<&HashSet<GameObject>>,
     ) {
-        if let Some(entry) = self.entry(game_object) {
-            if let Ok(component) = entry.get_component::<ComponentID>() {
-                if let Ok(value) = serde_json::to_value(component) {
-                    data.components
-                        .entry(game_object_id)
-                        .or_default()
-                        .insert(ComponentID::type_uuid(), value);
-                }
-            }
-            if let Ok(component) = entry.get_component::<ComponentTransform>() {
-                if let Ok(value) = serde_json::to_value(component) {
-                    data.components
-                        .entry(game_object_id)
-                        .or_default()
-                        .insert(ComponentTransform::type_uuid(), value);
-                }
-            }
-        }
-
         'insert_hierarchy: {
             try_all!(
                 None => break 'insert_hierarchy;
