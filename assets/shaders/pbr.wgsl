@@ -20,8 +20,7 @@ struct MaterialProperties {
 };
 
 struct EnvironmentProperties {
-    sky_light_intensity: f32,
-    _padding: vec3f,
+    sky_light: vec4f,
 };
 
 @group(0) @binding(1)
@@ -134,12 +133,12 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     let kd = (1.0 - ks) * (1.0 - material.metallic);
 
     let irradiance =
-        environment.sky_light_intensity * textureSample(irradiance_texture, irradiance_sampler, n).rgb;
+        environment.sky_light.x * textureSample(irradiance_texture, irradiance_sampler, n).rgb;
     let diffuse = kd * irradiance * albedo.rgb;
 
     let r = reflect(-v, n);
     let prefiltered_color =
-        environment.sky_light_intensity *
+        environment.sky_light.x *
         textureSampleLevel(
             prefilter_texture,
             prefilter_sampler,
