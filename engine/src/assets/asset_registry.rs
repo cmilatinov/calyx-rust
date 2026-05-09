@@ -970,6 +970,11 @@ impl AssetRegistry {
         self.load::<Texture>("textures/missing").ok()
     }
 
+    /// Returns the built-in white texture asset when available.
+    pub fn white_texture(&self) -> Option<Ref<Texture>> {
+        self.load::<Texture>("textures/white").ok()
+    }
+
     /// Returns or creates a 2D black fallback texture.
     pub fn black_texture_2d(&self) -> Option<Ref<Texture>> {
         self.load_or_create(Self::BLACK_TEXTURE_2D, || {

@@ -37,7 +37,10 @@ mod tests {
             texture.err()
         );
         let texture = texture.unwrap();
-        assert!(texture.read().descriptor.mip_level_count > 1);
+        let texture = texture.read();
+        assert_eq!(texture.descriptor.size.width, 1);
+        assert_eq!(texture.descriptor.size.height, 1);
+        assert_eq!(texture.descriptor.mip_level_count, 1);
     }
 
     #[test]

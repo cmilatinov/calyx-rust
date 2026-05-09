@@ -28,7 +28,7 @@ pub struct MeshRenderTargets<'a> {
 }
 
 pub struct MeshRenderDefaults<'a> {
-    pub missing_texture: Ref<Texture>,
+    pub material_texture: Ref<Texture>,
     pub black_texture_2d: &'a Texture,
     pub black_texture_cube: &'a Texture,
 }
@@ -72,7 +72,7 @@ impl MeshRenderer {
         let material_bind_groups = self.build_material_bind_groups(
             device,
             asset_context,
-            defaults.missing_texture,
+            defaults.material_texture,
             assets,
         );
         let (irradiance_map, prefilter_map, brdf_map) = skybox_id
@@ -333,8 +333,8 @@ mod tests {
             .load::<Shader>("shaders/pbr")
             .expect("missing pbr shader");
         let default_texture = asset_registry
-            .missing_texture()
-            .expect("missing default texture");
+            .white_texture()
+            .expect("missing default material texture");
         drop(asset_registry);
 
         let material = Material::from_shader(&read_only_context, shader);

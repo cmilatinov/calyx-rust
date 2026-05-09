@@ -95,7 +95,7 @@ struct SceneRendererAssets {
     screen_space_quad: Ref<Mesh>,
     black_texture_2d: Ref<Texture>,
     black_texture_cube: Ref<Texture>,
-    missing_texture: Ref<Texture>,
+    white_texture: Ref<Texture>,
 }
 
 /// High-level scene renderer that prepares assets and renders the scene into an
@@ -182,7 +182,7 @@ impl SceneRenderer {
         let screen_space_quad = asset_registry.screen_space_quad().unwrap();
         let black_texture_2d = asset_registry.black_texture_2d().unwrap();
         let black_texture_cube = asset_registry.black_texture_cube().unwrap();
-        let missing_texture = asset_registry.missing_texture().unwrap();
+        let white_texture = asset_registry.white_texture().unwrap();
 
         Self {
             asset_context: context.clone(),
@@ -191,7 +191,7 @@ impl SceneRenderer {
                 screen_space_quad,
                 black_texture_2d,
                 black_texture_cube,
-                missing_texture,
+                white_texture,
             },
             options,
             scene_texture_msaa,
@@ -289,7 +289,7 @@ impl SceneRenderer {
                 &self.asset_context,
                 &assets,
                 MeshRenderDefaults {
-                    missing_texture: self.default_assets.missing_texture.clone(),
+                    material_texture: self.default_assets.white_texture.clone(),
                     black_texture_2d: &black_texture_2d,
                     black_texture_cube: &black_texture_cube,
                 },
@@ -589,7 +589,7 @@ impl SceneRenderer {
             material.collect_textures(
                 asset_context,
                 textures,
-                self.default_assets.missing_texture.clone(),
+                self.default_assets.white_texture.clone(),
             );
         }
         self.draw_list.sort_by_key(
