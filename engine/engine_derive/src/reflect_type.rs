@@ -110,6 +110,8 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
         quote! {
             inventory::submit!(
                 engine::ReflectRegistrationFn {
+                    crate_name: env!("CARGO_PKG_NAME"),
+                    module_path: module_path!(),
                     name: stringify!(#name),
                     function: <#name as engine::reflect::ReflectedType>::register
                 }
