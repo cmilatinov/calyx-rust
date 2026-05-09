@@ -118,6 +118,7 @@
       },
       "21b467c0-9409-4a7f-b750-418809609eb1": {
         "turret": "fd0e2a37-e81e-4b18-af5d-b71c0b2a6825",
+        "barrel": "a4e9c1eb-a8bc-4b3f-b3d6-d588fe769a76",
         "camera": "9985d281-6c72-4fd1-83e2-1abf2a495f77",
         "crosshair": "36fd779f-b09b-4912-83de-16fce6365981",
         "move_speed": 7.0,
@@ -257,13 +258,85 @@
         "fov": 1.2217305,
         "near_plane": 0.1
       }
+    },
+    "ff3e62d5-9f0b-4e43-8f42-81744fdc8a91": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "ff3e62d5-9f0b-4e43-8f42-81744fdc8a91",
+        "name": "Target A",
+        "visible": true
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            -3.0,
+            0.5,
+            12.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        }
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32",
+        "material": "c35634f8-fdee-c217-bc6b-22ab01eac817"
+      },
+      "f2c31eb5-c999-4125-9cb0-a72a238eca2e": {
+        "hit_radius": 1.0,
+        "hit_count": 0
+      }
+    },
+    "27b9ce07-f502-4481-a0c4-48c24358596d": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "27b9ce07-f502-4481-a0c4-48c24358596d",
+        "name": "Target B",
+        "visible": true
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            3.0,
+            0.5,
+            16.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        }
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32",
+        "material": "c35634f8-fdee-c217-bc6b-22ab01eac817"
+      },
+      "f2c31eb5-c999-4125-9cb0-a72a238eca2e": {
+        "hit_radius": 1.0,
+        "hit_count": 0
+      }
     }
   },
   "hierarchy": {
     "9a71cfab-2e0b-486a-83aa-37f1caebc71a": [
       "36fd779f-b09b-4912-83de-16fce6365981",
       "24b73614-e397-4e80-a669-3e64b910c53a",
-      "1d181f5b-1544-4f00-a19e-6ba14c57288a"
+      "1d181f5b-1544-4f00-a19e-6ba14c57288a",
+      "ff3e62d5-9f0b-4e43-8f42-81744fdc8a91",
+      "27b9ce07-f502-4481-a0c4-48c24358596d"
     ],
     "1d181f5b-1544-4f00-a19e-6ba14c57288a": [
       "a0e5ad62-7bb8-4b12-9160-c2bd84f5d4dd",
