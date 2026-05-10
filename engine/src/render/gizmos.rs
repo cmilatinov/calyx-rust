@@ -26,6 +26,7 @@ pub struct Gizmos<'a> {
     pub(crate) cube_list: &'a mut Vec<GizmoInstance>,
     pub(crate) lines_mesh: &'a mut Mesh,
     pub(crate) points_mesh: &'a mut Mesh,
+    pub(crate) icons_mesh: &'a mut Mesh,
 }
 
 impl Gizmos<'_> {
@@ -142,33 +143,26 @@ impl Gizmos<'_> {
 
         let right = safe_normalize(self.camera_transform.right(), vec3(1.0, 0.0, 0.0));
         let up = safe_normalize(self.camera_transform.up(), vec3(0.0, 1.0, 0.0));
-        match icon {
-            GizmoIcon::Camera => {
-                let left = *position - right * half;
-                let right_edge = *position + right * half;
-                let top = *position + up * half;
-                let bottom = *position - up * half;
-                let lens = *position + right * (half * 1.35);
-                self.line(&left, &top);
-                self.line(&top, &right_edge);
-                self.line(&right_edge, &bottom);
-                self.line(&bottom, &left);
-                self.line(&(right_edge + up * (half * 0.35)), &lens);
-                self.line(&lens, &(right_edge - up * (half * 0.35)));
-            }
-            GizmoIcon::Light => {
-                let radius = half * 0.55;
-                for i in 0..8 {
-                    let a = (i as f32) * std::f32::consts::TAU / 8.0;
-                    let b = ((i + 1) as f32) * std::f32::consts::TAU / 8.0;
-                    let start = *position + right * (a.cos() * radius) + up * (a.sin() * radius);
-                    let end = *position + right * (b.cos() * radius) + up * (b.sin() * radius);
-                    self.line(&start, &end);
-                }
-                self.line(&(*position - right * half), &(*position + right * half));
-                self.line(&(*position - up * half), &(*position + up * half));
-            }
-        }
+        let min = *position - right * half - up * half;
+        let max_x = *position + right * half - up * half;
+        let max = *position + right * half + up * half;
+        let min_x = *position - right * half + up * half;
+        let [uv_min, uv_max] = icon_uv_rect(icon);
+        let color = self.gizmo_color();
+        let base = self.icons_mesh.vertices.len() as u32;
+
+        self.icons_mesh.vertices.extend([min, max_x, max, min_x]);
+        self.icons_mesh.uvs[0].extend([
+            vec2(uv_min.x, uv_max.y),
+            uv_max,
+            vec2(uv_max.x, uv_min.y),
+            uv_min,
+        ]);
+        self.icons_mesh.uvs[1].extend(iter::repeat(color.xy()).take(4));
+        self.icons_mesh.uvs[2].extend(iter::repeat(vec2(color.z, color.w)).take(4));
+        self.icons_mesh
+            .indices
+            .extend([base, base + 1, base + 2, base + 2, base + 3, base]);
     }
 
     /// Sets the active gizmo color.
@@ -210,5 +204,12 @@ fn safe_normalize(value: Vec3, fallback: Vec3) -> Vec3 {
         fallback
     } else {
         glm::normalize(&value)
+    }
+}
+
+fn icon_uv_rect(icon: GizmoIcon) -> [glm::Vec2; 2] {
+    match icon {
+        GizmoIcon::Camera => [vec2(0.0, 0.0), vec2(0.5, 1.0)],
+        GizmoIcon::Light => [vec2(0.5, 0.0), vec2(1.0, 1.0)],
     }
 }
