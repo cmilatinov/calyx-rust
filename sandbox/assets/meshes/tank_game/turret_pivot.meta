@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "2ede3d56-dd0f-5aab-ae0d-b83db8f18ede",
+    "name": "meshes/tank_game/turret_pivot",
+    "display_name": "turret_pivot",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}

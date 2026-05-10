@@ -78,7 +78,7 @@ impl MaterialInspector {
                 ui.checkbox(bool, "");
             }
             ShaderVariableValue::Color(ref mut color) => {
-                ui.color_edit_button_srgba(color);
+                ui.color_edit_button_rgba_unmultiplied(color);
             }
             ShaderVariableValue::Int(ref mut int) => {
                 ui.add(egui::DragValue::new(int));

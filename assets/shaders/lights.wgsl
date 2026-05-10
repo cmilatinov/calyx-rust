@@ -2,6 +2,7 @@ struct PointLight {
     position: vec3f,
     radius: f32,
     color: vec3f,
+    intensity: f32,
 };
 
 struct PointLightStorage {
@@ -15,6 +16,7 @@ var<storage, read> point_lights: PointLightStorage;
 struct DirectionalLight {
     direction: vec3f,
     color: vec3f,
+    intensity: f32,
 };
 
 struct DirectionalLightStorage {

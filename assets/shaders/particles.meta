@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "b452e3c0-a587-f161-a076-0edd4e6e5060",
+    "name": "shaders/particles",
+    "display_name": "particles",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

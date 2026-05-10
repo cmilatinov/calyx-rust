@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "3320b997-505d-3203-7529-7e9dca148584",
+    "name": "prefabs/tank",
+    "display_name": "tank",
+    "type_uuid": "960f1d60-3ad4-4f1d-92d3-cceb0e0623d7"
+  },
+  "inner": []
+}

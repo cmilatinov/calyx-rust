@@ -1,7 +1,6 @@
 use crate::error::BoxedError;
 use crate::net::message::{GameChannel, GameMessage};
 use crate::net::{MessageQueue, ServerEvent};
-use log::{error, info};
 use renet::{ClientId, ConnectionConfig, RenetServer};
 use renet_netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig};
 use std::net::{SocketAddr, UdpSocket};
@@ -61,16 +60,16 @@ impl Server {
 
         server.update(duration);
         if let Err(err) = transport.update(duration, server) {
-            error!("Error updating server transport: {:?}", err);
+            log::error!("Error updating server transport: {:?}", err);
         }
 
         while let Some(event) = server.get_event() {
             match &event {
                 renet::ServerEvent::ClientConnected { client_id } => {
-                    info!("Client connected: {}", client_id);
+                    log::info!("Client connected: {}", client_id);
                 }
                 renet::ServerEvent::ClientDisconnected { client_id, reason } => {
-                    info!("Client disconnected: {}, reason: {}", client_id, reason);
+                    log::info!("Client disconnected: {}, reason: {}", client_id, reason);
                 }
             }
             queue.queue_message(GameMessage::ServerEvent(match event {
@@ -94,7 +93,11 @@ impl Server {
                                 bincode::config::standard(),
                             )
                             .map_err(|e| {
-                                error!("Failed to decode message from client {}: {}", client_id, e);
+                                log::error!(
+                                    "Failed to decode message from client {}: {}",
+                                    client_id,
+                                    e
+                                );
                                 e
                             })
                             .ok()

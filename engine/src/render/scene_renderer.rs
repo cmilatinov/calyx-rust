@@ -18,7 +18,6 @@ use egui::Color32;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::{wgpu, RenderState};
 use legion::{Entity, IntoQuery};
-use log::warn;
 use nalgebra_glm as glm;
 use nalgebra_glm::Mat4;
 use rapier3d::pipeline::DebugRenderPipeline;
@@ -95,7 +94,7 @@ struct SceneRendererAssets {
     screen_space_quad: Ref<Mesh>,
     black_texture_2d: Ref<Texture>,
     black_texture_cube: Ref<Texture>,
-    missing_texture: Ref<Texture>,
+    white_texture: Ref<Texture>,
 }
 
 /// High-level scene renderer that prepares assets and renders the scene into an
@@ -127,6 +126,7 @@ pub struct SceneRenderer {
     completed_object_pick: Option<CompletedObjectPick>,
     selected_game_object: Option<Uuid>,
     hovered_game_object: Option<Uuid>,
+    sky_light_intensity: f32,
 }
 
 impl SceneRenderer {
@@ -140,12 +140,20 @@ impl SceneRenderer {
         let asset_registry = context.registries.assets.read();
         let device = &render_state.device;
         let (width, height) = if initial_size.0 == 0 || initial_size.1 == 0 {
-            warn!("SceneRenderer created before a valid render size was available; using 1x1 initial textures");
+            log::warn!("SceneRenderer created before a valid render size was available; using 1x1 initial textures");
             (1, 1)
         } else {
             initial_size
         };
         options.samples = options.samples.max(1);
+        log::info!(
+            "Creating scene renderer: size={}x{}, samples={}, grid={}, gizmos={}",
+            width,
+            height,
+            options.samples,
+            options.grid,
+            options.gizmos
+        );
 
         // Textures
         let (
@@ -182,7 +190,7 @@ impl SceneRenderer {
         let screen_space_quad = asset_registry.screen_space_quad().unwrap();
         let black_texture_2d = asset_registry.black_texture_2d().unwrap();
         let black_texture_cube = asset_registry.black_texture_cube().unwrap();
-        let missing_texture = asset_registry.missing_texture().unwrap();
+        let white_texture = asset_registry.white_texture().unwrap();
 
         Self {
             asset_context: context.clone(),
@@ -191,7 +199,7 @@ impl SceneRenderer {
                 screen_space_quad,
                 black_texture_2d,
                 black_texture_cube,
-                missing_texture,
+                white_texture,
             },
             options,
             scene_texture_msaa,
@@ -217,6 +225,7 @@ impl SceneRenderer {
             completed_object_pick: None,
             selected_game_object: None,
             hovered_game_object: None,
+            sky_light_intensity: 0.0,
         }
     }
 
@@ -289,7 +298,7 @@ impl SceneRenderer {
                 &self.asset_context,
                 &assets,
                 MeshRenderDefaults {
-                    missing_texture: self.default_assets.missing_texture.clone(),
+                    material_texture: self.default_assets.white_texture.clone(),
                     black_texture_2d: &black_texture_2d,
                     black_texture_cube: &black_texture_cube,
                 },
@@ -297,11 +306,13 @@ impl SceneRenderer {
                     color: &self.scene_texture_msaa,
                     depth: &self.scene_depth_texture,
                 },
+                queue,
                 &self.light_manager,
                 &self.camera_uniform_buffer,
                 self.options.clear_color,
                 &options,
                 self.skybox_renderer.skybox_id(),
+                self.sky_light_intensity,
                 &draw_list,
                 self.options.gizmos.then_some(&mut self.gizmo_renderer),
             );
@@ -552,6 +563,7 @@ impl SceneRenderer {
         }
         let mut query = <&ComponentSkyLight>::query();
         let mut skybox = None;
+        let mut sky_light_intensity = 0.0;
         for c_sky_light in query.iter(world).filter(|s| s.active) {
             let Some(skybox_ref) = c_sky_light.skybox.get_ref(&self.asset_context.registries)
             else {
@@ -571,8 +583,10 @@ impl SceneRenderer {
                 .entry(self.default_assets.screen_space_quad.id())
                 .or_insert(self.default_assets.screen_space_quad.clone());
             skybox = Some(skybox_id);
+            sky_light_intensity = c_sky_light.intensity.max(0.0);
         }
         self.skybox_renderer.set_skybox(skybox);
+        self.sky_light_intensity = sky_light_intensity;
         for (_, mut mesh) in self.assets.meshes.lock_write() {
             mesh.instances.clear();
         }
@@ -589,7 +603,7 @@ impl SceneRenderer {
             material.collect_textures(
                 asset_context,
                 textures,
-                self.default_assets.missing_texture.clone(),
+                self.default_assets.white_texture.clone(),
             );
         }
         self.draw_list.sort_by_key(
@@ -731,6 +745,7 @@ impl SceneRenderer {
             match pending.receiver.try_recv() {
                 Ok(Ok(())) => break,
                 Ok(Err(_)) | Err(mpsc::TryRecvError::Disconnected) => {
+                    log::warn!("Object id readback failed or disconnected");
                     self.pending_object_id_readback = None;
                     self.completed_object_pick = None;
                     return;
@@ -950,6 +965,13 @@ impl SceneRenderer {
         {
             return;
         }
+        log::trace!(
+            "Resizing scene renderer textures from {}x{} to {}x{}",
+            self.scene_texture.descriptor.size.width,
+            self.scene_texture.descriptor.size.height,
+            width,
+            height
+        );
         self.cancel_pending_object_id_readback();
         (
             self.scene_texture,

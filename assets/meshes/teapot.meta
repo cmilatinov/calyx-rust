@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "f3848e76-a7b8-d804-768d-876eb4bc3b3d",
+    "name": "meshes/teapot",
+    "display_name": "teapot",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}

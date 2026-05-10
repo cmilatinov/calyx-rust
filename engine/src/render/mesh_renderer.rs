@@ -8,12 +8,20 @@ use crate::render::render_utils::RenderUtils;
 use crate::render::{GizmoRenderer, LightManager, PipelineOptions, Shader};
 use egui::Color32;
 use egui_wgpu::wgpu;
+use egui_wgpu::wgpu::util::DeviceExt;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
+
+#[repr(C)]
+#[derive(Default, Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct EnvironmentUniform {
+    sky_light: [f32; 4],
+}
 
 pub struct MeshRenderer {
     scene_shader: Ref<Shader>,
     object_id_shader: Ref<Shader>,
+    environment_uniform_buffer: wgpu::Buffer,
     material_bind_group_cache: HashMap<AssetId, CachedMaterialBindGroups>,
 }
 
@@ -28,7 +36,7 @@ pub struct MeshRenderTargets<'a> {
 }
 
 pub struct MeshRenderDefaults<'a> {
-    pub missing_texture: Ref<Texture>,
+    pub material_texture: Ref<Texture>,
     pub black_texture_2d: &'a Texture,
     pub black_texture_cube: &'a Texture,
 }
@@ -48,6 +56,13 @@ impl MeshRenderer {
                 .read()
                 .load::<Shader>("shaders/object_id")
                 .expect("missing object_id_shader"),
+            environment_uniform_buffer: context.render_context.device().create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("environment_uniform_buffer"),
+                    contents: bytemuck::cast_slice(&[EnvironmentUniform::default()]),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                },
+            ),
             material_bind_group_cache: Default::default(),
         }
     }
@@ -61,18 +76,20 @@ impl MeshRenderer {
         assets: &LockedAssetRenderState,
         defaults: MeshRenderDefaults<'_>,
         targets: MeshRenderTargets<'_>,
+        queue: &wgpu::Queue,
         light_manager: &LightManager,
         camera_uniform_buffer: &wgpu::Buffer,
         clear_color: Color32,
         pipeline_options: &PipelineOptions,
         skybox_id: Option<AssetId>,
+        sky_light_intensity: f32,
         draw_list: &[(AssetId, AssetId, AssetId, Range<u32>)],
         gizmo_renderer: Option<&mut GizmoRenderer>,
     ) {
         let material_bind_groups = self.build_material_bind_groups(
             device,
             asset_context,
-            defaults.missing_texture,
+            defaults.material_texture,
             assets,
         );
         let (irradiance_map, prefilter_map, brdf_map) = skybox_id
@@ -89,6 +106,13 @@ impl MeshRenderer {
                 defaults.black_texture_cube,
                 defaults.black_texture_2d,
             ));
+        queue.write_buffer(
+            &self.environment_uniform_buffer,
+            0,
+            bytemuck::cast_slice(&[EnvironmentUniform {
+                sky_light: [sky_light_intensity, 0.0, 0.0, 0.0],
+            }]),
+        );
         let scene_bind_group = self.scene_bind_group(
             device,
             camera_uniform_buffer,
@@ -196,6 +220,10 @@ impl MeshRenderer {
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: wgpu::BindingResource::Sampler(&brdf_map.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: self.environment_uniform_buffer.as_entire_binding(),
                 },
             ],
         })
@@ -333,8 +361,8 @@ mod tests {
             .load::<Shader>("shaders/pbr")
             .expect("missing pbr shader");
         let default_texture = asset_registry
-            .missing_texture()
-            .expect("missing default texture");
+            .white_texture()
+            .expect("missing default material texture");
         drop(asset_registry);
 
         let material = Material::from_shader(&read_only_context, shader);

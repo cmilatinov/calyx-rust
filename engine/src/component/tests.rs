@@ -90,6 +90,7 @@ mod tests {
             go,
             ComponentPointLight {
                 radius: 25.0,
+                intensity: 1.25,
                 ..Default::default()
             },
         );
@@ -196,8 +197,8 @@ mod tests {
             Some((false, 0.42))
         );
         assert_eq!(
-            restored.read_component::<ComponentPointLight, _, _>(rgo, |c| c.radius),
-            Some(25.0)
+            restored.read_component::<ComponentPointLight, _, _>(rgo, |c| (c.radius, c.intensity)),
+            Some((25.0, 1.25))
         );
         assert_eq!(
             restored.read_component::<ComponentSkyLight, _, _>(rgo, |c| (c.active, c.intensity)),

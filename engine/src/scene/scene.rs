@@ -1,7 +1,6 @@
 use bimap::BiHashMap;
 use legion::world::{Entry, EntryRef};
 use legion::{Entity, EntityStore, IntoQuery, World};
-use log::trace;
 use nalgebra_glm::Mat4;
 use serde::de::DeserializeSeed;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -418,7 +417,7 @@ impl Scene {
                         let id = field.get::<GameObjectRef>(&*instance).map(|r| r.id());
                         let target_id = id_mapping.get_by_left(&id);
                     );
-                    trace!("{} - {}", name, field.name);
+                    log::trace!("{} - {}", name, field.name);
                     field
                         .set(&mut *instance, GameObjectRef::new(*target_id))
                         .unwrap();

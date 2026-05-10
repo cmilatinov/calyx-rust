@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "4d796fc9-5fbe-5d29-9b77-0d192eb6d5d3",
+    "name": "meshes/tank_game/wheels_left",
+    "display_name": "wheels_left",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}

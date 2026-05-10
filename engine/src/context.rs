@@ -67,11 +67,22 @@ impl AssetContext {
         cc: &eframe::CreationContext,
         project_path: impl Into<PathBuf>,
     ) -> Result<Self, BoxedError> {
+        let project_path = project_path.into();
+        log::info!("Creating asset context for {}", project_path.display());
         let render_context = Arc::new(RenderContext::from_eframe(cc));
         let mut type_registry = TypeRegistry::new();
+        let mut registration_count = 0usize;
         for f in inventory::iter::<ReflectRegistrationFn>() {
+            log::trace!(
+                "Registering reflected types from {}::{} ({})",
+                f.crate_name,
+                f.module_path,
+                f.name
+            );
             (f.function)(&mut type_registry);
+            registration_count += 1;
         }
+        log::info!("Applied {registration_count} reflection registration callbacks");
         let type_registry = Ref::new(type_registry);
         let component_registry = Ref::new(ComponentRegistry::new(&type_registry.read()));
         let asset_registry = AssetRegistry::new(

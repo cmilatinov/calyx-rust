@@ -63,6 +63,14 @@ impl Asset for Texture {
             depth_or_array_layers: 1,
         };
         let mip_level_count = Self::mip_level_count(texture_size.width, texture_size.height);
+        log::info!(
+            "Loaded texture {} ({}x{}, {:?}, {} mips)",
+            path.display(),
+            texture_size.width,
+            texture_size.height,
+            texture_format,
+            mip_level_count
+        );
         let texture = Self::new(
             game.render_context.clone(),
             &wgpu::TextureDescriptor {
@@ -247,6 +255,11 @@ impl Texture {
         let mut src_view = self.create_mip_view(0);
 
         for mip_level in 1..self.descriptor.mip_level_count {
+            log::trace!(
+                "Generating 2D mip level {} for texture {:?}",
+                mip_level,
+                self.descriptor.label
+            );
             let dst_view = self.create_mip_view(mip_level);
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("texture_mip_bind_group"),

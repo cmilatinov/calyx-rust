@@ -23,13 +23,9 @@ impl AssetInspector for PrefabInspector {
 
     fn show_context_menu(&self, ui: &mut Ui, game: &mut GameContext, asset_id: Uuid) {
         if ui.button("Import").clicked() {
-            let Ok(asset) = game
-                .assets
-                .registries
-                .assets
-                .read()
-                .load_dyn_by_id(asset_id)
-            else {
+            let asset_registry = game.assets.registries.assets.read();
+            let prefab_meta = asset_registry.asset_meta_from_id(asset_id);
+            let Ok(asset) = asset_registry.load_dyn_by_id(asset_id) else {
                 ui.close_menu();
                 return;
             };
@@ -38,9 +34,24 @@ impl AssetInspector for PrefabInspector {
                 return;
             };
             let prefab = prefab_ref.read();
-            game.scenes
+            drop(asset_registry);
+            if let Some(game_object) = game
+                .scenes
                 .simulation_scene_mut()
-                .instantiate_prefab(&prefab, None);
+                .instantiate_prefab(&prefab, None)
+            {
+                let scene = game.scenes.simulation_scene();
+                log::info!(
+                    "Instantiated prefab: prefab={} asset_id={} root_object={} ({})",
+                    prefab_meta
+                        .as_ref()
+                        .map(|meta| meta.display_name.as_str())
+                        .unwrap_or("<unknown>"),
+                    asset_id,
+                    scene.name(game_object),
+                    scene.uuid(game_object)
+                );
+            }
             ui.close_menu();
         }
     }

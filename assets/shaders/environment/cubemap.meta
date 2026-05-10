@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "a936702a-94a6-98ec-6d86-aa0522512b5f",
+    "name": "shaders/environment/cubemap",
+    "display_name": "cubemap",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

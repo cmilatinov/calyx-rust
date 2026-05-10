@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "a330e477-435e-5208-8040-e1857c4fe324",
+    "name": "meshes/tank_game/turret_head",
+    "display_name": "turret_head",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}

@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "d19899a9-da22-448b-6b0c-4b35c4b289aa",
+    "name": "meshes/plane",
+    "display_name": "plane",
+    "type_uuid": "00000000-0000-0000-0000-000000000000"
+  },
+  "inner": []
+}

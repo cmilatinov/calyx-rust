@@ -246,6 +246,13 @@ impl Asset for Mesh {
                 .with_path(path)
                 .with_type(Self::asset_name()),
         )?;
+        log::info!(
+            "Loaded mesh {} ({} vertices, {} faces, {} bones)",
+            path.display(),
+            mesh.vertices.len(),
+            mesh.faces.len(),
+            mesh.bones.len()
+        );
         Ok(LoadedAsset::new(Mesh::from_russimp_mesh(
             &game.render_context,
             mesh,

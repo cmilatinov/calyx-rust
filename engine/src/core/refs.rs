@@ -127,7 +127,7 @@ impl<T: TypeName> TypeName for Ref<T> {
     }
 
     fn type_name_short() -> &'static str {
-        T::type_name()
+        T::type_name_short()
     }
 }
 
@@ -181,7 +181,7 @@ impl<T: ?Sized + TypeName> TypeName for ReadOnlyRef<T> {
     }
 
     fn type_name_short() -> &'static str {
-        T::type_name()
+        T::type_name_short()
     }
 }
 

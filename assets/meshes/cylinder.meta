@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "e26dd487-ca0d-fac5-b703-542d2a97d71d",
+    "name": "meshes/cylinder",
+    "display_name": "cylinder",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}

@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "91a0e86e-1a02-4f8f-85ca-c14d5ebf7570",
+    "name": "shaders/object_id",
+    "display_name": "object_id",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

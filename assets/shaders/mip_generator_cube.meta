@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "9bb8f6fe-9ce6-453b-9704-e69cf9da4af5",
+    "name": "shaders/mip_generator_cube",
+    "display_name": "mip_generator_cube",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

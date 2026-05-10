@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "c8453e1c-b6eb-6618-1d88-140501b8b11d",
+    "name": "shaders/environment/prefilter",
+    "display_name": "prefilter",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

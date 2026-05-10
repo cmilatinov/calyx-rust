@@ -5,7 +5,6 @@ edition = "2021"
 
 [features]
 default = []
-log_file = []
 
 [lib]
 crate-type = ["rlib"]
@@ -14,6 +13,7 @@ crate-type = ["rlib"]
 engine_derive = { path = "./engine_derive" }
 bimap.workspace = true
 bytemuck.workspace = true
+chrono.workspace = true
 common-path.workspace = true
 dunce.workspace = true
 eframe.workspace = true
@@ -52,8 +52,7 @@ lerp.workspace = true
 typed-builder.workspace = true
 rand.workspace = true
 log.workspace = true
-dirs.workspace = true
-env_logger.workspace = true
+env_filter.workspace = true
 russimp-ng.workspace = true
 pollster.workspace = true
 

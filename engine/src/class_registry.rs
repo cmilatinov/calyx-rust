@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::ops::Deref;
 
-use log::warn;
 use uuid::Uuid;
 
 use crate::component::{
@@ -70,16 +69,16 @@ impl ComponentRegistry {
             ReflectTypeUuidDynamic
         )) {
             let Some(meta_default) = type_registry.trait_meta::<ReflectDefault>(type_id) else {
-                warn!("Skipping component {type_id}: missing ReflectDefault metadata");
+                log::warn!("Skipping component {type_id}: missing ReflectDefault metadata");
                 continue;
             };
             let Some(meta_component) = type_registry.trait_meta::<ReflectComponent>(type_id) else {
-                warn!("Skipping component {type_id}: missing ReflectComponent metadata");
+                log::warn!("Skipping component {type_id}: missing ReflectComponent metadata");
                 continue;
             };
             let instance = meta_default.default();
             let Ok(component) = meta_component.get_boxed(instance) else {
-                warn!("Skipping component {type_id}: failed to bind Component metadata");
+                log::warn!("Skipping component {type_id}: failed to bind Component metadata");
                 continue;
             };
             self.components.insert(type_id, component);
@@ -90,7 +89,9 @@ impl ComponentRegistry {
                 if let Ok(updater) = meta_update.get_boxed(instance) {
                     self.update_components.push((type_id, updater));
                 } else {
-                    warn!("Skipping update hook for component {type_id}: failed to bind metadata");
+                    log::warn!(
+                        "Skipping update hook for component {type_id}: failed to bind metadata"
+                    );
                 }
             }
 
@@ -100,7 +101,9 @@ impl ComponentRegistry {
                 if let Ok(resetter) = meta_reset.get_boxed(instance) {
                     self.reset_components.insert(type_id, resetter);
                 } else {
-                    warn!("Skipping reset hook for component {type_id}: failed to bind metadata");
+                    log::warn!(
+                        "Skipping reset hook for component {type_id}: failed to bind metadata"
+                    );
                 }
             }
         }

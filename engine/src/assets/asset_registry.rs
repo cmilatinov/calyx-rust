@@ -1,6 +1,5 @@
 use eframe::wgpu;
 use glob::glob;
-use log::warn;
 use nalgebra_glm::{vec2, vec3};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use path_absolutize::Absolutize;
@@ -146,6 +145,7 @@ impl AssetRegistry {
         let asset_paths = [path.clone(), assets_path];
         let mut watcher = RecommendedWatcher::new(tx, Config::default()).map_err(Box::new)?;
         for path in asset_paths.iter() {
+            log::info!("Watching asset root {}", path.display());
             watcher
                 .watch(path, RecursiveMode::Recursive)
                 .map_err(Box::new)?;
@@ -313,6 +313,16 @@ impl AssetRegistry {
         self.load_by_id(id)
     }
 
+    /// Reloads an asset by filesystem path, replacing the cached value.
+    pub fn reload_by_path<A: Asset + TypeUuid>(&self, path: &Path) -> Result<Ref<A>, AssetError> {
+        let id = self.asset_id_from_path(path).ok_or_else(|| {
+            AssetError::NotFound
+                .with_path(path)
+                .with_type(A::asset_name())
+        })?;
+        self.reload_by_id(id)
+    }
+
     /// Loads an asset by filesystem path as a type-erased handle.
     pub fn load_dyn_by_path(&self, path: &Path) -> Result<Ref<dyn Asset>, AssetError> {
         let id = self
@@ -344,10 +354,39 @@ impl AssetRegistry {
         let path = self
             .asset_path(id, A::file_extensions())
             .ok_or_else(|| AssetError::NotFound.with_type(A::asset_name()))?;
+        log::trace!(
+            "Loading asset {} ({}) from {}",
+            id,
+            A::asset_name(),
+            path.display()
+        );
         let asset = self.load_asset_file(id, &path)?;
 
         // Create ref
         self.asset_cache_mut().insert(id, asset.as_asset());
+        log::trace!("Loaded asset {} from {}", id, path.display());
+        Ok(asset)
+    }
+
+    /// Reloads an asset by UUID as a typed handle, replacing the cached value.
+    pub fn reload_by_id<A: Asset + TypeUuid>(&self, id: Uuid) -> Result<Ref<A>, AssetError> {
+        log::trace!("Reloading asset {} ({})", id, A::asset_name());
+        let meta = self
+            .asset_meta_from_id(id)
+            .ok_or_else(|| AssetError::NotFound.with_source(format!("asset id {id}")))?;
+        if let Some(parent_id) = meta.parent {
+            self.load_dyn_by_id(parent_id)?;
+        }
+
+        let path = self
+            .asset_path(id, A::file_extensions())
+            .ok_or_else(|| AssetError::NotFound.with_type(A::asset_name()))?;
+        let asset = self.load_asset_file(id, &path)?;
+
+        self.asset_cache_mut().insert(id, asset.as_asset());
+        self.update_asset_dependencies(id, &path);
+        self.clear_reload_error(id);
+        log::info!("Reloaded asset {} from {}", id, path.display());
         Ok(asset)
     }
 
@@ -374,11 +413,13 @@ impl AssetRegistry {
         let ctor = ctors.get(&meta.type_uuid).ok_or_else(|| {
             AssetError::NotFound.with_source(format!("constructor for type {}", meta.type_uuid))
         })?;
+        log::trace!("Loading dynamic asset {} from {}", id, path.display());
         let LoadedAssetRef { asset, sub_assets } = (ctor.create)(self.asset_context(), id, path)?;
 
         // Load from file
         self.load_sub_asset_meta(id, sub_assets);
         self.asset_cache_mut().insert(id, asset.clone());
+        log::trace!("Loaded dynamic asset {} from {}", id, path.display());
         Ok(asset)
     }
 
@@ -391,6 +432,7 @@ impl AssetRegistry {
         if self.asset_id(name.as_str()).is_some() {
             return Err(AssetError::AlreadyExists.with_source(format!("asset name `{name}`")));
         }
+        let asset_name = name.clone();
         let id = utils::uuid_from_str(name.as_str());
         let asset = Ref::from_id_value(id, value);
         let registry = self.type_registry.read();
@@ -418,6 +460,7 @@ impl AssetRegistry {
             },
         );
         self.asset_cache_mut().insert(id, asset.as_asset());
+        log::info!("Created in-memory asset {} ({})", asset_name, id);
         Ok(asset)
     }
 
@@ -493,7 +536,7 @@ impl AssetRegistry {
                         .collect(),
                 };
                 if let Err(err) = self.write_meta_file(&meta_path, &meta) {
-                    warn!(
+                    log::warn!(
                         "Failed to write asset metadata for {}: {}",
                         meta_path.display(),
                         err
@@ -524,6 +567,11 @@ impl AssetRegistry {
 
     fn mark_path_dirty(&self, path: &Path) {
         if let Some(id) = self.asset_id_from_path(path) {
+            log::trace!(
+                "Marking asset {} dirty after change to {}",
+                id,
+                path.display()
+            );
             self.mark_asset_dirty(id);
         }
 
@@ -535,6 +583,11 @@ impl AssetRegistry {
             .cloned()
             .unwrap_or_default();
         for id in dependent_ids {
+            log::trace!(
+                "Marking dependent asset {} dirty after change to {}",
+                id,
+                path.display()
+            );
             self.mark_asset_dirty(id);
         }
     }
@@ -583,6 +636,7 @@ impl AssetRegistry {
 
 impl AssetRegistry {
     fn recv_notify_event(&self, event: Event) {
+        log::trace!("Received asset notification: {:?}", event.kind);
         let paths_iter = Self::notify_event_paths(&event);
         match event.kind {
             EventKind::Create(_) => {
@@ -590,7 +644,7 @@ impl AssetRegistry {
                     if let Err(err) =
                         self.build_asset_meta(self.root_path(), file, &file.with_extension("meta"))
                     {
-                        warn!(
+                        log::warn!(
                             "Failed to build asset metadata for {}: {}",
                             file.display(),
                             err
@@ -605,7 +659,15 @@ impl AssetRegistry {
             }
             EventKind::Remove(_) => {
                 for file in paths_iter {
-                    let _ = std::fs::remove_file(file.with_extension("meta"));
+                    let meta_path = file.with_extension("meta");
+                    match std::fs::remove_file(&meta_path) {
+                        Ok(()) => log::info!("Removed asset metadata {}", meta_path.display()),
+                        Err(err) => log::warn!(
+                            "Failed to remove asset metadata {}: {}",
+                            meta_path.display(),
+                            err
+                        ),
+                    }
                 }
             }
             _ => {}
@@ -721,6 +783,7 @@ impl AssetRegistry {
 impl AssetRegistry {
     /// Rebuilds metadata for every asset file under every asset root.
     pub fn build_meta(&self) -> Result<(), BoxedError> {
+        let mut built_count = 0usize;
         for asset_path in &self.asset_paths {
             for path in
                 glob(format!("{}/**/*", asset_path.to_str().unwrap()).as_str()).map_err(Box::new)?
@@ -728,7 +791,7 @@ impl AssetRegistry {
                 let path = match path {
                     Ok(path) => path,
                     Err(err) => {
-                        warn!("Skipping asset path while building metadata: {}", err);
+                        log::warn!("Skipping asset path while building metadata: {}", err);
                         continue;
                     }
                 };
@@ -740,14 +803,17 @@ impl AssetRegistry {
                 }
                 let meta_path = path.with_extension("meta");
                 if let Err(err) = self.build_asset_meta(asset_path, &path, &meta_path) {
-                    warn!(
+                    log::warn!(
                         "Failed to build asset metadata for {}: {}",
                         path.display(),
                         err
                     );
+                } else {
+                    built_count += 1;
                 }
             }
         }
+        log::info!("Built metadata for {built_count} assets");
         Ok(())
     }
 
@@ -795,6 +861,7 @@ impl AssetRegistry {
             .insert(Self::relative_asset_path(asset_path, path), id);
         drop(data);
         self.update_asset_dependencies(id, path);
+        log::trace!("Built asset metadata for {}", path.display());
         Ok(())
     }
 
@@ -818,7 +885,7 @@ impl AssetRegistry {
                     data.dependencies.entry(dependency).or_default().insert(id);
                 }
             }
-            Err(err) => warn!(
+            Err(err) => log::warn!(
                 "Failed to scan shader dependencies for {}: {}",
                 path.display(),
                 err
@@ -930,9 +997,10 @@ impl AssetRegistry {
                         self.load_sub_asset_meta(id, loaded.sub_assets);
                         self.update_asset_dependencies(id, &path);
                         self.clear_reload_error(id);
+                        log::info!("Hot-reloaded {}", path.display());
                     }
                     Err(error) => {
-                        warn!("Failed to hot-reload {}: {}", path.display(), error);
+                        log::warn!("Failed to hot-reload {}: {}", path.display(), error);
                         self.set_reload_error(AssetReloadError { id, path, error });
                     }
                 }
@@ -968,6 +1036,11 @@ impl AssetRegistry {
     /// Returns the built-in "missing texture" asset when available.
     pub fn missing_texture(&self) -> Option<Ref<Texture>> {
         self.load::<Texture>("textures/missing").ok()
+    }
+
+    /// Returns the built-in white texture asset when available.
+    pub fn white_texture(&self) -> Option<Ref<Texture>> {
+        self.load::<Texture>("textures/white").ok()
     }
 
     /// Returns or creates a 2D black fallback texture.

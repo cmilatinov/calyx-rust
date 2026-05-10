@@ -6,6 +6,7 @@ pub use gizmos::*;
 pub(crate) use grid_renderer::*;
 pub(crate) use light_manager::*;
 pub(crate) use mesh_renderer::*;
+pub(crate) use outline_renderer::*;
 pub(crate) use particle_renderer::*;
 pub use pipeline_options::*;
 pub use render_context::*;
@@ -14,7 +15,6 @@ pub use scene_renderer::*;
 pub use shader::*;
 pub use shader_preprocessor::*;
 pub(crate) use skybox_renderer::*;
-pub(crate) use outline_renderer::*;
 
 mod asset_map;
 mod asset_render_state;

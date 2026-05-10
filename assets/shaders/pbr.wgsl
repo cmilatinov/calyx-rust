@@ -13,9 +13,14 @@ struct VertexOut {
 };
 
 struct MaterialProperties {
+    base_color: vec4f,
     metallic: f32,
     roughness: f32,
     ambient_occlusion: f32,
+};
+
+struct EnvironmentProperties {
+    sky_light: vec4f,
 };
 
 @group(0) @binding(1)
@@ -35,6 +40,9 @@ var brdf_texture: texture_2d<f32>;
 
 @group(0) @binding(6)
 var brdf_sampler: sampler;
+
+@group(0) @binding(7)
+var<uniform> environment: EnvironmentProperties;
 
 @group(3) @binding(0)
 var diffuse_texture: texture_2d<f32>;
@@ -84,7 +92,7 @@ fn vs_main(vertex: VertexIn) -> VertexOut {
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4f {
-    let albedo = 5.0 * textureSample(diffuse_texture, diffuse_sampler, in.uv);
+    let albedo = 5.0 * material.base_color * textureSample(diffuse_texture, diffuse_sampler, in.uv);
     let n = normalize(in.normal);
     let view_position = vec3f(
         camera.inverse_view[3][0],
@@ -110,30 +118,33 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
         let a = max((999.0 - r) / (r * r), 0.0);
         let attenuation = 1.0 / ((a * dist * dist) + dist + 1.0);
 
-        color += pbr(n, v, l, albedo.rgb, light.color * attenuation, material);
+        color += pbr(n, v, l, albedo.rgb, light.color * light.intensity * attenuation, material);
     }
 
     // Directional lights
     for (var i = 0u; i < directional_lights.size; i++) {
         let light = directional_lights.lights[i];
         let l = normalize(-light.direction);
-        color += pbr(n, v, l, albedo.rgb, light.color, material);
+        color += pbr(n, v, l, albedo.rgb, light.color * light.intensity, material);
     }
 
     // Ambient light
     let ks = f(f0, v, n, material.roughness);
     let kd = (1.0 - ks) * (1.0 - material.metallic);
 
-    let irradiance = textureSample(irradiance_texture, irradiance_sampler, n).rgb;
+    let irradiance =
+        environment.sky_light.x * textureSample(irradiance_texture, irradiance_sampler, n).rgb;
     let diffuse = kd * irradiance * albedo.rgb;
 
     let r = reflect(-v, n);
-    let prefiltered_color = textureSampleLevel(
-        prefilter_texture,
-        prefilter_sampler,
-        r,
-        material.roughness * f32(textureNumLevels(prefilter_texture) - 1u)
-    ).rgb;
+    let prefiltered_color =
+        environment.sky_light.x *
+        textureSampleLevel(
+            prefilter_texture,
+            prefilter_sampler,
+            r,
+            material.roughness * f32(textureNumLevels(prefilter_texture) - 1u)
+        ).rgb;
     let brdf = textureSample(
         brdf_texture,
         brdf_sampler,
