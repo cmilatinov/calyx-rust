@@ -1,6 +1,7 @@
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::wgpu::BufferUsages;
+use image::RgbaImage;
 use legion::{Entity, IntoQuery};
 use nalgebra_glm::{vec4, Mat4};
 use rapier3d::pipeline::DebugRenderPipeline;
@@ -22,8 +23,8 @@ use super::buffer::wgpu_buffer_init_desc;
 use super::{PipelineOptions, Shader};
 
 const HIDDEN_GIZMO_OPACITY: f32 = 0.35;
-const ICON_ATLAS_WIDTH: u32 = 32;
-const ICON_ATLAS_HEIGHT: u32 = 16;
+const CAMERA_ICON_PNG: &[u8] = include_bytes!("../../../resources/icons/camera.png");
+const LIGHT_ICON_PNG: &[u8] = include_bytes!("../../../resources/icons/light.png");
 
 /// Per-instance draw data for gizmo rendering.
 #[repr(C)]
@@ -402,11 +403,12 @@ impl GizmoRenderer {
         queue: &wgpu::Queue,
         layout: &wgpu::BindGroupLayout,
     ) -> IconTexture {
+        let (pixels, width, height) = Self::icon_atlas_pixels();
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("gizmo_icon_atlas"),
             size: wgpu::Extent3d {
-                width: ICON_ATLAS_WIDTH,
-                height: ICON_ATLAS_HEIGHT,
+                width,
+                height,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -433,15 +435,15 @@ impl GizmoRenderer {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &Self::icon_atlas_pixels(),
+            &pixels,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(ICON_ATLAS_WIDTH * 4),
-                rows_per_image: Some(ICON_ATLAS_HEIGHT),
+                bytes_per_row: Some(width * 4),
+                rows_per_image: Some(height),
             },
             wgpu::Extent3d {
-                width: ICON_ATLAS_WIDTH,
-                height: ICON_ATLAS_HEIGHT,
+                width,
+                height,
                 depth_or_array_layers: 1,
             },
         );
@@ -468,80 +470,37 @@ impl GizmoRenderer {
         }
     }
 
-    fn icon_atlas_pixels() -> Vec<u8> {
-        let mut pixels = vec![0; (ICON_ATLAS_WIDTH * ICON_ATLAS_HEIGHT * 4) as usize];
-        Self::draw_camera_icon(&mut pixels, 0);
-        Self::draw_light_icon(&mut pixels, 16);
-        pixels
+    fn icon_atlas_pixels() -> (Vec<u8>, u32, u32) {
+        let camera = Self::decode_icon(CAMERA_ICON_PNG, "camera");
+        let light = Self::decode_icon(LIGHT_ICON_PNG, "light");
+        let width = camera.width() + light.width();
+        let height = camera.height().max(light.height());
+        let mut pixels = vec![0; (width * height * 4) as usize];
+        Self::copy_icon(&mut pixels, width, &camera, 0, 0);
+        Self::copy_icon(&mut pixels, width, &light, camera.width(), 0);
+        (pixels, width, height)
     }
 
-    fn set_icon_pixel(pixels: &mut [u8], x: u32, y: u32, alpha: u8) {
-        let index = ((y * ICON_ATLAS_WIDTH + x) * 4) as usize;
-        pixels[index] = 255;
-        pixels[index + 1] = 255;
-        pixels[index + 2] = 255;
-        pixels[index + 3] = pixels[index + 3].max(alpha);
+    fn decode_icon(bytes: &[u8], name: &str) -> RgbaImage {
+        image::load_from_memory(bytes)
+            .unwrap_or_else(|err| panic!("failed to decode {name} gizmo icon: {err}"))
+            .to_rgba8()
     }
 
-    fn draw_line(pixels: &mut [u8], x0: i32, y0: i32, x1: i32, y1: i32, x_offset: u32) {
-        let dx = (x1 - x0).abs();
-        let sx = if x0 < x1 { 1 } else { -1 };
-        let dy = -(y1 - y0).abs();
-        let sy = if y0 < y1 { 1 } else { -1 };
-        let mut err = dx + dy;
-        let mut x = x0;
-        let mut y = y0;
-
-        loop {
-            if (0..16).contains(&x) && (0..16).contains(&y) {
-                Self::set_icon_pixel(pixels, x_offset + x as u32, y as u32, 255);
-            }
-            if x == x1 && y == y1 {
-                break;
-            }
-            let e2 = 2 * err;
-            if e2 >= dy {
-                err += dy;
-                x += sx;
-            }
-            if e2 <= dx {
-                err += dx;
-                y += sy;
+    fn copy_icon(
+        pixels: &mut [u8],
+        atlas_width: u32,
+        icon: &RgbaImage,
+        x_offset: u32,
+        y_offset: u32,
+    ) {
+        for y in 0..icon.height() {
+            for x in 0..icon.width() {
+                let src = icon.get_pixel(x, y).0;
+                let dst = (((y + y_offset) * atlas_width + x + x_offset) * 4) as usize;
+                pixels[dst..dst + 4].copy_from_slice(&src);
             }
         }
-    }
-
-    fn draw_camera_icon(pixels: &mut [u8], x_offset: u32) {
-        for x in 3..11 {
-            Self::set_icon_pixel(pixels, x_offset + x, 4, 255);
-            Self::set_icon_pixel(pixels, x_offset + x, 11, 255);
-        }
-        for y in 4..12 {
-            Self::set_icon_pixel(pixels, x_offset + 3, y, 255);
-            Self::set_icon_pixel(pixels, x_offset + 10, y, 255);
-        }
-        Self::draw_line(pixels, 10, 6, 14, 4, x_offset);
-        Self::draw_line(pixels, 14, 4, 14, 11, x_offset);
-        Self::draw_line(pixels, 14, 11, 10, 9, x_offset);
-    }
-
-    fn draw_light_icon(pixels: &mut [u8], x_offset: u32) {
-        for y in 4..10 {
-            for x in 5..11 {
-                let dx = x as i32 - 8;
-                let dy = y as i32 - 7;
-                if dx * dx + dy * dy <= 9 {
-                    Self::set_icon_pixel(pixels, x_offset + x, y, 255);
-                }
-            }
-        }
-        Self::draw_line(pixels, 6, 10, 10, 10, x_offset);
-        Self::draw_line(pixels, 7, 12, 9, 12, x_offset);
-        Self::draw_line(pixels, 8, 1, 8, 3, x_offset);
-        Self::draw_line(pixels, 2, 7, 4, 7, x_offset);
-        Self::draw_line(pixels, 12, 7, 14, 7, x_offset);
-        Self::draw_line(pixels, 4, 3, 5, 4, x_offset);
-        Self::draw_line(pixels, 12, 3, 11, 4, x_offset);
     }
 
     fn load_shader(game: &ReadOnlyAssetContext, relative_path: &Path) -> Shader {
