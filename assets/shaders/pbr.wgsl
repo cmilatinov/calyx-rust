@@ -13,7 +13,6 @@ struct VertexOut {
 };
 
 struct MaterialProperties {
-    base_color: vec4f,
     metallic: f32,
     roughness: f32,
     ambient_occlusion: f32,
@@ -92,7 +91,7 @@ fn vs_main(vertex: VertexIn) -> VertexOut {
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4f {
-    let albedo = 5.0 * material.base_color * textureSample(diffuse_texture, diffuse_sampler, in.uv);
+    let albedo = 5.0 * textureSample(diffuse_texture, diffuse_sampler, in.uv);
     let n = normalize(in.normal);
     let view_position = vec3f(
         camera.inverse_view[3][0],
