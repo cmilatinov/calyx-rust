@@ -169,6 +169,7 @@ fn update_hull(
     let mut transform = scene.world_transform(game_object);
     let throttle = input.axis("move_forward");
     let steer = input.axis("move_right");
+    let mut changed = false;
 
     if steer.abs() > f32::EPSILON {
         transform.rotate(&UnitQuaternion::from_euler_angles(
@@ -176,6 +177,7 @@ fn update_hull(
             steer * controller.hull_turn_speed * dt,
             0.0,
         ));
+        changed = true;
     }
 
     if throttle.abs() > f32::EPSILON {
@@ -186,9 +188,16 @@ fn update_hull(
         };
         let forward = flatten_xz(transform.forward());
         transform.translate(&(forward * (throttle * speed * dt)));
+        changed = true;
     }
 
-    scene.set_world_transform(game_object, transform.matrix());
+    if changed {
+        let local_scale = scene.transform(game_object).scale;
+        scene.set_world_transform(game_object, transform.matrix());
+        let _ = scene.write_component::<ComponentTransform, _>(game_object, |component| {
+            component.transform.scale = local_scale;
+        });
+    }
     scene.world_transform(game_object)
 }
 
@@ -675,6 +684,14 @@ mod tests {
                 .expect("sandbox scene should have a main camera");
             scene.world_transform(camera)
         };
+        let authoring_tank_scale = {
+            let scene = game.scenes.current_scene();
+            let tank = scene
+                .objects()
+                .find(|go| scene.name(*go) == "Tank")
+                .expect("sandbox scene should have a Tank");
+            scene.transform(tank).scale
+        };
 
         game.scenes.start_simulation();
 
@@ -694,6 +711,15 @@ mod tests {
             simulation_camera_transform.rotation,
             authoring_camera_transform.rotation
         );
+        let simulation_tank_scale = {
+            let scene = game.scenes.simulation_scene();
+            let tank = scene
+                .objects()
+                .find(|go| scene.name(*go) == "Tank")
+                .expect("simulation scene should have a Tank");
+            scene.transform(tank).scale
+        };
+        assert_eq!(simulation_tank_scale, authoring_tank_scale);
     }
 
     #[test]
@@ -728,6 +754,14 @@ mod tests {
                 .expect("simulation scene should have a main camera");
             scene.world_transform(camera)
         };
+        let initial_tank_scale = {
+            let scene = game.scenes.simulation_scene();
+            let tank = scene
+                .objects()
+                .find(|go| scene.name(*go) == "Tank")
+                .expect("simulation scene should have a Tank");
+            scene.transform(tank).scale
+        };
 
         let ctx = egui::Context::default();
         let input = engine::input::Input::from_ctx(
@@ -754,6 +788,17 @@ mod tests {
             updated_camera_transform.position,
             initial_camera_transform.position
         );
+
+        let updated_tank_scale = {
+            let scene = game.scenes.simulation_scene();
+            let tank = scene
+                .objects()
+                .find(|go| scene.name(*go) == "Tank")
+                .expect("simulation scene should have a Tank");
+            scene.transform(tank).scale
+        };
+
+        assert_eq!(updated_tank_scale, initial_tank_scale);
     }
 
     #[test]
