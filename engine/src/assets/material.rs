@@ -103,21 +103,9 @@ impl<'de> Deserialize<'de> for MaterialTexture {
             Color([f32; 4]),
         }
 
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum MaterialTextureData {
-            LegacyAsset(AssetRef<Texture>),
-            Tagged(TaggedMaterialTexture),
-        }
-
-        match MaterialTextureData::deserialize(deserializer)? {
-            MaterialTextureData::LegacyAsset(asset) => Ok(Self::Asset(asset)),
-            MaterialTextureData::Tagged(TaggedMaterialTexture::Asset(asset)) => {
-                Ok(Self::Asset(asset))
-            }
-            MaterialTextureData::Tagged(TaggedMaterialTexture::Color(color)) => {
-                Ok(Self::Color(color))
-            }
+        match TaggedMaterialTexture::deserialize(deserializer)? {
+            TaggedMaterialTexture::Asset(asset) => Ok(Self::Asset(asset)),
+            TaggedMaterialTexture::Color(color) => Ok(Self::Color(color)),
         }
     }
 }
@@ -739,13 +727,13 @@ mod tests {
     }
 
     #[test]
-    fn texture2d_accepts_legacy_asset_reference_data() {
+    fn texture2d_accepts_asset_source_data() {
         let id = Uuid::parse_str("d2863902-8a4c-8f5b-2fef-8df1e3cf693e").unwrap();
         let value: ShaderVariableValue =
-            serde_json::from_value(json!({ "Texture2D": id })).unwrap();
+            serde_json::from_value(json!({ "Texture2D": { "Asset": id } })).unwrap();
 
         let ShaderVariableValue::Texture2D(MaterialTexture::Asset(asset)) = value else {
-            panic!("expected legacy texture asset reference");
+            panic!("expected texture asset source");
         };
         assert_eq!(asset.id(), id);
     }
