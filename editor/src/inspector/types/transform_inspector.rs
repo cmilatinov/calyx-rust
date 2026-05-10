@@ -22,11 +22,7 @@ impl TypeInspector for TransformInspector {
     fn show_inspector(&self, ui: &mut Ui, ctx: &InspectorContext, instance: &mut dyn Reflect) {
         if let Some(t_comp) = instance.downcast_mut::<ComponentTransform>() {
             let mut changed = false;
-            let mut transform = ctx.scene.world_transform(ctx.game_object);
-            let parent_transform = ctx
-                .parent
-                .map(|parent| ctx.scene.world_transform(parent))
-                .unwrap_or_default();
+            let mut transform = t_comp.transform;
             Widgets::inspector_prop_value(ui, "Position", |ui, _| {
                 changed |= Widgets::drag_float3(ui, 0.1, &mut transform.position);
             });
@@ -43,9 +39,7 @@ impl TypeInspector for TransformInspector {
                 changed |= Widgets::drag_float3(ui, 0.1, &mut transform.scale);
             });
             if changed {
-                t_comp
-                    .transform
-                    .set_local_matrix(&(parent_transform.inverse_matrix() * transform.matrix()));
+                t_comp.transform = transform;
                 ctx.scene.clear_transform_cache();
             }
         }
@@ -59,13 +53,7 @@ impl TypeInspector for TransformInspector {
     ) {
         if let Some(t_comp) = instance.downcast_mut::<ComponentTransform>() {
             if ui.button("Reset").clicked() {
-                let parent_transform = ctx
-                    .parent
-                    .map(|parent| ctx.scene.world_transform(parent))
-                    .unwrap_or_default();
-                t_comp
-                    .transform
-                    .set_local_matrix(&parent_transform.inverse_matrix());
+                t_comp.transform = Default::default();
                 ctx.scene.clear_transform_cache();
                 ui.close_menu()
             }

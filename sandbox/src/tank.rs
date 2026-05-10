@@ -802,6 +802,48 @@ mod tests {
     }
 
     #[test]
+    fn sandbox_shooting_does_not_move_targets() {
+        let assets = engine::test_support::test_asset_context_with_assets(vec![
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),
+            std::env::current_dir().unwrap().join("assets"),
+        ]);
+        let scene_ref = assets
+            .registries
+            .assets
+            .read()
+            .reload_by_path::<engine::scene::Scene>(
+                &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("assets")
+                    .join("scene.cxscene"),
+            )
+            .expect("sandbox scene should load");
+        let scene = scene_ref.read().clone();
+        let target_transforms = ["Target A", "Target B"].map(|name| {
+            let target = scene
+                .objects()
+                .find(|go| scene.name(*go) == name)
+                .expect("sandbox scene should have target");
+            (name, scene.world_transform(target))
+        });
+
+        let mut runner = engine::test_support::HeadlessSceneRunner::from_scene(scene);
+        runner.press_key(egui::Key::Space);
+        runner.step_many(120);
+
+        for (name, transform) in target_transforms {
+            let scene = runner.scene();
+            let target = scene
+                .objects()
+                .find(|go| scene.name(*go) == name)
+                .expect("sandbox scene should still have target");
+            let updated = scene.world_transform(target);
+            assert_eq!(updated.position, transform.position);
+            assert_eq!(updated.rotation, transform.rotation);
+            assert_eq!(updated.scale, transform.scale);
+        }
+    }
+
+    #[test]
     fn camera_follow_only_moves_xz_axes() {
         let rotation = UnitQuaternion::from_euler_angles(std::f32::consts::FRAC_PI_2, 0.2, 0.0);
         let mut camera_transform =
