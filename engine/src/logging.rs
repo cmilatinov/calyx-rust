@@ -1,4 +1,5 @@
-use log::{Level, LevelFilter, Metadata, Record, SetLoggerError};
+use env_filter::Filter;
+use log::{Metadata, Record, SetLoggerError};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -14,20 +15,21 @@ pub struct Log<T: LoggerImplementation> {
 impl<T: LoggerImplementation> Log<T> {
     /// Builds and installs the process-wide logger.
     pub fn new(logger: T) -> Self {
-        let level_filter = configured_level_filter();
+        let filter = configured_filter();
+        let max_level = filter.filter();
         let log_file_path = logger.log_file_path();
         match logger.log_file(&log_file_path) {
             Ok(file) => {
-                if install_logger(MultiSinkLogger::new(level_filter, file), level_filter).is_ok() {
+                if install_logger(MultiSinkLogger::new(filter, file), max_level).is_ok() {
                     log::info!(
-                        "Logging initialized; level={level_filter}, file={}",
+                        "Logging initialized; max_level={max_level}, file={}",
                         log_file_path.display()
                     );
                 }
             }
             Err(error) => {
-                let stdout_logger = StdoutLogger::new(level_filter);
-                if install_logger(stdout_logger, level_filter).is_ok() {
+                let stdout_logger = StdoutLogger::new(filter);
+                if install_logger(stdout_logger, max_level).is_ok() {
                     log::error!("Failed to create file log sink: {error}");
                 }
             }
@@ -82,14 +84,14 @@ impl LoggerImplementation for DefaultLogger {
 }
 
 struct MultiSinkLogger {
-    level_filter: LevelFilter,
+    filter: Filter,
     file: Mutex<File>,
 }
 
 impl MultiSinkLogger {
-    fn new(level_filter: LevelFilter, file: File) -> Self {
+    fn new(filter: Filter, file: File) -> Self {
         Self {
-            level_filter,
+            filter,
             file: Mutex::new(file),
         }
     }
@@ -97,11 +99,11 @@ impl MultiSinkLogger {
 
 impl log::Log for MultiSinkLogger {
     fn enabled(&self, metadata: &Metadata) -> bool {
-        level_enabled(metadata.level(), self.level_filter)
+        self.filter.enabled(metadata)
     }
 
     fn log(&self, record: &Record) {
-        if !self.enabled(record.metadata()) {
+        if !self.filter.matches(record) {
             return;
         }
         let line = format_record(record);
@@ -120,22 +122,22 @@ impl log::Log for MultiSinkLogger {
 }
 
 struct StdoutLogger {
-    level_filter: LevelFilter,
+    filter: Filter,
 }
 
 impl StdoutLogger {
-    fn new(level_filter: LevelFilter) -> Self {
-        Self { level_filter }
+    fn new(filter: Filter) -> Self {
+        Self { filter }
     }
 }
 
 impl log::Log for StdoutLogger {
     fn enabled(&self, metadata: &Metadata) -> bool {
-        level_enabled(metadata.level(), self.level_filter)
+        self.filter.enabled(metadata)
     }
 
     fn log(&self, record: &Record) {
-        if self.enabled(record.metadata()) {
+        if self.filter.matches(record) {
             let _ = io::stdout()
                 .lock()
                 .write_all(format_record(record).as_bytes());
@@ -149,42 +151,38 @@ impl log::Log for StdoutLogger {
 
 fn install_logger(
     logger: impl log::Log + 'static,
-    level_filter: LevelFilter,
+    max_level: log::LevelFilter,
 ) -> Result<(), SetLoggerError> {
     log::set_boxed_logger(Box::new(logger)).map(|_| {
-        log::set_max_level(level_filter);
+        log::set_max_level(max_level);
     })
 }
 
-fn configured_level_filter() -> LevelFilter {
-    let value = std::env::var("CALYX_LOG")
+fn configured_filter() -> Filter {
+    let spec = std::env::var("CALYX_LOG")
         .or_else(|_| std::env::var("RUST_LOG"))
-        .unwrap_or_else(|_| "info".to_string());
-    value
-        .split(',')
-        .filter_map(|directive| directive.rsplit('=').next())
-        .filter_map(parse_level_filter)
-        .max()
-        .unwrap_or(LevelFilter::Info)
+        .ok();
+    build_filter(spec.as_deref())
 }
 
-fn parse_level_filter(value: &str) -> Option<LevelFilter> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "off" => Some(LevelFilter::Off),
-        "error" => Some(LevelFilter::Error),
-        "warn" | "warning" => Some(LevelFilter::Warn),
-        "info" => Some(LevelFilter::Info),
-        "debug" => Some(LevelFilter::Debug),
-        "trace" => Some(LevelFilter::Trace),
-        _ => None,
+fn build_filter(spec: Option<&str>) -> Filter {
+    let mut builder = env_filter::Builder::new();
+    match spec {
+        Some(spec) if !spec.trim().is_empty() => {
+            if builder.try_parse(spec).is_err() {
+                builder = env_filter::Builder::new();
+                builder.parse(default_filter_spec());
+            }
+        }
+        _ => {
+            builder.parse(default_filter_spec());
+        }
     }
+    builder.build()
 }
 
-fn level_enabled(level: Level, level_filter: LevelFilter) -> bool {
-    level_filter
-        .to_level()
-        .map(|max_level| level <= max_level)
-        .unwrap_or(false)
+fn default_filter_spec() -> &'static str {
+    "engine=info,editor=info,sandbox=info"
 }
 
 fn format_record(record: &Record) -> String {
@@ -206,21 +204,36 @@ fn timestamp_millis() -> u128 {
 
 #[cfg(test)]
 mod tests {
-    use super::{level_enabled, parse_level_filter};
-    use log::{Level, LevelFilter};
+    use super::build_filter;
+    use log::{Level, LevelFilter, Record};
 
-    #[test]
-    fn parses_log_levels() {
-        assert_eq!(parse_level_filter("trace"), Some(LevelFilter::Trace));
-        assert_eq!(parse_level_filter("warning"), Some(LevelFilter::Warn));
-        assert_eq!(parse_level_filter("unknown"), None);
+    fn record(target: &'static str, level: Level) -> Record<'static> {
+        Record::builder()
+            .args(format_args!("test"))
+            .level(level)
+            .target(target)
+            .build()
     }
 
     #[test]
-    fn filters_records_at_or_above_level() {
-        assert!(level_enabled(Level::Error, LevelFilter::Info));
-        assert!(level_enabled(Level::Info, LevelFilter::Info));
-        assert!(!level_enabled(Level::Debug, LevelFilter::Info));
-        assert!(!level_enabled(Level::Error, LevelFilter::Off));
+    fn default_filter_includes_calyx_targets_only() {
+        let filter = build_filter(None);
+
+        assert_eq!(filter.filter(), LevelFilter::Info);
+        assert!(filter.matches(&record("engine::assets", Level::Info)));
+        assert!(filter.matches(&record("editor::project_manager", Level::Info)));
+        assert!(!filter.matches(&record("wgpu_core", Level::Info)));
+        assert!(!filter.matches(&record("engine::assets", Level::Debug)));
+    }
+
+    #[test]
+    fn env_filter_respects_target_directives() {
+        let filter = build_filter(Some("engine=trace,wgpu_core=warn"));
+
+        assert_eq!(filter.filter(), LevelFilter::Trace);
+        assert!(filter.matches(&record("engine::assets", Level::Trace)));
+        assert!(filter.matches(&record("wgpu_core", Level::Warn)));
+        assert!(!filter.matches(&record("wgpu_core", Level::Info)));
+        assert!(!filter.matches(&record("editor", Level::Info)));
     }
 }

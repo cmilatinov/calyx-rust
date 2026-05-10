@@ -2166,6 +2166,7 @@ dependencies = [
  "egui 0.31.1",
  "egui-wgpu",
  "engine_derive",
+ "env_filter 1.0.0",
  "glob",
  "image",
  "inventory",
@@ -2313,6 +2314,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a1c3cc8e57274ec99de65301228b537f1e4eedc1b8e0f9411c6caac8ae7308f"
 dependencies = [
  "log",
+ "regex",
 ]
 
 [[package]]
