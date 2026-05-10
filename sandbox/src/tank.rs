@@ -650,6 +650,113 @@ mod tests {
     }
 
     #[test]
+    fn editor_simulation_start_preserves_sandbox_camera_transform() {
+        let assets = engine::test_support::test_asset_context_with_assets(vec![
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),
+            std::env::current_dir().unwrap().join("assets"),
+        ]);
+        let scene_ref = assets
+            .registries
+            .assets
+            .read()
+            .reload_by_path::<engine::scene::Scene>(
+                &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("assets")
+                    .join("scene.cxscene"),
+            )
+            .expect("sandbox scene should load");
+
+        let mut game = engine::context::GameContext::new(assets);
+        game.scenes.load_scene(scene_ref.readonly());
+        let authoring_camera_transform = {
+            let scene = game.scenes.current_scene();
+            let (camera, _) = scene
+                .main_camera()
+                .expect("sandbox scene should have a main camera");
+            scene.world_transform(camera)
+        };
+
+        game.scenes.start_simulation();
+
+        let simulation_camera_transform = {
+            let scene = game.scenes.simulation_scene();
+            let (camera, _) = scene
+                .main_camera()
+                .expect("simulation scene should have a main camera");
+            scene.world_transform(camera)
+        };
+
+        assert_eq!(
+            simulation_camera_transform.position,
+            authoring_camera_transform.position
+        );
+        assert_eq!(
+            simulation_camera_transform.rotation,
+            authoring_camera_transform.rotation
+        );
+    }
+
+    #[test]
+    fn editor_simulation_first_update_preserves_camera_without_input() {
+        let assets = engine::test_support::test_asset_context_with_assets(vec![
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),
+            std::env::current_dir().unwrap().join("assets"),
+        ]);
+        let scene_ref = assets
+            .registries
+            .assets
+            .read()
+            .reload_by_path::<engine::scene::Scene>(
+                &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("assets")
+                    .join("scene.cxscene"),
+            )
+            .expect("sandbox scene should load");
+
+        let mut game = engine::context::GameContext::new(assets);
+        game.scenes.load_scene(scene_ref.readonly());
+        let authoring_object_count = game.scenes.current_scene().objects().count();
+        game.scenes.start_simulation();
+        assert_eq!(
+            game.scenes.simulation_scene().objects().count(),
+            authoring_object_count
+        );
+        let initial_camera_transform = {
+            let scene = game.scenes.simulation_scene();
+            let (camera, _) = scene
+                .main_camera()
+                .expect("simulation scene should have a main camera");
+            scene.world_transform(camera)
+        };
+
+        let ctx = egui::Context::default();
+        let input = engine::input::Input::from_ctx(
+            &ctx,
+            None,
+            engine::input::InputState {
+                is_active: false,
+                last_cursor_pos: None,
+                ..Default::default()
+            },
+        );
+        let registries = game.assets.lock_read().registries;
+        game.scenes.update(&registries, &mut game.resources, &input);
+
+        let updated_camera_transform = {
+            let scene = game.scenes.simulation_scene();
+            let (camera, _) = scene
+                .main_camera()
+                .expect("simulation scene should have a main camera");
+            scene.world_transform(camera)
+        };
+
+        assert_eq!(
+            updated_camera_transform.position,
+            initial_camera_transform.position
+        );
+    }
+
+    #[test]
     fn camera_follow_only_moves_xz_axes() {
         let rotation = UnitQuaternion::from_euler_angles(std::f32::consts::FRAC_PI_2, 0.2, 0.0);
         let mut camera_transform =

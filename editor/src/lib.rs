@@ -315,9 +315,19 @@ impl EditorApp {
         if let Some((node, c)) = scene.main_camera() {
             game_renderer.options_mut().clear_color = c.clear_color;
             let (width, height) = Self::get_physical_size(ctx, *game_size);
-            if width != 0 && height != 0 {
-                game_renderer.resize_textures(width, height);
+            if width == 0 || height == 0 {
+                let mut encoder =
+                    render_state
+                        .device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("Scene Renderer Encoder"),
+                        });
+                encoder.clear_texture(&game_renderer.scene_texture().texture, &Default::default());
+                render_state.queue.submit(Some(encoder.finish()));
+                return;
             }
+
+            game_renderer.resize_textures(width, height);
             let transform = scene.world_transform(node);
             let camera = Camera::new(
                 width as f32 / height as f32,
