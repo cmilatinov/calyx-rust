@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "429f803a-bc15-5e78-7e67-1c1160f494ca",
+    "name": "shaders/mip_generator_2d",
+    "display_name": "mip_generator_2d",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

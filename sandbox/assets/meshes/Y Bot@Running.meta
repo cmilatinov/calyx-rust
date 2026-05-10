@@ -1,0 +1,16 @@
+{
+  "main": {
+    "id": "ee9ab2cc-5475-5a8e-8727-1fc4f5e86737",
+    "name": "meshes/Y Bot@Running",
+    "display_name": "Y Bot@Running",
+    "type_uuid": "960f1d60-3ad4-4f1d-92d3-cceb0e0623d7"
+  },
+  "inner": [
+    {
+      "id": "0906e914-b66f-841a-d15f-a3f2b6c35939",
+      "name": "meshes/Y Bot@Running/mixamo.com",
+      "display_name": "meshes/Y Bot@Running/mixamo.com",
+      "type_uuid": "627dee5d-c2d6-4e3e-9b9e-80e3e601848d"
+    }
+  ]
+}

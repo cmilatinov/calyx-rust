@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "fd1c2953-01b1-5717-b162-86d9e30fdc45",
+    "name": "engine/engine_derive/Cargo",
+    "display_name": "Cargo",
+    "type_uuid": "00000000-0000-0000-0000-000000000000"
+  },
+  "inner": []
+}

@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "5eb2b615-df76-5b34-d74d-742136c9ed32",
+    "name": "meshes/cube",
+    "display_name": "cube",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}

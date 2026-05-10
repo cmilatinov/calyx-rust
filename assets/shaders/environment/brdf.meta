@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "925db056-ac82-97c0-1172-e6fdbd50d971",
+    "name": "shaders/environment/brdf",
+    "display_name": "brdf",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

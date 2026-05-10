@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "5ac27ffe-c2cf-3a5e-e6ba-9b8cc3b95abd",
+    "name": "shaders/constants",
+    "display_name": "constants",
+    "type_uuid": "00000000-0000-0000-0000-000000000000"
+  },
+  "inner": []
+}

@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "cf12a06a-f315-bf21-b4b5-86312879d16f",
+    "name": "shaders/lights",
+    "display_name": "lights",
+    "type_uuid": "00000000-0000-0000-0000-000000000000"
+  },
+  "inner": []
+}

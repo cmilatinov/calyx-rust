@@ -1,0 +1,28 @@
+{
+  "main": {
+    "id": "d9f2182c-68d1-26fb-097c-b8bdcda9e34d",
+    "name": "meshes/y_bot_sprint",
+    "display_name": "y_bot_sprint",
+    "type_uuid": "960f1d60-3ad4-4f1d-92d3-cceb0e0623d7"
+  },
+  "inner": [
+    {
+      "id": "f610761a-47e3-af9e-0445-81727f808ef2",
+      "name": "meshes/y_bot_sprint/Alpha_Surface",
+      "display_name": "meshes/y_bot_sprint/Alpha_Surface",
+      "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+    },
+    {
+      "id": "8955ec56-1f47-08da-3bd7-33a9b2934b04",
+      "name": "meshes/y_bot_sprint/Alpha_Joints",
+      "display_name": "meshes/y_bot_sprint/Alpha_Joints",
+      "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+    },
+    {
+      "id": "8c52c2be-d297-e3fc-3944-3c8c086bd33c",
+      "name": "meshes/y_bot_sprint/mixamo.com",
+      "display_name": "meshes/y_bot_sprint/mixamo.com",
+      "type_uuid": "627dee5d-c2d6-4e3e-9b9e-80e3e601848d"
+    }
+  ]
+}

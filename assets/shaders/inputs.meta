@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "515ba478-c139-9ba6-9f82-1b351351efef",
+    "name": "shaders/inputs",
+    "display_name": "inputs",
+    "type_uuid": "00000000-0000-0000-0000-000000000000"
+  },
+  "inner": []
+}

@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "ce0d58dc-857f-18ed-da78-a122bcfc90a1",
+    "name": "shaders/camera",
+    "display_name": "camera",
+    "type_uuid": "00000000-0000-0000-0000-000000000000"
+  },
+  "inner": []
+}

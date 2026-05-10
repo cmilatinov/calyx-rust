@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "04fb7da1-2c10-da36-7c18-8a8a824b85be",
+    "name": "shaders/environment/irradiance",
+    "display_name": "irradiance",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

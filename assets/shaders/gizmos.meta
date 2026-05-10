@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "29aed5ad-69e1-a239-2947-bfbb28746d06",
+    "name": "shaders/gizmos",
+    "display_name": "gizmos",
+    "type_uuid": "00000000-0000-0000-0000-000000000000"
+  },
+  "inner": []
+}

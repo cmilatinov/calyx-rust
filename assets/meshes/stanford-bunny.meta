@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "182ada19-77e4-8d03-8b03-0d51d8a7ac6d",
+    "name": "meshes/stanford-bunny",
+    "display_name": "stanford-bunny",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}
