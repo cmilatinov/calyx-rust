@@ -333,7 +333,6 @@ impl AssetRegistry {
 
     /// Loads an asset by UUID as a typed handle.
     pub fn load_by_id<A: Asset + TypeUuid>(&self, id: Uuid) -> Result<Ref<A>, AssetError> {
-        log::trace!("Loading asset {} ({})", id, A::asset_name());
         // Load parent asset if any
         let meta = self
             .asset_meta_from_id(id)
@@ -355,6 +354,12 @@ impl AssetRegistry {
         let path = self
             .asset_path(id, A::file_extensions())
             .ok_or_else(|| AssetError::NotFound.with_type(A::asset_name()))?;
+        log::trace!(
+            "Loading asset {} ({}) from {}",
+            id,
+            A::asset_name(),
+            path.display()
+        );
         let asset = self.load_asset_file(id, &path)?;
 
         // Create ref
@@ -387,7 +392,6 @@ impl AssetRegistry {
 
     /// Loads an asset by UUID as a type-erased handle.
     pub fn load_dyn_by_id(&self, id: Uuid) -> Result<Ref<dyn Asset>, AssetError> {
-        log::trace!("Loading dynamic asset {id}");
         // Load parent asset if any
         let meta = self
             .asset_meta_from_id(id)
@@ -409,6 +413,7 @@ impl AssetRegistry {
         let ctor = ctors.get(&meta.type_uuid).ok_or_else(|| {
             AssetError::NotFound.with_source(format!("constructor for type {}", meta.type_uuid))
         })?;
+        log::trace!("Loading dynamic asset {} from {}", id, path.display());
         let LoadedAssetRef { asset, sub_assets } = (ctor.create)(self.asset_context(), id, path)?;
 
         // Load from file
