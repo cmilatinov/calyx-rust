@@ -1,9 +1,0 @@
-{
-  "main": {
-    "id": "4c7991d7-4dd8-a20f-22fd-c777d2dd5e92",
-    "name": "prefabs/player",
-    "display_name": "player",
-    "type_uuid": "960f1d60-3ad4-4f1d-92d3-cceb0e0623d7"
-  },
-  "inner": []
-}
