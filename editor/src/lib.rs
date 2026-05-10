@@ -253,7 +253,7 @@ impl EditorApp {
             ctx,
             self.state.game_response.as_ref(),
             InputState {
-                is_active: self.is_game_focused(),
+                is_active: self.is_game_focused() && self.state.game_response.is_some(),
                 last_cursor_pos,
                 ..Default::default()
             },

@@ -1,8 +1,8 @@
 use super::Panel;
 use crate::{icons, EditorAppState};
 use egui::{
-    load::SizedTexture, Image, ImageSource, Key, Modifiers, Response, Sense, Ui, Vec2,
-    ViewportCommand,
+    load::SizedTexture, Image, ImageSource, Key, Modifiers, PointerButton, Response, Sense, Ui,
+    Vec2, ViewportCommand,
 };
 use engine::math::fit_aspect;
 use re_ui::Icon;
@@ -91,7 +91,7 @@ impl PanelGame {
                         id: texture_id,
                         size,
                     }))
-                    .sense(Sense::click()),
+                    .sense(Sense::click_and_drag()),
                 )
             },
         );
@@ -105,10 +105,16 @@ impl PanelGame {
         size: Vec2,
         res: Response,
     ) {
-        if res.clicked() {
+        let primary_pressed_on_viewport =
+            res.hovered() && ui.input(|input| input.pointer.button_pressed(PointerButton::Primary));
+        if primary_pressed_on_viewport {
+            res.request_focus();
             self.is_cursor_grabbed = true;
         } else if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape)) {
             self.is_cursor_grabbed = false;
+        }
+        if self.is_cursor_grabbed && !res.has_focus() {
+            res.request_focus();
         }
         if self.is_cursor_grabbed {
             ui.ctx()
