@@ -68,7 +68,7 @@ impl Ord for ShaderVariable {
 }
 
 /// Texture source stored by material texture slots.
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum MaterialTexture {
     /// Sample from a texture asset on disk.
     Asset(AssetRef<Texture>),
@@ -88,24 +88,6 @@ impl PartialEq for MaterialTexture {
             (Self::Asset(left), Self::Asset(right)) => left.id() == right.id(),
             (Self::Color(left), Self::Color(right)) => left == right,
             _ => false,
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for MaterialTexture {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        enum TaggedMaterialTexture {
-            Asset(AssetRef<Texture>),
-            Color([f32; 4]),
-        }
-
-        match TaggedMaterialTexture::deserialize(deserializer)? {
-            TaggedMaterialTexture::Asset(asset) => Ok(Self::Asset(asset)),
-            TaggedMaterialTexture::Color(color) => Ok(Self::Color(color)),
         }
     }
 }
