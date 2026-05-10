@@ -70,12 +70,22 @@ impl ProjectManager {
             let command = format!("cargo {}", args.join(" "));
             match output {
                 Ok(output) if output.status.success() => {
-                    log_command_output(command.as_str(), &output.stdout, &output.stderr);
+                    log_command_output(
+                        command.as_str(),
+                        &output.stdout,
+                        &output.stderr,
+                        CommandOutputStatus::Success,
+                    );
                     log::info!("Project assemblies built successfully");
                     project_manager_ref.write().load_assemblies();
                 }
                 Ok(output) => {
-                    log_command_output(command.as_str(), &output.stdout, &output.stderr);
+                    log_command_output(
+                        command.as_str(),
+                        &output.stdout,
+                        &output.stderr,
+                        CommandOutputStatus::Failure,
+                    );
                     log::error!(
                         "Project assembly build failed with status {}",
                         output.status
@@ -98,7 +108,12 @@ impl ProjectManager {
         {
             Ok(output) if output.status.success() => output,
             Ok(output) => {
-                log_command_output("cargo metadata", &output.stdout, &output.stderr);
+                log_command_output(
+                    "cargo metadata",
+                    &output.stdout,
+                    &output.stderr,
+                    CommandOutputStatus::Failure,
+                );
                 log::error!("Failed to read cargo metadata; status {}", output.status);
                 return;
             }
@@ -173,12 +188,20 @@ impl ProjectManager {
     }
 }
 
-fn log_command_output(command: &str, stdout: &[u8], stderr: &[u8]) {
+enum CommandOutputStatus {
+    Success,
+    Failure,
+}
+
+fn log_command_output(command: &str, stdout: &[u8], stderr: &[u8], status: CommandOutputStatus) {
     for line in String::from_utf8_lossy(stdout).lines() {
         log::trace!("{command} stdout: {line}");
     }
     for line in String::from_utf8_lossy(stderr).lines() {
-        log::warn!("{command} stderr: {line}");
+        match status {
+            CommandOutputStatus::Success => log::info!("{command} output: {line}"),
+            CommandOutputStatus::Failure => log::warn!("{command} stderr: {line}"),
+        }
     }
 }
 
