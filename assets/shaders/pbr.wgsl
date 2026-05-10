@@ -118,14 +118,14 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
         let a = max((999.0 - r) / (r * r), 0.0);
         let attenuation = 1.0 / ((a * dist * dist) + dist + 1.0);
 
-        color += pbr(n, v, l, albedo.rgb, light.color * attenuation, material);
+        color += pbr(n, v, l, albedo.rgb, light.color * light.intensity * attenuation, material);
     }
 
     // Directional lights
     for (var i = 0u; i < directional_lights.size; i++) {
         let light = directional_lights.lights[i];
         let l = normalize(-light.direction);
-        color += pbr(n, v, l, albedo.rgb, light.color, material);
+        color += pbr(n, v, l, albedo.rgb, light.color * light.intensity, material);
     }
 
     // Ambient light

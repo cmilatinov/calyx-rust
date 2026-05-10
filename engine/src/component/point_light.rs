@@ -23,6 +23,9 @@ pub struct ComponentPointLight {
     pub radius: f32,
     /// Light color.
     pub color: Color32,
+    /// Scalar intensity multiplier.
+    #[reflect_attr(min = 0.0, speed = 0.01)]
+    pub intensity: f32,
 }
 
 impl Default for ComponentPointLight {
@@ -31,6 +34,7 @@ impl Default for ComponentPointLight {
             active: true,
             radius: 10.0,
             color: Color32::WHITE,
+            intensity: 1.0,
         }
     }
 }

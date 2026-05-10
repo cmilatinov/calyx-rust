@@ -13,7 +13,7 @@ struct PointLight {
     position: [f32; 3],
     radius: f32,
     color: [f32; 3],
-    _padding: f32,
+    intensity: f32,
 }
 
 #[repr(C)]
@@ -22,7 +22,7 @@ struct DirectionalLight {
     direction: [f32; 3],
     _padding: f32,
     color: [f32; 3],
-    _padding2: f32,
+    intensity: f32,
 }
 
 pub struct LightManager {
@@ -126,9 +126,9 @@ impl LightManager {
             let color = light.color.to_normalized_gamma_f32();
             point_lights.push(PointLight {
                 color: [color[0], color[1], color[2]],
+                intensity: light.intensity.max(0.0),
                 radius: light.radius,
                 position: scene.world_transform(game_object).position.into(),
-                ..Default::default()
             });
         }
         point_lights
@@ -147,11 +147,12 @@ impl LightManager {
             let color = light.color.to_normalized_gamma_f32();
             directional_lights.push(DirectionalLight {
                 color: [color[0], color[1], color[2]],
+                intensity: light.intensity.max(0.0),
+                _padding: 0.0,
                 direction: scene
                     .world_transform(game_object)
                     .transform_direction(&Vec3::z_axis())
                     .into(),
-                ..Default::default()
             })
         }
         directional_lights
@@ -176,6 +177,7 @@ mod tests {
             ComponentPointLight {
                 radius: 7.5,
                 color: Color32::RED,
+                intensity: 0.25,
                 ..Default::default()
             },
         );
@@ -187,6 +189,7 @@ mod tests {
                 active: false,
                 radius: 99.0,
                 color: Color32::BLUE,
+                ..Default::default()
             },
         );
 
@@ -196,6 +199,7 @@ mod tests {
         assert_eq!(lights[0].position, [1.0, 2.0, 3.0]);
         assert_eq!(lights[0].radius, 7.5);
         assert_eq!(lights[0].color, [1.0, 0.0, 0.0]);
+        assert_eq!(lights[0].intensity, 0.25);
     }
 
     #[test]
@@ -206,6 +210,7 @@ mod tests {
             active,
             ComponentDirectionalLight {
                 color: Color32::GREEN,
+                intensity: 0.5,
                 ..Default::default()
             },
         );
@@ -225,5 +230,6 @@ mod tests {
         assert_eq!(lights.len(), 1);
         assert_eq!(lights[0].direction, [0.0, 0.0, 1.0]);
         assert_eq!(lights[0].color, [0.0, 1.0, 0.0]);
+        assert_eq!(lights[0].intensity, 0.5);
     }
 }
