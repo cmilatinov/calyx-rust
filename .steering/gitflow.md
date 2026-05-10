@@ -41,8 +41,8 @@ Examples:
 
 - Never commit directly to `main`.
 - Always create or use a Gitflow branch for changes: `feature/*`, `fix/*`, `chore/*`, `hotfix/*`, or `release/*`.
-- Never use git worktrees for this project.
-- If there are uncommitted changes and a branch switch is needed, stash the changes instead of creating a worktree.
+- Always use a dedicated git worktree for repository changes. Create the worktree from the intended base branch and keep each worktree scoped to one branch/PR.
+- If there are uncommitted changes in another worktree, leave them untouched and do the new work in a separate worktree instead of stashing or switching branches in place.
 - All non-hotfix work targets `staging`.
 - Keep commits atomic - one logical change per commit.
 - Use feature/fix/chore branches for multi-commit work.
