@@ -1,7 +1,6 @@
 use crate::error::BoxedError;
 use crate::net::message::{GameChannel, GameMessage};
 use crate::net::MessageQueue;
-use log::{error, info, trace};
 use renet::{ClientId, RenetClient};
 use renet_netcode::{ClientAuthentication, NetcodeClientTransport};
 use std::net::{SocketAddr, UdpSocket};
@@ -45,21 +44,21 @@ impl Client {
 
     /// Connects the client to `server_addr` using the engine's netcode protocol.
     pub fn connect(&mut self, server_addr: SocketAddr) -> Result<(), BoxedError> {
-        info!("Connecting to server at {}", server_addr);
+        log::info!("Connecting to server at {}", server_addr);
         let socket = UdpSocket::bind("127.0.0.1:0").map_err(|e| {
-            error!("Failed to bind socket: {}", e);
+            log::error!("Failed to bind socket: {}", e);
             Box::new(e) as Box<dyn std::error::Error + Send + Sync>
         })?;
 
         let current_time = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_err(|e| {
-                error!("System time error: {}", e);
+                log::error!("System time error: {}", e);
                 Box::new(e) as Box<dyn std::error::Error + Send + Sync>
             })?;
 
         let client_id = Self::generate_client_id();
-        trace!("Generated client ID: {}", client_id);
+        log::trace!("Generated client ID: {}", client_id);
 
         let authentication = ClientAuthentication::Unsecure {
             server_addr,
@@ -70,12 +69,12 @@ impl Client {
 
         self.transport = Some(
             NetcodeClientTransport::new(current_time, authentication, socket).map_err(|e| {
-                error!("Failed to create transport: {}", e);
+                log::error!("Failed to create transport: {}", e);
                 Box::new(e) as Box<dyn std::error::Error + Send + Sync>
             })?,
         );
 
-        info!("Successfully initialized client transport");
+        log::info!("Successfully initialized client transport");
         Ok(())
     }
 
@@ -89,11 +88,11 @@ impl Client {
 
         if let Some(transport) = transport {
             if let Err(err) = transport.update(duration, client) {
-                error!("Error updating transport: {:?}", err);
+                log::error!("Error updating transport: {:?}", err);
             }
 
             if let Err(err) = transport.send_packets(client) {
-                error!("Error sending packets: {}", err);
+                log::error!("Error sending packets: {}", err);
             }
         }
 
@@ -104,7 +103,7 @@ impl Client {
                     bincode::config::standard(),
                 )
                 .map_err(|e| {
-                    error!("Failed to decode message from server: {}", e);
+                    log::error!("Failed to decode message from server: {}", e);
                     e
                 })
                 .ok()
@@ -118,7 +117,7 @@ impl Client {
     pub fn send_message(&mut self, message: &GameMessage) -> Result<(), BoxedError> {
         let bytes =
             bincode::serde::encode_to_vec(message, bincode::config::standard()).map_err(|e| {
-                error!("Failed to serialize message: {}", e);
+                log::error!("Failed to serialize message: {}", e);
                 Box::new(e) as Box<dyn std::error::Error + Send + Sync>
             })?;
 
@@ -130,7 +129,7 @@ impl Client {
     pub fn is_connected(&self) -> bool {
         let connected = self.client.is_connected();
         if connected {
-            trace!("Client is connected");
+            log::trace!("Client is connected");
         }
         connected
     }
@@ -139,7 +138,7 @@ impl Client {
     pub fn is_connecting(&self) -> bool {
         let connecting = self.client.is_connecting();
         if connecting {
-            trace!("Client is connecting...");
+            log::trace!("Client is connecting...");
         }
         connecting
     }
@@ -148,7 +147,7 @@ impl Client {
     pub fn is_disconnected(&self) -> bool {
         let disconnected = self.client.is_disconnected();
         if disconnected {
-            trace!("Client is disconnected");
+            log::trace!("Client is disconnected");
         }
         disconnected
     }

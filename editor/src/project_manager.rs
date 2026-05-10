@@ -10,7 +10,6 @@ use engine::core::{Ref, WeakRef};
 use engine::error::BoxedError;
 use engine::reflect::type_registry::TypeRegistry;
 use engine::reflect::TypeInfo;
-use log::{error, info, trace, warn};
 use project::Project;
 use rusty_pool::JoinHandle;
 use serde_json::Value;
@@ -30,7 +29,7 @@ impl ProjectManager {
         background: Ref<Background>,
     ) -> Result<Ref<Self>, BoxedError> {
         let project_directory = dunce::canonicalize(project_directory.into()).map_err(Box::new)?;
-        info!("Loading project from {}", project_directory.display());
+        log::info!("Loading project from {}", project_directory.display());
         let current_project = Project::load(project_directory)?;
         Ok(Ref::new_cyclic(move |weak| Self {
             current_project,
@@ -43,7 +42,7 @@ impl ProjectManager {
 
     pub fn load(&mut self, path: impl Into<PathBuf>) -> Result<(), BoxedError> {
         let path = path.into();
-        info!("Switching project to {}", path.display());
+        log::info!("Switching project to {}", path.display());
         self.current_project = Project::load(path)?;
         Ok(())
     }
@@ -60,7 +59,7 @@ impl ProjectManager {
         let root = self.root_project_dir();
         let project_manager_ref = self.project_manager.upgrade().unwrap();
         self.background.write().execute(TaskId::Build, move || {
-            info!("Building project assemblies in {}", root.display());
+            log::info!("Building project assemblies in {}", root.display());
             let output = Command::new("cargo")
                 .current_dir(root)
                 .args(["build", "--profile", "release-with-debug"])
@@ -68,18 +67,18 @@ impl ProjectManager {
             match output {
                 Ok(output) if output.status.success() => {
                     log_command_output("cargo build", &output.stdout, &output.stderr);
-                    info!("Project assemblies built successfully");
+                    log::info!("Project assemblies built successfully");
                     project_manager_ref.write().load_assemblies();
                 }
                 Ok(output) => {
                     log_command_output("cargo build", &output.stdout, &output.stderr);
-                    error!(
+                    log::error!(
                         "Project assembly build failed with status {}",
                         output.status
                     );
                 }
                 Err(err) => {
-                    error!("Failed to start project assembly build: {err}");
+                    log::error!("Failed to start project assembly build: {err}");
                 }
             }
         })
@@ -87,7 +86,7 @@ impl ProjectManager {
 
     pub fn load_assemblies(&mut self) {
         let root = self.root_project_dir();
-        trace!("Loading project assemblies from {}", root.display());
+        log::trace!("Loading project assemblies from {}", root.display());
         let meta_output = match Command::new("cargo")
             .current_dir(root)
             .arg("metadata")
@@ -96,23 +95,23 @@ impl ProjectManager {
             Ok(output) if output.status.success() => output,
             Ok(output) => {
                 log_command_output("cargo metadata", &output.stdout, &output.stderr);
-                error!("Failed to read cargo metadata; status {}", output.status);
+                log::error!("Failed to read cargo metadata; status {}", output.status);
                 return;
             }
             Err(err) => {
-                error!("Failed to start cargo metadata: {err}");
+                log::error!("Failed to start cargo metadata: {err}");
                 return;
             }
         };
         let json: Value = match serde_json::from_slice(&meta_output.stdout) {
             Ok(json) => json,
             Err(err) => {
-                error!("Failed to parse cargo metadata: {err}");
+                log::error!("Failed to parse cargo metadata: {err}");
                 return;
             }
         };
         let Some(target_directory) = json["target_directory"].as_str() else {
-            error!("Cargo metadata did not include a target directory");
+            log::error!("Cargo metadata did not include a target directory");
             return;
         };
         let mut target = PathBuf::from(target_directory);
@@ -126,7 +125,7 @@ impl ProjectManager {
                     if let Ok(load_fn) =
                         lib.find_func::<extern "C" fn(&mut TypeRegistry), &str>("plugin_main")
                     {
-                        info!(
+                        log::info!(
                             "Loading plugin type registrations from crate {} ({})",
                             self.current_project().name(),
                             target.display()
@@ -141,7 +140,7 @@ impl ProjectManager {
                             registered_count += 1;
                             let (kind, type_name, details) =
                                 type_registration_summary(&registration.type_info);
-                            trace!(
+                            log::trace!(
                                 "Registered project type uuid={} crate={} module={} type={} kind={} traits={} {}",
                                 id,
                                 crate_name(type_name),
@@ -152,7 +151,7 @@ impl ProjectManager {
                                 details
                             );
                         }
-                        info!(
+                        log::info!(
                             "Loaded {registered_count} project type registrations from crate {}",
                             self.current_project().name()
                         );
@@ -162,9 +161,9 @@ impl ProjectManager {
                     component_registry_ref
                         .write()
                         .refresh_class_lists(&self.context.registries.types.read());
-                    info!("Project assemblies loaded");
+                    log::info!("Project assemblies loaded");
                 }
-                Err(err) => error!("Failed to load project assembly: {err}"),
+                Err(err) => log::error!("Failed to load project assembly: {err}"),
             }
         }
     }
@@ -172,10 +171,10 @@ impl ProjectManager {
 
 fn log_command_output(command: &str, stdout: &[u8], stderr: &[u8]) {
     for line in String::from_utf8_lossy(stdout).lines() {
-        trace!("{command} stdout: {line}");
+        log::trace!("{command} stdout: {line}");
     }
     for line in String::from_utf8_lossy(stderr).lines() {
-        warn!("{command} stderr: {line}");
+        log::warn!("{command} stderr: {line}");
     }
 }
 

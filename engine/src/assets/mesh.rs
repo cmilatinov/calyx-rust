@@ -4,7 +4,6 @@ use std::path::Path;
 
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
-use log::info;
 use nalgebra_glm::{vec2, vec3, vec4, IVec4, Mat4, Vec2, Vec3, Vec4};
 use russimp_ng::scene::{PostProcess, Scene};
 
@@ -247,7 +246,7 @@ impl Asset for Mesh {
                 .with_path(path)
                 .with_type(Self::asset_name()),
         )?;
-        info!(
+        log::info!(
             "Loaded mesh {} ({} vertices, {} faces, {} bones)",
             path.display(),
             mesh.vertices.len(),

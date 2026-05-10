@@ -18,7 +18,6 @@ use egui::Color32;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::{wgpu, RenderState};
 use legion::{Entity, IntoQuery};
-use log::{info, trace, warn};
 use nalgebra_glm as glm;
 use nalgebra_glm::Mat4;
 use rapier3d::pipeline::DebugRenderPipeline;
@@ -141,15 +140,19 @@ impl SceneRenderer {
         let asset_registry = context.registries.assets.read();
         let device = &render_state.device;
         let (width, height) = if initial_size.0 == 0 || initial_size.1 == 0 {
-            warn!("SceneRenderer created before a valid render size was available; using 1x1 initial textures");
+            log::warn!("SceneRenderer created before a valid render size was available; using 1x1 initial textures");
             (1, 1)
         } else {
             initial_size
         };
         options.samples = options.samples.max(1);
-        info!(
+        log::info!(
             "Creating scene renderer: size={}x{}, samples={}, grid={}, gizmos={}",
-            width, height, options.samples, options.grid, options.gizmos
+            width,
+            height,
+            options.samples,
+            options.grid,
+            options.gizmos
         );
 
         // Textures
@@ -742,7 +745,7 @@ impl SceneRenderer {
             match pending.receiver.try_recv() {
                 Ok(Ok(())) => break,
                 Ok(Err(_)) | Err(mpsc::TryRecvError::Disconnected) => {
-                    warn!("Object id readback failed or disconnected");
+                    log::warn!("Object id readback failed or disconnected");
                     self.pending_object_id_readback = None;
                     self.completed_object_pick = None;
                     return;
@@ -962,7 +965,7 @@ impl SceneRenderer {
         {
             return;
         }
-        trace!(
+        log::trace!(
             "Resizing scene renderer textures from {}x{} to {}x{}",
             self.scene_texture.descriptor.size.width,
             self.scene_texture.descriptor.size.height,

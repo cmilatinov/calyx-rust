@@ -1,6 +1,5 @@
 use egui_wgpu::wgpu;
 use image::{ColorType, DynamicImage, ImageReader};
-use log::{info, trace};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -64,7 +63,7 @@ impl Asset for Texture {
             depth_or_array_layers: 1,
         };
         let mip_level_count = Self::mip_level_count(texture_size.width, texture_size.height);
-        info!(
+        log::info!(
             "Loaded texture {} ({}x{}, {:?}, {} mips)",
             path.display(),
             texture_size.width,
@@ -256,7 +255,7 @@ impl Texture {
         let mut src_view = self.create_mip_view(0);
 
         for mip_level in 1..self.descriptor.mip_level_count {
-            trace!(
+            log::trace!(
                 "Generating 2D mip level {} for texture {:?}",
                 mip_level,
                 self.descriptor.label

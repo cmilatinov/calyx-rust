@@ -13,7 +13,6 @@ use crate::core::Ref;
 use crate::render::{AssetMap, LockedAssetRenderState, Shader};
 use crate::utils::TypeUuid;
 use egui_wgpu::{wgpu, RenderState};
-use log::{info, trace};
 use naga::{ImageDimension, Scalar, ScalarKind, TypeInner, VectorSize};
 use serde::{Deserialize, Serialize};
 
@@ -218,7 +217,7 @@ impl Asset for Material {
                 .with_source(err)
         })?;
         let material: Material = (assets, data).into();
-        info!(
+        log::info!(
             "Loaded material {} with {} shader variables",
             path.display(),
             material.variables.len()
@@ -587,7 +586,7 @@ impl Material {
         for (group, entries) in self.bind_group_entries.iter() {
             for (binding, entry) in entries {
                 if let BindingType::Buffer = entry.ty {
-                    trace!(
+                    log::trace!(
                         "Creating material buffer for group {}, binding {}, size {:?}",
                         group,
                         binding,
