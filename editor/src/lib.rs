@@ -244,17 +244,12 @@ impl eframe::App for EditorApp {
 impl EditorApp {
     fn update_game(&mut self, ctx: &egui::Context) {
         self.state.game.scenes.prepare();
-        let last_cursor_pos = self
-            .state
-            .game_response
-            .as_ref()
-            .map(|res| res.rect.center());
         let input = Input::from_ctx(
             ctx,
             self.state.game_response.as_ref(),
             InputState {
                 is_active: self.is_game_focused() && self.state.game_response.is_some(),
-                last_cursor_pos,
+                last_cursor_pos: None,
                 ..Default::default()
             },
         );
