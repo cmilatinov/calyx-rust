@@ -2,7 +2,7 @@ use crate::inspector::asset_inspector::{AssetInspector, ReflectAssetInspector};
 use crate::inspector::widgets::Widgets;
 use egui;
 use egui::Ui;
-use engine::assets::material::{Material, ShaderVariable, ShaderVariableValue};
+use engine::assets::material::{Material, MaterialTexture, ShaderVariable, ShaderVariableValue};
 use engine::assets::texture::Texture;
 use engine::context::{AssetContext, GameContext};
 use engine::reflect::{Reflect, ReflectDefault};
@@ -98,14 +98,44 @@ impl MaterialInspector {
             ShaderVariableValue::Vec4(ref mut vec) => {
                 Widgets::drag_floatn(ui, 0.1, vec);
             }
-            ShaderVariableValue::Texture2D(ref mut tex) => {
-                Widgets::asset_select_t(
-                    ui,
-                    &game.registries.assets.read(),
-                    (var.group, var.binding, var.offset),
-                    Some(Texture::type_uuid()),
-                    tex,
-                );
+            ShaderVariableValue::Texture2D(ref mut texture) => {
+                let id = (var.group, var.binding, var.offset, "texture_source");
+                egui::ComboBox::from_id_salt(id)
+                    .selected_text(match texture {
+                        MaterialTexture::Asset(_) => "Texture",
+                        MaterialTexture::Color(_) => "Color",
+                    })
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_label(matches!(texture, MaterialTexture::Color(_)), "Color")
+                            .clicked()
+                        {
+                            *texture = MaterialTexture::Color([1.0, 1.0, 1.0, 1.0]);
+                        }
+                        if ui
+                            .selectable_label(
+                                matches!(texture, MaterialTexture::Asset(_)),
+                                "Texture",
+                            )
+                            .clicked()
+                        {
+                            *texture = MaterialTexture::Asset(Default::default());
+                        }
+                    });
+                match texture {
+                    MaterialTexture::Asset(ref mut tex) => {
+                        Widgets::asset_select_t(
+                            ui,
+                            &game.registries.assets.read(),
+                            (var.group, var.binding, var.offset),
+                            Some(Texture::type_uuid()),
+                            tex,
+                        );
+                    }
+                    MaterialTexture::Color(ref mut color) => {
+                        ui.color_edit_button_rgba_unmultiplied(color);
+                    }
+                }
             }
             _ => {}
         });

@@ -67,6 +67,80 @@ impl Ord for ShaderVariable {
     }
 }
 
+/// Texture source stored by material texture slots.
+#[derive(Clone, Serialize)]
+pub enum MaterialTexture {
+    /// Sample from a texture asset on disk.
+    Asset(AssetRef<Texture>),
+    /// Sample from a generated in-memory 1x1 color texture.
+    Color([f32; 4]),
+}
+
+impl Default for MaterialTexture {
+    fn default() -> Self {
+        Self::Color([1.0, 1.0, 1.0, 1.0])
+    }
+}
+
+impl PartialEq for MaterialTexture {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Asset(left), Self::Asset(right)) => left.id() == right.id(),
+            (Self::Color(left), Self::Color(right)) => left == right,
+            _ => false,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for MaterialTexture {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        enum TaggedMaterialTexture {
+            Asset(AssetRef<Texture>),
+            Color([f32; 4]),
+        }
+
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum MaterialTextureData {
+            LegacyAsset(AssetRef<Texture>),
+            Tagged(TaggedMaterialTexture),
+        }
+
+        match MaterialTextureData::deserialize(deserializer)? {
+            MaterialTextureData::LegacyAsset(asset) => Ok(Self::Asset(asset)),
+            MaterialTextureData::Tagged(TaggedMaterialTexture::Asset(asset)) => {
+                Ok(Self::Asset(asset))
+            }
+            MaterialTextureData::Tagged(TaggedMaterialTexture::Color(color)) => {
+                Ok(Self::Color(color))
+            }
+        }
+    }
+}
+
+impl MaterialTexture {
+    /// Quantizes linear RGBA floats into a stable 8-bit texture cache key.
+    pub fn color_key(color: [f32; 4]) -> [u8; 4] {
+        color.map(|channel| (channel.clamp(0.0, 1.0) * 255.0).round() as u8)
+    }
+
+    fn as_texture(&self, context: &ReadOnlyAssetContext, default: Ref<Texture>) -> Ref<Texture> {
+        match self {
+            Self::Asset(texture) => texture.get_ref(&context.registries).unwrap_or(default),
+            Self::Color(color) => context
+                .registries
+                .assets
+                .read()
+                .color_texture_2d(*color)
+                .unwrap_or(default),
+        }
+    }
+}
+
 /// Editable value payload for a [`ShaderVariable`].
 #[derive(Serialize, Deserialize)]
 pub enum ShaderVariableValue {
@@ -88,8 +162,8 @@ pub enum ShaderVariableValue {
     Vec4([f32; 4]),
     /// 4x4 matrix.
     Mat4([[f32; 4]; 4]),
-    /// 2D texture asset reference.
-    Texture2D(AssetRef<Texture>),
+    /// 2D texture source.
+    Texture2D(MaterialTexture),
     /// Texture sampler slot.
     Sampler,
 }
@@ -130,7 +204,7 @@ impl ShaderVariableValue {
         let ShaderVariableValue::Texture2D(texture) = self else {
             return default;
         };
-        texture.get_ref(&context.registries).unwrap_or(default)
+        texture.as_texture(context, default)
     }
 }
 
@@ -642,7 +716,10 @@ impl From<(&ReadOnlyAssetContext, MaterialData)> for Material {
 
 #[cfg(test)]
 mod tests {
-    use super::{Material, ShaderVariableValue};
+    use super::{Material, MaterialTexture, ShaderVariableValue};
+    use crate::assets::AssetAccess;
+    use serde_json::json;
+    use uuid::Uuid;
 
     #[test]
     fn color_values_are_buffer_backed_as_vec4_f32() {
@@ -656,5 +733,35 @@ mod tests {
         assert!(Material::is_color_variable("base_color"));
         assert!(Material::is_color_variable("albedo"));
         assert!(!Material::is_color_variable("clip_plane"));
+    }
+
+    #[test]
+    fn material_texture_color_key_clamps_and_quantizes() {
+        assert_eq!(
+            MaterialTexture::color_key([-1.0, 0.5, 1.0, 2.0]),
+            [0, 128, 255, 255]
+        );
+    }
+
+    #[test]
+    fn texture2d_accepts_legacy_asset_reference_data() {
+        let id = Uuid::parse_str("d2863902-8a4c-8f5b-2fef-8df1e3cf693e").unwrap();
+        let value: ShaderVariableValue =
+            serde_json::from_value(json!({ "Texture2D": id })).unwrap();
+
+        let ShaderVariableValue::Texture2D(MaterialTexture::Asset(asset)) = value else {
+            panic!("expected legacy texture asset reference");
+        };
+        assert_eq!(asset.id(), id);
+    }
+
+    #[test]
+    fn texture2d_serializes_color_source_data() {
+        let value = ShaderVariableValue::Texture2D(MaterialTexture::Color([0.25, 0.5, 0.75, 1.0]));
+
+        assert_eq!(
+            serde_json::to_value(value).unwrap(),
+            json!({ "Texture2D": { "Color": [0.25, 0.5, 0.75, 1.0] } })
+        );
     }
 }

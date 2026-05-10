@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use crate::assets::animation_graph::AnimationGraph;
 use crate::assets::error::AssetError;
-use crate::assets::material::Material;
+use crate::assets::material::{Material, MaterialTexture};
 use crate::assets::mesh::Mesh;
 use crate::assets::texture::Texture;
 use crate::assets::Asset;
@@ -1041,6 +1041,18 @@ impl AssetRegistry {
     /// Returns the built-in white texture asset when available.
     pub fn white_texture(&self) -> Option<Ref<Texture>> {
         self.load::<Texture>("textures/white").ok()
+    }
+
+    /// Returns or creates an in-memory 1x1 texture for a material color.
+    pub fn color_texture_2d(&self, color: [f32; 4]) -> Option<Ref<Texture>> {
+        let rgba = MaterialTexture::color_key(color);
+        let name = format!(
+            "material_color_texture_{:02x}{:02x}{:02x}{:02x}",
+            rgba[0], rgba[1], rgba[2], rgba[3]
+        );
+        self.load_or_create(name.as_str(), || {
+            Texture::solid_color_2d(self.render_context.clone(), name.as_str(), rgba)
+        })
     }
 
     /// Returns or creates a 2D black fallback texture.
