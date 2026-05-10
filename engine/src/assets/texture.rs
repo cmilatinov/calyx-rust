@@ -191,6 +191,59 @@ impl Texture {
         }
     }
 
+    /// Creates a 1x1 RGBA texture initialized from the provided bytes.
+    pub fn solid_color_2d(render_context: Arc<RenderContext>, label: &str, rgba: [u8; 4]) -> Self {
+        let texture = Self::new(
+            render_context.clone(),
+            &wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            Some(wgpu::SamplerDescriptor {
+                label: Some(label),
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::FilterMode::Nearest,
+                ..Default::default()
+            }),
+            None,
+            false,
+        );
+        render_context.queue().write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &rgba,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        texture
+    }
+
     fn texture_format(color: ColorType) -> wgpu::TextureFormat {
         match color {
             ColorType::Rgba32F | ColorType::Rgb32F => wgpu::TextureFormat::Rgba32Float,
