@@ -10,7 +10,27 @@ use engine::utils::TypeUuid;
 use serde_json;
 use std::io::BufWriter;
 use std::ops::Deref;
+use std::time::Duration;
 use uuid::Uuid;
+
+const MATERIAL_COLOR_COMMIT_DELAY: f64 = 0.15;
+
+#[derive(Clone, Copy)]
+struct MaterialColorEditState {
+    draft: [f32; 4],
+    dirty: bool,
+    last_changed: f64,
+}
+
+impl MaterialColorEditState {
+    fn clean(color: [f32; 4]) -> Self {
+        Self {
+            draft: color,
+            dirty: false,
+            last_changed: 0.0,
+        }
+    }
+}
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, AssetInspector)]
@@ -39,6 +59,7 @@ impl AssetInspector for MaterialInspector {
             Self::show_variable_inspector(ui, &game.assets, var);
         }
         if ui.button("Save").clicked() {
+            Self::flush_pending_color_edits(ui, &mut material);
             let Some(meta) = game
                 .assets
                 .registries
@@ -65,6 +86,35 @@ impl AssetInspector for MaterialInspector {
 }
 
 impl MaterialInspector {
+    fn color_edit_id(var: &ShaderVariable) -> egui::Id {
+        egui::Id::new((
+            "material_texture_color",
+            var.group,
+            var.binding,
+            var.offset,
+            var.name.as_str(),
+        ))
+    }
+
+    fn flush_pending_color_edits(ui: &mut Ui, material: &mut Material) {
+        for var in material.variables.iter_mut() {
+            let id = Self::color_edit_id(var);
+            let ShaderVariableValue::Texture2D(MaterialTexture::Color(ref mut color)) =
+                &mut var.value
+            else {
+                continue;
+            };
+            let mut state = ui
+                .memory_mut(|mem| mem.data.get_temp::<MaterialColorEditState>(id))
+                .unwrap_or_else(|| MaterialColorEditState::clean(*color));
+            if state.dirty {
+                *color = state.draft;
+                state.dirty = false;
+                ui.memory_mut(|mem| mem.data.insert_temp(id, state));
+            }
+        }
+    }
+
     fn show_variable_inspector(ui: &mut Ui, game: &AssetContext, var: &mut ShaderVariable) {
         let show_var = match &var.value {
             ShaderVariableValue::Sampler => false,
@@ -73,6 +123,7 @@ impl MaterialInspector {
         if !show_var {
             return;
         }
+        let color_edit_id = Self::color_edit_id(var);
         Widgets::inspector_prop_value(ui, var.name.as_str(), |ui, _| match &mut var.value {
             ShaderVariableValue::Bool(ref mut bool) => {
                 ui.checkbox(bool, "");
@@ -111,6 +162,12 @@ impl MaterialInspector {
                             .clicked()
                         {
                             *texture = MaterialTexture::Color([1.0, 1.0, 1.0, 1.0]);
+                            ui.memory_mut(|mem| {
+                                mem.data.insert_temp(
+                                    color_edit_id,
+                                    MaterialColorEditState::clean([1.0, 1.0, 1.0, 1.0]),
+                                )
+                            });
                         }
                         if ui
                             .selectable_label(
@@ -133,11 +190,41 @@ impl MaterialInspector {
                         );
                     }
                     MaterialTexture::Color(ref mut color) => {
-                        ui.color_edit_button_rgba_unmultiplied(color);
+                        Self::show_material_color_editor(ui, color_edit_id, color);
                     }
                 }
             }
             _ => {}
         });
+    }
+
+    fn show_material_color_editor(ui: &mut Ui, id: egui::Id, color: &mut [f32; 4]) {
+        let (now, pointer_down) = ui.input(|input| (input.time, input.pointer.any_down()));
+        let mut state = ui
+            .memory_mut(|mem| mem.data.get_temp::<MaterialColorEditState>(id))
+            .unwrap_or_else(|| MaterialColorEditState::clean(*color));
+        if !state.dirty {
+            state.draft = *color;
+        }
+
+        let response = ui.color_edit_button_rgba_unmultiplied(&mut state.draft);
+        if response.changed() {
+            state.dirty = true;
+            state.last_changed = now;
+        }
+
+        if state.dirty {
+            let elapsed = now - state.last_changed;
+            if !pointer_down || elapsed >= MATERIAL_COLOR_COMMIT_DELAY {
+                *color = state.draft;
+                state.dirty = false;
+            } else {
+                ui.ctx().request_repaint_after(Duration::from_secs_f64(
+                    MATERIAL_COLOR_COMMIT_DELAY - elapsed,
+                ));
+            }
+        }
+
+        ui.memory_mut(|mem| mem.data.insert_temp(id, state));
     }
 }
