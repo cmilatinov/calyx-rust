@@ -54,6 +54,7 @@ type AssetReload = Box<
         + Sync,
 >;
 type AssetCache = HashMap<Uuid, Ref<dyn Asset>>;
+type ColorTextureCache = HashMap<[u8; 4], Ref<Texture>>;
 
 const HOT_RELOAD_DEBOUNCE: Duration = Duration::from_millis(75);
 
@@ -122,6 +123,7 @@ pub struct AssetRegistry {
     component_registry: Ref<ComponentRegistry>,
     asset_paths: Vec<PathBuf>,
     asset_cache: RwLock<AssetCache>,
+    color_texture_cache: RwLock<ColorTextureCache>,
     asset_data: RwLock<AssetData>,
     asset_constructors: RwLock<HashMap<Uuid, AssetConstructors>>,
     watcher_thread: Option<JoinHandle<()>>,
@@ -158,6 +160,7 @@ impl AssetRegistry {
                 component_registry,
                 asset_paths: asset_paths.into(),
                 asset_cache: Default::default(),
+                color_texture_cache: Default::default(),
                 asset_data: Default::default(),
                 asset_constructors: Default::default(),
                 watcher_thread: None,
@@ -198,6 +201,7 @@ impl AssetRegistry {
             component_registry,
             asset_paths: vec![path],
             asset_cache: Default::default(),
+            color_texture_cache: Default::default(),
             asset_data: Default::default(),
             asset_constructors: Default::default(),
             watcher_thread: None,
@@ -225,6 +229,7 @@ impl AssetRegistry {
                 component_registry,
                 asset_paths,
                 asset_cache: Default::default(),
+                color_texture_cache: Default::default(),
                 asset_data: Default::default(),
                 asset_constructors: Default::default(),
                 watcher_thread: None,
@@ -1044,15 +1049,26 @@ impl AssetRegistry {
     }
 
     /// Returns or creates an in-memory 1x1 texture for a material color.
-    pub fn color_texture_2d(&self, color: [f32; 4]) -> Option<Ref<Texture>> {
+    pub fn color_texture_2d(&self, color: [f32; 4]) -> Ref<Texture> {
         let rgba = MaterialTexture::color_key(color);
+        if let Some(texture) = self.color_texture_cache.read().unwrap().get(&rgba) {
+            return texture.clone();
+        }
+
         let name = format!(
             "material_color_texture_{:02x}{:02x}{:02x}{:02x}",
             rgba[0], rgba[1], rgba[2], rgba[3]
         );
-        self.load_or_create(name.as_str(), || {
-            Texture::solid_color_2d(self.render_context.clone(), name.as_str(), rgba)
-        })
+        let texture = Ref::from_id_value(
+            utils::uuid_from_str(name.as_str()),
+            Texture::solid_color_2d(self.render_context.clone(), name.as_str(), rgba),
+        );
+        let mut cache = self.color_texture_cache.write().unwrap();
+        if let Some(texture) = cache.get(&rgba) {
+            return texture.clone();
+        }
+        cache.insert(rgba, texture.clone());
+        texture
     }
 
     /// Returns or creates a 2D black fallback texture.

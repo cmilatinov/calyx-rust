@@ -131,12 +131,7 @@ impl MaterialTexture {
     fn as_texture(&self, context: &ReadOnlyAssetContext, default: Ref<Texture>) -> Ref<Texture> {
         match self {
             Self::Asset(texture) => texture.get_ref(&context.registries).unwrap_or(default),
-            Self::Color(color) => context
-                .registries
-                .assets
-                .read()
-                .color_texture_2d(*color)
-                .unwrap_or(default),
+            Self::Color(color) => context.registries.assets.read().color_texture_2d(*color),
         }
     }
 }
