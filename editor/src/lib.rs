@@ -119,9 +119,11 @@ impl EditorApp {
     pub fn new(
         cc: &eframe::CreationContext,
         project_path: impl Into<PathBuf>,
+        log: Log<DefaultLogger>,
     ) -> Result<Self, BoxedError> {
         let tree = Self::create_tree();
         let project_path = project_path.into();
+        log::info!("Starting editor for project {}", project_path.display());
         let asset_context = AssetContext::new(cc, project_path.join("assets"))?;
         let game = GameContext::new(asset_context.clone());
         let project_manager = ProjectManager::new(
@@ -149,12 +151,7 @@ impl EditorApp {
             ),
             project_manager,
             state: EditorAppState::new(game, Self::initial_render_size(&cc.egui_ctx)),
-            _log: Log::new(
-                DefaultLogger::builder()
-                    .app_vendor("Calyx")
-                    .app_name("Editor")
-                    .build(),
-            ),
+            _log: log,
         })
     }
 
@@ -391,6 +388,7 @@ impl EditorApp {
 
     fn new_interaction(&mut self) {
         self.state.game.scenes.load_default_scene();
+        log::info!("Created new scene from default scene");
     }
 
     fn open_interaction(&mut self) {
@@ -410,7 +408,6 @@ impl EditorApp {
             Err(error) => {
                 let message = format!("Failed to open scene {}: {}", file.display(), error);
                 log::error!("{message}");
-                eprintln!("{message}");
                 return;
             }
         };
@@ -418,7 +415,6 @@ impl EditorApp {
         let object_count = self.state.game.scenes.current_scene().objects().count();
         let message = format!("Opened scene {} ({} objects)", file.display(), object_count);
         log::info!("{message}");
-        eprintln!("{message}");
     }
 
     fn save_interaction(&mut self, save_as: bool) {
@@ -454,16 +450,22 @@ impl EditorApp {
     }
 
     fn save_scene(file: PathBuf, scene: &Scene) {
+        let object_count = scene.objects().count();
+        let display_path = file.display().to_string();
         let Ok(file) = std::fs::OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(true)
-            .open(file)
+            .open(&file)
         else {
+            log::error!("Failed to open scene file for save: {display_path}");
             return;
         };
         let writer = BufWriter::new(file);
-        serde_json::to_writer_pretty(writer, scene).unwrap();
+        match serde_json::to_writer_pretty(writer, scene) {
+            Ok(()) => log::info!("Saved scene {display_path} ({object_count} objects)"),
+            Err(error) => log::error!("Failed to save scene {display_path}: {error}"),
+        }
     }
 
     fn icon_button(ui: &mut Ui, source: ImageSource) -> Response {
@@ -484,6 +486,7 @@ impl EditorApp {
                 if Self::icon_button(ui, include_image!("../../resources/icons/compile_dark.png"))
                     .clicked()
                 {
+                    log::info!("Queued project assembly build");
                     self.project_manager.read().build_assemblies();
                 }
 
@@ -499,8 +502,10 @@ impl EditorApp {
                 .clicked()
                 {
                     if is_simulating {
+                        log::info!("Pausing scene simulation");
                         self.state.game.scenes.pause_simulation();
                     } else {
+                        log::info!("Starting scene simulation");
                         self.state.game.scenes.start_simulation();
                     }
                 }
@@ -508,6 +513,7 @@ impl EditorApp {
                 if Self::icon_button(ui, include_image!("../../resources/icons/suspend_dark.png"))
                     .clicked()
                 {
+                    log::info!("Stopping scene simulation");
                     self.state.game.scenes.stop_simulation();
                 }
             });
@@ -561,16 +567,18 @@ impl EditorApp {
 
 impl EditorApp {
     pub fn run() -> eframe::Result<()> {
+        let log = Log::new(
+            DefaultLogger::builder()
+                .app_vendor("Calyx")
+                .app_name("Editor")
+                .build(),
+        );
         let args: Vec<String> = env::args().collect();
-        if args.len() != 2 {}
 
         let Some(project_path) = env::args().nth(1).map(|arg| PathBuf::from(arg)) else {
-            eprintln!("Expected 2 arguments, got {}", args.len());
+            log::error!("Expected 2 arguments, got {}", args.len());
             std::process::exit(1);
         };
-
-        // log::set_boxed_logger(Box::new(Logger)).expect("Unable to setup logger");
-        // log::set_max_level(LevelFilter::Debug);
 
         let options = NativeOptions {
             viewport: egui::ViewportBuilder {
@@ -620,7 +628,7 @@ impl EditorApp {
         eframe::run_native(
             "Calyx",
             options,
-            Box::new(|cc| Ok(Box::new(EditorApp::new(cc, project_path)?))),
+            Box::new(move |cc| Ok(Box::new(EditorApp::new(cc, project_path, log)?))),
         )
     }
 }

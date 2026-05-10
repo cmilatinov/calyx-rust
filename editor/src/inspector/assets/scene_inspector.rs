@@ -38,12 +38,10 @@ impl AssetInspector for SceneInspector {
                     let object_count = game.scenes.current_scene().objects().count();
                     let message = format!("Opened scene {label} ({object_count} objects)");
                     log::info!("{message}");
-                    eprintln!("{message}");
                 }
                 Err(error) => {
                     let message = format!("Failed to open scene {label}: {error}");
                     log::error!("{message}");
-                    eprintln!("{message}");
                 }
             }
             ui.close_menu();

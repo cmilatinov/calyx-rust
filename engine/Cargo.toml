@@ -5,7 +5,6 @@ edition = "2021"
 
 [features]
 default = []
-log_file = []
 
 [lib]
 crate-type = ["rlib"]
@@ -52,8 +51,6 @@ lerp.workspace = true
 typed-builder.workspace = true
 rand.workspace = true
 log.workspace = true
-dirs.workspace = true
-env_logger.workspace = true
 russimp-ng.workspace = true
 pollster.workspace = true
 

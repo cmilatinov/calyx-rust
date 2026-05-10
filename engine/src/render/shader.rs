@@ -10,6 +10,7 @@ use crate::utils::TypeUuid;
 use eframe::wgpu::ShaderSource;
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::PipelineCompilationOptions;
+use log::{info, trace};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -100,6 +101,12 @@ impl Asset for Shader {
         let ty = Self::shader_type(&module);
         let bind_group_entries = Self::bind_group_entries(&module);
         let bind_group_layouts = Self::bind_group_layouts(device, &bind_group_entries);
+        info!(
+            "Loaded shader {} from {} with {} bind groups",
+            name,
+            path.display(),
+            bind_group_entries.len()
+        );
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("pipeline_layout"),
@@ -369,6 +376,7 @@ impl Shader {
     /// layouts.
     pub fn rebuild_pipeline_layout(&mut self) {
         let device = self.render_context.device();
+        trace!("Rebuilding pipeline layout for shader {}", self.name);
         self.pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("pipeline_layout"),
             bind_group_layouts: self
@@ -386,6 +394,12 @@ impl Shader {
         if self.pipelines.contains_key(options) {
             return;
         }
+        trace!(
+            "Building render pipeline for shader {}: samples={}, targets={}",
+            self.name,
+            options.samples,
+            options.fragment_targets.len()
+        );
         let device = self.render_context.device();
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(self.name.as_str()),

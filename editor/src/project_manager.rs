@@ -1,7 +1,6 @@
 use sharedlib::{Lib, Symbol};
-use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 
 use crate::task_id::TaskId;
 use engine::background::Background;
@@ -10,7 +9,7 @@ use engine::core::{Ref, WeakRef};
 use engine::error::BoxedError;
 use engine::reflect::type_registry::TypeRegistry;
 use engine::reflect::TypeInfo;
-use log::trace;
+use log::{error, info, trace, warn};
 use project::Project;
 use rusty_pool::JoinHandle;
 use serde_json::Value;
@@ -30,6 +29,7 @@ impl ProjectManager {
         background: Ref<Background>,
     ) -> Result<Ref<Self>, BoxedError> {
         let project_directory = dunce::canonicalize(project_directory.into()).map_err(Box::new)?;
+        info!("Loading project from {}", project_directory.display());
         let current_project = Project::load(project_directory)?;
         Ok(Ref::new_cyclic(move |weak| Self {
             current_project,
@@ -41,7 +41,9 @@ impl ProjectManager {
     }
 
     pub fn load(&mut self, path: impl Into<PathBuf>) -> Result<(), BoxedError> {
-        self.current_project = Project::load(path.into())?;
+        let path = path.into();
+        info!("Switching project to {}", path.display());
+        self.current_project = Project::load(path)?;
         Ok(())
     }
 
@@ -53,44 +55,66 @@ impl ProjectManager {
         self.current_project.root_directory().clone()
     }
 
-    fn pipe_stdout(child: &mut Child) {
-        let stdout = child.stdout.as_mut().unwrap();
-        let mut reader = BufReader::new(stdout);
-        let mut line = String::new();
-        loop {
-            match reader.read_line(&mut line) {
-                Ok(0) | Err(_) => break,
-                _ => {}
-            }
-        }
-        let _ = child.wait();
-    }
-
     pub fn build_assemblies(&self) -> JoinHandle<()> {
         let root = self.root_project_dir();
         let project_manager_ref = self.project_manager.upgrade().unwrap();
         self.background.write().execute(TaskId::Build, move || {
-            // std::thread::sleep(Duration::from_secs(10));
-            let mut build = Command::new("cargo")
+            info!("Building project assemblies in {}", root.display());
+            let output = Command::new("cargo")
                 .current_dir(root)
                 .args(["build", "--profile", "release-with-debug"])
-                .stdout(Stdio::piped())
-                .spawn()
-                .unwrap();
-            Self::pipe_stdout(&mut build);
-            project_manager_ref.write().load_assemblies();
+                .output();
+            match output {
+                Ok(output) if output.status.success() => {
+                    log_command_output("cargo build", &output.stdout, &output.stderr);
+                    info!("Project assemblies built successfully");
+                    project_manager_ref.write().load_assemblies();
+                }
+                Ok(output) => {
+                    log_command_output("cargo build", &output.stdout, &output.stderr);
+                    error!(
+                        "Project assembly build failed with status {}",
+                        output.status
+                    );
+                }
+                Err(err) => {
+                    error!("Failed to start project assembly build: {err}");
+                }
+            }
         })
     }
 
     pub fn load_assemblies(&mut self) {
         let root = self.root_project_dir();
-        let meta_output = Command::new("cargo")
+        trace!("Loading project assemblies from {}", root.display());
+        let meta_output = match Command::new("cargo")
             .current_dir(root)
             .arg("metadata")
             .output()
-            .expect("");
-        let json: Value = serde_json::from_slice(&meta_output.stdout).unwrap();
-        let mut target = PathBuf::from(json["target_directory"].as_str().unwrap());
+        {
+            Ok(output) if output.status.success() => output,
+            Ok(output) => {
+                log_command_output("cargo metadata", &output.stdout, &output.stderr);
+                error!("Failed to read cargo metadata; status {}", output.status);
+                return;
+            }
+            Err(err) => {
+                error!("Failed to start cargo metadata: {err}");
+                return;
+            }
+        };
+        let json: Value = match serde_json::from_slice(&meta_output.stdout) {
+            Ok(json) => json,
+            Err(err) => {
+                error!("Failed to parse cargo metadata: {err}");
+                return;
+            }
+        };
+        let Some(target_directory) = json["target_directory"].as_str() else {
+            error!("Cargo metadata did not include a target directory");
+            return;
+        };
+        let mut target = PathBuf::from(target_directory);
         target.push("release-with-debug");
         target.push(engine::utils::lib_file_name(
             self.current_project().name().as_str(),
@@ -101,6 +125,7 @@ impl ProjectManager {
                     if let Ok(load_fn) =
                         lib.find_func::<extern "C" fn(&mut TypeRegistry), &str>("plugin_main")
                     {
+                        info!("Loading plugin type registrations");
                         let mut registry = self.context.registries.types.write();
                         load_fn.get()(&mut registry);
                         for (id, registration) in &registry.types {
@@ -114,9 +139,19 @@ impl ProjectManager {
                     component_registry_ref
                         .write()
                         .refresh_class_lists(&self.context.registries.types.read());
+                    info!("Project assemblies loaded");
                 }
-                Err(err) => eprintln!("{}", err),
+                Err(err) => error!("Failed to load project assembly: {err}"),
             }
         }
+    }
+}
+
+fn log_command_output(command: &str, stdout: &[u8], stderr: &[u8]) {
+    for line in String::from_utf8_lossy(stdout).lines() {
+        trace!("{command} stdout: {line}");
+    }
+    for line in String::from_utf8_lossy(stderr).lines() {
+        warn!("{command} stderr: {line}");
     }
 }

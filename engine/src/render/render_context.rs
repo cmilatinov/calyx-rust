@@ -2,6 +2,7 @@ use crate::render::{PipelineOptions, PipelineOptionsBuilder, RenderUtils};
 use eframe::wgpu::ColorTargetState;
 use egui::epaint;
 use egui_wgpu::{wgpu, Renderer};
+use log::info;
 use std::sync::Arc;
 
 enum RenderBackend {
@@ -23,12 +24,17 @@ pub struct RenderContext {
 impl RenderContext {
     /// Wraps the wgpu render state exposed by an eframe creation context.
     pub fn from_eframe(cc: &eframe::CreationContext) -> Self {
+        let render_state = cc
+            .wgpu_render_state
+            .clone()
+            .expect("eframe context not using wgpu");
+        info!(
+            "Initialized eframe render context with target format {:?}",
+            render_state.target_format
+        );
         Self {
             backend: RenderBackend::Eframe {
-                render_state: cc
-                    .wgpu_render_state
-                    .clone()
-                    .expect("eframe context not using wgpu"),
+                render_state,
                 texture_manager: cc.egui_ctx.tex_manager(),
             },
         }
@@ -36,6 +42,7 @@ impl RenderContext {
 
     /// Creates a headless render context from an explicit device and queue.
     pub fn headless(device: Arc<wgpu::Device>, queue: Arc<wgpu::Queue>) -> Self {
+        info!("Initialized headless render context");
         Self {
             backend: RenderBackend::Headless { device, queue },
         }

@@ -4,6 +4,7 @@ use crate::core::ReadOnlyRef;
 use crate::input::Input;
 use crate::resource::ResourceMap;
 use crate::scene::Scene;
+use log::{info, trace};
 use std::path::PathBuf;
 
 /// Metadata tracked alongside the current authoring scene.
@@ -29,6 +30,7 @@ impl SceneManager {
     /// Creates a manager with an empty authoring scene and the project's
     /// default scene cached for resets.
     pub fn new(asset_registry_ref: ReadOnlyRef<AssetRegistry>) -> Self {
+        info!("Initializing scene manager");
         let current_scene;
         let default_scene;
         {
@@ -53,6 +55,8 @@ impl SceneManager {
     pub fn load_empty_scene(&mut self) {
         self.stop_simulation();
         self.current_scene = self.asset_registry.read().new_empty_scene();
+        self.current_scene_meta = Default::default();
+        info!("Loaded empty scene");
     }
 
     /// Replaces the current authoring scene with a clone of the configured
@@ -61,6 +65,8 @@ impl SceneManager {
         self.stop_simulation();
         let snapshot = self.default_scene.read().snapshot();
         self.current_scene = self.current_scene.restore_snapshot(snapshot);
+        self.current_scene_meta = Default::default();
+        info!("Loaded default scene");
     }
 
     /// Loads `scene` into the authoring slot and records its asset path when
@@ -74,12 +80,16 @@ impl SceneManager {
             self.current_scene_meta = SceneMeta {
                 file: asset_meta.path.clone(),
             };
+            info!("Loaded scene asset {} ({})", asset_meta.name, asset_meta.id);
+        } else {
+            info!("Loaded scene from in-memory asset reference");
         }
     }
 
     /// Drops the simulation copy without modifying the authoring scene.
     pub fn unload_current_scene(&mut self) {
         self.simulation_scene = None;
+        trace!("Unloaded simulation scene copy");
     }
 
     /// Starts simulation, cloning the current authoring scene on first run.
@@ -90,15 +100,20 @@ impl SceneManager {
         }
 
         self.simulation_running = true;
+        info!("Scene simulation started");
     }
 
     /// Pauses simulation updates while preserving the simulation scene.
     pub fn pause_simulation(&mut self) {
         self.simulation_running = false;
+        info!("Scene simulation paused");
     }
 
     /// Stops simulation and discards the simulation scene.
     pub fn stop_simulation(&mut self) {
+        if self.simulation_running || self.simulation_scene.is_some() {
+            info!("Scene simulation stopped");
+        }
         self.simulation_scene = None;
         self.simulation_running = false;
     }
