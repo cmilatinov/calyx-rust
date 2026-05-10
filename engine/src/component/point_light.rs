@@ -1,7 +1,7 @@
 use crate as engine;
 use crate::component::{Component, ReflectComponent};
 use crate::reflect::{Reflect, ReflectDefault};
-use crate::render::Gizmos;
+use crate::render::{GizmoIcon, Gizmos};
 use crate::scene::{GameObject, Scene};
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use egui::Color32;
@@ -44,6 +44,7 @@ impl Component for ComponentPointLight {
         let transform = scene.world_transform(game_object);
         let color = self.color.to_normalized_gamma_f32();
         gizmos.set_color(&Vec4::from(color));
+        gizmos.icon(GizmoIcon::Light, &transform.position, 0.75);
         gizmos.wire_sphere(&transform.position, self.radius);
     }
 }

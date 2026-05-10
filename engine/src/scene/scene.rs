@@ -724,6 +724,18 @@ impl Scene {
             .unwrap_or_default()
     }
 
+    /// Returns whether `game_object` is locally marked visible.
+    pub fn is_visible(&self, game_object: GameObject) -> bool {
+        self.entry(game_object)
+            .and_then(|e| e.get_component::<ComponentID>().ok().map(|id| id.visible))
+            .unwrap_or(true)
+    }
+
+    /// Returns whether `game_object` and every parent in its hierarchy are visible.
+    pub fn is_visible_in_hierarchy(&self, game_object: GameObject) -> bool {
+        self.is_visible(game_object) && self.ancestors(game_object).all(|go| self.is_visible(go))
+    }
+
     /// Returns the persistent UUID stored in [`ComponentID`] for `game_object`.
     pub fn uuid(&self, game_object: GameObject) -> Uuid {
         self.entry(game_object)

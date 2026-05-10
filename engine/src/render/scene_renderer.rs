@@ -510,6 +510,9 @@ impl SceneRenderer {
             let Some(game_object) = scene.game_object_from_entity(*entity) else {
                 continue;
             };
+            if !scene.is_visible_in_hierarchy(game_object) {
+                continue;
+            }
             let Some(mesh_ref) = c_mesh.mesh.get_ref(&self.asset_context.registries) else {
                 continue;
             };
@@ -531,6 +534,9 @@ impl SceneRenderer {
             let Some(game_object) = scene.game_object_from_entity(*entity) else {
                 continue;
             };
+            if !scene.is_visible_in_hierarchy(game_object) {
+                continue;
+            }
             let Some(mesh_ref) = c_skinned_mesh.mesh.get_ref(&self.asset_context.registries) else {
                 continue;
             };

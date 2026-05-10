@@ -21,6 +21,8 @@ use crate::scene::Scene;
 use super::buffer::wgpu_buffer_init_desc;
 use super::{PipelineOptions, Shader};
 
+const HIDDEN_GIZMO_OPACITY: f32 = 0.35;
+
 /// Per-instance draw data for gizmo rendering.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -213,6 +215,7 @@ impl GizmoRenderer {
         Gizmos {
             camera_transform,
             color: vec4(1.0, 1.0, 1.0, 1.0),
+            opacity: 1.0,
             depth_test_enabled: true,
             circle_list: &mut self.circle_list,
             cube_list: &mut self.cube_list,
@@ -240,6 +243,12 @@ impl GizmoRenderer {
                 let world = &scene.world;
                 for entity in query.iter(world) {
                     if let Some(game_object) = scene.game_object_from_entity(*entity) {
+                        let opacity = if scene.is_visible_in_hierarchy(game_object) {
+                            1.0
+                        } else {
+                            HIDDEN_GIZMO_OPACITY
+                        };
+                        gizmos.set_opacity(opacity);
                         for (_, comp) in registry.components() {
                             if let Some(entry) = scene.entry(game_object) {
                                 if let Some(instance) = comp.get_instance(&entry) {
@@ -251,6 +260,7 @@ impl GizmoRenderer {
                 }
             }
             if let Some(physics_debug_pipeline) = physics_debug_pipeline {
+                gizmos.set_opacity(1.0);
                 let mut physics_debug_render: PhysicsDebugRenderer = gizmos.into();
                 physics_debug_pipeline.render(
                     &mut physics_debug_render,
