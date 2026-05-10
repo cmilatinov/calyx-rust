@@ -58,6 +58,13 @@ pub struct Shader {
 }
 
 impl Asset for Shader {
+    fn asset_name() -> &'static str
+    where
+        Self: Sized,
+    {
+        "Shader"
+    }
+
     fn file_extensions() -> &'static [&'static str] {
         &["wgsl"]
     }

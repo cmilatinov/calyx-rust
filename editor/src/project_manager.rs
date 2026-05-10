@@ -1,4 +1,5 @@
 use sharedlib::{Lib, Symbol};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -120,19 +121,41 @@ impl ProjectManager {
             self.current_project().name().as_str(),
         ));
         unsafe {
-            match Lib::new(target) {
+            match Lib::new(&target) {
                 Ok(lib) => {
                     if let Ok(load_fn) =
                         lib.find_func::<extern "C" fn(&mut TypeRegistry), &str>("plugin_main")
                     {
-                        info!("Loading plugin type registrations");
+                        info!(
+                            "Loading plugin type registrations from crate {} ({})",
+                            self.current_project().name(),
+                            target.display()
+                        );
                         let mut registry = self.context.registries.types.write();
+                        let before = registry.types.keys().copied().collect::<HashSet<_>>();
                         load_fn.get()(&mut registry);
-                        for (id, registration) in &registry.types {
-                            if let TypeInfo::Struct(info) = &registration.type_info {
-                                trace!("[{}] {}", id, info.type_name);
-                            }
+                        let mut registered_count = 0usize;
+                        for (id, registration) in
+                            registry.types.iter().filter(|(id, _)| !before.contains(id))
+                        {
+                            registered_count += 1;
+                            let (kind, type_name, details) =
+                                type_registration_summary(&registration.type_info);
+                            trace!(
+                                "Registered project type uuid={} crate={} module={} type={} kind={} traits={} {}",
+                                id,
+                                crate_name(type_name),
+                                module_path(type_name),
+                                type_name,
+                                kind,
+                                registration.trait_meta.len(),
+                                details
+                            );
                         }
+                        info!(
+                            "Loaded {registered_count} project type registrations from crate {}",
+                            self.current_project().name()
+                        );
                     }
                     self.assembly = Some(lib);
                     let component_registry_ref = self.context.registries.components.clone();
@@ -154,4 +177,52 @@ fn log_command_output(command: &str, stdout: &[u8], stderr: &[u8]) {
     for line in String::from_utf8_lossy(stderr).lines() {
         warn!("{command} stderr: {line}");
     }
+}
+
+fn type_registration_summary(type_info: &TypeInfo) -> (&'static str, &'static str, String) {
+    match type_info {
+        TypeInfo::Struct(info) => (
+            "struct",
+            info.type_name,
+            format!("fields={}", info.fields.len()),
+        ),
+        TypeInfo::Enum(info) => (
+            "enum",
+            info.type_name,
+            format!("variants={}", info.variants.len()),
+        ),
+        TypeInfo::List(info) => (
+            "list",
+            info.type_name,
+            format!(
+                "element_type={} element_uuid={}",
+                info.element.type_name, info.element.type_uuid
+            ),
+        ),
+        TypeInfo::Option(info) => (
+            "option",
+            info.type_name,
+            format!(
+                "value_type={} value_uuid={}",
+                info.value.type_name, info.value.type_uuid
+            ),
+        ),
+        TypeInfo::Map(info) => (
+            "map",
+            info.type_name,
+            format!(
+                "key_type={} key_uuid={} value_type={} value_uuid={}",
+                info.key.type_name, info.key.type_uuid, info.value.type_name, info.value.type_uuid
+            ),
+        ),
+        TypeInfo::None => ("unknown", "<unknown>", "metadata=none".to_string()),
+    }
+}
+
+fn crate_name(type_name: &str) -> &str {
+    type_name.split("::").next().unwrap_or(type_name)
+}
+
+fn module_path(type_name: &str) -> &str {
+    type_name.rsplit_once("::").map_or("", |(module, _)| module)
 }

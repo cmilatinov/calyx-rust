@@ -1,10 +1,10 @@
+use chrono::Local;
 use env_filter::Filter;
 use log::{Metadata, Record, SetLoggerError};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
 use typed_builder::TypedBuilder;
 
 /// Initializes the global logger using a concrete logger implementation.
@@ -72,7 +72,7 @@ impl LoggerImplementation for DefaultLogger {
     fn log_file_path(&self) -> PathBuf {
         let app_name = self.app_name.to_ascii_lowercase();
         let app_vendor = self.app_vendor.to_ascii_lowercase();
-        let file_name = format!("{app_vendor}_{app_name}_{}.log", timestamp_millis());
+        let file_name = format!("{app_vendor}_{app_name}_{}.log", file_timestamp());
         self.log_dir()
             .unwrap_or_else(|_| PathBuf::from("logs"))
             .join(file_name)
@@ -106,9 +106,10 @@ impl log::Log for MultiSinkLogger {
         if !self.filter.matches(record) {
             return;
         }
-        let line = format_record(record);
-        let _ = io::stdout().lock().write_all(line.as_bytes());
+        let stdout_line = format_stdout_record(record);
+        let _ = io::stdout().lock().write_all(stdout_line.as_bytes());
         if let Ok(mut file) = self.file.lock() {
+            let line = format_file_record(record);
             let _ = file.write_all(line.as_bytes());
         }
     }
@@ -140,7 +141,7 @@ impl log::Log for StdoutLogger {
         if self.filter.matches(record) {
             let _ = io::stdout()
                 .lock()
-                .write_all(format_record(record).as_bytes());
+                .write_all(format_stdout_record(record).as_bytes());
         }
     }
 
@@ -185,26 +186,50 @@ fn default_filter_spec() -> &'static str {
     "engine=info,editor=info,sandbox=info"
 }
 
-fn format_record(record: &Record) -> String {
+fn format_stdout_record(record: &Record) -> String {
+    let level = format!("{:<5}", record.level());
+    format!(
+        "{} {}{}{} {} - {}\n",
+        log_timestamp(),
+        level_color(record.level()),
+        level,
+        "\x1b[0m",
+        record.target(),
+        record.args()
+    )
+}
+
+fn format_file_record(record: &Record) -> String {
     format!(
         "{} {:<5} {} - {}\n",
-        timestamp_millis(),
+        log_timestamp(),
         record.level(),
         record.target(),
         record.args()
     )
 }
 
-fn timestamp_millis() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
-        .unwrap_or_default()
+fn level_color(level: log::Level) -> &'static str {
+    match level {
+        log::Level::Error => "\x1b[1;31m",
+        log::Level::Warn => "\x1b[33m",
+        log::Level::Info => "\x1b[32m",
+        log::Level::Debug => "\x1b[34m",
+        log::Level::Trace => "\x1b[90m",
+    }
+}
+
+fn log_timestamp() -> String {
+    Local::now().format("%Y-%m-%d %H:%M:%S%.3f").to_string()
+}
+
+fn file_timestamp() -> String {
+    Local::now().format("%Y%m%d_%H%M%S%.3f").to_string()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::build_filter;
+    use super::{build_filter, format_file_record, format_stdout_record};
     use log::{Level, LevelFilter, Record};
 
     fn record(target: &'static str, level: Level) -> Record<'static> {
@@ -235,5 +260,21 @@ mod tests {
         assert!(filter.matches(&record("wgpu_core", Level::Warn)));
         assert!(!filter.matches(&record("wgpu_core", Level::Info)));
         assert!(!filter.matches(&record("editor", Level::Info)));
+    }
+
+    #[test]
+    fn stdout_record_format_includes_level_color() {
+        let line = format_stdout_record(&record("engine::assets", Level::Warn));
+
+        assert!(line.contains("\x1b[33mWARN "));
+        assert!(line.contains("\x1b[0m engine::assets - test"));
+    }
+
+    #[test]
+    fn file_record_format_omits_level_color() {
+        let line = format_file_record(&record("engine::assets", Level::Warn));
+
+        assert!(!line.contains("\x1b["));
+        assert!(line.contains("WARN  engine::assets - test"));
     }
 }

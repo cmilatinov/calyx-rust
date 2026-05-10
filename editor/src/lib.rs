@@ -502,10 +502,16 @@ impl EditorApp {
                 .clicked()
                 {
                     if is_simulating {
-                        log::info!("Pausing scene simulation");
+                        log::info!(
+                            "User paused scene simulation; objects={}",
+                            self.state.game.scenes.simulation_scene().objects().count()
+                        );
                         self.state.game.scenes.pause_simulation();
                     } else {
-                        log::info!("Starting scene simulation");
+                        log::info!(
+                            "User started scene simulation; objects={}",
+                            self.state.game.scenes.current_scene().objects().count()
+                        );
                         self.state.game.scenes.start_simulation();
                     }
                 }
@@ -513,7 +519,10 @@ impl EditorApp {
                 if Self::icon_button(ui, include_image!("../../resources/icons/suspend_dark.png"))
                     .clicked()
                 {
-                    log::info!("Stopping scene simulation");
+                    log::info!(
+                        "User stopped scene simulation; had_simulation_scene={}",
+                        self.state.game.scenes.has_simulation_scene()
+                    );
                     self.state.game.scenes.stop_simulation();
                 }
             });

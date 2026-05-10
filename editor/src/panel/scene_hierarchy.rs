@@ -206,6 +206,11 @@ impl PanelSceneHierarchy {
             scene.write_component::<ComponentID, _>(game_object, |c| {
                 c.visible = is_visible;
             });
+            log::info!(
+                "Set game object visibility: object={} visible={}",
+                Self::game_object_label(scene, game_object),
+                is_visible
+            );
         }
         self.handle_dnd_interaction(ui, scene, game_object, response, body_response);
         response.context_menu(|ui| {
@@ -219,22 +224,36 @@ impl PanelSceneHierarchy {
                         .create(true)
                         .write(true)
                         .truncate(true)
-                        .open(path)
+                        .open(&path)
                     {
                         let prefab = scene.create_prefab(game_object);
                         let writer = BufWriter::new(file);
                         serde_json::to_writer_pretty(writer, &prefab).unwrap();
+                        log::info!(
+                            "Saved prefab from game object: object={} path={}",
+                            Self::game_object_label(scene, game_object),
+                            path.display()
+                        );
                     }
                 }
                 ui.close_menu();
             }
             if ui.button("Delete").clicked() {
+                log::info!(
+                    "Deleted game object: object={}",
+                    Self::game_object_label(scene, game_object)
+                );
                 scene.delete(game_object);
                 *selection = Selection::none();
                 ui.close_menu();
             }
             if ui.button("New Game Object").clicked() {
                 let child = scene.create(None, Some(game_object));
+                log::info!(
+                    "Added game object to scene: object={} parent={}",
+                    Self::game_object_label(scene, child),
+                    Self::game_object_label(scene, game_object)
+                );
                 *selection = Selection::from_id(SelectionType::GameObject, scene.uuid(child));
                 ui.close_menu();
             }
@@ -364,10 +383,20 @@ impl PanelSceneHierarchy {
         );
 
         if ui.input(|i| i.pointer.any_released()) {
+            let dragged_label = Self::game_object_label(scene, dragged_game_object);
+            let parent_label = Self::game_object_label(scene, target_parent);
+            let sibling_label =
+                target_sibling.map(|sibling| Self::game_object_label(scene, sibling));
             scene.set_parent_with_sibling(
                 dragged_game_object,
                 Some(target_parent),
                 target_sibling.map(|sibling| (sibling, SiblingDir::Before)),
+            );
+            log::info!(
+                "Reparented game object: object={} parent={} before={}",
+                dragged_label,
+                parent_label,
+                sibling_label.as_deref().unwrap_or("<end>")
             );
             egui::DragAndDrop::clear_payload(ui.ctx());
         } else {
@@ -399,9 +428,21 @@ impl PanelSceneHierarchy {
             let parent = selection
                 .last(SelectionType::GameObject)
                 .and_then(|id| scene.find(id));
-            scene.create(None, parent);
+            let game_object = scene.create(None, parent);
+            let parent_label = parent
+                .map(|parent| Self::game_object_label(scene, parent))
+                .unwrap_or_else(|| Self::game_object_label(scene, scene.root()));
+            log::info!(
+                "Added game object to scene: object={} parent={}",
+                Self::game_object_label(scene, game_object),
+                parent_label
+            );
         }
         res
+    }
+
+    fn game_object_label(scene: &Scene, game_object: GameObject) -> String {
+        format!("{} ({})", scene.name(game_object), scene.uuid(game_object))
     }
 
     fn visibility_button_ui(ui: &mut Ui, enabled: bool, visible: &mut bool) -> Response {

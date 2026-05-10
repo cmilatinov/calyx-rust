@@ -104,6 +104,13 @@ impl Panel for PanelInspector {
                                 if !components_to_remove.contains(type_id) {
                                     continue;
                                 }
+                                let component_name =
+                                    Self::type_display_name(&type_registry, *type_id)
+                                        .unwrap_or_else(|| type_id.to_string());
+                                let object_label = Self::game_object_label(
+                                    state.game.scenes.simulation_scene(),
+                                    game_object,
+                                );
                                 if let Some(mut entry) = state
                                     .game
                                     .scenes
@@ -111,6 +118,12 @@ impl Panel for PanelInspector {
                                     .entry_mut(game_object)
                                 {
                                     component.remove_instance(&mut entry);
+                                    log::info!(
+                                        "Removed component from game object: component={} type_uuid={} object={}",
+                                        component_name,
+                                        type_id,
+                                        object_label
+                                    );
                                 }
                             }
                         } else if let Some(asset_id) = state.selection.first(SelectionType::Asset) {
@@ -406,9 +419,14 @@ impl PanelInspector {
                 }
                 let name = Self::display_name(&assets.types.read(), component.as_reflect());
                 if ui.selectable_label(false, name).clicked() {
-                    scenes
-                        .simulation_scene_mut()
-                        .bind_component_dyn(game_object, *type_uuid);
+                    let scene = scenes.simulation_scene_mut();
+                    scene.bind_component_dyn(game_object, *type_uuid);
+                    log::info!(
+                        "Added component to game object: component={} type_uuid={} object={}",
+                        name,
+                        type_uuid,
+                        Self::game_object_label(scene, game_object)
+                    );
                 }
             }
         });
@@ -416,5 +434,38 @@ impl PanelInspector {
             ui.memory_mut(|mem| mem.open_popup(id));
         }
         res
+    }
+
+    fn type_display_name(type_registry: &TypeRegistry, type_uuid: Uuid) -> Option<String> {
+        type_registry
+            .type_info_by_id(type_uuid)
+            .map(|info| match info {
+                TypeInfo::Struct(info) => info
+                    .attr("name")
+                    .and_then(|attr| match attr {
+                        AttributeValue::String(name) => Some(name.to_string()),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| Self::short_type_name(info.type_name).to_string()),
+                TypeInfo::Enum(info) => info
+                    .attr("name")
+                    .and_then(|attr| match attr {
+                        AttributeValue::String(name) => Some(name.to_string()),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| Self::short_type_name(info.type_name).to_string()),
+                TypeInfo::List(info) => Self::short_type_name(info.type_name).to_string(),
+                TypeInfo::Option(info) => Self::short_type_name(info.type_name).to_string(),
+                TypeInfo::Map(info) => Self::short_type_name(info.type_name).to_string(),
+                TypeInfo::None => type_uuid.to_string(),
+            })
+    }
+
+    fn short_type_name(type_name: &str) -> &str {
+        type_name.rsplit("::").next().unwrap_or(type_name)
+    }
+
+    fn game_object_label(scene: &engine::scene::Scene, game_object: GameObject) -> String {
+        format!("{} ({})", scene.name(game_object), scene.uuid(game_object))
     }
 }
