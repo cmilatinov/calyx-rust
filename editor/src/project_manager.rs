@@ -59,19 +59,23 @@ impl ProjectManager {
         let root = self.root_project_dir();
         let project_manager_ref = self.project_manager.upgrade().unwrap();
         self.background.write().execute(TaskId::Build, move || {
-            log::info!("Building project assemblies in {}", root.display());
-            let output = Command::new("cargo")
-                .current_dir(root)
-                .args(["build", "--profile", "release-with-debug"])
-                .output();
+            let profile = assembly_profile();
+            let args = cargo_build_args(profile);
+            log::info!(
+                "Building project assemblies in {} with profile {}",
+                root.display(),
+                profile
+            );
+            let output = Command::new("cargo").current_dir(root).args(&args).output();
+            let command = format!("cargo {}", args.join(" "));
             match output {
                 Ok(output) if output.status.success() => {
-                    log_command_output("cargo build", &output.stdout, &output.stderr);
+                    log_command_output(command.as_str(), &output.stdout, &output.stderr);
                     log::info!("Project assemblies built successfully");
                     project_manager_ref.write().load_assemblies();
                 }
                 Ok(output) => {
-                    log_command_output("cargo build", &output.stdout, &output.stderr);
+                    log_command_output(command.as_str(), &output.stdout, &output.stderr);
                     log::error!(
                         "Project assembly build failed with status {}",
                         output.status
@@ -115,7 +119,7 @@ impl ProjectManager {
             return;
         };
         let mut target = PathBuf::from(target_directory);
-        target.push("release-with-debug");
+        target.push(assembly_target_dir(assembly_profile()));
         target.push(engine::utils::lib_file_name(
             self.current_project().name().as_str(),
         ));
@@ -224,4 +228,48 @@ fn crate_name(type_name: &str) -> &str {
 
 fn module_path(type_name: &str) -> &str {
     type_name.rsplit_once("::").map_or("", |(module, _)| module)
+}
+
+fn assembly_profile() -> &'static str {
+    env!("CALYX_EDITOR_PROFILE")
+}
+
+fn cargo_build_args(profile: &str) -> Vec<String> {
+    let mut args = vec!["build".to_string(), "--lib".to_string()];
+    if profile != "dev" {
+        args.push("--profile".to_string());
+        args.push(profile.to_string());
+    }
+    args
+}
+
+fn assembly_target_dir(profile: &str) -> &str {
+    match profile {
+        "dev" | "test" => "debug",
+        "release" | "bench" => "release",
+        profile => profile,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{assembly_target_dir, cargo_build_args};
+
+    #[test]
+    fn dev_profile_uses_default_cargo_build() {
+        assert_eq!(cargo_build_args("dev"), ["build", "--lib"]);
+        assert_eq!(assembly_target_dir("dev"), "debug");
+    }
+
+    #[test]
+    fn custom_profile_is_forwarded_to_cargo_and_target_dir() {
+        assert_eq!(
+            cargo_build_args("release-with-debug"),
+            ["build", "--lib", "--profile", "release-with-debug"]
+        );
+        assert_eq!(
+            assembly_target_dir("release-with-debug"),
+            "release-with-debug"
+        );
+    }
 }
