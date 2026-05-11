@@ -169,6 +169,7 @@ fn update_hull(
     let mut transform = scene.world_transform(game_object);
     let throttle = input.axis("move_forward");
     let steer = input.axis("move_right");
+    let mut changed = false;
 
     if steer.abs() > f32::EPSILON {
         transform.rotate(&UnitQuaternion::from_euler_angles(
@@ -176,6 +177,7 @@ fn update_hull(
             steer * controller.hull_turn_speed * dt,
             0.0,
         ));
+        changed = true;
     }
 
     if throttle.abs() > f32::EPSILON {
@@ -186,9 +188,16 @@ fn update_hull(
         };
         let forward = flatten_xz(transform.forward());
         transform.translate(&(forward * (throttle * speed * dt)));
+        changed = true;
     }
 
-    scene.set_world_transform(game_object, transform.matrix());
+    if changed {
+        let local_scale = scene.transform(game_object).scale;
+        scene.set_world_transform(game_object, transform.matrix());
+        let _ = scene.write_component::<ComponentTransform, _>(game_object, |component| {
+            component.transform.scale = local_scale;
+        });
+    }
     scene.world_transform(game_object)
 }
 
@@ -647,6 +656,191 @@ mod tests {
             game.scenes.current_scene().objects().count() > 0,
             "scene manager should install deserialized scene objects"
         );
+    }
+
+    #[test]
+    fn editor_simulation_start_preserves_sandbox_camera_transform() {
+        let assets = engine::test_support::test_asset_context_with_assets(vec![
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),
+            std::env::current_dir().unwrap().join("assets"),
+        ]);
+        let scene_ref = assets
+            .registries
+            .assets
+            .read()
+            .reload_by_path::<engine::scene::Scene>(
+                &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("assets")
+                    .join("scene.cxscene"),
+            )
+            .expect("sandbox scene should load");
+
+        let mut game = engine::context::GameContext::new(assets);
+        game.scenes.load_scene(scene_ref.readonly());
+        let authoring_camera_transform = {
+            let scene = game.scenes.current_scene();
+            let (camera, _) = scene
+                .main_camera()
+                .expect("sandbox scene should have a main camera");
+            scene.world_transform(camera)
+        };
+        let authoring_tank_scale = {
+            let scene = game.scenes.current_scene();
+            let tank = scene
+                .objects()
+                .find(|go| scene.name(*go) == "Tank")
+                .expect("sandbox scene should have a Tank");
+            scene.transform(tank).scale
+        };
+
+        game.scenes.start_simulation();
+
+        let simulation_camera_transform = {
+            let scene = game.scenes.simulation_scene();
+            let (camera, _) = scene
+                .main_camera()
+                .expect("simulation scene should have a main camera");
+            scene.world_transform(camera)
+        };
+
+        assert_eq!(
+            simulation_camera_transform.position,
+            authoring_camera_transform.position
+        );
+        assert_eq!(
+            simulation_camera_transform.rotation,
+            authoring_camera_transform.rotation
+        );
+        let simulation_tank_scale = {
+            let scene = game.scenes.simulation_scene();
+            let tank = scene
+                .objects()
+                .find(|go| scene.name(*go) == "Tank")
+                .expect("simulation scene should have a Tank");
+            scene.transform(tank).scale
+        };
+        assert_eq!(simulation_tank_scale, authoring_tank_scale);
+    }
+
+    #[test]
+    fn editor_simulation_first_update_preserves_camera_without_input() {
+        let assets = engine::test_support::test_asset_context_with_assets(vec![
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),
+            std::env::current_dir().unwrap().join("assets"),
+        ]);
+        let scene_ref = assets
+            .registries
+            .assets
+            .read()
+            .reload_by_path::<engine::scene::Scene>(
+                &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("assets")
+                    .join("scene.cxscene"),
+            )
+            .expect("sandbox scene should load");
+
+        let mut game = engine::context::GameContext::new(assets);
+        game.scenes.load_scene(scene_ref.readonly());
+        let authoring_object_count = game.scenes.current_scene().objects().count();
+        game.scenes.start_simulation();
+        assert_eq!(
+            game.scenes.simulation_scene().objects().count(),
+            authoring_object_count
+        );
+        let initial_camera_transform = {
+            let scene = game.scenes.simulation_scene();
+            let (camera, _) = scene
+                .main_camera()
+                .expect("simulation scene should have a main camera");
+            scene.world_transform(camera)
+        };
+        let initial_tank_scale = {
+            let scene = game.scenes.simulation_scene();
+            let tank = scene
+                .objects()
+                .find(|go| scene.name(*go) == "Tank")
+                .expect("simulation scene should have a Tank");
+            scene.transform(tank).scale
+        };
+
+        let ctx = egui::Context::default();
+        let input = engine::input::Input::from_ctx(
+            &ctx,
+            None,
+            engine::input::InputState {
+                is_active: false,
+                last_cursor_pos: None,
+                ..Default::default()
+            },
+        );
+        let registries = game.assets.lock_read().registries;
+        game.scenes.update(&registries, &mut game.resources, &input);
+
+        let updated_camera_transform = {
+            let scene = game.scenes.simulation_scene();
+            let (camera, _) = scene
+                .main_camera()
+                .expect("simulation scene should have a main camera");
+            scene.world_transform(camera)
+        };
+
+        assert_eq!(
+            updated_camera_transform.position,
+            initial_camera_transform.position
+        );
+
+        let updated_tank_scale = {
+            let scene = game.scenes.simulation_scene();
+            let tank = scene
+                .objects()
+                .find(|go| scene.name(*go) == "Tank")
+                .expect("simulation scene should have a Tank");
+            scene.transform(tank).scale
+        };
+
+        assert_eq!(updated_tank_scale, initial_tank_scale);
+    }
+
+    #[test]
+    fn sandbox_shooting_does_not_move_targets() {
+        let assets = engine::test_support::test_asset_context_with_assets(vec![
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),
+            std::env::current_dir().unwrap().join("assets"),
+        ]);
+        let scene_ref = assets
+            .registries
+            .assets
+            .read()
+            .reload_by_path::<engine::scene::Scene>(
+                &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("assets")
+                    .join("scene.cxscene"),
+            )
+            .expect("sandbox scene should load");
+        let scene = scene_ref.read().clone();
+        let target_transforms = ["Target A", "Target B"].map(|name| {
+            let target = scene
+                .objects()
+                .find(|go| scene.name(*go) == name)
+                .expect("sandbox scene should have target");
+            (name, scene.world_transform(target))
+        });
+
+        let mut runner = engine::test_support::HeadlessSceneRunner::from_scene(scene);
+        runner.press_key(egui::Key::Space);
+        runner.step_many(120);
+
+        for (name, transform) in target_transforms {
+            let scene = runner.scene();
+            let target = scene
+                .objects()
+                .find(|go| scene.name(*go) == name)
+                .expect("sandbox scene should still have target");
+            let updated = scene.world_transform(target);
+            assert_eq!(updated.position, transform.position);
+            assert_eq!(updated.rotation, transform.rotation);
+            assert_eq!(updated.scale, transform.scale);
+        }
     }
 
     #[test]

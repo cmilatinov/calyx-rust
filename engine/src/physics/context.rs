@@ -187,15 +187,16 @@ impl PhysicsContext {
         }
     }
 
-    /// Sync scene transforms → rapier for kinematic and fixed bodies only.
-    /// Dynamic bodies are owned by rapier during simulation — their
-    /// transforms flow back to the scene via update().
+    /// Sync explicit scene transform edits into Rapier before stepping.
+    ///
+    /// Dynamic bodies normally flow Rapier -> scene in `update()`, so their
+    /// scene transforms already match their rigid bodies on the next frame.
+    /// When editor tools or gameplay code intentionally teleport a dynamic
+    /// object, this catches the mismatch before Rapier overwrites it with a
+    /// stale body pose.
     fn sync_transforms(scene: &mut Scene) {
         let mut query = <(Entity, &ComponentRigidBody)>::query();
         for (entity, c_rb) in query.iter(&scene.world) {
-            if c_rb.ty == RigidBodyType::Dynamic {
-                continue;
-            }
             let Some(go) = scene.game_object_from_entity(*entity) else {
                 continue;
             };
@@ -204,8 +205,15 @@ impl PhysicsContext {
             };
             let transform = scene.world_transform(go);
             let rb = &mut scene.physics.bodies[handle];
-            rb.set_position(transform.position.into(), true);
-            rb.set_rotation(transform.rotation, true);
+            let position_changed =
+                (*rb.translation() - transform.position).magnitude_squared() > 1e-8;
+            let rotation_changed = rb.rotation().angle_to(&transform.rotation).abs() > 1e-5;
+            if c_rb.ty != RigidBodyType::Dynamic || position_changed {
+                rb.set_position(transform.position.into(), true);
+            }
+            if c_rb.ty != RigidBodyType::Dynamic || rotation_changed {
+                rb.set_rotation(transform.rotation, true);
+            }
         }
         let mut query = <(Entity, &ComponentCollider)>::query();
         for (entity, _) in query.iter(&scene.world) {

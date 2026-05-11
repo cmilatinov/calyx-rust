@@ -131,7 +131,9 @@ impl EditorApp {
             project_path,
             game.resources.background().clone(),
         )?;
-        project_manager.read().build_assemblies();
+        if !project_manager.write().load_existing_assemblies() {
+            project_manager.read().build_assemblies();
+        }
         let panels = Panels::new(
             project_manager
                 .read()
@@ -244,17 +246,12 @@ impl eframe::App for EditorApp {
 impl EditorApp {
     fn update_game(&mut self, ctx: &egui::Context) {
         self.state.game.scenes.prepare();
-        let last_cursor_pos = self
-            .state
-            .game_response
-            .as_ref()
-            .map(|res| res.rect.center());
         let input = Input::from_ctx(
             ctx,
             self.state.game_response.as_ref(),
             InputState {
-                is_active: self.is_game_focused(),
-                last_cursor_pos,
+                is_active: self.is_game_focused() && self.state.game_response.is_some(),
+                last_cursor_pos: None,
                 ..Default::default()
             },
         );
@@ -320,9 +317,19 @@ impl EditorApp {
         if let Some((node, c)) = scene.main_camera() {
             game_renderer.options_mut().clear_color = c.clear_color;
             let (width, height) = Self::get_physical_size(ctx, *game_size);
-            if width != 0 && height != 0 {
-                game_renderer.resize_textures(width, height);
+            if width == 0 || height == 0 {
+                let mut encoder =
+                    render_state
+                        .device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("Scene Renderer Encoder"),
+                        });
+                encoder.clear_texture(&game_renderer.scene_texture().texture, &Default::default());
+                render_state.queue.submit(Some(encoder.finish()));
+                return;
             }
+
+            game_renderer.resize_textures(width, height);
             let transform = scene.world_transform(node);
             let camera = Camera::new(
                 width as f32 / height as f32,

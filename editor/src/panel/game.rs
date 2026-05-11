@@ -1,8 +1,8 @@
 use super::Panel;
 use crate::{icons, EditorAppState};
 use egui::{
-    load::SizedTexture, Image, ImageSource, Key, Modifiers, Response, Sense, Ui, Vec2,
-    ViewportCommand,
+    load::SizedTexture, Image, ImageSource, Key, Modifiers, PointerButton, Response, Sense, Ui,
+    Vec2,
 };
 use engine::math::fit_aspect;
 use re_ui::Icon;
@@ -91,7 +91,7 @@ impl PanelGame {
                         id: texture_id,
                         size,
                     }))
-                    .sense(Sense::click()),
+                    .sense(Sense::click_and_drag()),
                 )
             },
         );
@@ -105,19 +105,19 @@ impl PanelGame {
         size: Vec2,
         res: Response,
     ) {
-        if res.clicked() {
+        let primary_pressed =
+            ui.input(|input| input.pointer.button_pressed(PointerButton::Primary));
+        let primary_pressed_on_viewport = res.hovered() && primary_pressed;
+        if primary_pressed_on_viewport {
+            res.request_focus();
             self.is_cursor_grabbed = true;
         } else if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape)) {
             self.is_cursor_grabbed = false;
+        } else if primary_pressed {
+            self.is_cursor_grabbed = false;
         }
-        if self.is_cursor_grabbed {
-            ui.ctx()
-                .send_viewport_cmd(ViewportCommand::CursorVisible(false));
-            ui.ctx()
-                .send_viewport_cmd(ViewportCommand::CursorPosition(res.rect.center()));
-        } else {
-            ui.ctx()
-                .send_viewport_cmd(ViewportCommand::CursorVisible(true));
+        if self.is_cursor_grabbed && !res.has_focus() {
+            res.request_focus();
         }
         let screen_rect = ui.ctx().screen_rect();
         app_state.game_size = (size.x / screen_rect.width(), size.y / screen_rect.height());

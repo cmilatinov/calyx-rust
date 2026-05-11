@@ -352,6 +352,22 @@ mod tests {
     }
 
     #[test]
+    fn set_world_transform_preserves_child_scale() {
+        let mut scene = test_scene();
+        let parent = scene.create(None, None);
+        let child = scene.create(None, Some(parent));
+        scene.write_component::<crate::component::ComponentTransform, _>(child, |transform| {
+            transform.transform.scale = Vec3::new(0.45, 0.45, 0.45);
+        });
+
+        let world = scene.world_transform(child);
+        scene.set_world_transform(child, world.matrix());
+
+        let local = scene.transform(child);
+        assert_eq!(local.scale, Vec3::new(0.45, 0.45, 0.45));
+    }
+
+    #[test]
     fn transform_relative_to() {
         let mut scene = test_scene();
         let a = scene.create(None, None);
