@@ -50,7 +50,7 @@ impl AtlasIcon {
             .paint_at(ui, rect);
     }
 
-    pub fn uv(&self) -> Rect {
+    fn uv(&self) -> Rect {
         let icon = MANIFEST
             .icons
             .get(self.name)
@@ -59,8 +59,6 @@ impl AtlasIcon {
     }
 }
 
-pub const FOLDER: AtlasIcon = AtlasIcon::new("folder-fill");
-pub const FILE: AtlasIcon = AtlasIcon::new("file-fill");
 pub const GAME_OBJECT: AtlasIcon = AtlasIcon::new("cube-fill");
 pub const OBJECT_TREE: AtlasIcon = AtlasIcon::new("tree-structure-fill");
 pub const WALKING: AtlasIcon = AtlasIcon::new("person-simple-walk-fill");

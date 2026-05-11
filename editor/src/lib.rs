@@ -471,10 +471,10 @@ impl EditorApp {
     fn icon_button(ui: &mut Ui, icon: &icons::AtlasIcon) -> Response {
         let image = icon
             .as_image()
-            .fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE))
-            .tint(ui.visuals().widgets.inactive.fg_stroke.color);
+            .fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
         ui.add(
             Button::image(image)
+                .image_tint_follows_text_color(true)
                 .corner_radius(CornerRadius::ZERO)
                 .sense(Sense::click()),
         )

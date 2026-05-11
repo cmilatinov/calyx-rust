@@ -1,17 +1,26 @@
 use crate::panel::Panel;
 use crate::selection::{Selection, SelectionType};
 use crate::widgets::FileButton;
-use crate::{icons, EditorAppState};
+use crate::EditorAppState;
 use egui::text::LayoutJob;
 use egui::{FontFamily, FontId, Frame, Margin, Rect, Response, Sense, TextFormat, Ui, Vec2};
 use engine::assets::animation_graph::AnimationGraph;
 use re_ui::list_item::ShowCollapsingResponse;
+use re_ui::Icon;
 use relative_path::PathExt;
 use std::any::Any;
 use std::fs::{DirEntry, OpenOptions, ReadDir};
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
+
+macro_rules! legacy_icon_from_path {
+    ($path:literal) => {
+        Icon::new($path, include_bytes!($path))
+    };
+}
+
+const FOLDER_TREE_ICON: Icon = legacy_icon_from_path!("../../../resources/icons/mdi--folder.png");
 
 pub struct PanelContentBrowser {
     selected_folder: PathBuf,
@@ -104,6 +113,8 @@ impl Panel for PanelContentBrowser {
         const ICON_PADDING_Y: f32 = 5.0;
         const ICON_SPACING: f32 = 10.0;
         const TOTAL_WIDTH: f32 = ICON_SIZE + ICON_PADDING_X * 2.0;
+        let folder_image = egui::include_image!("../../../resources/icons/folder_large.png");
+        let file_image = egui::include_image!("../../../resources/icons/body_dark_large.png");
         egui::CentralPanel::default()
             .frame(Frame {
                 inner_margin: Margin::same(3),
@@ -120,11 +131,14 @@ impl Panel for PanelContentBrowser {
                         for (idx, node) in nodes.iter().enumerate() {
                             let is_dir = node.is_dir();
                             let is_selected = self.is_selected(state, node, is_dir);
-                            let icon = if is_dir { &icons::FOLDER } else { &icons::FILE };
                             let res = PanelContentBrowser::render_file_button(
                                 ui,
                                 node.file_name().unwrap().to_str().unwrap(),
-                                icon,
+                                if is_dir {
+                                    folder_image.clone()
+                                } else {
+                                    file_image.clone()
+                                },
                                 Vec2::splat(ICON_SIZE),
                                 ICON_SPACING,
                                 Vec2::new(ICON_PADDING_X, ICON_PADDING_Y),
@@ -267,9 +281,7 @@ impl PanelContentBrowser {
                 ui,
                 collapsing_id,
                 false,
-                re_ui::list_item::LabelContent::new(text).with_icon_fn(|ui, rect, visuals| {
-                    icons::FOLDER.paint_at(ui, rect, visuals.icon_tint());
-                }),
+                re_ui::list_item::LabelContent::new(text).with_icon(&FOLDER_TREE_ICON),
                 |ui| {
                     for child in child_entries {
                         let path = child.path();
@@ -280,9 +292,7 @@ impl PanelContentBrowser {
         } else {
             response = item.show_hierarchical(
                 ui,
-                re_ui::list_item::LabelContent::new(text).with_icon_fn(|ui, rect, visuals| {
-                    icons::FOLDER.paint_at(ui, rect, visuals.icon_tint());
-                }),
+                re_ui::list_item::LabelContent::new(text).with_icon(&FOLDER_TREE_ICON),
             );
         }
 
@@ -307,13 +317,13 @@ impl PanelContentBrowser {
     fn render_file_button<'a>(
         ui: &'a mut Ui,
         name: &'a str,
-        icon: &'static icons::AtlasIcon,
+        image_src: impl Into<egui::ImageSource<'a>>,
         image_size: Vec2,
         image_spacing: f32,
         padding: Vec2,
         selected: bool,
     ) -> Response {
-        let image = icon.as_image().fit_to_exact_size(image_size);
+        let image = egui::Image::new(image_src).fit_to_exact_size(image_size);
         let mut format = TextFormat::default();
         format.font_id = FontId::new(11.0, FontFamily::Proportional);
         let mut job = LayoutJob::single_section(String::from(name), format);
@@ -323,8 +333,6 @@ impl PanelContentBrowser {
         job.wrap.max_rows = 1;
         let button = FileButton {
             image,
-            image_uv: icon.uv(),
-            image_tint: ui.visuals().widgets.inactive.fg_stroke.color,
             image_size,
             image_spacing,
             text: job.into(),
