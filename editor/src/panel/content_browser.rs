@@ -3,10 +3,7 @@ use crate::selection::{Selection, SelectionType};
 use crate::widgets::FileButton;
 use crate::{icons, EditorAppState};
 use egui::text::LayoutJob;
-use egui::{
-    include_image, FontFamily, FontId, Frame, ImageSource, Margin, Rect, Response, Sense,
-    TextFormat, Ui, Vec2,
-};
+use egui::{FontFamily, FontId, Frame, Image, Margin, Rect, Response, Sense, TextFormat, Ui, Vec2};
 use engine::assets::animation_graph::AnimationGraph;
 use re_ui::list_item::ShowCollapsingResponse;
 use relative_path::PathExt;
@@ -107,8 +104,6 @@ impl Panel for PanelContentBrowser {
         const ICON_PADDING_Y: f32 = 5.0;
         const ICON_SPACING: f32 = 10.0;
         const TOTAL_WIDTH: f32 = ICON_SIZE + ICON_PADDING_X * 2.0;
-        let folder_image = include_image!("../../../resources/icons/folder_large.png");
-        let file_image = include_image!("../../../resources/icons/body_dark_large.png");
         egui::CentralPanel::default()
             .frame(Frame {
                 inner_margin: Margin::same(3),
@@ -129,9 +124,9 @@ impl Panel for PanelContentBrowser {
                                 ui,
                                 node.file_name().unwrap().to_str().unwrap(),
                                 if is_dir {
-                                    folder_image.clone()
+                                    icons::FOLDER.as_image()
                                 } else {
-                                    file_image.clone()
+                                    icons::FILE.as_image()
                                 },
                                 Vec2::splat(ICON_SIZE),
                                 ICON_SPACING,
@@ -275,7 +270,9 @@ impl PanelContentBrowser {
                 ui,
                 collapsing_id,
                 false,
-                re_ui::list_item::LabelContent::new(text).with_icon(&icons::FOLDER),
+                re_ui::list_item::LabelContent::new(text).with_icon_fn(|ui, rect, visuals| {
+                    icons::FOLDER.paint_at(ui, rect, visuals.icon_tint());
+                }),
                 |ui| {
                     for child in child_entries {
                         let path = child.path();
@@ -286,7 +283,9 @@ impl PanelContentBrowser {
         } else {
             response = item.show_hierarchical(
                 ui,
-                re_ui::list_item::LabelContent::new(text).with_icon(&icons::FOLDER),
+                re_ui::list_item::LabelContent::new(text).with_icon_fn(|ui, rect, visuals| {
+                    icons::FOLDER.paint_at(ui, rect, visuals.icon_tint());
+                }),
             );
         }
 
@@ -311,13 +310,13 @@ impl PanelContentBrowser {
     fn render_file_button<'a>(
         ui: &'a mut Ui,
         name: &'a str,
-        image_src: impl Into<ImageSource<'a>>,
+        image: Image<'a>,
         image_size: Vec2,
         image_spacing: f32,
         padding: Vec2,
         selected: bool,
     ) -> Response {
-        let image = egui::Image::new(image_src).fit_to_exact_size(image_size);
+        let image = image.fit_to_exact_size(image_size);
         let mut format = TextFormat::default();
         format.font_id = FontId::new(11.0, FontFamily::Proportional);
         let mut job = LayoutJob::single_section(String::from(name), format);

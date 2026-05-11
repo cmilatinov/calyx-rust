@@ -68,7 +68,9 @@ impl Panel for PanelSceneHierarchy {
                             re_ui::list_item::LabelContent::new("Scene")
                                 .truncate(true)
                                 .always_show_buttons(true)
-                                .with_icon(&icons::OBJECT_TREE)
+                                .with_icon_fn(|ui, rect, visuals| {
+                                    icons::OBJECT_TREE.paint_at(ui, rect, visuals.icon_tint());
+                                })
                                 .with_buttons(|ui| {
                                     self.add_game_object_button(ui, scene, selection)
                                 }),
@@ -143,7 +145,9 @@ impl PanelSceneHierarchy {
         let content = re_ui::list_item::LabelContent::new(name)
             .truncate(true)
             .subdued(!container_visible)
-            .with_icon(&icons::GAME_OBJECT)
+            .with_icon_fn(|ui, rect, visuals| {
+                icons::GAME_OBJECT.paint_at(ui, rect, visuals.icon_tint());
+            })
             .with_buttons(|ui| {
                 let res = Self::visibility_button_ui(ui, parent_visible, &mut visible);
                 visibility_response = Some(res.clone());

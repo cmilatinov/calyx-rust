@@ -15,7 +15,7 @@ use engine::component::ComponentAnimator;
 use engine::core::Ref;
 use engine::ext::egui::{EguiUiExt, EguiVec2Ext};
 use petgraph::prelude::{EdgeIndex, NodeIndex};
-use re_ui::{DesignTokens, Icon};
+use re_ui::DesignTokens;
 use std::any::Any;
 use std::collections::HashMap;
 use std::ops::DerefMut;
@@ -47,7 +47,7 @@ impl Panel for PanelAnimator {
         "Animator"
     }
 
-    fn icon(&self) -> Option<&'static Icon> {
+    fn icon(&self) -> Option<&'static icons::AtlasIcon> {
         Some(&icons::WALKING)
     }
 
