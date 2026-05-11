@@ -160,6 +160,45 @@ mod tests {
     }
 
     #[test]
+    fn moving_dynamic_transform_syncs_to_rapier() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        scene.add_component(
+            go,
+            ComponentRigidBody {
+                ty: RigidBodyType::Dynamic,
+                ..Default::default()
+            },
+        );
+
+        scene.prepare();
+        let entity = go.entity;
+        let handle = *scene.physics.entity_rigid_body.get(&entity).unwrap();
+        let pos = *scene.physics.bodies[handle].translation();
+        assert!((pos.y - 0.0).abs() < 1e-5);
+
+        scene.set_transform(go, &nalgebra_glm::translation(&Vec3::new(0.0, 7.0, 0.0)));
+
+        scene.prepare();
+        let pos = *scene.physics.bodies[handle].translation();
+        assert!(
+            (pos.y - 7.0).abs() < 1e-5,
+            "dynamic rapier body should be at y=7 after an explicit transform edit, got y={}",
+            pos.y
+        );
+
+        let time = time_with_delta(0.0);
+        let config = PhysicsConfiguration::default();
+        PhysicsContext::update(&mut scene, &time, &config);
+        let pos = scene.world_transform(go).position;
+        assert!(
+            (pos.y - 7.0).abs() < 1e-5,
+            "dynamic scene transform should not be reset by a stale rapier pose, got y={}",
+            pos.y
+        );
+    }
+
+    #[test]
     fn cuboid_collider_shape() {
         let mut scene = test_scene();
         let go = scene.create(None, None);

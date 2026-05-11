@@ -131,7 +131,9 @@ impl EditorApp {
             project_path,
             game.resources.background().clone(),
         )?;
-        project_manager.read().build_assemblies();
+        if !project_manager.write().load_existing_assemblies() {
+            project_manager.read().build_assemblies();
+        }
         let panels = Panels::new(
             project_manager
                 .read()
