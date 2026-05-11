@@ -10,7 +10,6 @@ pub use self::inspector::*;
 pub use self::scene_hierarchy::*;
 pub use self::terminal::*;
 pub use self::viewport::*;
-use crate::icons::AtlasIcon;
 use crate::widgets::{TabDesc, TabWidget};
 use crate::EditorAppState;
 use egui::{Id, InnerResponse, Response};
@@ -29,7 +28,7 @@ pub trait Panel: Any {
     fn name() -> &'static str
     where
         Self: Sized;
-    fn icon(&self) -> Option<&'static AtlasIcon> {
+    fn icon(&self) -> Option<&'static re_ui::Icon> {
         None
     }
     fn ui(&mut self, ui: &mut Ui, state: &mut EditorAppState);
@@ -70,7 +69,7 @@ impl Panels {
         &self,
         tiles: &Tiles<&'static str>,
         tile_id: TileId,
-    ) -> Option<&'static AtlasIcon> {
+    ) -> Option<&'static re_ui::Icon> {
         tiles
             .get(tile_id)
             .and_then(|t| match t {

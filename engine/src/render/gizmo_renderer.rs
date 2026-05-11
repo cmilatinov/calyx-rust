@@ -1,7 +1,7 @@
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::wgpu::BufferUsages;
-use image::RgbaImage;
+use image::{imageops, RgbaImage};
 use legion::{Entity, IntoQuery};
 use nalgebra_glm::{vec4, Mat4};
 use rapier3d::pipeline::DebugRenderPipeline;
@@ -23,8 +23,10 @@ use super::buffer::wgpu_buffer_init_desc;
 use super::{PipelineOptions, Shader};
 
 const HIDDEN_GIZMO_OPACITY: f32 = 0.35;
-const CAMERA_ICON_PNG: &[u8] = include_bytes!("../../../resources/icons/camera.png");
-const LIGHT_ICON_PNG: &[u8] = include_bytes!("../../../resources/icons/light.png");
+const PHOSPHOR_ICON_ATLAS_PNG: &[u8] =
+    include_bytes!("../../../resources/icons/phosphor_regular.png");
+const PHOSPHOR_CAMERA_FILL_RECT: (u32, u32, u32, u32) = (4622, 794, 128, 128);
+const PHOSPHOR_LIGHTBULB_FILL_RECT: (u32, u32, u32, u32) = (1850, 2774, 128, 128);
 
 /// Per-instance draw data for gizmo rendering.
 #[repr(C)]
@@ -471,8 +473,11 @@ impl GizmoRenderer {
     }
 
     fn icon_atlas_pixels() -> (Vec<u8>, u32, u32) {
-        let camera = Self::decode_icon(CAMERA_ICON_PNG, "camera");
-        let light = Self::decode_icon(LIGHT_ICON_PNG, "light");
+        let atlas = image::load_from_memory(PHOSPHOR_ICON_ATLAS_PNG)
+            .unwrap_or_else(|err| panic!("failed to decode Phosphor gizmo icon atlas: {err}"))
+            .to_rgba8();
+        let camera = Self::crop_icon(&atlas, PHOSPHOR_CAMERA_FILL_RECT);
+        let light = Self::crop_icon(&atlas, PHOSPHOR_LIGHTBULB_FILL_RECT);
         let width = camera.width() + light.width();
         let height = camera.height().max(light.height());
         let mut pixels = vec![0; (width * height * 4) as usize];
@@ -481,10 +486,9 @@ impl GizmoRenderer {
         (pixels, width, height)
     }
 
-    fn decode_icon(bytes: &[u8], name: &str) -> RgbaImage {
-        image::load_from_memory(bytes)
-            .unwrap_or_else(|err| panic!("failed to decode {name} gizmo icon: {err}"))
-            .to_rgba8()
+    fn crop_icon(atlas: &RgbaImage, rect: (u32, u32, u32, u32)) -> RgbaImage {
+        let (x, y, width, height) = rect;
+        imageops::crop_imm(atlas, x, y, width, height).to_image()
     }
 
     fn copy_icon(

@@ -1,26 +1,17 @@
 use crate::panel::Panel;
 use crate::selection::{Selection, SelectionType};
 use crate::widgets::FileButton;
-use crate::EditorAppState;
+use crate::{icons, EditorAppState};
 use egui::text::LayoutJob;
 use egui::{FontFamily, FontId, Frame, Margin, Rect, Response, Sense, TextFormat, Ui, Vec2};
 use engine::assets::animation_graph::AnimationGraph;
 use re_ui::list_item::ShowCollapsingResponse;
-use re_ui::Icon;
 use relative_path::PathExt;
 use std::any::Any;
 use std::fs::{DirEntry, OpenOptions, ReadDir};
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
-
-macro_rules! legacy_icon_from_path {
-    ($path:literal) => {
-        Icon::new($path, include_bytes!($path))
-    };
-}
-
-const FOLDER_TREE_ICON: Icon = legacy_icon_from_path!("../../../resources/icons/mdi--folder.png");
 
 pub struct PanelContentBrowser {
     selected_folder: PathBuf,
@@ -281,7 +272,7 @@ impl PanelContentBrowser {
                 ui,
                 collapsing_id,
                 false,
-                re_ui::list_item::LabelContent::new(text).with_icon(&FOLDER_TREE_ICON),
+                re_ui::list_item::LabelContent::new(text).with_icon(&icons::FOLDER),
                 |ui| {
                     for child in child_entries {
                         let path = child.path();
@@ -292,7 +283,7 @@ impl PanelContentBrowser {
         } else {
             response = item.show_hierarchical(
                 ui,
-                re_ui::list_item::LabelContent::new(text).with_icon(&FOLDER_TREE_ICON),
+                re_ui::list_item::LabelContent::new(text).with_icon(&icons::FOLDER),
             );
         }
 

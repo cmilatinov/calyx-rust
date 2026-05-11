@@ -5,6 +5,7 @@ use egui::{
     ViewportCommand,
 };
 use engine::math::fit_aspect;
+use re_ui::Icon;
 use std::any::Any;
 
 #[derive(Default, Debug)]
@@ -17,7 +18,7 @@ impl Panel for PanelGame {
         "Game"
     }
 
-    fn icon(&self) -> Option<&'static icons::AtlasIcon> {
+    fn icon(&self) -> Option<&'static Icon> {
         Some(&icons::GAMEPAD)
     }
 

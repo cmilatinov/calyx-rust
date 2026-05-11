@@ -13,6 +13,7 @@ use engine::math::Transform;
 use engine::render::CameraLike;
 use mint::ColumnMatrix4;
 use nalgebra_glm::{DMat4, Mat4};
+use re_ui::Icon;
 use std::any::Any;
 use transform_gizmo_egui::config::DEFAULT_SNAP_ANGLE;
 use transform_gizmo_egui::mint::RowMatrix4;
@@ -49,7 +50,7 @@ impl Panel for PanelViewport {
         "Viewport"
     }
 
-    fn icon(&self) -> Option<&'static icons::AtlasIcon> {
+    fn icon(&self) -> Option<&'static Icon> {
         Some(&icons::VIEWPORT_3D)
     }
 

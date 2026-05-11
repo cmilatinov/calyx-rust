@@ -3,17 +3,15 @@ use egui::{
     StrokeKind, TextStyle, TextWrapMode, Ui, Vec2, WidgetText,
 };
 use egui_tiles::{Behavior, TabState, TileId, Tiles};
-use re_ui::DesignTokens;
+use re_ui::{DesignTokens, Icon};
 use std::sync::Arc;
-
-use crate::icons::AtlasIcon;
 
 pub struct TabWidget {
     pub galley: Arc<Galley>,
     pub rect: Rect,
     pub galley_rect: Rect,
     pub close_rect: Option<Rect>,
-    pub icon: Option<&'static AtlasIcon>,
+    pub icon: Option<&'static Icon>,
     pub icon_size: Vec2,
     pub icon_rect: Rect,
     pub bg_color: Color32,
@@ -22,7 +20,7 @@ pub struct TabWidget {
 
 pub struct TabDesc {
     pub label: WidgetText,
-    pub icon: Option<&'static AtlasIcon>,
+    pub icon: Option<&'static Icon>,
     pub selected: bool,
     pub hovered: bool,
     pub closeable: bool,
