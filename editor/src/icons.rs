@@ -64,7 +64,3 @@ pub const OBJECT_TREE: AtlasIcon = AtlasIcon::new("tree-structure-fill");
 pub const WALKING: AtlasIcon = AtlasIcon::new("person-simple-walk-fill");
 pub const GAMEPAD: AtlasIcon = AtlasIcon::new("game-controller-fill");
 pub const VIEWPORT_3D: AtlasIcon = AtlasIcon::new("cube-focus-fill");
-pub const BUILD: AtlasIcon = AtlasIcon::new("hammer-fill");
-pub const PLAY: AtlasIcon = AtlasIcon::new("play-fill");
-pub const PAUSE: AtlasIcon = AtlasIcon::new("pause-fill");
-pub const STOP: AtlasIcon = AtlasIcon::new("stop-fill");
