@@ -1,0 +1,12 @@
+[package]
+name = "icon_atlas"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap.workspace = true
+glob.workspace = true
+image.workspace = true
+resvg.workspace = true
+serde.workspace = true
+serde_json.workspace = true

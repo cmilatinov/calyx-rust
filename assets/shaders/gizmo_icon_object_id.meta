@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "b083f4e7-75b2-4b30-96e8-d93631e56f4b",
+    "name": "shaders/gizmo_icon_object_id",
+    "display_name": "gizmo_icon_object_id",
+    "type_uuid": "00000000-0000-0000-0000-000000000000"
+  },
+  "inner": []
+}

@@ -1,7 +1,7 @@
 use crate as engine;
 use crate::component::{Component, ReflectComponent};
 use crate::reflect::{Reflect, ReflectDefault};
-use crate::render::Gizmos;
+use crate::render::{GizmoIcon, Gizmos};
 use crate::scene::{GameObject, Scene};
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use egui::Color32;
@@ -47,6 +47,7 @@ impl Component for ComponentCamera {
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {
         let transform = scene.world_transform(game_object);
         gizmos.set_color(&Vec4::new(1.0, 1.0, 1.0, 1.0));
+        gizmos.icon(GizmoIcon::Camera, &transform.position, 1.0);
         gizmos.wire_frustum(
             &transform,
             16.0 / 9.0,

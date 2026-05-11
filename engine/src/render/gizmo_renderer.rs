@@ -1,11 +1,13 @@
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::wgpu::BufferUsages;
+use image::{imageops, RgbaImage};
 use legion::{Entity, IntoQuery};
 use nalgebra_glm::{vec4, Mat4};
 use rapier3d::pipeline::DebugRenderPipeline;
 use std::default::Default;
 use std::path::Path;
+use uuid::Uuid;
 
 use crate::assets::mesh::Mesh;
 use crate::assets::Asset;
@@ -19,7 +21,13 @@ use crate::render::render_utils::RenderUtils;
 use crate::scene::Scene;
 
 use super::buffer::wgpu_buffer_init_desc;
-use super::{PipelineOptions, Shader};
+use super::{Camera, PipelineOptions, Shader};
+
+const HIDDEN_GIZMO_OPACITY: f32 = 0.35;
+const PHOSPHOR_ICON_ATLAS_PNG: &[u8] =
+    include_bytes!("../../../resources/icons/phosphor_regular.png");
+const PHOSPHOR_CAMERA_FILL_RECT: (u32, u32, u32, u32) = (4622, 794, 128, 128);
+const PHOSPHOR_LIGHTBULB_FILL_RECT: (u32, u32, u32, u32) = (1850, 2774, 128, 128);
 
 /// Per-instance draw data for gizmo rendering.
 #[repr(C)]
@@ -49,9 +57,13 @@ pub struct GizmoRenderer {
     wire_cube_mesh: Mesh,
     lines_mesh: Mesh,
     points_mesh: Mesh,
+    icons_mesh: Mesh,
 
     shader: Shader,
+    icon_shader: Shader,
+    icon_object_id_shader: Shader,
     gizmo_bind_group: wgpu::BindGroup,
+    icon_texture: IconTexture,
     circle_bind_group: wgpu::BindGroup,
     cube_bind_group: wgpu::BindGroup,
     lines_bind_group: wgpu::BindGroup,
@@ -61,6 +73,14 @@ pub struct GizmoRenderer {
     cube_instance_buffer: wgpu::Buffer,
 }
 
+struct IconTexture {
+    _texture: wgpu::Texture,
+    _view: wgpu::TextureView,
+    _sampler: wgpu::Sampler,
+    bind_group: wgpu::BindGroup,
+    object_id_bind_group: wgpu::BindGroup,
+}
+
 impl GizmoRenderer {
     /// Creates a gizmo renderer bound to `camera_uniform_buffer`.
     pub fn new(
@@ -68,8 +88,8 @@ impl GizmoRenderer {
         camera_uniform_buffer: &wgpu::Buffer,
         samples: u32,
     ) -> Self {
-        let render_state = game.render_context.render_state();
-        let device = &render_state.device;
+        let device = game.render_context.device();
+        let queue = game.render_context.queue();
 
         let circle_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("circle_instance_buffer"),
@@ -94,9 +114,10 @@ impl GizmoRenderer {
             }; Mesh::MAX_INSTANCES],
         ));
 
-        let shader = Shader::from_file(game, Path::new("assets/shaders/gizmos.wgsl"))
-            .unwrap()
-            .asset;
+        let shader = Self::load_shader(game, Path::new("shaders/gizmos.wgsl"));
+        let icon_shader = Self::load_shader(game, Path::new("shaders/gizmo_icons.wgsl"));
+        let icon_object_id_shader =
+            Self::load_shader(game, Path::new("shaders/gizmo_icon_object_id.wgsl"));
 
         let gizmo_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("gizmo_bind_group"),
@@ -143,6 +164,13 @@ impl GizmoRenderer {
             }],
         });
 
+        let icon_texture = Self::create_icon_texture(
+            device,
+            queue,
+            &icon_shader.bind_group_layouts[1],
+            &icon_object_id_shader.bind_group_layouts[1],
+        );
+
         let renderer = Self {
             samples,
             circle_list: Vec::new(),
@@ -152,9 +180,13 @@ impl GizmoRenderer {
             wire_cube_mesh: game.registries.assets.read().wire_cube(),
             lines_mesh: Mesh::new(&game.render_context),
             points_mesh: Mesh::new(&game.render_context),
+            icons_mesh: Mesh::new(&game.render_context),
 
             shader,
+            icon_shader,
+            icon_object_id_shader,
             gizmo_bind_group,
+            icon_texture,
             circle_bind_group,
             cube_bind_group,
             lines_bind_group,
@@ -186,6 +218,7 @@ impl GizmoRenderer {
         self.cube_list.clear();
         self.lines_mesh.clear();
         self.points_mesh.clear();
+        self.icons_mesh.clear();
     }
 
     fn load_buffers(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
@@ -205,19 +238,30 @@ impl GizmoRenderer {
         RenderUtils::rebuild_mesh_data(device, queue, &mut self.wire_cube_mesh);
         self.lines_mesh.rebuild_mesh_data(device);
         self.points_mesh.rebuild_mesh_data(device);
+        self.icons_mesh.rebuild_mesh_data(device);
     }
 
     /// Returns a gizmo command recorder for the current frame.
-    pub fn gizmos<'a>(&'a mut self, camera_transform: &'a Transform) -> Gizmos<'a> {
+    pub fn gizmos<'a>(
+        &'a mut self,
+        camera: &'a Camera,
+        camera_transform: &'a Transform,
+        viewport_size: [f32; 2],
+    ) -> Gizmos<'a> {
         self.clear();
         Gizmos {
+            camera,
             camera_transform,
+            viewport_size,
+            object_id: 0,
             color: vec4(1.0, 1.0, 1.0, 1.0),
+            opacity: 1.0,
             depth_test_enabled: true,
             circle_list: &mut self.circle_list,
             cube_list: &mut self.cube_list,
             lines_mesh: &mut self.lines_mesh,
             points_mesh: &mut self.points_mesh,
+            icons_mesh: &mut self.icons_mesh,
         }
     }
 
@@ -226,20 +270,30 @@ impl GizmoRenderer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        camera: &Camera,
         camera_transform: &Transform,
+        viewport_size: [f32; 2],
         scene: &Scene,
         physics_debug_pipeline: Option<&mut DebugRenderPipeline>,
+        mut object_id_for_game_object: impl FnMut(Uuid) -> u32,
     ) {
         {
             let registry_ref = self.component_registry.clone();
             let mut gizmos;
             {
                 let registry = registry_ref.read();
-                gizmos = self.gizmos(camera_transform);
+                gizmos = self.gizmos(camera, camera_transform, viewport_size);
                 let mut query = <Entity>::query();
                 let world = &scene.world;
                 for entity in query.iter(world) {
                     if let Some(game_object) = scene.game_object_from_entity(*entity) {
+                        gizmos.set_object_id(object_id_for_game_object(scene.uuid(game_object)));
+                        let opacity = if scene.is_visible_in_hierarchy(game_object) {
+                            1.0
+                        } else {
+                            HIDDEN_GIZMO_OPACITY
+                        };
+                        gizmos.set_opacity(opacity);
                         for (_, comp) in registry.components() {
                             if let Some(entry) = scene.entry(game_object) {
                                 if let Some(instance) = comp.get_instance(&entry) {
@@ -251,6 +305,8 @@ impl GizmoRenderer {
                 }
             }
             if let Some(physics_debug_pipeline) = physics_debug_pipeline {
+                gizmos.set_object_id(0);
+                gizmos.set_opacity(1.0);
                 let mut physics_debug_render: PhysicsDebugRenderer = gizmos.into();
                 physics_debug_pipeline.render(
                     &mut physics_debug_render,
@@ -291,10 +347,19 @@ impl GizmoRenderer {
             target_format,
             self.samples,
         );
+        let mut icon_depth = RenderUtils::depth_default(wgpu::TextureFormat::Depth32Float);
+        icon_depth.depth_write_enabled = false;
+        let icon_options = PipelineOptions::builder()
+            .samples(self.samples)
+            .cull_mode(None)
+            .depth_stencil(Some(icon_depth))
+            .fragment_targets(vec![Some(RenderUtils::color_alpha_blending(target_format))])
+            .build();
         self.shader.build_pipeline(&circle_options);
         self.shader.build_pipeline(&cube_options);
         self.shader.build_pipeline(&line_options);
         self.shader.build_pipeline(&point_options);
+        self.icon_shader.build_pipeline(&icon_options);
         if !self.circle_list.is_empty() {
             if let Some(pipeline) = self.shader.get_pipeline(&circle_options) {
                 render_pass.set_pipeline(pipeline);
@@ -345,5 +410,250 @@ impl GizmoRenderer {
                 render_pass.draw(0..(self.points_mesh.vertices.len() as u32), 0..1);
             }
         }
+
+        if !self.icons_mesh.indices.is_empty() {
+            if let Some(pipeline) = self.icon_shader.get_pipeline(&icon_options) {
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
+                render_pass.set_bind_group(1, &self.icon_texture.bind_group, &[]);
+
+                RenderUtils::bind_mesh_buffers(render_pass, &self.icons_mesh);
+                render_pass.draw_indexed(0..(self.icons_mesh.indices.len() as u32), 0, 0..1);
+            }
+        }
+    }
+
+    /// Renders icon gizmos into the object-id target so editor picks can select
+    /// objects represented only by gizmo icons.
+    pub fn render_icon_object_ids<'a>(
+        &'a mut self,
+        target_format: wgpu::TextureFormat,
+        render_pass: &mut wgpu::RenderPass<'a>,
+    ) {
+        if self.icons_mesh.indices.is_empty() {
+            return;
+        }
+
+        let mut depth = RenderUtils::depth_default(wgpu::TextureFormat::Depth32Float);
+        depth.depth_write_enabled = false;
+        let options = PipelineOptions::builder()
+            .samples(1)
+            .cull_mode(None)
+            .depth_stencil(Some(depth))
+            .fragment_targets(vec![Some(wgpu::ColorTargetState {
+                format: target_format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::RED,
+            })])
+            .build();
+        self.icon_object_id_shader.build_pipeline(&options);
+        let Some(pipeline) = self.icon_object_id_shader.get_pipeline(&options) else {
+            return;
+        };
+
+        render_pass.set_pipeline(pipeline);
+        render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
+        render_pass.set_bind_group(1, &self.icon_texture.object_id_bind_group, &[]);
+        RenderUtils::bind_mesh_buffers(render_pass, &self.icons_mesh);
+        render_pass.draw_indexed(0..(self.icons_mesh.indices.len() as u32), 0, 0..1);
+    }
+
+    fn create_icon_texture(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layout: &wgpu::BindGroupLayout,
+        object_id_layout: &wgpu::BindGroupLayout,
+    ) -> IconTexture {
+        let (pixels, width, height) = Self::icon_atlas_pixels();
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("gizmo_icon_atlas"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("gizmo_icon_sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &pixels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        let view = texture.create_view(&Default::default());
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("gizmo_icon_texture_bind_group"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        });
+        let object_id_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("gizmo_icon_object_id_texture_bind_group"),
+            layout: object_id_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        });
+        IconTexture {
+            _texture: texture,
+            _view: view,
+            _sampler: sampler,
+            bind_group,
+            object_id_bind_group,
+        }
+    }
+
+    fn icon_atlas_pixels() -> (Vec<u8>, u32, u32) {
+        let atlas = image::load_from_memory(PHOSPHOR_ICON_ATLAS_PNG)
+            .unwrap_or_else(|err| panic!("failed to decode Phosphor gizmo icon atlas: {err}"))
+            .to_rgba8();
+        let camera = Self::crop_icon(&atlas, PHOSPHOR_CAMERA_FILL_RECT);
+        let light = Self::crop_icon(&atlas, PHOSPHOR_LIGHTBULB_FILL_RECT);
+        let width = camera.width() + light.width();
+        let height = camera.height().max(light.height());
+        let mut pixels = vec![0; (width * height * 4) as usize];
+        Self::copy_icon(&mut pixels, width, &camera, 0, 0);
+        Self::copy_icon(&mut pixels, width, &light, camera.width(), 0);
+        (pixels, width, height)
+    }
+
+    fn crop_icon(atlas: &RgbaImage, rect: (u32, u32, u32, u32)) -> RgbaImage {
+        let (x, y, width, height) = rect;
+        imageops::crop_imm(atlas, x, y, width, height).to_image()
+    }
+
+    fn copy_icon(
+        pixels: &mut [u8],
+        atlas_width: u32,
+        icon: &RgbaImage,
+        x_offset: u32,
+        y_offset: u32,
+    ) {
+        for y in 0..icon.height() {
+            for x in 0..icon.width() {
+                let src = icon.get_pixel(x, y).0;
+                let dst = (((y + y_offset) * atlas_width + x + x_offset) * 4) as usize;
+                pixels[dst..dst + 4].copy_from_slice(&src);
+            }
+        }
+    }
+
+    fn load_shader(game: &ReadOnlyAssetContext, relative_path: &Path) -> Shader {
+        let asset_paths = game.registries.assets.read().asset_paths().clone();
+        for asset_path in asset_paths {
+            let path = asset_path.join(relative_path);
+            if path.exists() {
+                return Shader::from_file(game, &path).unwrap().asset;
+            }
+        }
+        panic!("missing gizmo shader {}", relative_path.display());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::test_asset_context_with_assets;
+    use std::path::PathBuf;
+
+    fn assets_path() -> PathBuf {
+        let assets_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets");
+        dunce::canonicalize(assets_path).expect("assets dir not found")
+    }
+
+    #[test]
+    fn gizmo_icon_shader_builds_pipeline() {
+        let context = test_asset_context_with_assets(vec![assets_path()]);
+        let read_only_context = context.lock_read();
+        let mut shader = Shader::from_file(
+            &read_only_context,
+            &assets_path().join("shaders/gizmo_icons.wgsl"),
+        )
+        .expect("icon shader should load")
+        .asset;
+        let mut depth_stencil = RenderUtils::depth_default(wgpu::TextureFormat::Depth32Float);
+        depth_stencil.depth_write_enabled = false;
+        let icon_options = PipelineOptions::builder()
+            .cull_mode(None)
+            .depth_stencil(Some(depth_stencil))
+            .fragment_targets(vec![Some(RenderUtils::color_alpha_blending(
+                wgpu::TextureFormat::Rgba16Float,
+            ))])
+            .build();
+
+        shader.build_pipeline(&icon_options);
+
+        assert!(shader.get_pipeline(&icon_options).is_some());
+    }
+
+    #[test]
+    fn gizmo_icon_object_id_shader_builds_pipeline() {
+        let context = test_asset_context_with_assets(vec![assets_path()]);
+        let read_only_context = context.lock_read();
+        let mut shader = Shader::from_file(
+            &read_only_context,
+            &assets_path().join("shaders/gizmo_icon_object_id.wgsl"),
+        )
+        .expect("icon object id shader should load")
+        .asset;
+        let mut depth_stencil = RenderUtils::depth_default(wgpu::TextureFormat::Depth32Float);
+        depth_stencil.depth_write_enabled = false;
+        let icon_options = PipelineOptions::builder()
+            .samples(1)
+            .cull_mode(None)
+            .depth_stencil(Some(depth_stencil))
+            .fragment_targets(vec![Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::R32Uint,
+                blend: None,
+                write_mask: wgpu::ColorWrites::RED,
+            })])
+            .build();
+
+        shader.build_pipeline(&icon_options);
+
+        assert!(shader.get_pipeline(&icon_options).is_some());
     }
 }

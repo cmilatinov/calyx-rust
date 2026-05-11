@@ -218,6 +218,20 @@ mod tests {
         assert!(all.contains(&go3));
     }
 
+    #[test]
+    fn visibility_in_hierarchy_respects_parent_state() {
+        let mut scene = test_scene();
+        let parent = scene.create(None, None);
+        let child = scene.create(None, Some(parent));
+        let unrelated = scene.create(None, None);
+
+        scene.write_component::<ComponentID, _>(parent, |id| id.visible = false);
+
+        assert!(!scene.is_visible_in_hierarchy(parent));
+        assert!(!scene.is_visible_in_hierarchy(child));
+        assert!(scene.is_visible_in_hierarchy(unrelated));
+    }
+
     // --- Deletion ---
 
     #[test]

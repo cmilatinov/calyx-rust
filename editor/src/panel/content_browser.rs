@@ -3,10 +3,7 @@ use crate::selection::{Selection, SelectionType};
 use crate::widgets::FileButton;
 use crate::{icons, EditorAppState};
 use egui::text::LayoutJob;
-use egui::{
-    include_image, FontFamily, FontId, Frame, ImageSource, Margin, Rect, Response, Sense,
-    TextFormat, Ui, Vec2,
-};
+use egui::{FontFamily, FontId, Frame, Margin, Rect, Response, Sense, TextFormat, Ui, Vec2};
 use engine::assets::animation_graph::AnimationGraph;
 use re_ui::list_item::ShowCollapsingResponse;
 use relative_path::PathExt;
@@ -107,8 +104,8 @@ impl Panel for PanelContentBrowser {
         const ICON_PADDING_Y: f32 = 5.0;
         const ICON_SPACING: f32 = 10.0;
         const TOTAL_WIDTH: f32 = ICON_SIZE + ICON_PADDING_X * 2.0;
-        let folder_image = include_image!("../../../resources/icons/folder_large.png");
-        let file_image = include_image!("../../../resources/icons/body_dark_large.png");
+        let folder_image = egui::include_image!("../../../resources/icons/folder_large.png");
+        let file_image = egui::include_image!("../../../resources/icons/body_dark_large.png");
         egui::CentralPanel::default()
             .frame(Frame {
                 inner_margin: Margin::same(3),
@@ -311,7 +308,7 @@ impl PanelContentBrowser {
     fn render_file_button<'a>(
         ui: &'a mut Ui,
         name: &'a str,
-        image_src: impl Into<ImageSource<'a>>,
+        image_src: impl Into<egui::ImageSource<'a>>,
         image_size: Vec2,
         image_spacing: f32,
         padding: Vec2,

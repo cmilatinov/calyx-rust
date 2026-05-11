@@ -77,8 +77,11 @@ impl GridRenderer {
             occlusion_query_set: None,
         });
 
+        let mut depth_stencil = RenderUtils::depth_default(wgpu::TextureFormat::Depth32Float);
+        depth_stencil.depth_write_enabled = false;
         let options = PipelineOptions::builder()
             .samples(samples)
+            .depth_stencil(Some(depth_stencil))
             .fragment_targets(vec![Some(RenderUtils::color_alpha_blending(
                 scene_texture_msaa.descriptor.format,
             ))])
