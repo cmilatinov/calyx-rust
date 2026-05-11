@@ -237,6 +237,7 @@ impl MeshRenderer {
         targets: MeshRenderTargets<'_>,
         camera_uniform_buffer: &wgpu::Buffer,
         draw_list: &[(AssetId, AssetId, AssetId, Range<u32>)],
+        gizmo_renderer: Option<&mut GizmoRenderer>,
     ) {
         let options = PipelineOptions::builder()
             .samples(1)
@@ -295,6 +296,11 @@ impl MeshRenderer {
                 last_mesh_id = mesh_id;
             }
             RenderUtils::draw_mesh_instanced(&mut render_pass, mesh, instances.clone());
+        }
+
+        if let Some(gizmo_renderer) = gizmo_renderer {
+            gizmo_renderer
+                .render_icon_object_ids(targets.color.descriptor.format, &mut render_pass);
         }
     }
 

@@ -262,15 +262,6 @@ impl SceneRenderer {
         let device = &render_state.device;
 
         self.load_camera_uniforms(queue, camera, camera_transform);
-        if self.options.gizmos {
-            self.gizmo_renderer.draw_gizmos(
-                device,
-                queue,
-                camera_transform,
-                scene,
-                physics_debug_pipeline,
-            );
-        }
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("encoder"),
@@ -285,6 +276,26 @@ impl SceneRenderer {
             })])
             .build();
         self.build_asset_data(render_state, scene, &options);
+        if self.options.gizmos {
+            let object_id_lookup = &mut self.object_id_lookup;
+            let object_ids_build = &mut self.object_ids_build;
+            self.gizmo_renderer.draw_gizmos(
+                device,
+                queue,
+                camera,
+                camera_transform,
+                [
+                    self.scene_texture_msaa.descriptor.size.width as f32,
+                    self.scene_texture_msaa.descriptor.size.height as f32,
+                ],
+                scene,
+                physics_debug_pipeline,
+                |game_object_id| {
+                    register_object_id(object_id_lookup, object_ids_build, game_object_id)
+                },
+            );
+        }
+        self.finish_object_ids();
         let draw_list = self.build_draw_list();
         self.build_mesh_data(render_state);
         self.light_manager.build_data(render_state, scene);
@@ -327,6 +338,7 @@ impl SceneRenderer {
             },
             &self.camera_uniform_buffer,
             &draw_list,
+            self.options.gizmos.then_some(&mut self.gizmo_renderer),
         );
         drop(assets);
         self.skybox_renderer.render(
@@ -457,13 +469,11 @@ impl SceneRenderer {
     }
 
     fn register_object_id(&mut self, game_object_id: Uuid) -> u32 {
-        if let Some(object_id) = self.object_id_lookup.get(&game_object_id) {
-            return *object_id;
-        }
-        self.object_ids_build.push(game_object_id);
-        let object_id = self.object_ids_build.len() as u32;
-        self.object_id_lookup.insert(game_object_id, object_id);
-        object_id
+        register_object_id(
+            &mut self.object_id_lookup,
+            &mut self.object_ids_build,
+            game_object_id,
+        )
     }
 
     fn object_id_for_game_object(&self, game_object_id: Option<Uuid>) -> u32 {
@@ -620,6 +630,9 @@ impl SceneRenderer {
                  ..
              }| (*shader_id, *mat_id, *mesh_id),
         );
+    }
+
+    fn finish_object_ids(&mut self) {
         self.object_ids = Arc::from(std::mem::take(&mut self.object_ids_build));
     }
 
@@ -992,4 +1005,18 @@ impl SceneRenderer {
             self.options.samples,
         );
     }
+}
+
+fn register_object_id(
+    object_id_lookup: &mut HashMap<Uuid, u32>,
+    object_ids_build: &mut Vec<Uuid>,
+    game_object_id: Uuid,
+) -> u32 {
+    if let Some(object_id) = object_id_lookup.get(&game_object_id) {
+        return *object_id;
+    }
+    object_ids_build.push(game_object_id);
+    let object_id = object_ids_build.len() as u32;
+    object_id_lookup.insert(game_object_id, object_id);
+    object_id
 }

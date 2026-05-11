@@ -7,6 +7,9 @@ use nalgebra::UnitQuaternion;
 use nalgebra_glm as glm;
 use nalgebra_glm::{vec2, vec3, vec4, Mat4, Vec3, Vec4};
 
+const MIN_ICON_SIZE_PIXELS: f32 = 24.0;
+const MAX_ICON_SIZE_PIXELS: f32 = 48.0;
+
 /// Built-in camera-facing editor icon shapes.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum GizmoIcon {
@@ -18,7 +21,10 @@ pub enum GizmoIcon {
 
 /// Immediate-mode helper used by components to emit debug gizmo geometry.
 pub struct Gizmos<'a> {
+    pub(crate) camera: &'a Camera,
     pub(crate) camera_transform: &'a Transform,
+    pub(crate) viewport_size: [f32; 2],
+    pub(crate) object_id: u32,
     pub(crate) color: Vec4,
     pub(crate) opacity: f32,
     pub(crate) depth_test_enabled: bool,
@@ -136,7 +142,8 @@ impl Gizmos<'_> {
 
     /// Emits a camera-facing editor icon centered at `position`.
     pub fn icon(&mut self, icon: GizmoIcon, position: &Vec3, size: f32) {
-        let half = size.max(0.0) * 0.5;
+        let size = self.clamped_icon_world_size(position, size.max(0.0));
+        let half = size * 0.5;
         if half <= 0.0 {
             return;
         }
@@ -160,6 +167,7 @@ impl Gizmos<'_> {
         ]);
         self.icons_mesh.uvs[1].extend(iter::repeat(color.xy()).take(4));
         self.icons_mesh.uvs[2].extend(iter::repeat(vec2(color.z, color.w)).take(4));
+        self.icons_mesh.uvs[3].extend(iter::repeat(vec2(self.object_id as f32, 0.0)).take(4));
         self.icons_mesh
             .indices
             .extend([base, base + 1, base + 2, base + 2, base + 3, base]);
@@ -180,6 +188,10 @@ impl Gizmos<'_> {
         self.depth_test_enabled = enabled;
     }
 
+    pub(crate) fn set_object_id(&mut self, object_id: u32) {
+        self.object_id = object_id;
+    }
+
     fn gizmo_instance(&self, transform: Mat4, enable_normals: bool) -> GizmoInstance {
         GizmoInstance {
             transform: transform.into(),
@@ -197,6 +209,25 @@ impl Gizmos<'_> {
     fn alpha(&self) -> f32 {
         self.color.w * self.opacity
     }
+
+    fn clamped_icon_world_size(&self, position: &Vec3, size: f32) -> f32 {
+        let depth = glm::dot(
+            &(*position - self.camera_transform.position),
+            &safe_normalize(self.camera_transform.forward(), vec3(0.0, 0.0, 1.0)),
+        );
+        let viewport_height = self.viewport_size[1].max(1.0);
+        let projection_y = self.camera.projection[(1, 1)].abs();
+        if depth <= self.camera.near_plane || projection_y <= f32::EPSILON {
+            return size;
+        }
+
+        let projected_pixels = size * projection_y * viewport_height / (2.0 * depth);
+        if projected_pixels <= f32::EPSILON {
+            return size;
+        }
+
+        size * projected_pixels.clamp(MIN_ICON_SIZE_PIXELS, MAX_ICON_SIZE_PIXELS) / projected_pixels
+    }
 }
 
 fn safe_normalize(value: Vec3, fallback: Vec3) -> Vec3 {
@@ -211,5 +242,89 @@ fn icon_uv_rect(icon: GizmoIcon) -> [glm::Vec2; 2] {
     match icon {
         GizmoIcon::Camera => [vec2(0.0, 0.0), vec2(0.5, 1.0)],
         GizmoIcon::Light => [vec2(0.5, 0.0), vec2(1.0, 1.0)],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::assets::mesh::Mesh;
+    use crate::test_utils::test_asset_context_with_assets;
+    use nalgebra_glm::vec3;
+    use std::path::PathBuf;
+
+    fn assets_path() -> PathBuf {
+        let assets_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets");
+        dunce::canonicalize(assets_path).expect("assets dir not found")
+    }
+
+    #[test]
+    fn icon_size_is_clamped_to_pixel_range() {
+        let asset_context = test_asset_context_with_assets(vec![assets_path()]);
+        let context = asset_context.lock_read();
+        let camera = Camera::default();
+        let camera_transform = Transform::default();
+        let position = vec3(0.0, 0.0, 100.0);
+        let mut circle_list = Vec::new();
+        let mut cube_list = Vec::new();
+        let mut lines_mesh = Mesh::new(&context.render_context);
+        let mut points_mesh = Mesh::new(&context.render_context);
+        let mut icons_mesh = Mesh::new(&context.render_context);
+        let gizmos = Gizmos {
+            camera: &camera,
+            camera_transform: &camera_transform,
+            viewport_size: [1920.0, 1080.0],
+            object_id: 0,
+            color: vec4(1.0, 1.0, 1.0, 1.0),
+            opacity: 1.0,
+            depth_test_enabled: true,
+            circle_list: &mut circle_list,
+            cube_list: &mut cube_list,
+            lines_mesh: &mut lines_mesh,
+            points_mesh: &mut points_mesh,
+            icons_mesh: &mut icons_mesh,
+        };
+
+        let size = gizmos.clamped_icon_world_size(&position, 0.01);
+        let projected_pixels = size * camera.projection[(1, 1)].abs() * 1080.0 / (2.0 * position.z);
+
+        assert!((projected_pixels - MIN_ICON_SIZE_PIXELS).abs() < 0.001);
+
+        let size = gizmos.clamped_icon_world_size(&vec3(0.0, 0.0, 1.0), 10.0);
+        let projected_pixels = size * camera.projection[(1, 1)].abs() * 1080.0 / 2.0;
+
+        assert!((projected_pixels - MAX_ICON_SIZE_PIXELS).abs() < 0.001);
+    }
+
+    #[test]
+    fn icon_mesh_stores_object_id_for_picking() {
+        let asset_context = test_asset_context_with_assets(vec![assets_path()]);
+        let context = asset_context.lock_read();
+        let camera = Camera::default();
+        let camera_transform = Transform::default();
+        let mut circle_list = Vec::new();
+        let mut cube_list = Vec::new();
+        let mut lines_mesh = Mesh::new(&context.render_context);
+        let mut points_mesh = Mesh::new(&context.render_context);
+        let mut icons_mesh = Mesh::new(&context.render_context);
+        let mut gizmos = Gizmos {
+            camera: &camera,
+            camera_transform: &camera_transform,
+            viewport_size: [1920.0, 1080.0],
+            object_id: 17,
+            color: vec4(1.0, 1.0, 1.0, 1.0),
+            opacity: 1.0,
+            depth_test_enabled: true,
+            circle_list: &mut circle_list,
+            cube_list: &mut cube_list,
+            lines_mesh: &mut lines_mesh,
+            points_mesh: &mut points_mesh,
+            icons_mesh: &mut icons_mesh,
+        };
+
+        gizmos.icon(GizmoIcon::Camera, &vec3(0.0, 0.0, 10.0), 1.0);
+
+        assert_eq!(gizmos.icons_mesh.uvs[3].len(), 4);
+        assert!(gizmos.icons_mesh.uvs[3].iter().all(|uv| uv.x == 17.0));
     }
 }

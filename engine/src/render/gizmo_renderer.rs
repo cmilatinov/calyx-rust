@@ -7,6 +7,7 @@ use nalgebra_glm::{vec4, Mat4};
 use rapier3d::pipeline::DebugRenderPipeline;
 use std::default::Default;
 use std::path::Path;
+use uuid::Uuid;
 
 use crate::assets::mesh::Mesh;
 use crate::assets::Asset;
@@ -20,7 +21,7 @@ use crate::render::render_utils::RenderUtils;
 use crate::scene::Scene;
 
 use super::buffer::wgpu_buffer_init_desc;
-use super::{PipelineOptions, Shader};
+use super::{Camera, PipelineOptions, Shader};
 
 const HIDDEN_GIZMO_OPACITY: f32 = 0.35;
 const PHOSPHOR_ICON_ATLAS_PNG: &[u8] =
@@ -60,6 +61,7 @@ pub struct GizmoRenderer {
 
     shader: Shader,
     icon_shader: Shader,
+    icon_object_id_shader: Shader,
     gizmo_bind_group: wgpu::BindGroup,
     icon_texture: IconTexture,
     circle_bind_group: wgpu::BindGroup,
@@ -76,6 +78,7 @@ struct IconTexture {
     _view: wgpu::TextureView,
     _sampler: wgpu::Sampler,
     bind_group: wgpu::BindGroup,
+    object_id_bind_group: wgpu::BindGroup,
 }
 
 impl GizmoRenderer {
@@ -113,6 +116,8 @@ impl GizmoRenderer {
 
         let shader = Self::load_shader(game, Path::new("shaders/gizmos.wgsl"));
         let icon_shader = Self::load_shader(game, Path::new("shaders/gizmo_icons.wgsl"));
+        let icon_object_id_shader =
+            Self::load_shader(game, Path::new("shaders/gizmo_icon_object_id.wgsl"));
 
         let gizmo_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("gizmo_bind_group"),
@@ -159,8 +164,12 @@ impl GizmoRenderer {
             }],
         });
 
-        let icon_texture =
-            Self::create_icon_texture(device, queue, &icon_shader.bind_group_layouts[1]);
+        let icon_texture = Self::create_icon_texture(
+            device,
+            queue,
+            &icon_shader.bind_group_layouts[1],
+            &icon_object_id_shader.bind_group_layouts[1],
+        );
 
         let renderer = Self {
             samples,
@@ -175,6 +184,7 @@ impl GizmoRenderer {
 
             shader,
             icon_shader,
+            icon_object_id_shader,
             gizmo_bind_group,
             icon_texture,
             circle_bind_group,
@@ -232,10 +242,18 @@ impl GizmoRenderer {
     }
 
     /// Returns a gizmo command recorder for the current frame.
-    pub fn gizmos<'a>(&'a mut self, camera_transform: &'a Transform) -> Gizmos<'a> {
+    pub fn gizmos<'a>(
+        &'a mut self,
+        camera: &'a Camera,
+        camera_transform: &'a Transform,
+        viewport_size: [f32; 2],
+    ) -> Gizmos<'a> {
         self.clear();
         Gizmos {
+            camera,
             camera_transform,
+            viewport_size,
+            object_id: 0,
             color: vec4(1.0, 1.0, 1.0, 1.0),
             opacity: 1.0,
             depth_test_enabled: true,
@@ -252,20 +270,24 @@ impl GizmoRenderer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        camera: &Camera,
         camera_transform: &Transform,
+        viewport_size: [f32; 2],
         scene: &Scene,
         physics_debug_pipeline: Option<&mut DebugRenderPipeline>,
+        mut object_id_for_game_object: impl FnMut(Uuid) -> u32,
     ) {
         {
             let registry_ref = self.component_registry.clone();
             let mut gizmos;
             {
                 let registry = registry_ref.read();
-                gizmos = self.gizmos(camera_transform);
+                gizmos = self.gizmos(camera, camera_transform, viewport_size);
                 let mut query = <Entity>::query();
                 let world = &scene.world;
                 for entity in query.iter(world) {
                     if let Some(game_object) = scene.game_object_from_entity(*entity) {
+                        gizmos.set_object_id(object_id_for_game_object(scene.uuid(game_object)));
                         let opacity = if scene.is_visible_in_hierarchy(game_object) {
                             1.0
                         } else {
@@ -283,6 +305,7 @@ impl GizmoRenderer {
                 }
             }
             if let Some(physics_debug_pipeline) = physics_debug_pipeline {
+                gizmos.set_object_id(0);
                 gizmos.set_opacity(1.0);
                 let mut physics_debug_render: PhysicsDebugRenderer = gizmos.into();
                 physics_debug_pipeline.render(
@@ -400,10 +423,46 @@ impl GizmoRenderer {
         }
     }
 
+    /// Renders icon gizmos into the object-id target so editor picks can select
+    /// objects represented only by gizmo icons.
+    pub fn render_icon_object_ids<'a>(
+        &'a mut self,
+        target_format: wgpu::TextureFormat,
+        render_pass: &mut wgpu::RenderPass<'a>,
+    ) {
+        if self.icons_mesh.indices.is_empty() {
+            return;
+        }
+
+        let mut depth = RenderUtils::depth_default(wgpu::TextureFormat::Depth32Float);
+        depth.depth_write_enabled = false;
+        let options = PipelineOptions::builder()
+            .samples(1)
+            .cull_mode(None)
+            .depth_stencil(Some(depth))
+            .fragment_targets(vec![Some(wgpu::ColorTargetState {
+                format: target_format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::RED,
+            })])
+            .build();
+        self.icon_object_id_shader.build_pipeline(&options);
+        let Some(pipeline) = self.icon_object_id_shader.get_pipeline(&options) else {
+            return;
+        };
+
+        render_pass.set_pipeline(pipeline);
+        render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
+        render_pass.set_bind_group(1, &self.icon_texture.object_id_bind_group, &[]);
+        RenderUtils::bind_mesh_buffers(render_pass, &self.icons_mesh);
+        render_pass.draw_indexed(0..(self.icons_mesh.indices.len() as u32), 0, 0..1);
+    }
+
     fn create_icon_texture(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         layout: &wgpu::BindGroupLayout,
+        object_id_layout: &wgpu::BindGroupLayout,
     ) -> IconTexture {
         let (pixels, width, height) = Self::icon_atlas_pixels();
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -464,11 +523,26 @@ impl GizmoRenderer {
                 },
             ],
         });
+        let object_id_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("gizmo_icon_object_id_texture_bind_group"),
+            layout: object_id_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        });
         IconTexture {
             _texture: texture,
             _view: view,
             _sampler: sampler,
             bind_group,
+            object_id_bind_group,
         }
     }
 
@@ -548,6 +622,34 @@ mod tests {
             .fragment_targets(vec![Some(RenderUtils::color_alpha_blending(
                 wgpu::TextureFormat::Rgba16Float,
             ))])
+            .build();
+
+        shader.build_pipeline(&icon_options);
+
+        assert!(shader.get_pipeline(&icon_options).is_some());
+    }
+
+    #[test]
+    fn gizmo_icon_object_id_shader_builds_pipeline() {
+        let context = test_asset_context_with_assets(vec![assets_path()]);
+        let read_only_context = context.lock_read();
+        let mut shader = Shader::from_file(
+            &read_only_context,
+            &assets_path().join("shaders/gizmo_icon_object_id.wgsl"),
+        )
+        .expect("icon object id shader should load")
+        .asset;
+        let mut depth_stencil = RenderUtils::depth_default(wgpu::TextureFormat::Depth32Float);
+        depth_stencil.depth_write_enabled = false;
+        let icon_options = PipelineOptions::builder()
+            .samples(1)
+            .cull_mode(None)
+            .depth_stencil(Some(depth_stencil))
+            .fragment_targets(vec![Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::R32Uint,
+                blend: None,
+                write_mask: wgpu::ColorWrites::RED,
+            })])
             .build();
 
         shader.build_pipeline(&icon_options);
