@@ -59,14 +59,14 @@ impl AtlasIcon {
     }
 }
 
-pub const FOLDER: AtlasIcon = AtlasIcon::new("folder");
-pub const FILE: AtlasIcon = AtlasIcon::new("file");
-pub const GAME_OBJECT: AtlasIcon = AtlasIcon::new("cube");
-pub const OBJECT_TREE: AtlasIcon = AtlasIcon::new("tree-structure");
-pub const WALKING: AtlasIcon = AtlasIcon::new("person-simple-walk");
-pub const GAMEPAD: AtlasIcon = AtlasIcon::new("game-controller");
-pub const VIEWPORT_3D: AtlasIcon = AtlasIcon::new("cube-focus");
-pub const BUILD: AtlasIcon = AtlasIcon::new("hammer");
-pub const PLAY: AtlasIcon = AtlasIcon::new("play");
-pub const PAUSE: AtlasIcon = AtlasIcon::new("pause");
-pub const STOP: AtlasIcon = AtlasIcon::new("stop");
+pub const FOLDER: AtlasIcon = AtlasIcon::new("folder-fill");
+pub const FILE: AtlasIcon = AtlasIcon::new("file-fill");
+pub const GAME_OBJECT: AtlasIcon = AtlasIcon::new("cube-fill");
+pub const OBJECT_TREE: AtlasIcon = AtlasIcon::new("tree-structure-fill");
+pub const WALKING: AtlasIcon = AtlasIcon::new("person-simple-walk-fill");
+pub const GAMEPAD: AtlasIcon = AtlasIcon::new("game-controller-fill");
+pub const VIEWPORT_3D: AtlasIcon = AtlasIcon::new("cube-focus-fill");
+pub const BUILD: AtlasIcon = AtlasIcon::new("hammer-fill");
+pub const PLAY: AtlasIcon = AtlasIcon::new("play-fill");
+pub const PAUSE: AtlasIcon = AtlasIcon::new("pause-fill");
+pub const STOP: AtlasIcon = AtlasIcon::new("stop-fill");
