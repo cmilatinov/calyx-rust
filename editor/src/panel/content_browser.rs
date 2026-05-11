@@ -3,7 +3,7 @@ use crate::selection::{Selection, SelectionType};
 use crate::widgets::FileButton;
 use crate::{icons, EditorAppState};
 use egui::text::LayoutJob;
-use egui::{FontFamily, FontId, Frame, Image, Margin, Rect, Response, Sense, TextFormat, Ui, Vec2};
+use egui::{FontFamily, FontId, Frame, Margin, Rect, Response, Sense, TextFormat, Ui, Vec2};
 use engine::assets::animation_graph::AnimationGraph;
 use re_ui::list_item::ShowCollapsingResponse;
 use relative_path::PathExt;
@@ -120,14 +120,11 @@ impl Panel for PanelContentBrowser {
                         for (idx, node) in nodes.iter().enumerate() {
                             let is_dir = node.is_dir();
                             let is_selected = self.is_selected(state, node, is_dir);
+                            let icon = if is_dir { &icons::FOLDER } else { &icons::FILE };
                             let res = PanelContentBrowser::render_file_button(
                                 ui,
                                 node.file_name().unwrap().to_str().unwrap(),
-                                if is_dir {
-                                    icons::FOLDER.as_image()
-                                } else {
-                                    icons::FILE.as_image()
-                                },
+                                icon,
                                 Vec2::splat(ICON_SIZE),
                                 ICON_SPACING,
                                 Vec2::new(ICON_PADDING_X, ICON_PADDING_Y),
@@ -310,13 +307,13 @@ impl PanelContentBrowser {
     fn render_file_button<'a>(
         ui: &'a mut Ui,
         name: &'a str,
-        image: Image<'a>,
+        icon: &'static icons::AtlasIcon,
         image_size: Vec2,
         image_spacing: f32,
         padding: Vec2,
         selected: bool,
     ) -> Response {
-        let image = image.fit_to_exact_size(image_size);
+        let image = icon.as_image().fit_to_exact_size(image_size);
         let mut format = TextFormat::default();
         format.font_id = FontId::new(11.0, FontFamily::Proportional);
         let mut job = LayoutJob::single_section(String::from(name), format);
@@ -326,6 +323,8 @@ impl PanelContentBrowser {
         job.wrap.max_rows = 1;
         let button = FileButton {
             image,
+            image_uv: icon.uv(),
+            image_tint: ui.visuals().widgets.inactive.fg_stroke.color,
             image_size,
             image_spacing,
             text: job.into(),

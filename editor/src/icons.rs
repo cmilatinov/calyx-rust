@@ -50,7 +50,7 @@ impl AtlasIcon {
             .paint_at(ui, rect);
     }
 
-    fn uv(&self) -> Rect {
+    pub fn uv(&self) -> Rect {
         let icon = MANIFEST
             .icons
             .get(self.name)

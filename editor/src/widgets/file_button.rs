@@ -1,11 +1,13 @@
 use egui::load::TexturePoll;
 use egui::{
-    pos2, Color32, CornerRadius, Image, Rect, Response, Stroke, StrokeKind, TextStyle,
-    TextWrapMode, Ui, Vec2, Widget, WidgetText,
+    Color32, CornerRadius, Image, Rect, Response, Stroke, StrokeKind, TextStyle, TextWrapMode, Ui,
+    Vec2, Widget, WidgetText,
 };
 
 pub struct FileButton<'a> {
     pub image: Image<'a>,
+    pub image_uv: Rect,
+    pub image_tint: Color32,
     pub image_size: Vec2,
     pub image_spacing: f32,
     pub text: WidgetText,
@@ -17,6 +19,8 @@ impl Widget for FileButton<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
         let Self {
             image,
+            image_uv,
+            image_tint,
             image_size,
             image_spacing,
             text,
@@ -67,12 +71,8 @@ impl Widget for FileButton<'_> {
             image_rect.set_height(image_size.y);
             let tlr = image.load_for_size(ui.ctx(), image_size);
             if let Ok(TexturePoll::Ready { texture }) = tlr {
-                ui.painter().image(
-                    texture.id,
-                    image_rect,
-                    Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                    Color32::WHITE,
-                );
+                ui.painter()
+                    .image(texture.id, image_rect, image_uv, image_tint);
             }
 
             let mut text_rect = rect.shrink2(padding);
