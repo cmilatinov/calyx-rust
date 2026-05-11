@@ -325,7 +325,7 @@ impl SceneRenderer {
                 self.skybox_renderer.skybox_id(),
                 self.sky_light_intensity,
                 &draw_list,
-                self.options.gizmos.then_some(&mut self.gizmo_renderer),
+                None,
             );
         }
         self.mesh_renderer.render_object_ids(
@@ -372,6 +372,31 @@ impl SceneRenderer {
             &self.scene_depth_texture,
             self.options.samples,
         );
+        if self.options.gizmos {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Scene Gizmos"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.scene_texture_msaa.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.scene_depth_texture.view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            self.gizmo_renderer
+                .render_gizmos(self.scene_texture_msaa.descriptor.format, &mut render_pass);
+        }
         queue.submit(Some(encoder.finish()));
     }
 
