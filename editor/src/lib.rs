@@ -14,8 +14,8 @@ use crate::camera::EditorCamera;
 use crate::task_id::TaskId;
 use eframe::{wgpu, NativeOptions};
 use egui::{Align, Layout};
-use egui::{Button, CornerRadius, Response, Sense, Ui, Vec2};
 use egui::{Color32, Frame, Margin, Shadow};
+use egui::{CornerRadius, Response, Sense, Ui, Vec2};
 use egui_tiles::{Container, Linear, LinearDir, Tiles, Tree};
 use egui_wgpu::wgpu::PowerPreference;
 use egui_wgpu::{SurfaceErrorAction, WgpuSetup, WgpuSetupCreateNew};
@@ -469,15 +469,12 @@ impl EditorApp {
     }
 
     fn icon_button(ui: &mut Ui, icon: &icons::AtlasIcon) -> Response {
-        let image = icon
-            .as_image()
-            .fit_to_exact_size(Vec2::new(BASE_FONT_SIZE, BASE_FONT_SIZE));
-        ui.add(
-            Button::image(image)
-                .image_tint_follows_text_color(true)
-                .corner_radius(CornerRadius::ZERO)
-                .sense(Sense::click()),
-        )
+        let (rect, response) = ui.allocate_exact_size(Vec2::splat(BASE_FONT_SIZE), Sense::click());
+        if ui.is_rect_visible(rect) {
+            let tint = ui.style().interact(&response).fg_stroke.color;
+            icon.paint_at(ui, rect, tint);
+        }
+        response
     }
 
     fn menu_bar(&mut self, ctx: &egui::Context) {
