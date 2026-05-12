@@ -61,7 +61,6 @@ fn style_resolution_applies_tokens_class_responsive_and_state_overrides() {
             .radius(CornerRadius::all(4.0)),
     );
     let mut runtime = UiRuntime::with_styles(styles);
-    runtime.state.hovered = Some(ElementId::from("panel"));
     let theme = Theme::default();
     let node = container()
         .id("panel")
@@ -133,6 +132,85 @@ fn hit_testing_skips_pass_through_nodes_and_clicks_underlying_element() {
 
     assert!(frame.clicked("under"));
     assert!(!frame.clicked("overlay"));
+    assert!(frame.hovered("under"));
+    assert!(frame.hovered("overlay"));
+}
+
+#[test]
+fn hover_passes_through_overlapping_elements_while_click_targets_frontmost() {
+    let theme = Theme::default();
+    let mut runtime = UiRuntime::default();
+    let back_hover = UiColor::rgba(20, 80, 160, 255);
+    let front_hover = UiColor::rgba(200, 80, 20, 255);
+    let root = stack()
+        .id("root")
+        .child(
+            button("Back")
+                .id("back")
+                .width(UiLength::Px(100.0))
+                .height(UiLength::Px(40.0))
+                .hover_style(StylePatch::default().background(back_hover)),
+        )
+        .child(
+            button("Front")
+                .id("front")
+                .width(UiLength::Px(100.0))
+                .height(UiLength::Px(40.0))
+                .hover_style(StylePatch::default().background(front_hover)),
+        );
+
+    let hover = runtime.frame(
+        &root,
+        viewport(120.0, 60.0),
+        UiInput {
+            pointer_position: Some(UiPoint::new(20.0, 20.0)),
+            pointer_down: false,
+        },
+        &theme,
+    );
+
+    assert!(hover.hovered("back"));
+    assert!(hover.hovered("front"));
+    assert_eq!(
+        hover
+            .layout
+            .find(&ElementId::from("back"))
+            .unwrap()
+            .style
+            .background,
+        back_hover
+    );
+    assert_eq!(
+        hover
+            .layout
+            .find(&ElementId::from("front"))
+            .unwrap()
+            .style
+            .background,
+        front_hover
+    );
+
+    runtime.frame(
+        &root,
+        viewport(120.0, 60.0),
+        UiInput {
+            pointer_position: Some(UiPoint::new(20.0, 20.0)),
+            pointer_down: true,
+        },
+        &theme,
+    );
+    let click = runtime.frame(
+        &root,
+        viewport(120.0, 60.0),
+        UiInput {
+            pointer_position: Some(UiPoint::new(20.0, 20.0)),
+            pointer_down: false,
+        },
+        &theme,
+    );
+
+    assert!(click.clicked("front"));
+    assert!(!click.clicked("back"));
 }
 
 #[test]

@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::events::{ElementResponse, EventPhase, PointerEventKind, UiEventRecord, UiInput};
 use super::geometry::UiRect;
-use super::layout::{hit_test_path, layout_tree, LayoutNode};
+use super::layout::{hit_test_path, hover_hit_ids, layout_tree, LayoutNode};
 use super::paint::{collect_paint_commands, PaintCommand};
 use super::style::{StyleRegistry, Theme};
 use super::widgets::{ElementId, UiNode};
@@ -10,7 +10,7 @@ use super::widgets::{ElementId, UiNode};
 /// Cross-frame interaction state for a UI tree.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct InteractionState {
-    pub hovered: Option<ElementId>,
+    pub hovered: HashSet<ElementId>,
     pub pressed: Option<ElementId>,
     pub focused: Option<ElementId>,
     captured: Option<ElementId>,
@@ -70,17 +70,17 @@ impl UiRuntime {
         let target_path = input
             .pointer_position
             .and_then(|point| hit_test_path(&hit_layout, point));
+        let hover_ids = input
+            .pointer_position
+            .map(|point| hover_hit_ids(&hit_layout, point))
+            .unwrap_or_default();
         let target = self
             .state
             .captured
             .clone()
             .or_else(|| target_path.as_ref().and_then(|path| path.last().cloned()));
 
-        self.update_hover(
-            target_path.as_ref().and_then(|path| path.last()),
-            &mut events,
-            &mut responses,
-        );
+        self.update_hover(&hover_ids, &mut events, &mut responses);
 
         if input.pointer_position != self.state.previous_input.pointer_position {
             if let Some(path) = target_path.as_ref() {
@@ -145,7 +145,7 @@ impl UiRuntime {
             self.state.drag_started = false;
         }
 
-        if let Some(id) = &self.state.hovered {
+        for id in &self.state.hovered {
             responses.entry(id.clone()).or_default().hovered = true;
         }
         if let Some(id) = &self.state.pressed {
@@ -166,23 +166,22 @@ impl UiRuntime {
 
     fn update_hover(
         &mut self,
-        next: Option<&ElementId>,
+        next: &[ElementId],
         events: &mut Vec<UiEventRecord>,
         responses: &mut HashMap<ElementId, ElementResponse>,
     ) {
-        let previous = self.state.hovered.clone();
-        if previous.as_ref() == next {
+        let next: HashSet<_> = next.iter().cloned().collect();
+        if self.state.hovered == next {
             return;
         }
-        if let Some(id) = previous {
+        for id in self.state.hovered.difference(&next) {
             events.push(UiEventRecord {
-                element_id: id,
+                element_id: id.clone(),
                 kind: PointerEventKind::PointerLeave,
                 phase: EventPhase::Target,
             });
         }
-        self.state.hovered = next.cloned();
-        if let Some(id) = next {
+        for id in next.difference(&self.state.hovered) {
             events.push(UiEventRecord {
                 element_id: id.clone(),
                 kind: PointerEventKind::PointerEnter,
@@ -190,6 +189,7 @@ impl UiRuntime {
             });
             responses.entry(id.clone()).or_default().hovered = true;
         }
+        self.state.hovered = next;
     }
 }
 

@@ -174,7 +174,7 @@ pub fn resolve_style(
     if node
         .id
         .as_ref()
-        .is_some_and(|id| state.hovered.as_ref() == Some(id))
+        .is_some_and(|id| state.hovered.contains(id))
     {
         node.hover_style.apply_to(&mut style);
     }
@@ -439,5 +439,31 @@ pub fn hit_test_path(root: &LayoutNode, point: super::geometry::UiPoint) -> Opti
         root.id.as_ref().map(|id| vec![id.clone()])
     } else {
         None
+    }
+}
+
+/// Returns every element under `point` for hover styling and hover response state.
+///
+/// Hover intentionally ignores pointer event blocking so overlays can react while also
+/// allowing background elements beneath them to react to hover.
+pub fn hover_hit_ids(root: &LayoutNode, point: super::geometry::UiPoint) -> Vec<ElementId> {
+    let mut ids = Vec::new();
+    collect_hover_hits(root, point, &mut ids);
+    ids
+}
+
+fn collect_hover_hits(
+    node: &LayoutNode,
+    point: super::geometry::UiPoint,
+    ids: &mut Vec<ElementId>,
+) {
+    if !node.rect.contains(point) {
+        return;
+    }
+    if let Some(id) = &node.id {
+        ids.push(id.clone());
+    }
+    for child in &node.children {
+        collect_hover_hits(child, point, ids);
     }
 }
