@@ -7,11 +7,30 @@ use crate::physics::events::{CollisionEvents, ContactKind};
 use crate::physics::PhysicsConfiguration;
 use crate::scene::{GameObject, Scene};
 use legion::{Entity, IntoQuery};
-use nalgebra::{UnitQuaternion, Vector3};
+use nalgebra::{Point3, Translation3, UnitQuaternion, Vector3};
 use nalgebra_glm::Mat4;
+use rapier3d::parry::query::ShapeCastOptions;
 use rapier3d::prelude::*;
 use std::collections::HashMap;
 use std::sync::Mutex;
+
+/// Result of a physics ray cast resolved to the engine collider entity.
+#[derive(Clone, Copy, Debug)]
+pub struct PhysicsRayHit {
+    pub entity: Entity,
+    pub collider: ColliderHandle,
+    pub toi: f32,
+    pub point: Vector3<f32>,
+    pub normal: Vector3<f32>,
+}
+
+/// Result of a physics shape cast resolved to the engine collider entity.
+#[derive(Clone, Copy, Debug)]
+pub struct PhysicsShapeCastHit {
+    pub entity: Entity,
+    pub collider: ColliderHandle,
+    pub hit: ShapeCastHit,
+}
 
 #[derive(Default)]
 pub struct PhysicsContext {
@@ -99,6 +118,87 @@ impl PhysicsContext {
         Self::sync_rigid_bodies(scene);
         Self::sync_colliders(scene);
         Self::sync_transforms(scene);
+        scene
+            .physics
+            .query_pipeline
+            .update(&scene.physics.colliders);
+    }
+
+    /// Casts a normalized ray through the current physics world.
+    ///
+    /// `max_distance` is measured in world units. A zero-length direction
+    /// returns no hit.
+    pub fn cast_ray(
+        &self,
+        origin: Vector3<f32>,
+        direction: Vector3<f32>,
+        max_distance: f32,
+        solid: bool,
+        filter: QueryFilter,
+    ) -> Option<PhysicsRayHit> {
+        let distance = direction.norm();
+        if distance <= f32::EPSILON || max_distance <= 0.0 {
+            return None;
+        }
+
+        let ray_direction = direction / distance;
+        let ray = Ray::new(Point3::from(origin), ray_direction);
+        let (collider, intersection) = self.query_pipeline.cast_ray_and_get_normal(
+            &self.bodies,
+            &self.colliders,
+            &ray,
+            max_distance,
+            solid,
+            filter,
+        )?;
+        let entity = *self.collider_entity.get(&collider)?;
+
+        Some(PhysicsRayHit {
+            entity,
+            collider,
+            toi: intersection.time_of_impact,
+            point: origin + ray_direction * intersection.time_of_impact,
+            normal: intersection.normal,
+        })
+    }
+
+    /// Casts a collider primitive through the current physics world.
+    ///
+    /// The velocity vector determines the cast direction and distance. Use
+    /// `max_time_of_impact` to clamp how far along that velocity the query may
+    /// report hits.
+    pub fn cast_shape(
+        &self,
+        shape: ColliderShape,
+        position: Vector3<f32>,
+        rotation: UnitQuaternion<f32>,
+        velocity: Vector3<f32>,
+        max_time_of_impact: f32,
+        filter: QueryFilter,
+    ) -> Option<PhysicsShapeCastHit> {
+        if velocity.norm_squared() <= f32::EPSILON || max_time_of_impact <= 0.0 {
+            return None;
+        }
+
+        let shape = Self::collider_shape(shape);
+        let shape_pos = Isometry::from_parts(Translation3::from(position), rotation);
+        let options = ShapeCastOptions::with_max_time_of_impact(max_time_of_impact);
+        let (collider, hit) = self.query_pipeline.cast_shape(
+            &self.bodies,
+            &self.colliders,
+            &shape_pos,
+            &velocity,
+            shape.as_ref(),
+            options,
+            filter,
+        )?;
+        let entity = *self.collider_entity.get(&collider)?;
+
+        Some(PhysicsShapeCastHit {
+            entity,
+            collider,
+            hit,
+        })
     }
 
     /// Create or update rigid body properties when the component is dirty.
