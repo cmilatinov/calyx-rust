@@ -62,8 +62,13 @@ fn layout_node(
     screen_class: ScreenClass,
 ) -> LayoutNode {
     let style = resolve_style(node, theme, styles, state, screen_class);
-    let outer_size = resolve_size(&node.kind, &style, constraints.max);
-    let rect = UiRect::from_min_size(origin, outer_size);
+    let margin_origin = UiPoint::new(origin.x + style.margin.left, origin.y + style.margin.top);
+    let margin_constraints = UiSize::new(
+        (constraints.max.width - style.margin.horizontal()).max(0.0),
+        (constraints.max.height - style.margin.vertical()).max(0.0),
+    );
+    let outer_size = resolve_size(&node.kind, &style, margin_constraints);
+    let rect = UiRect::from_min_size(margin_origin, outer_size);
     let content_rect = rect.inset(style.padding);
 
     let children = match node.kind {

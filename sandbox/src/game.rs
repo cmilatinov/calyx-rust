@@ -2,16 +2,19 @@ use eframe::egui_wgpu::{SurfaceErrorAction, WgpuSetup, WgpuSetupCreateNew};
 use eframe::wgpu::PowerPreference;
 use eframe::{egui_wgpu, wgpu, Frame, NativeOptions};
 use egui::load::SizedTexture;
-use egui::{
-    Align2, Color32, Context, Direction, FontId, Image, ImageSource, InnerResponse, Layout, Pos2,
-    Rect, Sense,
-};
+use egui::{Context, Direction, Image, ImageSource, InnerResponse, Layout, Rect, Sense};
 use engine::context::{AssetContext, GameContext};
 use engine::error::DynError;
 use engine::input::{Input, InputState};
 use engine::logging::{DefaultLogger, Log};
 use engine::render::{Camera, SceneRenderer, SceneRendererOptions};
 use engine::scene::Scene;
+use engine::ui::{
+    button, center, column, container, crosshair, custom_paint, image, progress_bar,
+    render_commands, row, sized_box, spacer, stack, text, Border, CornerRadius, EdgeInsets,
+    EguiUiBackend, PaintCommand, PointerEvents, ScreenClass, StylePatch, Theme, UiColor, UiInput,
+    UiLength, UiPoint, UiRect, UiRuntime, UiSize,
+};
 use sandbox::plugin_main;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -27,6 +30,8 @@ use winit::platform::x11::EventLoopBuilderExtX11;
 struct GameApp {
     game: GameContext,
     renderer: SceneRenderer,
+    ui_runtime: UiRuntime,
+    ui_theme: Theme,
     fps_counter: usize,
     fps: usize,
     #[allow(unused)]
@@ -65,6 +70,8 @@ impl GameApp {
                 },
                 Self::initial_render_size(&cc.egui_ctx),
             ),
+            ui_runtime: UiRuntime::default(),
+            ui_theme: Theme::default(),
             fps_counter: 0,
             fps: 0,
             log: Log::new(
@@ -93,6 +100,244 @@ impl GameApp {
             (pixels_per_point * window_size.width()) as u32,
             (pixels_per_point * window_size.height()) as u32,
         )
+    }
+
+    fn pointer_input(ctx: &Context) -> UiInput {
+        ctx.input(|input| UiInput {
+            pointer_position: input
+                .pointer
+                .latest_pos()
+                .map(|position| UiPoint::new(position.x, position.y)),
+            pointer_down: input.pointer.primary_down(),
+        })
+    }
+
+    fn sandbox_ui(viewport: UiRect, fps: usize) -> engine::ui::UiNode {
+        let panel = UiColor::rgba(11, 15, 18, 220);
+        let panel_hover = UiColor::rgba(30, 42, 48, 235);
+        let outline = UiColor::rgba(116, 136, 145, 180);
+        let text_primary = UiColor::rgba(238, 244, 247, 255);
+        let text_muted = UiColor::rgba(158, 176, 184, 255);
+        let health = UiColor::rgba(87, 201, 132, 255);
+        let ammo = UiColor::rgba(86, 162, 255, 255);
+        let warning = UiColor::rgba(255, 192, 94, 255);
+
+        let panel_style = StylePatch::default()
+            .background(panel)
+            .border(Border::solid(outline, 1.0))
+            .radius(CornerRadius::all(8.0))
+            .padding(EdgeInsets::all(12.0))
+            .gap(8.0);
+
+        let hover_style = StylePatch::default().background(panel_hover);
+
+        stack()
+            .id("sandbox-ui")
+            .width(UiLength::Px(viewport.width()))
+            .height(UiLength::Px(viewport.height()))
+            .pointer_events(PointerEvents::None)
+            .child(
+                column()
+                    .id("status-panel")
+                    .style(panel_style.clone())
+                    .hover_style(hover_style.clone())
+                    .pointer_events(PointerEvents::Auto)
+                    .width(UiLength::Px(320.0))
+                    .height(UiLength::Px(196.0))
+                    .when(
+                        ScreenClass::Compact,
+                        StylePatch::default().width(UiLength::Px(260.0)),
+                    )
+                    .child(
+                        row()
+                            .id("status-row")
+                            .gap(10.0)
+                            .height(UiLength::Px(28.0))
+                            .child(
+                                text("Calyx Runtime UI")
+                                    .id("title")
+                                    .style(
+                                        StylePatch::default()
+                                            .text_color(text_primary)
+                                            .font_size(18.0),
+                                    )
+                                    .width(UiLength::Px(190.0)),
+                            )
+                            .child(spacer().id("title-spacer"))
+                            .child(
+                                container()
+                                    .id("fps-pill")
+                                    .background(UiColor::rgba(33, 45, 50, 255))
+                                    .radius(CornerRadius::all(12.0))
+                                    .padding(EdgeInsets::symmetric(8.0, 3.0))
+                                    .width(UiLength::Px(70.0))
+                                    .height(UiLength::Px(24.0))
+                                    .child(
+                                        text(format!("{fps} fps"))
+                                            .style(
+                                                StylePatch::default()
+                                                    .text_color(text_muted)
+                                                    .font_size(13.0),
+                                            )
+                                            .id("fps-text"),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        column()
+                            .id("meters")
+                            .gap(6.0)
+                            .height(UiLength::Px(56.0))
+                            .child(
+                                progress_bar(0.76, health)
+                                    .id("health-bar")
+                                    .background(UiColor::rgba(42, 50, 45, 255))
+                                    .border(Border::solid(UiColor::rgba(98, 128, 108, 180), 1.0))
+                                    .radius(CornerRadius::all(5.0))
+                                    .width(UiLength::Fill)
+                                    .height(UiLength::Px(16.0)),
+                            )
+                            .child(
+                                progress_bar(0.42, ammo)
+                                    .id("ammo-bar")
+                                    .background(UiColor::rgba(37, 44, 54, 255))
+                                    .border(Border::solid(UiColor::rgba(86, 128, 184, 180), 1.0))
+                                    .radius(CornerRadius::all(5.0))
+                                    .width(UiLength::Fill)
+                                    .height(UiLength::Px(16.0)),
+                            ),
+                    )
+                    .child(
+                        row()
+                            .id("button-row")
+                            .gap(8.0)
+                            .height(UiLength::Px(36.0))
+                            .child(
+                                button("Hover")
+                                    .id("hover-button")
+                                    .background(UiColor::rgba(35, 47, 53, 255))
+                                    .border(Border::solid(outline, 1.0))
+                                    .radius(CornerRadius::all(6.0))
+                                    .padding(EdgeInsets::symmetric(10.0, 6.0))
+                                    .hover_style(
+                                        StylePatch::default()
+                                            .background(UiColor::rgba(50, 72, 81, 255)),
+                                    )
+                                    .pressed_style(
+                                        StylePatch::default()
+                                            .background(UiColor::rgba(67, 96, 108, 255)),
+                                    ),
+                            )
+                            .child(
+                                button("Pressed")
+                                    .id("pressed-button")
+                                    .background(UiColor::rgba(58, 43, 36, 255))
+                                    .border(Border::solid(warning, 1.0))
+                                    .radius(CornerRadius::all(6.0))
+                                    .padding(EdgeInsets::symmetric(10.0, 6.0))
+                                    .hover_style(
+                                        StylePatch::default()
+                                            .background(UiColor::rgba(75, 56, 42, 255)),
+                                    )
+                                    .pressed_style(
+                                        StylePatch::default()
+                                            .background(UiColor::rgba(95, 66, 42, 255)),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        container()
+                            .id("clip-demo")
+                            .background(UiColor::rgba(20, 25, 28, 255))
+                            .border(Border::solid(UiColor::rgba(84, 96, 102, 255), 1.0))
+                            .radius(CornerRadius::all(6.0))
+                            .style(StylePatch::default().clip(true))
+                            .width(UiLength::Fill)
+                            .height(UiLength::Px(32.0))
+                            .child(text("clipped text + rounded paint").id("clip-label").style(
+                                StylePatch::default().text_color(text_muted).font_size(13.0),
+                            )),
+                    ),
+            )
+            .child(
+                center(
+                    crosshair(UiColor::rgba(238, 244, 247, 210), 28.0)
+                        .id("crosshair")
+                        .width(UiLength::Px(28.0))
+                        .height(UiLength::Px(28.0)),
+                )
+                .id("crosshair-center")
+                .width(UiLength::Px(viewport.width()))
+                .height(UiLength::Px(viewport.height()))
+                .pointer_events(PointerEvents::None),
+            )
+            .child(
+                row()
+                    .id("bottom-card")
+                    .style(panel_style)
+                    .hover_style(hover_style)
+                    .pointer_events(PointerEvents::Auto)
+                    .width(UiLength::Px(360.0))
+                    .height(UiLength::Px(96.0))
+                    .margin(EdgeInsets {
+                        top: viewport.height() - 116.0,
+                        right: 0.0,
+                        bottom: 0.0,
+                        left: viewport.width() - 380.0,
+                    })
+                    .gap(12.0)
+                    .child(
+                        image("scene-preview")
+                            .id("image-preview")
+                            .background(UiColor::rgba(28, 34, 38, 255))
+                            .border(Border::solid(outline, 1.0))
+                            .radius(CornerRadius::all(6.0))
+                            .width(UiLength::Px(72.0))
+                            .height(UiLength::Px(72.0)),
+                    )
+                    .child(
+                        column()
+                            .id("custom-column")
+                            .gap(5.0)
+                            .child(
+                                text("Image + custom paint").id("image-title").style(
+                                    StylePatch::default()
+                                        .text_color(text_primary)
+                                        .font_size(15.0),
+                                ),
+                            )
+                            .child(
+                                sized_box()
+                                    .id("divider-box")
+                                    .width(UiLength::Px(210.0))
+                                    .height(UiLength::Px(8.0))
+                                    .child(
+                                        custom_paint(vec![PaintCommand::Line {
+                                            start: UiPoint::new(
+                                                viewport.width() - 276.0,
+                                                viewport.height() - 62.0,
+                                            ),
+                                            end: UiPoint::new(
+                                                viewport.width() - 66.0,
+                                                viewport.height() - 62.0,
+                                            ),
+                                            color: warning,
+                                            width: 2.0,
+                                        }])
+                                        .id("custom-line"),
+                                    ),
+                            )
+                            .child(
+                                text("Backend commands over egui")
+                                    .id("image-caption")
+                                    .style(
+                                        StylePatch::default()
+                                            .text_color(text_muted)
+                                            .font_size(13.0),
+                                    ),
+                            ),
+                    ),
+            )
     }
 }
 
@@ -137,12 +382,25 @@ impl eframe::App for GameApp {
                 let scene = scenes.current_scene_mut();
                 scene.prepare();
                 scene.update(&assets.registries, resources, &input);
-                ui.painter().text(
-                    Pos2::new(0.0, ui.max_rect().height()),
-                    Align2::LEFT_BOTTOM,
-                    format!("{}", self.fps),
-                    FontId::proportional(18.0),
-                    Color32::GREEN,
+
+                let viewport = UiRect::from_min_size(
+                    UiPoint::new(rect.min.x, rect.min.y),
+                    UiSize::new(rect.width(), rect.height()),
+                );
+                let sandbox_ui = Self::sandbox_ui(viewport, self.fps);
+                let frame = self.ui_runtime.frame(
+                    &sandbox_ui,
+                    viewport,
+                    Self::pointer_input(ui.ctx()),
+                    &self.ui_theme,
+                );
+                let mut backend = EguiUiBackend::new(ui.painter());
+                render_commands(
+                    &mut backend,
+                    viewport,
+                    ui.ctx().pixels_per_point(),
+                    &frame.paint_commands,
+                    |_| texture_id,
                 );
             });
 

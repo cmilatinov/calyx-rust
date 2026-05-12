@@ -465,6 +465,10 @@ impl StylePatch {
         self.radius = Some(value);
         self
     }
+    pub fn font_size(mut self, value: f32) -> Self {
+        self.font_size = Some(value);
+        self
+    }
     pub fn pointer_events(mut self, value: PointerEvents) -> Self {
         self.pointer_events = Some(value);
         self
