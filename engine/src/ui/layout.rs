@@ -3,13 +3,13 @@ use super::runtime::InteractionState;
 use super::style::{
     AlignItems, JustifyContent, PointerEvents, ScreenClass, Style, StyleRegistry, Theme, UiLength,
 };
-use super::widgets::{ElementId, UiNode, WidgetKind};
+use super::widgets::{ElementId, UiArena, UiLayoutKind, UiNodeHandle, WidgetHandle};
 
 /// Final layout node used for hit testing and paint generation.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LayoutNode {
     pub id: Option<ElementId>,
-    pub kind: WidgetKind,
+    pub widget: WidgetHandle,
     pub rect: UiRect,
     pub content_rect: UiRect,
     pub style: Style,
@@ -32,7 +32,8 @@ struct Constraints {
 }
 
 pub fn layout_tree(
-    root: &UiNode,
+    arena: &UiArena,
+    root: UiNodeHandle,
     viewport: UiRect,
     theme: &Theme,
     styles: &StyleRegistry,
@@ -40,6 +41,7 @@ pub fn layout_tree(
 ) -> LayoutNode {
     let screen_class = ScreenClass::from_width(viewport.width());
     layout_node(
+        arena,
         root,
         Constraints {
             max: viewport.size(),
@@ -53,7 +55,8 @@ pub fn layout_tree(
 }
 
 fn layout_node(
-    node: &UiNode,
+    arena: &UiArena,
+    node: UiNodeHandle,
     constraints: Constraints,
     origin: UiPoint,
     theme: &Theme,
@@ -61,21 +64,31 @@ fn layout_node(
     state: &InteractionState,
     screen_class: ScreenClass,
 ) -> LayoutNode {
-    let style = resolve_style(node, theme, styles, state, screen_class);
+    let node_data = arena.node(node);
+    let widget = arena.widget(node_data.widget);
+    let style = resolve_style(arena, node, theme, styles, state, screen_class);
     let margin_origin = UiPoint::new(origin.x + style.margin.left, origin.y + style.margin.top);
     let margin_constraints = UiSize::new(
         (constraints.max.width - style.margin.horizontal()).max(0.0),
         (constraints.max.height - style.margin.vertical()).max(0.0),
     );
-    let outer_size = resolve_size(&node.kind, &style, margin_constraints);
+    let outer_size = resolve_size(arena, node_data.widget, &style, margin_constraints);
     let rect = UiRect::from_min_size(margin_origin, outer_size);
     let content_rect = rect.inset(style.padding);
 
-    let children = match node.kind {
-        WidgetKind::Row => {
-            layout_flex(node, content_rect, true, theme, styles, state, screen_class)
-        }
-        WidgetKind::Column => layout_flex(
+    let children = match widget.layout_kind() {
+        UiLayoutKind::Row => layout_flex(
+            arena,
+            node,
+            content_rect,
+            true,
+            theme,
+            styles,
+            state,
+            screen_class,
+        ),
+        UiLayoutKind::Column => layout_flex(
+            arena,
             node,
             content_rect,
             false,
@@ -84,11 +97,13 @@ fn layout_node(
             state,
             screen_class,
         ),
-        WidgetKind::Stack => node
+        UiLayoutKind::Stack => node_data
             .children
             .iter()
+            .copied()
             .map(|child| {
                 layout_node(
+                    arena,
                     child,
                     Constraints {
                         max: content_rect.size(),
@@ -101,17 +116,24 @@ fn layout_node(
                 )
             })
             .collect(),
-        WidgetKind::Center => node
+        UiLayoutKind::Center => node_data
             .children
             .iter()
+            .copied()
             .map(|child| {
-                let child_style = resolve_style(child, theme, styles, state, screen_class);
-                let child_size = resolve_size(&child.kind, &child_style, content_rect.size());
+                let child_style = resolve_style(arena, child, theme, styles, state, screen_class);
+                let child_size = resolve_size(
+                    arena,
+                    arena.node(child).widget,
+                    &child_style,
+                    content_rect.size(),
+                );
                 let child_origin = UiPoint::new(
                     content_rect.min.x + (content_rect.width() - child_size.width).max(0.0) * 0.5,
                     content_rect.min.y + (content_rect.height() - child_size.height).max(0.0) * 0.5,
                 );
                 layout_node(
+                    arena,
                     child,
                     Constraints { max: child_size },
                     child_origin,
@@ -122,11 +144,13 @@ fn layout_node(
                 )
             })
             .collect(),
-        _ => node
+        _ => node_data
             .children
             .iter()
+            .copied()
             .map(|child| {
                 layout_node(
+                    arena,
                     child,
                     Constraints {
                         max: content_rect.size(),
@@ -142,23 +166,25 @@ fn layout_node(
     };
 
     LayoutNode {
-        id: node.id.clone(),
-        kind: node.kind.clone(),
+        id: node_data.id.clone(),
+        widget: node_data.widget,
         rect,
         content_rect,
         style,
-        stop_propagation: node.stop_propagation.clone(),
+        stop_propagation: node_data.stop_propagation.clone(),
         children,
     }
 }
 
 pub fn resolve_style(
-    node: &UiNode,
+    arena: &UiArena,
+    node: UiNodeHandle,
     theme: &Theme,
     styles: &StyleRegistry,
     state: &InteractionState,
     screen_class: ScreenClass,
 ) -> Style {
+    let node = arena.node(node);
     let mut style = theme.default_style.clone();
     if let Some(class) = &node.class {
         if let Some(preset) = styles.get(class) {
@@ -190,7 +216,8 @@ pub fn resolve_style(
 }
 
 fn layout_flex(
-    node: &UiNode,
+    arena: &UiArena,
+    node: UiNodeHandle,
     content_rect: UiRect,
     horizontal: bool,
     theme: &Theme,
@@ -198,8 +225,9 @@ fn layout_flex(
     state: &InteractionState,
     screen_class: ScreenClass,
 ) -> Vec<LayoutNode> {
-    let parent_style = resolve_style(node, theme, styles, state, screen_class);
-    let count = node.children.len();
+    let node_data = arena.node(node);
+    let parent_style = resolve_style(arena, node, theme, styles, state, screen_class);
+    let count = node_data.children.len();
     if count == 0 {
         return Vec::new();
     }
@@ -217,14 +245,16 @@ fn layout_flex(
 
     let mut fixed_total = 0.0;
     let mut flex_total = 0.0;
-    let child_styles: Vec<_> = node
+    let child_styles: Vec<_> = node_data
         .children
         .iter()
-        .map(|child| resolve_style(child, theme, styles, state, screen_class))
+        .copied()
+        .map(|child| resolve_style(arena, child, theme, styles, state, screen_class))
         .collect();
-    for (child, style) in node.children.iter().zip(child_styles.iter()) {
+    for (child, style) in node_data.children.iter().copied().zip(child_styles.iter()) {
         let child_size = default_size(
-            &child.kind,
+            arena,
+            arena.node(child).widget,
             style,
             UiSize::new(main_available, cross_available),
         );
@@ -265,12 +295,15 @@ fn layout_flex(
         _ => 0.0,
     };
 
-    node.children
+    node_data
+        .children
         .iter()
+        .copied()
         .zip(child_styles.iter())
         .map(|(child, style)| {
             let default = default_size(
-                child.kind(),
+                arena,
+                arena.node(child).widget,
                 style,
                 UiSize::new(main_available, cross_available),
             );
@@ -340,6 +373,7 @@ fn layout_flex(
             };
             cursor += main + parent_style.gap;
             layout_node(
+                arena,
                 child,
                 Constraints { max: size },
                 origin,
@@ -352,18 +386,8 @@ fn layout_flex(
         .collect()
 }
 
-trait WidgetKindRef {
-    fn kind(&self) -> &WidgetKind;
-}
-
-impl WidgetKindRef for UiNode {
-    fn kind(&self) -> &WidgetKind {
-        &self.kind
-    }
-}
-
-fn resolve_size(kind: &WidgetKind, style: &Style, max: UiSize) -> UiSize {
-    let default = default_size(kind, style, max);
+fn resolve_size(arena: &UiArena, widget: WidgetHandle, style: &Style, max: UiSize) -> UiSize {
+    let default = default_size(arena, widget, style, max);
     let width = resolve_length(style.width, max.width).unwrap_or(default.width);
     let height = resolve_length(style.height, max.height).unwrap_or(default.height);
     apply_constraints(UiSize::new(width, height), style, max)
@@ -396,30 +420,8 @@ fn resolve_length(length: UiLength, parent: f32) -> Option<f32> {
     }
 }
 
-fn default_size(kind: &WidgetKind, style: &Style, max: UiSize) -> UiSize {
-    match kind {
-        WidgetKind::Text { text } => UiSize::new(
-            text.len() as f32 * style.font_size * 0.5,
-            style.font_size * 1.25,
-        ),
-        WidgetKind::Button { label } => UiSize::new(
-            label.len() as f32 * style.font_size * 0.55 + style.padding.horizontal(),
-            style.font_size * 1.4 + style.padding.vertical(),
-        ),
-        WidgetKind::ProgressBar { .. } => {
-            UiSize::new(160.0_f32.min(max.width), 16.0_f32.min(max.height))
-        }
-        WidgetKind::Crosshair { size, .. } => UiSize::new(*size, *size),
-        WidgetKind::Spacer => UiSize::ZERO,
-        WidgetKind::Row
-        | WidgetKind::Column
-        | WidgetKind::Stack
-        | WidgetKind::Container
-        | WidgetKind::Center => max,
-        WidgetKind::SizedBox | WidgetKind::Image { .. } | WidgetKind::CustomPaint { .. } => {
-            UiSize::new(0.0, 0.0)
-        }
-    }
+fn default_size(arena: &UiArena, widget: WidgetHandle, style: &Style, max: UiSize) -> UiSize {
+    arena.widget(widget).default_size(style, max)
 }
 
 /// Returns the deepest interactive path under `point`, front-most children first.

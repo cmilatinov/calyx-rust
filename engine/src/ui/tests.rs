@@ -7,6 +7,13 @@ fn viewport(width: f32, height: f32) -> UiRect {
     UiRect::from_min_size(UiPoint::ZERO, UiSize::new(width, height))
 }
 
+fn pointer(x: f32, y: f32, down: bool) -> UiInput {
+    UiInput {
+        pointer_position: Some(UiPoint::new(x, y)),
+        pointer_down: down,
+    }
+}
+
 fn node_rect(frame: &UiFrame, id: &str) -> UiRect {
     frame
         .layout
@@ -19,25 +26,27 @@ fn node_rect(frame: &UiFrame, id: &str) -> UiRect {
 fn row_layout_applies_flex_gap_padding_and_constraints() {
     let theme = Theme::default();
     let mut runtime = UiRuntime::default();
-    let root = row()
-        .id("root")
-        .padding(EdgeInsets::all(10.0))
-        .gap(5.0)
-        .child(
-            sized_box()
-                .id("fixed")
-                .width(UiLength::Px(50.0))
-                .height(UiLength::Px(20.0)),
-        )
-        .child(
-            sized_box()
-                .id("flex")
-                .width(UiLength::Fill)
-                .height(UiLength::Px(20.0))
-                .flex_grow(1.0),
-        );
+    let mut ui = UiArena::default();
+    let fixed = ui
+        .sized_box()
+        .id(&mut ui, "fixed")
+        .width(&mut ui, UiLength::Px(50.0))
+        .height(&mut ui, UiLength::Px(20.0));
+    let flex = ui
+        .sized_box()
+        .id(&mut ui, "flex")
+        .width(&mut ui, UiLength::Fill)
+        .height(&mut ui, UiLength::Px(20.0))
+        .flex_grow(&mut ui, 1.0);
+    let root = ui
+        .row()
+        .id(&mut ui, "root")
+        .padding(&mut ui, EdgeInsets::all(10.0))
+        .gap(&mut ui, 5.0)
+        .child(&mut ui, fixed)
+        .child(&mut ui, flex);
 
-    let frame = runtime.frame(&root, viewport(200.0, 60.0), UiInput::default(), &theme);
+    let frame = runtime.frame(&ui, root, viewport(200.0, 60.0), UiInput::default(), &theme);
 
     assert_eq!(node_rect(&frame, "root"), viewport(200.0, 60.0));
     assert_eq!(
@@ -62,26 +71,28 @@ fn style_resolution_applies_tokens_class_responsive_and_state_overrides() {
     );
     let mut runtime = UiRuntime::with_styles(styles);
     let theme = Theme::default();
-    let node = container()
-        .id("panel")
-        .class("hud.panel")
+    let mut ui = UiArena::default();
+    let root = ui
+        .container()
+        .id(&mut ui, "panel")
+        .class(&mut ui, "hud.panel")
         .when(
+            &mut ui,
             ScreenClass::Compact,
             StylePatch::default().padding(EdgeInsets::all(2.0)),
         )
         .hover_style(
+            &mut ui,
             StylePatch::default()
                 .background(theme.colors.hover)
                 .radius(CornerRadius::left(6.0)),
         );
 
     let frame = runtime.frame(
-        &node,
+        &ui,
+        root,
         viewport(320.0, 200.0),
-        UiInput {
-            pointer_position: Some(UiPoint::new(1.0, 1.0)),
-            pointer_down: false,
-        },
+        pointer(1.0, 1.0, false),
         &theme,
     );
     let panel = frame.layout.find(&ElementId::from("panel")).unwrap();
@@ -95,38 +106,36 @@ fn style_resolution_applies_tokens_class_responsive_and_state_overrides() {
 fn hit_testing_skips_pass_through_nodes_and_clicks_underlying_element() {
     let theme = Theme::default();
     let mut runtime = UiRuntime::default();
-    let root = stack()
-        .id("root")
-        .child(
-            button("under")
-                .id("under")
-                .width(UiLength::Px(100.0))
-                .height(UiLength::Px(40.0)),
-        )
-        .child(
-            container()
-                .id("overlay")
-                .width(UiLength::Px(100.0))
-                .height(UiLength::Px(40.0))
-                .pointer_events(PointerEvents::None),
-        );
+    let mut ui = UiArena::default();
+    let under = ui
+        .button("under")
+        .id(&mut ui, "under")
+        .width(&mut ui, UiLength::Px(100.0))
+        .height(&mut ui, UiLength::Px(40.0));
+    let overlay = ui
+        .container()
+        .id(&mut ui, "overlay")
+        .width(&mut ui, UiLength::Px(100.0))
+        .height(&mut ui, UiLength::Px(40.0))
+        .pointer_events(&mut ui, PointerEvents::None);
+    let root = ui
+        .stack()
+        .id(&mut ui, "root")
+        .child(&mut ui, under)
+        .child(&mut ui, overlay);
 
     runtime.frame(
-        &root,
+        &ui,
+        root,
         viewport(120.0, 60.0),
-        UiInput {
-            pointer_position: Some(UiPoint::new(20.0, 20.0)),
-            pointer_down: true,
-        },
+        pointer(20.0, 20.0, true),
         &theme,
     );
     let frame = runtime.frame(
-        &root,
+        &ui,
+        root,
         viewport(120.0, 60.0),
-        UiInput {
-            pointer_position: Some(UiPoint::new(20.0, 20.0)),
-            pointer_down: false,
-        },
+        pointer(20.0, 20.0, false),
         &theme,
     );
 
@@ -140,32 +149,32 @@ fn hit_testing_skips_pass_through_nodes_and_clicks_underlying_element() {
 fn hover_passes_through_overlapping_elements_while_click_targets_frontmost() {
     let theme = Theme::default();
     let mut runtime = UiRuntime::default();
+    let mut ui = UiArena::default();
     let back_hover = UiColor::rgba(20, 80, 160, 255);
     let front_hover = UiColor::rgba(200, 80, 20, 255);
-    let root = stack()
-        .id("root")
-        .child(
-            button("Back")
-                .id("back")
-                .width(UiLength::Px(100.0))
-                .height(UiLength::Px(40.0))
-                .hover_style(StylePatch::default().background(back_hover)),
-        )
-        .child(
-            button("Front")
-                .id("front")
-                .width(UiLength::Px(100.0))
-                .height(UiLength::Px(40.0))
-                .hover_style(StylePatch::default().background(front_hover)),
-        );
+    let back = ui
+        .button("Back")
+        .id(&mut ui, "back")
+        .width(&mut ui, UiLength::Px(100.0))
+        .height(&mut ui, UiLength::Px(40.0))
+        .hover_style(&mut ui, StylePatch::default().background(back_hover));
+    let front = ui
+        .button("Front")
+        .id(&mut ui, "front")
+        .width(&mut ui, UiLength::Px(100.0))
+        .height(&mut ui, UiLength::Px(40.0))
+        .hover_style(&mut ui, StylePatch::default().background(front_hover));
+    let root = ui
+        .stack()
+        .id(&mut ui, "root")
+        .child(&mut ui, back)
+        .child(&mut ui, front);
 
     let hover = runtime.frame(
-        &root,
+        &ui,
+        root,
         viewport(120.0, 60.0),
-        UiInput {
-            pointer_position: Some(UiPoint::new(20.0, 20.0)),
-            pointer_down: false,
-        },
+        pointer(20.0, 20.0, false),
         &theme,
     );
 
@@ -191,21 +200,17 @@ fn hover_passes_through_overlapping_elements_while_click_targets_frontmost() {
     );
 
     runtime.frame(
-        &root,
+        &ui,
+        root,
         viewport(120.0, 60.0),
-        UiInput {
-            pointer_position: Some(UiPoint::new(20.0, 20.0)),
-            pointer_down: true,
-        },
+        pointer(20.0, 20.0, true),
         &theme,
     );
     let click = runtime.frame(
-        &root,
+        &ui,
+        root,
         viewport(120.0, 60.0),
-        UiInput {
-            pointer_position: Some(UiPoint::new(20.0, 20.0)),
-            pointer_down: false,
-        },
+        pointer(20.0, 20.0, false),
         &theme,
     );
 
@@ -217,25 +222,24 @@ fn hover_passes_through_overlapping_elements_while_click_targets_frontmost() {
 fn event_dispatch_uses_capture_target_bubble_and_can_stop_propagation() {
     let theme = Theme::default();
     let mut runtime = UiRuntime::default();
-    let root = container().id("root").child(
-        container()
-            .id("parent")
-            .stop_propagation_on(PointerEventKind::PointerDown)
-            .child(
-                button("child")
-                    .id("child")
-                    .width(UiLength::Px(80.0))
-                    .height(UiLength::Px(24.0)),
-            ),
-    );
+    let mut ui = UiArena::default();
+    let child = ui
+        .button("child")
+        .id(&mut ui, "child")
+        .width(&mut ui, UiLength::Px(80.0))
+        .height(&mut ui, UiLength::Px(24.0));
+    let parent = ui
+        .container()
+        .id(&mut ui, "parent")
+        .stop_propagation_on(&mut ui, PointerEventKind::PointerDown)
+        .child(&mut ui, child);
+    let root = ui.container().id(&mut ui, "root").child(&mut ui, parent);
 
     let frame = runtime.frame(
-        &root,
+        &ui,
+        root,
         viewport(120.0, 60.0),
-        UiInput {
-            pointer_position: Some(UiPoint::new(10.0, 10.0)),
-            pointer_down: true,
-        },
+        pointer(10.0, 10.0, true),
         &theme,
     );
     let down_events: Vec<_> = frame
@@ -258,20 +262,26 @@ fn event_dispatch_uses_capture_target_bubble_and_can_stop_propagation() {
 fn hover_pressed_click_and_drag_state_survives_across_frames_by_stable_id() {
     let theme = Theme::default();
     let mut runtime = UiRuntime::default();
-    let root = button("Launch")
-        .id("launch")
-        .width(UiLength::Px(100.0))
-        .height(UiLength::Px(32.0))
-        .hover_style(StylePatch::default().background(UiColor::rgba(1, 2, 3, 255)))
-        .pressed_style(StylePatch::default().background(UiColor::rgba(4, 5, 6, 255)));
+    let mut ui = UiArena::default();
+    let root = ui
+        .button("Launch")
+        .id(&mut ui, "launch")
+        .width(&mut ui, UiLength::Px(100.0))
+        .height(&mut ui, UiLength::Px(32.0))
+        .hover_style(
+            &mut ui,
+            StylePatch::default().background(UiColor::rgba(1, 2, 3, 255)),
+        )
+        .pressed_style(
+            &mut ui,
+            StylePatch::default().background(UiColor::rgba(4, 5, 6, 255)),
+        );
 
     let hover = runtime.frame(
-        &root,
+        &ui,
+        root,
         viewport(200.0, 100.0),
-        UiInput {
-            pointer_position: Some(UiPoint::new(10.0, 10.0)),
-            pointer_down: false,
-        },
+        pointer(10.0, 10.0, false),
         &theme,
     );
     assert!(hover.hovered("launch"));
@@ -286,12 +296,10 @@ fn hover_pressed_click_and_drag_state_survives_across_frames_by_stable_id() {
     );
 
     let pressed = runtime.frame(
-        &root,
+        &ui,
+        root,
         viewport(200.0, 100.0),
-        UiInput {
-            pointer_position: Some(UiPoint::new(10.0, 10.0)),
-            pointer_down: true,
-        },
+        pointer(10.0, 10.0, true),
         &theme,
     );
     assert!(pressed.response("launch").pressed);
@@ -306,23 +314,19 @@ fn hover_pressed_click_and_drag_state_survives_across_frames_by_stable_id() {
     );
 
     let dragged = runtime.frame(
-        &root,
+        &ui,
+        root,
         viewport(200.0, 100.0),
-        UiInput {
-            pointer_position: Some(UiPoint::new(20.0, 10.0)),
-            pointer_down: true,
-        },
+        pointer(20.0, 10.0, true),
         &theme,
     );
     assert!(dragged.response("launch").dragged);
 
     let clicked = runtime.frame(
-        &root,
+        &ui,
+        root,
         viewport(200.0, 100.0),
-        UiInput {
-            pointer_position: Some(UiPoint::new(20.0, 10.0)),
-            pointer_down: false,
-        },
+        pointer(20.0, 10.0, false),
         &theme,
     );
     assert!(clicked.clicked("launch"));
@@ -332,14 +336,22 @@ fn hover_pressed_click_and_drag_state_survives_across_frames_by_stable_id() {
 fn progress_bar_clamps_value_and_generates_fill_command() {
     let theme = Theme::default();
     let mut runtime = UiRuntime::default();
-    let root = progress_bar(2.0, UiColor::rgba(10, 200, 20, 255))
-        .id("health")
-        .width(UiLength::Px(100.0))
-        .height(UiLength::Px(10.0))
-        .padding(EdgeInsets::ZERO)
-        .radius(CornerRadius::all(3.0));
+    let mut ui = UiArena::default();
+    let root = ui
+        .progress_bar(2.0, UiColor::rgba(10, 200, 20, 255))
+        .id(&mut ui, "health")
+        .width(&mut ui, UiLength::Px(100.0))
+        .height(&mut ui, UiLength::Px(10.0))
+        .padding(&mut ui, EdgeInsets::ZERO)
+        .radius(&mut ui, CornerRadius::all(3.0));
 
-    let frame = runtime.frame(&root, viewport(200.0, 100.0), UiInput::default(), &theme);
+    let frame = runtime.frame(
+        &ui,
+        root,
+        viewport(200.0, 100.0),
+        UiInput::default(),
+        &theme,
+    );
 
     assert!(frame.paint_commands.iter().any(|command| {
         matches!(
@@ -353,26 +365,38 @@ fn progress_bar_clamps_value_and_generates_fill_command() {
 }
 
 #[test]
-fn paint_commands_include_rounded_background_border_text_and_clip() {
+fn paint_commands_include_rounded_background_border_text_clip_and_transform() {
     let theme = Theme::default();
     let mut runtime = UiRuntime::default();
-    let root = container()
-        .id("panel")
-        .width(UiLength::Px(80.0))
-        .height(UiLength::Px(40.0))
-        .padding(EdgeInsets::all(4.0))
-        .background(UiColor::rgba(1, 2, 3, 255))
-        .border(Border::solid(UiColor::rgba(9, 8, 7, 255), 2.0))
-        .radius(CornerRadius::all(5.0))
-        .style(StylePatch::default().clip(true))
-        .child(text("HP").id("label"));
+    let mut ui = UiArena::default();
+    let label = ui.text("HP").id(&mut ui, "label");
+    let root = ui
+        .container()
+        .id(&mut ui, "panel")
+        .width(&mut ui, UiLength::Px(80.0))
+        .height(&mut ui, UiLength::Px(40.0))
+        .padding(&mut ui, EdgeInsets::all(4.0))
+        .background(&mut ui, UiColor::rgba(1, 2, 3, 255))
+        .border(&mut ui, Border::solid(UiColor::rgba(9, 8, 7, 255), 2.0))
+        .radius(&mut ui, CornerRadius::all(5.0))
+        .style(
+            &mut ui,
+            StylePatch::default()
+                .clip(true)
+                .transform(UiTransform::tilt_degrees(4.0, -8.0)),
+        )
+        .child(&mut ui, label);
 
-    let frame = runtime.frame(&root, viewport(100.0, 60.0), UiInput::default(), &theme);
+    let frame = runtime.frame(&ui, root, viewport(100.0, 60.0), UiInput::default(), &theme);
 
     assert!(matches!(
         frame.paint_commands.first(),
         Some(PaintCommand::PushClip(_))
     ));
+    assert!(frame
+        .paint_commands
+        .iter()
+        .any(|command| matches!(command, PaintCommand::PushTransform { .. })));
     assert!(frame.paint_commands.iter().any(|command| {
         matches!(
             command,
@@ -389,7 +413,7 @@ fn paint_commands_include_rounded_background_border_text_and_clip() {
     assert!(frame
         .paint_commands
         .iter()
-        .any(|command| { matches!(command, PaintCommand::Text { text, .. } if text == "HP") }));
+        .any(|command| matches!(command, PaintCommand::Text { text, .. } if text == "HP")));
     assert!(matches!(
         frame.paint_commands.last(),
         Some(PaintCommand::PopClip)
@@ -399,8 +423,10 @@ fn paint_commands_include_rounded_background_border_text_and_clip() {
 #[test]
 fn backend_adapter_forwards_expected_operations() {
     let rect = viewport(50.0, 20.0);
+    let transform = UiTransform::tilt_degrees(3.0, -5.0);
     let commands = vec![
         PaintCommand::PushClip(rect),
+        PaintCommand::PushTransform { rect, transform },
         PaintCommand::FillRect {
             rect,
             color: UiColor::rgba(1, 2, 3, 255),
@@ -418,13 +444,12 @@ fn backend_adapter_forwards_expected_operations() {
             tint: UiColor::WHITE,
             radius: CornerRadius::none(),
         },
+        PaintCommand::PopTransform,
         PaintCommand::PopClip,
     ];
     let mut backend = RecordingBackend::<String>::default();
 
-    render_commands(&mut backend, rect, 1.0, &commands, |texture| {
-        texture.to_owned()
-    });
+    render_commands(&mut backend, rect, 1.0, &commands, str::to_owned);
 
     assert_eq!(
         backend.ops.first(),
@@ -434,6 +459,9 @@ fn backend_adapter_forwards_expected_operations() {
         })
     );
     assert!(backend.ops.contains(&BackendOp::PushClip(rect)));
+    assert!(backend
+        .ops
+        .contains(&BackendOp::PushTransform { rect, transform }));
     assert!(backend.ops.iter().any(|op| {
         matches!(
             op,
@@ -443,48 +471,75 @@ fn backend_adapter_forwards_expected_operations() {
     assert!(backend
         .ops
         .iter()
-        .any(|op| { matches!(op, BackendOp::Text { text, .. } if text == "Ammo") }));
+        .any(|op| matches!(op, BackendOp::Text { text, .. } if text == "Ammo")));
     assert!(backend
         .ops
         .iter()
-        .any(|op| { matches!(op, BackendOp::Image { texture, .. } if texture == "icon/ammo") }));
+        .any(|op| matches!(op, BackendOp::Image { texture, .. } if texture == "icon/ammo")));
     assert_eq!(backend.ops.last(), Some(&BackendOp::EndFrame));
+}
+
+#[test]
+fn custom_widget_can_be_allocated_without_engine_enum_changes() {
+    struct BadgeWidget;
+
+    impl UiWidget for BadgeWidget {
+        fn default_size(&self, _style: &Style, _max: UiSize) -> UiSize {
+            UiSize::new(24.0, 12.0)
+        }
+
+        fn paint(&self, _node: &LayoutNode, commands: &mut Vec<PaintCommand>) {
+            commands.push(PaintCommand::Custom("badge".to_owned()));
+        }
+    }
+
+    let theme = Theme::default();
+    let mut runtime = UiRuntime::default();
+    let mut ui = UiArena::default();
+    let root = ui.alloc_node(BadgeWidget).id(&mut ui, "badge");
+
+    let frame = runtime.frame(&ui, root, viewport(100.0, 50.0), UiInput::default(), &theme);
+
+    assert_eq!(node_rect(&frame, "badge").size(), UiSize::new(24.0, 12.0));
+    assert!(frame
+        .paint_commands
+        .iter()
+        .any(|command| matches!(command, PaintCommand::Custom(name) if name == "badge")));
 }
 
 #[test]
 fn full_frame_loop_handles_responsive_layout_interaction_and_backend_output() {
     let mut runtime = UiRuntime::default();
     let theme = Theme::default();
-    let root = column()
-        .id("hud")
-        .padding(EdgeInsets::all(12.0))
+    let mut ui = UiArena::default();
+    let fire = ui
+        .button("Fire")
+        .id(&mut ui, "fire")
+        .width(&mut ui, UiLength::Px(80.0))
+        .height(&mut ui, UiLength::Px(32.0));
+    let root = ui
+        .column()
+        .id(&mut ui, "hud")
+        .padding(&mut ui, EdgeInsets::all(12.0))
         .when(
+            &mut ui,
             ScreenClass::Compact,
             StylePatch::default().padding(EdgeInsets::all(4.0)),
         )
-        .child(
-            button("Fire")
-                .id("fire")
-                .width(UiLength::Px(80.0))
-                .height(UiLength::Px(32.0)),
-        );
+        .child(&mut ui, fire);
 
     runtime.frame(
-        &root,
+        &ui,
+        root,
         viewport(320.0, 200.0),
-        UiInput {
-            pointer_position: Some(UiPoint::new(10.0, 10.0)),
-            pointer_down: true,
-        },
+        pointer(10.0, 10.0, true),
         &theme,
     );
     let frame = runtime.frame(
-        &root,
+        &ui,
+        root,
         viewport(320.0, 200.0),
-        UiInput {
-            pointer_position: Some(UiPoint::new(10.0, 10.0)),
-            pointer_down: false,
-        },
+        pointer(10.0, 10.0, false),
         &theme,
     );
     let mut backend = RecordingBackend::<String>::default();
@@ -501,7 +556,7 @@ fn full_frame_loop_handles_responsive_layout_interaction_and_backend_output() {
     assert!(backend
         .ops
         .iter()
-        .any(|op| { matches!(op, BackendOp::Text { text, .. } if text == "Fire") }));
+        .any(|op| matches!(op, BackendOp::Text { text, .. } if text == "Fire")));
 }
 
 #[test]
@@ -512,6 +567,7 @@ fn theme_and_style_are_registered_for_reflection() {
     Theme::register(&mut registry);
     Style::register(&mut registry);
     CornerRadius::register(&mut registry);
+    UiTransform::register(&mut registry);
 
     assert!(matches!(
         registry.type_info::<Theme>(),
@@ -523,6 +579,10 @@ fn theme_and_style_are_registered_for_reflection() {
     ));
     assert!(matches!(
         registry.type_info::<CornerRadius>(),
+        Some(TypeInfo::Struct(_))
+    ));
+    assert!(matches!(
+        registry.type_info::<UiTransform>(),
         Some(TypeInfo::Struct(_))
     ));
 }

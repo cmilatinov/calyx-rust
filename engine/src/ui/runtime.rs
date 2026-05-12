@@ -5,7 +5,7 @@ use super::geometry::UiRect;
 use super::layout::{hit_test_path, hover_hit_ids, layout_tree, LayoutNode};
 use super::paint::{collect_paint_commands, PaintCommand};
 use super::style::{StyleRegistry, Theme};
-use super::widgets::{ElementId, UiNode};
+use super::widgets::{ElementId, UiArena, UiNodeHandle};
 
 /// Cross-frame interaction state for a UI tree.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -59,12 +59,13 @@ impl UiRuntime {
 
     pub fn frame(
         &mut self,
-        root: &UiNode,
+        arena: &UiArena,
+        root: UiNodeHandle,
         viewport: UiRect,
         input: UiInput,
         theme: &Theme,
     ) -> UiFrame {
-        let hit_layout = layout_tree(root, viewport, theme, &self.styles, &self.state);
+        let hit_layout = layout_tree(arena, root, viewport, theme, &self.styles, &self.state);
         let mut events = Vec::new();
         let mut responses: HashMap<ElementId, ElementResponse> = HashMap::new();
         let target_path = input
@@ -153,8 +154,8 @@ impl UiRuntime {
         }
 
         self.state.previous_input = input;
-        let layout = layout_tree(root, viewport, theme, &self.styles, &self.state);
-        let paint_commands = collect_paint_commands(&layout);
+        let layout = layout_tree(arena, root, viewport, theme, &self.styles, &self.state);
+        let paint_commands = collect_paint_commands(arena, &layout);
         UiFrame {
             layout,
             paint_commands,

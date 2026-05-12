@@ -1,13 +1,18 @@
 use super::geometry::{UiPoint, UiRect};
 use super::layout::LayoutNode;
-use super::style::{Border, CornerRadius, UiColor};
-use super::widgets::WidgetKind;
+use super::style::{Border, CornerRadius, UiColor, UiTransform};
+use super::widgets::UiArena;
 
 /// Backend-neutral paint command.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PaintCommand {
     PushClip(UiRect),
     PopClip,
+    PushTransform {
+        rect: UiRect,
+        transform: UiTransform,
+    },
+    PopTransform,
     FillRect {
         rect: UiRect,
         color: UiColor,
@@ -39,15 +44,22 @@ pub enum PaintCommand {
     Custom(String),
 }
 
-pub fn collect_paint_commands(root: &LayoutNode) -> Vec<PaintCommand> {
+pub fn collect_paint_commands(arena: &UiArena, root: &LayoutNode) -> Vec<PaintCommand> {
     let mut commands = Vec::new();
-    collect_node_paint(root, &mut commands);
+    collect_node_paint(arena, root, &mut commands);
     commands
 }
 
-fn collect_node_paint(node: &LayoutNode, commands: &mut Vec<PaintCommand>) {
+fn collect_node_paint(arena: &UiArena, node: &LayoutNode, commands: &mut Vec<PaintCommand>) {
     if node.style.clip {
         commands.push(PaintCommand::PushClip(node.content_rect));
+    }
+    let transformed = !node.style.transform.is_identity();
+    if transformed {
+        commands.push(PaintCommand::PushTransform {
+            rect: node.rect,
+            transform: node.style.transform,
+        });
     }
 
     let background = node.style.background.with_alpha(node.style.opacity);
@@ -66,64 +78,15 @@ fn collect_node_paint(node: &LayoutNode, commands: &mut Vec<PaintCommand>) {
         });
     }
 
-    match &node.kind {
-        WidgetKind::Text { text } | WidgetKind::Button { label: text } => {
-            commands.push(PaintCommand::Text {
-                rect: node.content_rect,
-                text: text.clone(),
-                color: node.style.text_color.with_alpha(node.style.opacity),
-                font_size: node.style.font_size,
-            });
-        }
-        WidgetKind::Image { texture } => {
-            commands.push(PaintCommand::Image {
-                rect: node.content_rect,
-                texture: texture.clone(),
-                tint: node.style.text_color.with_alpha(node.style.opacity),
-                radius: node.style.radius,
-            });
-        }
-        WidgetKind::ProgressBar { value, fill } => {
-            let fill_rect = UiRect {
-                max: UiPoint::new(
-                    node.content_rect.min.x + node.content_rect.width() * value.clamp(0.0, 1.0),
-                    node.content_rect.max.y,
-                ),
-                ..node.content_rect
-            };
-            commands.push(PaintCommand::FillRect {
-                rect: fill_rect,
-                color: fill.with_alpha(node.style.opacity),
-                radius: node.style.radius,
-            });
-        }
-        WidgetKind::Crosshair { color, size } => {
-            let center = UiPoint::new(
-                node.rect.min.x + node.rect.width() * 0.5,
-                node.rect.min.y + node.rect.height() * 0.5,
-            );
-            let half = *size * 0.5;
-            commands.push(PaintCommand::Line {
-                start: UiPoint::new(center.x - half, center.y),
-                end: UiPoint::new(center.x + half, center.y),
-                color: *color,
-                width: 1.0,
-            });
-            commands.push(PaintCommand::Line {
-                start: UiPoint::new(center.x, center.y - half),
-                end: UiPoint::new(center.x, center.y + half),
-                color: *color,
-                width: 1.0,
-            });
-        }
-        WidgetKind::CustomPaint { commands: custom } => commands.extend(custom.iter().cloned()),
-        _ => {}
-    }
+    arena.widget(node.widget).paint(node, commands);
 
     for child in &node.children {
-        collect_node_paint(child, commands);
+        collect_node_paint(arena, child, commands);
     }
 
+    if transformed {
+        commands.push(PaintCommand::PopTransform);
+    }
     if node.style.clip {
         commands.push(PaintCommand::PopClip);
     }

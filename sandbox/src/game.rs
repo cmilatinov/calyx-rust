@@ -10,10 +10,9 @@ use engine::logging::{DefaultLogger, Log};
 use engine::render::{Camera, SceneRenderer, SceneRendererOptions};
 use engine::scene::Scene;
 use engine::ui::{
-    button, center, column, container, crosshair, custom_paint, image, progress_bar,
-    render_commands, row, sized_box, spacer, stack, text, Border, CornerRadius, EdgeInsets,
-    EguiUiBackend, PaintCommand, PointerEvents, ScreenClass, StylePatch, Theme, UiColor, UiInput,
-    UiLength, UiPoint, UiRect, UiRuntime, UiSize,
+    render_commands, Border, CornerRadius, EdgeInsets, EguiUiBackend, PaintCommand, PointerEvents,
+    ScreenClass, StylePatch, Theme, UiArena, UiColor, UiInput, UiLength, UiNodeHandle, UiPoint,
+    UiRect, UiRuntime, UiSize, UiTransform,
 };
 use sandbox::plugin_main;
 use std::path::PathBuf;
@@ -31,6 +30,7 @@ struct GameApp {
     game: GameContext,
     renderer: SceneRenderer,
     ui_runtime: UiRuntime,
+    ui_arena: UiArena,
     ui_theme: Theme,
     fps_counter: usize,
     fps: usize,
@@ -71,6 +71,7 @@ impl GameApp {
                 Self::initial_render_size(&cc.egui_ctx),
             ),
             ui_runtime: UiRuntime::default(),
+            ui_arena: UiArena::default(),
             ui_theme: Theme::default(),
             fps_counter: 0,
             fps: 0,
@@ -112,232 +113,255 @@ impl GameApp {
         })
     }
 
-    fn sandbox_ui(viewport: UiRect, fps: usize) -> engine::ui::UiNode {
-        let panel = UiColor::rgba(11, 15, 18, 220);
-        let panel_hover = UiColor::rgba(30, 42, 48, 235);
-        let outline = UiColor::rgba(116, 136, 145, 180);
-        let text_primary = UiColor::rgba(238, 244, 247, 255);
-        let text_muted = UiColor::rgba(158, 176, 184, 255);
-        let health = UiColor::rgba(87, 201, 132, 255);
-        let ammo = UiColor::rgba(86, 162, 255, 255);
-        let warning = UiColor::rgba(255, 192, 94, 255);
+    fn hud_text(
+        ui: &mut UiArena,
+        id: &'static str,
+        value: impl Into<String>,
+        color: UiColor,
+        size: f32,
+    ) -> UiNodeHandle {
+        ui.text(value)
+            .id(ui, id)
+            .style(ui, StylePatch::default().text_color(color).font_size(size))
+    }
+
+    fn meter(
+        ui: &mut UiArena,
+        id: &'static str,
+        value: f32,
+        fill: UiColor,
+        background: UiColor,
+        outline: UiColor,
+    ) -> UiNodeHandle {
+        ui.progress_bar(value, fill)
+            .id(ui, id)
+            .background(ui, background)
+            .border(ui, Border::solid(outline, 1.0))
+            .radius(ui, CornerRadius::all(4.0))
+            .width(ui, UiLength::Fill)
+            .height(ui, UiLength::Px(14.0))
+    }
+
+    fn sandbox_ui(ui: &mut UiArena, viewport: UiRect, fps: usize) -> UiNodeHandle {
+        let panel = UiColor::rgba(6, 13, 18, 218);
+        let panel_hover = UiColor::rgba(13, 31, 40, 236);
+        let cyan = UiColor::rgba(65, 231, 255, 235);
+        let cyan_dim = UiColor::rgba(45, 121, 137, 190);
+        let red = UiColor::rgba(239, 76, 84, 235);
+        let amber = UiColor::rgba(255, 195, 81, 240);
+        let green = UiColor::rgba(86, 228, 142, 235);
+        let text = UiColor::rgba(229, 247, 252, 255);
+        let muted = UiColor::rgba(124, 168, 181, 255);
 
         let panel_style = StylePatch::default()
             .background(panel)
-            .border(Border::solid(outline, 1.0))
-            .radius(CornerRadius::all(8.0))
+            .border(Border::solid(cyan_dim, 1.0))
+            .radius(CornerRadius::all(7.0))
             .padding(EdgeInsets::all(12.0))
             .gap(8.0);
+        let hover_tilt = StylePatch::default()
+            .background(panel_hover)
+            .transform(UiTransform::tilt_degrees(3.0, -7.0));
 
-        let hover_style = StylePatch::default().background(panel_hover);
+        let title = Self::hud_text(ui, "status-title", "MANTICORE // STATUS", cyan, 16.0)
+            .width(ui, UiLength::Px(210.0));
+        let fps_text = Self::hud_text(ui, "fps-text", format!("{fps} FPS"), muted, 12.0);
+        let fps_pill = ui
+            .container()
+            .id(ui, "fps-pill")
+            .background(ui, UiColor::rgba(11, 28, 36, 245))
+            .border(ui, Border::solid(cyan_dim, 1.0))
+            .radius(ui, CornerRadius::all(12.0))
+            .padding(ui, EdgeInsets::symmetric(9.0, 3.0))
+            .width(ui, UiLength::Px(76.0))
+            .height(ui, UiLength::Px(24.0))
+            .child(ui, fps_text);
+        let status_spacer = ui.spacer().id(ui, "status-header-spacer");
+        let status_header = ui
+            .row()
+            .id(ui, "status-header")
+            .height(ui, UiLength::Px(28.0))
+            .gap(ui, 8.0)
+            .child(ui, title)
+            .child(ui, status_spacer)
+            .child(ui, fps_pill);
 
-        stack()
-            .id("sandbox-ui")
-            .width(UiLength::Px(viewport.width()))
-            .height(UiLength::Px(viewport.height()))
-            .pointer_events(PointerEvents::None)
-            .child(
-                column()
-                    .id("status-panel")
-                    .style(panel_style.clone())
-                    .hover_style(hover_style.clone())
-                    .pointer_events(PointerEvents::Auto)
-                    .width(UiLength::Px(320.0))
-                    .height(UiLength::Px(196.0))
-                    .when(
-                        ScreenClass::Compact,
-                        StylePatch::default().width(UiLength::Px(260.0)),
-                    )
-                    .child(
-                        row()
-                            .id("status-row")
-                            .gap(10.0)
-                            .height(UiLength::Px(28.0))
-                            .child(
-                                text("Calyx Runtime UI")
-                                    .id("title")
-                                    .style(
-                                        StylePatch::default()
-                                            .text_color(text_primary)
-                                            .font_size(18.0),
-                                    )
-                                    .width(UiLength::Px(190.0)),
-                            )
-                            .child(spacer().id("title-spacer"))
-                            .child(
-                                container()
-                                    .id("fps-pill")
-                                    .background(UiColor::rgba(33, 45, 50, 255))
-                                    .radius(CornerRadius::all(12.0))
-                                    .padding(EdgeInsets::symmetric(8.0, 3.0))
-                                    .width(UiLength::Px(70.0))
-                                    .height(UiLength::Px(24.0))
-                                    .child(
-                                        text(format!("{fps} fps"))
-                                            .style(
-                                                StylePatch::default()
-                                                    .text_color(text_muted)
-                                                    .font_size(13.0),
-                                            )
-                                            .id("fps-text"),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        column()
-                            .id("meters")
-                            .gap(6.0)
-                            .height(UiLength::Px(56.0))
-                            .child(
-                                progress_bar(0.76, health)
-                                    .id("health-bar")
-                                    .background(UiColor::rgba(42, 50, 45, 255))
-                                    .border(Border::solid(UiColor::rgba(98, 128, 108, 180), 1.0))
-                                    .radius(CornerRadius::all(5.0))
-                                    .width(UiLength::Fill)
-                                    .height(UiLength::Px(16.0)),
-                            )
-                            .child(
-                                progress_bar(0.42, ammo)
-                                    .id("ammo-bar")
-                                    .background(UiColor::rgba(37, 44, 54, 255))
-                                    .border(Border::solid(UiColor::rgba(86, 128, 184, 180), 1.0))
-                                    .radius(CornerRadius::all(5.0))
-                                    .width(UiLength::Fill)
-                                    .height(UiLength::Px(16.0)),
-                            ),
-                    )
-                    .child(
-                        row()
-                            .id("button-row")
-                            .gap(8.0)
-                            .height(UiLength::Px(36.0))
-                            .child(
-                                button("Hover")
-                                    .id("hover-button")
-                                    .background(UiColor::rgba(35, 47, 53, 255))
-                                    .border(Border::solid(outline, 1.0))
-                                    .radius(CornerRadius::all(6.0))
-                                    .padding(EdgeInsets::symmetric(10.0, 6.0))
-                                    .hover_style(
-                                        StylePatch::default()
-                                            .background(UiColor::rgba(50, 72, 81, 255)),
-                                    )
-                                    .pressed_style(
-                                        StylePatch::default()
-                                            .background(UiColor::rgba(67, 96, 108, 255)),
-                                    ),
-                            )
-                            .child(
-                                button("Pressed")
-                                    .id("pressed-button")
-                                    .background(UiColor::rgba(58, 43, 36, 255))
-                                    .border(Border::solid(warning, 1.0))
-                                    .radius(CornerRadius::all(6.0))
-                                    .padding(EdgeInsets::symmetric(10.0, 6.0))
-                                    .hover_style(
-                                        StylePatch::default()
-                                            .background(UiColor::rgba(75, 56, 42, 255)),
-                                    )
-                                    .pressed_style(
-                                        StylePatch::default()
-                                            .background(UiColor::rgba(95, 66, 42, 255)),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        container()
-                            .id("clip-demo")
-                            .background(UiColor::rgba(20, 25, 28, 255))
-                            .border(Border::solid(UiColor::rgba(84, 96, 102, 255), 1.0))
-                            .radius(CornerRadius::all(6.0))
-                            .style(StylePatch::default().clip(true))
-                            .width(UiLength::Fill)
-                            .height(UiLength::Px(32.0))
-                            .child(text("clipped text + rounded paint").id("clip-label").style(
-                                StylePatch::default().text_color(text_muted).font_size(13.0),
-                            )),
-                    ),
+        let hull_label = Self::hud_text(ui, "hull-label", "HULL  76%", text, 13.0);
+        let hull = Self::meter(
+            ui,
+            "hull-meter",
+            0.76,
+            green,
+            UiColor::rgba(18, 48, 33, 230),
+            UiColor::rgba(86, 228, 142, 160),
+        );
+        let shield_label = Self::hud_text(ui, "shield-label", "SHIELD  42%", text, 13.0);
+        let shield = Self::meter(
+            ui,
+            "shield-meter",
+            0.42,
+            cyan,
+            UiColor::rgba(18, 45, 54, 230),
+            UiColor::rgba(65, 231, 255, 150),
+        );
+        let status_panel = ui
+            .column()
+            .id(ui, "status-panel")
+            .style(ui, panel_style.clone())
+            .hover_style(ui, hover_tilt.clone())
+            .pointer_events(ui, PointerEvents::Auto)
+            .width(ui, UiLength::Px(340.0))
+            .height(ui, UiLength::Px(164.0))
+            .when(
+                ui,
+                ScreenClass::Compact,
+                StylePatch::default().width(UiLength::Px(292.0)),
             )
-            .child(
-                center(
-                    crosshair(UiColor::rgba(238, 244, 247, 210), 28.0)
-                        .id("crosshair")
-                        .width(UiLength::Px(28.0))
-                        .height(UiLength::Px(28.0)),
-                )
-                .id("crosshair-center")
-                .width(UiLength::Px(viewport.width()))
-                .height(UiLength::Px(viewport.height()))
-                .pointer_events(PointerEvents::None),
+            .child(ui, status_header)
+            .child(ui, hull_label)
+            .child(ui, hull)
+            .child(ui, shield_label)
+            .child(ui, shield);
+
+        let weapon_title = Self::hud_text(ui, "weapon-title", "RAIL CANNON", cyan, 15.0);
+        let ammo_big = Self::hud_text(ui, "ammo-count", "042", text, 34.0)
+            .width(ui, UiLength::Px(86.0))
+            .height(ui, UiLength::Px(46.0));
+        let reserve_ammo = Self::hud_text(ui, "reserve-ammo", "/ 120", muted, 15.0);
+        let fire_mode = Self::hud_text(ui, "fire-mode", "BURST ARM", amber, 12.0);
+        let ammo_meta = ui
+            .column()
+            .id(ui, "ammo-meta")
+            .gap(ui, 3.0)
+            .child(ui, reserve_ammo)
+            .child(ui, fire_mode);
+        let ammo_row = ui
+            .row()
+            .id(ui, "ammo-row")
+            .height(ui, UiLength::Px(50.0))
+            .child(ui, ammo_big)
+            .child(ui, ammo_meta);
+        let heat = Self::meter(
+            ui,
+            "heat-meter",
+            0.31,
+            amber,
+            UiColor::rgba(58, 42, 18, 230),
+            UiColor::rgba(255, 195, 81, 150),
+        );
+        let heat_label = Self::hud_text(ui, "heat-label", "HEAT", muted, 12.0);
+        let weapon_panel = ui
+            .column()
+            .id(ui, "weapon-panel")
+            .style(ui, panel_style.clone())
+            .hover_style(
+                ui,
+                StylePatch::default()
+                    .background(panel_hover)
+                    .transform(UiTransform::tilt_degrees(-3.0, 8.0)),
             )
-            .child(
-                row()
-                    .id("bottom-card")
-                    .style(panel_style)
-                    .hover_style(hover_style)
-                    .pointer_events(PointerEvents::Auto)
-                    .width(UiLength::Px(360.0))
-                    .height(UiLength::Px(96.0))
-                    .margin(EdgeInsets {
-                        top: viewport.height() - 116.0,
-                        right: 0.0,
-                        bottom: 0.0,
-                        left: viewport.width() - 380.0,
-                    })
-                    .gap(12.0)
-                    .child(
-                        image("scene-preview")
-                            .id("image-preview")
-                            .background(UiColor::rgba(28, 34, 38, 255))
-                            .border(Border::solid(outline, 1.0))
-                            .radius(CornerRadius::all(6.0))
-                            .width(UiLength::Px(72.0))
-                            .height(UiLength::Px(72.0)),
-                    )
-                    .child(
-                        column()
-                            .id("custom-column")
-                            .gap(5.0)
-                            .child(
-                                text("Image + custom paint").id("image-title").style(
-                                    StylePatch::default()
-                                        .text_color(text_primary)
-                                        .font_size(15.0),
-                                ),
-                            )
-                            .child(
-                                sized_box()
-                                    .id("divider-box")
-                                    .width(UiLength::Px(210.0))
-                                    .height(UiLength::Px(8.0))
-                                    .child(
-                                        custom_paint(vec![PaintCommand::Line {
-                                            start: UiPoint::new(
-                                                viewport.width() - 276.0,
-                                                viewport.height() - 62.0,
-                                            ),
-                                            end: UiPoint::new(
-                                                viewport.width() - 66.0,
-                                                viewport.height() - 62.0,
-                                            ),
-                                            color: warning,
-                                            width: 2.0,
-                                        }])
-                                        .id("custom-line"),
-                                    ),
-                            )
-                            .child(
-                                text("Backend commands over egui")
-                                    .id("image-caption")
-                                    .style(
-                                        StylePatch::default()
-                                            .text_color(text_muted)
-                                            .font_size(13.0),
-                                    ),
-                            ),
-                    ),
+            .pointer_events(ui, PointerEvents::Auto)
+            .width(ui, UiLength::Px(278.0))
+            .height(ui, UiLength::Px(150.0))
+            .margin(
+                ui,
+                EdgeInsets {
+                    top: viewport.height() - 174.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 24.0,
+                },
             )
+            .child(ui, weapon_title)
+            .child(ui, ammo_row)
+            .child(ui, heat_label)
+            .child(ui, heat);
+
+        let target_title = Self::hud_text(ui, "target-title", "TARGET LOCK", red, 14.0);
+        let target_name = Self::hud_text(ui, "target-name", "SIMULATED ARMOR // 284m", text, 18.0);
+        let target_armor = Self::meter(
+            ui,
+            "target-armor",
+            0.58,
+            red,
+            UiColor::rgba(58, 24, 28, 230),
+            UiColor::rgba(239, 76, 84, 150),
+        );
+        let target_readout = ui
+            .column()
+            .id(ui, "target-panel")
+            .style(ui, panel_style)
+            .hover_style(ui, hover_tilt)
+            .pointer_events(ui, PointerEvents::Auto)
+            .width(ui, UiLength::Px(312.0))
+            .height(ui, UiLength::Px(118.0))
+            .margin(
+                ui,
+                EdgeInsets {
+                    top: viewport.height() - 142.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: viewport.width() - 336.0,
+                },
+            )
+            .child(ui, target_title)
+            .child(ui, target_name)
+            .child(ui, target_armor);
+
+        let crosshair = ui
+            .crosshair(cyan, 34.0)
+            .id(ui, "crosshair")
+            .width(ui, UiLength::Px(34.0))
+            .height(ui, UiLength::Px(34.0));
+        let crosshair_center = ui
+            .center(crosshair)
+            .id(ui, "crosshair-center")
+            .width(ui, UiLength::Px(viewport.width()))
+            .height(ui, UiLength::Px(viewport.height()))
+            .pointer_events(ui, PointerEvents::None);
+
+        let center_x = viewport.min.x + viewport.width() * 0.5;
+        let center_y = viewport.min.y + viewport.height() * 0.5;
+        let brackets = ui
+            .custom_paint(vec![
+                PaintCommand::Line {
+                    start: UiPoint::new(center_x - 74.0, center_y - 44.0),
+                    end: UiPoint::new(center_x - 38.0, center_y - 44.0),
+                    color: cyan,
+                    width: 2.0,
+                },
+                PaintCommand::Line {
+                    start: UiPoint::new(center_x + 38.0, center_y - 44.0),
+                    end: UiPoint::new(center_x + 74.0, center_y - 44.0),
+                    color: cyan,
+                    width: 2.0,
+                },
+                PaintCommand::Line {
+                    start: UiPoint::new(center_x - 74.0, center_y + 44.0),
+                    end: UiPoint::new(center_x - 38.0, center_y + 44.0),
+                    color: cyan,
+                    width: 2.0,
+                },
+                PaintCommand::Line {
+                    start: UiPoint::new(center_x + 38.0, center_y + 44.0),
+                    end: UiPoint::new(center_x + 74.0, center_y + 44.0),
+                    color: cyan,
+                    width: 2.0,
+                },
+            ])
+            .id(ui, "target-brackets")
+            .pointer_events(ui, PointerEvents::None);
+
+        ui.stack()
+            .id(ui, "sandbox-ui")
+            .width(ui, UiLength::Px(viewport.width()))
+            .height(ui, UiLength::Px(viewport.height()))
+            .pointer_events(ui, PointerEvents::None)
+            .child(ui, status_panel)
+            .child(ui, weapon_panel)
+            .child(ui, target_readout)
+            .child(ui, crosshair_center)
+            .child(ui, brackets)
     }
 }
 
@@ -387,9 +411,11 @@ impl eframe::App for GameApp {
                     UiPoint::new(rect.min.x, rect.min.y),
                     UiSize::new(rect.width(), rect.height()),
                 );
-                let sandbox_ui = Self::sandbox_ui(viewport, self.fps);
+                self.ui_arena.clear();
+                let sandbox_ui = Self::sandbox_ui(&mut self.ui_arena, viewport, self.fps);
                 let frame = self.ui_runtime.frame(
-                    &sandbox_ui,
+                    &self.ui_arena,
+                    sandbox_ui,
                     viewport,
                     Self::pointer_input(ui.ctx()),
                     &self.ui_theme,

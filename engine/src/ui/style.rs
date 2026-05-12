@@ -137,6 +137,52 @@ impl Border {
     }
 }
 
+/// Screen-space fake 3D transform applied by backends that support transformed quads.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
+#[uuid = "67850a50-61f7-4eba-92f7-b9cb3f672f0f"]
+#[reflect(Default)]
+#[repr(C)]
+pub struct UiTransform {
+    pub rotate_x: f32,
+    pub rotate_y: f32,
+    pub rotate_z: f32,
+    pub scale: f32,
+    pub perspective: f32,
+}
+
+impl Default for UiTransform {
+    fn default() -> Self {
+        Self {
+            rotate_x: 0.0,
+            rotate_y: 0.0,
+            rotate_z: 0.0,
+            scale: 1.0,
+            perspective: 800.0,
+        }
+    }
+}
+
+impl UiTransform {
+    pub fn identity() -> Self {
+        Self::default()
+    }
+
+    pub fn tilt_degrees(rotate_x: f32, rotate_y: f32) -> Self {
+        Self {
+            rotate_x: rotate_x.to_radians(),
+            rotate_y: rotate_y.to_radians(),
+            ..Default::default()
+        }
+    }
+
+    pub fn is_identity(self) -> bool {
+        self.rotate_x.abs() < f32::EPSILON
+            && self.rotate_y.abs() < f32::EPSILON
+            && self.rotate_z.abs() < f32::EPSILON
+            && (self.scale - 1.0).abs() < f32::EPSILON
+    }
+}
+
 /// Whether a node participates in pointer hit testing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "c1acddbe-c29c-49bb-b1fb-a7d88b42ac7a"]
@@ -224,6 +270,7 @@ pub struct Style {
     pub align_items: AlignItems,
     pub justify_content: JustifyContent,
     pub clip: bool,
+    pub transform: UiTransform,
 }
 
 impl Default for Style {
@@ -251,6 +298,7 @@ impl Default for Style {
             align_items: AlignItems::Stretch,
             justify_content: JustifyContent::Start,
             clip: false,
+            transform: UiTransform::identity(),
         }
     }
 }
@@ -280,6 +328,7 @@ pub struct StylePatch {
     pub align_items: Option<AlignItems>,
     pub justify_content: Option<JustifyContent>,
     pub clip: Option<bool>,
+    pub transform: Option<UiTransform>,
 }
 
 impl StylePatch {
@@ -350,6 +399,9 @@ impl StylePatch {
         if other.clip.is_some() {
             self.clip = other.clip;
         }
+        if other.transform.is_some() {
+            self.transform = other.transform;
+        }
     }
 
     pub fn apply_to(&self, style: &mut Style) {
@@ -418,6 +470,9 @@ impl StylePatch {
         }
         if let Some(value) = self.clip {
             style.clip = value;
+        }
+        if let Some(value) = self.transform {
+            style.transform = value;
         }
     }
 
@@ -491,6 +546,10 @@ impl StylePatch {
     }
     pub fn clip(mut self, value: bool) -> Self {
         self.clip = Some(value);
+        self
+    }
+    pub fn transform(mut self, value: UiTransform) -> Self {
+        self.transform = Some(value);
         self
     }
 }
