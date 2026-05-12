@@ -6,6 +6,7 @@ Use the steering files in this repository as standing project instructions:
 - [.steering/project.md](.steering/project.md) - Calyx workspace architecture, crate map, and project conventions.
 - [.steering/todoist.md](.steering/todoist.md) - Todoist planning, task selection, and PR reference rules.
 - [.steering/code-review.md](.steering/code-review.md) - senior-developer review checklist and keep/skip workflow.
+- [.steering/hud-ui.md](.steering/hud-ui.md) - HUD/runtime UI requirements, architecture, and testing strategy.
 
 When making repository changes, follow the Gitflow rules in `.steering/gitflow.md`. Commit titles must start with exactly one of `refactor:`, `feat:`, `fix:`, `perf:`, `chore:`, or `docs:`.
 

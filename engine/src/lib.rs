@@ -42,6 +42,8 @@ pub mod resource;
 pub mod scene;
 /// Headless and integration-style test helpers.
 pub mod test_support;
+/// Backend-neutral runtime UI and HUD composition APIs.
+pub mod ui;
 /// Miscellaneous utility traits, macros, and helper functions.
 pub mod utils;
 
