@@ -16,10 +16,13 @@ use rusty_pool::JoinHandle;
 
 pub struct ProjectManager {
     current_project: Project,
-    assembly: Option<Lib>,
     context: AssetContext,
     background: Ref<Background>,
     project_manager: WeakRef<ProjectManager>,
+    // Keep the dynamic assembly after contexts/registries in field order so
+    // plugin-backed trait objects and scene components drop before the library
+    // is unloaded during editor shutdown.
+    assembly: Option<Lib>,
 }
 
 impl ProjectManager {
@@ -33,10 +36,10 @@ impl ProjectManager {
         let current_project = Project::load(project_directory)?;
         Ok(Ref::new_cyclic(move |weak| Self {
             current_project,
-            assembly: None,
             context,
             background,
             project_manager: weak,
+            assembly: None,
         }))
     }
 
