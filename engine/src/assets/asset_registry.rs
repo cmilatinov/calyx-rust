@@ -318,6 +318,13 @@ impl AssetRegistry {
         self.load_by_id(id)
     }
 
+    /// Returns a typed cached asset without loading it from disk.
+    pub fn loaded_by_id<A: Asset + TypeUuid>(&self, id: Uuid) -> Option<Ref<A>> {
+        self.asset_cache()
+            .get(&id)
+            .and_then(|asset| asset.try_downcast::<A>())
+    }
+
     /// Reloads an asset by filesystem path, replacing the cached value.
     pub fn reload_by_path<A: Asset + TypeUuid>(&self, path: &Path) -> Result<Ref<A>, AssetError> {
         let id = self.asset_id_from_path(path).ok_or_else(|| {

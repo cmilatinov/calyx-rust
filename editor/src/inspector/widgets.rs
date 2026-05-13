@@ -1,6 +1,7 @@
 use egui;
 use egui::{Color32, DragValue, Frame, Id, Response, Shape, Stroke, StrokeKind, Ui, WidgetText};
-use engine::assets::{Asset, AssetAccess, AssetRef, AssetRegistry};
+use engine::assets::texture::Texture;
+use engine::assets::{Asset, AssetAccess, AssetMeta, AssetRef, AssetRegistry};
 use engine::component::ComponentID;
 use engine::scene::{GameObjectRef, Scene};
 use engine::utils::TypeUuid;
@@ -43,6 +44,11 @@ impl SearchSelectState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AssetSelectorFilter {
+    Texture2D,
+}
+
 #[allow(dead_code)]
 impl Widgets {
     pub fn asset_select_t<T: Asset + TypeUuid>(
@@ -59,11 +65,37 @@ impl Widgets {
         res
     }
 
+    pub fn asset_select_t_filtered<T: Asset + TypeUuid>(
+        ui: &mut Ui,
+        registry: &AssetRegistry,
+        id: impl std::hash::Hash,
+        type_uuid: Option<Uuid>,
+        filters: &[AssetSelectorFilter],
+        value: &mut AssetRef<T>,
+    ) -> Response {
+        let res = Self::asset_select_filtered(ui, registry, id, type_uuid, filters, value.id_mut());
+        if res.changed() {
+            value.clear_cache();
+        }
+        res
+    }
+
     pub fn asset_select(
         ui: &mut Ui,
         registry: &AssetRegistry,
         id: impl std::hash::Hash,
         type_uuid: Option<Uuid>,
+        value: &mut Uuid,
+    ) -> Response {
+        Self::asset_select_filtered(ui, registry, id, type_uuid, &[], value)
+    }
+
+    pub fn asset_select_filtered(
+        ui: &mut Ui,
+        registry: &AssetRegistry,
+        id: impl std::hash::Hash,
+        type_uuid: Option<Uuid>,
+        filters: &[AssetSelectorFilter],
         value: &mut Uuid,
     ) -> Response {
         lazy_static! {
@@ -85,6 +117,11 @@ impl Widgets {
                 Self::search_select_contents(ui, id, &mut state, |ui, search| {
                     let mut assets = Vec::new();
                     registry.search_assets(search, type_uuid, &mut assets);
+                    assets.retain(|asset| {
+                        filters
+                            .iter()
+                            .all(|filter| Self::asset_matches_filter(registry, asset, *filter))
+                    });
                     if search.is_empty() {
                         changed |= ui.selectable_value(value, Uuid::nil(), "None").changed();
                     }
@@ -124,6 +161,29 @@ impl Widgets {
             .show(ui);
         ui.add_space(6.0);
         add_options(ui, state.search.as_str());
+    }
+
+    fn asset_matches_filter(
+        registry: &AssetRegistry,
+        asset: &AssetMeta,
+        filter: AssetSelectorFilter,
+    ) -> bool {
+        match filter {
+            AssetSelectorFilter::Texture2D => Self::asset_is_texture_2d(registry, asset),
+        }
+    }
+
+    fn asset_is_texture_2d(registry: &AssetRegistry, asset: &AssetMeta) -> bool {
+        if asset.type_uuid != Texture::type_uuid() {
+            return false;
+        }
+        if asset.path.is_some() {
+            return true;
+        }
+        registry
+            .loaded_by_id::<Texture>(asset.id)
+            .map(|texture| texture.read().is_2d())
+            .unwrap_or(false)
     }
 
     pub fn game_object_select(
@@ -299,5 +359,71 @@ impl Widgets {
                     add_contents.borrow_mut()(PropChildrenPhase::Children { ui });
                 },
             );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui_wgpu::wgpu;
+
+    #[test]
+    fn texture_2d_filter_accepts_loaded_2d_texture() {
+        let context = engine::test_support::test_asset_context_with_assets(Vec::new());
+        let render_context = context.render_context.clone();
+        let texture = context
+            .registries
+            .assets
+            .read()
+            .create(
+                "test_texture_2d".into(),
+                Texture::solid_color_2d(render_context, "test_texture_2d", [255, 255, 255, 255]),
+            )
+            .unwrap();
+        let registry = context.registries.assets.read();
+        let meta = registry.asset_meta_from_id(texture.id()).unwrap();
+
+        assert!(Widgets::asset_is_texture_2d(&registry, &meta));
+    }
+
+    #[test]
+    fn texture_2d_filter_rejects_loaded_cube_texture() {
+        let context = engine::test_support::test_asset_context_with_assets(Vec::new());
+        let render_context = context.render_context.clone();
+        let texture = context
+            .registries
+            .assets
+            .read()
+            .create(
+                "test_texture_cube".into(),
+                Texture::new(
+                    render_context,
+                    &wgpu::TextureDescriptor {
+                        label: Some("test_texture_cube"),
+                        size: wgpu::Extent3d {
+                            width: 16,
+                            height: 16,
+                            depth_or_array_layers: 6,
+                        },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                        view_formats: &[],
+                    },
+                    None,
+                    Some(wgpu::TextureViewDescriptor {
+                        dimension: Some(wgpu::TextureViewDimension::Cube),
+                        ..Default::default()
+                    }),
+                    false,
+                ),
+            )
+            .unwrap();
+        let registry = context.registries.assets.read();
+        let meta = registry.asset_meta_from_id(texture.id()).unwrap();
+
+        assert!(!Widgets::asset_is_texture_2d(&registry, &meta));
     }
 }
