@@ -1,3 +1,4 @@
+pub mod game_state;
 mod tank;
 
 use engine::reflect::type_registry::TypeRegistry;
@@ -15,6 +16,7 @@ pub extern "C" fn plugin_main(registry: &mut TypeRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game_state::ComponentGameState;
     use crate::tank::ComponentTankController;
     use engine::component::ComponentTransform;
 
@@ -29,6 +31,7 @@ mod tests {
         assert!(registry
             .type_registration::<ComponentTankController>()
             .is_some());
+        assert!(registry.type_registration::<ComponentGameState>().is_some());
         assert!(registry.type_registration::<ComponentTransform>().is_none());
     }
 }
