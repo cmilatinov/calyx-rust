@@ -20,6 +20,7 @@ pub struct SceneManager {
     simulation_running: bool,
     current_scene: Scene,
     current_scene_meta: SceneMeta,
+    current_scene_revision: u64,
     simulation_scene: Option<Scene>,
     default_scene: ReadOnlyRef<Scene>,
     asset_registry: ReadOnlyRef<AssetRegistry>,
@@ -44,6 +45,7 @@ impl SceneManager {
             simulation_running: false,
             current_scene,
             current_scene_meta: Default::default(),
+            current_scene_revision: 0,
             simulation_scene: None,
             default_scene,
             asset_registry: asset_registry_ref,
@@ -55,6 +57,7 @@ impl SceneManager {
         self.stop_simulation();
         self.current_scene = self.asset_registry.read().new_empty_scene();
         self.current_scene_meta = Default::default();
+        self.current_scene_revision += 1;
         log::info!("Loaded empty scene");
     }
 
@@ -65,6 +68,7 @@ impl SceneManager {
         let snapshot = self.default_scene.read().snapshot();
         self.current_scene = self.current_scene.restore_snapshot(snapshot);
         self.current_scene_meta = Default::default();
+        self.current_scene_revision += 1;
         log::info!("Loaded default scene");
     }
 
@@ -81,8 +85,15 @@ impl SceneManager {
             };
             log::info!("Loaded scene asset {} ({})", asset_meta.name, asset_meta.id);
         } else {
+            self.current_scene_meta = Default::default();
             log::info!("Loaded scene from in-memory asset reference");
         }
+        self.current_scene_revision += 1;
+    }
+
+    /// Updates the current scene source file after a successful save.
+    pub fn set_current_scene_file(&mut self, file: Option<PathBuf>) {
+        self.current_scene_meta.file = file;
     }
 
     /// Drops the simulation copy without modifying the authoring scene.
@@ -168,6 +179,11 @@ impl SceneManager {
     /// Returns metadata about the current authoring scene.
     pub fn current_scene_meta(&self) -> &SceneMeta {
         &self.current_scene_meta
+    }
+
+    /// Returns a monotonically increasing revision for scene load/reset events.
+    pub fn current_scene_revision(&self) -> u64 {
+        self.current_scene_revision
     }
 
     /// Returns the current authoring scene.

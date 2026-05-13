@@ -1,4 +1,5 @@
 use std::env;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::BufWriter;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -75,6 +76,48 @@ pub struct EditorAppState {
     pub game_size: (f32, f32),
     pub gizmo_modes: EnumSet<GizmoMode>,
     pub gizmo_orientation: GizmoOrientation,
+    active_scene: ActiveSceneState,
+    window_title: String,
+}
+
+#[derive(Debug, Default)]
+struct ActiveSceneState {
+    file: Option<PathBuf>,
+    scene_revision: u64,
+    saved_hash: Option<u64>,
+    dirty: bool,
+}
+
+impl ActiveSceneState {
+    fn sync_loaded_scene(&mut self, file: Option<PathBuf>, scene_revision: u64, scene_hash: u64) {
+        if self.file != file || self.scene_revision != scene_revision || self.saved_hash.is_none() {
+            self.file = file;
+            self.scene_revision = scene_revision;
+            self.saved_hash = Some(scene_hash);
+            self.dirty = false;
+            return;
+        }
+        self.dirty = self.saved_hash.is_some_and(|hash| hash != scene_hash);
+    }
+
+    fn mark_saved(&mut self, file: Option<PathBuf>, scene_revision: u64, scene_hash: u64) {
+        self.file = file;
+        self.scene_revision = scene_revision;
+        self.saved_hash = Some(scene_hash);
+        self.dirty = false;
+    }
+
+    fn scene_label(&self) -> String {
+        self.file
+            .as_ref()
+            .map(|file| file.display().to_string())
+            .unwrap_or_else(|| "Untitled Scene".into())
+    }
+
+    fn title(&self, project_name: &str) -> String {
+        let dirty = if self.dirty { " *" } else { "" };
+        format!("Calyx - {project_name} - {}{dirty}", self.scene_label())
+    }
 }
 
 impl EditorAppState {
@@ -92,6 +135,8 @@ impl EditorAppState {
             game_response: Default::default(),
             gizmo_modes: GizmoMode::all_translate(),
             gizmo_orientation: GizmoOrientation::Global,
+            active_scene: Default::default(),
+            window_title: String::new(),
             scene_renderer: SceneRenderer::new(
                 &asset_context,
                 SceneRendererOptions {
@@ -222,6 +267,7 @@ impl eframe::App for EditorApp {
 
         self.update_game(ctx);
         self.render_view_outline(frame);
+        self.update_window_title(ctx);
 
         self.fps_counter += 1;
         if self.state.game.resources.time().timer("fps") >= 1.0 {
@@ -260,6 +306,32 @@ impl EditorApp {
             scenes, resources, ..
         } = &mut self.state.game;
         scenes.update(&assets.registries, resources, &input);
+    }
+
+    fn update_window_title(&mut self, ctx: &egui::Context) {
+        let scene_hash = Self::scene_content_hash(self.state.game.scenes.current_scene());
+        let scene_meta = self.state.game.scenes.current_scene_meta();
+        self.state.active_scene.sync_loaded_scene(
+            scene_meta.file.clone(),
+            self.state.game.scenes.current_scene_revision(),
+            scene_hash,
+        );
+
+        let project_name = self.project_manager.read().current_project().name().clone();
+        let title = self.state.active_scene.title(project_name.as_str());
+        if self.state.window_title != title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.state.window_title = title;
+        }
+    }
+
+    fn scene_content_hash(scene: &Scene) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        match serde_json::to_vec(scene) {
+            Ok(data) => data.hash(&mut hasher),
+            Err(error) => error.to_string().hash(&mut hasher),
+        }
+        hasher.finish()
     }
 
     fn render_view_outline(&mut self, frame: &mut eframe::Frame) {
@@ -395,6 +467,12 @@ impl EditorApp {
 
     fn new_interaction(&mut self) {
         self.state.game.scenes.load_default_scene();
+        let scene_hash = Self::scene_content_hash(self.state.game.scenes.current_scene());
+        self.state.active_scene.mark_saved(
+            None,
+            self.state.game.scenes.current_scene_revision(),
+            scene_hash,
+        );
         log::info!("Created new scene from default scene");
     }
 
@@ -419,6 +497,12 @@ impl EditorApp {
             }
         };
         self.state.game.scenes.load_scene(scene.readonly());
+        let scene_hash = Self::scene_content_hash(self.state.game.scenes.current_scene());
+        self.state.active_scene.mark_saved(
+            self.state.game.scenes.current_scene_meta().file.clone(),
+            self.state.game.scenes.current_scene_revision(),
+            scene_hash,
+        );
         let object_count = self.state.game.scenes.current_scene().objects().count();
         let message = format!("Opened scene {} ({} objects)", file.display(), object_count);
         log::info!("{message}");
@@ -429,7 +513,18 @@ impl EditorApp {
             None => return;
             let file = self.scene_save_file(save_as);
         );
-        Self::save_scene(file, self.state.game.scenes.current_scene());
+        if Self::save_scene(file.clone(), self.state.game.scenes.current_scene()) {
+            self.state
+                .game
+                .scenes
+                .set_current_scene_file(Some(file.clone()));
+            let scene_hash = Self::scene_content_hash(self.state.game.scenes.current_scene());
+            self.state.active_scene.mark_saved(
+                Some(file),
+                self.state.game.scenes.current_scene_revision(),
+                scene_hash,
+            );
+        }
     }
 
     fn pick_scene_open_file() -> Option<PathBuf> {
@@ -456,7 +551,7 @@ impl EditorApp {
         Self::pick_scene_save_file()
     }
 
-    fn save_scene(file: PathBuf, scene: &Scene) {
+    fn save_scene(file: PathBuf, scene: &Scene) -> bool {
         let object_count = scene.objects().count();
         let display_path = file.display().to_string();
         let Ok(file) = std::fs::OpenOptions::new()
@@ -466,12 +561,18 @@ impl EditorApp {
             .open(&file)
         else {
             log::error!("Failed to open scene file for save: {display_path}");
-            return;
+            return false;
         };
         let writer = BufWriter::new(file);
         match serde_json::to_writer_pretty(writer, scene) {
-            Ok(()) => log::info!("Saved scene {display_path} ({object_count} objects)"),
-            Err(error) => log::error!("Failed to save scene {display_path}: {error}"),
+            Ok(()) => {
+                log::info!("Saved scene {display_path} ({object_count} objects)");
+                true
+            }
+            Err(error) => {
+                log::error!("Failed to save scene {display_path}: {error}");
+                false
+            }
         }
     }
 
@@ -578,6 +679,39 @@ impl EditorApp {
 
     fn is_simulating(&self) -> bool {
         self.state.game.scenes.is_simulating()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ActiveSceneState;
+    use std::path::PathBuf;
+
+    #[test]
+    fn active_scene_title_uses_untitled_fallback_and_dirty_marker() {
+        let mut state = ActiveSceneState::default();
+
+        state.sync_loaded_scene(None, 0, 10);
+        assert_eq!(state.title("Sandbox"), "Calyx - Sandbox - Untitled Scene");
+
+        state.sync_loaded_scene(None, 0, 20);
+        assert_eq!(state.title("Sandbox"), "Calyx - Sandbox - Untitled Scene *");
+    }
+
+    #[test]
+    fn active_scene_title_resets_dirty_state_after_save() {
+        let mut state = ActiveSceneState::default();
+        let file = PathBuf::from("assets/scene.cxscene");
+
+        state.sync_loaded_scene(Some(file.clone()), 1, 10);
+        state.sync_loaded_scene(Some(file.clone()), 1, 20);
+        assert!(state.dirty);
+
+        state.mark_saved(Some(file), 1, 20);
+        assert_eq!(
+            state.title("Sandbox"),
+            "Calyx - Sandbox - assets/scene.cxscene"
+        );
     }
 }
 
