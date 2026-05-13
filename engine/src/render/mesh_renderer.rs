@@ -349,6 +349,7 @@ impl MeshRenderer {
 mod tests {
     use super::*;
     use crate::assets::material::Material;
+    use crate::assets::Asset;
     use crate::test_utils::test_asset_context_with_assets;
     use std::path::PathBuf;
     use uuid::Uuid;
@@ -395,5 +396,29 @@ mod tests {
 
         assert!(renderer.material_bind_group_cache.contains_key(&live_id));
         assert!(!renderer.material_bind_group_cache.contains_key(&stale_id));
+    }
+
+    #[test]
+    fn object_id_shader_builds_pipeline_with_skinning_path() {
+        let context = test_asset_context_with_assets(vec![assets_path()]);
+        let read_only_context = context.lock_read();
+        let mut shader = Shader::from_file(
+            &read_only_context,
+            &assets_path().join("shaders/object_id.wgsl"),
+        )
+        .expect("object id shader should load")
+        .asset;
+        let options = PipelineOptions::builder()
+            .samples(1)
+            .fragment_targets(vec![Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::R32Uint,
+                blend: None,
+                write_mask: wgpu::ColorWrites::RED,
+            })])
+            .build();
+
+        shader.build_pipeline(&options);
+
+        assert!(shader.get_pipeline(&options).is_some());
     }
 }
