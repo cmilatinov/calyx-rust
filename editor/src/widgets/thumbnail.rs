@@ -62,6 +62,21 @@ pub struct ThumbnailImage {
     pub rgba: Vec<u8>,
 }
 
+impl ThumbnailImage {
+    fn expected_rgba_len(&self) -> Option<usize> {
+        let pixels = (self.width as usize).checked_mul(self.height as usize)?;
+        pixels.checked_mul(4)
+    }
+
+    pub fn is_valid_rgba(&self) -> bool {
+        self.width > 0
+            && self.height > 0
+            && self
+                .expected_rgba_len()
+                .is_some_and(|expected| self.rgba.len() == expected)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ThumbnailStatus {
     Missing,
@@ -132,7 +147,19 @@ impl ThumbnailPipeline {
     }
 
     pub fn complete(&mut self, key: ThumbnailKey, image: ThumbnailImage) {
-        self.statuses.insert(key, ThumbnailStatus::Ready(image));
+        if image.is_valid_rgba() {
+            self.statuses.insert(key, ThumbnailStatus::Ready(image));
+        } else {
+            self.fail(
+                key,
+                format!(
+                    "invalid thumbnail image payload: {}x{} has {} RGBA bytes",
+                    image.width,
+                    image.height,
+                    image.rgba.len()
+                ),
+            );
+        }
     }
 
     pub fn fail(&mut self, key: ThumbnailKey, message: impl Into<String>) {
@@ -227,5 +254,28 @@ mod tests {
                 message: "regenerate failed".into()
             }
         );
+    }
+
+    #[test]
+    fn complete_rejects_invalid_rgba_payload() {
+        let mut pipeline = ThumbnailPipeline::default();
+        let request = request(1);
+        let key = request.key();
+        pipeline.request(request, ThumbnailPriority::Normal);
+        pipeline.start_next();
+
+        pipeline.complete(
+            key,
+            ThumbnailImage {
+                width: 2,
+                height: 2,
+                rgba: vec![255, 0, 255, 255],
+            },
+        );
+
+        assert!(matches!(
+            pipeline.status(key),
+            ThumbnailStatus::Failed { message } if message.contains("invalid thumbnail image payload")
+        ));
     }
 }
