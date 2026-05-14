@@ -54,6 +54,18 @@ impl Panel for PanelInspector {
                         {
                             let mut entity_components = HashSet::new();
                             let mut components_to_remove = HashSet::new();
+                            let component_registry_ref =
+                                state.game.assets.registries.components.clone();
+                            let component_registry = component_registry_ref.read();
+                            if let Some(entry) =
+                                state.game.scenes.simulation_scene().entry(game_object)
+                            {
+                                for (type_id, component) in component_registry.components() {
+                                    if component.get_instance(&entry).is_some() {
+                                        entity_components.insert(*type_id);
+                                    }
+                                }
+                            }
 
                             self.add_component_button_ui(
                                 ui,
@@ -63,9 +75,6 @@ impl Panel for PanelInspector {
                                 game_object,
                             );
 
-                            let component_registry_ref =
-                                state.game.assets.registries.components.clone();
-                            let component_registry = component_registry_ref.read();
                             for (type_id, component) in component_registry.components() {
                                 let Some(instance) = (unsafe {
                                     state
