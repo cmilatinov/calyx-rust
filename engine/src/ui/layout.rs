@@ -289,6 +289,14 @@ fn layout_flex(
     }
     let remaining = (main_available - fixed_total - gap_total).max(0.0);
     let used_main = fixed_total + gap_total + if flex_total > 0.0 { remaining } else { 0.0 };
+    let space_between = if parent_style.justify_content == JustifyContent::SpaceBetween
+        && count > 1
+        && flex_total <= 0.0
+    {
+        (main_available - used_main).max(0.0) / count.saturating_sub(1) as f32
+    } else {
+        0.0
+    };
     let mut cursor = match parent_style.justify_content {
         JustifyContent::Center => (main_available - used_main).max(0.0) * 0.5,
         JustifyContent::End => (main_available - used_main).max(0.0),
@@ -371,7 +379,7 @@ fn layout_flex(
             } else {
                 UiSize::new(cross, main)
             };
-            cursor += main + parent_style.gap;
+            cursor += main + parent_style.gap + space_between;
             layout_node(
                 arena,
                 child,

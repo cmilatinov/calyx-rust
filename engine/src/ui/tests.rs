@@ -60,6 +60,39 @@ fn row_layout_applies_flex_gap_padding_and_constraints() {
 }
 
 #[test]
+fn row_layout_distributes_space_between_children() {
+    let theme = Theme::default();
+    let mut runtime = UiRuntime::default();
+    let mut ui = UiArena::default();
+    let first = ui
+        .sized_box()
+        .id(&mut ui, "first")
+        .width(&mut ui, UiLength::Px(20.0))
+        .height(&mut ui, UiLength::Px(10.0));
+    let second = ui
+        .sized_box()
+        .id(&mut ui, "second")
+        .width(&mut ui, UiLength::Px(20.0))
+        .height(&mut ui, UiLength::Px(10.0));
+    let third = ui
+        .sized_box()
+        .id(&mut ui, "third")
+        .width(&mut ui, UiLength::Px(20.0))
+        .height(&mut ui, UiLength::Px(10.0));
+    let root = ui
+        .row()
+        .id(&mut ui, "root")
+        .justify_content(&mut ui, JustifyContent::SpaceBetween)
+        .children(&mut ui, [first, second, third]);
+
+    let frame = runtime.frame(&ui, root, viewport(200.0, 40.0), UiInput::default(), &theme);
+
+    assert_eq!(node_rect(&frame, "first").min.x, 0.0);
+    assert_eq!(node_rect(&frame, "second").min.x, 90.0);
+    assert_eq!(node_rect(&frame, "third").min.x, 180.0);
+}
+
+#[test]
 fn style_resolution_applies_tokens_class_responsive_and_state_overrides() {
     let mut styles = StyleRegistry::default();
     styles.insert(
