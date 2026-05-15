@@ -36,6 +36,7 @@ pub struct UiEventRecord {
 pub struct UiInput {
     pub pointer_position: Option<UiPoint>,
     pub pointer_down: bool,
+    pub delta_time: f32,
 }
 
 /// Per-element response for the current frame.

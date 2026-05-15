@@ -8,9 +8,22 @@ fn viewport(width: f32, height: f32) -> UiRect {
 }
 
 fn pointer(x: f32, y: f32, down: bool) -> UiInput {
+    pointer_dt(x, y, down, 0.0)
+}
+
+fn pointer_dt(x: f32, y: f32, down: bool, delta_time: f32) -> UiInput {
     UiInput {
         pointer_position: Some(UiPoint::new(x, y)),
         pointer_down: down,
+        delta_time,
+    }
+}
+
+fn no_pointer(delta_time: f32) -> UiInput {
+    UiInput {
+        pointer_position: None,
+        pointer_down: false,
+        delta_time,
     }
 }
 
@@ -133,6 +146,72 @@ fn style_resolution_applies_tokens_class_responsive_and_state_overrides() {
     assert_eq!(panel.style.padding, EdgeInsets::all(2.0));
     assert_eq!(panel.style.background, theme.colors.hover);
     assert_eq!(panel.style.radius, CornerRadius::left(6.0));
+}
+
+#[test]
+fn state_style_transitions_blend_in_and_out_over_time() {
+    let theme = Theme::default();
+    let mut runtime = UiRuntime::default();
+    let mut ui = UiArena::default();
+    let base = UiColor::rgba(10, 20, 30, 255);
+    let hover = UiColor::rgba(110, 120, 130, 255);
+    let target_transform = UiTransform::tilt_degrees(0.0, 12.0);
+    let root = ui
+        .container()
+        .id(&mut ui, "panel")
+        .background(&mut ui, base)
+        .transition_duration(&mut ui, 0.1)
+        .width(&mut ui, UiLength::Px(100.0))
+        .height(&mut ui, UiLength::Px(50.0))
+        .hover_style(
+            &mut ui,
+            StylePatch::default()
+                .background(hover)
+                .transform(target_transform),
+        );
+
+    let entering = runtime.frame(
+        &ui,
+        root,
+        viewport(200.0, 100.0),
+        pointer_dt(10.0, 10.0, false, 0.05),
+        &theme,
+    );
+    let entering_style = &entering
+        .layout
+        .find(&ElementId::from("panel"))
+        .unwrap()
+        .style;
+    assert!(entering_style.background.r > base.r);
+    assert!(entering_style.background.r < hover.r);
+    assert!(entering_style.transform.rotate_y > 0.0);
+    assert!(entering_style.transform.rotate_y < target_transform.rotate_y);
+
+    let entered = runtime.frame(
+        &ui,
+        root,
+        viewport(200.0, 100.0),
+        pointer_dt(10.0, 10.0, false, 0.05),
+        &theme,
+    );
+    let entered_style = &entered
+        .layout
+        .find(&ElementId::from("panel"))
+        .unwrap()
+        .style;
+    assert_eq!(entered_style.background, hover);
+    assert!((entered_style.transform.rotate_y - target_transform.rotate_y).abs() < 0.001);
+
+    let leaving = runtime.frame(&ui, root, viewport(200.0, 100.0), no_pointer(0.05), &theme);
+    let leaving_style = &leaving
+        .layout
+        .find(&ElementId::from("panel"))
+        .unwrap()
+        .style;
+    assert!(leaving_style.background.r > base.r);
+    assert!(leaving_style.background.r < hover.r);
+    assert!(leaving_style.transform.rotate_y > 0.0);
+    assert!(leaving_style.transform.rotate_y < target_transform.rotate_y);
 }
 
 #[test]

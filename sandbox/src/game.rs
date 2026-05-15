@@ -110,6 +110,7 @@ impl GameApp {
                 .latest_pos()
                 .map(|position| UiPoint::new(position.x, position.y)),
             pointer_down: input.pointer.primary_down(),
+            delta_time: input.stable_dt,
         })
     }
 
@@ -158,7 +159,8 @@ impl GameApp {
             .border(Border::solid(cyan_dim, 1.0))
             .radius(CornerRadius::all(7.0))
             .padding(EdgeInsets::all(12.0))
-            .gap(8.0);
+            .gap(8.0)
+            .transition_duration(0.18);
         let hover_tilt = StylePatch::default()
             .background(panel_hover)
             .transform(UiTransform::tilt_degrees(3.0, -7.0));

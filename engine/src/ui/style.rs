@@ -39,6 +39,15 @@ impl UiColor {
     pub fn is_visible(self) -> bool {
         self.a > 0
     }
+
+    pub fn lerp(self, other: Self, amount: f32) -> Self {
+        Self {
+            r: lerp_u8(self.r, other.r, amount),
+            g: lerp_u8(self.g, other.g, amount),
+            b: lerp_u8(self.b, other.b, amount),
+            a: lerp_u8(self.a, other.a, amount),
+        }
+    }
 }
 
 /// Length unit used by layout.
@@ -108,6 +117,15 @@ impl CornerRadius {
             || self.bottom_right > 0.0
             || self.bottom_left > 0.0
     }
+
+    pub fn lerp(self, other: Self, amount: f32) -> Self {
+        Self {
+            top_left: lerp_f32(self.top_left, other.top_left, amount),
+            top_right: lerp_f32(self.top_right, other.top_right, amount),
+            bottom_right: lerp_f32(self.bottom_right, other.bottom_right, amount),
+            bottom_left: lerp_f32(self.bottom_left, other.bottom_left, amount),
+        }
+    }
 }
 
 /// Border style for UI rectangles.
@@ -134,6 +152,13 @@ impl Border {
 
     pub fn is_visible(self) -> bool {
         self.width > 0.0 && self.color.is_visible()
+    }
+
+    pub fn lerp(self, other: Self, amount: f32) -> Self {
+        Self {
+            color: self.color.lerp(other.color, amount),
+            width: lerp_f32(self.width, other.width, amount),
+        }
     }
 }
 
@@ -180,6 +205,16 @@ impl UiTransform {
             && self.rotate_y.abs() < f32::EPSILON
             && self.rotate_z.abs() < f32::EPSILON
             && (self.scale - 1.0).abs() < f32::EPSILON
+    }
+
+    pub fn lerp(self, other: Self, amount: f32) -> Self {
+        Self {
+            rotate_x: lerp_f32(self.rotate_x, other.rotate_x, amount),
+            rotate_y: lerp_f32(self.rotate_y, other.rotate_y, amount),
+            rotate_z: lerp_f32(self.rotate_z, other.rotate_z, amount),
+            scale: lerp_f32(self.scale, other.scale, amount),
+            perspective: lerp_f32(self.perspective, other.perspective, amount),
+        }
     }
 }
 
@@ -271,6 +306,7 @@ pub struct Style {
     pub justify_content: JustifyContent,
     pub clip: bool,
     pub transform: UiTransform,
+    pub transition_duration: f32,
 }
 
 impl Default for Style {
@@ -299,6 +335,39 @@ impl Default for Style {
             justify_content: JustifyContent::Start,
             clip: false,
             transform: UiTransform::identity(),
+            transition_duration: 0.0,
+        }
+    }
+}
+
+impl Style {
+    pub fn lerp(from: &Self, to: &Self, amount: f32) -> Self {
+        let amount = amount.clamp(0.0, 1.0);
+        Self {
+            width: pick_end(from.width, to.width, amount),
+            height: pick_end(from.height, to.height, amount),
+            min_width: pick_end(from.min_width, to.min_width, amount),
+            min_height: pick_end(from.min_height, to.min_height, amount),
+            max_width: pick_end(from.max_width, to.max_width, amount),
+            max_height: pick_end(from.max_height, to.max_height, amount),
+            margin: lerp_edge_insets(from.margin, to.margin, amount),
+            padding: lerp_edge_insets(from.padding, to.padding, amount),
+            gap: lerp_f32(from.gap, to.gap, amount),
+            background: from.background.lerp(to.background, amount),
+            text_color: from.text_color.lerp(to.text_color, amount),
+            border: from.border.lerp(to.border, amount),
+            radius: from.radius.lerp(to.radius, amount),
+            opacity: lerp_f32(from.opacity, to.opacity, amount),
+            font_size: lerp_f32(from.font_size, to.font_size, amount),
+            pointer_events: pick_end(from.pointer_events, to.pointer_events, amount),
+            flex_grow: lerp_f32(from.flex_grow, to.flex_grow, amount),
+            flex_shrink: lerp_f32(from.flex_shrink, to.flex_shrink, amount),
+            flex_basis: pick_end(from.flex_basis, to.flex_basis, amount),
+            align_items: pick_end(from.align_items, to.align_items, amount),
+            justify_content: pick_end(from.justify_content, to.justify_content, amount),
+            clip: pick_end(from.clip, to.clip, amount),
+            transform: from.transform.lerp(to.transform, amount),
+            transition_duration: lerp_f32(from.transition_duration, to.transition_duration, amount),
         }
     }
 }
@@ -329,6 +398,7 @@ pub struct StylePatch {
     pub justify_content: Option<JustifyContent>,
     pub clip: Option<bool>,
     pub transform: Option<UiTransform>,
+    pub transition_duration: Option<f32>,
 }
 
 impl StylePatch {
@@ -402,6 +472,9 @@ impl StylePatch {
         if other.transform.is_some() {
             self.transform = other.transform;
         }
+        if other.transition_duration.is_some() {
+            self.transition_duration = other.transition_duration;
+        }
     }
 
     pub fn apply_to(&self, style: &mut Style) {
@@ -473,6 +546,9 @@ impl StylePatch {
         }
         if let Some(value) = self.transform {
             style.transform = value;
+        }
+        if let Some(value) = self.transition_duration {
+            style.transition_duration = value.max(0.0);
         }
     }
 
@@ -551,6 +627,37 @@ impl StylePatch {
     pub fn transform(mut self, value: UiTransform) -> Self {
         self.transform = Some(value);
         self
+    }
+    pub fn transition_duration(mut self, value: f32) -> Self {
+        self.transition_duration = Some(value);
+        self
+    }
+}
+
+fn lerp_f32(from: f32, to: f32, amount: f32) -> f32 {
+    from + (to - from) * amount
+}
+
+fn lerp_u8(from: u8, to: u8, amount: f32) -> u8 {
+    lerp_f32(from as f32, to as f32, amount)
+        .round()
+        .clamp(0.0, 255.0) as u8
+}
+
+fn lerp_edge_insets(from: EdgeInsets, to: EdgeInsets, amount: f32) -> EdgeInsets {
+    EdgeInsets {
+        top: lerp_f32(from.top, to.top, amount),
+        right: lerp_f32(from.right, to.right, amount),
+        bottom: lerp_f32(from.bottom, to.bottom, amount),
+        left: lerp_f32(from.left, to.left, amount),
+    }
+}
+
+fn pick_end<T: Copy>(from: T, to: T, amount: f32) -> T {
+    if amount >= 1.0 {
+        to
+    } else {
+        from
     }
 }
 

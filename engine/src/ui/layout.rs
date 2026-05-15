@@ -197,22 +197,46 @@ pub fn resolve_style(
             patch.apply_to(&mut style);
         }
     }
-    if node
-        .id
-        .as_ref()
-        .is_some_and(|id| state.hovered.contains(id))
-    {
-        node.hover_style.apply_to(&mut style);
-    }
-    if node
-        .id
-        .as_ref()
-        .is_some_and(|id| state.pressed.as_ref() == Some(id))
-    {
-        node.pressed_style.apply_to(&mut style);
+    if let Some(id) = node.id.as_ref() {
+        let hover_amount = if style.transition_duration <= f32::EPSILON {
+            if state.hovered.contains(id) {
+                1.0
+            } else {
+                0.0
+            }
+        } else {
+            state.hover_transition(id)
+        };
+        if hover_amount > 0.0 {
+            let base = style.clone();
+            let mut target = base.clone();
+            node.hover_style.apply_to(&mut target);
+            style = Style::lerp(&base, &target, ease_transition(hover_amount));
+        }
+
+        let pressed_amount = if style.transition_duration <= f32::EPSILON {
+            if state.pressed.as_ref() == Some(id) {
+                1.0
+            } else {
+                0.0
+            }
+        } else {
+            state.pressed_transition(id)
+        };
+        if pressed_amount > 0.0 {
+            let base = style.clone();
+            let mut target = base.clone();
+            node.pressed_style.apply_to(&mut target);
+            style = Style::lerp(&base, &target, ease_transition(pressed_amount));
+        }
     }
     style.opacity = style.opacity.clamp(0.0, 1.0);
     style
+}
+
+fn ease_transition(amount: f32) -> f32 {
+    let amount = amount.clamp(0.0, 1.0);
+    amount * amount * (3.0 - 2.0 * amount)
 }
 
 fn layout_flex(

@@ -2,10 +2,12 @@ use std::collections::{HashMap, HashSet};
 
 use super::events::{ElementResponse, EventPhase, PointerEventKind, UiEventRecord, UiInput};
 use super::geometry::UiRect;
-use super::layout::{hit_test_path, hover_hit_ids, layout_tree, LayoutNode};
+use super::layout::{hit_test_path, hover_hit_ids, layout_tree, resolve_style, LayoutNode};
 use super::paint::{collect_paint_commands, PaintCommand};
-use super::style::{StyleRegistry, Theme};
+use super::style::{ScreenClass, StyleRegistry, Theme};
 use super::widgets::{ElementId, UiArena, UiNodeHandle};
+
+const TRANSITION_EPSILON: f32 = 0.0001;
 
 /// Cross-frame interaction state for a UI tree.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -13,9 +15,21 @@ pub struct InteractionState {
     pub hovered: HashSet<ElementId>,
     pub pressed: Option<ElementId>,
     pub focused: Option<ElementId>,
+    hover_transition: HashMap<ElementId, f32>,
+    pressed_transition: HashMap<ElementId, f32>,
     captured: Option<ElementId>,
     previous_input: UiInput,
     drag_started: bool,
+}
+
+impl InteractionState {
+    pub fn hover_transition(&self, id: &ElementId) -> f32 {
+        self.hover_transition.get(id).copied().unwrap_or(0.0)
+    }
+
+    pub fn pressed_transition(&self, id: &ElementId) -> f32 {
+        self.pressed_transition.get(id).copied().unwrap_or(0.0)
+    }
 }
 
 /// Complete UI frame result.
@@ -153,6 +167,7 @@ impl UiRuntime {
             responses.entry(id.clone()).or_default().pressed = true;
         }
 
+        self.update_style_transitions(arena, root, viewport, theme, input.delta_time);
         self.state.previous_input = input;
         let layout = layout_tree(arena, root, viewport, theme, &self.styles, &self.state);
         let paint_commands = collect_paint_commands(arena, &layout);
@@ -191,6 +206,95 @@ impl UiRuntime {
             responses.entry(id.clone()).or_default().hovered = true;
         }
         self.state.hovered = next;
+    }
+
+    fn update_style_transitions(
+        &mut self,
+        arena: &UiArena,
+        root: UiNodeHandle,
+        viewport: UiRect,
+        theme: &Theme,
+        delta_time: f32,
+    ) {
+        let screen_class = ScreenClass::from_width(viewport.width());
+        let mut seen = HashSet::new();
+        self.update_node_transitions(
+            arena,
+            root,
+            theme,
+            screen_class,
+            delta_time.max(0.0),
+            &mut seen,
+        );
+        self.state
+            .hover_transition
+            .retain(|id, amount| seen.contains(id) && *amount > 0.0);
+        self.state
+            .pressed_transition
+            .retain(|id, amount| seen.contains(id) && *amount > 0.0);
+    }
+
+    fn update_node_transitions(
+        &mut self,
+        arena: &UiArena,
+        node: UiNodeHandle,
+        theme: &Theme,
+        screen_class: ScreenClass,
+        delta_time: f32,
+        seen: &mut HashSet<ElementId>,
+    ) {
+        let node_data = arena.node(node);
+        let id = node_data.id.clone();
+        let children = node_data.children.clone();
+
+        if let Some(id) = id {
+            seen.insert(id.clone());
+            let style = resolve_style(arena, node, theme, &self.styles, &self.state, screen_class);
+            update_transition_amount(
+                &mut self.state.hover_transition,
+                &id,
+                self.state.hovered.contains(&id),
+                delta_time,
+                style.transition_duration,
+            );
+            update_transition_amount(
+                &mut self.state.pressed_transition,
+                &id,
+                self.state.pressed.as_ref() == Some(&id),
+                delta_time,
+                style.transition_duration,
+            );
+        }
+
+        for child in children {
+            self.update_node_transitions(arena, child, theme, screen_class, delta_time, seen);
+        }
+    }
+}
+
+fn update_transition_amount(
+    transitions: &mut HashMap<ElementId, f32>,
+    id: &ElementId,
+    active: bool,
+    delta_time: f32,
+    duration: f32,
+) {
+    if duration <= TRANSITION_EPSILON {
+        transitions.remove(id);
+        return;
+    }
+
+    let current = transitions.get(id).copied().unwrap_or(0.0);
+    let step = delta_time / duration;
+    let next = if active {
+        (current + step).min(1.0)
+    } else {
+        (current - step).max(0.0)
+    };
+    if next > 0.0 {
+        transitions.insert(id.clone(), next);
+    } else {
+        transitions.remove(id);
     }
 }
 

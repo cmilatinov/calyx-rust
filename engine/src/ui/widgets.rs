@@ -355,6 +355,10 @@ impl UiNodeHandle {
         self.style_patch(arena, |style| style.justify_content = Some(value))
     }
 
+    pub fn transition_duration(self, arena: &mut UiArena, value: f32) -> Self {
+        self.style_patch(arena, |style| style.transition_duration = Some(value))
+    }
+
     fn style_patch(self, arena: &mut UiArena, update: impl FnOnce(&mut StylePatch)) -> Self {
         update(&mut arena.node_mut(self).style);
         self
