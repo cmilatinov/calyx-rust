@@ -143,39 +143,224 @@ impl GameApp {
             .height(ui, UiLength::Px(14.0))
     }
 
+    fn line(start: UiPoint, end: UiPoint, color: UiColor, width: f32) -> PaintCommand {
+        PaintCommand::Line {
+            start,
+            end,
+            color,
+            width,
+        }
+    }
+
+    fn push_panel_frame(
+        commands: &mut Vec<PaintCommand>,
+        rect: UiRect,
+        primary: UiColor,
+        danger: UiColor,
+        dim: UiColor,
+    ) {
+        let x = rect.min.x;
+        let y = rect.min.y;
+        let w = rect.width();
+        let h = rect.height();
+        let right = x + w;
+        let bottom = y + h;
+
+        commands.extend([
+            Self::line(UiPoint::new(x, y + 22.0), UiPoint::new(x, y), primary, 2.0),
+            Self::line(UiPoint::new(x, y), UiPoint::new(x + 42.0, y), primary, 2.0),
+            Self::line(
+                UiPoint::new(right - 86.0, y),
+                UiPoint::new(right - 18.0, y),
+                primary,
+                2.0,
+            ),
+            Self::line(
+                UiPoint::new(right - 18.0, y),
+                UiPoint::new(right, y + 18.0),
+                primary,
+                2.0,
+            ),
+            Self::line(
+                UiPoint::new(right, y + 18.0),
+                UiPoint::new(right, y + 46.0),
+                primary,
+                2.0,
+            ),
+            Self::line(
+                UiPoint::new(x, bottom - 36.0),
+                UiPoint::new(x, bottom),
+                dim,
+                1.0,
+            ),
+            Self::line(
+                UiPoint::new(x, bottom),
+                UiPoint::new(x + 70.0, bottom),
+                dim,
+                1.0,
+            ),
+            Self::line(
+                UiPoint::new(right - 56.0, bottom),
+                UiPoint::new(right, bottom),
+                danger,
+                2.0,
+            ),
+            Self::line(
+                UiPoint::new(right, bottom - 24.0),
+                UiPoint::new(right, bottom),
+                danger,
+                2.0,
+            ),
+            Self::line(
+                UiPoint::new(x + 18.0, y + 7.0),
+                UiPoint::new(x + 118.0, y + 7.0),
+                dim,
+                1.0,
+            ),
+            Self::line(
+                UiPoint::new(x + 20.0, bottom - 9.0),
+                UiPoint::new(right - 90.0, bottom - 9.0),
+                dim,
+                1.0,
+            ),
+        ]);
+    }
+
+    fn neon_hud_overlay(
+        viewport: UiRect,
+        status_width: f32,
+        weapon_size: UiSize,
+        target_size: UiSize,
+        yellow: UiColor,
+        red: UiColor,
+        cyan: UiColor,
+        dim: UiColor,
+    ) -> Vec<PaintCommand> {
+        let mut commands = Vec::new();
+        let status = UiRect::from_min_size(viewport.min, UiSize::new(status_width, 172.0));
+        let weapon = UiRect::from_min_size(
+            UiPoint::new(
+                viewport.min.x + 24.0,
+                viewport.min.y + viewport.height() - 182.0,
+            ),
+            weapon_size,
+        );
+        let target = UiRect::from_min_size(
+            UiPoint::new(
+                viewport.min.x + viewport.width() - target_size.width - 24.0,
+                viewport.min.y + viewport.height() - target_size.height - 24.0,
+            ),
+            target_size,
+        );
+        Self::push_panel_frame(&mut commands, status, yellow, red, dim);
+        Self::push_panel_frame(&mut commands, weapon, yellow, red, dim);
+        Self::push_panel_frame(&mut commands, target, red, yellow, dim);
+
+        let center_x = viewport.min.x + viewport.width() * 0.5;
+        let center_y = viewport.min.y + viewport.height() * 0.5;
+        commands.extend([
+            Self::line(
+                UiPoint::new(center_x - 122.0, center_y),
+                UiPoint::new(center_x - 48.0, center_y),
+                yellow,
+                2.0,
+            ),
+            Self::line(
+                UiPoint::new(center_x + 48.0, center_y),
+                UiPoint::new(center_x + 122.0, center_y),
+                yellow,
+                2.0,
+            ),
+            Self::line(
+                UiPoint::new(center_x, center_y - 92.0),
+                UiPoint::new(center_x, center_y - 48.0),
+                red,
+                2.0,
+            ),
+            Self::line(
+                UiPoint::new(center_x, center_y + 48.0),
+                UiPoint::new(center_x, center_y + 92.0),
+                red,
+                2.0,
+            ),
+            Self::line(
+                UiPoint::new(center_x - 24.0, center_y - 24.0),
+                UiPoint::new(center_x - 9.0, center_y - 36.0),
+                cyan,
+                1.0,
+            ),
+            Self::line(
+                UiPoint::new(center_x + 24.0, center_y + 24.0),
+                UiPoint::new(center_x + 9.0, center_y + 36.0),
+                cyan,
+                1.0,
+            ),
+            Self::line(
+                UiPoint::new(viewport.min.x + 26.0, viewport.min.y + 206.0),
+                UiPoint::new(viewport.min.x + 278.0, viewport.min.y + 206.0),
+                dim,
+                1.0,
+            ),
+            Self::line(
+                UiPoint::new(viewport.min.x + 26.0, viewport.min.y + 214.0),
+                UiPoint::new(viewport.min.x + 174.0, viewport.min.y + 214.0),
+                red,
+                1.0,
+            ),
+            Self::line(
+                UiPoint::new(viewport.max.x - 286.0, viewport.min.y + 58.0),
+                UiPoint::new(viewport.max.x - 94.0, viewport.min.y + 58.0),
+                yellow,
+                1.0,
+            ),
+            Self::line(
+                UiPoint::new(viewport.max.x - 94.0, viewport.min.y + 58.0),
+                UiPoint::new(viewport.max.x - 64.0, viewport.min.y + 88.0),
+                red,
+                1.0,
+            ),
+        ]);
+        commands
+    }
+
     fn sandbox_ui(ui: &mut UiArena, viewport: UiRect, fps: usize) -> UiNodeHandle {
-        let panel = UiColor::rgba(6, 13, 18, 218);
-        let panel_hover = UiColor::rgba(13, 31, 40, 236);
-        let cyan = UiColor::rgba(65, 231, 255, 235);
-        let cyan_dim = UiColor::rgba(45, 121, 137, 190);
-        let red = UiColor::rgba(239, 76, 84, 235);
-        let amber = UiColor::rgba(255, 195, 81, 240);
-        let green = UiColor::rgba(86, 228, 142, 235);
-        let text = UiColor::rgba(229, 247, 252, 255);
-        let muted = UiColor::rgba(124, 168, 181, 255);
+        let panel = UiColor::rgba(10, 10, 8, 232);
+        let panel_hover = UiColor::rgba(31, 28, 10, 244);
+        let cyan = UiColor::rgba(31, 229, 255, 230);
+        let cyan_dim = UiColor::rgba(24, 117, 130, 180);
+        let red = UiColor::rgba(255, 42, 66, 238);
+        let yellow = UiColor::rgba(252, 238, 33, 244);
+        let yellow_dim = UiColor::rgba(148, 130, 24, 200);
+        let green = UiColor::rgba(89, 255, 148, 232);
+        let text = UiColor::rgba(250, 249, 220, 255);
+        let muted = UiColor::rgba(176, 168, 113, 255);
+        let compact = ScreenClass::from_width(viewport.width()) == ScreenClass::Compact;
+        let status_width = if compact { 292.0 } else { 360.0 };
+        let weapon_size = UiSize::new(300.0, 158.0);
+        let target_size = UiSize::new(332.0, 126.0);
 
         let panel_style = StylePatch::default()
             .background(panel)
-            .border(Border::solid(cyan_dim, 1.0))
-            .radius(CornerRadius::all(7.0))
+            .border(Border::solid(yellow_dim, 1.0))
+            .radius(CornerRadius::all(2.0))
             .padding(EdgeInsets::all(12.0))
-            .gap(8.0)
+            .gap(7.0)
             .transition_duration(0.18);
         let hover_tilt = StylePatch::default()
             .background(panel_hover)
             .transform(UiTransform::tilt_degrees(3.0, -7.0));
 
-        let title = Self::hud_text(ui, "status-title", "MANTICORE // STATUS", cyan, 16.0)
-            .width(ui, UiLength::Px(210.0));
-        let fps_text = Self::hud_text(ui, "fps-text", format!("{fps} FPS"), muted, 12.0);
+        let title = Self::hud_text(ui, "status-title", "COMBAT OS // STATUS", yellow, 16.0)
+            .width(ui, UiLength::Px(224.0));
+        let fps_text = Self::hud_text(ui, "fps-text", format!("{fps:03} FPS"), panel, 12.0);
         let fps_pill = ui
             .container()
             .id(ui, "fps-pill")
-            .background(ui, UiColor::rgba(11, 28, 36, 245))
-            .border(ui, Border::solid(cyan_dim, 1.0))
-            .radius(ui, CornerRadius::all(12.0))
-            .padding(ui, EdgeInsets::symmetric(9.0, 3.0))
-            .width(ui, UiLength::Px(76.0))
+            .background(ui, yellow)
+            .border(ui, Border::solid(red, 1.0))
+            .radius(ui, CornerRadius::all(1.0))
+            .padding(ui, EdgeInsets::symmetric(8.0, 3.0))
+            .width(ui, UiLength::Px(82.0))
             .height(ui, UiLength::Px(24.0))
             .child(ui, fps_text);
         let status_spacer = ui.spacer().id(ui, "status-header-spacer");
@@ -188,23 +373,24 @@ impl GameApp {
             .child(ui, status_spacer)
             .child(ui, fps_pill);
 
-        let hull_label = Self::hud_text(ui, "hull-label", "HULL  76%", text, 13.0);
+        let hull_label = Self::hud_text(ui, "hull-label", "BIOFRAME INTEGRITY  76%", text, 13.0);
         let hull = Self::meter(
             ui,
             "hull-meter",
             0.76,
             green,
-            UiColor::rgba(18, 48, 33, 230),
-            UiColor::rgba(86, 228, 142, 160),
+            UiColor::rgba(25, 38, 21, 235),
+            UiColor::rgba(89, 255, 148, 180),
         );
-        let shield_label = Self::hud_text(ui, "shield-label", "SHIELD  42%", text, 13.0);
+        let shield_label =
+            Self::hud_text(ui, "shield-label", "ICE / SHIELD BUFFER  42%", red, 13.0);
         let shield = Self::meter(
             ui,
             "shield-meter",
             0.42,
             cyan,
-            UiColor::rgba(18, 45, 54, 230),
-            UiColor::rgba(65, 231, 255, 150),
+            UiColor::rgba(14, 36, 40, 235),
+            cyan_dim,
         );
         let status_panel = ui
             .column()
@@ -212,8 +398,8 @@ impl GameApp {
             .style(ui, panel_style.clone())
             .hover_style(ui, hover_tilt.clone())
             .pointer_events(ui, PointerEvents::Auto)
-            .width(ui, UiLength::Px(340.0))
-            .height(ui, UiLength::Px(164.0))
+            .width(ui, UiLength::Px(status_width))
+            .height(ui, UiLength::Px(172.0))
             .when(
                 ui,
                 ScreenClass::Compact,
@@ -225,12 +411,12 @@ impl GameApp {
             .child(ui, shield_label)
             .child(ui, shield);
 
-        let weapon_title = Self::hud_text(ui, "weapon-title", "RAIL CANNON", cyan, 15.0);
-        let ammo_big = Self::hud_text(ui, "ammo-count", "042", text, 34.0)
-            .width(ui, UiLength::Px(86.0))
-            .height(ui, UiLength::Px(46.0));
-        let reserve_ammo = Self::hud_text(ui, "reserve-ammo", "/ 120", muted, 15.0);
-        let fire_mode = Self::hud_text(ui, "fire-mode", "BURST ARM", amber, 12.0);
+        let weapon_title = Self::hud_text(ui, "weapon-title", "K-RAIL // SMART LINK", yellow, 15.0);
+        let ammo_big = Self::hud_text(ui, "ammo-count", "042", yellow, 38.0)
+            .width(ui, UiLength::Px(92.0))
+            .height(ui, UiLength::Px(50.0));
+        let reserve_ammo = Self::hud_text(ui, "reserve-ammo", "/120", muted, 15.0);
+        let fire_mode = Self::hud_text(ui, "fire-mode", "BURST_ARM // HOT", red, 12.0);
         let ammo_meta = ui
             .column()
             .id(ui, "ammo-meta")
@@ -247,11 +433,11 @@ impl GameApp {
             ui,
             "heat-meter",
             0.31,
-            amber,
-            UiColor::rgba(58, 42, 18, 230),
-            UiColor::rgba(255, 195, 81, 150),
+            yellow,
+            UiColor::rgba(58, 49, 12, 235),
+            UiColor::rgba(252, 238, 33, 160),
         );
-        let heat_label = Self::hud_text(ui, "heat-label", "HEAT", muted, 12.0);
+        let heat_label = Self::hud_text(ui, "heat-label", "THERMAL LOAD", muted, 12.0);
         let weapon_panel = ui
             .column()
             .id(ui, "weapon-panel")
@@ -263,12 +449,12 @@ impl GameApp {
                     .transform(UiTransform::tilt_degrees(-3.0, 8.0)),
             )
             .pointer_events(ui, PointerEvents::Auto)
-            .width(ui, UiLength::Px(278.0))
-            .height(ui, UiLength::Px(150.0))
+            .width(ui, UiLength::Px(weapon_size.width))
+            .height(ui, UiLength::Px(weapon_size.height))
             .margin(
                 ui,
                 EdgeInsets {
-                    top: viewport.height() - 174.0,
+                    top: viewport.height() - weapon_size.height - 24.0,
                     right: 0.0,
                     bottom: 0.0,
                     left: 24.0,
@@ -279,15 +465,15 @@ impl GameApp {
             .child(ui, heat_label)
             .child(ui, heat);
 
-        let target_title = Self::hud_text(ui, "target-title", "TARGET LOCK", red, 14.0);
-        let target_name = Self::hud_text(ui, "target-name", "SIMULATED ARMOR // 284m", text, 18.0);
+        let target_title = Self::hud_text(ui, "target-title", "TARGET ACQUIRED", red, 14.0);
+        let target_name = Self::hud_text(ui, "target-name", "HOSTILE DRONE // 284M", text, 18.0);
         let target_armor = Self::meter(
             ui,
             "target-armor",
             0.58,
             red,
             UiColor::rgba(58, 24, 28, 230),
-            UiColor::rgba(239, 76, 84, 150),
+            UiColor::rgba(255, 42, 66, 165),
         );
         let target_readout = ui
             .column()
@@ -295,15 +481,15 @@ impl GameApp {
             .style(ui, panel_style)
             .hover_style(ui, hover_tilt)
             .pointer_events(ui, PointerEvents::Auto)
-            .width(ui, UiLength::Px(312.0))
-            .height(ui, UiLength::Px(118.0))
+            .width(ui, UiLength::Px(target_size.width))
+            .height(ui, UiLength::Px(target_size.height))
             .margin(
                 ui,
                 EdgeInsets {
-                    top: viewport.height() - 142.0,
+                    top: viewport.height() - target_size.height - 24.0,
                     right: 0.0,
                     bottom: 0.0,
-                    left: viewport.width() - 336.0,
+                    left: viewport.width() - target_size.width - 24.0,
                 },
             )
             .child(ui, target_title)
@@ -311,7 +497,7 @@ impl GameApp {
             .child(ui, target_armor);
 
         let crosshair = ui
-            .crosshair(cyan, 34.0)
+            .crosshair(yellow, 34.0)
             .id(ui, "crosshair")
             .width(ui, UiLength::Px(34.0))
             .height(ui, UiLength::Px(34.0));
@@ -322,36 +508,18 @@ impl GameApp {
             .height(ui, UiLength::Px(viewport.height()))
             .pointer_events(ui, PointerEvents::None);
 
-        let center_x = viewport.min.x + viewport.width() * 0.5;
-        let center_y = viewport.min.y + viewport.height() * 0.5;
-        let brackets = ui
-            .custom_paint(vec![
-                PaintCommand::Line {
-                    start: UiPoint::new(center_x - 74.0, center_y - 44.0),
-                    end: UiPoint::new(center_x - 38.0, center_y - 44.0),
-                    color: cyan,
-                    width: 2.0,
-                },
-                PaintCommand::Line {
-                    start: UiPoint::new(center_x + 38.0, center_y - 44.0),
-                    end: UiPoint::new(center_x + 74.0, center_y - 44.0),
-                    color: cyan,
-                    width: 2.0,
-                },
-                PaintCommand::Line {
-                    start: UiPoint::new(center_x - 74.0, center_y + 44.0),
-                    end: UiPoint::new(center_x - 38.0, center_y + 44.0),
-                    color: cyan,
-                    width: 2.0,
-                },
-                PaintCommand::Line {
-                    start: UiPoint::new(center_x + 38.0, center_y + 44.0),
-                    end: UiPoint::new(center_x + 74.0, center_y + 44.0),
-                    color: cyan,
-                    width: 2.0,
-                },
-            ])
-            .id(ui, "target-brackets")
+        let overlay = ui
+            .custom_paint(Self::neon_hud_overlay(
+                viewport,
+                status_width,
+                weapon_size,
+                target_size,
+                yellow,
+                red,
+                cyan,
+                yellow_dim,
+            ))
+            .id(ui, "neon-frame-overlay")
             .pointer_events(ui, PointerEvents::None);
 
         ui.stack()
@@ -362,8 +530,8 @@ impl GameApp {
             .child(ui, status_panel)
             .child(ui, weapon_panel)
             .child(ui, target_readout)
+            .child(ui, overlay)
             .child(ui, crosshair_center)
-            .child(ui, brackets)
     }
 }
 
