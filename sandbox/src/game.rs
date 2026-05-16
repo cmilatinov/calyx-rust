@@ -257,11 +257,10 @@ impl GameApp {
             .pointer_events(ui, PointerEvents::None)
     }
 
-    fn neon_hud_overlay(
+    fn hud_overview_overlay(
         viewport: UiRect,
-        yellow: UiColor,
-        red: UiColor,
-        cyan: UiColor,
+        primary: UiColor,
+        bright: UiColor,
         dim: UiColor,
     ) -> Vec<PaintCommand> {
         let mut commands = Vec::new();
@@ -271,37 +270,37 @@ impl GameApp {
             Self::line(
                 UiPoint::new(center_x - 122.0, center_y),
                 UiPoint::new(center_x - 48.0, center_y),
-                yellow,
+                bright,
                 2.0,
             ),
             Self::line(
                 UiPoint::new(center_x + 48.0, center_y),
                 UiPoint::new(center_x + 122.0, center_y),
-                yellow,
+                bright,
                 2.0,
             ),
             Self::line(
                 UiPoint::new(center_x, center_y - 92.0),
                 UiPoint::new(center_x, center_y - 48.0),
-                red,
+                primary,
                 2.0,
             ),
             Self::line(
                 UiPoint::new(center_x, center_y + 48.0),
                 UiPoint::new(center_x, center_y + 92.0),
-                red,
+                primary,
                 2.0,
             ),
             Self::line(
                 UiPoint::new(center_x - 24.0, center_y - 24.0),
                 UiPoint::new(center_x - 9.0, center_y - 36.0),
-                cyan,
+                dim,
                 1.0,
             ),
             Self::line(
                 UiPoint::new(center_x + 24.0, center_y + 24.0),
                 UiPoint::new(center_x + 9.0, center_y + 36.0),
-                cyan,
+                dim,
                 1.0,
             ),
             Self::line(
@@ -313,19 +312,19 @@ impl GameApp {
             Self::line(
                 UiPoint::new(viewport.min.x + 26.0, viewport.min.y + 214.0),
                 UiPoint::new(viewport.min.x + 174.0, viewport.min.y + 214.0),
-                red,
+                primary,
                 1.0,
             ),
             Self::line(
                 UiPoint::new(viewport.max.x - 286.0, viewport.min.y + 58.0),
                 UiPoint::new(viewport.max.x - 94.0, viewport.min.y + 58.0),
-                yellow,
+                bright,
                 1.0,
             ),
             Self::line(
                 UiPoint::new(viewport.max.x - 94.0, viewport.min.y + 58.0),
                 UiPoint::new(viewport.max.x - 64.0, viewport.min.y + 88.0),
-                red,
+                dim,
                 1.0,
             ),
         ]);
@@ -333,192 +332,320 @@ impl GameApp {
     }
 
     fn sandbox_ui(ui: &mut UiArena, viewport: UiRect, fps: usize) -> UiNodeHandle {
-        let panel = UiColor::rgba(10, 10, 8, 232);
-        let cyan = UiColor::rgba(31, 229, 255, 230);
-        let cyan_dim = UiColor::rgba(24, 117, 130, 180);
-        let red = UiColor::rgba(255, 42, 66, 238);
-        let yellow = UiColor::rgba(252, 238, 33, 244);
-        let yellow_dim = UiColor::rgba(148, 130, 24, 200);
-        let green = UiColor::rgba(89, 255, 148, 232);
-        let text = UiColor::rgba(250, 249, 220, 255);
-        let muted = UiColor::rgba(176, 168, 113, 255);
+        let panel = UiColor::rgba(10, 10, 10, 190);
+        let panel_strong = UiColor::rgba(8, 8, 8, 226);
+        let primary = UiColor::rgba(232, 232, 228, 236);
+        let bright = UiColor::rgba(255, 255, 252, 255);
+        let dim = UiColor::rgba(138, 138, 136, 172);
+        let muted = UiColor::rgba(170, 170, 168, 232);
+        let black = UiColor::rgba(6, 6, 6, 244);
+        let green = UiColor::rgba(83, 191, 84, 238);
         let compact = ScreenClass::from_width(viewport.width()) == ScreenClass::Compact;
-        let status_width = if compact { 292.0 } else { 360.0 };
-        let weapon_size = UiSize::new(300.0, 158.0);
-        let target_size = UiSize::new(332.0, 126.0);
-        let status_rect = UiRect::from_min_size(viewport.min, UiSize::new(status_width, 172.0));
-        let weapon_rect = UiRect::from_min_size(
+        let status_size = UiSize::new(if compact { 210.0 } else { 240.0 }, 88.0);
+        let prompt_size = UiSize::new(if compact { 232.0 } else { 272.0 }, 42.0);
+        let vitals_size = UiSize::new(if compact { 276.0 } else { 318.0 }, 116.0);
+        let progress_size = UiSize::new(292.0, 54.0);
+        let speed_size = UiSize::new(156.0, 112.0);
+        let radio_size = UiSize::new(if compact { 264.0 } else { 296.0 }, 154.0);
+
+        let status_rect = UiRect::from_min_size(
+            UiPoint::new(viewport.min.x + 18.0, viewport.min.y + 20.0),
+            status_size,
+        );
+        let prompt_rect = UiRect::from_min_size(
+            UiPoint::new(
+                viewport.min.x + viewport.width() * 0.5 - prompt_size.width * 0.5,
+                viewport.min.y + 24.0,
+            ),
+            prompt_size,
+        );
+        let vitals_rect = UiRect::from_min_size(
             UiPoint::new(
                 viewport.min.x + 24.0,
-                viewport.min.y + viewport.height() - weapon_size.height - 24.0,
+                viewport.min.y + viewport.height() - vitals_size.height - 28.0,
             ),
-            weapon_size,
+            vitals_size,
         );
-        let target_rect = UiRect::from_min_size(
+        let progress_rect = UiRect::from_min_size(
             UiPoint::new(
-                viewport.min.x + viewport.width() - target_size.width - 24.0,
-                viewport.min.y + viewport.height() - target_size.height - 24.0,
+                viewport.min.x + viewport.width() * 0.5 - progress_size.width * 0.5,
+                viewport.min.y + viewport.height() - progress_size.height - 26.0,
             ),
-            target_size,
+            progress_size,
+        );
+        let speed_rect = UiRect::from_min_size(
+            UiPoint::new(
+                viewport.min.x + viewport.width() - speed_size.width - 34.0,
+                viewport.min.y + viewport.height() - speed_size.height - 36.0,
+            ),
+            speed_size,
+        );
+        let radio_rect = UiRect::from_min_size(
+            UiPoint::new(
+                viewport.min.x + viewport.width() - radio_size.width - 34.0,
+                viewport.min.y + 92.0,
+            ),
+            radio_size,
         );
 
         let panel_style = StylePatch::default()
             .background(panel)
-            .border(Border::solid(yellow_dim, 1.0))
+            .border(Border::solid(dim, 1.0))
             .radius(CornerRadius::none())
-            .padding(EdgeInsets::all(12.0))
-            .gap(7.0)
+            .padding(EdgeInsets::all(10.0))
+            .gap(6.0)
             .transition_duration(0.18);
         let hover_tilt = StylePatch::default().transform(UiTransform::tilt_degrees(3.0, -7.0));
-        let weapon_hover_tilt =
+        let reverse_hover_tilt =
             StylePatch::default().transform(UiTransform::tilt_degrees(-3.0, 8.0));
 
-        let title = Self::hud_text(ui, "status-title", "COMBAT OS // STATUS", yellow, 16.0)
-            .width(ui, UiLength::Px(224.0));
-        let fps_text = Self::hud_text(ui, "fps-text", format!("{fps:03} FPS"), panel, 12.0);
-        let fps_pill = ui
-            .container()
-            .id(ui, "fps-pill")
-            .background(ui, yellow)
-            .border(ui, Border::solid(red, 1.0))
-            .radius(ui, CornerRadius::none())
-            .padding(ui, EdgeInsets::symmetric(8.0, 3.0))
-            .width(ui, UiLength::Px(82.0))
-            .height(ui, UiLength::Px(24.0))
-            .child(ui, fps_text);
-        let status_spacer = ui.spacer().id(ui, "status-header-spacer");
-        let status_header = ui
-            .row()
-            .id(ui, "status-header")
-            .height(ui, UiLength::Px(28.0))
-            .gap(ui, 8.0)
-            .child(ui, title)
-            .child(ui, status_spacer)
-            .child(ui, fps_pill);
-
-        let hull_label = Self::hud_text(ui, "hull-label", "BIOFRAME INTEGRITY  76%", text, 13.0);
-        let hull = Self::meter(
-            ui,
-            "hull-meter",
-            0.76,
-            green,
-            UiColor::rgba(25, 38, 21, 235),
-            UiColor::rgba(89, 255, 148, 180),
-        );
-        let shield_label =
-            Self::hud_text(ui, "shield-label", "ICE / SHIELD BUFFER  42%", red, 13.0);
-        let shield = Self::meter(
-            ui,
-            "shield-meter",
-            0.42,
-            cyan,
-            UiColor::rgba(14, 36, 40, 235),
-            cyan_dim,
-        );
+        let brand = Self::hud_text(ui, "hud-brand", "CALYX", bright, 18.0);
+        let id_line = Self::hud_text(ui, "hud-id", "ID 0323    20:23", muted, 11.0);
+        let fps_line = Self::hud_text(ui, "hud-fps", format!("{fps:03} FPS"), dim, 11.0);
         let status_panel = ui
             .column()
             .id(ui, "status-panel")
             .style(ui, panel_style.clone())
             .hover_style(ui, hover_tilt.clone())
             .pointer_events(ui, PointerEvents::Auto)
-            .width(ui, UiLength::Px(status_width))
-            .height(ui, UiLength::Px(172.0))
-            .when(
-                ui,
-                ScreenClass::Compact,
-                StylePatch::default().width(UiLength::Px(292.0)),
-            )
-            .child(ui, status_header)
-            .child(ui, hull_label)
-            .child(ui, hull)
-            .child(ui, shield_label)
-            .child(ui, shield);
-
-        let weapon_title = Self::hud_text(ui, "weapon-title", "K-RAIL // SMART LINK", yellow, 15.0);
-        let ammo_big = Self::hud_text(ui, "ammo-count", "042", yellow, 38.0)
-            .width(ui, UiLength::Px(92.0))
-            .height(ui, UiLength::Px(50.0));
-        let reserve_ammo = Self::hud_text(ui, "reserve-ammo", "/120", muted, 15.0);
-        let fire_mode = Self::hud_text(ui, "fire-mode", "BURST_ARM // HOT", red, 12.0);
-        let ammo_meta = ui
-            .column()
-            .id(ui, "ammo-meta")
-            .gap(ui, 3.0)
-            .child(ui, reserve_ammo)
-            .child(ui, fire_mode);
-        let ammo_row = ui
-            .row()
-            .id(ui, "ammo-row")
-            .height(ui, UiLength::Px(50.0))
-            .child(ui, ammo_big)
-            .child(ui, ammo_meta);
-        let heat = Self::meter(
-            ui,
-            "heat-meter",
-            0.31,
-            yellow,
-            UiColor::rgba(58, 49, 12, 235),
-            UiColor::rgba(252, 238, 33, 160),
-        );
-        let heat_label = Self::hud_text(ui, "heat-label", "THERMAL LOAD", muted, 12.0);
-        let weapon_panel = ui
-            .column()
-            .id(ui, "weapon-panel")
-            .style(ui, panel_style.clone())
-            .hover_style(ui, weapon_hover_tilt.clone())
-            .pointer_events(ui, PointerEvents::Auto)
-            .width(ui, UiLength::Px(weapon_size.width))
-            .height(ui, UiLength::Px(weapon_size.height))
+            .width(ui, UiLength::Px(status_size.width))
+            .height(ui, UiLength::Px(status_size.height))
             .margin(
                 ui,
                 EdgeInsets {
-                    top: viewport.height() - weapon_size.height - 24.0,
+                    top: status_rect.min.y - viewport.min.y,
                     right: 0.0,
                     bottom: 0.0,
-                    left: 24.0,
+                    left: status_rect.min.x - viewport.min.x,
                 },
             )
-            .child(ui, weapon_title)
-            .child(ui, ammo_row)
-            .child(ui, heat_label)
-            .child(ui, heat);
+            .child(ui, brand)
+            .child(ui, id_line)
+            .child(ui, fps_line);
 
-        let target_title = Self::hud_text(ui, "target-title", "TARGET ACQUIRED", red, 14.0);
-        let target_name = Self::hud_text(ui, "target-name", "HOSTILE DRONE // 284M", text, 18.0);
-        let target_armor = Self::meter(
-            ui,
-            "target-armor",
-            0.58,
-            red,
-            UiColor::rgba(58, 24, 28, 230),
-            UiColor::rgba(255, 42, 66, 165),
-        );
-        let target_readout = ui
+        let key_text = Self::hud_text(ui, "prompt-key-text", "E", bright, 15.0);
+        let key_box = ui
+            .container()
+            .id(ui, "prompt-key")
+            .background(ui, black)
+            .border(ui, Border::solid(bright, 1.0))
+            .radius(ui, CornerRadius::none())
+            .padding(ui, EdgeInsets::symmetric(9.0, 4.0))
+            .width(ui, UiLength::Px(32.0))
+            .height(ui, UiLength::Px(30.0))
+            .child(ui, key_text);
+        let prompt_title = Self::hud_text(ui, "prompt-title", "GARAGE", bright, 12.0);
+        let prompt_hint =
+            Self::hud_text(ui, "prompt-hint", "Press [E] to open garage", muted, 10.0);
+        let prompt_copy = ui
             .column()
-            .id(ui, "target-panel")
+            .id(ui, "prompt-copy")
+            .gap(ui, 0.0)
+            .child(ui, prompt_title)
+            .child(ui, prompt_hint);
+        let prompt_panel = ui
+            .row()
+            .id(ui, "prompt-panel")
+            .style(
+                ui,
+                StylePatch::default()
+                    .background(panel_strong)
+                    .border(Border::solid(dim, 1.0))
+                    .radius(CornerRadius::none())
+                    .padding(EdgeInsets::symmetric(8.0, 6.0))
+                    .transition_duration(0.18),
+            )
+            .hover_style(ui, reverse_hover_tilt.clone())
+            .pointer_events(ui, PointerEvents::Auto)
+            .width(ui, UiLength::Px(prompt_size.width))
+            .height(ui, UiLength::Px(prompt_size.height))
+            .margin(
+                ui,
+                EdgeInsets {
+                    top: prompt_rect.min.y - viewport.min.y,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: prompt_rect.min.x - viewport.min.x,
+                },
+            )
+            .gap(ui, 8.0)
+            .child(ui, key_box)
+            .child(ui, prompt_copy);
+
+        let hp_label = Self::hud_text(ui, "hp-label", "HP", bright, 12.0);
+        let hp_meter = Self::meter(
+            ui,
+            "hp-meter",
+            1.0,
+            bright,
+            UiColor::rgba(32, 32, 32, 210),
+            dim,
+        );
+        let shield_label = Self::hud_text(ui, "shield-label", "SHIELD", muted, 12.0);
+        let shield_meter = Self::meter(
+            ui,
+            "shield-meter",
+            0.58,
+            bright,
+            UiColor::rgba(32, 32, 32, 210),
+            dim,
+        );
+        let cash_label = Self::hud_text(ui, "cash-label", "CASH  58", green, 12.0);
+        let vitals_panel = ui
+            .column()
+            .id(ui, "vitals-panel")
+            .style(ui, panel_style.clone())
+            .hover_style(ui, hover_tilt.clone())
+            .pointer_events(ui, PointerEvents::Auto)
+            .width(ui, UiLength::Px(vitals_size.width))
+            .height(ui, UiLength::Px(vitals_size.height))
+            .margin(
+                ui,
+                EdgeInsets {
+                    top: vitals_rect.min.y - viewport.min.y,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: vitals_rect.min.x - viewport.min.x,
+                },
+            )
+            .child(ui, hp_label)
+            .child(ui, hp_meter)
+            .child(ui, shield_label)
+            .child(ui, shield_meter)
+            .child(ui, cash_label);
+
+        let notification_title =
+            Self::hud_text(ui, "notification-title", "NOTIFICATION", bright, 12.0);
+        let notification_copy = Self::hud_text(
+            ui,
+            "notification-copy",
+            "You have been hired as a driver",
+            muted,
+            10.0,
+        );
+        let radio_title = Self::hud_text(ui, "radio-title", "Voice channel #1", bright, 11.0);
+        let radio_one = Self::hud_text(ui, "radio-one", "Victoria Adams", muted, 10.0);
+        let radio_two = Self::hud_text(ui, "radio-two", "Aiden Smith", muted, 10.0);
+        let radio_three = Self::hud_text(ui, "radio-three", "Carl John", muted, 10.0);
+        let radio_panel = ui
+            .column()
+            .id(ui, "radio-panel")
+            .style(ui, panel_style.clone())
+            .hover_style(ui, reverse_hover_tilt.clone())
+            .pointer_events(ui, PointerEvents::Auto)
+            .width(ui, UiLength::Px(radio_size.width))
+            .height(ui, UiLength::Px(radio_size.height))
+            .margin(
+                ui,
+                EdgeInsets {
+                    top: radio_rect.min.y - viewport.min.y,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: radio_rect.min.x - viewport.min.x,
+                },
+            )
+            .child(ui, notification_title)
+            .child(ui, notification_copy)
+            .child(ui, radio_title)
+            .child(ui, radio_one)
+            .child(ui, radio_two)
+            .child(ui, radio_three);
+
+        let street_key = Self::hud_text(ui, "street-key", "NE", bright, 13.0);
+        let street_name = Self::hud_text(ui, "street-name", "Burton", bright, 12.0);
+        let street_sub = Self::hud_text(ui, "street-sub", "Abe Milton Parkway", muted, 10.0);
+        let street_copy = ui
+            .column()
+            .id(ui, "street-copy")
+            .gap(ui, 0.0)
+            .child(ui, street_name)
+            .child(ui, street_sub);
+        let street_card = ui
+            .row()
+            .id(ui, "street-card")
+            .style(
+                ui,
+                StylePatch::default()
+                    .background(panel_strong)
+                    .border(Border::solid(dim, 1.0))
+                    .radius(CornerRadius::none())
+                    .padding(EdgeInsets::symmetric(8.0, 6.0)),
+            )
+            .gap(ui, 8.0)
+            .width(ui, UiLength::Px(150.0))
+            .height(ui, UiLength::Px(42.0))
+            .margin(
+                ui,
+                EdgeInsets {
+                    top: viewport.height() - 172.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: viewport.width() * 0.5 - 75.0,
+                },
+            )
+            .child(ui, street_key)
+            .child(ui, street_copy);
+
+        let progress_label = Self::hud_text(ui, "progress-label", "LOADING...", muted, 10.0);
+        let loading_bar = Self::meter(
+            ui,
+            "loading-meter",
+            0.72,
+            bright,
+            UiColor::rgba(34, 34, 34, 220),
+            dim,
+        );
+        let progress_panel = ui
+            .column()
+            .id(ui, "progress-panel")
+            .style(ui, panel_style.clone())
+            .hover_style(ui, reverse_hover_tilt.clone())
+            .pointer_events(ui, PointerEvents::Auto)
+            .width(ui, UiLength::Px(progress_size.width))
+            .height(ui, UiLength::Px(progress_size.height))
+            .margin(
+                ui,
+                EdgeInsets {
+                    top: progress_rect.min.y - viewport.min.y,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: progress_rect.min.x - viewport.min.x,
+                },
+            )
+            .child(ui, progress_label)
+            .child(ui, loading_bar);
+
+        let speed_value = Self::hud_text(ui, "speed-value", "173", bright, 36.0)
+            .width(ui, UiLength::Px(78.0))
+            .height(ui, UiLength::Px(44.0));
+        let speed_unit = Self::hud_text(ui, "speed-unit", "km/h", muted, 13.0);
+        let speed_meta = Self::hud_text(ui, "speed-meta", "0.7.3.5.12", dim, 10.0);
+        let speed_panel = ui
+            .column()
+            .id(ui, "speed-panel")
             .style(ui, panel_style)
             .hover_style(ui, hover_tilt.clone())
             .pointer_events(ui, PointerEvents::Auto)
-            .width(ui, UiLength::Px(target_size.width))
-            .height(ui, UiLength::Px(target_size.height))
+            .width(ui, UiLength::Px(speed_size.width))
+            .height(ui, UiLength::Px(speed_size.height))
             .margin(
                 ui,
                 EdgeInsets {
-                    top: target_rect.min.y - viewport.min.y,
+                    top: speed_rect.min.y - viewport.min.y,
                     right: 0.0,
                     bottom: 0.0,
-                    left: target_rect.min.x - viewport.min.x,
+                    left: speed_rect.min.x - viewport.min.x,
                 },
             )
-            .child(ui, target_title)
-            .child(ui, target_name)
-            .child(ui, target_armor);
+            .child(ui, speed_value)
+            .child(ui, speed_unit)
+            .child(ui, speed_meta);
 
         let crosshair = ui
-            .crosshair(yellow, 34.0)
+            .crosshair(bright, 28.0)
             .id(ui, "crosshair")
-            .width(ui, UiLength::Px(34.0))
-            .height(ui, UiLength::Px(34.0));
+            .width(ui, UiLength::Px(28.0))
+            .height(ui, UiLength::Px(28.0));
         let crosshair_center = ui
             .center(crosshair)
             .id(ui, "crosshair-center")
@@ -531,36 +658,64 @@ impl GameApp {
             "status-panel-frame",
             viewport,
             status_rect,
-            yellow,
-            red,
-            yellow_dim,
+            bright,
+            primary,
+            dim,
             hover_tilt.clone(),
         );
-        let weapon_frame = Self::panel_frame_node(
+        let prompt_frame = Self::panel_frame_node(
             ui,
-            "weapon-panel-frame",
+            "prompt-panel-frame",
             viewport,
-            weapon_rect,
-            yellow,
-            red,
-            yellow_dim,
-            weapon_hover_tilt,
+            prompt_rect,
+            bright,
+            primary,
+            dim,
+            reverse_hover_tilt.clone(),
         );
-        let target_frame = Self::panel_frame_node(
+        let vitals_frame = Self::panel_frame_node(
             ui,
-            "target-panel-frame",
+            "vitals-panel-frame",
             viewport,
-            target_rect,
-            red,
-            yellow,
-            yellow_dim,
+            vitals_rect,
+            bright,
+            primary,
+            dim,
+            hover_tilt.clone(),
+        );
+        let radio_frame = Self::panel_frame_node(
+            ui,
+            "radio-panel-frame",
+            viewport,
+            radio_rect,
+            bright,
+            primary,
+            dim,
+            reverse_hover_tilt.clone(),
+        );
+        let progress_frame = Self::panel_frame_node(
+            ui,
+            "progress-panel-frame",
+            viewport,
+            progress_rect,
+            bright,
+            primary,
+            dim,
+            reverse_hover_tilt,
+        );
+        let speed_frame = Self::panel_frame_node(
+            ui,
+            "speed-panel-frame",
+            viewport,
+            speed_rect,
+            bright,
+            primary,
+            dim,
             hover_tilt,
         );
         let overlay = ui
-            .custom_paint(Self::neon_hud_overlay(
-                viewport, yellow, red, cyan, yellow_dim,
-            ))
-            .id(ui, "neon-frame-overlay")
+            .custom_paint(Self::hud_overview_overlay(viewport, primary, bright, dim))
+            .id(ui, "hud-overview-overlay")
             .pointer_events(ui, PointerEvents::None);
 
         ui.stack()
@@ -569,11 +724,18 @@ impl GameApp {
             .height(ui, UiLength::Px(viewport.height()))
             .pointer_events(ui, PointerEvents::None)
             .child(ui, status_panel)
-            .child(ui, weapon_panel)
-            .child(ui, target_readout)
+            .child(ui, prompt_panel)
+            .child(ui, vitals_panel)
+            .child(ui, radio_panel)
+            .child(ui, street_card)
+            .child(ui, progress_panel)
+            .child(ui, speed_panel)
             .child(ui, status_frame)
-            .child(ui, weapon_frame)
-            .child(ui, target_frame)
+            .child(ui, prompt_frame)
+            .child(ui, vitals_frame)
+            .child(ui, radio_frame)
+            .child(ui, progress_frame)
+            .child(ui, speed_frame)
             .child(ui, overlay)
             .child(ui, crosshair_center)
     }
