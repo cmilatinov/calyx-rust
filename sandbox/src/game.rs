@@ -138,7 +138,7 @@ impl GameApp {
             .id(ui, id)
             .background(ui, background)
             .border(ui, Border::solid(outline, 1.0))
-            .radius(ui, CornerRadius::all(4.0))
+            .radius(ui, CornerRadius::none())
             .width(ui, UiLength::Fill)
             .height(ui, UiLength::Px(14.0))
     }
@@ -226,36 +226,45 @@ impl GameApp {
         ]);
     }
 
+    fn panel_frame_node(
+        ui: &mut UiArena,
+        id: &'static str,
+        viewport: UiRect,
+        rect: UiRect,
+        primary: UiColor,
+        danger: UiColor,
+        dim: UiColor,
+        hover_style: StylePatch,
+    ) -> UiNodeHandle {
+        let mut commands = Vec::new();
+        Self::push_panel_frame(&mut commands, rect, primary, danger, dim);
+        ui.custom_paint(commands)
+            .id(ui, id)
+            .style(
+                ui,
+                StylePatch::default()
+                    .width(UiLength::Px(rect.width()))
+                    .height(UiLength::Px(rect.height()))
+                    .margin(EdgeInsets {
+                        top: rect.min.y - viewport.min.y,
+                        right: 0.0,
+                        bottom: 0.0,
+                        left: rect.min.x - viewport.min.x,
+                    })
+                    .transition_duration(0.18),
+            )
+            .hover_style(ui, hover_style)
+            .pointer_events(ui, PointerEvents::None)
+    }
+
     fn neon_hud_overlay(
         viewport: UiRect,
-        status_width: f32,
-        weapon_size: UiSize,
-        target_size: UiSize,
         yellow: UiColor,
         red: UiColor,
         cyan: UiColor,
         dim: UiColor,
     ) -> Vec<PaintCommand> {
         let mut commands = Vec::new();
-        let status = UiRect::from_min_size(viewport.min, UiSize::new(status_width, 172.0));
-        let weapon = UiRect::from_min_size(
-            UiPoint::new(
-                viewport.min.x + 24.0,
-                viewport.min.y + viewport.height() - 182.0,
-            ),
-            weapon_size,
-        );
-        let target = UiRect::from_min_size(
-            UiPoint::new(
-                viewport.min.x + viewport.width() - target_size.width - 24.0,
-                viewport.min.y + viewport.height() - target_size.height - 24.0,
-            ),
-            target_size,
-        );
-        Self::push_panel_frame(&mut commands, status, yellow, red, dim);
-        Self::push_panel_frame(&mut commands, weapon, yellow, red, dim);
-        Self::push_panel_frame(&mut commands, target, red, yellow, dim);
-
         let center_x = viewport.min.x + viewport.width() * 0.5;
         let center_y = viewport.min.y + viewport.height() * 0.5;
         commands.extend([
@@ -325,7 +334,6 @@ impl GameApp {
 
     fn sandbox_ui(ui: &mut UiArena, viewport: UiRect, fps: usize) -> UiNodeHandle {
         let panel = UiColor::rgba(10, 10, 8, 232);
-        let panel_hover = UiColor::rgba(31, 28, 10, 244);
         let cyan = UiColor::rgba(31, 229, 255, 230);
         let cyan_dim = UiColor::rgba(24, 117, 130, 180);
         let red = UiColor::rgba(255, 42, 66, 238);
@@ -338,17 +346,32 @@ impl GameApp {
         let status_width = if compact { 292.0 } else { 360.0 };
         let weapon_size = UiSize::new(300.0, 158.0);
         let target_size = UiSize::new(332.0, 126.0);
+        let status_rect = UiRect::from_min_size(viewport.min, UiSize::new(status_width, 172.0));
+        let weapon_rect = UiRect::from_min_size(
+            UiPoint::new(
+                viewport.min.x + 24.0,
+                viewport.min.y + viewport.height() - weapon_size.height - 24.0,
+            ),
+            weapon_size,
+        );
+        let target_rect = UiRect::from_min_size(
+            UiPoint::new(
+                viewport.min.x + viewport.width() - target_size.width - 24.0,
+                viewport.min.y + viewport.height() - target_size.height - 24.0,
+            ),
+            target_size,
+        );
 
         let panel_style = StylePatch::default()
             .background(panel)
             .border(Border::solid(yellow_dim, 1.0))
-            .radius(CornerRadius::all(2.0))
+            .radius(CornerRadius::none())
             .padding(EdgeInsets::all(12.0))
             .gap(7.0)
             .transition_duration(0.18);
-        let hover_tilt = StylePatch::default()
-            .background(panel_hover)
-            .transform(UiTransform::tilt_degrees(3.0, -7.0));
+        let hover_tilt = StylePatch::default().transform(UiTransform::tilt_degrees(3.0, -7.0));
+        let weapon_hover_tilt =
+            StylePatch::default().transform(UiTransform::tilt_degrees(-3.0, 8.0));
 
         let title = Self::hud_text(ui, "status-title", "COMBAT OS // STATUS", yellow, 16.0)
             .width(ui, UiLength::Px(224.0));
@@ -358,7 +381,7 @@ impl GameApp {
             .id(ui, "fps-pill")
             .background(ui, yellow)
             .border(ui, Border::solid(red, 1.0))
-            .radius(ui, CornerRadius::all(1.0))
+            .radius(ui, CornerRadius::none())
             .padding(ui, EdgeInsets::symmetric(8.0, 3.0))
             .width(ui, UiLength::Px(82.0))
             .height(ui, UiLength::Px(24.0))
@@ -442,12 +465,7 @@ impl GameApp {
             .column()
             .id(ui, "weapon-panel")
             .style(ui, panel_style.clone())
-            .hover_style(
-                ui,
-                StylePatch::default()
-                    .background(panel_hover)
-                    .transform(UiTransform::tilt_degrees(-3.0, 8.0)),
-            )
+            .hover_style(ui, weapon_hover_tilt.clone())
             .pointer_events(ui, PointerEvents::Auto)
             .width(ui, UiLength::Px(weapon_size.width))
             .height(ui, UiLength::Px(weapon_size.height))
@@ -479,17 +497,17 @@ impl GameApp {
             .column()
             .id(ui, "target-panel")
             .style(ui, panel_style)
-            .hover_style(ui, hover_tilt)
+            .hover_style(ui, hover_tilt.clone())
             .pointer_events(ui, PointerEvents::Auto)
             .width(ui, UiLength::Px(target_size.width))
             .height(ui, UiLength::Px(target_size.height))
             .margin(
                 ui,
                 EdgeInsets {
-                    top: viewport.height() - target_size.height - 24.0,
+                    top: target_rect.min.y - viewport.min.y,
                     right: 0.0,
                     bottom: 0.0,
-                    left: viewport.width() - target_size.width - 24.0,
+                    left: target_rect.min.x - viewport.min.x,
                 },
             )
             .child(ui, target_title)
@@ -508,16 +526,39 @@ impl GameApp {
             .height(ui, UiLength::Px(viewport.height()))
             .pointer_events(ui, PointerEvents::None);
 
+        let status_frame = Self::panel_frame_node(
+            ui,
+            "status-panel-frame",
+            viewport,
+            status_rect,
+            yellow,
+            red,
+            yellow_dim,
+            hover_tilt.clone(),
+        );
+        let weapon_frame = Self::panel_frame_node(
+            ui,
+            "weapon-panel-frame",
+            viewport,
+            weapon_rect,
+            yellow,
+            red,
+            yellow_dim,
+            weapon_hover_tilt,
+        );
+        let target_frame = Self::panel_frame_node(
+            ui,
+            "target-panel-frame",
+            viewport,
+            target_rect,
+            red,
+            yellow,
+            yellow_dim,
+            hover_tilt,
+        );
         let overlay = ui
             .custom_paint(Self::neon_hud_overlay(
-                viewport,
-                status_width,
-                weapon_size,
-                target_size,
-                yellow,
-                red,
-                cyan,
-                yellow_dim,
+                viewport, yellow, red, cyan, yellow_dim,
             ))
             .id(ui, "neon-frame-overlay")
             .pointer_events(ui, PointerEvents::None);
@@ -530,6 +571,9 @@ impl GameApp {
             .child(ui, status_panel)
             .child(ui, weapon_panel)
             .child(ui, target_readout)
+            .child(ui, status_frame)
+            .child(ui, weapon_frame)
+            .child(ui, target_frame)
             .child(ui, overlay)
             .child(ui, crosshair_center)
     }
