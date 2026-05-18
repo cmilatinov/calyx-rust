@@ -57,6 +57,14 @@ pub trait UiWidget: Send + Sync + 'static {
     fn paint(&self, node: &LayoutNode, commands: &mut Vec<PaintCommand>);
 }
 
+/// Trait for struct-based UI composition.
+///
+/// Implement this for reusable widgets that compose engine primitives into a node tree. The
+/// lower-level [`UiWidget`] trait remains the backend-facing widget storage contract.
+pub trait Widget {
+    fn build(&self, ui: &mut UiArena) -> UiNodeHandle;
+}
+
 /// Handle to a widget instance inside [`UiArena`] typed storage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct WidgetHandle {
@@ -175,6 +183,10 @@ impl UiArena {
         handle
     }
 
+    pub fn build(&mut self, widget: impl Widget) -> UiNodeHandle {
+        widget.build(self)
+    }
+
     pub fn node(&self, handle: UiNodeHandle) -> &UiNode {
         &self.nodes[handle.0]
     }
@@ -239,10 +251,6 @@ impl UiArena {
 
     pub fn center(&mut self, child: UiNodeHandle) -> UiNodeHandle {
         self.alloc_node(CenterWidget).child(self, child)
-    }
-
-    pub fn crosshair(&mut self, color: UiColor, size: f32) -> UiNodeHandle {
-        self.alloc_node(CrosshairWidget { color, size })
     }
 
     pub fn custom_paint(&mut self, commands: Vec<PaintCommand>) -> UiNodeHandle {
@@ -394,11 +402,6 @@ pub struct ProgressBarWidget {
     pub fill: UiColor,
 }
 
-pub struct CrosshairWidget {
-    pub color: UiColor,
-    pub size: f32,
-}
-
 pub struct CustomPaintWidget {
     pub commands: Vec<PaintCommand>,
 }
@@ -543,32 +546,6 @@ impl UiWidget for ProgressBarWidget {
             rect: fill_rect,
             color: self.fill.with_alpha(node.style.opacity),
             radius: node.style.radius,
-        });
-    }
-}
-
-impl UiWidget for CrosshairWidget {
-    fn default_size(&self, _style: &Style, _max: UiSize) -> UiSize {
-        UiSize::new(self.size, self.size)
-    }
-
-    fn paint(&self, node: &LayoutNode, commands: &mut Vec<PaintCommand>) {
-        let center = UiPoint::new(
-            node.rect.min.x + node.rect.width() * 0.5,
-            node.rect.min.y + node.rect.height() * 0.5,
-        );
-        let half = self.size * 0.5;
-        commands.push(PaintCommand::Line {
-            start: UiPoint::new(center.x - half, center.y),
-            end: UiPoint::new(center.x + half, center.y),
-            color: self.color,
-            width: 1.0,
-        });
-        commands.push(PaintCommand::Line {
-            start: UiPoint::new(center.x, center.y - half),
-            end: UiPoint::new(center.x, center.y + half),
-            color: self.color,
-            width: 1.0,
         });
     }
 }

@@ -35,6 +35,74 @@ fn node_rect(frame: &UiFrame, id: &str) -> UiRect {
         .rect
 }
 
+struct ExamplePrimitiveHud {
+    title: String,
+    meter_value: f32,
+    margin: EdgeInsets,
+}
+
+impl Widget for ExamplePrimitiveHud {
+    fn build(&self, ui: &mut UiArena) -> UiNodeHandle {
+        let title = ui
+            .text(self.title.clone())
+            .id(ui, "example-title")
+            .style(
+                ui,
+                StylePatch::default()
+                    .text_color(UiColor::rgba(236, 240, 244, 255))
+                    .font_size(14.0),
+            )
+            .pointer_events(ui, PointerEvents::None);
+        let value = ui
+            .text(format!(
+                "{:03}%",
+                (self.meter_value.clamp(0.0, 1.0) * 100.0) as u32
+            ))
+            .id(ui, "example-value")
+            .style(
+                ui,
+                StylePatch::default()
+                    .text_color(UiColor::rgba(150, 190, 240, 255))
+                    .font_size(12.0),
+            )
+            .pointer_events(ui, PointerEvents::None);
+        let header = ui
+            .row()
+            .id(ui, "example-header")
+            .justify_content(ui, JustifyContent::SpaceBetween)
+            .pointer_events(ui, PointerEvents::None)
+            .child(ui, title)
+            .child(ui, value);
+        let meter = ui
+            .progress_bar(self.meter_value, UiColor::rgba(150, 190, 240, 255))
+            .id(ui, "example-meter")
+            .background(ui, UiColor::rgba(24, 28, 32, 230))
+            .border(ui, Border::solid(UiColor::rgba(90, 104, 116, 255), 1.0))
+            .radius(ui, CornerRadius::all(2.0))
+            .height(ui, UiLength::Px(12.0))
+            .width(ui, UiLength::Fill)
+            .pointer_events(ui, PointerEvents::None);
+
+        ui.column()
+            .id(ui, "example-hud")
+            .style(
+                ui,
+                StylePatch::default()
+                    .background(UiColor::rgba(12, 16, 20, 220))
+                    .border(Border::solid(UiColor::rgba(90, 104, 116, 255), 1.0))
+                    .radius(CornerRadius::all(4.0))
+                    .padding(EdgeInsets::all(8.0))
+                    .gap(6.0)
+                    .pointer_events(PointerEvents::None),
+            )
+            .width(ui, UiLength::Px(180.0))
+            .height(ui, UiLength::Px(58.0))
+            .margin(ui, self.margin)
+            .child(ui, header)
+            .child(ui, meter)
+    }
+}
+
 #[test]
 fn row_layout_applies_flex_gap_padding_and_constraints() {
     let theme = Theme::default();
@@ -802,6 +870,48 @@ fn progress_bar_clamps_value_and_generates_fill_command() {
                 if rect.width() == 100.0
                     && *color == UiColor::rgba(10, 200, 20, 255)
                     && *radius == CornerRadius::all(3.0)
+        )
+    }));
+}
+
+#[test]
+fn widget_trait_composes_engine_primitives_into_example_hud() {
+    let theme = Theme::default();
+    let mut runtime = UiRuntime::default();
+    let mut ui = UiArena::default();
+    let root = ui.build(ExamplePrimitiveHud {
+        title: "SYSTEM".to_owned(),
+        meter_value: 0.42,
+        margin: EdgeInsets {
+            top: 12.0,
+            right: 0.0,
+            bottom: 0.0,
+            left: 16.0,
+        },
+    });
+
+    let frame = runtime.frame(
+        &ui,
+        root,
+        viewport(320.0, 200.0),
+        UiInput::default(),
+        &theme,
+    );
+
+    assert_eq!(
+        node_rect(&frame, "example-hud").min,
+        UiPoint::new(16.0, 12.0)
+    );
+    assert!(frame
+        .paint_commands
+        .iter()
+        .any(|command| matches!(command, PaintCommand::Text { text, .. } if text == "SYSTEM")));
+    assert!(frame.paint_commands.iter().any(|command| {
+        matches!(
+            command,
+            PaintCommand::FillRect { rect, color, .. }
+                if (rect.width() - 68.88).abs() < 0.01
+                    && *color == UiColor::rgba(150, 190, 240, 255)
         )
     }));
 }
