@@ -218,6 +218,7 @@ impl Palette {
             .radius(CornerRadius::all(7.0))
             .padding(EdgeInsets::all(18.0))
             .gap(12.0)
+            .clip(true)
     }
 
     fn title_text(self) -> StylePatch {
@@ -485,7 +486,7 @@ impl Widget for TokensPanel {
         let patches = text(
             ui,
             "tokens-patches",
-            "StylePatch controls colors, radius, spacing, fonts, hover, and pressed states.",
+            "StylePatch controls colors, spacing, fonts, hover, and pressed states.",
             self.palette.label_text(),
         );
         let hover = button(
