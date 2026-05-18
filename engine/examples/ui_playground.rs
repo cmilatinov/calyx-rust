@@ -1,6 +1,6 @@
 use eframe::{egui, NativeOptions};
 use engine::ui::{
-    render_commands, Border, CornerRadius, EdgeInsets, EguiUiBackend, JustifyContent, PaintCommand,
+    render_commands, Border, CornerRadius, EdgeInsets, EguiUiBackend, JustifyContent,
     PointerEvents, StylePatch, Theme, UiArena, UiColor, UiInput, UiLength, UiNodeHandle, UiPoint,
     UiRect, UiRuntime, UiSize, Widget,
 };
@@ -111,14 +111,9 @@ impl Widget for PlaygroundUi {
         let middle_top = 182.0;
         let bottom_top = (self.viewport.height() - 198.0 - margin).max(462.0);
 
-        let background = BackgroundLines {
-            viewport: self.viewport,
-            palette,
-        }
-        .build(ui);
         let title = TitlePanel {
             palette,
-            size: UiSize::new(content_width, 124.0),
+            size: UiSize::new(content_width, 132.0),
             margin: EdgeInsets {
                 top: margin,
                 right: 0.0,
@@ -180,10 +175,7 @@ impl Widget for PlaygroundUi {
             .width(ui, UiLength::Px(self.viewport.width()))
             .height(ui, UiLength::Px(self.viewport.height()))
             .pointer_events(ui, PointerEvents::None)
-            .children(
-                ui,
-                [background, title, controls, meters, composition, tokens],
-            )
+            .children(ui, [title, controls, meters, composition, tokens])
     }
 }
 
@@ -194,7 +186,6 @@ struct Palette {
     line: UiColor,
     text: UiColor,
     muted: UiColor,
-    subtle: UiColor,
     blue: UiColor,
     green: UiColor,
     amber: UiColor,
@@ -210,7 +201,6 @@ impl Default for Palette {
             line: UiColor::rgba(92, 108, 122, 190),
             text: UiColor::rgba(238, 242, 246, 255),
             muted: UiColor::rgba(155, 166, 176, 230),
-            subtle: UiColor::rgba(86, 96, 105, 96),
             blue: UiColor::rgba(94, 166, 255, 245),
             green: UiColor::rgba(84, 214, 142, 245),
             amber: UiColor::rgba(238, 190, 92, 245),
@@ -259,42 +249,6 @@ impl Palette {
     }
 }
 
-struct BackgroundLines {
-    viewport: UiRect,
-    palette: Palette,
-}
-
-impl Widget for BackgroundLines {
-    fn build(&self, ui: &mut UiArena) -> UiNodeHandle {
-        let mut commands = Vec::new();
-        let line = self.palette.subtle;
-        let width = self.viewport.width();
-        let height = self.viewport.height();
-        for y in [148.0, 446.0, height - 28.0] {
-            commands.push(PaintCommand::Line {
-                start: UiPoint::new(28.0, y.min(height - 1.0)),
-                end: UiPoint::new((width - 28.0).max(28.0), y.min(height - 1.0)),
-                color: line,
-                width: 1.0,
-            });
-        }
-        for x in [28.0, width - 28.0] {
-            commands.push(PaintCommand::Line {
-                start: UiPoint::new(x.max(0.0), 28.0),
-                end: UiPoint::new(x.max(0.0), (height - 28.0).max(28.0)),
-                color: line,
-                width: 1.0,
-            });
-        }
-
-        ui.custom_paint(commands)
-            .id(ui, "background-lines")
-            .width(ui, UiLength::Px(width))
-            .height(ui, UiLength::Px(height))
-            .pointer_events(ui, PointerEvents::None)
-    }
-}
-
 struct TitlePanel {
     palette: Palette,
     size: UiSize,
@@ -308,13 +262,15 @@ impl Widget for TitlePanel {
             "title",
             "Engine UI Playground",
             self.palette.title_text(),
-        );
+        )
+        .height(ui, UiLength::Px(36.0));
         let subtitle = text(
             ui,
             "subtitle",
             "A live dashboard built from text, containers, rows, columns, buttons, progress bars, custom paint, and style patches.",
             self.palette.label_text(),
-        );
+        )
+        .height(ui, UiLength::Px(20.0));
         let badge = pill(
             ui,
             "backend-pill",
@@ -333,6 +289,7 @@ impl Widget for TitlePanel {
             .row()
             .id(ui, "title-badges")
             .gap(ui, 8.0)
+            .height(ui, UiLength::Px(28.0))
             .pointer_events(ui, PointerEvents::None)
             .child(ui, badge)
             .child(ui, status);
