@@ -323,7 +323,8 @@ impl Widget for ControlsPanel {
             "controls-title",
             "Interactive Controls",
             self.palette.body_text(),
-        );
+        )
+        .height(ui, UiLength::Px(22.0));
         let primary = button(
             ui,
             "primary-button",
@@ -349,13 +350,15 @@ impl Widget for ControlsPanel {
             "click-count",
             format!("Clicks recorded: {}", self.click_count),
             self.palette.label_text(),
-        );
+        )
+        .height(ui, UiLength::Px(18.0));
         let hint = text(
             ui,
             "controls-hint",
             "Pointer events update per-frame responses.",
             self.palette.small_text(),
-        );
+        )
+        .height(ui, UiLength::Px(18.0));
 
         ui.column()
             .id(ui, "controls-panel")
@@ -385,7 +388,8 @@ impl Widget for MeterPanel {
             "meters-title",
             "Progress Bars",
             self.palette.body_text(),
-        );
+        )
+        .height(ui, UiLength::Px(22.0));
         let first = meter_row(
             ui,
             "meter-a",
@@ -443,7 +447,8 @@ impl Widget for CompositionPanel {
             "composition-title",
             "Layout Composition",
             self.palette.body_text(),
-        );
+        )
+        .height(ui, UiLength::Px(22.0));
         let blue = swatch(ui, "swatch-blue", self.palette.blue);
         let green = swatch(ui, "swatch-green", self.palette.green);
         let amber = swatch(ui, "swatch-amber", self.palette.amber);
@@ -452,14 +457,16 @@ impl Widget for CompositionPanel {
             .row()
             .id(ui, "composition-row")
             .gap(ui, 8.0)
+            .height(ui, UiLength::Px(46.0))
             .pointer_events(ui, PointerEvents::None)
             .children(ui, [blue, green, amber, red]);
         let copy = text(
             ui,
             "composition-copy",
-            "Rows, columns, stack positioning, margins, padding, borders, radius, and custom paint.",
+            "Rows, columns, stack positioning, spacing, borders, and radius.",
             self.palette.label_text(),
-        );
+        )
+        .height(ui, UiLength::Px(18.0));
 
         ui.column()
             .id(ui, "composition-panel")
@@ -482,13 +489,16 @@ struct TokensPanel {
 
 impl Widget for TokensPanel {
     fn build(&self, ui: &mut UiArena) -> UiNodeHandle {
-        let title = text(ui, "tokens-title", "Style Hooks", self.palette.body_text());
+        let title = text(ui, "tokens-title", "Style Hooks", self.palette.body_text())
+            .height(ui, UiLength::Px(22.0));
         let patches = text(
             ui,
             "tokens-patches",
             "StylePatch controls colors, spacing, fonts, hover, and pressed states.",
             self.palette.label_text(),
-        );
+        )
+        .width(ui, UiLength::Fill)
+        .height(ui, UiLength::Px(20.0));
         let hover = button(
             ui,
             "style-demo-button",
@@ -565,17 +575,21 @@ fn meter_row(
     fill: UiColor,
     palette: Palette,
 ) -> UiNodeHandle {
-    let label = text(ui, format!("{id}-label"), label, palette.label_text());
+    let label =
+        text(ui, format!("{id}-label"), label, palette.label_text()).height(ui, UiLength::Px(16.0));
     let value_label = text(
         ui,
         format!("{id}-value"),
         format!("{:03}%", (value.clamp(0.0, 1.0) * 100.0) as u32),
         palette.label_text(),
-    );
+    )
+    .width(ui, UiLength::Px(46.0))
+    .height(ui, UiLength::Px(16.0));
     let header = ui
         .row()
         .id(ui, format!("{id}-header"))
         .justify_content(ui, JustifyContent::SpaceBetween)
+        .height(ui, UiLength::Px(18.0))
         .pointer_events(ui, PointerEvents::None)
         .child(ui, label)
         .child(ui, value_label);
@@ -592,6 +606,7 @@ fn meter_row(
     ui.column()
         .id(ui, id)
         .gap(ui, 4.0)
+        .height(ui, UiLength::Px(38.0))
         .pointer_events(ui, PointerEvents::None)
         .child(ui, header)
         .child(ui, meter)
