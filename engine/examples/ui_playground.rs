@@ -1,6 +1,6 @@
 use eframe::{egui, NativeOptions};
 use engine::ui::{
-    render_commands, Border, CornerRadius, EdgeInsets, EguiUiBackend, JustifyContent,
+    render_commands, Border, CornerRadius, EdgeInsets, EguiUiBackend, JustifyContent, PaintCommand,
     PointerEvents, StylePatch, Theme, UiArena, UiColor, UiInput, UiLength, UiNodeHandle, UiPoint,
     UiRect, UiRuntime, UiSize, Widget,
 };
@@ -102,8 +102,23 @@ impl Widget for PlaygroundUi {
     fn build(&self, ui: &mut UiArena) -> UiNodeHandle {
         let palette = Palette::default();
         let margin = 28.0;
+        let gap = 20.0;
+        let content_width = (self.viewport.width() - margin * 2.0).max(0.0);
+        let left_width = 330.0;
+        let right_width = (content_width - left_width - gap).max(420.0);
+        let bottom_left_width = 520.0_f32.min(content_width * 0.52);
+        let bottom_right_width = (content_width - bottom_left_width - gap).max(300.0);
+        let middle_top = 182.0;
+        let bottom_top = (self.viewport.height() - 198.0 - margin).max(462.0);
+
+        let background = BackgroundLines {
+            viewport: self.viewport,
+            palette,
+        }
+        .build(ui);
         let title = TitlePanel {
             palette,
+            size: UiSize::new(content_width, 124.0),
             margin: EdgeInsets {
                 top: margin,
                 right: 0.0,
@@ -116,8 +131,9 @@ impl Widget for PlaygroundUi {
             palette,
             click_count: self.click_count,
             armed: self.armed,
+            size: UiSize::new(left_width, 250.0),
             margin: EdgeInsets {
-                top: 150.0,
+                top: middle_top,
                 right: 0.0,
                 bottom: 0.0,
                 left: margin,
@@ -127,18 +143,20 @@ impl Widget for PlaygroundUi {
         let meters = MeterPanel {
             palette,
             pulse: self.pulse,
+            size: UiSize::new(right_width, 250.0),
             margin: EdgeInsets {
-                top: margin,
+                top: middle_top,
                 right: 0.0,
                 bottom: 0.0,
-                left: (self.viewport.width() - 392.0 - margin).max(margin),
+                left: margin + left_width + gap,
             },
         }
         .build(ui);
         let composition = CompositionPanel {
             palette,
+            size: UiSize::new(bottom_left_width, 170.0),
             margin: EdgeInsets {
-                top: (self.viewport.height() - 210.0 - margin).max(380.0),
+                top: bottom_top,
                 right: 0.0,
                 bottom: 0.0,
                 left: margin,
@@ -147,11 +165,12 @@ impl Widget for PlaygroundUi {
         .build(ui);
         let tokens = TokensPanel {
             palette,
+            size: UiSize::new(bottom_right_width, 170.0),
             margin: EdgeInsets {
-                top: (self.viewport.height() - 210.0 - margin).max(380.0),
+                top: bottom_top,
                 right: 0.0,
                 bottom: 0.0,
-                left: (self.viewport.width() - 392.0 - margin).max(margin),
+                left: margin + bottom_left_width + gap,
             },
         }
         .build(ui);
@@ -161,7 +180,10 @@ impl Widget for PlaygroundUi {
             .width(ui, UiLength::Px(self.viewport.width()))
             .height(ui, UiLength::Px(self.viewport.height()))
             .pointer_events(ui, PointerEvents::None)
-            .children(ui, [title, controls, meters, composition, tokens])
+            .children(
+                ui,
+                [background, title, controls, meters, composition, tokens],
+            )
     }
 }
 
@@ -172,6 +194,7 @@ struct Palette {
     line: UiColor,
     text: UiColor,
     muted: UiColor,
+    subtle: UiColor,
     blue: UiColor,
     green: UiColor,
     amber: UiColor,
@@ -187,6 +210,7 @@ impl Default for Palette {
             line: UiColor::rgba(92, 108, 122, 190),
             text: UiColor::rgba(238, 242, 246, 255),
             muted: UiColor::rgba(155, 166, 176, 230),
+            subtle: UiColor::rgba(86, 96, 105, 96),
             blue: UiColor::rgba(94, 166, 255, 245),
             green: UiColor::rgba(84, 214, 142, 245),
             amber: UiColor::rgba(238, 190, 92, 245),
@@ -201,9 +225,9 @@ impl Palette {
         StylePatch::default()
             .background(self.panel)
             .border(Border::solid(self.line, 1.0))
-            .radius(CornerRadius::all(6.0))
-            .padding(EdgeInsets::all(14.0))
-            .gap(10.0)
+            .radius(CornerRadius::all(7.0))
+            .padding(EdgeInsets::all(18.0))
+            .gap(12.0)
     }
 
     fn title_text(self) -> StylePatch {
@@ -226,10 +250,54 @@ impl Palette {
             .font_size(14.0)
             .pointer_events(PointerEvents::None)
     }
+
+    fn small_text(self) -> StylePatch {
+        StylePatch::default()
+            .text_color(self.muted)
+            .font_size(11.0)
+            .pointer_events(PointerEvents::None)
+    }
+}
+
+struct BackgroundLines {
+    viewport: UiRect,
+    palette: Palette,
+}
+
+impl Widget for BackgroundLines {
+    fn build(&self, ui: &mut UiArena) -> UiNodeHandle {
+        let mut commands = Vec::new();
+        let line = self.palette.subtle;
+        let width = self.viewport.width();
+        let height = self.viewport.height();
+        for y in [148.0, 446.0, height - 28.0] {
+            commands.push(PaintCommand::Line {
+                start: UiPoint::new(28.0, y.min(height - 1.0)),
+                end: UiPoint::new((width - 28.0).max(28.0), y.min(height - 1.0)),
+                color: line,
+                width: 1.0,
+            });
+        }
+        for x in [28.0, width - 28.0] {
+            commands.push(PaintCommand::Line {
+                start: UiPoint::new(x.max(0.0), 28.0),
+                end: UiPoint::new(x.max(0.0), (height - 28.0).max(28.0)),
+                color: line,
+                width: 1.0,
+            });
+        }
+
+        ui.custom_paint(commands)
+            .id(ui, "background-lines")
+            .width(ui, UiLength::Px(width))
+            .height(ui, UiLength::Px(height))
+            .pointer_events(ui, PointerEvents::None)
+    }
 }
 
 struct TitlePanel {
     palette: Palette,
+    size: UiSize,
     margin: EdgeInsets,
 }
 
@@ -244,7 +312,7 @@ impl Widget for TitlePanel {
         let subtitle = text(
             ui,
             "subtitle",
-            "Struct widgets composed from engine primitives",
+            "A live dashboard built from text, containers, rows, columns, buttons, progress bars, custom paint, and style patches.",
             self.palette.label_text(),
         );
         let badge = pill(
@@ -254,17 +322,31 @@ impl Widget for TitlePanel {
             self.palette,
             self.palette.blue,
         );
+        let status = pill(
+            ui,
+            "composition-pill",
+            "Widget trait",
+            self.palette,
+            self.palette.green,
+        );
+        let row = ui
+            .row()
+            .id(ui, "title-badges")
+            .gap(ui, 8.0)
+            .pointer_events(ui, PointerEvents::None)
+            .child(ui, badge)
+            .child(ui, status);
 
         ui.column()
             .id(ui, "title-panel")
             .style(ui, self.palette.panel_style())
-            .width(ui, UiLength::Px(430.0))
-            .height(ui, UiLength::Px(96.0))
+            .width(ui, UiLength::Px(self.size.width))
+            .height(ui, UiLength::Px(self.size.height))
             .margin(ui, self.margin)
             .pointer_events(ui, PointerEvents::None)
             .child(ui, title)
             .child(ui, subtitle)
-            .child(ui, badge)
+            .child(ui, row)
     }
 }
 
@@ -272,6 +354,7 @@ struct ControlsPanel {
     palette: Palette,
     click_count: u32,
     armed: bool,
+    size: UiSize,
     margin: EdgeInsets,
 }
 
@@ -309,23 +392,31 @@ impl Widget for ControlsPanel {
             format!("Clicks recorded: {}", self.click_count),
             self.palette.label_text(),
         );
+        let hint = text(
+            ui,
+            "controls-hint",
+            "Pointer events update per-frame responses.",
+            self.palette.small_text(),
+        );
 
         ui.column()
             .id(ui, "controls-panel")
             .style(ui, self.palette.panel_style())
-            .width(ui, UiLength::Px(300.0))
-            .height(ui, UiLength::Px(196.0))
+            .width(ui, UiLength::Px(self.size.width))
+            .height(ui, UiLength::Px(self.size.height))
             .margin(ui, self.margin)
             .child(ui, title)
             .child(ui, primary)
             .child(ui, toggle)
             .child(ui, count)
+            .child(ui, hint)
     }
 }
 
 struct MeterPanel {
     palette: Palette,
     pulse: f32,
+    size: UiSize,
     margin: EdgeInsets,
 }
 
@@ -361,20 +452,29 @@ impl Widget for MeterPanel {
             self.palette.amber,
             self.palette,
         );
+        let fourth = meter_row(
+            ui,
+            "meter-d",
+            "Capacity",
+            0.92,
+            self.palette.green,
+            self.palette,
+        );
 
         ui.column()
             .id(ui, "meters-panel")
             .style(ui, self.palette.panel_style())
-            .width(ui, UiLength::Px(392.0))
-            .height(ui, UiLength::Px(214.0))
+            .width(ui, UiLength::Px(self.size.width))
+            .height(ui, UiLength::Px(self.size.height))
             .margin(ui, self.margin)
             .pointer_events(ui, PointerEvents::None)
-            .children(ui, [title, first, second, third])
+            .children(ui, [title, first, second, third, fourth])
     }
 }
 
 struct CompositionPanel {
     palette: Palette,
+    size: UiSize,
     margin: EdgeInsets,
 }
 
@@ -399,15 +499,15 @@ impl Widget for CompositionPanel {
         let copy = text(
             ui,
             "composition-copy",
-            "Rows, columns, stack positioning, margins, padding, borders, and radius.",
+            "Rows, columns, stack positioning, margins, padding, borders, radius, and custom paint.",
             self.palette.label_text(),
         );
 
         ui.column()
             .id(ui, "composition-panel")
             .style(ui, self.palette.panel_style())
-            .width(ui, UiLength::Px(470.0))
-            .height(ui, UiLength::Px(170.0))
+            .width(ui, UiLength::Px(self.size.width))
+            .height(ui, UiLength::Px(self.size.height))
             .margin(ui, self.margin)
             .pointer_events(ui, PointerEvents::None)
             .child(ui, title)
@@ -418,6 +518,7 @@ impl Widget for CompositionPanel {
 
 struct TokensPanel {
     palette: Palette,
+    size: UiSize,
     margin: EdgeInsets,
 }
 
@@ -427,7 +528,7 @@ impl Widget for TokensPanel {
         let patches = text(
             ui,
             "tokens-patches",
-            "StylePatch: background, border, radius, font, gaps, hover, pressed",
+            "StylePatch controls colors, radius, spacing, fonts, hover, and pressed states.",
             self.palette.label_text(),
         );
         let hover = button(
@@ -446,8 +547,8 @@ impl Widget for TokensPanel {
                     .panel_style()
                     .background(self.palette.panel_alt),
             )
-            .width(ui, UiLength::Px(392.0))
-            .height(ui, UiLength::Px(170.0))
+            .width(ui, UiLength::Px(self.size.width))
+            .height(ui, UiLength::Px(self.size.height))
             .margin(ui, self.margin)
             .child(ui, title)
             .child(ui, patches)
