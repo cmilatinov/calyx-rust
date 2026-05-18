@@ -73,6 +73,61 @@ fn row_layout_applies_flex_gap_padding_and_constraints() {
 }
 
 #[test]
+fn row_layout_shrinks_fixed_children_when_they_overflow() {
+    let theme = Theme::default();
+    let mut runtime = UiRuntime::default();
+    let mut ui = UiArena::default();
+    let first = ui
+        .sized_box()
+        .id(&mut ui, "first")
+        .width(&mut ui, UiLength::Px(80.0))
+        .height(&mut ui, UiLength::Px(10.0));
+    let second = ui
+        .sized_box()
+        .id(&mut ui, "second")
+        .width(&mut ui, UiLength::Px(80.0))
+        .height(&mut ui, UiLength::Px(10.0));
+    let root = ui
+        .row()
+        .id(&mut ui, "root")
+        .children(&mut ui, [first, second]);
+
+    let frame = runtime.frame(&ui, root, viewport(100.0, 40.0), UiInput::default(), &theme);
+
+    assert_eq!(node_rect(&frame, "first").width(), 50.0);
+    assert_eq!(node_rect(&frame, "second").min.x, 50.0);
+    assert_eq!(node_rect(&frame, "second").width(), 50.0);
+}
+
+#[test]
+fn flex_shrink_zero_keeps_child_size_when_space_is_tight() {
+    let theme = Theme::default();
+    let mut runtime = UiRuntime::default();
+    let mut ui = UiArena::default();
+    let fixed = ui
+        .sized_box()
+        .id(&mut ui, "fixed")
+        .width(&mut ui, UiLength::Px(70.0))
+        .height(&mut ui, UiLength::Px(10.0))
+        .flex_shrink(&mut ui, 0.0);
+    let flexible = ui
+        .sized_box()
+        .id(&mut ui, "flexible")
+        .width(&mut ui, UiLength::Px(70.0))
+        .height(&mut ui, UiLength::Px(10.0));
+    let root = ui
+        .row()
+        .id(&mut ui, "root")
+        .children(&mut ui, [fixed, flexible]);
+
+    let frame = runtime.frame(&ui, root, viewport(100.0, 40.0), UiInput::default(), &theme);
+
+    assert_eq!(node_rect(&frame, "fixed").width(), 70.0);
+    assert_eq!(node_rect(&frame, "flexible").min.x, 70.0);
+    assert_eq!(node_rect(&frame, "flexible").width(), 30.0);
+}
+
+#[test]
 fn row_layout_distributes_space_between_children() {
     let theme = Theme::default();
     let mut runtime = UiRuntime::default();
@@ -508,6 +563,54 @@ fn passive_overlay_with_passive_children_does_not_consume_pointer() {
 }
 
 #[test]
+fn clipped_child_does_not_receive_pointer_outside_clip_rect() {
+    let theme = Theme::default();
+    let mut runtime = UiRuntime::default();
+    let mut ui = UiArena::default();
+    let child = ui
+        .button("child")
+        .id(&mut ui, "child")
+        .width(&mut ui, UiLength::Px(100.0))
+        .height(&mut ui, UiLength::Px(40.0));
+    let root = ui
+        .container()
+        .id(&mut ui, "root")
+        .width(&mut ui, UiLength::Px(100.0))
+        .height(&mut ui, UiLength::Px(40.0))
+        .padding(
+            &mut ui,
+            EdgeInsets {
+                top: 0.0,
+                right: 0.0,
+                bottom: 20.0,
+                left: 0.0,
+            },
+        )
+        .style(&mut ui, StylePatch::default().clip(true))
+        .pointer_events(&mut ui, PointerEvents::None)
+        .child(&mut ui, child);
+
+    runtime.frame(
+        &ui,
+        root,
+        viewport(120.0, 60.0),
+        pointer(10.0, 30.0, true),
+        &theme,
+    );
+    let frame = runtime.frame(
+        &ui,
+        root,
+        viewport(120.0, 60.0),
+        pointer(10.0, 30.0, false),
+        &theme,
+    );
+
+    assert!(!frame.clicked("child"));
+    assert!(!frame.hovered("child"));
+    assert!(!frame.consumed_pointer);
+}
+
+#[test]
 fn event_dispatch_uses_capture_target_bubble_and_can_stop_propagation() {
     let theme = Theme::default();
     let mut runtime = UiRuntime::default();
@@ -619,6 +722,56 @@ fn hover_pressed_click_and_drag_state_survives_across_frames_by_stable_id() {
         &theme,
     );
     assert!(clicked.clicked("launch"));
+}
+
+#[test]
+fn captured_drag_consumes_pointer_until_release_even_outside_target() {
+    let theme = Theme::default();
+    let mut runtime = UiRuntime::default();
+    let mut ui = UiArena::default();
+    let root = ui
+        .button("Drag")
+        .id(&mut ui, "drag")
+        .width(&mut ui, UiLength::Px(100.0))
+        .height(&mut ui, UiLength::Px(32.0));
+
+    let pressed = runtime.frame(
+        &ui,
+        root,
+        viewport(200.0, 100.0),
+        pointer(10.0, 10.0, true),
+        &theme,
+    );
+    assert!(pressed.consumed_pointer);
+
+    let dragged_outside = runtime.frame(
+        &ui,
+        root,
+        viewport(200.0, 100.0),
+        pointer(150.0, 10.0, true),
+        &theme,
+    );
+    assert!(dragged_outside.response("drag").dragged);
+    assert!(dragged_outside.consumed_pointer);
+
+    let released_outside = runtime.frame(
+        &ui,
+        root,
+        viewport(200.0, 100.0),
+        pointer(150.0, 10.0, false),
+        &theme,
+    );
+    assert!(!released_outside.clicked("drag"));
+    assert!(released_outside.consumed_pointer);
+
+    let next_frame = runtime.frame(
+        &ui,
+        root,
+        viewport(200.0, 100.0),
+        pointer(150.0, 10.0, false),
+        &theme,
+    );
+    assert!(!next_frame.consumed_pointer);
 }
 
 #[test]

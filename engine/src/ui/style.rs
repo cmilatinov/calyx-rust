@@ -608,6 +608,10 @@ impl StylePatch {
         self.flex_grow = Some(value);
         self
     }
+    pub fn flex_shrink(mut self, value: f32) -> Self {
+        self.flex_shrink = Some(value);
+        self
+    }
     pub fn flex_basis(mut self, value: UiLength) -> Self {
         self.flex_basis = Some(value);
         self

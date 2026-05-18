@@ -267,8 +267,6 @@ fn layout_flex(
         content_rect.width()
     };
 
-    let mut fixed_total = 0.0;
-    let mut flex_total = 0.0;
     let mut margin_total = 0.0;
     let child_styles: Vec<_> = node_data
         .children
@@ -276,46 +274,65 @@ fn layout_flex(
         .copied()
         .map(|child| resolve_style(arena, child, theme, styles, state, screen_class))
         .collect();
-    for (child, style) in node_data.children.iter().copied().zip(child_styles.iter()) {
-        margin_total += main_margin(style, horizontal);
-        let child_size = default_size(
-            arena,
-            arena.node(child).widget,
-            style,
-            UiSize::new(main_available, cross_available),
-        );
-        let explicit_main = resolve_length(
-            if horizontal {
+    let child_metrics: Vec<_> = node_data
+        .children
+        .iter()
+        .copied()
+        .zip(child_styles.iter())
+        .map(|(child, style)| {
+            margin_total += main_margin(style, horizontal);
+            let child_size = default_size(
+                arena,
+                arena.node(child).widget,
+                style,
+                UiSize::new(main_available, cross_available),
+            );
+            let main_length = if horizontal {
                 style.width
             } else {
                 style.height
-            },
-            main_available,
-        );
-        let basis = resolve_length(style.flex_basis, main_available)
-            .or(explicit_main)
-            .unwrap_or(if horizontal {
-                child_size.width
+            };
+            let explicit_main = resolve_length(main_length, main_available);
+            let basis = resolve_length(style.flex_basis, main_available)
+                .or(explicit_main)
+                .unwrap_or(if horizontal {
+                    child_size.width
+                } else {
+                    child_size.height
+                });
+            let is_flex = matches!(main_length, UiLength::Fill) || style.flex_grow > 0.0;
+            let shrink_weight = if is_flex {
+                0.0
             } else {
-                child_size.height
-            });
-        if matches!(
-            if horizontal {
-                style.width
-            } else {
-                style.height
-            },
-            UiLength::Fill
-        ) || style.flex_grow > 0.0
-        {
-            flex_total += style.flex_grow.max(1.0);
-        } else {
-            fixed_total += basis;
-        }
-    }
-    let remaining = (main_available - fixed_total - margin_total - gap_total).max(0.0);
+                style.flex_shrink.max(0.0) * basis
+            };
+            (basis, is_flex, shrink_weight)
+        })
+        .collect();
+    let fixed_total: f32 = child_metrics
+        .iter()
+        .filter_map(|(basis, is_flex, _)| (!is_flex).then_some(*basis))
+        .sum();
+    let flex_total: f32 = child_styles
+        .iter()
+        .zip(child_metrics.iter())
+        .filter_map(|(style, (_, is_flex, _))| is_flex.then_some(style.flex_grow.max(1.0)))
+        .sum();
+    let shrink_total: f32 = child_metrics
+        .iter()
+        .map(|(_, _, shrink_weight)| *shrink_weight)
+        .sum();
+    let available_for_fixed = (main_available - margin_total - gap_total).max(0.0);
+    let fixed_overflow = (fixed_total - available_for_fixed).max(0.0);
+    let fixed_shrink_total = if shrink_total > 0.0 {
+        fixed_overflow.min(fixed_total)
+    } else {
+        0.0
+    };
+    let fixed_used = fixed_total - fixed_shrink_total;
+    let remaining = (main_available - fixed_used - margin_total - gap_total).max(0.0);
     let used_main =
-        fixed_total + margin_total + gap_total + if flex_total > 0.0 { remaining } else { 0.0 };
+        fixed_used + margin_total + gap_total + if flex_total > 0.0 { remaining } else { 0.0 };
     let space_between = if parent_style.justify_content == JustifyContent::SpaceBetween
         && count > 1
         && flex_total <= 0.0
@@ -335,23 +352,18 @@ fn layout_flex(
         .iter()
         .copied()
         .zip(child_styles.iter())
-        .map(|(child, style)| {
+        .zip(child_metrics.iter())
+        .map(|((child, style), (basis, is_flex, shrink_weight))| {
             let default = default_size(
                 arena,
                 arena.node(child).widget,
                 style,
                 UiSize::new(main_available, cross_available),
             );
-            let main = if matches!(
-                if horizontal {
-                    style.width
-                } else {
-                    style.height
-                },
-                UiLength::Fill
-            ) || style.flex_grow > 0.0
-            {
+            let main = if *is_flex {
                 remaining * style.flex_grow.max(1.0) / flex_total.max(1.0)
+            } else if fixed_shrink_total > 0.0 && shrink_total > 0.0 {
+                (*basis - fixed_shrink_total * *shrink_weight / shrink_total).max(0.0)
             } else {
                 resolve_length(
                     if horizontal {
@@ -481,11 +493,33 @@ fn default_size(arena: &UiArena, widget: WidgetHandle, style: &Style, max: UiSiz
 
 /// Returns the deepest interactive path under `point`, front-most children first.
 pub fn hit_test_path(root: &LayoutNode, point: super::geometry::UiPoint) -> Option<Vec<ElementId>> {
+    hit_test_path_clipped(root, point, None)
+}
+
+fn hit_test_path_clipped(
+    root: &LayoutNode,
+    point: super::geometry::UiPoint,
+    clip: Option<UiRect>,
+) -> Option<Vec<ElementId>> {
     if !root.rect.contains(point) {
         return None;
     }
+    if clip.is_some_and(|clip| !clip.contains(point)) {
+        return None;
+    }
+    let clip = if root.style.clip {
+        Some(match clip {
+            Some(clip) => intersect_rects(clip, root.content_rect)?,
+            None => root.content_rect,
+        })
+    } else {
+        clip
+    };
+    if clip.is_some_and(|clip| !clip.contains(point)) {
+        return None;
+    }
     for child in root.children.iter().rev() {
-        if let Some(mut path) = hit_test_path(child, point) {
+        if let Some(mut path) = hit_test_path_clipped(child, point, clip) {
             if let Some(id) = &root.id {
                 path.insert(0, id.clone());
             }
@@ -505,22 +539,43 @@ pub fn hit_test_path(root: &LayoutNode, point: super::geometry::UiPoint) -> Opti
 /// allowing background elements beneath them to react to hover.
 pub fn hover_hit_ids(root: &LayoutNode, point: super::geometry::UiPoint) -> Vec<ElementId> {
     let mut ids = Vec::new();
-    collect_hover_hits(root, point, &mut ids);
+    collect_hover_hits(root, point, None, &mut ids);
     ids
 }
 
 fn collect_hover_hits(
     node: &LayoutNode,
     point: super::geometry::UiPoint,
+    clip: Option<UiRect>,
     ids: &mut Vec<ElementId>,
 ) {
     if !node.rect.contains(point) {
+        return;
+    }
+    if clip.is_some_and(|clip| !clip.contains(point)) {
+        return;
+    }
+    let clip = if node.style.clip {
+        match clip {
+            Some(clip) => intersect_rects(clip, node.content_rect),
+            None => Some(node.content_rect),
+        }
+    } else {
+        clip
+    };
+    if clip.is_some_and(|clip| !clip.contains(point)) {
         return;
     }
     if let Some(id) = &node.id {
         ids.push(id.clone());
     }
     for child in &node.children {
-        collect_hover_hits(child, point, ids);
+        collect_hover_hits(child, point, clip, ids);
     }
+}
+
+fn intersect_rects(a: UiRect, b: UiRect) -> Option<UiRect> {
+    let min = UiPoint::new(a.min.x.max(b.min.x), a.min.y.max(b.min.y));
+    let max = UiPoint::new(a.max.x.min(b.max.x), a.max.y.min(b.max.y));
+    (min.x <= max.x && min.y <= max.y).then_some(UiRect { min, max })
 }

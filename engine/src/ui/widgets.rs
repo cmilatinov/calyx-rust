@@ -347,6 +347,10 @@ impl UiNodeHandle {
         self.style_patch(arena, |style| style.flex_grow = Some(value))
     }
 
+    pub fn flex_shrink(self, arena: &mut UiArena, value: f32) -> Self {
+        self.style_patch(arena, |style| style.flex_shrink = Some(value))
+    }
+
     pub fn align_items(self, arena: &mut UiArena, value: AlignItems) -> Self {
         self.style_patch(arena, |style| style.align_items = Some(value))
     }

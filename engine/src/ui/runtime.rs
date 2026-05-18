@@ -94,6 +94,7 @@ impl UiRuntime {
             .captured
             .clone()
             .or_else(|| target_path.as_ref().and_then(|path| path.last().cloned()));
+        let had_pointer_capture = self.state.captured.is_some() || self.state.pressed.is_some();
 
         self.update_hover(&hover_ids, &mut events, &mut responses);
 
@@ -171,12 +172,16 @@ impl UiRuntime {
         self.state.previous_input = input;
         let layout = layout_tree(arena, root, viewport, theme, &self.styles, &self.state);
         let paint_commands = collect_paint_commands(arena, &layout);
+        let consumed_pointer = target_path.is_some()
+            || had_pointer_capture
+            || self.state.captured.is_some()
+            || self.state.pressed.is_some();
         UiFrame {
             layout,
             paint_commands,
             events,
             responses,
-            consumed_pointer: target_path.is_some(),
+            consumed_pointer,
         }
     }
 
