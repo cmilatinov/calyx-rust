@@ -941,10 +941,17 @@ fn paint_commands_include_rounded_background_border_text_clip_and_transform() {
 
     let frame = runtime.frame(&ui, root, viewport(100.0, 60.0), UiInput::default(), &theme);
 
-    assert!(matches!(
-        frame.paint_commands.first(),
-        Some(PaintCommand::PushClip(_))
-    ));
+    let fill_index = frame
+        .paint_commands
+        .iter()
+        .position(|command| matches!(command, PaintCommand::FillRect { .. }))
+        .unwrap();
+    let clip_index = frame
+        .paint_commands
+        .iter()
+        .position(|command| matches!(command, PaintCommand::PushClip(_)))
+        .unwrap();
+    assert!(fill_index < clip_index);
     assert!(frame
         .paint_commands
         .iter()
@@ -968,7 +975,7 @@ fn paint_commands_include_rounded_background_border_text_clip_and_transform() {
         .any(|command| matches!(command, PaintCommand::Text { text, .. } if text == "HP")));
     assert!(matches!(
         frame.paint_commands.last(),
-        Some(PaintCommand::PopClip)
+        Some(PaintCommand::PopTransform)
     ));
 }
 

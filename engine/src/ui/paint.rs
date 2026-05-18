@@ -51,9 +51,6 @@ pub fn collect_paint_commands(arena: &UiArena, root: &LayoutNode) -> Vec<PaintCo
 }
 
 fn collect_node_paint(arena: &UiArena, node: &LayoutNode, commands: &mut Vec<PaintCommand>) {
-    if node.style.clip {
-        commands.push(PaintCommand::PushClip(node.content_rect));
-    }
     let transformed = !node.style.transform.is_identity();
     if transformed {
         commands.push(PaintCommand::PushTransform {
@@ -78,16 +75,20 @@ fn collect_node_paint(arena: &UiArena, node: &LayoutNode, commands: &mut Vec<Pai
         });
     }
 
+    if node.style.clip {
+        commands.push(PaintCommand::PushClip(node.content_rect));
+    }
+
     arena.widget(node.widget).paint(node, commands);
 
     for child in &node.children {
         collect_node_paint(arena, child, commands);
     }
 
-    if transformed {
-        commands.push(PaintCommand::PopTransform);
-    }
     if node.style.clip {
         commands.push(PaintCommand::PopClip);
+    }
+    if transformed {
+        commands.push(PaintCommand::PopTransform);
     }
 }
