@@ -231,7 +231,13 @@ impl UiBackend for EguiUiBackend<'_> {
     fn begin_frame(&mut self, _viewport: UiRect, _scale_factor: f32) {}
 
     fn push_clip(&mut self, rect: UiRect) {
-        self.clip_stack.push(to_egui_rect(rect));
+        let clip = to_egui_rect(rect);
+        let clip = self
+            .clip_stack
+            .last()
+            .map(|parent| intersect_clip_rect(*parent, clip))
+            .unwrap_or(clip);
+        self.clip_stack.push(clip);
     }
 
     fn pop_clip(&mut self) {
@@ -447,4 +453,8 @@ fn to_egui_radius(radius: CornerRadius) -> egui::CornerRadius {
         sw: radius.bottom_left.clamp(0.0, u8::MAX as f32) as u8,
         se: radius.bottom_right.clamp(0.0, u8::MAX as f32) as u8,
     }
+}
+
+pub(crate) fn intersect_clip_rect(parent: egui::Rect, child: egui::Rect) -> egui::Rect {
+    parent.intersect(child)
 }

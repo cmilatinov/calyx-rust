@@ -124,6 +124,7 @@ impl GameApp {
         ui.text(value)
             .id(ui, id)
             .style(ui, StylePatch::default().text_color(color).font_size(size))
+            .pointer_events(ui, PointerEvents::None)
     }
 
     fn meter(
@@ -141,6 +142,7 @@ impl GameApp {
             .radius(ui, CornerRadius::none())
             .width(ui, UiLength::Fill)
             .height(ui, UiLength::Px(14.0))
+            .pointer_events(ui, PointerEvents::None)
     }
 
     fn line(start: UiPoint, end: UiPoint, color: UiColor, width: f32) -> PaintCommand {
@@ -407,7 +409,7 @@ impl GameApp {
             .id(ui, "status-panel")
             .style(ui, panel_style.clone())
             .hover_style(ui, hover_tilt.clone())
-            .pointer_events(ui, PointerEvents::Auto)
+            .pointer_events(ui, PointerEvents::None)
             .width(ui, UiLength::Px(status_size.width))
             .height(ui, UiLength::Px(status_size.height))
             .margin(
@@ -433,6 +435,7 @@ impl GameApp {
             .padding(ui, EdgeInsets::symmetric(9.0, 4.0))
             .width(ui, UiLength::Px(32.0))
             .height(ui, UiLength::Px(30.0))
+            .pointer_events(ui, PointerEvents::None)
             .child(ui, key_text);
         let prompt_title = Self::hud_text(ui, "prompt-title", "GARAGE", bright, 12.0);
         let prompt_hint =
@@ -441,6 +444,7 @@ impl GameApp {
             .column()
             .id(ui, "prompt-copy")
             .gap(ui, 0.0)
+            .pointer_events(ui, PointerEvents::None)
             .child(ui, prompt_title)
             .child(ui, prompt_hint);
         let prompt_panel = ui
@@ -456,7 +460,7 @@ impl GameApp {
                     .transition_duration(0.18),
             )
             .hover_style(ui, reverse_hover_tilt.clone())
-            .pointer_events(ui, PointerEvents::Auto)
+            .pointer_events(ui, PointerEvents::None)
             .width(ui, UiLength::Px(prompt_size.width))
             .height(ui, UiLength::Px(prompt_size.height))
             .margin(
@@ -496,7 +500,7 @@ impl GameApp {
             .id(ui, "vitals-panel")
             .style(ui, panel_style.clone())
             .hover_style(ui, hover_tilt.clone())
-            .pointer_events(ui, PointerEvents::Auto)
+            .pointer_events(ui, PointerEvents::None)
             .width(ui, UiLength::Px(vitals_size.width))
             .height(ui, UiLength::Px(vitals_size.height))
             .margin(
@@ -532,7 +536,7 @@ impl GameApp {
             .id(ui, "radio-panel")
             .style(ui, panel_style.clone())
             .hover_style(ui, reverse_hover_tilt.clone())
-            .pointer_events(ui, PointerEvents::Auto)
+            .pointer_events(ui, PointerEvents::None)
             .width(ui, UiLength::Px(radio_size.width))
             .height(ui, UiLength::Px(radio_size.height))
             .margin(
@@ -558,6 +562,7 @@ impl GameApp {
             .column()
             .id(ui, "street-copy")
             .gap(ui, 0.0)
+            .pointer_events(ui, PointerEvents::None)
             .child(ui, street_name)
             .child(ui, street_sub);
         let street_card = ui
@@ -572,6 +577,7 @@ impl GameApp {
                     .padding(EdgeInsets::symmetric(8.0, 6.0)),
             )
             .gap(ui, 8.0)
+            .pointer_events(ui, PointerEvents::None)
             .width(ui, UiLength::Px(150.0))
             .height(ui, UiLength::Px(42.0))
             .margin(
@@ -600,7 +606,7 @@ impl GameApp {
             .id(ui, "progress-panel")
             .style(ui, panel_style.clone())
             .hover_style(ui, reverse_hover_tilt.clone())
-            .pointer_events(ui, PointerEvents::Auto)
+            .pointer_events(ui, PointerEvents::None)
             .width(ui, UiLength::Px(progress_size.width))
             .height(ui, UiLength::Px(progress_size.height))
             .margin(
@@ -625,7 +631,7 @@ impl GameApp {
             .id(ui, "speed-panel")
             .style(ui, panel_style)
             .hover_style(ui, hover_tilt.clone())
-            .pointer_events(ui, PointerEvents::Auto)
+            .pointer_events(ui, PointerEvents::None)
             .width(ui, UiLength::Px(speed_size.width))
             .height(ui, UiLength::Px(speed_size.height))
             .margin(
@@ -768,12 +774,27 @@ impl eframe::App for GameApp {
                         )
                     },
                 );
+                rect = response.rect;
+
+                let viewport = UiRect::from_min_size(
+                    UiPoint::new(rect.min.x, rect.min.y),
+                    UiSize::new(rect.width(), rect.height()),
+                );
+                self.ui_arena.clear();
+                let sandbox_ui = Self::sandbox_ui(&mut self.ui_arena, viewport, self.fps);
+                let ui_frame = self.ui_runtime.frame(
+                    &self.ui_arena,
+                    sandbox_ui,
+                    viewport,
+                    Self::pointer_input(ui.ctx()),
+                    &self.ui_theme,
+                );
+
                 let state = InputState {
-                    is_active: true,
+                    is_active: !ui_frame.consumed_pointer,
                     last_cursor_pos: None,
                     ..Default::default()
                 };
-                rect = response.rect;
                 let input = Input::from_ctx(ui.ctx(), Some(&response), state);
                 let assets = self.game.assets.lock_read();
                 let GameContext {
@@ -783,25 +804,12 @@ impl eframe::App for GameApp {
                 scene.prepare();
                 scene.update(&assets.registries, resources, &input);
 
-                let viewport = UiRect::from_min_size(
-                    UiPoint::new(rect.min.x, rect.min.y),
-                    UiSize::new(rect.width(), rect.height()),
-                );
-                self.ui_arena.clear();
-                let sandbox_ui = Self::sandbox_ui(&mut self.ui_arena, viewport, self.fps);
-                let frame = self.ui_runtime.frame(
-                    &self.ui_arena,
-                    sandbox_ui,
-                    viewport,
-                    Self::pointer_input(ui.ctx()),
-                    &self.ui_theme,
-                );
                 let mut backend = EguiUiBackend::new(ui.painter());
                 render_commands(
                     &mut backend,
                     viewport,
                     ui.ctx().pixels_per_point(),
-                    &frame.paint_commands,
+                    &ui_frame.paint_commands,
                     |_| texture_id,
                 );
             });

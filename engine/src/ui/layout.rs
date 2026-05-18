@@ -269,6 +269,7 @@ fn layout_flex(
 
     let mut fixed_total = 0.0;
     let mut flex_total = 0.0;
+    let mut margin_total = 0.0;
     let child_styles: Vec<_> = node_data
         .children
         .iter()
@@ -276,6 +277,7 @@ fn layout_flex(
         .map(|child| resolve_style(arena, child, theme, styles, state, screen_class))
         .collect();
     for (child, style) in node_data.children.iter().copied().zip(child_styles.iter()) {
+        margin_total += main_margin(style, horizontal);
         let child_size = default_size(
             arena,
             arena.node(child).widget,
@@ -311,8 +313,9 @@ fn layout_flex(
             fixed_total += basis;
         }
     }
-    let remaining = (main_available - fixed_total - gap_total).max(0.0);
-    let used_main = fixed_total + gap_total + if flex_total > 0.0 { remaining } else { 0.0 };
+    let remaining = (main_available - fixed_total - margin_total - gap_total).max(0.0);
+    let used_main =
+        fixed_total + margin_total + gap_total + if flex_total > 0.0 { remaining } else { 0.0 };
     let space_between = if parent_style.justify_content == JustifyContent::SpaceBetween
         && count > 1
         && flex_total <= 0.0
@@ -364,6 +367,8 @@ fn layout_flex(
                     default.height
                 })
             };
+            let main_margin = main_margin(style, horizontal);
+            let cross_margin = cross_margin(style, horizontal);
             let cross = resolve_length(
                 if horizontal {
                     style.height
@@ -373,7 +378,7 @@ fn layout_flex(
                 cross_available,
             )
             .unwrap_or(match parent_style.align_items {
-                AlignItems::Stretch => cross_available,
+                AlignItems::Stretch => (cross_available - cross_margin).max(0.0),
                 _ => {
                     if horizontal {
                         default.height
@@ -382,9 +387,10 @@ fn layout_flex(
                     }
                 }
             });
+            let allocated_cross = cross + cross_margin;
             let cross_offset = match parent_style.align_items {
-                AlignItems::Center => (cross_available - cross).max(0.0) * 0.5,
-                AlignItems::End => (cross_available - cross).max(0.0),
+                AlignItems::Center => (cross_available - allocated_cross).max(0.0) * 0.5,
+                AlignItems::End => (cross_available - allocated_cross).max(0.0),
                 _ => 0.0,
             };
             let origin = if horizontal {
@@ -398,12 +404,13 @@ fn layout_flex(
                     content_rect.min.y + cursor,
                 )
             };
+            let allocated_main = main + main_margin;
             let size = if horizontal {
-                UiSize::new(main, cross)
+                UiSize::new(allocated_main, allocated_cross)
             } else {
-                UiSize::new(cross, main)
+                UiSize::new(allocated_cross, allocated_main)
             };
-            cursor += main + parent_style.gap + space_between;
+            cursor += allocated_main + parent_style.gap + space_between;
             layout_node(
                 arena,
                 child,
@@ -416,6 +423,22 @@ fn layout_flex(
             )
         })
         .collect()
+}
+
+fn main_margin(style: &Style, horizontal: bool) -> f32 {
+    if horizontal {
+        style.margin.horizontal()
+    } else {
+        style.margin.vertical()
+    }
+}
+
+fn cross_margin(style: &Style, horizontal: bool) -> f32 {
+    if horizontal {
+        style.margin.vertical()
+    } else {
+        style.margin.horizontal()
+    }
 }
 
 fn resolve_size(arena: &UiArena, widget: WidgetHandle, style: &Style, max: UiSize) -> UiSize {

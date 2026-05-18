@@ -106,6 +106,148 @@ fn row_layout_distributes_space_between_children() {
 }
 
 #[test]
+fn row_layout_includes_child_margins_in_spacing() {
+    let theme = Theme::default();
+    let mut runtime = UiRuntime::default();
+    let mut ui = UiArena::default();
+    let first = ui
+        .sized_box()
+        .id(&mut ui, "first")
+        .width(&mut ui, UiLength::Px(20.0))
+        .height(&mut ui, UiLength::Px(10.0))
+        .margin(
+            &mut ui,
+            EdgeInsets {
+                top: 2.0,
+                right: 10.0,
+                bottom: 3.0,
+                left: 5.0,
+            },
+        );
+    let second = ui
+        .sized_box()
+        .id(&mut ui, "second")
+        .width(&mut ui, UiLength::Px(20.0))
+        .height(&mut ui, UiLength::Px(10.0))
+        .margin(
+            &mut ui,
+            EdgeInsets {
+                top: 0.0,
+                right: 0.0,
+                bottom: 0.0,
+                left: 7.0,
+            },
+        );
+    let root = ui
+        .row()
+        .id(&mut ui, "root")
+        .gap(&mut ui, 4.0)
+        .child(&mut ui, first)
+        .child(&mut ui, second);
+
+    let frame = runtime.frame(&ui, root, viewport(100.0, 50.0), UiInput::default(), &theme);
+
+    assert_eq!(
+        node_rect(&frame, "first"),
+        UiRect::from_min_size(UiPoint::new(5.0, 2.0), UiSize::new(20.0, 10.0))
+    );
+    assert_eq!(
+        node_rect(&frame, "second"),
+        UiRect::from_min_size(UiPoint::new(46.0, 0.0), UiSize::new(20.0, 10.0))
+    );
+}
+
+#[test]
+fn column_layout_includes_child_margins_in_spacing() {
+    let theme = Theme::default();
+    let mut runtime = UiRuntime::default();
+    let mut ui = UiArena::default();
+    let first = ui
+        .sized_box()
+        .id(&mut ui, "first")
+        .width(&mut ui, UiLength::Px(12.0))
+        .height(&mut ui, UiLength::Px(20.0))
+        .margin(
+            &mut ui,
+            EdgeInsets {
+                top: 0.0,
+                right: 0.0,
+                bottom: 10.0,
+                left: 4.0,
+            },
+        );
+    let second = ui
+        .sized_box()
+        .id(&mut ui, "second")
+        .width(&mut ui, UiLength::Px(12.0))
+        .height(&mut ui, UiLength::Px(20.0))
+        .margin(
+            &mut ui,
+            EdgeInsets {
+                top: 5.0,
+                right: 0.0,
+                bottom: 0.0,
+                left: 0.0,
+            },
+        );
+    let root = ui
+        .column()
+        .id(&mut ui, "root")
+        .gap(&mut ui, 2.0)
+        .child(&mut ui, first)
+        .child(&mut ui, second);
+
+    let frame = runtime.frame(&ui, root, viewport(50.0, 100.0), UiInput::default(), &theme);
+
+    assert_eq!(
+        node_rect(&frame, "first"),
+        UiRect::from_min_size(UiPoint::new(4.0, 0.0), UiSize::new(12.0, 20.0))
+    );
+    assert_eq!(
+        node_rect(&frame, "second"),
+        UiRect::from_min_size(UiPoint::new(0.0, 37.0), UiSize::new(12.0, 20.0))
+    );
+}
+
+#[test]
+fn space_between_layout_includes_child_margins() {
+    let theme = Theme::default();
+    let mut runtime = UiRuntime::default();
+    let mut ui = UiArena::default();
+    let first = ui
+        .sized_box()
+        .id(&mut ui, "first")
+        .width(&mut ui, UiLength::Px(20.0))
+        .height(&mut ui, UiLength::Px(10.0))
+        .margin(&mut ui, EdgeInsets::symmetric(5.0, 0.0));
+    let second = ui
+        .sized_box()
+        .id(&mut ui, "second")
+        .width(&mut ui, UiLength::Px(20.0))
+        .height(&mut ui, UiLength::Px(10.0))
+        .margin(
+            &mut ui,
+            EdgeInsets {
+                top: 0.0,
+                right: 0.0,
+                bottom: 0.0,
+                left: 10.0,
+            },
+        );
+    let root = ui
+        .row()
+        .id(&mut ui, "root")
+        .justify_content(&mut ui, JustifyContent::SpaceBetween)
+        .child(&mut ui, first)
+        .child(&mut ui, second);
+
+    let frame = runtime.frame(&ui, root, viewport(200.0, 40.0), UiInput::default(), &theme);
+
+    assert_eq!(node_rect(&frame, "first").min.x, 5.0);
+    assert_eq!(node_rect(&frame, "second").min.x, 180.0);
+}
+
+#[test]
 fn style_resolution_applies_tokens_class_responsive_and_state_overrides() {
     let mut styles = StyleRegistry::default();
     styles.insert(
@@ -328,6 +470,41 @@ fn hover_passes_through_overlapping_elements_while_click_targets_frontmost() {
 
     assert!(click.clicked("front"));
     assert!(!click.clicked("back"));
+}
+
+#[test]
+fn passive_overlay_with_passive_children_does_not_consume_pointer() {
+    let theme = Theme::default();
+    let mut runtime = UiRuntime::default();
+    let mut ui = UiArena::default();
+    let label = ui
+        .text("FPS")
+        .id(&mut ui, "label")
+        .pointer_events(&mut ui, PointerEvents::None);
+    let overlay = ui
+        .container()
+        .id(&mut ui, "overlay")
+        .width(&mut ui, UiLength::Px(100.0))
+        .height(&mut ui, UiLength::Px(40.0))
+        .pointer_events(&mut ui, PointerEvents::None)
+        .child(&mut ui, label);
+    let root = ui
+        .stack()
+        .id(&mut ui, "root")
+        .pointer_events(&mut ui, PointerEvents::None)
+        .child(&mut ui, overlay);
+
+    let frame = runtime.frame(
+        &ui,
+        root,
+        viewport(120.0, 60.0),
+        pointer(20.0, 20.0, false),
+        &theme,
+    );
+
+    assert!(!frame.consumed_pointer);
+    assert!(frame.hovered("overlay"));
+    assert!(frame.hovered("label"));
 }
 
 #[test]
@@ -589,6 +766,19 @@ fn backend_adapter_forwards_expected_operations() {
         .iter()
         .any(|op| matches!(op, BackendOp::Image { texture, .. } if texture == "icon/ammo")));
     assert_eq!(backend.ops.last(), Some(&BackendOp::EndFrame));
+}
+
+#[test]
+fn egui_clip_rects_are_intersected_for_nested_clips() {
+    let parent = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(100.0, 100.0));
+    let child = egui::Rect::from_min_max(egui::pos2(-10.0, 10.0), egui::pos2(50.0, 150.0));
+
+    let clip = crate::ui::backend::intersect_clip_rect(parent, child);
+
+    assert_eq!(
+        clip,
+        egui::Rect::from_min_max(egui::pos2(0.0, 10.0), egui::pos2(50.0, 100.0))
+    );
 }
 
 #[test]
