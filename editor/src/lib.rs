@@ -128,11 +128,14 @@ impl EditorApp {
         let project_path = project_path.into();
         log::info!("Starting editor for project {}", project_path.display());
         let asset_context = AssetContext::new(cc, project_path.join("assets"))?;
-        let game = GameContext::new(asset_context.clone());
+        let mut game = GameContext::new(asset_context.clone());
+        let assembly_status = Ref::new(ProjectAssemblyStatus::default());
+        game.resources.insert(assembly_status.clone());
         let project_manager = ProjectManager::new(
             asset_context,
             project_path,
             game.resources.background().clone(),
+            assembly_status,
         )?;
         if !project_manager.write().load_existing_assemblies() {
             project_manager.read().build_assemblies();
@@ -381,7 +384,13 @@ impl EditorApp {
                 self.new_interaction();
                 ui.close_menu();
             }
-            if ui.button("Open").clicked() {
+            let open_response = ui
+                .add_enabled(
+                    self.project_manager.read().assemblies_loaded(),
+                    Button::new("Open"),
+                )
+                .on_disabled_hover_text("Build project assemblies before opening scenes");
+            if open_response.clicked() {
                 self.open_interaction();
                 ui.close_menu();
             }

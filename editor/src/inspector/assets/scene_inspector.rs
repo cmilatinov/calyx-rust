@@ -6,6 +6,7 @@ use engine::utils::TypeUuid;
 use uuid::Uuid;
 
 use crate::inspector::asset_inspector::{AssetInspector, ReflectAssetInspector};
+use crate::project_manager::ProjectAssemblyStatus;
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, AssetInspector)]
@@ -22,7 +23,14 @@ impl AssetInspector for SceneInspector {
     }
 
     fn show_context_menu(&self, ui: &mut Ui, game: &mut GameContext, asset_id: Uuid) {
-        if ui.button("Open").clicked() {
+        let assemblies_loaded = game
+            .resources
+            .resource::<engine::core::Ref<ProjectAssemblyStatus>>()
+            .is_some_and(|status| status.read().is_loaded());
+        let open_response = ui
+            .add_enabled(assemblies_loaded, egui::Button::new("Open"))
+            .on_disabled_hover_text("Build project assemblies before opening scenes");
+        if open_response.clicked() {
             let (scene, label) = {
                 let registry = game.assets.registries.assets.read();
                 let label = registry
