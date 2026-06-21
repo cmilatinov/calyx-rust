@@ -321,6 +321,7 @@ fn advance_reload(controller: &mut ComponentTankController, dt: f32) {
         return;
     }
 
+    controller.ammo = controller.ammo.min(controller.max_ammo);
     if controller.ammo > 0 {
         controller.reload_remaining = 0.0;
         return;
@@ -959,6 +960,21 @@ mod tests {
         advance_reload(&mut controller, 1.0);
 
         assert_eq!(controller.ammo, 0);
+        assert_eq!(controller.reload_remaining, 0.0);
+    }
+
+    #[test]
+    fn reload_clamps_stale_ammo_to_max_ammo() {
+        let mut controller = ComponentTankController {
+            max_ammo: 3,
+            ammo: 6,
+            reload_remaining: 1.0,
+            ..Default::default()
+        };
+
+        advance_reload(&mut controller, 0.1);
+
+        assert_eq!(controller.ammo, 3);
         assert_eq!(controller.reload_remaining, 0.0);
     }
 
