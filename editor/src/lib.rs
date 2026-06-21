@@ -56,8 +56,11 @@ pub struct EditorApp {
     tree: Tree<&'static str>,
     panels: Panels,
     physics_debug_pipeline: DebugRenderPipeline,
-    project_manager: Ref<ProjectManager>,
+    // Drop runtime/editor state before the project manager so assembly-backed
+    // scene components and registry trait objects are destroyed while the
+    // project assembly is still loaded.
     state: EditorAppState,
+    project_manager: Ref<ProjectManager>,
     _log: Log<DefaultLogger>,
 }
 
