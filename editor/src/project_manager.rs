@@ -207,9 +207,20 @@ impl ProjectManager {
             };
             match Lib::new(&target) {
                 Ok(lib) => {
-                    if let Ok(load_fn) =
-                        lib.find_func::<extern "C" fn(&mut TypeRegistry), &str>("plugin_main")
                     {
+                        let load_fn = match lib
+                            .find_func::<extern "C" fn(&mut TypeRegistry), &str>("plugin_main")
+                        {
+                            Ok(load_fn) => load_fn,
+                            Err(err) => {
+                                log::error!(
+                                    "Project assembly {} is missing plugin_main: {err}",
+                                    target.display()
+                                );
+                                self.refresh_assembly_status();
+                                return false;
+                            }
+                        };
                         log::info!(
                             "Loading plugin type registrations from crate {} ({})",
                             self.current_project().name(),
