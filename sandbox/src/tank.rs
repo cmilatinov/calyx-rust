@@ -34,10 +34,16 @@ pub struct ComponentTankController {
     pub projectile_lifetime: f32,
     pub projectile_radius: f32,
     pub muzzle_offset: f32,
+    pub max_ammo: u32,
+    pub ammo: u32,
     pub fire_cooldown: f32,
+    pub reload_duration: f32,
     #[serde(skip)]
     #[reflect_skip]
     pub fire_cooldown_remaining: f32,
+    #[serde(skip)]
+    #[reflect_skip]
+    pub reload_remaining: f32,
 }
 
 impl Default for ComponentTankController {
@@ -55,8 +61,12 @@ impl Default for ComponentTankController {
             projectile_lifetime: 2.0,
             projectile_radius: 0.18,
             muzzle_offset: 1.0,
+            max_ammo: 6,
+            ammo: 6,
             fire_cooldown: 0.35,
+            reload_duration: 1.4,
             fire_cooldown_remaining: 0.0,
+            reload_remaining: 0.0,
         }
     }
 }
@@ -155,6 +165,8 @@ impl ComponentUpdate for ComponentTankController {
         );
         let _ = scene.write_component::<ComponentTankController, _>(game_object, |component| {
             component.fire_cooldown_remaining = controller.fire_cooldown_remaining;
+            component.reload_remaining = controller.reload_remaining;
+            component.ammo = controller.ammo;
         });
     }
 }
@@ -277,15 +289,24 @@ fn update_shooting(
 ) {
     controller.fire_cooldown_remaining =
         advance_fire_cooldown(controller.fire_cooldown_remaining, dt);
+    advance_reload(controller, dt);
+    if is_reloading(controller) {
+        return;
+    }
     if !can_fire(
         input.action("shoot").pressed(),
         controller.fire_cooldown_remaining,
+        controller.ammo,
     ) {
         return;
     }
 
     if spawn_projectile(scene, controller) {
+        controller.ammo = controller.ammo.saturating_sub(1);
         controller.fire_cooldown_remaining = controller.fire_cooldown;
+        if controller.ammo == 0 {
+            controller.reload_remaining = controller.reload_duration;
+        }
     }
 }
 
@@ -293,8 +314,36 @@ fn advance_fire_cooldown(remaining: f32, dt: f32) -> f32 {
     (remaining - dt).max(0.0)
 }
 
-fn can_fire(shoot_pressed: bool, cooldown_remaining: f32) -> bool {
-    shoot_pressed && cooldown_remaining <= f32::EPSILON
+fn advance_reload(controller: &mut ComponentTankController, dt: f32) {
+    if controller.max_ammo == 0 {
+        controller.ammo = 0;
+        controller.reload_remaining = 0.0;
+        return;
+    }
+
+    controller.ammo = controller.ammo.min(controller.max_ammo);
+    if controller.ammo > 0 {
+        controller.reload_remaining = 0.0;
+        return;
+    }
+
+    if controller.reload_remaining <= f32::EPSILON {
+        controller.ammo = controller.max_ammo;
+        return;
+    }
+
+    controller.reload_remaining = (controller.reload_remaining - dt.max(0.0)).max(0.0);
+    if controller.reload_remaining <= f32::EPSILON {
+        controller.ammo = controller.max_ammo;
+    }
+}
+
+fn is_reloading(controller: &ComponentTankController) -> bool {
+    controller.ammo == 0
+}
+
+fn can_fire(shoot_pressed: bool, cooldown_remaining: f32, ammo: u32) -> bool {
+    shoot_pressed && cooldown_remaining <= f32::EPSILON && ammo > 0
 }
 
 fn spawn_projectile(
@@ -525,8 +574,9 @@ fn yaw_rotation(direction: &Vec3) -> UnitQuaternion<f32> {
 #[cfg(test)]
 mod tests {
     use super::{
-        advance_fire_cooldown, can_fire, clip_from_screen, flatten_xz, follow_camera_xz,
-        screen_to_ground, segment_intersects_sphere, yaw_rotation,
+        advance_fire_cooldown, advance_reload, can_fire, clip_from_screen, flatten_xz,
+        follow_camera_xz, is_reloading, screen_to_ground, segment_intersects_sphere, yaw_rotation,
+        ComponentTankController,
     };
     use engine::component::{ComponentID, ComponentTransform};
     use engine::math::Transform;
@@ -871,9 +921,61 @@ mod tests {
 
     #[test]
     fn fire_gate_requires_input_and_expired_cooldown() {
-        assert!(can_fire(true, 0.0));
-        assert!(!can_fire(false, 0.0));
-        assert!(!can_fire(true, 0.1));
+        assert!(can_fire(true, 0.0, 1));
+        assert!(!can_fire(false, 0.0, 1));
+        assert!(!can_fire(true, 0.1, 1));
+        assert!(!can_fire(true, 0.0, 0));
+    }
+
+    #[test]
+    fn reload_refills_empty_ammo_after_duration() {
+        let mut controller = ComponentTankController {
+            max_ammo: 3,
+            ammo: 0,
+            reload_duration: 1.0,
+            reload_remaining: 1.0,
+            ..Default::default()
+        };
+
+        advance_reload(&mut controller, 0.4);
+        assert_eq!(controller.ammo, 0);
+        assert!(is_reloading(&controller));
+        assert!((controller.reload_remaining - 0.6).abs() < 1e-6);
+
+        advance_reload(&mut controller, 0.6);
+        assert_eq!(controller.ammo, 3);
+        assert!(!is_reloading(&controller));
+        assert_eq!(controller.reload_remaining, 0.0);
+    }
+
+    #[test]
+    fn reload_is_disabled_when_max_ammo_is_zero() {
+        let mut controller = ComponentTankController {
+            max_ammo: 0,
+            ammo: 0,
+            reload_remaining: 1.0,
+            ..Default::default()
+        };
+
+        advance_reload(&mut controller, 1.0);
+
+        assert_eq!(controller.ammo, 0);
+        assert_eq!(controller.reload_remaining, 0.0);
+    }
+
+    #[test]
+    fn reload_clamps_stale_ammo_to_max_ammo() {
+        let mut controller = ComponentTankController {
+            max_ammo: 3,
+            ammo: 6,
+            reload_remaining: 1.0,
+            ..Default::default()
+        };
+
+        advance_reload(&mut controller, 0.1);
+
+        assert_eq!(controller.ammo, 3);
+        assert_eq!(controller.reload_remaining, 0.0);
     }
 
     #[test]
