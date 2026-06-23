@@ -31,6 +31,7 @@ pub struct ComponentTankController {
     pub hull_turn_speed: f32,
     pub turret_turn_speed: f32,
     pub projectile_speed: f32,
+    pub projectile_damage: f32,
     pub projectile_lifetime: f32,
     pub projectile_radius: f32,
     pub muzzle_offset: f32,
@@ -58,6 +59,7 @@ impl Default for ComponentTankController {
             hull_turn_speed: 2.8,
             turret_turn_speed: 12.0,
             projectile_speed: 28.0,
+            projectile_damage: 35.0,
             projectile_lifetime: 2.0,
             projectile_radius: 0.18,
             muzzle_offset: 1.0,
@@ -82,6 +84,7 @@ impl Component for ComponentTankController {}
 pub struct ComponentProjectile {
     pub direction: Vec3,
     pub speed: f32,
+    pub damage: f32,
     pub lifetime_remaining: f32,
     pub radius: f32,
 }
@@ -91,6 +94,7 @@ impl Default for ComponentProjectile {
         Self {
             direction: vec3(0.0, 0.0, 1.0),
             speed: 28.0,
+            damage: 35.0,
             lifetime_remaining: 2.0,
             radius: 0.18,
         }
@@ -133,6 +137,44 @@ impl Default for ComponentProjectileTarget {
 }
 
 impl Component for ComponentProjectileTarget {}
+
+#[derive(Clone, Copy, TypeUuid, Serialize, Deserialize, Component, Reflect)]
+#[uuid = "8f0175f4-1a76-4c43-8932-6462f9005ab4"]
+#[reflect(Default, TypeUuidDynamic, Component)]
+#[reflect_attr(name = "Health")]
+#[serde(default)]
+#[repr(C)]
+pub struct ComponentHealth {
+    pub max_health: f32,
+    pub current_health: f32,
+    pub destroy_on_death: bool,
+    pub dead: bool,
+}
+
+impl Default for ComponentHealth {
+    fn default() -> Self {
+        Self {
+            max_health: 100.0,
+            current_health: 100.0,
+            destroy_on_death: false,
+            dead: false,
+        }
+    }
+}
+
+impl Component for ComponentHealth {}
+
+impl ComponentHealth {
+    fn apply_damage(&mut self, amount: f32) -> bool {
+        if self.dead || amount <= 0.0 {
+            return self.dead;
+        }
+
+        self.current_health = (self.current_health - amount).max(0.0);
+        self.dead = self.current_health <= f32::EPSILON;
+        self.dead
+    }
+}
 
 impl ComponentUpdate for ComponentTankController {
     fn update(
@@ -386,6 +428,7 @@ fn spawn_projectile(
         ComponentProjectile {
             direction,
             speed: controller.projectile_speed,
+            damage: controller.projectile_damage,
             lifetime_remaining: controller.projectile_lifetime,
             radius: controller.projectile_radius,
         },
@@ -424,9 +467,7 @@ fn update_projectile(
     let end = start + direction * projectile.speed * travel_time;
 
     if let Some(target) = first_projectile_hit(scene, game_object, start, end, projectile.radius) {
-        let _ = scene.write_component::<ComponentProjectileTarget, _>(target, |target| {
-            target.hit_count = target.hit_count.saturating_add(1);
-        });
+        apply_projectile_damage(scene, target, projectile.damage);
         scene.delete(game_object);
         return;
     }
@@ -444,6 +485,30 @@ fn update_projectile(
         component.direction = projectile.direction;
         component.lifetime_remaining = projectile.lifetime_remaining;
     });
+}
+
+fn apply_projectile_damage(
+    scene: &mut engine::scene::Scene,
+    target: engine::scene::GameObject,
+    damage: f32,
+) {
+    let mut should_destroy = false;
+    let damaged_health = scene
+        .write_component::<ComponentHealth, _>(target, |health| {
+            let died = health.apply_damage(damage);
+            should_destroy = died && health.destroy_on_death;
+        })
+        .is_some();
+
+    if !damaged_health {
+        let _ = scene.write_component::<ComponentProjectileTarget, _>(target, |target| {
+            target.hit_count = target.hit_count.saturating_add(1);
+        });
+    }
+
+    if should_destroy {
+        scene.delete(target);
+    }
 }
 
 fn first_projectile_hit(
@@ -575,8 +640,9 @@ fn yaw_rotation(direction: &Vec3) -> UnitQuaternion<f32> {
 mod tests {
     use super::{
         advance_fire_cooldown, advance_reload, can_fire, clip_from_screen, flatten_xz,
-        follow_camera_xz, is_reloading, screen_to_ground, segment_intersects_sphere, yaw_rotation,
-        ComponentTankController,
+        follow_camera_xz, is_reloading, screen_to_ground, segment_intersects_sphere,
+        update_projectile, yaw_rotation, ComponentHealth, ComponentProjectile,
+        ComponentProjectileTarget, ComponentTankController,
     };
     use engine::component::{ComponentID, ComponentTransform};
     use engine::math::Transform;
@@ -992,5 +1058,94 @@ mod tests {
             vec3(2.0, 0.0, 5.0),
             0.5,
         ));
+    }
+
+    #[test]
+    fn projectile_hit_applies_damage_to_health() {
+        let mut scene = engine::test_support::test_scene();
+        let projectile = scene.create(
+            Some(ComponentID {
+                name: "Projectile".to_string(),
+                ..Default::default()
+            }),
+            None,
+        );
+        scene.add_component(
+            projectile,
+            ComponentProjectile {
+                direction: vec3(0.0, 0.0, 1.0),
+                speed: 10.0,
+                damage: 25.0,
+                lifetime_remaining: 1.0,
+                radius: 0.1,
+            },
+        );
+
+        let target = scene.create(
+            Some(ComponentID {
+                name: "Target".to_string(),
+                ..Default::default()
+            }),
+            None,
+        );
+        scene.set_world_transform(target, Transform::from_xyz(0.0, 0.0, 5.0).matrix());
+        scene.add_component(target, ComponentProjectileTarget::default());
+        scene.add_component(
+            target,
+            ComponentHealth {
+                current_health: 60.0,
+                max_health: 60.0,
+                ..Default::default()
+            },
+        );
+
+        update_projectile(&mut scene, projectile, 0.5);
+
+        let health = scene
+            .read_component::<ComponentHealth, _, _>(target, |health| *health)
+            .expect("target should keep health after nonlethal hit");
+        assert_eq!(health.current_health, 35.0);
+        assert!(!health.dead);
+        let hit_count = scene
+            .read_component::<ComponentProjectileTarget, _, _>(target, |target| target.hit_count)
+            .unwrap();
+        assert_eq!(hit_count, 0, "health damage replaces legacy hit counting");
+    }
+
+    #[test]
+    fn lethal_projectile_hit_marks_health_dead_and_can_destroy_target() {
+        let mut scene = engine::test_support::test_scene();
+        let projectile = scene.create(None, None);
+        scene.add_component(
+            projectile,
+            ComponentProjectile {
+                direction: vec3(0.0, 0.0, 1.0),
+                speed: 10.0,
+                damage: 100.0,
+                lifetime_remaining: 1.0,
+                radius: 0.1,
+            },
+        );
+
+        let target = scene.create(None, None);
+        scene.set_world_transform(target, Transform::from_xyz(0.0, 0.0, 5.0).matrix());
+        scene.add_component(target, ComponentProjectileTarget::default());
+        scene.add_component(
+            target,
+            ComponentHealth {
+                current_health: 40.0,
+                max_health: 40.0,
+                destroy_on_death: true,
+                ..Default::default()
+            },
+        );
+
+        update_projectile(&mut scene, projectile, 0.5);
+
+        scene.flush_deletes();
+        assert!(
+            !scene.objects().any(|object| object == target),
+            "destroy_on_death targets should be removed after lethal damage"
+        );
     }
 }
