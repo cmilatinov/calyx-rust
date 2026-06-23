@@ -91,6 +91,7 @@ impl ComponentRespawnState {
             self.death_requested = false;
             if self.alive {
                 self.alive = false;
+                self.respawn_requested = false;
                 self.respawn_remaining = self.respawn_delay.max(0.0);
                 self.invulnerability_remaining = 0.0;
             }
@@ -98,6 +99,7 @@ impl ComponentRespawnState {
         }
 
         if self.alive {
+            self.respawn_requested = false;
             self.invulnerability_remaining = (self.invulnerability_remaining - dt).max(0.0);
             return None;
         }
@@ -146,7 +148,8 @@ pub fn update_respawn_state(scene: &mut Scene, game_object: GameObject, dt: f32)
 
     let should_spawn = state.tick(dt) == Some(RespawnAction::Spawn);
     let spawned = should_spawn
-        && find_spawn_transform(scene, state.team).is_some_and(|transform| {
+        && find_spawn_transform(scene, state.team).is_some_and(|mut transform| {
+            transform.scale = scene.world_transform(game_object).scale;
             scene.set_world_transform(game_object, transform.matrix());
             state.mark_spawned();
             true
@@ -210,6 +213,29 @@ mod tests {
 
         assert_eq!(state.tick(0.5), Some(RespawnAction::Spawn));
         assert!(state.respawn_requested);
+    }
+
+    #[test]
+    fn live_respawn_request_does_not_bypass_next_death_delay() {
+        let mut state = ComponentRespawnState {
+            respawn_delay: 2.0,
+            respawn_requested: true,
+            ..Default::default()
+        };
+
+        assert_eq!(state.tick(0.0), None);
+        assert!(state.alive);
+        assert!(!state.respawn_requested);
+
+        state.respawn_requested = true;
+        state.death_requested = true;
+        assert_eq!(state.tick(0.0), None);
+        assert!(!state.alive);
+        assert_eq!(state.respawn_remaining, 2.0);
+        assert!(!state.respawn_requested);
+
+        assert_eq!(state.tick(0.5), None);
+        assert_eq!(state.respawn_remaining, 1.5);
     }
 
     #[test]
@@ -302,5 +328,40 @@ mod tests {
             .expect("player should keep respawn state");
         assert!(state.alive);
         assert_eq!(state.invulnerability_remaining, 2.5);
+    }
+
+    #[test]
+    fn respawn_update_preserves_object_scale() {
+        let mut scene = engine::test_support::test_scene();
+        let spawn = scene.create(None, None);
+        let player = scene.create(None, None);
+        let mut spawn_transform = Transform::from_xyz(8.0, 0.0, 4.0);
+        spawn_transform.scale = vec3(5.0, 5.0, 5.0);
+        let mut player_transform = Transform::from_xyz(-4.0, 0.0, 0.0);
+        player_transform.scale = vec3(0.5, 1.5, 2.0);
+        scene.set_world_transform(spawn, spawn_transform.matrix());
+        scene.set_world_transform(player, player_transform.matrix());
+        scene.add_component(
+            spawn,
+            ComponentSpawnPoint {
+                team: 3,
+                ..Default::default()
+            },
+        );
+        scene.add_component(
+            player,
+            ComponentRespawnState {
+                team: 3,
+                alive: false,
+                respawn_remaining: 0.0,
+                ..Default::default()
+            },
+        );
+
+        assert!(update_respawn_state(&mut scene, player, 0.0));
+
+        let updated = scene.world_transform(player);
+        assert_eq!(updated.position, vec3(8.0, 0.0, 4.0));
+        assert!((updated.scale - vec3(0.5, 1.5, 2.0)).magnitude() < 1e-6);
     }
 }
