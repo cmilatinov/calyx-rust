@@ -6,6 +6,10 @@ use std::any::Any;
 use crate::panel::Panel;
 use crate::EditorAppState;
 
+const TOOLBAR_MARGIN_X: i8 = 10;
+const TOOLBAR_MARGIN_Y: i8 = 6;
+const LOG_BOTTOM_PADDING: f32 = 8.0;
+
 pub struct PanelTerminal {
     min_level: LevelFilter,
     filter: String,
@@ -32,7 +36,7 @@ impl Panel for PanelTerminal {
 
     fn ui(&mut self, ui: &mut Ui, _state: &mut EditorAppState) {
         egui::Frame::NONE
-            .inner_margin(Margin::symmetric(8, 4))
+            .inner_margin(Margin::symmetric(TOOLBAR_MARGIN_X, TOOLBAR_MARGIN_Y))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     egui::ComboBox::from_id_salt("console_min_level")
@@ -76,6 +80,7 @@ impl Panel for PanelTerminal {
                     }
                     ui.label(Self::entry_text(ui, &entry));
                 }
+                ui.add_space(LOG_BOTTOM_PADDING);
             });
     }
 
