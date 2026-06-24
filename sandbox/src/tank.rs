@@ -1,7 +1,8 @@
 use egui::Rect;
 use engine::component::{
-    Component, ComponentCamera, ComponentEventContext, ComponentID, ComponentMesh,
-    ComponentTransform, ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
+    ColliderShape, Component, ComponentCamera, ComponentCollider, ComponentEventContext,
+    ComponentID, ComponentMesh, ComponentRigidBody, ComponentTransform, ComponentUpdate,
+    ReflectComponent, ReflectComponentUpdate,
 };
 use engine::core::TimeType;
 use engine::input::Input;
@@ -433,6 +434,24 @@ fn spawn_projectile(
             radius: controller.projectile_radius,
         },
     );
+    scene.add_component(
+        projectile_object,
+        ComponentRigidBody {
+            enabled: true,
+            gravity_scale: 0.0,
+            can_sleep: false,
+            ..Default::default()
+        },
+    );
+    scene.add_component(
+        projectile_object,
+        ComponentCollider {
+            shape: ColliderShape::Sphere {
+                radius: controller.projectile_radius,
+            },
+            ..Default::default()
+        },
+    );
     if let Some(visual) = visual {
         scene.add_component(projectile_object, visual);
     }
@@ -641,12 +660,15 @@ mod tests {
     use super::{
         advance_fire_cooldown, advance_reload, can_fire, clip_from_screen, flatten_xz,
         follow_camera_xz, is_reloading, screen_to_ground, segment_intersects_sphere,
-        update_projectile, yaw_rotation, ComponentHealth, ComponentProjectile,
+        spawn_projectile, update_projectile, yaw_rotation, ComponentHealth, ComponentProjectile,
         ComponentProjectileTarget, ComponentTankController,
     };
-    use engine::component::{ComponentID, ComponentTransform};
+    use engine::component::{
+        ColliderShape, ComponentCollider, ComponentID, ComponentRigidBody, ComponentTransform,
+    };
     use engine::math::Transform;
     use engine::render::Camera;
+    use engine::scene::GameObjectRef;
     use nalgebra::UnitQuaternion;
     use nalgebra_glm::vec3;
     use serde_json::Value;
@@ -1058,6 +1080,56 @@ mod tests {
             vec3(2.0, 0.0, 5.0),
             0.5,
         ));
+    }
+
+    #[test]
+    fn spawned_projectile_has_velocity_and_physics_components() {
+        let mut scene = engine::test_support::test_scene();
+        let barrel = scene.create(
+            Some(ComponentID {
+                name: "Barrel".to_string(),
+                ..Default::default()
+            }),
+            None,
+        );
+        let controller = ComponentTankController {
+            barrel: GameObjectRef::new(scene.uuid(barrel)),
+            projectile_radius: 0.25,
+            projectile_speed: 12.0,
+            projectile_damage: 17.0,
+            projectile_lifetime: 1.5,
+            ..Default::default()
+        };
+
+        assert!(spawn_projectile(&mut scene, &controller));
+
+        let projectile = scene
+            .objects()
+            .find(|object| scene.name(*object) == "Projectile")
+            .expect("spawn should create a projectile object");
+        let projectile_component = scene
+            .read_component::<ComponentProjectile, _, _>(projectile, |component| *component)
+            .expect("projectile should have velocity/lifetime data");
+        assert_eq!(projectile_component.speed, 12.0);
+        assert_eq!(projectile_component.damage, 17.0);
+        assert_eq!(projectile_component.lifetime_remaining, 1.5);
+        assert_eq!(projectile_component.radius, 0.25);
+
+        let rigid_body = scene
+            .read_component::<ComponentRigidBody, _, _>(projectile, |component| {
+                (component.gravity_scale, component.can_sleep)
+            })
+            .expect("projectile should have a rigid body");
+        assert_eq!(rigid_body.0, 0.0);
+        assert!(!rigid_body.1);
+
+        let collider = scene
+            .read_component::<ComponentCollider, _, _>(projectile, |component| component.shape)
+            .expect("projectile should have a collider");
+        let ColliderShape::Sphere { radius } = collider else {
+            panic!("projectile collider should be a sphere");
+        };
+        assert_eq!(radius, controller.projectile_radius);
     }
 
     #[test]

@@ -40,6 +40,29 @@ mod tests {
     }
 
     #[test]
+    fn prepare_removes_deleted_physics_objects() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        scene.add_component(go, ComponentRigidBody::default());
+        scene.add_component(go, ComponentCollider::default());
+        scene.prepare();
+
+        assert_eq!(scene.physics.bodies.len(), 1);
+        assert_eq!(scene.physics.colliders.len(), 1);
+        assert!(scene.physics.entity_rigid_body.contains_key(&go.entity));
+        assert!(scene.physics.entity_collider.contains_key(&go.entity));
+
+        scene.delete(go);
+        scene.prepare();
+
+        assert_eq!(scene.physics.bodies.len(), 0);
+        assert_eq!(scene.physics.colliders.len(), 0);
+        assert!(!scene.physics.entity_rigid_body.contains_key(&go.entity));
+        assert!(!scene.physics.entity_collider.contains_key(&go.entity));
+        assert!(scene.physics.collider_entity.is_empty());
+    }
+
+    #[test]
     fn dynamic_body_falls_under_gravity() {
         let mut scene = test_scene();
         let go = scene.create(None, None);

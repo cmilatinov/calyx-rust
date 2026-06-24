@@ -11,7 +11,7 @@ use nalgebra::{Point3, Translation3, UnitQuaternion, Vector3};
 use nalgebra_glm::Mat4;
 use rapier3d::parry::query::ShapeCastOptions;
 use rapier3d::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
 /// Result of a physics ray cast resolved to the engine collider entity.
@@ -115,6 +115,7 @@ impl PhysicsContext {
     }
 
     pub fn prepare(scene: &mut Scene) {
+        Self::remove_stale_physics_objects(scene);
         Self::sync_rigid_bodies(scene);
         Self::sync_colliders(scene);
         Self::sync_transforms(scene);
@@ -199,6 +200,59 @@ impl PhysicsContext {
             collider,
             hit,
         })
+    }
+
+    /// Removes Rapier objects whose owning scene entities have been deleted.
+    fn remove_stale_physics_objects(scene: &mut Scene) {
+        let live_entities: HashSet<Entity> =
+            <Entity>::query().iter(&scene.world).copied().collect();
+        let stale_bodies: Vec<_> = scene
+            .physics
+            .entity_rigid_body
+            .iter()
+            .filter_map(|(&entity, &handle)| {
+                (!live_entities.contains(&entity)).then_some((entity, handle))
+            })
+            .collect();
+
+        for (entity, handle) in stale_bodies {
+            scene.physics.entity_rigid_body.remove(&entity);
+            scene.physics.bodies.remove(
+                handle,
+                &mut scene.physics.islands,
+                &mut scene.physics.colliders,
+                &mut scene.physics.impulse_joints,
+                &mut scene.physics.multibody_joints,
+                true,
+            );
+        }
+
+        let stale_colliders: Vec<_> = scene
+            .physics
+            .entity_collider
+            .iter()
+            .filter_map(|(&entity, &handle)| {
+                (!live_entities.contains(&entity) || scene.physics.colliders.get(handle).is_none())
+                    .then_some((entity, handle))
+            })
+            .collect();
+
+        for (entity, handle) in stale_colliders {
+            scene.physics.entity_collider.remove(&entity);
+            if scene.physics.colliders.get(handle).is_some() {
+                scene.physics.colliders.remove(
+                    handle,
+                    &mut scene.physics.islands,
+                    &mut scene.physics.bodies,
+                    true,
+                );
+            }
+            scene.physics.collider_entity.remove(&handle);
+        }
+
+        scene.physics.collider_entity.retain(|handle, entity| {
+            live_entities.contains(entity) && scene.physics.colliders.get(*handle).is_some()
+        });
     }
 
     /// Create or update rigid body properties when the component is dirty.
