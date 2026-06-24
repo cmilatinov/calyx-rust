@@ -432,7 +432,6 @@ impl PanelInspector {
             &res,
             PopupCloseBehavior::CloseOnClickOutside,
             |ui| {
-                ui.set_min_width(res.rect.width().max(220.0));
                 Widgets::search_select_contents(
                     ui,
                     id,
