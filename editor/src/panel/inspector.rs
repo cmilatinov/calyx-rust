@@ -4,13 +4,13 @@ use std::collections::HashSet;
 use crate::inspector::assets::animation_graph_inspector::AnimationGraphInspector;
 use crate::inspector::inspector_registry::InspectorRegistry;
 use crate::inspector::type_inspector::InspectorContext;
-use crate::inspector::widgets::Widgets;
+use crate::inspector::widgets::{SearchSelectState, Widgets};
 use crate::panel::Panel;
 use crate::selection::SelectionType;
 use crate::EditorAppState;
 use convert_case::{Case, Casing};
 use egui::scroll_area::ScrollBarVisibility;
-use egui::{Id, PopupCloseBehavior, Response, Ui};
+use egui::{Id, Response, Ui};
 use engine::assets::animation_graph::AnimationGraph;
 use engine::component::{ComponentID, ComponentTransform};
 use engine::context::ReadOnlyRegistryContext;
@@ -24,7 +24,7 @@ use uuid::Uuid;
 
 #[derive(Default)]
 pub struct PanelInspector {
-    add_component_search: String,
+    add_component_select: SearchSelectState,
 }
 
 impl Panel for PanelInspector {
@@ -411,63 +411,53 @@ impl PanelInspector {
         game_object: GameObject,
     ) -> Response {
         let num_components = assets.components.read().components().count();
-        let res = ui
-            .list_item()
-            .draggable(false)
-            .interactive(num_components > entity_components.len())
-            .show_flat(
-                ui,
-                LabelContent::new(" Add Component")
-                    .always_show_buttons(true)
-                    .truncate(true)
-                    .with_icon(&re_ui::icons::ADD),
-            )
+        let enabled = num_components > entity_components.len();
+        let mut component_to_add = None;
+        let mut res = ui
+            .add_enabled_ui(enabled, |ui| {
+                Widgets::search_select_popup(
+                    ui,
+                    "add_component_popup",
+                    "Add Component",
+                    &mut self.add_component_select,
+                    |ui, search| {
+                        let search = search.trim().to_owned();
+                        let mut shown = 0usize;
+                        for (type_uuid, component) in assets.components.read().components() {
+                            if entity_components.contains(type_uuid) {
+                                continue;
+                            }
+                            let name =
+                                Self::display_name(&assets.types.read(), component.as_reflect());
+                            if !Self::component_matches_search(&name, &search) {
+                                continue;
+                            }
+                            shown += 1;
+                            if ui.selectable_label(false, name).clicked() {
+                                component_to_add = Some((*type_uuid, name));
+                                ui.close_menu();
+                            }
+                        }
+
+                        if shown == 0 {
+                            ui.weak("No matching components");
+                        }
+                    },
+                )
+            })
+            .inner
             .on_hover_text("Add a new component to this game object");
-        let id = ui.make_persistent_id("add_component_popup");
-        egui::popup::popup_below_widget(
-            ui,
-            id,
-            &res,
-            PopupCloseBehavior::CloseOnClickOutside,
-            |ui| {
-                ui.set_min_width(res.rect.width().max(220.0));
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.add_component_search).hint_text("Search"),
-                );
-                ui.separator();
-
-                let search = self.add_component_search.trim().to_owned();
-                let mut shown = 0usize;
-                for (type_uuid, component) in assets.components.read().components() {
-                    if entity_components.contains(type_uuid) {
-                        continue;
-                    }
-                    let name = Self::display_name(&assets.types.read(), component.as_reflect());
-                    if !Self::component_matches_search(&name, &search) {
-                        continue;
-                    }
-                    shown += 1;
-                    if ui.selectable_label(false, name).clicked() {
-                        let scene = scenes.simulation_scene_mut();
-                        scene.bind_component_dyn(game_object, *type_uuid);
-                        log::info!(
-                            "Added component to game object: component={} type_uuid={} object={}",
-                            name,
-                            type_uuid,
-                            Self::game_object_label(scene, game_object)
-                        );
-                        self.add_component_search.clear();
-                        ui.memory_mut(|mem| mem.close_popup());
-                    }
-                }
-
-                if shown == 0 {
-                    ui.weak("No matching components");
-                }
-            },
-        );
-        if res.clicked() {
-            ui.memory_mut(|mem| mem.open_popup(id));
+        if let Some((type_uuid, name)) = component_to_add {
+            let scene = scenes.simulation_scene_mut();
+            scene.bind_component_dyn(game_object, type_uuid);
+            self.add_component_select.clear_search();
+            log::info!(
+                "Added component to game object: component={} type_uuid={} object={}",
+                name,
+                type_uuid,
+                Self::game_object_label(scene, game_object)
+            );
+            res.mark_changed();
         }
         res
     }
