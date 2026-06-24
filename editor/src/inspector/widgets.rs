@@ -117,6 +117,7 @@ impl Widgets {
             ui.memory_mut(|m| m.request_focus(search_id));
             state.should_request_focus = false;
         }
+        ui.add_space(1.0);
         egui::TextEdit::singleline(&mut state.search)
             .id(search_id)
             .hint_text("Filter by name")
