@@ -32,6 +32,11 @@ pub(crate) struct SearchSelectState {
 }
 
 impl SearchSelectState {
+    pub(crate) fn open(&mut self) {
+        self.search.clear();
+        self.should_request_focus = true;
+    }
+
     pub(crate) fn clear_search(&mut self) {
         self.search.clear();
         self.should_request_focus = false;
@@ -68,58 +73,56 @@ impl Widgets {
         let asset_meta = registry.asset_meta_from_id(*value);
         let mut changed = false;
 
+        let id = ui.make_persistent_id(id);
         let selected_text = asset_meta
             .map(|meta| meta.display_name.clone())
             .unwrap_or("None".into());
-        let mut res = Self::search_select_popup(ui, id, selected_text, &mut state, |ui, search| {
-            let mut assets = Vec::new();
-            registry.search_assets(search, type_uuid, &mut assets);
-            if search.is_empty() {
-                changed |= ui.selectable_value(value, Uuid::nil(), "None").changed();
-            }
-            for asset in assets {
-                changed |= ui
-                    .selectable_value(value, asset.id, asset.display_name)
-                    .changed();
-            }
-        });
+        let mut res = egui::ComboBox::from_id_salt(id)
+            .truncate()
+            .width(100.0)
+            .selected_text(selected_text)
+            .show_ui(ui, |ui| {
+                Self::search_select_contents(ui, id, &mut state, |ui, search| {
+                    let mut assets = Vec::new();
+                    registry.search_assets(search, type_uuid, &mut assets);
+                    if search.is_empty() {
+                        changed |= ui.selectable_value(value, Uuid::nil(), "None").changed();
+                    }
+                    for asset in assets {
+                        changed |= ui
+                            .selectable_value(value, asset.id, asset.display_name)
+                            .changed();
+                    }
+                });
+            })
+            .response;
+        if res.clicked() {
+            state.open();
+        }
         if changed {
             res.mark_changed();
         }
         res
     }
 
-    pub(crate) fn search_select_popup(
+    pub(crate) fn search_select_contents(
         ui: &mut Ui,
         id: impl std::hash::Hash,
-        selected_text: impl Into<WidgetText>,
         state: &mut SearchSelectState,
         add_options: impl FnOnce(&mut Ui, &str),
-    ) -> Response {
+    ) {
         let id = ui.make_persistent_id(id);
         let search_id = id.with("search");
-        let res = egui::ComboBox::from_id_salt(id)
-            .truncate()
-            .width(100.0)
-            .selected_text(selected_text)
-            .show_ui(ui, |ui| {
-                if state.should_request_focus {
-                    ui.memory_mut(|m| m.request_focus(search_id));
-                    state.should_request_focus = false;
-                }
-                egui::TextEdit::singleline(&mut state.search)
-                    .id(search_id)
-                    .hint_text("Filter by name")
-                    .show(ui);
-                ui.add_space(6.0);
-                add_options(ui, state.search.as_str());
-            })
-            .response;
-        if res.clicked() {
-            state.search.clear();
-            state.should_request_focus = true;
+        if state.should_request_focus {
+            ui.memory_mut(|m| m.request_focus(search_id));
+            state.should_request_focus = false;
         }
-        res
+        egui::TextEdit::singleline(&mut state.search)
+            .id(search_id)
+            .hint_text("Filter by name")
+            .show(ui);
+        ui.add_space(6.0);
+        add_options(ui, state.search.as_str());
     }
 
     pub fn game_object_select(
