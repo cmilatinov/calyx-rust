@@ -7,8 +7,11 @@ use crate::panel::Panel;
 use crate::EditorAppState;
 
 const TOOLBAR_MARGIN_X: i8 = 10;
-const TOOLBAR_MARGIN_Y: i8 = 6;
-const LOG_BOTTOM_PADDING: f32 = 8.0;
+const TOOLBAR_MARGIN_Y: i8 = 8;
+const LOG_TOP_PADDING: f32 = 6.0;
+const LOG_BOTTOM_PADDING: f32 = 12.0;
+const LOG_BACKGROUND: Color32 = Color32::from_rgb(3, 4, 4);
+const LOG_TEXT_COLOR: Color32 = Color32::from_rgb(205, 205, 205);
 
 pub struct PanelTerminal {
     min_level: LevelFilter,
@@ -35,6 +38,9 @@ impl Panel for PanelTerminal {
     }
 
     fn ui(&mut self, ui: &mut Ui, _state: &mut EditorAppState) {
+        let item_spacing_y = ui.spacing().item_spacing.y;
+        ui.spacing_mut().item_spacing.y = 0.0;
+
         egui::Frame::NONE
             .inner_margin(Margin::symmetric(TOOLBAR_MARGIN_X, TOOLBAR_MARGIN_Y))
             .show(ui, |ui| {
@@ -67,21 +73,32 @@ impl Panel for PanelTerminal {
         ui.separator();
 
         let filter = self.filter.to_ascii_lowercase();
-        egui::ScrollArea::vertical()
-            .stick_to_bottom(self.stick_to_bottom)
-            .show(ui, |ui| {
-                for entry in engine::logging::recent_log_entries() {
-                    if !Self::passes_level(entry.level, self.min_level) {
-                        continue;
+        egui::Frame::NONE.fill(LOG_BACKGROUND).show(ui, |ui| {
+            ui.set_min_height(ui.available_height());
+            egui::ScrollArea::vertical()
+                .id_salt("console_log_scroll")
+                .auto_shrink([false, false])
+                .max_height(ui.available_height())
+                .stick_to_bottom(self.stick_to_bottom)
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = item_spacing_y;
+                    ui.add_space(LOG_TOP_PADDING);
+
+                    for entry in engine::logging::recent_log_entries() {
+                        if !Self::passes_level(entry.level, self.min_level) {
+                            continue;
+                        }
+                        let line = entry.line();
+                        if !filter.is_empty() && !line.to_ascii_lowercase().contains(&filter) {
+                            continue;
+                        }
+                        ui.label(Self::entry_text(ui, &entry));
                     }
-                    let line = entry.line();
-                    if !filter.is_empty() && !line.to_ascii_lowercase().contains(&filter) {
-                        continue;
-                    }
-                    ui.label(Self::entry_text(ui, &entry));
-                }
-                ui.add_space(LOG_BOTTOM_PADDING);
-            });
+                    ui.add_space(LOG_BOTTOM_PADDING);
+                });
+        });
+
+        ui.spacing_mut().item_spacing.y = item_spacing_y;
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -121,14 +138,13 @@ impl PanelTerminal {
 
     fn entry_text(ui: &Ui, entry: &engine::logging::LogEntry) -> LayoutJob {
         let font_id = TextStyle::Monospace.resolve(ui.style());
-        let text_color = ui.visuals().text_color();
         let level_color = Self::level_color(entry.level);
         let mut job = LayoutJob::default();
 
         job.append(
             &format!("{} ", entry.timestamp),
             0.0,
-            Self::text_format(font_id.clone(), text_color),
+            Self::text_format(font_id.clone(), LOG_TEXT_COLOR),
         );
         job.append(
             &format!("{:<5}", entry.level),
@@ -138,7 +154,7 @@ impl PanelTerminal {
         job.append(
             &format!(" {} - {}", entry.target, entry.message),
             0.0,
-            Self::text_format(font_id, text_color),
+            Self::text_format(font_id, LOG_TEXT_COLOR),
         );
 
         job
