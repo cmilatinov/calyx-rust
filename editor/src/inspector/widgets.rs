@@ -25,9 +25,22 @@ pub enum PropChildrenPhase<'a> {
     },
 }
 
-struct SelectState {
+#[derive(Default)]
+pub(crate) struct SearchSelectState {
     search: String,
     should_request_focus: bool,
+}
+
+impl SearchSelectState {
+    pub(crate) fn open(&mut self) {
+        self.search.clear();
+        self.should_request_focus = true;
+    }
+
+    pub(crate) fn clear_search(&mut self) {
+        self.search.clear();
+        self.should_request_focus = false;
+    }
 }
 
 #[allow(dead_code)]
@@ -54,54 +67,63 @@ impl Widgets {
         value: &mut Uuid,
     ) -> Response {
         lazy_static! {
-            static ref STATE: RwLock<SelectState> = RwLock::new(SelectState {
-                search: String::from(""),
-                should_request_focus: false
-            });
+            static ref STATE: RwLock<SearchSelectState> = RwLock::new(SearchSelectState::default());
         }
         let mut state = STATE.write().unwrap();
         let asset_meta = registry.asset_meta_from_id(*value);
         let mut changed = false;
 
+        let id = ui.make_persistent_id(id);
+        let selected_text = asset_meta
+            .map(|meta| meta.display_name.clone())
+            .unwrap_or("None".into());
         let mut res = egui::ComboBox::from_id_salt(id)
             .truncate()
             .width(100.0)
-            .selected_text(
-                asset_meta
-                    .map(|meta| meta.display_name.clone())
-                    .unwrap_or("None".into()),
-            )
+            .selected_text(selected_text)
             .show_ui(ui, |ui| {
-                let id = Id::from("asset_select");
-                if state.should_request_focus {
-                    ui.memory_mut(|m| m.request_focus(id));
-                    state.should_request_focus = false;
-                }
-                egui::TextEdit::singleline(&mut state.search)
-                    .id(id)
-                    .hint_text("Filter by name")
-                    .show(ui);
-                let mut assets = Vec::new();
-                registry.search_assets(state.search.as_str(), type_uuid, &mut assets);
-                ui.add_space(6.0);
-                if state.search.is_empty() {
-                    changed |= ui.selectable_value(value, Uuid::nil(), "None").changed();
-                }
-                for asset in assets {
-                    changed |= ui
-                        .selectable_value(value, asset.id, asset.display_name)
-                        .changed();
-                }
+                Self::search_select_contents(ui, id, &mut state, |ui, search| {
+                    let mut assets = Vec::new();
+                    registry.search_assets(search, type_uuid, &mut assets);
+                    if search.is_empty() {
+                        changed |= ui.selectable_value(value, Uuid::nil(), "None").changed();
+                    }
+                    for asset in assets {
+                        changed |= ui
+                            .selectable_value(value, asset.id, asset.display_name)
+                            .changed();
+                    }
+                });
             })
             .response;
         if res.clicked() {
-            state.search.clear();
-            state.should_request_focus = true;
+            state.open();
         }
         if changed {
             res.mark_changed();
         }
         res
+    }
+
+    pub(crate) fn search_select_contents(
+        ui: &mut Ui,
+        id: impl std::hash::Hash,
+        state: &mut SearchSelectState,
+        add_options: impl FnOnce(&mut Ui, &str),
+    ) {
+        let id = ui.make_persistent_id(id);
+        let search_id = id.with("search");
+        if state.should_request_focus {
+            ui.memory_mut(|m| m.request_focus(search_id));
+            state.should_request_focus = false;
+        }
+        ui.add_space(1.0);
+        egui::TextEdit::singleline(&mut state.search)
+            .id(search_id)
+            .hint_text("Filter by name")
+            .show(ui);
+        ui.add_space(6.0);
+        add_options(ui, state.search.as_str());
     }
 
     pub fn game_object_select(
@@ -111,7 +133,7 @@ impl Widgets {
         value: &mut GameObjectRef,
     ) -> Response {
         lazy_static! {
-            static ref STATE: RwLock<SelectState> = RwLock::new(SelectState {
+            static ref STATE: RwLock<SearchSelectState> = RwLock::new(SearchSelectState {
                 search: String::from(""),
                 should_request_focus: false
             });
