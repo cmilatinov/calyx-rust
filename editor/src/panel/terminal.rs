@@ -1,4 +1,5 @@
-use egui::{Color32, RichText, Ui};
+use egui::text::LayoutJob;
+use egui::{Color32, FontId, Margin, TextFormat, TextStyle, Ui};
 use log::LevelFilter;
 use std::any::Any;
 
@@ -30,31 +31,35 @@ impl Panel for PanelTerminal {
     }
 
     fn ui(&mut self, ui: &mut Ui, _state: &mut EditorAppState) {
-        ui.horizontal(|ui| {
-            egui::ComboBox::from_id_salt("console_min_level")
-                .selected_text(Self::level_filter_label(self.min_level))
-                .show_ui(ui, |ui| {
-                    for level in [
-                        LevelFilter::Error,
-                        LevelFilter::Warn,
-                        LevelFilter::Info,
-                        LevelFilter::Debug,
-                        LevelFilter::Trace,
-                    ] {
-                        ui.selectable_value(
-                            &mut self.min_level,
-                            level,
-                            Self::level_filter_label(level),
-                        );
-                    }
+        egui::Frame::NONE
+            .inner_margin(Margin::symmetric(8, 4))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    egui::ComboBox::from_id_salt("console_min_level")
+                        .selected_text(Self::level_filter_label(self.min_level))
+                        .show_ui(ui, |ui| {
+                            for level in [
+                                LevelFilter::Error,
+                                LevelFilter::Warn,
+                                LevelFilter::Info,
+                                LevelFilter::Debug,
+                                LevelFilter::Trace,
+                            ] {
+                                ui.selectable_value(
+                                    &mut self.min_level,
+                                    level,
+                                    Self::level_filter_label(level),
+                                );
+                            }
+                        });
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.filter)
+                            .hint_text("Filter")
+                            .desired_width(180.0),
+                    );
+                    ui.checkbox(&mut self.stick_to_bottom, "Auto-scroll");
                 });
-            ui.add(
-                egui::TextEdit::singleline(&mut self.filter)
-                    .hint_text("Filter")
-                    .desired_width(180.0),
-            );
-            ui.checkbox(&mut self.stick_to_bottom, "Auto-scroll");
-        });
+            });
         ui.separator();
 
         let filter = self.filter.to_ascii_lowercase();
@@ -69,11 +74,7 @@ impl Panel for PanelTerminal {
                     if !filter.is_empty() && !line.to_ascii_lowercase().contains(&filter) {
                         continue;
                     }
-                    ui.label(
-                        RichText::new(line)
-                            .monospace()
-                            .color(Self::level_color(entry.level)),
-                    );
+                    ui.label(Self::entry_text(ui, &entry));
                 }
             });
     }
@@ -107,9 +108,42 @@ impl PanelTerminal {
         match level {
             log::Level::Error => Color32::from_rgb(255, 92, 92),
             log::Level::Warn => Color32::from_rgb(232, 178, 80),
-            log::Level::Info => Color32::from_rgb(185, 214, 180),
+            log::Level::Info => Color32::from_rgb(0, 220, 0),
             log::Level::Debug => Color32::from_rgb(143, 190, 255),
             log::Level::Trace => Color32::from_gray(150),
+        }
+    }
+
+    fn entry_text(ui: &Ui, entry: &engine::logging::LogEntry) -> LayoutJob {
+        let font_id = TextStyle::Monospace.resolve(ui.style());
+        let text_color = ui.visuals().text_color();
+        let level_color = Self::level_color(entry.level);
+        let mut job = LayoutJob::default();
+
+        job.append(
+            &format!("{} ", entry.timestamp),
+            0.0,
+            Self::text_format(font_id.clone(), text_color),
+        );
+        job.append(
+            &format!("{:<5}", entry.level),
+            0.0,
+            Self::text_format(font_id.clone(), level_color),
+        );
+        job.append(
+            &format!(" {} - {}", entry.target, entry.message),
+            0.0,
+            Self::text_format(font_id, text_color),
+        );
+
+        job
+    }
+
+    fn text_format(font_id: FontId, color: Color32) -> TextFormat {
+        TextFormat {
+            font_id,
+            color,
+            ..Default::default()
         }
     }
 }
