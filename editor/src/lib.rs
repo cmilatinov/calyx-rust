@@ -1,5 +1,4 @@
 use std::env;
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::BufWriter;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -83,28 +82,11 @@ pub struct EditorAppState {
 #[derive(Debug, Default)]
 struct ActiveSceneState {
     file: Option<PathBuf>,
-    scene_revision: u64,
-    saved_hash: Option<u64>,
-    dirty: bool,
 }
 
 impl ActiveSceneState {
-    fn sync_loaded_scene(&mut self, file: Option<PathBuf>, scene_revision: u64, scene_hash: u64) {
-        if self.file != file || self.scene_revision != scene_revision || self.saved_hash.is_none() {
-            self.file = file;
-            self.scene_revision = scene_revision;
-            self.saved_hash = Some(scene_hash);
-            self.dirty = false;
-            return;
-        }
-        self.dirty = self.saved_hash.is_some_and(|hash| hash != scene_hash);
-    }
-
-    fn mark_saved(&mut self, file: Option<PathBuf>, scene_revision: u64, scene_hash: u64) {
+    fn set_file(&mut self, file: Option<PathBuf>) {
         self.file = file;
-        self.scene_revision = scene_revision;
-        self.saved_hash = Some(scene_hash);
-        self.dirty = false;
     }
 
     fn scene_label(&self) -> String {
@@ -115,23 +97,7 @@ impl ActiveSceneState {
     }
 
     fn title(&self, project_name: &str) -> String {
-        let dirty = if self.dirty { " *" } else { "" };
-        format!("Calyx - {project_name} - {}{dirty}", self.scene_label())
-    }
-}
-
-struct SceneHashWriter<'a> {
-    hasher: &'a mut DefaultHasher,
-}
-
-impl std::io::Write for SceneHashWriter<'_> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.hasher.write(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
+        format!("Calyx - {project_name} - {}", self.scene_label())
     }
 }
 
@@ -324,13 +290,8 @@ impl EditorApp {
     }
 
     fn update_window_title(&mut self, ctx: &egui::Context) {
-        let scene_hash = Self::scene_content_hash(self.state.game.scenes.current_scene());
         let scene_meta = self.state.game.scenes.current_scene_meta();
-        self.state.active_scene.sync_loaded_scene(
-            scene_meta.file.clone(),
-            self.state.game.scenes.current_scene_revision(),
-            scene_hash,
-        );
+        self.state.active_scene.set_file(scene_meta.file.clone());
 
         let project_name = self.project_manager.read().current_project().name().clone();
         let title = self.state.active_scene.title(project_name.as_str());
@@ -338,20 +299,6 @@ impl EditorApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.state.window_title = title;
         }
-    }
-
-    fn scene_content_hash(scene: &Scene) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        let result = {
-            let mut writer = SceneHashWriter {
-                hasher: &mut hasher,
-            };
-            serde_json::to_writer(&mut writer, scene)
-        };
-        if let Err(error) = result {
-            error.to_string().hash(&mut hasher);
-        }
-        hasher.finish()
     }
 
     fn render_view_outline(&mut self, frame: &mut eframe::Frame) {
@@ -487,12 +434,6 @@ impl EditorApp {
 
     fn new_interaction(&mut self) {
         self.state.game.scenes.load_default_scene();
-        let scene_hash = Self::scene_content_hash(self.state.game.scenes.current_scene());
-        self.state.active_scene.mark_saved(
-            None,
-            self.state.game.scenes.current_scene_revision(),
-            scene_hash,
-        );
         log::info!("Created new scene from default scene");
     }
 
@@ -517,12 +458,6 @@ impl EditorApp {
             }
         };
         self.state.game.scenes.load_scene(scene.readonly());
-        let scene_hash = Self::scene_content_hash(self.state.game.scenes.current_scene());
-        self.state.active_scene.mark_saved(
-            self.state.game.scenes.current_scene_meta().file.clone(),
-            self.state.game.scenes.current_scene_revision(),
-            scene_hash,
-        );
         let object_count = self.state.game.scenes.current_scene().objects().count();
         let message = format!("Opened scene {} ({} objects)", file.display(), object_count);
         log::info!("{message}");
@@ -538,12 +473,6 @@ impl EditorApp {
                 .game
                 .scenes
                 .set_current_scene_file(Some(file.clone()));
-            let scene_hash = Self::scene_content_hash(self.state.game.scenes.current_scene());
-            self.state.active_scene.mark_saved(
-                Some(file),
-                self.state.game.scenes.current_scene_revision(),
-                scene_hash,
-            );
         }
     }
 
@@ -708,26 +637,19 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn active_scene_title_uses_untitled_fallback_and_dirty_marker() {
+    fn active_scene_title_uses_untitled_fallback() {
         let mut state = ActiveSceneState::default();
 
-        state.sync_loaded_scene(None, 0, 10);
+        state.set_file(None);
         assert_eq!(state.title("Sandbox"), "Calyx - Sandbox - Untitled Scene");
-
-        state.sync_loaded_scene(None, 0, 20);
-        assert_eq!(state.title("Sandbox"), "Calyx - Sandbox - Untitled Scene *");
     }
 
     #[test]
-    fn active_scene_title_resets_dirty_state_after_save() {
+    fn active_scene_title_uses_scene_file() {
         let mut state = ActiveSceneState::default();
         let file = PathBuf::from("assets/scene.cxscene");
 
-        state.sync_loaded_scene(Some(file.clone()), 1, 10);
-        state.sync_loaded_scene(Some(file.clone()), 1, 20);
-        assert!(state.dirty);
-
-        state.mark_saved(Some(file), 1, 20);
+        state.set_file(Some(file));
         assert_eq!(
             state.title("Sandbox"),
             "Calyx - Sandbox - assets/scene.cxscene"
