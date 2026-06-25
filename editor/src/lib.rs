@@ -81,18 +81,23 @@ pub struct EditorAppState {
 
 #[derive(Debug, Default)]
 struct ActiveSceneState {
-    file: Option<PathBuf>,
+    label: Option<String>,
 }
 
 impl ActiveSceneState {
-    fn set_file(&mut self, file: Option<PathBuf>) {
-        self.file = file;
+    fn set_scene(&mut self, asset_name: Option<String>, file: Option<PathBuf>) {
+        self.label = asset_name.or_else(|| {
+            file.as_ref()
+                .and_then(|path| path.file_name())
+                .and_then(|name| name.to_str())
+                .map(str::to_owned)
+        });
     }
 
     fn scene_label(&self) -> String {
-        self.file
+        self.label
             .as_ref()
-            .map(|file| file.display().to_string())
+            .cloned()
             .unwrap_or_else(|| "Untitled Scene".into())
     }
 
@@ -291,7 +296,9 @@ impl EditorApp {
 
     fn update_window_title(&mut self, ctx: &egui::Context) {
         let scene_meta = self.state.game.scenes.current_scene_meta();
-        self.state.active_scene.set_file(scene_meta.file.clone());
+        self.state
+            .active_scene
+            .set_scene(scene_meta.asset_name.clone(), scene_meta.file.clone());
 
         let project_name = self.project_manager.read().current_project().name().clone();
         let title = self.state.active_scene.title(project_name.as_str());
@@ -458,10 +465,12 @@ impl EditorApp {
             }
         };
         self.state.game.scenes.load_scene(scene.readonly());
-        self.state
-            .game
-            .scenes
-            .set_current_scene_file(Some(file.clone()));
+        if self.state.game.scenes.current_scene_meta().file.is_none() {
+            self.state
+                .game
+                .scenes
+                .set_current_scene_file(Some(file.clone()));
+        }
         let object_count = self.state.game.scenes.current_scene().objects().count();
         let message = format!("Opened scene {} ({} objects)", file.display(), object_count);
         log::info!("{message}");
@@ -644,20 +653,26 @@ mod tests {
     fn active_scene_title_uses_untitled_fallback() {
         let mut state = ActiveSceneState::default();
 
-        state.set_file(None);
+        state.set_scene(None, None);
         assert_eq!(state.title("Sandbox"), "Calyx - Sandbox - Untitled Scene");
     }
 
     #[test]
-    fn active_scene_title_uses_scene_file() {
+    fn active_scene_title_uses_asset_name() {
         let mut state = ActiveSceneState::default();
         let file = PathBuf::from("assets/scene.cxscene");
 
-        state.set_file(Some(file));
-        assert_eq!(
-            state.title("Sandbox"),
-            "Calyx - Sandbox - assets/scene.cxscene"
-        );
+        state.set_scene(Some("scene".into()), Some(file));
+        assert_eq!(state.title("Sandbox"), "Calyx - Sandbox - scene");
+    }
+
+    #[test]
+    fn active_scene_title_uses_file_name_fallback() {
+        let mut state = ActiveSceneState::default();
+        let file = PathBuf::from("assets/scene.cxscene");
+
+        state.set_scene(None, Some(file));
+        assert_eq!(state.title("Sandbox"), "Calyx - Sandbox - scene.cxscene");
     }
 }
 

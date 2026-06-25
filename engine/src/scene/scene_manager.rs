@@ -12,6 +12,8 @@ pub struct SceneMeta {
     /// Source file for the loaded scene asset, when the scene originated from
     /// disk.
     pub file: Option<PathBuf>,
+    /// Canonical asset metadata name for the loaded scene, when available.
+    pub asset_name: Option<String>,
 }
 
 /// Owns the editable scene and the optional simulation copy used while the game
@@ -78,6 +80,7 @@ impl SceneManager {
         if let Some(asset_meta) = self.asset_registry.read().asset_meta_from_ref(&scene) {
             self.current_scene_meta = SceneMeta {
                 file: asset_meta.path.clone(),
+                asset_name: Some(asset_meta.name.clone()),
             };
             log::info!("Loaded scene asset {} ({})", asset_meta.name, asset_meta.id);
         } else {
@@ -89,6 +92,7 @@ impl SceneManager {
     /// Updates the current scene source file when an editor workflow knows it.
     pub fn set_current_scene_file(&mut self, file: Option<PathBuf>) {
         self.current_scene_meta.file = file;
+        self.current_scene_meta.asset_name = None;
     }
 
     /// Drops the simulation copy without modifying the authoring scene.
