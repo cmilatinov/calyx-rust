@@ -126,6 +126,7 @@ impl Texture {
     pub fn is_2d(&self) -> bool {
         self.descriptor.dimension == wgpu::TextureDimension::D2
             && self.descriptor.size.depth_or_array_layers == 1
+            && self.descriptor.sample_count == 1
             && matches!(
                 self.view_descriptor.dimension,
                 None | Some(wgpu::TextureViewDimension::D2)

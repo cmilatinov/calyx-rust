@@ -163,6 +163,11 @@ impl Widgets {
         add_options(ui, state.search.as_str());
     }
 
+    /// Applies lightweight selector-side asset constraints without forcing asset
+    /// loads from the UI path. File-backed `Texture` assets currently rely on
+    /// the importer invariant that image files produce single-sample 2D
+    /// textures; if file-backed 3D, array, cube, or multisampled textures are
+    /// introduced, this should use imported metadata instead of `path` alone.
     fn asset_matches_filter(
         registry: &AssetRegistry,
         asset: &AssetMeta,
@@ -415,6 +420,47 @@ mod tests {
                     None,
                     Some(wgpu::TextureViewDescriptor {
                         dimension: Some(wgpu::TextureViewDimension::Cube),
+                        ..Default::default()
+                    }),
+                    false,
+                ),
+            )
+            .unwrap();
+        let registry = context.registries.assets.read();
+        let meta = registry.asset_meta_from_id(texture.id()).unwrap();
+
+        assert!(!Widgets::asset_is_texture_2d(&registry, &meta));
+    }
+
+    #[test]
+    fn texture_2d_filter_rejects_loaded_multisampled_texture() {
+        let context = engine::test_support::test_asset_context_with_assets(Vec::new());
+        let render_context = context.render_context.clone();
+        let texture = context
+            .registries
+            .assets
+            .read()
+            .create(
+                "test_texture_msaa".into(),
+                Texture::new(
+                    render_context,
+                    &wgpu::TextureDescriptor {
+                        label: Some("test_texture_msaa"),
+                        size: wgpu::Extent3d {
+                            width: 16,
+                            height: 16,
+                            depth_or_array_layers: 1,
+                        },
+                        mip_level_count: 1,
+                        sample_count: 4,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                        view_formats: &[],
+                    },
+                    None,
+                    Some(wgpu::TextureViewDescriptor {
+                        dimension: Some(wgpu::TextureViewDimension::D2),
                         ..Default::default()
                     }),
                     false,
