@@ -458,6 +458,10 @@ impl EditorApp {
             }
         };
         self.state.game.scenes.load_scene(scene.readonly());
+        self.state
+            .game
+            .scenes
+            .set_current_scene_file(Some(file.clone()));
         let object_count = self.state.game.scenes.current_scene().objects().count();
         let message = format!("Opened scene {} ({} objects)", file.display(), object_count);
         log::info!("{message}");

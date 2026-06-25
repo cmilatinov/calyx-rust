@@ -86,7 +86,7 @@ impl SceneManager {
         }
     }
 
-    /// Updates the current scene source file after a successful save.
+    /// Updates the current scene source file when an editor workflow knows it.
     pub fn set_current_scene_file(&mut self, file: Option<PathBuf>) {
         self.current_scene_meta.file = file;
     }
