@@ -7,9 +7,10 @@ use crate::panel::Panel;
 use crate::EditorAppState;
 
 const TOOLBAR_MARGIN_X: i8 = 10;
-const TOOLBAR_MARGIN_Y: i8 = 8;
+const TOOLBAR_MARGIN_TOP: i8 = 6;
+const TOOLBAR_MARGIN_BOTTOM: i8 = 2;
 const LOG_TOP_PADDING: f32 = 6.0;
-const LOG_BOTTOM_PADDING: f32 = 12.0;
+const LOG_BOTTOM_PADDING: f32 = 32.0;
 const LOG_BACKGROUND: Color32 = Color32::from_rgb(3, 4, 4);
 const LOG_TEXT_COLOR: Color32 = Color32::from_rgb(205, 205, 205);
 
@@ -42,7 +43,12 @@ impl Panel for PanelTerminal {
         ui.spacing_mut().item_spacing.y = 0.0;
 
         egui::Frame::NONE
-            .inner_margin(Margin::symmetric(TOOLBAR_MARGIN_X, TOOLBAR_MARGIN_Y))
+            .inner_margin(Margin {
+                left: TOOLBAR_MARGIN_X,
+                right: TOOLBAR_MARGIN_X,
+                top: TOOLBAR_MARGIN_TOP,
+                bottom: TOOLBAR_MARGIN_BOTTOM,
+            })
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     egui::ComboBox::from_id_salt("console_min_level")
