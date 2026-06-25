@@ -120,6 +120,21 @@ impl ActiveSceneState {
     }
 }
 
+struct SceneHashWriter<'a> {
+    hasher: &'a mut DefaultHasher,
+}
+
+impl std::io::Write for SceneHashWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.hasher.write(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 impl EditorAppState {
     fn new(game: GameContext, initial_render_size: (u32, u32)) -> Self {
         let asset_context = game.assets.lock_read();
@@ -327,9 +342,14 @@ impl EditorApp {
 
     fn scene_content_hash(scene: &Scene) -> u64 {
         let mut hasher = DefaultHasher::new();
-        match serde_json::to_vec(scene) {
-            Ok(data) => data.hash(&mut hasher),
-            Err(error) => error.to_string().hash(&mut hasher),
+        let result = {
+            let mut writer = SceneHashWriter {
+                hasher: &mut hasher,
+            };
+            serde_json::to_writer(&mut writer, scene)
+        };
+        if let Err(error) = result {
+            error.to_string().hash(&mut hasher);
         }
         hasher.finish()
     }
