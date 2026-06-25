@@ -1,5 +1,5 @@
 use crate::inspector::asset_inspector::{AssetInspector, ReflectAssetInspector};
-use crate::inspector::widgets::Widgets;
+use crate::inspector::widgets::{AssetSelectorFilter, Widgets};
 use egui;
 use egui::Ui;
 use engine::assets::material::{Material, MaterialTexture, ShaderVariable, ShaderVariableValue};
@@ -223,11 +223,12 @@ impl MaterialInspector {
                     });
                 match texture {
                     MaterialTexture::Asset(ref mut tex) => {
-                        changed |= Widgets::asset_select_t(
+                        changed |= Widgets::asset_select_t_filtered(
                             ui,
                             &game.registries.assets.read(),
                             (var.group, var.binding, var.offset),
                             Some(Texture::type_uuid()),
+                            &[AssetSelectorFilter::Texture2D],
                             tex,
                         )
                         .changed();

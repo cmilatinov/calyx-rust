@@ -122,6 +122,17 @@ impl Asset for Texture {
 impl Texture {
     const WORKGROUP_SIZE: f32 = 8.0;
 
+    /// Returns true when this texture can be sampled as a single 2D texture.
+    pub fn is_2d(&self) -> bool {
+        self.descriptor.dimension == wgpu::TextureDimension::D2
+            && self.descriptor.size.depth_or_array_layers == 1
+            && self.descriptor.sample_count == 1
+            && matches!(
+                self.view_descriptor.dimension,
+                None | Some(wgpu::TextureViewDimension::D2)
+            )
+    }
+
     fn mip_level_count(width: u32, height: u32) -> u32 {
         width.max(height).ilog2() + 1
     }
