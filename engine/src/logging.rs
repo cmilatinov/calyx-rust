@@ -1,11 +1,60 @@
 use chrono::Local;
 use env_filter::Filter;
 use log::{Metadata, Record, SetLoggerError};
+use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use typed_builder::TypedBuilder;
+
+const LOG_HISTORY_LIMIT: usize = 1000;
+static LOG_HISTORY: OnceLock<Mutex<VecDeque<LogEntry>>> = OnceLock::new();
+
+/// One log entry retained for editor console display.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LogEntry {
+    pub timestamp: String,
+    pub level: log::Level,
+    pub target: String,
+    pub message: String,
+}
+
+impl LogEntry {
+    fn from_record(record: &Record) -> Self {
+        Self {
+            timestamp: log_timestamp(),
+            level: record.level(),
+            target: record.target().to_string(),
+            message: record.args().to_string(),
+        }
+    }
+
+    pub fn line(&self) -> String {
+        format!(
+            "{} {:<5} {} - {}",
+            self.timestamp, self.level, self.target, self.message
+        )
+    }
+}
+
+/// Returns a snapshot of recent process log entries.
+pub fn recent_log_entries() -> Vec<LogEntry> {
+    LOG_HISTORY
+        .get_or_init(Default::default)
+        .lock()
+        .map(|history| history.iter().cloned().collect())
+        .unwrap_or_default()
+}
+
+fn push_log_entry(entry: LogEntry) {
+    if let Ok(mut history) = LOG_HISTORY.get_or_init(Default::default).lock() {
+        if history.len() >= LOG_HISTORY_LIMIT {
+            history.pop_front();
+        }
+        history.push_back(entry);
+    }
+}
 
 /// Initializes the global logger using a concrete logger implementation.
 pub struct Log<T: LoggerImplementation> {
@@ -106,6 +155,7 @@ impl log::Log for MultiSinkLogger {
         if !self.filter.matches(record) {
             return;
         }
+        push_log_entry(LogEntry::from_record(record));
         let stdout_line = format_stdout_record(record);
         let _ = io::stdout().lock().write_all(stdout_line.as_bytes());
         if let Ok(mut file) = self.file.lock() {
@@ -139,6 +189,7 @@ impl log::Log for StdoutLogger {
 
     fn log(&self, record: &Record) {
         if self.filter.matches(record) {
+            push_log_entry(LogEntry::from_record(record));
             let _ = io::stdout()
                 .lock()
                 .write_all(format_stdout_record(record).as_bytes());
@@ -229,7 +280,7 @@ fn file_timestamp() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_filter, format_file_record, format_stdout_record};
+    use super::{build_filter, format_file_record, format_stdout_record, LogEntry};
     use log::{Level, LevelFilter, Record};
 
     fn record(target: &'static str, level: Level) -> Record<'static> {
@@ -276,5 +327,17 @@ mod tests {
 
         assert!(!line.contains("\x1b["));
         assert!(line.contains("WARN  engine::assets - test"));
+    }
+
+    #[test]
+    fn log_entry_line_uses_plain_console_format() {
+        let entry = LogEntry {
+            timestamp: "2026-05-13 00:00:00.000".to_string(),
+            level: Level::Info,
+            target: "editor".to_string(),
+            message: "ready".to_string(),
+        };
+
+        assert_eq!(entry.line(), "2026-05-13 00:00:00.000 INFO  editor - ready");
     }
 }
