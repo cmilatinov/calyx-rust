@@ -157,7 +157,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
 
     let ambient = diffuse + specular;
     color += material.ambient_occlusion * ambient;
-    color += environment.ambient_light.rgb * environment.ambient_light.a * albedo.rgb;
+    color += environment.ambient_light.rgb * albedo.rgb;
 
     // Tone mapping
     let gamma = 1.4;

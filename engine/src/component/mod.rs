@@ -1,3 +1,4 @@
+pub use ambient_light::*;
 pub use animator::*;
 pub use bone::*;
 pub use camera::*;
@@ -13,6 +14,7 @@ pub use skinned_mesh::*;
 pub use sky_light::*;
 pub use transform::*;
 
+mod ambient_light;
 mod animator;
 mod bone;
 mod camera;

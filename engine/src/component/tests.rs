@@ -88,6 +88,14 @@ mod tests {
         );
         scene.add_component(
             go,
+            ComponentAmbientLight {
+                color: Color32::BLUE,
+                intensity: 0.33,
+                ..Default::default()
+            },
+        );
+        scene.add_component(
+            go,
             ComponentPointLight {
                 radius: 25.0,
                 intensity: 1.25,
@@ -195,6 +203,10 @@ mod tests {
                 c.intensity
             )),
             Some((false, 0.42))
+        );
+        assert_eq!(
+            restored.read_component::<ComponentAmbientLight, _, _>(rgo, |c| (c.color, c.intensity)),
+            Some((Color32::BLUE, 0.33))
         );
         assert_eq!(
             restored.read_component::<ComponentPointLight, _, _>(rgo, |c| (c.radius, c.intensity)),

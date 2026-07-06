@@ -12,7 +12,8 @@ use engine::assets::mesh::Mesh;
 use engine::assets::texture::Texture;
 use engine::assets::{AssetRef, AssetRegistry};
 use engine::component::{
-    ComponentDirectionalLight, ComponentMesh, ComponentPointLight, ComponentSkinnedMesh,
+    ComponentAmbientLight, ComponentDirectionalLight, ComponentMesh, ComponentPointLight,
+    ComponentSkinnedMesh,
 };
 use engine::context::ReadOnlyAssetContext;
 use engine::math::Transform;
@@ -502,8 +503,6 @@ impl ThumbnailService {
                     gizmos: false,
                     samples: 1,
                     clear_color: Color32::from_rgb(42, 48, 56),
-                    ambient_light: Color32::from_rgb(210, 220, 232),
-                    ambient_light_intensity: 0.22,
                 },
                 (THUMBNAIL_SIZE, THUMBNAIL_SIZE),
             )
@@ -771,6 +770,16 @@ fn default_material_ref(context: &ReadOnlyAssetContext) -> Result<AssetRef<Mater
 }
 
 fn add_preview_lighting(scene: &mut Scene) {
+    let ambient = scene.create(None, None);
+    scene.add_component(
+        ambient,
+        ComponentAmbientLight {
+            active: true,
+            color: Color32::from_rgb(210, 220, 232),
+            intensity: 0.22,
+        },
+    );
+
     let directional = scene.create(None, None);
     let mut directional_transform = Transform::from_xyz(-3.0, 4.5, -4.0);
     directional_transform.look_at(&vec3(0.0, 0.0, 0.0));
