@@ -90,6 +90,28 @@ fn source_version(path: Option<&Path>) -> u64 {
     modified ^ metadata.len().rotate_left(32)
 }
 
+fn thumbnail_asset_type_name(asset_type: Uuid) -> &'static str {
+    if asset_type == Texture::type_uuid() {
+        "texture"
+    } else if asset_type == Mesh::type_uuid() {
+        "mesh"
+    } else if asset_type == Prefab::type_uuid() {
+        "prefab"
+    } else if asset_type == engine::assets::skybox::Skybox::type_uuid() {
+        "skybox"
+    } else {
+        "unknown"
+    }
+}
+
+fn thumbnail_source_label(request: &ThumbnailRequest) -> String {
+    request
+        .source_path
+        .as_ref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "<unknown>".into())
+}
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum ThumbnailPriority {
     Low,
@@ -138,17 +160,56 @@ impl ThumbnailPipeline {
         priority: ThumbnailPriority,
     ) -> ThumbnailStatus {
         let key = request.key();
-        match self.statuses.get_mut(&key) {
+        match self.statuses.get(&key).cloned() {
             Some(ThumbnailStatus::Queued { priority: existing }) => {
-                if priority > *existing {
-                    *existing = priority;
+                if priority > existing {
+                    if let Some(ThumbnailStatus::Queued { priority: existing }) =
+                        self.statuses.get_mut(&key)
+                    {
+                        *existing = priority;
+                    }
                     if let Some(job) = self.queued.iter_mut().find(|job| job.key() == key) {
                         job.priority = priority;
                     }
+                    log::debug!(
+                        "Promoted thumbnail job asset={} type={} version={} priority={:?}->{:?} path={}",
+                        request.asset_id,
+                        thumbnail_asset_type_name(request.asset_type),
+                        request.source_version,
+                        existing,
+                        priority,
+                        thumbnail_source_label(&request)
+                    );
                 }
             }
             Some(ThumbnailStatus::InProgress | ThumbnailStatus::Ready) => {}
-            Some(ThumbnailStatus::Failed { .. } | ThumbnailStatus::Missing) | None => {
+            Some(ThumbnailStatus::Failed { message }) => {
+                log::debug!(
+                    "Requeued failed thumbnail job asset={} type={} version={} priority={:?} path={} previous_error={}",
+                    request.asset_id,
+                    thumbnail_asset_type_name(request.asset_type),
+                    request.source_version,
+                    priority,
+                    thumbnail_source_label(&request),
+                    message
+                );
+                self.queued.push(ThumbnailJob {
+                    request,
+                    priority,
+                    requested_at: Instant::now(),
+                });
+                self.statuses
+                    .insert(key, ThumbnailStatus::Queued { priority });
+            }
+            Some(ThumbnailStatus::Missing) | None => {
+                log::debug!(
+                    "Queued thumbnail job asset={} type={} version={} priority={:?} path={}",
+                    request.asset_id,
+                    thumbnail_asset_type_name(request.asset_type),
+                    request.source_version,
+                    priority,
+                    thumbnail_source_label(&request)
+                );
                 self.queued.push(ThumbnailJob {
                     request,
                     priority,
@@ -182,6 +243,15 @@ impl ThumbnailPipeline {
             .map(|(index, _)| index)?;
         let job = self.queued.remove(index);
         self.statuses.insert(job.key(), ThumbnailStatus::InProgress);
+        log::debug!(
+            "Started thumbnail job asset={} type={} version={} priority={:?} path={} queued_remaining={}",
+            job.request.asset_id,
+            thumbnail_asset_type_name(job.request.asset_type),
+            job.request.source_version,
+            job.priority,
+            thumbnail_source_label(&job.request),
+            self.queued.len()
+        );
         Some(job)
     }
 
@@ -263,13 +333,33 @@ impl ThumbnailService {
                 return;
             };
             let key = job.key();
+            let started_at = Instant::now();
             match self.generate(context, render_state, &job.request) {
                 Ok(texture) => {
                     self.textures.insert(key, texture);
-                    self.pipeline.complete(key);
+                    let status_updated = self.pipeline.complete(key);
+                    log::debug!(
+                        "Finished thumbnail job asset={} type={} version={} path={} elapsed_ms={} status_updated={}",
+                        job.request.asset_id,
+                        thumbnail_asset_type_name(job.request.asset_type),
+                        job.request.source_version,
+                        thumbnail_source_label(&job.request),
+                        started_at.elapsed().as_millis(),
+                        status_updated
+                    );
                 }
                 Err(message) => {
-                    self.pipeline.fail(key, message);
+                    let status_updated = self.pipeline.fail(key, message.as_str());
+                    log::debug!(
+                        "Failed thumbnail job asset={} type={} version={} path={} elapsed_ms={} status_updated={} error={}",
+                        job.request.asset_id,
+                        thumbnail_asset_type_name(job.request.asset_type),
+                        job.request.source_version,
+                        thumbnail_source_label(&job.request),
+                        started_at.elapsed().as_millis(),
+                        status_updated,
+                        message
+                    );
                 }
             }
         }
@@ -312,6 +402,13 @@ impl ThumbnailService {
             .load_by_id::<Texture>(asset_id)
             .map_err(|err| format!("failed to load texture thumbnail source: {err}"))?;
         let texture = texture_ref.read();
+        log::debug!(
+            "Generating texture thumbnail asset={} size={}x{} format={:?}",
+            asset_id,
+            texture.descriptor.size.width,
+            texture.descriptor.size.height,
+            texture.descriptor.format
+        );
         if texture.descriptor.dimension != wgpu::TextureDimension::D2
             || texture.descriptor.size.depth_or_array_layers != 1
         {
@@ -341,6 +438,11 @@ impl ThumbnailService {
         let material = default_material_ref(context)?;
         let bounds = {
             let mesh = mesh_ref.read();
+            log::debug!(
+                "Generating mesh thumbnail asset={} vertices={}",
+                asset_id,
+                mesh.vertices.len()
+            );
             Bounds::from_mesh(&mesh).unwrap_or_default()
         };
         let mut scene = context.scene();
@@ -376,6 +478,12 @@ impl ThumbnailService {
                 .ok_or_else(|| "prefab thumbnail source could not be instantiated".to_string())?
         };
         let bounds = scene_mesh_bounds(context, &scene, root).unwrap_or_default();
+        let object_count = std::iter::once(root).chain(scene.descendants(root)).count();
+        log::debug!(
+            "Generating prefab thumbnail asset={} objects={}",
+            asset_id,
+            object_count
+        );
         add_preview_lighting(context, &mut scene);
         self.render_scene_thumbnail(context, render_state, &scene, bounds)
     }
@@ -392,6 +500,7 @@ impl ThumbnailService {
             .read()
             .load_by_id::<engine::assets::skybox::Skybox>(asset_id)
             .map_err(|err| format!("failed to load skybox thumbnail source: {err}"))?;
+        log::debug!("Generating skybox thumbnail asset={}", asset_id);
         let mut scene = context.scene();
         let sky_light = scene.create(None, None);
         scene.add_component(
@@ -413,7 +522,19 @@ impl ThumbnailService {
         bounds: Bounds,
     ) -> Result<Texture, String> {
         let (camera, camera_transform) = camera_for_bounds(bounds);
+        log::debug!(
+            "Rendering scene thumbnail bounds_center=({:.3}, {:.3}, {:.3}) bounds_radius={:.3}",
+            bounds.center().x,
+            bounds.center().y,
+            bounds.center().z,
+            bounds.radius()
+        );
         let renderer = self.scene_renderer.get_or_insert_with(|| {
+            log::debug!(
+                "Creating thumbnail scene renderer size={}x{}",
+                THUMBNAIL_SIZE,
+                THUMBNAIL_SIZE
+            );
             SceneRenderer::new(
                 context,
                 SceneRendererOptions {
@@ -487,6 +608,7 @@ struct TextureDownscaler {
 
 impl TextureDownscaler {
     fn new(context: &ReadOnlyAssetContext) -> Result<Self, String> {
+        log::debug!("Loading thumbnail downscale shader resource");
         let shader_ref = context
             .registries
             .assets
@@ -501,6 +623,7 @@ impl TextureDownscaler {
             shader.bind_group_layouts.first().cloned().ok_or_else(|| {
                 "thumbnail downscale shader did not declare bind group 0".to_string()
             })?;
+        log::debug!("Loaded thumbnail downscale shader resource");
         Ok(Self {
             pipeline,
             bind_group_layout,
@@ -513,6 +636,14 @@ impl TextureDownscaler {
         render_state: &RenderState,
         source: &Texture,
     ) -> Texture {
+        log::debug!(
+            "Dispatching texture thumbnail downscale source_size={}x{} source_format={:?} output_size={}x{}",
+            source.descriptor.size.width,
+            source.descriptor.size.height,
+            source.descriptor.format,
+            THUMBNAIL_SIZE,
+            THUMBNAIL_SIZE
+        );
         let thumbnail = Texture::new(
             context.render_context.clone(),
             &wgpu::TextureDescriptor {
