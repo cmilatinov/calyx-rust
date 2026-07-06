@@ -447,16 +447,47 @@ impl AssetRegistry {
         let asset_name = name.clone();
         let id = utils::uuid_from_str(name.as_str());
         let asset = Ref::from_id_value(id, value);
-        let registry = self.type_registry.read();
-        let display_name: Option<String> = registry.type_info::<A>().and_then(|info| {
-            if let TypeInfo::Struct(info) = info {
-                if let Some(AttributeValue::String(str)) = info.attr("name") {
-                    return Some(str.to_string());
-                }
+        self.upsert_in_memory_asset_meta::<A>(id, name);
+        self.asset_cache_mut().insert(id, asset.as_asset());
+        log::info!("Created in-memory asset {} ({})", asset_name, id);
+        Ok(asset)
+    }
+
+    /// Creates an in-memory asset or updates an existing cached asset with the
+    /// same name and type.
+    pub fn create_or_update<A: Asset + TypeUuid>(
+        &self,
+        name: String,
+        value: A,
+    ) -> Result<Ref<A>, AssetError> {
+        let id = self
+            .asset_id(name.as_str())
+            .unwrap_or_else(|| utils::uuid_from_str(name.as_str()));
+
+        if let Some(asset_ref) = self.asset_cache().get(&id).cloned() {
+            let Some(asset_ref) = asset_ref.try_downcast::<A>() else {
+                return Err(AssetError::TypeMismatch
+                    .with_type(A::asset_name())
+                    .with_source(format!("asset name `{name}`")));
+            };
+            {
+                let mut asset = asset_ref.write();
+                *asset = value;
             }
-            None
-        });
+            self.upsert_in_memory_asset_meta::<A>(id, name);
+            return Ok(asset_ref);
+        }
+
+        let asset = Ref::from_id_value(id, value);
+        self.upsert_in_memory_asset_meta::<A>(id, name);
+        self.asset_cache_mut().insert(id, asset.as_asset());
+        Ok(asset)
+    }
+
+    fn upsert_in_memory_asset_meta<A: Asset + TypeUuid>(&self, id: Uuid, name: String) {
+        let display_name = self.asset_display_name::<A>(&name);
         let mut data = self.asset_data_mut();
+        let existing_meta = data.meta.get(&id).cloned();
         data.names
             .insert(RelativePathBuf::from(name.as_str()).normalize(), id);
         data.meta.insert(
@@ -464,16 +495,31 @@ impl AssetRegistry {
             AssetMeta {
                 id,
                 type_uuid: A::type_uuid(),
-                display_name: display_name.unwrap_or(name.clone()),
+                display_name,
                 name,
-                parent: None,
-                children: Default::default(),
-                path: None,
+                parent: existing_meta.as_ref().and_then(|meta| meta.parent),
+                children: existing_meta
+                    .as_ref()
+                    .map(|meta| meta.children.clone())
+                    .unwrap_or_default(),
+                path: existing_meta.and_then(|meta| meta.path),
             },
         );
-        self.asset_cache_mut().insert(id, asset.as_asset());
-        log::info!("Created in-memory asset {} ({})", asset_name, id);
-        Ok(asset)
+    }
+
+    fn asset_display_name<A: TypeUuid + 'static>(&self, fallback: &str) -> String {
+        let registry = self.type_registry.read();
+        registry
+            .type_info::<A>()
+            .and_then(|info| {
+                if let TypeInfo::Struct(info) = info {
+                    if let Some(AttributeValue::String(str)) = info.attr("name") {
+                        return Some(str.to_string());
+                    }
+                }
+                None
+            })
+            .unwrap_or_else(|| fallback.to_string())
     }
 
     /// Loads `name` when it exists, otherwise creates it from `create_fn`.

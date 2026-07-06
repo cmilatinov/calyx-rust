@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use crate::assets::animation::Animation;
     use crate::assets::mesh::Mesh;
     use crate::assets::texture::Texture;
     use crate::test_utils::test_registries_with_assets;
@@ -66,6 +67,30 @@ mod tests {
         assert!(meta.is_some());
         let meta = meta.unwrap();
         assert_eq!(meta.type_uuid, Mesh::type_uuid());
+    }
+
+    #[test]
+    fn create_or_update_reuses_existing_asset_ref() {
+        let registries = asset_registries();
+        let registry = registries.assets.read();
+        let name = format!("generated/test_animation_{}", Uuid::new_v4());
+
+        let mut first_value = Animation::default();
+        first_value.duration = 1.0;
+        let first = registry
+            .create_or_update(name.clone(), first_value)
+            .unwrap();
+
+        let mut second_value = Animation::default();
+        second_value.duration = 2.0;
+        let second = registry
+            .create_or_update(name.clone(), second_value)
+            .unwrap();
+
+        assert_eq!(first.id(), second.id());
+        assert_eq!(first.ptr_id(), second.ptr_id());
+        assert_eq!(registry.asset_id(&name), Some(first.id()));
+        assert_eq!(second.read().duration, 2.0);
     }
 
     #[test]
