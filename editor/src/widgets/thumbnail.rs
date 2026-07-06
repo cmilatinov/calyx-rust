@@ -29,7 +29,7 @@ use sha1::{Digest, Sha1};
 use uuid::Uuid;
 
 const THUMBNAIL_SIZE: u32 = 128;
-const THUMBNAIL_CACHE_VERSION: u32 = 1;
+const THUMBNAIL_CACHE_VERSION: u32 = 2;
 const THUMBNAIL_MAX_FAILURES: u8 = 3;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -867,7 +867,7 @@ impl ThumbnailGenerator {
                         grid: false,
                         gizmos: false,
                         samples: 1,
-                        clear_color: Color32::from_rgb(42, 48, 56),
+                        clear_color: Color32::TRANSPARENT,
                     },
                     (THUMBNAIL_SIZE, THUMBNAIL_SIZE),
                 )
