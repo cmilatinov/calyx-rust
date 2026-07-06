@@ -318,6 +318,13 @@ impl AssetRegistry {
         self.load_by_id(id)
     }
 
+    /// Returns a typed cached asset without loading it from disk.
+    pub fn loaded_by_id<A: Asset + TypeUuid>(&self, id: Uuid) -> Option<Ref<A>> {
+        self.asset_cache()
+            .get(&id)
+            .and_then(|asset| asset.try_downcast::<A>())
+    }
+
     /// Reloads an asset by filesystem path, replacing the cached value.
     pub fn reload_by_path<A: Asset + TypeUuid>(&self, path: &Path) -> Result<Ref<A>, AssetError> {
         let id = self.asset_id_from_path(path).ok_or_else(|| {
@@ -997,15 +1004,35 @@ impl AssetRegistry {
 
             let ctors = self.asset_constructors();
             if let Some(ctor) = ctors.get(&meta.type_uuid) {
+                log::trace!(
+                    "Hot-reloading asset {} ({}, type {}) from {}",
+                    meta.name,
+                    meta.id,
+                    meta.type_uuid,
+                    path.display()
+                );
                 match (ctor.reload)(self.asset_context(), &asset_ref, &path) {
                     Ok(loaded) => {
+                        let sub_asset_count = loaded.sub_assets.len();
                         self.load_sub_asset_meta(id, loaded.sub_assets);
                         self.update_asset_dependencies(id, &path);
                         self.clear_reload_error(id);
-                        log::info!("Hot-reloaded {}", path.display());
+                        log::info!(
+                            "Hot-reloaded asset {} ({}) from {} with {} sub-assets",
+                            meta.name,
+                            meta.id,
+                            path.display(),
+                            sub_asset_count
+                        );
                     }
                     Err(error) => {
-                        log::warn!("Failed to hot-reload {}: {}", path.display(), error);
+                        log::warn!(
+                            "Failed to hot-reload asset {} ({}) from {}: {}",
+                            meta.name,
+                            meta.id,
+                            path.display(),
+                            error
+                        );
                         self.set_reload_error(AssetReloadError { id, path, error });
                     }
                 }

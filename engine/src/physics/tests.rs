@@ -4,8 +4,10 @@ mod tests {
     use crate::core::Time;
     use crate::physics::{PhysicsConfiguration, PhysicsContext};
     use crate::test_utils::test_scene;
+    use nalgebra::UnitQuaternion;
     use nalgebra_glm::Vec3;
     use rapier3d::dynamics::RigidBodyType;
+    use rapier3d::pipeline::QueryFilter;
 
     fn time_with_delta(dt: f32) -> Time {
         let mut time = Time::new(120.0);
@@ -35,6 +37,29 @@ mod tests {
         scene.prepare();
 
         assert!(!scene.physics.colliders.is_empty());
+    }
+
+    #[test]
+    fn prepare_removes_deleted_physics_objects() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        scene.add_component(go, ComponentRigidBody::default());
+        scene.add_component(go, ComponentCollider::default());
+        scene.prepare();
+
+        assert_eq!(scene.physics.bodies.len(), 1);
+        assert_eq!(scene.physics.colliders.len(), 1);
+        assert!(scene.physics.entity_rigid_body.contains_key(&go.entity));
+        assert!(scene.physics.entity_collider.contains_key(&go.entity));
+
+        scene.delete(go);
+        scene.prepare();
+
+        assert_eq!(scene.physics.bodies.len(), 0);
+        assert_eq!(scene.physics.colliders.len(), 0);
+        assert!(!scene.physics.entity_rigid_body.contains_key(&go.entity));
+        assert!(!scene.physics.entity_collider.contains_key(&go.entity));
+        assert!(scene.physics.collider_entity.is_empty());
     }
 
     #[test]
@@ -216,6 +241,96 @@ mod tests {
         scene.prepare();
 
         assert_eq!(scene.physics.colliders.len(), 1);
+    }
+
+    #[test]
+    fn raycast_hits_collider_entity() {
+        let mut scene = test_scene();
+        let target = scene.create(None, None);
+        scene.set_transform(
+            target,
+            &nalgebra_glm::translation(&Vec3::new(0.0, 0.0, 5.0)),
+        );
+        scene.add_component(
+            target,
+            ComponentRigidBody {
+                ty: RigidBodyType::Fixed,
+                ..Default::default()
+            },
+        );
+        scene.add_component(
+            target,
+            ComponentCollider {
+                shape: ColliderShape::Sphere { radius: 0.5 },
+                ..Default::default()
+            },
+        );
+
+        scene.prepare();
+
+        let hit = scene
+            .physics
+            .cast_ray(
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(0.0, 0.0, 1.0),
+                10.0,
+                true,
+                QueryFilter::default(),
+            )
+            .expect("ray should hit the target sphere");
+
+        assert_eq!(hit.entity, target.entity);
+        assert!((hit.toi - 4.5).abs() < 1e-4, "unexpected toi {}", hit.toi);
+        assert!(
+            (hit.point.z - 4.5).abs() < 1e-4,
+            "unexpected hit point {:?}",
+            hit.point
+        );
+    }
+
+    #[test]
+    fn shape_cast_hits_collider_entity() {
+        let mut scene = test_scene();
+        let target = scene.create(None, None);
+        scene.set_transform(
+            target,
+            &nalgebra_glm::translation(&Vec3::new(0.0, 0.0, 5.0)),
+        );
+        scene.add_component(
+            target,
+            ComponentRigidBody {
+                ty: RigidBodyType::Fixed,
+                ..Default::default()
+            },
+        );
+        scene.add_component(
+            target,
+            ComponentCollider {
+                shape: ColliderShape::Sphere { radius: 0.5 },
+                ..Default::default()
+            },
+        );
+
+        scene.prepare();
+
+        let hit = scene
+            .physics
+            .cast_shape(
+                ColliderShape::Sphere { radius: 0.5 },
+                Vec3::new(0.0, 0.0, 0.0),
+                UnitQuaternion::identity(),
+                Vec3::new(0.0, 0.0, 10.0),
+                1.0,
+                QueryFilter::default(),
+            )
+            .expect("shape cast should hit the target sphere");
+
+        assert_eq!(hit.entity, target.entity);
+        assert!(
+            (hit.hit.time_of_impact - 0.4).abs() < 1e-4,
+            "unexpected time of impact {}",
+            hit.hit.time_of_impact
+        );
     }
 
     #[test]

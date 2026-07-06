@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use crate::inspector::assets::animation_graph_inspector::AnimationGraphInspector;
 use crate::inspector::inspector_registry::InspectorRegistry;
 use crate::inspector::type_inspector::InspectorContext;
-use crate::inspector::widgets::Widgets;
+use crate::inspector::widgets::{SearchSelectState, Widgets};
 use crate::panel::Panel;
 use crate::selection::SelectionType;
 use crate::EditorAppState;
@@ -23,7 +23,9 @@ use re_ui::{DesignTokens, UiExt};
 use uuid::Uuid;
 
 #[derive(Default)]
-pub struct PanelInspector;
+pub struct PanelInspector {
+    add_component_select: SearchSelectState,
+}
 
 impl Panel for PanelInspector {
     fn name() -> &'static str {
@@ -52,8 +54,20 @@ impl Panel for PanelInspector {
                         {
                             let mut entity_components = HashSet::new();
                             let mut components_to_remove = HashSet::new();
+                            let component_registry_ref =
+                                state.game.assets.registries.components.clone();
+                            let component_registry = component_registry_ref.read();
+                            if let Some(entry) =
+                                state.game.scenes.simulation_scene().entry(game_object)
+                            {
+                                for (type_id, component) in component_registry.components() {
+                                    if component.get_instance(&entry).is_some() {
+                                        entity_components.insert(*type_id);
+                                    }
+                                }
+                            }
 
-                            Self::add_component_button_ui(
+                            self.add_component_button_ui(
                                 ui,
                                 &state.game.assets.lock_read().registries,
                                 &mut state.game.scenes,
@@ -61,9 +75,6 @@ impl Panel for PanelInspector {
                                 game_object,
                             );
 
-                            let component_registry_ref =
-                                state.game.assets.registries.components.clone();
-                            let component_registry = component_registry_ref.read();
                             for (type_id, component) in component_registry.components() {
                                 let Some(instance) = (unsafe {
                                     state
@@ -392,6 +403,7 @@ impl PanelInspector {
     }
 
     fn add_component_button_ui(
+        &mut self,
         ui: &mut Ui,
         assets: &ReadOnlyRegistryContext,
         scenes: &mut SceneManager,
@@ -399,10 +411,12 @@ impl PanelInspector {
         game_object: GameObject,
     ) -> Response {
         let num_components = assets.components.read().components().count();
-        let res = ui
+        let enabled = num_components > entity_components.len();
+        let mut component_to_add = None;
+        let mut res = ui
             .list_item()
             .draggable(false)
-            .interactive(num_components > entity_components.len())
+            .interactive(enabled)
             .show_flat(
                 ui,
                 LabelContent::new(" Add Component")
@@ -412,28 +426,64 @@ impl PanelInspector {
             )
             .on_hover_text("Add a new component to this game object");
         let id = ui.make_persistent_id("add_component_popup");
-        egui::popup::popup_below_widget(ui, id, &res, PopupCloseBehavior::CloseOnClick, |ui| {
-            for (type_uuid, component) in assets.components.read().components() {
-                if entity_components.contains(type_uuid) {
-                    continue;
-                }
-                let name = Self::display_name(&assets.types.read(), component.as_reflect());
-                if ui.selectable_label(false, name).clicked() {
-                    let scene = scenes.simulation_scene_mut();
-                    scene.bind_component_dyn(game_object, *type_uuid);
-                    log::info!(
-                        "Added component to game object: component={} type_uuid={} object={}",
-                        name,
-                        type_uuid,
-                        Self::game_object_label(scene, game_object)
-                    );
-                }
-            }
-        });
-        if res.clicked() {
+        egui::popup::popup_below_widget(
+            ui,
+            id,
+            &res,
+            PopupCloseBehavior::CloseOnClickOutside,
+            |ui| {
+                Widgets::search_select_contents(
+                    ui,
+                    id,
+                    &mut self.add_component_select,
+                    |ui, search| {
+                        let search = search.trim().to_owned();
+                        let mut shown = 0usize;
+                        for (type_uuid, component) in assets.components.read().components() {
+                            if entity_components.contains(type_uuid) {
+                                continue;
+                            }
+                            let name =
+                                Self::display_name(&assets.types.read(), component.as_reflect());
+                            if !Self::component_matches_search(name, &search) {
+                                continue;
+                            }
+                            shown += 1;
+                            if ui.selectable_label(false, name).clicked() {
+                                component_to_add = Some((*type_uuid, name));
+                                ui.memory_mut(|mem| mem.close_popup());
+                            }
+                        }
+
+                        if shown == 0 {
+                            ui.weak("No matching components");
+                        }
+                    },
+                );
+            },
+        );
+        if res.clicked() && enabled {
+            self.add_component_select.open();
             ui.memory_mut(|mem| mem.open_popup(id));
         }
+        if let Some((type_uuid, name)) = component_to_add {
+            let scene = scenes.simulation_scene_mut();
+            scene.bind_component_dyn(game_object, type_uuid);
+            self.add_component_select.clear_search();
+            log::info!(
+                "Added component to game object: component={} type_uuid={} object={}",
+                name,
+                type_uuid,
+                Self::game_object_label(scene, game_object)
+            );
+            res.mark_changed();
+        }
         res
+    }
+
+    fn component_matches_search(name: &str, search: &str) -> bool {
+        let search = search.trim();
+        search.is_empty() || name.to_lowercase().contains(&search.to_lowercase())
     }
 
     fn type_display_name(type_registry: &TypeRegistry, type_uuid: Uuid) -> Option<String> {
@@ -467,5 +517,32 @@ impl PanelInspector {
 
     fn game_object_label(scene: &engine::scene::Scene, game_object: GameObject) -> String {
         format!("{} ({})", scene.name(game_object), scene.uuid(game_object))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PanelInspector;
+
+    #[test]
+    fn component_search_matches_case_insensitive_substrings() {
+        assert!(PanelInspector::component_matches_search(
+            "Tank Controller",
+            "tank"
+        ));
+        assert!(PanelInspector::component_matches_search(
+            "Directional Light",
+            "LIGHT"
+        ));
+        assert!(!PanelInspector::component_matches_search(
+            "Component Mesh",
+            "camera"
+        ));
+    }
+
+    #[test]
+    fn component_search_treats_blank_query_as_match() {
+        assert!(PanelInspector::component_matches_search("Camera", ""));
+        assert!(PanelInspector::component_matches_search("Camera", "   "));
     }
 }

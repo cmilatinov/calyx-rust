@@ -1,7 +1,8 @@
 use egui::Rect;
 use engine::component::{
-    Component, ComponentCamera, ComponentEventContext, ComponentID, ComponentMesh,
-    ComponentTransform, ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
+    ColliderShape, Component, ComponentCamera, ComponentCollider, ComponentEventContext,
+    ComponentID, ComponentMesh, ComponentRigidBody, ComponentTransform, ComponentUpdate,
+    ReflectComponent, ReflectComponentUpdate,
 };
 use engine::core::TimeType;
 use engine::input::Input;
@@ -31,13 +32,20 @@ pub struct ComponentTankController {
     pub hull_turn_speed: f32,
     pub turret_turn_speed: f32,
     pub projectile_speed: f32,
+    pub projectile_damage: f32,
     pub projectile_lifetime: f32,
     pub projectile_radius: f32,
     pub muzzle_offset: f32,
+    pub max_ammo: u32,
+    pub ammo: u32,
     pub fire_cooldown: f32,
+    pub reload_duration: f32,
     #[serde(skip)]
     #[reflect_skip]
     pub fire_cooldown_remaining: f32,
+    #[serde(skip)]
+    #[reflect_skip]
+    pub reload_remaining: f32,
 }
 
 impl Default for ComponentTankController {
@@ -52,11 +60,16 @@ impl Default for ComponentTankController {
             hull_turn_speed: 2.8,
             turret_turn_speed: 12.0,
             projectile_speed: 28.0,
+            projectile_damage: 35.0,
             projectile_lifetime: 2.0,
             projectile_radius: 0.18,
             muzzle_offset: 1.0,
+            max_ammo: 6,
+            ammo: 6,
             fire_cooldown: 0.35,
+            reload_duration: 1.4,
             fire_cooldown_remaining: 0.0,
+            reload_remaining: 0.0,
         }
     }
 }
@@ -72,6 +85,7 @@ impl Component for ComponentTankController {}
 pub struct ComponentProjectile {
     pub direction: Vec3,
     pub speed: f32,
+    pub damage: f32,
     pub lifetime_remaining: f32,
     pub radius: f32,
 }
@@ -81,6 +95,7 @@ impl Default for ComponentProjectile {
         Self {
             direction: vec3(0.0, 0.0, 1.0),
             speed: 28.0,
+            damage: 35.0,
             lifetime_remaining: 2.0,
             radius: 0.18,
         }
@@ -124,6 +139,44 @@ impl Default for ComponentProjectileTarget {
 
 impl Component for ComponentProjectileTarget {}
 
+#[derive(Clone, Copy, TypeUuid, Serialize, Deserialize, Component, Reflect)]
+#[uuid = "8f0175f4-1a76-4c43-8932-6462f9005ab4"]
+#[reflect(Default, TypeUuidDynamic, Component)]
+#[reflect_attr(name = "Health")]
+#[serde(default)]
+#[repr(C)]
+pub struct ComponentHealth {
+    pub max_health: f32,
+    pub current_health: f32,
+    pub destroy_on_death: bool,
+    pub dead: bool,
+}
+
+impl Default for ComponentHealth {
+    fn default() -> Self {
+        Self {
+            max_health: 100.0,
+            current_health: 100.0,
+            destroy_on_death: false,
+            dead: false,
+        }
+    }
+}
+
+impl Component for ComponentHealth {}
+
+impl ComponentHealth {
+    fn apply_damage(&mut self, amount: f32) -> bool {
+        if self.dead || amount <= 0.0 {
+            return self.dead;
+        }
+
+        self.current_health = (self.current_health - amount).max(0.0);
+        self.dead = self.current_health <= f32::EPSILON;
+        self.dead
+    }
+}
+
 impl ComponentUpdate for ComponentTankController {
     fn update(
         &self,
@@ -155,6 +208,8 @@ impl ComponentUpdate for ComponentTankController {
         );
         let _ = scene.write_component::<ComponentTankController, _>(game_object, |component| {
             component.fire_cooldown_remaining = controller.fire_cooldown_remaining;
+            component.reload_remaining = controller.reload_remaining;
+            component.ammo = controller.ammo;
         });
     }
 }
@@ -277,15 +332,24 @@ fn update_shooting(
 ) {
     controller.fire_cooldown_remaining =
         advance_fire_cooldown(controller.fire_cooldown_remaining, dt);
+    advance_reload(controller, dt);
+    if is_reloading(controller) {
+        return;
+    }
     if !can_fire(
         input.action("shoot").pressed(),
         controller.fire_cooldown_remaining,
+        controller.ammo,
     ) {
         return;
     }
 
     if spawn_projectile(scene, controller) {
+        controller.ammo = controller.ammo.saturating_sub(1);
         controller.fire_cooldown_remaining = controller.fire_cooldown;
+        if controller.ammo == 0 {
+            controller.reload_remaining = controller.reload_duration;
+        }
     }
 }
 
@@ -293,8 +357,36 @@ fn advance_fire_cooldown(remaining: f32, dt: f32) -> f32 {
     (remaining - dt).max(0.0)
 }
 
-fn can_fire(shoot_pressed: bool, cooldown_remaining: f32) -> bool {
-    shoot_pressed && cooldown_remaining <= f32::EPSILON
+fn advance_reload(controller: &mut ComponentTankController, dt: f32) {
+    if controller.max_ammo == 0 {
+        controller.ammo = 0;
+        controller.reload_remaining = 0.0;
+        return;
+    }
+
+    controller.ammo = controller.ammo.min(controller.max_ammo);
+    if controller.ammo > 0 {
+        controller.reload_remaining = 0.0;
+        return;
+    }
+
+    if controller.reload_remaining <= f32::EPSILON {
+        controller.ammo = controller.max_ammo;
+        return;
+    }
+
+    controller.reload_remaining = (controller.reload_remaining - dt.max(0.0)).max(0.0);
+    if controller.reload_remaining <= f32::EPSILON {
+        controller.ammo = controller.max_ammo;
+    }
+}
+
+fn is_reloading(controller: &ComponentTankController) -> bool {
+    controller.ammo == 0
+}
+
+fn can_fire(shoot_pressed: bool, cooldown_remaining: f32, ammo: u32) -> bool {
+    shoot_pressed && cooldown_remaining <= f32::EPSILON && ammo > 0
 }
 
 fn spawn_projectile(
@@ -337,8 +429,27 @@ fn spawn_projectile(
         ComponentProjectile {
             direction,
             speed: controller.projectile_speed,
+            damage: controller.projectile_damage,
             lifetime_remaining: controller.projectile_lifetime,
             radius: controller.projectile_radius,
+        },
+    );
+    scene.add_component(
+        projectile_object,
+        ComponentRigidBody {
+            enabled: true,
+            gravity_scale: 0.0,
+            can_sleep: false,
+            ..Default::default()
+        },
+    );
+    scene.add_component(
+        projectile_object,
+        ComponentCollider {
+            shape: ColliderShape::Sphere {
+                radius: controller.projectile_radius,
+            },
+            ..Default::default()
         },
     );
     if let Some(visual) = visual {
@@ -375,9 +486,7 @@ fn update_projectile(
     let end = start + direction * projectile.speed * travel_time;
 
     if let Some(target) = first_projectile_hit(scene, game_object, start, end, projectile.radius) {
-        let _ = scene.write_component::<ComponentProjectileTarget, _>(target, |target| {
-            target.hit_count = target.hit_count.saturating_add(1);
-        });
+        apply_projectile_damage(scene, target, projectile.damage);
         scene.delete(game_object);
         return;
     }
@@ -395,6 +504,30 @@ fn update_projectile(
         component.direction = projectile.direction;
         component.lifetime_remaining = projectile.lifetime_remaining;
     });
+}
+
+fn apply_projectile_damage(
+    scene: &mut engine::scene::Scene,
+    target: engine::scene::GameObject,
+    damage: f32,
+) {
+    let mut should_destroy = false;
+    let damaged_health = scene
+        .write_component::<ComponentHealth, _>(target, |health| {
+            let died = health.apply_damage(damage);
+            should_destroy = died && health.destroy_on_death;
+        })
+        .is_some();
+
+    if !damaged_health {
+        let _ = scene.write_component::<ComponentProjectileTarget, _>(target, |target| {
+            target.hit_count = target.hit_count.saturating_add(1);
+        });
+    }
+
+    if should_destroy {
+        scene.delete(target);
+    }
 }
 
 fn first_projectile_hit(
@@ -525,12 +658,17 @@ fn yaw_rotation(direction: &Vec3) -> UnitQuaternion<f32> {
 #[cfg(test)]
 mod tests {
     use super::{
-        advance_fire_cooldown, can_fire, clip_from_screen, flatten_xz, follow_camera_xz,
-        screen_to_ground, segment_intersects_sphere, yaw_rotation,
+        advance_fire_cooldown, advance_reload, can_fire, clip_from_screen, flatten_xz,
+        follow_camera_xz, is_reloading, screen_to_ground, segment_intersects_sphere,
+        spawn_projectile, update_projectile, yaw_rotation, ComponentHealth, ComponentProjectile,
+        ComponentProjectileTarget, ComponentTankController,
     };
-    use engine::component::{ComponentID, ComponentTransform};
+    use engine::component::{
+        ColliderShape, ComponentCollider, ComponentID, ComponentRigidBody, ComponentTransform,
+    };
     use engine::math::Transform;
     use engine::render::Camera;
+    use engine::scene::GameObjectRef;
     use nalgebra::UnitQuaternion;
     use nalgebra_glm::vec3;
     use serde_json::Value;
@@ -871,9 +1009,61 @@ mod tests {
 
     #[test]
     fn fire_gate_requires_input_and_expired_cooldown() {
-        assert!(can_fire(true, 0.0));
-        assert!(!can_fire(false, 0.0));
-        assert!(!can_fire(true, 0.1));
+        assert!(can_fire(true, 0.0, 1));
+        assert!(!can_fire(false, 0.0, 1));
+        assert!(!can_fire(true, 0.1, 1));
+        assert!(!can_fire(true, 0.0, 0));
+    }
+
+    #[test]
+    fn reload_refills_empty_ammo_after_duration() {
+        let mut controller = ComponentTankController {
+            max_ammo: 3,
+            ammo: 0,
+            reload_duration: 1.0,
+            reload_remaining: 1.0,
+            ..Default::default()
+        };
+
+        advance_reload(&mut controller, 0.4);
+        assert_eq!(controller.ammo, 0);
+        assert!(is_reloading(&controller));
+        assert!((controller.reload_remaining - 0.6).abs() < 1e-6);
+
+        advance_reload(&mut controller, 0.6);
+        assert_eq!(controller.ammo, 3);
+        assert!(!is_reloading(&controller));
+        assert_eq!(controller.reload_remaining, 0.0);
+    }
+
+    #[test]
+    fn reload_is_disabled_when_max_ammo_is_zero() {
+        let mut controller = ComponentTankController {
+            max_ammo: 0,
+            ammo: 0,
+            reload_remaining: 1.0,
+            ..Default::default()
+        };
+
+        advance_reload(&mut controller, 1.0);
+
+        assert_eq!(controller.ammo, 0);
+        assert_eq!(controller.reload_remaining, 0.0);
+    }
+
+    #[test]
+    fn reload_clamps_stale_ammo_to_max_ammo() {
+        let mut controller = ComponentTankController {
+            max_ammo: 3,
+            ammo: 6,
+            reload_remaining: 1.0,
+            ..Default::default()
+        };
+
+        advance_reload(&mut controller, 0.1);
+
+        assert_eq!(controller.ammo, 3);
+        assert_eq!(controller.reload_remaining, 0.0);
     }
 
     #[test]
@@ -890,5 +1080,144 @@ mod tests {
             vec3(2.0, 0.0, 5.0),
             0.5,
         ));
+    }
+
+    #[test]
+    fn spawned_projectile_has_velocity_and_physics_components() {
+        let mut scene = engine::test_support::test_scene();
+        let barrel = scene.create(
+            Some(ComponentID {
+                name: "Barrel".to_string(),
+                ..Default::default()
+            }),
+            None,
+        );
+        let controller = ComponentTankController {
+            barrel: GameObjectRef::new(scene.uuid(barrel)),
+            projectile_radius: 0.25,
+            projectile_speed: 12.0,
+            projectile_damage: 17.0,
+            projectile_lifetime: 1.5,
+            ..Default::default()
+        };
+
+        assert!(spawn_projectile(&mut scene, &controller));
+
+        let projectile = scene
+            .objects()
+            .find(|object| scene.name(*object) == "Projectile")
+            .expect("spawn should create a projectile object");
+        let projectile_component = scene
+            .read_component::<ComponentProjectile, _, _>(projectile, |component| *component)
+            .expect("projectile should have velocity/lifetime data");
+        assert_eq!(projectile_component.speed, 12.0);
+        assert_eq!(projectile_component.damage, 17.0);
+        assert_eq!(projectile_component.lifetime_remaining, 1.5);
+        assert_eq!(projectile_component.radius, 0.25);
+
+        let rigid_body = scene
+            .read_component::<ComponentRigidBody, _, _>(projectile, |component| {
+                (component.gravity_scale, component.can_sleep)
+            })
+            .expect("projectile should have a rigid body");
+        assert_eq!(rigid_body.0, 0.0);
+        assert!(!rigid_body.1);
+
+        let collider = scene
+            .read_component::<ComponentCollider, _, _>(projectile, |component| component.shape)
+            .expect("projectile should have a collider");
+        let ColliderShape::Sphere { radius } = collider else {
+            panic!("projectile collider should be a sphere");
+        };
+        assert_eq!(radius, controller.projectile_radius);
+    }
+
+    #[test]
+    fn projectile_hit_applies_damage_to_health() {
+        let mut scene = engine::test_support::test_scene();
+        let projectile = scene.create(
+            Some(ComponentID {
+                name: "Projectile".to_string(),
+                ..Default::default()
+            }),
+            None,
+        );
+        scene.add_component(
+            projectile,
+            ComponentProjectile {
+                direction: vec3(0.0, 0.0, 1.0),
+                speed: 10.0,
+                damage: 25.0,
+                lifetime_remaining: 1.0,
+                radius: 0.1,
+            },
+        );
+
+        let target = scene.create(
+            Some(ComponentID {
+                name: "Target".to_string(),
+                ..Default::default()
+            }),
+            None,
+        );
+        scene.set_world_transform(target, Transform::from_xyz(0.0, 0.0, 5.0).matrix());
+        scene.add_component(target, ComponentProjectileTarget::default());
+        scene.add_component(
+            target,
+            ComponentHealth {
+                current_health: 60.0,
+                max_health: 60.0,
+                ..Default::default()
+            },
+        );
+
+        update_projectile(&mut scene, projectile, 0.5);
+
+        let health = scene
+            .read_component::<ComponentHealth, _, _>(target, |health| *health)
+            .expect("target should keep health after nonlethal hit");
+        assert_eq!(health.current_health, 35.0);
+        assert!(!health.dead);
+        let hit_count = scene
+            .read_component::<ComponentProjectileTarget, _, _>(target, |target| target.hit_count)
+            .unwrap();
+        assert_eq!(hit_count, 0, "health damage replaces legacy hit counting");
+    }
+
+    #[test]
+    fn lethal_projectile_hit_marks_health_dead_and_can_destroy_target() {
+        let mut scene = engine::test_support::test_scene();
+        let projectile = scene.create(None, None);
+        scene.add_component(
+            projectile,
+            ComponentProjectile {
+                direction: vec3(0.0, 0.0, 1.0),
+                speed: 10.0,
+                damage: 100.0,
+                lifetime_remaining: 1.0,
+                radius: 0.1,
+            },
+        );
+
+        let target = scene.create(None, None);
+        scene.set_world_transform(target, Transform::from_xyz(0.0, 0.0, 5.0).matrix());
+        scene.add_component(target, ComponentProjectileTarget::default());
+        scene.add_component(
+            target,
+            ComponentHealth {
+                current_health: 40.0,
+                max_health: 40.0,
+                destroy_on_death: true,
+                ..Default::default()
+            },
+        );
+
+        update_projectile(&mut scene, projectile, 0.5);
+
+        scene.flush_deletes();
+        assert!(
+            !scene.objects().any(|object| object == target),
+            "destroy_on_death targets should be removed after lethal damage"
+        );
     }
 }

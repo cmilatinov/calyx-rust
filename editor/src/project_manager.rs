@@ -11,15 +11,38 @@ use engine::core::{Ref, WeakRef};
 use engine::error::BoxedError;
 use engine::reflect::type_registry::TypeRegistry;
 use engine::reflect::TypeInfo;
+use engine::resource::Resource;
+use engine::utils::TypeUuid;
 use project::Project;
 use rusty_pool::JoinHandle;
 
+#[derive(Default, Resource, TypeUuid)]
+#[uuid = "1f7d437c-a775-4f7f-8474-a6b4a348704f"]
+#[repr(C)]
+pub struct ProjectAssemblyStatus {
+    loaded: bool,
+}
+
+impl ProjectAssemblyStatus {
+    pub fn is_loaded(&self) -> bool {
+        self.loaded
+    }
+
+    fn set_loaded(&mut self, loaded: bool) {
+        self.loaded = loaded;
+    }
+}
+
 pub struct ProjectManager {
     current_project: Project,
-    assembly: Option<Lib>,
     context: AssetContext,
     background: Ref<Background>,
+    assembly_status: Ref<ProjectAssemblyStatus>,
     project_manager: WeakRef<ProjectManager>,
+    // Keep the dynamic assembly after contexts/registries in field order so
+    // plugin-backed trait objects and scene components drop before the library
+    // is unloaded during editor shutdown.
+    assembly: Option<Lib>,
 }
 
 impl ProjectManager {
@@ -27,16 +50,18 @@ impl ProjectManager {
         context: AssetContext,
         project_directory: impl Into<PathBuf>,
         background: Ref<Background>,
+        assembly_status: Ref<ProjectAssemblyStatus>,
     ) -> Result<Ref<Self>, BoxedError> {
         let project_directory = dunce::canonicalize(project_directory.into()).map_err(Box::new)?;
         log::info!("Loading project from {}", project_directory.display());
         let current_project = Project::load(project_directory)?;
         Ok(Ref::new_cyclic(move |weak| Self {
             current_project,
-            assembly: None,
             context,
             background,
+            assembly_status,
             project_manager: weak,
+            assembly: None,
         }))
     }
 
@@ -131,6 +156,7 @@ impl ProjectManager {
         let source = self.assembly_source_path();
         if !source.exists() {
             log::info!("No project assembly found at {}", source.display());
+            self.refresh_assembly_status();
             return false;
         }
         log::info!("Loading existing project assembly: {}", source.display());
@@ -156,6 +182,7 @@ impl ProjectManager {
                     "Failed to prepare project assembly {}: {err}",
                     source.display()
                 );
+                self.refresh_assembly_status();
                 return false;
             }
         };
@@ -183,9 +210,20 @@ impl ProjectManager {
             };
             match Lib::new(&target) {
                 Ok(lib) => {
-                    if let Ok(load_fn) =
-                        lib.find_func::<extern "C" fn(&mut TypeRegistry), &str>("plugin_main")
                     {
+                        let load_fn = match lib
+                            .find_func::<extern "C" fn(&mut TypeRegistry), &str>("plugin_main")
+                        {
+                            Ok(load_fn) => load_fn,
+                            Err(err) => {
+                                log::error!(
+                                    "Project assembly {} is missing plugin_main: {err}",
+                                    target.display()
+                                );
+                                self.refresh_assembly_status();
+                                return false;
+                            }
+                        };
                         log::info!(
                             "Loading plugin type registrations from crate {} ({})",
                             self.current_project().name(),
@@ -222,15 +260,27 @@ impl ProjectManager {
                     component_registry_ref
                         .write()
                         .refresh_class_lists(&self.context.registries.types.read());
+                    self.refresh_assembly_status();
                     log::info!("Project assemblies loaded");
                     true
                 }
                 Err(err) => {
                     log::error!("Failed to load project assembly: {err}");
+                    self.refresh_assembly_status();
                     false
                 }
             }
         }
+    }
+
+    pub fn assemblies_loaded(&self) -> bool {
+        self.assembly.is_some()
+    }
+
+    fn refresh_assembly_status(&self) {
+        self.assembly_status
+            .write()
+            .set_loaded(self.assemblies_loaded());
     }
 }
 
@@ -539,11 +589,16 @@ fn assembly_target_dir(profile: &str) -> &str {
 mod tests {
     use super::{
         assembly_artifact_path, assembly_build_target_dir, assembly_target_dir, cargo_build_args,
-        copy_runtime_dependencies, is_rust_runtime_library,
+        copy_runtime_dependencies, is_rust_runtime_library, ProjectAssemblyStatus,
     };
     use std::fs;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn project_assembly_status_defaults_to_unloaded() {
+        assert!(!ProjectAssemblyStatus::default().is_loaded());
+    }
 
     #[test]
     fn dev_profile_uses_default_cargo_build() {
