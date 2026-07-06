@@ -30,6 +30,7 @@ use uuid::Uuid;
 
 const THUMBNAIL_SIZE: u32 = 128;
 const THUMBNAIL_CACHE_VERSION: u32 = 1;
+const THUMBNAIL_MAX_FAILURES: u8 = 3;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ThumbnailKey {
@@ -130,12 +131,6 @@ impl ThumbnailCache {
             .join(project_hash)
             .join(format!("v{THUMBNAIL_CACHE_VERSION}"))
             .join(format!("{THUMBNAIL_SIZE}px"));
-
-        log::debug!(
-            "Using thumbnail disk cache root={} asset_root={}",
-            cache_root.display(),
-            asset_root.display()
-        );
 
         Self { root: cache_root }
     }
@@ -447,6 +442,7 @@ pub enum ThumbnailStatus {
 pub struct ThumbnailPipeline {
     queued: Vec<ThumbnailJob>,
     statuses: HashMap<ThumbnailKey, ThumbnailStatus>,
+    failure_counts: HashMap<ThumbnailKey, u8>,
 }
 
 impl ThumbnailPipeline {
@@ -467,49 +463,32 @@ impl ThumbnailPipeline {
                     if let Some(job) = self.queued.iter_mut().find(|job| job.key() == key) {
                         job.priority = priority;
                     }
-                    log::debug!(
-                        "Promoted thumbnail job asset={} type={} version={} priority={:?}->{:?} path={}",
-                        request.asset_id,
-                        thumbnail_asset_type_name(request.asset_type),
-                        request.source_version,
-                        existing,
-                        priority,
-                        thumbnail_source_label(&request)
-                    );
                 }
             }
             Some(ThumbnailStatus::InProgress | ThumbnailStatus::Ready) => {}
-            Some(ThumbnailStatus::Failed { message }) => {
-                log::debug!(
-                    "Skipped failed thumbnail job retry asset={} type={} version={} priority={:?} path={} error={}",
-                    request.asset_id,
-                    thumbnail_asset_type_name(request.asset_type),
-                    request.source_version,
-                    priority,
-                    thumbnail_source_label(&request),
-                    message
-                );
+            Some(ThumbnailStatus::Failed { .. })
+                if self.failure_count(key) < THUMBNAIL_MAX_FAILURES =>
+            {
+                self.enqueue(request, priority);
             }
+            Some(ThumbnailStatus::Failed { .. }) => {}
             Some(ThumbnailStatus::Missing) | None => {
-                log::debug!(
-                    "Queued thumbnail job asset={} type={} version={} priority={:?} path={}",
-                    request.asset_id,
-                    thumbnail_asset_type_name(request.asset_type),
-                    request.source_version,
-                    priority,
-                    thumbnail_source_label(&request)
-                );
-                self.queued.push(ThumbnailJob {
-                    request,
-                    priority,
-                    requested_at: Instant::now(),
-                });
-                self.statuses
-                    .insert(key, ThumbnailStatus::Queued { priority });
+                self.enqueue(request, priority);
             }
         }
 
         self.status(key)
+    }
+
+    fn enqueue(&mut self, request: ThumbnailRequest, priority: ThumbnailPriority) {
+        let key = request.key();
+        self.queued.push(ThumbnailJob {
+            request,
+            priority,
+            requested_at: Instant::now(),
+        });
+        self.statuses
+            .insert(key, ThumbnailStatus::Queued { priority });
     }
 
     pub fn status(&self, key: ThumbnailKey) -> ThumbnailStatus {
@@ -517,6 +496,10 @@ impl ThumbnailPipeline {
             .get(&key)
             .cloned()
             .unwrap_or(ThumbnailStatus::Missing)
+    }
+
+    fn failure_count(&self, key: ThumbnailKey) -> u8 {
+        self.failure_counts.get(&key).copied().unwrap_or_default()
     }
 
     pub fn queued_len(&self) -> usize {
@@ -532,15 +515,6 @@ impl ThumbnailPipeline {
             .map(|(index, _)| index)?;
         let job = self.queued.remove(index);
         self.statuses.insert(job.key(), ThumbnailStatus::InProgress);
-        log::debug!(
-            "Started thumbnail job asset={} type={} version={} priority={:?} path={} queued_remaining={}",
-            job.request.asset_id,
-            thumbnail_asset_type_name(job.request.asset_type),
-            job.request.source_version,
-            job.priority,
-            thumbnail_source_label(&job.request),
-            self.queued.len()
-        );
         Some(job)
     }
 
@@ -548,6 +522,7 @@ impl ThumbnailPipeline {
         if !matches!(self.statuses.get(&key), Some(ThumbnailStatus::InProgress)) {
             return false;
         }
+        self.failure_counts.remove(&key);
         self.statuses.insert(key, ThumbnailStatus::Ready);
         true
     }
@@ -556,6 +531,8 @@ impl ThumbnailPipeline {
         if !matches!(self.statuses.get(&key), Some(ThumbnailStatus::InProgress)) {
             return false;
         }
+        let count = self.failure_counts.entry(key).or_default();
+        *count = count.saturating_add(1);
         self.statuses.insert(
             key,
             ThumbnailStatus::Failed {
@@ -568,6 +545,7 @@ impl ThumbnailPipeline {
     pub fn clear(&mut self, key: ThumbnailKey) {
         self.queued.retain(|job| job.key() != key);
         self.statuses.remove(&key);
+        self.failure_counts.remove(&key);
     }
 
     pub fn clear_asset_versions_except(&mut self, asset_id: Uuid, source_version: u64) {
@@ -624,19 +602,6 @@ impl ThumbnailService {
         request: ThumbnailRequest,
         priority: ThumbnailPriority,
     ) -> ThumbnailStatus {
-        let key = request.key();
-        let asset_id = request.asset_id;
-        let asset_type_name = thumbnail_asset_type_name(request.asset_type);
-        let source_version = request.source_version;
-        let source_label = thumbnail_source_label(&request);
-        log::debug!(
-            "Thumbnail request made asset={} type={} version={} priority={:?} path={}",
-            asset_id,
-            asset_type_name,
-            source_version,
-            priority,
-            source_label
-        );
         let mut state = self.shared.state.lock().unwrap();
         state
             .pipeline
@@ -645,15 +610,6 @@ impl ThumbnailService {
             key.asset_id != request.asset_id || key.source_version == request.source_version
         });
         let status = state.pipeline.request(request, priority);
-        log::debug!(
-            "Thumbnail request resolved asset={} type={} version={} status={:?} has_texture={} queued_len={}",
-            asset_id,
-            asset_type_name,
-            source_version,
-            status,
-            state.textures.contains_key(&key),
-            state.pipeline.queued_len()
-        );
         drop(state);
         self.shared.wake.notify_one();
         status
@@ -719,7 +675,6 @@ impl Drop for ThumbnailService {
 }
 
 fn thumbnail_worker_loop(shared: Arc<ThumbnailShared>, context: ReadOnlyAssetContext) {
-    log::debug!("Started thumbnail generation worker");
     let cache = ThumbnailCache::new(&context);
     let mut generator = ThumbnailGenerator::default();
     loop {
@@ -727,7 +682,6 @@ fn thumbnail_worker_loop(shared: Arc<ThumbnailShared>, context: ReadOnlyAssetCon
             let mut state = shared.state.lock().unwrap();
             loop {
                 if state.stop {
-                    log::debug!("Stopping thumbnail generation worker");
                     return;
                 }
                 if let Some(job) = state.pipeline.start_next() {
@@ -747,105 +701,48 @@ fn thumbnail_worker_loop(shared: Arc<ThumbnailShared>, context: ReadOnlyAssetCon
                 if status_updated {
                     state.textures.insert(key, texture);
                 }
-                log::debug!(
-                    "Loaded thumbnail from disk cache asset={} type={} version={} path={} cache_path={} elapsed_ms={} status_updated={}",
-                    job.request.asset_id,
-                    thumbnail_asset_type_name(job.request.asset_type),
-                    job.request.source_version,
-                    thumbnail_source_label(&job.request),
-                    cache.path(&job.request).display(),
-                    started_at.elapsed().as_millis(),
-                    status_updated
-                );
                 continue;
             }
-            Ok(None) => {
-                log::debug!(
-                    "Thumbnail disk cache miss asset={} type={} version={} path={} cache_path={}",
-                    job.request.asset_id,
-                    thumbnail_asset_type_name(job.request.asset_type),
-                    job.request.source_version,
-                    thumbnail_source_label(&job.request),
-                    cache.path(&job.request).display()
-                );
-            }
-            Err(message) => {
-                log::debug!(
-                    "Failed to load thumbnail disk cache asset={} type={} version={} path={} cache_path={} error={}",
-                    job.request.asset_id,
-                    thumbnail_asset_type_name(job.request.asset_type),
-                    job.request.source_version,
-                    thumbnail_source_label(&job.request),
-                    cache.path(&job.request).display(),
-                    message
-                );
-            }
+            Ok(None) | Err(_) => {}
         }
 
         match generator.generate(&context, render_state, &job.request) {
             Ok(texture) => {
-                log::debug!(
-                    "Generated thumbnail asset={} type={} version={} path={} texture_size={}x{} format={:?} elapsed_ms={}",
-                    job.request.asset_id,
-                    thumbnail_asset_type_name(job.request.asset_type),
-                    job.request.source_version,
-                    thumbnail_source_label(&job.request),
-                    texture.descriptor.size.width,
-                    texture.descriptor.size.height,
-                    texture.descriptor.format,
-                    started_at.elapsed().as_millis()
-                );
-                match cache.store(render_state, &job.request, &texture) {
-                    Ok(()) => {
-                        log::debug!(
-                            "Stored thumbnail in disk cache asset={} type={} version={} path={} cache_path={}",
-                            job.request.asset_id,
-                            thumbnail_asset_type_name(job.request.asset_type),
-                            job.request.source_version,
-                            thumbnail_source_label(&job.request),
-                            cache.path(&job.request).display()
-                        );
-                    }
-                    Err(message) => {
-                        log::debug!(
-                            "Failed to store thumbnail disk cache asset={} type={} version={} path={} cache_path={} error={}",
-                            job.request.asset_id,
-                            thumbnail_asset_type_name(job.request.asset_type),
-                            job.request.source_version,
-                            thumbnail_source_label(&job.request),
-                            cache.path(&job.request).display(),
-                            message
-                        );
-                    }
-                }
+                let _ = cache.store(render_state, &job.request, &texture);
                 let mut state = shared.state.lock().unwrap();
                 let status_updated = state.pipeline.complete(key);
                 if status_updated {
+                    log::trace!(
+                        "Generated thumbnail asset={} type={} version={} path={} texture_size={}x{} format={:?} elapsed_ms={}",
+                        job.request.asset_id,
+                        thumbnail_asset_type_name(job.request.asset_type),
+                        job.request.source_version,
+                        thumbnail_source_label(&job.request),
+                        texture.descriptor.size.width,
+                        texture.descriptor.size.height,
+                        texture.descriptor.format,
+                        started_at.elapsed().as_millis()
+                    );
                     state.textures.insert(key, texture);
                 }
-                log::debug!(
-                    "Finished thumbnail job asset={} type={} version={} path={} elapsed_ms={} status_updated={}",
-                    job.request.asset_id,
-                    thumbnail_asset_type_name(job.request.asset_type),
-                    job.request.source_version,
-                    thumbnail_source_label(&job.request),
-                    started_at.elapsed().as_millis(),
-                    status_updated
-                );
             }
             Err(message) => {
                 let mut state = shared.state.lock().unwrap();
                 let status_updated = state.pipeline.fail(key, message.as_str());
-                log::debug!(
-                    "Failed thumbnail job asset={} type={} version={} path={} elapsed_ms={} status_updated={} error={}",
-                    job.request.asset_id,
-                    thumbnail_asset_type_name(job.request.asset_type),
-                    job.request.source_version,
-                    thumbnail_source_label(&job.request),
-                    started_at.elapsed().as_millis(),
-                    status_updated,
-                    message
-                );
+                let failure_count = state.pipeline.failure_count(key);
+                if status_updated && failure_count <= THUMBNAIL_MAX_FAILURES {
+                    log::warn!(
+                        "Thumbnail request failed asset={} type={} version={} attempt={}/{} path={} elapsed_ms={} error={}",
+                        job.request.asset_id,
+                        thumbnail_asset_type_name(job.request.asset_type),
+                        job.request.source_version,
+                        failure_count,
+                        THUMBNAIL_MAX_FAILURES,
+                        thumbnail_source_label(&job.request),
+                        started_at.elapsed().as_millis(),
+                        message
+                    );
+                }
             }
         }
     }
@@ -886,13 +783,6 @@ impl ThumbnailGenerator {
             .load_by_id::<Texture>(asset_id)
             .map_err(|err| format!("failed to load texture thumbnail source: {err}"))?;
         let texture = texture_ref.read();
-        log::debug!(
-            "Generating texture thumbnail asset={} size={}x{} format={:?}",
-            asset_id,
-            texture.descriptor.size.width,
-            texture.descriptor.size.height,
-            texture.descriptor.format
-        );
         if texture.descriptor.dimension != wgpu::TextureDimension::D2
             || texture.descriptor.size.depth_or_array_layers != 1
         {
@@ -922,11 +812,6 @@ impl ThumbnailGenerator {
         let material = default_material_ref(context)?;
         let bounds = {
             let mesh = mesh_ref.read();
-            log::debug!(
-                "Generating mesh thumbnail asset={} vertices={}",
-                asset_id,
-                mesh.vertices.len()
-            );
             Bounds::from_mesh(&mesh).unwrap_or_default()
         };
         let mut scene = context.scene();
@@ -962,12 +847,6 @@ impl ThumbnailGenerator {
                 .ok_or_else(|| "prefab thumbnail source could not be instantiated".to_string())?
         };
         let bounds = scene_mesh_bounds(context, &scene, root).unwrap_or_default();
-        let object_count = std::iter::once(root).chain(scene.descendants(root)).count();
-        log::debug!(
-            "Generating prefab thumbnail asset={} objects={}",
-            asset_id,
-            object_count
-        );
         add_preview_lighting(&mut scene);
         self.render_scene_thumbnail(context, render_state, &scene, bounds)
     }
@@ -980,20 +859,8 @@ impl ThumbnailGenerator {
         bounds: Bounds,
     ) -> Result<Texture, String> {
         let (camera, camera_transform) = camera_for_bounds(bounds);
-        log::debug!(
-            "Rendering scene thumbnail bounds_center=({:.3}, {:.3}, {:.3}) bounds_radius={:.3}",
-            bounds.center().x,
-            bounds.center().y,
-            bounds.center().z,
-            bounds.radius()
-        );
         {
             let renderer = self.scene_renderer.get_or_insert_with(|| {
-                log::debug!(
-                    "Creating thumbnail scene renderer size={}x{}",
-                    THUMBNAIL_SIZE,
-                    THUMBNAIL_SIZE
-                );
                 SceneRenderer::new(
                     context,
                     SceneRendererOptions {
@@ -1030,7 +897,6 @@ struct TextureDownscaler {
 
 impl TextureDownscaler {
     fn new(context: &ReadOnlyAssetContext) -> Result<Self, String> {
-        log::debug!("Loading thumbnail downscale shader resource");
         let shader_ref = context
             .registries
             .assets
@@ -1045,7 +911,6 @@ impl TextureDownscaler {
             shader.bind_group_layouts.first().cloned().ok_or_else(|| {
                 "thumbnail downscale shader did not declare bind group 0".to_string()
             })?;
-        log::debug!("Loaded thumbnail downscale shader resource");
         Ok(Self {
             pipeline,
             bind_group_layout,
@@ -1058,14 +923,6 @@ impl TextureDownscaler {
         render_state: &RenderState,
         source: &Texture,
     ) -> Texture {
-        log::debug!(
-            "Dispatching texture thumbnail downscale source_size={}x{} source_format={:?} output_size={}x{}",
-            source.descriptor.size.width,
-            source.descriptor.size.height,
-            source.descriptor.format,
-            THUMBNAIL_SIZE,
-            THUMBNAIL_SIZE
-        );
         let thumbnail = Texture::new(
             context.render_context.clone(),
             &wgpu::TextureDescriptor {
@@ -1356,7 +1213,41 @@ mod tests {
     }
 
     #[test]
-    fn failed_jobs_do_not_requeue_without_invalidation() {
+    fn failed_jobs_retry_until_failure_threshold() {
+        let mut pipeline = ThumbnailPipeline::default();
+        let request = request(1);
+        let key = request.key();
+
+        pipeline.request(request.clone(), ThumbnailPriority::Normal);
+
+        for attempt in 1..=THUMBNAIL_MAX_FAILURES {
+            pipeline.start_next();
+            assert!(pipeline.fail(key, "bad source"));
+            assert_eq!(pipeline.failure_count(key), attempt);
+
+            let status = pipeline.request(request.clone(), ThumbnailPriority::High);
+            if attempt < THUMBNAIL_MAX_FAILURES {
+                assert_eq!(pipeline.queued_len(), 1);
+                assert_eq!(
+                    status,
+                    ThumbnailStatus::Queued {
+                        priority: ThumbnailPriority::High
+                    }
+                );
+            } else {
+                assert_eq!(pipeline.queued_len(), 0);
+                assert_eq!(
+                    status,
+                    ThumbnailStatus::Failed {
+                        message: "bad source".into()
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn complete_and_clear_reset_failure_count() {
         let mut pipeline = ThumbnailPipeline::default();
         let request = request(1);
         let key = request.key();
@@ -1364,16 +1255,17 @@ mod tests {
         pipeline.request(request.clone(), ThumbnailPriority::Normal);
         pipeline.start_next();
         assert!(pipeline.fail(key, "bad source"));
+        assert_eq!(pipeline.failure_count(key), 1);
 
-        let status = pipeline.request(request, ThumbnailPriority::High);
+        pipeline.request(request.clone(), ThumbnailPriority::Normal);
+        pipeline.start_next();
+        assert!(pipeline.complete(key));
+        assert_eq!(pipeline.failure_count(key), 0);
 
-        assert_eq!(pipeline.queued_len(), 0);
-        assert_eq!(
-            status,
-            ThumbnailStatus::Failed {
-                message: "bad source".into()
-            }
-        );
+        pipeline.request(request, ThumbnailPriority::Normal);
+        pipeline.clear(key);
+        assert_eq!(pipeline.failure_count(key), 0);
+        assert_eq!(pipeline.status(key), ThumbnailStatus::Missing);
     }
 
     #[test]
