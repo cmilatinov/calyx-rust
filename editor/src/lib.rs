@@ -12,6 +12,7 @@ use self::panel::*;
 pub use self::project_manager::*;
 use crate::camera::EditorCamera;
 use crate::task_id::TaskId;
+use crate::widgets::ThumbnailService;
 use eframe::{wgpu, NativeOptions};
 use egui::{include_image, Button, CornerRadius, ImageSource, Response, Sense, Ui, Vec2};
 use egui::{Align, Layout};
@@ -75,6 +76,7 @@ pub struct EditorAppState {
     pub game_size: (f32, f32),
     pub gizmo_modes: EnumSet<GizmoMode>,
     pub gizmo_orientation: GizmoOrientation,
+    pub thumbnails: ThumbnailService,
 }
 
 impl EditorAppState {
@@ -92,6 +94,7 @@ impl EditorAppState {
             game_response: Default::default(),
             gizmo_modes: GizmoMode::all_translate(),
             gizmo_orientation: GizmoOrientation::Global,
+            thumbnails: ThumbnailService::default(),
             scene_renderer: SceneRenderer::new(
                 &asset_context,
                 SceneRendererOptions {
@@ -200,6 +203,7 @@ impl eframe::App for EditorApp {
         self.state.game.resources.time_mut().update_time();
         self.state.game_response = None;
         self.render_views(ctx, frame);
+        self.process_thumbnail_jobs(frame);
 
         self.menu_bar(ctx);
 
@@ -244,6 +248,14 @@ impl eframe::App for EditorApp {
 }
 
 impl EditorApp {
+    fn process_thumbnail_jobs(&mut self, frame: &mut eframe::Frame) {
+        let Some(render_state) = frame.wgpu_render_state() else {
+            return;
+        };
+        let asset_context = self.state.game.assets.lock_read();
+        self.state.thumbnails.process(&asset_context, render_state);
+    }
+
     fn update_game(&mut self, ctx: &egui::Context) {
         self.state.game.scenes.prepare();
         let input = Input::from_ctx(

@@ -1,9 +1,12 @@
 use crate::panel::Panel;
 use crate::selection::{Selection, SelectionType};
-use crate::widgets::FileButton;
+use crate::widgets::{FileButton, ThumbnailPriority, ThumbnailRequest, ThumbnailStatus};
 use crate::{icons, EditorAppState};
+use egui::load::SizedTexture;
 use egui::text::LayoutJob;
-use egui::{FontFamily, FontId, Frame, Margin, Rect, Response, Sense, TextFormat, Ui, Vec2};
+use egui::{
+    FontFamily, FontId, Frame, ImageSource, Margin, Rect, Response, Sense, TextFormat, Ui, Vec2,
+};
 use engine::assets::animation_graph::AnimationGraph;
 use re_ui::list_item::ShowCollapsingResponse;
 use relative_path::PathExt;
@@ -122,15 +125,18 @@ impl Panel for PanelContentBrowser {
                         for (idx, node) in nodes.iter().enumerate() {
                             let is_dir = node.is_dir();
                             let is_selected = self.is_selected(state, node, is_dir);
+                            let image_size = Vec2::splat(ICON_SIZE);
+                            let image_src = if is_dir {
+                                folder_image.clone()
+                            } else {
+                                self.asset_thumbnail_image(state, node, image_size)
+                                    .unwrap_or_else(|| file_image.clone())
+                            };
                             let res = PanelContentBrowser::render_file_button(
                                 ui,
                                 node.file_name().unwrap().to_str().unwrap(),
-                                if is_dir {
-                                    folder_image.clone()
-                                } else {
-                                    file_image.clone()
-                                },
-                                Vec2::splat(ICON_SIZE),
+                                image_src,
+                                image_size,
                                 ICON_SPACING,
                                 Vec2::new(ICON_PADDING_X, ICON_PADDING_Y),
                                 is_selected,
@@ -181,6 +187,29 @@ impl Panel for PanelContentBrowser {
 }
 
 impl PanelContentBrowser {
+    fn asset_thumbnail_image(
+        &self,
+        state: &mut EditorAppState,
+        path: &Path,
+        image_size: Vec2,
+    ) -> Option<ImageSource<'static>> {
+        let request = {
+            let registry = state.game.assets.registries.assets.read();
+            ThumbnailRequest::from_asset_path(&registry, path)
+        }?;
+        let key = request.key();
+        let status = state.thumbnails.request(request, ThumbnailPriority::Normal);
+        if !matches!(status, ThumbnailStatus::Ready) {
+            return None;
+        }
+        state.thumbnails.texture_id(key).map(|id| {
+            ImageSource::Texture(SizedTexture {
+                id,
+                size: image_size,
+            })
+        })
+    }
+
     fn empty_space_interaction(&mut self, ui: &mut Ui, rect: Rect) {
         ui.allocate_rect(rect, Sense::click()).context_menu(|ui| {
             ui.menu_button("Create New", |ui| {
