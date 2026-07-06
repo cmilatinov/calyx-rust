@@ -24,12 +24,13 @@ use engine::render::{Camera, SceneRenderer, SceneRendererOptions, Shader};
 use engine::scene::{GameObject, Prefab, Scene};
 use engine::utils::TypeUuid;
 use image::{ImageBuffer, ImageFormat, RgbaImage};
+use nalgebra::UnitQuaternion;
 use nalgebra_glm::{vec3, Vec3};
 use sha1::{Digest, Sha1};
 use uuid::Uuid;
 
 const THUMBNAIL_SIZE: u32 = 128;
-const THUMBNAIL_CACHE_VERSION: u32 = 2;
+const THUMBNAIL_CACHE_VERSION: u32 = 3;
 const THUMBNAIL_MAX_FAILURES: u8 = 3;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -1045,6 +1046,19 @@ impl Bounds {
         let extents = self.max - self.min;
         extents.norm().max(0.5) * 0.5
     }
+
+    fn corners(&self) -> [Vec3; 8] {
+        [
+            vec3(self.min.x, self.min.y, self.min.z),
+            vec3(self.max.x, self.min.y, self.min.z),
+            vec3(self.min.x, self.max.y, self.min.z),
+            vec3(self.max.x, self.max.y, self.min.z),
+            vec3(self.min.x, self.min.y, self.max.z),
+            vec3(self.max.x, self.min.y, self.max.z),
+            vec3(self.min.x, self.max.y, self.max.z),
+            vec3(self.max.x, self.max.y, self.max.z),
+        ]
+    }
 }
 
 fn scene_mesh_bounds(
@@ -1127,16 +1141,46 @@ fn add_preview_lighting(scene: &mut Scene) {
 }
 
 fn camera_for_bounds(bounds: Bounds) -> (Camera, Transform) {
+    const ASPECT: f32 = 1.0;
+    const FOV_X: f32 = 40.0f32.to_radians();
+    const FRAME_MARGIN: f32 = 1.2;
+    const MIN_DISTANCE: f32 = 1.2;
+
     let center = bounds.center();
     let radius = bounds.radius();
-    let fov = 40.0f32.to_radians();
-    let distance = (radius / (fov * 0.5).tan()).max(1.2) * 0.92;
-    let camera_position = center + vec3(0.9, 0.55, -0.85).normalize() * distance;
-    let mut camera_transform =
-        Transform::from_xyz(camera_position.x, camera_position.y, camera_position.z);
-    camera_transform.look_at(&center);
-    let camera = Camera::new(1.0, fov, 0.01, distance + radius * 6.0);
+    let view_direction = vec3(0.9, 0.55, -0.85).normalize();
+    let unit_transform = thumbnail_camera_transform(center, view_direction, 1.0);
+
+    let tan_half_x = (FOV_X * 0.5).tan();
+    let tan_half_y = (FOV_X * 0.5).tan();
+    let mut distance = MIN_DISTANCE.max(radius);
+    for corner in bounds.corners() {
+        let offset = corner - center;
+        let view_offset = unit_transform.inverse_transform_direction(&offset);
+        distance = distance.max(view_offset.x.abs() / tan_half_x - view_offset.z);
+        distance = distance.max(view_offset.y.abs() / tan_half_y - view_offset.z);
+        distance = distance.max(0.01 - view_offset.z);
+    }
+    distance = (distance * FRAME_MARGIN).max(MIN_DISTANCE);
+
+    let camera_transform = thumbnail_camera_transform(center, view_direction, distance);
+    let max_depth = bounds
+        .corners()
+        .into_iter()
+        .map(|corner| camera_transform.inverse_transform_position(&corner).z)
+        .fold(distance, f32::max);
+    let camera = Camera::new(ASPECT, FOV_X, 0.01, max_depth + radius.max(1.0));
     (camera, camera_transform)
+}
+
+fn thumbnail_camera_transform(center: Vec3, view_direction: Vec3, distance: f32) -> Transform {
+    let camera_position = center + view_direction * distance;
+    let target_direction = (center - camera_position).normalize();
+    Transform::from_components(
+        camera_position,
+        UnitQuaternion::face_towards(&target_direction, &Vec3::y_axis()),
+        vec3(1.0, 1.0, 1.0),
+    )
 }
 
 #[cfg(test)]
@@ -1266,6 +1310,49 @@ mod tests {
         pipeline.clear(key);
         assert_eq!(pipeline.failure_count(key), 0);
         assert_eq!(pipeline.status(key), ThumbnailStatus::Missing);
+    }
+
+    fn assert_camera_encloses(bounds: Bounds) {
+        let (camera, transform) = camera_for_bounds(bounds);
+        let tan_half_x = (camera.fov_x * 0.5).tan();
+        let tan_half_y = (camera.fov_x * 0.5).tan();
+
+        for corner in bounds.corners() {
+            let view = transform.inverse_transform_position(&corner);
+            let depth = view.z;
+            assert!(
+                depth >= camera.near_plane,
+                "corner {corner:?} is before the near plane at view-space {view:?}"
+            );
+            assert!(
+                depth <= camera.far_plane,
+                "corner {corner:?} is beyond the far plane at view-space {view:?}"
+            );
+            assert!(
+                view.x.abs() <= depth * tan_half_x + 0.001,
+                "corner {corner:?} is outside horizontal frustum at view-space {view:?}"
+            );
+            assert!(
+                view.y.abs() <= depth * tan_half_y + 0.001,
+                "corner {corner:?} is outside vertical frustum at view-space {view:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn thumbnail_camera_encloses_bounds() {
+        assert_camera_encloses(Bounds {
+            min: vec3(-5.0, -0.25, -0.25),
+            max: vec3(5.0, 0.25, 0.25),
+        });
+        assert_camera_encloses(Bounds {
+            min: vec3(-0.25, -6.0, -0.25),
+            max: vec3(0.25, 6.0, 0.25),
+        });
+        assert_camera_encloses(Bounds {
+            min: vec3(-0.5, -0.5, -4.0),
+            max: vec3(0.5, 0.5, 4.0),
+        });
     }
 
     #[test]
