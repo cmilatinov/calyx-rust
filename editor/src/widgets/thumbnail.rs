@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread::{self, JoinHandle};
 use std::time::{Instant, UNIX_EPOCH};
 
 use eframe::wgpu;
@@ -24,7 +26,6 @@ use nalgebra_glm::{vec3, Vec3};
 use uuid::Uuid;
 
 const THUMBNAIL_SIZE: u32 = 128;
-const MAX_THUMBNAIL_JOBS_PER_FRAME: usize = 1;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ThumbnailKey {
@@ -284,12 +285,39 @@ impl ThumbnailPipeline {
     }
 }
 
-#[derive(Default)]
 pub struct ThumbnailService {
+    shared: Arc<ThumbnailShared>,
+    worker: Option<JoinHandle<()>>,
+}
+
+struct ThumbnailShared {
+    state: Mutex<ThumbnailState>,
+    wake: Condvar,
+}
+
+#[derive(Default)]
+struct ThumbnailState {
     pipeline: ThumbnailPipeline,
     textures: HashMap<ThumbnailKey, Texture>,
+    stop: bool,
+}
+
+#[derive(Default)]
+struct ThumbnailGenerator {
     texture_downscaler: Option<TextureDownscaler>,
     scene_renderer: Option<SceneRenderer>,
+}
+
+impl Default for ThumbnailService {
+    fn default() -> Self {
+        Self {
+            shared: Arc::new(ThumbnailShared {
+                state: Mutex::new(ThumbnailState::default()),
+                wake: Condvar::new(),
+            }),
+            worker: None,
+        }
+    }
 }
 
 impl ThumbnailService {
@@ -298,63 +326,135 @@ impl ThumbnailService {
         request: ThumbnailRequest,
         priority: ThumbnailPriority,
     ) -> ThumbnailStatus {
-        self.pipeline
+        let mut state = self.shared.state.lock().unwrap();
+        state
+            .pipeline
             .clear_asset_versions_except(request.asset_id, request.source_version);
-        self.textures.retain(|key, _| {
+        state.textures.retain(|key, _| {
             key.asset_id != request.asset_id || key.source_version == request.source_version
         });
-        self.pipeline.request(request, priority)
+        let status = state.pipeline.request(request, priority);
+        drop(state);
+        self.shared.wake.notify_one();
+        status
     }
 
     pub fn status(&self, key: ThumbnailKey) -> ThumbnailStatus {
-        self.pipeline.status(key)
+        self.shared.state.lock().unwrap().pipeline.status(key)
     }
 
     pub fn texture_id(&self, key: ThumbnailKey) -> Option<egui::TextureId> {
-        self.textures
+        self.shared
+            .state
+            .lock()
+            .unwrap()
+            .textures
             .get(&key)
             .and_then(|texture| texture.handle.as_ref())
             .map(|handle| handle.id())
     }
 
-    pub fn process(&mut self, context: &ReadOnlyAssetContext, render_state: &RenderState) {
-        for _ in 0..MAX_THUMBNAIL_JOBS_PER_FRAME {
-            let Some(job) = self.pipeline.start_next() else {
-                return;
-            };
-            let key = job.key();
-            let started_at = Instant::now();
-            match self.generate(context, render_state, &job.request) {
-                Ok(texture) => {
-                    self.textures.insert(key, texture);
-                    let status_updated = self.pipeline.complete(key);
-                    log::debug!(
-                        "Finished thumbnail job asset={} type={} version={} path={} elapsed_ms={} status_updated={}",
-                        job.request.asset_id,
-                        thumbnail_asset_type_name(job.request.asset_type),
-                        job.request.source_version,
-                        thumbnail_source_label(&job.request),
-                        started_at.elapsed().as_millis(),
-                        status_updated
-                    );
-                }
-                Err(message) => {
-                    let status_updated = self.pipeline.fail(key, message.as_str());
-                    log::debug!(
-                        "Failed thumbnail job asset={} type={} version={} path={} elapsed_ms={} status_updated={} error={}",
-                        job.request.asset_id,
-                        thumbnail_asset_type_name(job.request.asset_type),
-                        job.request.source_version,
-                        thumbnail_source_label(&job.request),
-                        started_at.elapsed().as_millis(),
-                        status_updated,
-                        message
-                    );
-                }
+    pub fn process(&mut self, context: &ReadOnlyAssetContext, _render_state: &RenderState) {
+        self.ensure_worker(context.clone());
+    }
+
+    fn ensure_worker(&mut self, context: ReadOnlyAssetContext) {
+        if self
+            .worker
+            .as_ref()
+            .is_some_and(|worker| !worker.is_finished())
+        {
+            return;
+        }
+        if let Some(worker) = self.worker.take() {
+            if worker.join().is_err() {
+                log::warn!("Thumbnail generation worker exited with a panic");
+            }
+        }
+
+        let shared = self.shared.clone();
+        self.worker = Some(
+            thread::Builder::new()
+                .name("thumbnail-generator".into())
+                .spawn(move || thumbnail_worker_loop(shared, context))
+                .expect("failed to spawn thumbnail generation worker"),
+        );
+        self.shared.wake.notify_one();
+    }
+}
+
+impl Drop for ThumbnailService {
+    fn drop(&mut self) {
+        {
+            let mut state = self.shared.state.lock().unwrap();
+            state.stop = true;
+        }
+        self.shared.wake.notify_one();
+        if let Some(worker) = self.worker.take() {
+            if worker.join().is_err() {
+                log::warn!("Thumbnail generation worker exited with a panic");
             }
         }
     }
+}
 
+fn thumbnail_worker_loop(shared: Arc<ThumbnailShared>, context: ReadOnlyAssetContext) {
+    log::debug!("Started thumbnail generation worker");
+    let mut generator = ThumbnailGenerator::default();
+    loop {
+        let job = {
+            let mut state = shared.state.lock().unwrap();
+            loop {
+                if state.stop {
+                    log::debug!("Stopping thumbnail generation worker");
+                    return;
+                }
+                if let Some(job) = state.pipeline.start_next() {
+                    break job;
+                }
+                state = shared.wake.wait(state).unwrap();
+            }
+        };
+
+        let key = job.key();
+        let started_at = Instant::now();
+        let render_state = context.render_context.render_state();
+        match generator.generate(&context, render_state, &job.request) {
+            Ok(texture) => {
+                let mut state = shared.state.lock().unwrap();
+                let status_updated = state.pipeline.complete(key);
+                if status_updated {
+                    state.textures.insert(key, texture);
+                }
+                log::debug!(
+                    "Finished thumbnail job asset={} type={} version={} path={} elapsed_ms={} status_updated={}",
+                    job.request.asset_id,
+                    thumbnail_asset_type_name(job.request.asset_type),
+                    job.request.source_version,
+                    thumbnail_source_label(&job.request),
+                    started_at.elapsed().as_millis(),
+                    status_updated
+                );
+            }
+            Err(message) => {
+                let mut state = shared.state.lock().unwrap();
+                let status_updated = state.pipeline.fail(key, message.as_str());
+                log::debug!(
+                    "Failed thumbnail job asset={} type={} version={} path={} elapsed_ms={} status_updated={} error={}",
+                    job.request.asset_id,
+                    thumbnail_asset_type_name(job.request.asset_type),
+                    job.request.source_version,
+                    thumbnail_source_label(&job.request),
+                    started_at.elapsed().as_millis(),
+                    status_updated,
+                    message
+                );
+            }
+        }
+    }
+}
+
+impl ThumbnailGenerator {
     fn generate(
         &mut self,
         context: &ReadOnlyAssetContext,
