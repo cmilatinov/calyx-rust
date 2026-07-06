@@ -12,6 +12,7 @@ use egui::Color32;
 use egui_wgpu::RenderState;
 use engine::assets::material::Material;
 use engine::assets::mesh::Mesh;
+use engine::assets::skybox::Skybox;
 use engine::assets::texture::Texture;
 use engine::assets::{AssetRef, AssetRegistry};
 use engine::component::{
@@ -23,7 +24,7 @@ use engine::math::Transform;
 use engine::render::{Camera, SceneRenderer, SceneRendererOptions, Shader};
 use engine::scene::{GameObject, Prefab, Scene};
 use engine::utils::TypeUuid;
-use image::{ImageBuffer, ImageFormat, RgbaImage};
+use image::{ColorType, DynamicImage, ImageBuffer, ImageFormat, ImageReader, RgbaImage};
 use nalgebra::UnitQuaternion;
 use nalgebra_glm::{vec3, Vec3};
 use sha1::{Digest, Sha1};
@@ -65,6 +66,7 @@ impl ThumbnailRequest {
         asset_type == Texture::type_uuid()
             || asset_type == Mesh::type_uuid()
             || asset_type == Prefab::type_uuid()
+            || asset_type == Skybox::type_uuid()
     }
 
     pub fn key(&self) -> ThumbnailKey {
@@ -103,6 +105,8 @@ fn thumbnail_asset_type_name(asset_type: Uuid) -> &'static str {
         "mesh"
     } else if asset_type == Prefab::type_uuid() {
         "prefab"
+    } else if asset_type == Skybox::type_uuid() {
+        "skybox"
     } else {
         "unknown"
     }
@@ -252,6 +256,74 @@ fn project_cache_hash(asset_root: &Path) -> String {
     let mut hasher = Sha1::new();
     hasher.update(normalized.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+fn texture_from_image_file(
+    context: &ReadOnlyAssetContext,
+    label: &str,
+    path: &Path,
+) -> Result<Texture, String> {
+    let reader = ImageReader::open(path)
+        .map_err(|err| format!("failed to open texture source {}: {err}", path.display()))?;
+    let image = transform_thumbnail_source_image(
+        reader
+            .decode()
+            .map_err(|err| format!("failed to decode texture source {}: {err}", path.display()))?,
+    );
+    let texture_depth = image.color().bytes_per_pixel() as u32;
+    let texture_format = thumbnail_source_texture_format(image.color());
+    let texture_size = wgpu::Extent3d {
+        width: image.width(),
+        height: image.height(),
+        depth_or_array_layers: 1,
+    };
+    let texture = Texture::new(
+        context.render_context.clone(),
+        &wgpu::TextureDescriptor {
+            label: Some(label),
+            size: texture_size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: texture_format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        },
+        None,
+        None,
+        false,
+    );
+    context.render_context.queue().write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture.texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        image.as_bytes(),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(texture_depth * image.width()),
+            rows_per_image: Some(image.height()),
+        },
+        texture_size,
+    );
+    Ok(texture)
+}
+
+fn transform_thumbnail_source_image(image: DynamicImage) -> DynamicImage {
+    match image.color() {
+        ColorType::Rgba32F | ColorType::Rgba8 => image,
+        ColorType::Rgb32F => image.to_rgba32f().into(),
+        _ => image.to_rgba8().into(),
+    }
+}
+
+fn thumbnail_source_texture_format(color: ColorType) -> wgpu::TextureFormat {
+    match color {
+        ColorType::Rgba32F => wgpu::TextureFormat::Rgba32Float,
+        _ => wgpu::TextureFormat::Rgba8Unorm,
+    }
 }
 
 fn texture_from_rgba8(context: &ReadOnlyAssetContext, label: &str, image: &RgbaImage) -> Texture {
@@ -583,6 +655,7 @@ struct ThumbnailState {
 struct ThumbnailGenerator {
     texture_downscaler: Option<TextureDownscaler>,
     scene_renderer: Option<SceneRenderer>,
+    skybox_front_face_downscaler: Option<SkyboxFrontFaceDownscaler>,
 }
 
 impl Default for ThumbnailService {
@@ -765,6 +838,9 @@ impl ThumbnailGenerator {
         if request.asset_type == Prefab::type_uuid() {
             return self.generate_prefab_thumbnail(context, render_state, request.asset_id);
         }
+        if request.asset_type == Skybox::type_uuid() {
+            return self.generate_skybox_thumbnail(context, render_state, request);
+        }
         Err(format!(
             "unsupported thumbnail asset type {}",
             request.asset_type
@@ -826,6 +902,32 @@ impl ThumbnailGenerator {
         );
         add_preview_lighting(&mut scene);
         self.render_scene_thumbnail(context, render_state, &scene, bounds)
+    }
+
+    fn generate_skybox_thumbnail(
+        &mut self,
+        context: &ReadOnlyAssetContext,
+        render_state: &RenderState,
+        request: &ThumbnailRequest,
+    ) -> Result<Texture, String> {
+        let source_path = request
+            .source_path
+            .as_deref()
+            .ok_or_else(|| "skybox thumbnail source has no file path".to_string())?;
+        let source = texture_from_image_file(context, "thumbnail_skybox_source", source_path)
+            .map_err(|err| format!("failed to load skybox thumbnail source: {err}"))?;
+        if source.descriptor.dimension != wgpu::TextureDimension::D2
+            || source.descriptor.size.depth_or_array_layers != 1
+        {
+            return Err("skybox thumbnails require a 2D source texture".into());
+        }
+        if self.skybox_front_face_downscaler.is_none() {
+            self.skybox_front_face_downscaler = Some(SkyboxFrontFaceDownscaler::new(context)?);
+        }
+        let Some(downscaler) = &self.skybox_front_face_downscaler else {
+            return Err("skybox thumbnail downscaler was not initialized".into());
+        };
+        Ok(downscaler.downscale_front_face(context, render_state, &source))
     }
 
     fn generate_prefab_thumbnail(
@@ -891,9 +993,108 @@ impl ThumbnailGenerator {
     }
 }
 
+struct SkyboxFrontFaceDownscaler {
+    pipeline: wgpu::ComputePipeline,
+    bind_group_layout: wgpu::BindGroupLayout,
+}
+
+impl SkyboxFrontFaceDownscaler {
+    fn new(context: &ReadOnlyAssetContext) -> Result<Self, String> {
+        let shader_ref = context
+            .registries
+            .assets
+            .read()
+            .load::<Shader>("shaders/thumbnail_skybox_front_face")
+            .map_err(|err| format!("failed to load skybox thumbnail shader: {err}"))?;
+        let shader = shader_ref.read();
+        let pipeline = shader.compute_pipeline.as_ref().cloned().ok_or_else(|| {
+            "skybox thumbnail shader did not build a compute pipeline".to_string()
+        })?;
+        let bind_group_layout =
+            shader.bind_group_layouts.first().cloned().ok_or_else(|| {
+                "skybox thumbnail shader did not declare bind group 0".to_string()
+            })?;
+        Ok(Self {
+            pipeline,
+            bind_group_layout,
+        })
+    }
+
+    fn downscale_front_face(
+        &self,
+        context: &ReadOnlyAssetContext,
+        render_state: &RenderState,
+        source: &Texture,
+    ) -> Texture {
+        let thumbnail = thumbnail_output_texture(context, "thumbnail_skybox_front_face_output");
+        let bind_group = render_state
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("thumbnail_skybox_front_face_bind_group"),
+                layout: &self.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&source.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&thumbnail.view),
+                    },
+                ],
+            });
+        let mut encoder =
+            render_state
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("thumbnail_skybox_front_face_encoder"),
+                });
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("thumbnail_skybox_front_face_pass"),
+                timestamp_writes: None,
+            });
+            compute_pass.set_pipeline(&self.pipeline);
+            compute_pass.set_bind_group(0, &bind_group, &[]);
+            compute_pass.dispatch_workgroups(
+                THUMBNAIL_SIZE.div_ceil(8),
+                THUMBNAIL_SIZE.div_ceil(8),
+                1,
+            );
+        }
+        render_state.queue.submit(Some(encoder.finish()));
+        thumbnail
+    }
+}
+
 struct TextureDownscaler {
     pipeline: wgpu::ComputePipeline,
     bind_group_layout: wgpu::BindGroupLayout,
+}
+
+fn thumbnail_output_texture(context: &ReadOnlyAssetContext, label: &'static str) -> Texture {
+    Texture::new(
+        context.render_context.clone(),
+        &wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: THUMBNAIL_SIZE,
+                height: THUMBNAIL_SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        },
+        None,
+        None,
+        true,
+    )
 }
 
 impl TextureDownscaler {
@@ -924,28 +1125,17 @@ impl TextureDownscaler {
         render_state: &RenderState,
         source: &Texture,
     ) -> Texture {
-        let thumbnail = Texture::new(
-            context.render_context.clone(),
-            &wgpu::TextureDescriptor {
-                label: Some("thumbnail_texture_downscale_output"),
-                size: wgpu::Extent3d {
-                    width: THUMBNAIL_SIZE,
-                    height: THUMBNAIL_SIZE,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                usage: wgpu::TextureUsages::STORAGE_BINDING
-                    | wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::COPY_SRC,
-                view_formats: &[],
-            },
-            None,
-            None,
-            true,
-        );
+        self.downscale_view(context, render_state, &source.view, &source.sampler)
+    }
+
+    fn downscale_view(
+        &self,
+        context: &ReadOnlyAssetContext,
+        render_state: &RenderState,
+        source_view: &wgpu::TextureView,
+        source_sampler: &wgpu::Sampler,
+    ) -> Texture {
+        let thumbnail = thumbnail_output_texture(context, "thumbnail_texture_downscale_output");
         let bind_group = render_state
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
@@ -954,11 +1144,11 @@ impl TextureDownscaler {
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&source.view),
+                        resource: wgpu::BindingResource::TextureView(source_view),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&source.sampler),
+                        resource: wgpu::BindingResource::Sampler(source_sampler),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
@@ -1388,5 +1578,24 @@ mod tests {
                 priority: ThumbnailPriority::Normal
             }
         );
+    }
+
+    #[test]
+    fn skybox_assets_are_supported_for_thumbnails() {
+        assert!(ThumbnailRequest::is_supported_asset_type(
+            Skybox::type_uuid()
+        ));
+        assert_eq!(thumbnail_asset_type_name(Skybox::type_uuid()), "skybox");
+    }
+
+    #[test]
+    fn skybox_front_face_shader_builds() {
+        let assets_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets");
+        let assets_path = dunce::canonicalize(assets_path).expect("assets dir not found");
+        let context = engine::test_support::test_asset_context_with_assets(vec![assets_path]);
+        let context = context.lock_read();
+
+        SkyboxFrontFaceDownscaler::new(&context)
+            .expect("skybox front-face thumbnail shader should build");
     }
 }

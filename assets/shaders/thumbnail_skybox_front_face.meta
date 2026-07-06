@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "0bac5477-c28a-4e90-a074-ec22843b2d6f",
+    "name": "shaders/thumbnail_skybox_front_face",
+    "display_name": "thumbnail_skybox_front_face",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}
