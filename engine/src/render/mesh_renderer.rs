@@ -16,6 +16,7 @@ use std::ops::Range;
 #[derive(Default, Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct EnvironmentUniform {
     sky_light: [f32; 4],
+    ambient_light: [f32; 4],
 }
 
 pub struct MeshRenderer {
@@ -83,6 +84,7 @@ impl MeshRenderer {
         pipeline_options: &PipelineOptions,
         skybox_id: Option<AssetId>,
         sky_light_intensity: f32,
+        ambient_light: [f32; 4],
         draw_list: &[(AssetId, AssetId, AssetId, Range<u32>)],
         gizmo_renderer: Option<&mut GizmoRenderer>,
     ) {
@@ -111,6 +113,7 @@ impl MeshRenderer {
             0,
             bytemuck::cast_slice(&[EnvironmentUniform {
                 sky_light: [sky_light_intensity, 0.0, 0.0, 0.0],
+                ambient_light,
             }]),
         );
         let scene_bind_group = self.scene_bind_group(

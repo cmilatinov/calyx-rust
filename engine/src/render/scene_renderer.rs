@@ -62,6 +62,10 @@ pub struct SceneRendererOptions {
     pub gizmos: bool,
     /// Clear color used for the scene color target.
     pub clear_color: Color32,
+    /// Ambient light color added by the mesh shader when no skybox lighting is desired.
+    pub ambient_light: Color32,
+    /// Scalar ambient light multiplier.
+    pub ambient_light_intensity: f32,
     // TODO: figure out why GTX 970 isn't supporting MSAA
     /// MSAA sample count used for offscreen scene rendering.
     pub samples: u32,
@@ -324,6 +328,7 @@ impl SceneRenderer {
                 &options,
                 self.skybox_renderer.skybox_id(),
                 self.sky_light_intensity,
+                scene_ambient_light(&self.options),
                 &draw_list,
                 None,
             );
@@ -1032,6 +1037,16 @@ impl SceneRenderer {
             self.options.samples,
         );
     }
+}
+
+fn scene_ambient_light(options: &SceneRendererOptions) -> [f32; 4] {
+    let color = options.ambient_light.to_normalized_gamma_f32();
+    [
+        color[0],
+        color[1],
+        color[2],
+        options.ambient_light_intensity.max(0.0),
+    ]
 }
 
 fn register_object_id(

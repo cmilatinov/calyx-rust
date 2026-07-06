@@ -20,6 +20,7 @@ struct MaterialProperties {
 
 struct EnvironmentProperties {
     sky_light: vec4f,
+    ambient_light: vec4f,
 };
 
 @group(0) @binding(1)
@@ -156,6 +157,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
 
     let ambient = diffuse + specular;
     color += material.ambient_occlusion * ambient;
+    color += environment.ambient_light.rgb * environment.ambient_light.a * albedo.rgb;
 
     // Tone mapping
     let gamma = 1.4;

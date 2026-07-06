@@ -13,7 +13,6 @@ use engine::assets::texture::Texture;
 use engine::assets::{AssetRef, AssetRegistry};
 use engine::component::{
     ComponentDirectionalLight, ComponentMesh, ComponentPointLight, ComponentSkinnedMesh,
-    ComponentSkyLight,
 };
 use engine::context::ReadOnlyAssetContext;
 use engine::math::Transform;
@@ -58,7 +57,6 @@ impl ThumbnailRequest {
         asset_type == Texture::type_uuid()
             || asset_type == Mesh::type_uuid()
             || asset_type == Prefab::type_uuid()
-            || asset_type == engine::assets::skybox::Skybox::type_uuid()
     }
 
     pub fn key(&self) -> ThumbnailKey {
@@ -97,8 +95,6 @@ fn thumbnail_asset_type_name(asset_type: Uuid) -> &'static str {
         "mesh"
     } else if asset_type == Prefab::type_uuid() {
         "prefab"
-    } else if asset_type == engine::assets::skybox::Skybox::type_uuid() {
-        "skybox"
     } else {
         "unknown"
     }
@@ -185,7 +181,7 @@ impl ThumbnailPipeline {
             Some(ThumbnailStatus::InProgress | ThumbnailStatus::Ready) => {}
             Some(ThumbnailStatus::Failed { message }) => {
                 log::debug!(
-                    "Requeued failed thumbnail job asset={} type={} version={} priority={:?} path={} previous_error={}",
+                    "Skipped failed thumbnail job retry asset={} type={} version={} priority={:?} path={} error={}",
                     request.asset_id,
                     thumbnail_asset_type_name(request.asset_type),
                     request.source_version,
@@ -193,13 +189,6 @@ impl ThumbnailPipeline {
                     thumbnail_source_label(&request),
                     message
                 );
-                self.queued.push(ThumbnailJob {
-                    request,
-                    priority,
-                    requested_at: Instant::now(),
-                });
-                self.statuses
-                    .insert(key, ThumbnailStatus::Queued { priority });
             }
             Some(ThumbnailStatus::Missing) | None => {
                 log::debug!(
@@ -380,9 +369,6 @@ impl ThumbnailService {
         if request.asset_type == Prefab::type_uuid() {
             return self.generate_prefab_thumbnail(context, render_state, request.asset_id);
         }
-        if request.asset_type == engine::assets::skybox::Skybox::type_uuid() {
-            return self.generate_skybox_thumbnail(context, render_state, request.asset_id);
-        }
         Err(format!(
             "unsupported thumbnail asset type {}",
             request.asset_type
@@ -454,7 +440,7 @@ impl ThumbnailService {
                 material,
             },
         );
-        add_preview_lighting(context, &mut scene);
+        add_preview_lighting(&mut scene);
         self.render_scene_thumbnail(context, render_state, &scene, bounds)
     }
 
@@ -484,34 +470,8 @@ impl ThumbnailService {
             asset_id,
             object_count
         );
-        add_preview_lighting(context, &mut scene);
+        add_preview_lighting(&mut scene);
         self.render_scene_thumbnail(context, render_state, &scene, bounds)
-    }
-
-    fn generate_skybox_thumbnail(
-        &mut self,
-        context: &ReadOnlyAssetContext,
-        render_state: &RenderState,
-        asset_id: Uuid,
-    ) -> Result<Texture, String> {
-        context
-            .registries
-            .assets
-            .read()
-            .load_by_id::<engine::assets::skybox::Skybox>(asset_id)
-            .map_err(|err| format!("failed to load skybox thumbnail source: {err}"))?;
-        log::debug!("Generating skybox thumbnail asset={}", asset_id);
-        let mut scene = context.scene();
-        let sky_light = scene.create(None, None);
-        scene.add_component(
-            sky_light,
-            ComponentSkyLight {
-                active: true,
-                intensity: 1.0,
-                skybox: AssetRef::from_id(asset_id),
-            },
-        );
-        self.render_scene_thumbnail(context, render_state, &scene, Bounds::unit())
     }
 
     fn render_scene_thumbnail(
@@ -541,7 +501,9 @@ impl ThumbnailService {
                     grid: false,
                     gizmos: false,
                     samples: 1,
-                    clear_color: Color32::from_rgb(18, 20, 22),
+                    clear_color: Color32::from_rgb(42, 48, 56),
+                    ambient_light: Color32::from_rgb(210, 220, 232),
+                    ambient_light_intensity: 0.22,
                 },
                 (THUMBNAIL_SIZE, THUMBNAIL_SIZE),
             )
@@ -808,21 +770,9 @@ fn default_material_ref(context: &ReadOnlyAssetContext) -> Result<AssetRef<Mater
         .ok_or_else(|| "missing default material for thumbnail render".into())
 }
 
-fn add_preview_lighting(context: &ReadOnlyAssetContext, scene: &mut Scene) {
-    if let Some(skybox_id) = first_skybox_id(context) {
-        let sky_light = scene.create(None, None);
-        scene.add_component(
-            sky_light,
-            ComponentSkyLight {
-                active: true,
-                intensity: 0.75,
-                skybox: AssetRef::from_id(skybox_id),
-            },
-        );
-    }
-
+fn add_preview_lighting(scene: &mut Scene) {
     let directional = scene.create(None, None);
-    let mut directional_transform = Transform::from_xyz(-2.0, 3.0, -4.0);
+    let mut directional_transform = Transform::from_xyz(-3.0, 4.5, -4.0);
     directional_transform.look_at(&vec3(0.0, 0.0, 0.0));
     scene.set_world_transform(directional, directional_transform.matrix());
     scene.add_component(
@@ -830,42 +780,33 @@ fn add_preview_lighting(context: &ReadOnlyAssetContext, scene: &mut Scene) {
         ComponentDirectionalLight {
             active: true,
             color: Color32::WHITE,
-            intensity: 0.65,
+            intensity: 0.72,
         },
     );
 
     let point = scene.create(None, None);
-    scene.set_world_transform(point, Transform::from_xyz(2.5, 3.0, -3.0).matrix());
+    scene.set_world_transform(point, Transform::from_xyz(2.25, 2.5, -2.75).matrix());
     scene.add_component(
         point,
         ComponentPointLight {
             active: true,
-            radius: 8.0,
+            radius: 6.0,
             color: Color32::WHITE,
-            intensity: 0.8,
+            intensity: 0.45,
         },
     );
-}
-
-fn first_skybox_id(context: &ReadOnlyAssetContext) -> Option<Uuid> {
-    let mut assets = Vec::new();
-    context.registries.assets.read().search_assets(
-        "",
-        Some(engine::assets::skybox::Skybox::type_uuid()),
-        &mut assets,
-    );
-    assets.first().map(|meta| meta.id)
 }
 
 fn camera_for_bounds(bounds: Bounds) -> (Camera, Transform) {
     let center = bounds.center();
     let radius = bounds.radius();
-    let distance = (radius / (25.0f32.to_radians()).tan()).max(1.5) * 1.35;
-    let camera_position = center + vec3(0.75, 0.45, -1.0).normalize() * distance;
+    let fov = 40.0f32.to_radians();
+    let distance = (radius / (fov * 0.5).tan()).max(1.2) * 0.92;
+    let camera_position = center + vec3(0.9, 0.55, -0.85).normalize() * distance;
     let mut camera_transform =
         Transform::from_xyz(camera_position.x, camera_position.y, camera_position.z);
     camera_transform.look_at(&center);
-    let camera = Camera::new(1.0, 50.0f32.to_radians(), 0.01, distance + radius * 4.0);
+    let camera = Camera::new(1.0, fov, 0.01, distance + radius * 6.0);
     (camera, camera_transform)
 }
 
@@ -940,6 +881,27 @@ mod tests {
         pipeline.request(request, ThumbnailPriority::Normal);
         assert!(!pipeline.fail(key, "already ready"));
         assert_eq!(pipeline.status(key), ThumbnailStatus::Ready);
+    }
+
+    #[test]
+    fn failed_jobs_do_not_requeue_without_invalidation() {
+        let mut pipeline = ThumbnailPipeline::default();
+        let request = request(1);
+        let key = request.key();
+
+        pipeline.request(request.clone(), ThumbnailPriority::Normal);
+        pipeline.start_next();
+        assert!(pipeline.fail(key, "bad source"));
+
+        let status = pipeline.request(request, ThumbnailPriority::High);
+
+        assert_eq!(pipeline.queued_len(), 0);
+        assert_eq!(
+            status,
+            ThumbnailStatus::Failed {
+                message: "bad source".into()
+            }
+        );
     }
 
     #[test]

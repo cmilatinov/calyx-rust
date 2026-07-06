@@ -136,6 +136,7 @@ impl EditorAppState {
                     gizmos: true,
                     samples: 1,
                     clear_color: Color32::from_rgb(8, 8, 8),
+                    ..Default::default()
                 },
                 initial_render_size,
             ),
