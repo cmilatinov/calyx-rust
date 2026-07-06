@@ -64,6 +64,7 @@ impl ThumbnailRequest {
 
     pub fn is_supported_asset_type(asset_type: Uuid) -> bool {
         asset_type == Texture::type_uuid()
+            || asset_type == Material::type_uuid()
             || asset_type == Mesh::type_uuid()
             || asset_type == Prefab::type_uuid()
             || asset_type == Skybox::type_uuid()
@@ -101,6 +102,8 @@ fn source_version(path: Option<&Path>) -> u64 {
 fn thumbnail_asset_type_name(asset_type: Uuid) -> &'static str {
     if asset_type == Texture::type_uuid() {
         "texture"
+    } else if asset_type == Material::type_uuid() {
+        "material"
     } else if asset_type == Mesh::type_uuid() {
         "mesh"
     } else if asset_type == Prefab::type_uuid() {
@@ -832,6 +835,9 @@ impl ThumbnailGenerator {
         if request.asset_type == Texture::type_uuid() {
             return self.generate_texture_thumbnail(context, render_state, request.asset_id);
         }
+        if request.asset_type == Material::type_uuid() {
+            return self.generate_material_thumbnail(context, render_state, request.asset_id);
+        }
         if request.asset_type == Mesh::type_uuid() {
             return self.generate_mesh_thumbnail(context, render_state, request.asset_id);
         }
@@ -872,6 +878,41 @@ impl ThumbnailGenerator {
             return Err("texture thumbnail downscaler was not initialized".into());
         };
         Ok(downscaler.downscale(context, render_state, &texture))
+    }
+
+    fn generate_material_thumbnail(
+        &mut self,
+        context: &ReadOnlyAssetContext,
+        render_state: &RenderState,
+        asset_id: Uuid,
+    ) -> Result<Texture, String> {
+        let material_ref = context
+            .registries
+            .assets
+            .read()
+            .load_by_id::<Material>(asset_id)
+            .map_err(|err| format!("failed to load material thumbnail source: {err}"))?;
+        let sphere_ref = context
+            .registries
+            .assets
+            .read()
+            .sphere()
+            .ok_or_else(|| "missing sphere mesh for material thumbnail render".to_string())?;
+        let bounds = {
+            let sphere = sphere_ref.read();
+            Bounds::from_mesh(&sphere).unwrap_or_default()
+        };
+        let mut scene = context.scene();
+        let game_object = scene.create(None, None);
+        scene.add_component(
+            game_object,
+            ComponentMesh {
+                mesh: Some(sphere_ref).into(),
+                material: Some(material_ref).into(),
+            },
+        );
+        add_preview_lighting(&mut scene);
+        self.render_scene_thumbnail(context, render_state, &scene, bounds)
     }
 
     fn generate_mesh_thumbnail(
@@ -1581,7 +1622,11 @@ mod tests {
     }
 
     #[test]
-    fn skybox_assets_are_supported_for_thumbnails() {
+    fn material_and_skybox_assets_are_supported_for_thumbnails() {
+        assert!(ThumbnailRequest::is_supported_asset_type(
+            Material::type_uuid()
+        ));
+        assert_eq!(thumbnail_asset_type_name(Material::type_uuid()), "material");
         assert!(ThumbnailRequest::is_supported_asset_type(
             Skybox::type_uuid()
         ));
