@@ -624,6 +624,19 @@ impl ThumbnailService {
         request: ThumbnailRequest,
         priority: ThumbnailPriority,
     ) -> ThumbnailStatus {
+        let key = request.key();
+        let asset_id = request.asset_id;
+        let asset_type_name = thumbnail_asset_type_name(request.asset_type);
+        let source_version = request.source_version;
+        let source_label = thumbnail_source_label(&request);
+        log::debug!(
+            "Thumbnail request made asset={} type={} version={} priority={:?} path={}",
+            asset_id,
+            asset_type_name,
+            source_version,
+            priority,
+            source_label
+        );
         let mut state = self.shared.state.lock().unwrap();
         state
             .pipeline
@@ -632,6 +645,15 @@ impl ThumbnailService {
             key.asset_id != request.asset_id || key.source_version == request.source_version
         });
         let status = state.pipeline.request(request, priority);
+        log::debug!(
+            "Thumbnail request resolved asset={} type={} version={} status={:?} has_texture={} queued_len={}",
+            asset_id,
+            asset_type_name,
+            source_version,
+            status,
+            state.textures.contains_key(&key),
+            state.pipeline.queued_len()
+        );
         drop(state);
         self.shared.wake.notify_one();
         status
@@ -762,6 +784,17 @@ fn thumbnail_worker_loop(shared: Arc<ThumbnailShared>, context: ReadOnlyAssetCon
 
         match generator.generate(&context, render_state, &job.request) {
             Ok(texture) => {
+                log::debug!(
+                    "Generated thumbnail asset={} type={} version={} path={} texture_size={}x{} format={:?} elapsed_ms={}",
+                    job.request.asset_id,
+                    thumbnail_asset_type_name(job.request.asset_type),
+                    job.request.source_version,
+                    thumbnail_source_label(&job.request),
+                    texture.descriptor.size.width,
+                    texture.descriptor.size.height,
+                    texture.descriptor.format,
+                    started_at.elapsed().as_millis()
+                );
                 match cache.store(render_state, &job.request, &texture) {
                     Ok(()) => {
                         log::debug!(
