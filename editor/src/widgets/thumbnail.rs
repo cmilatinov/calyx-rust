@@ -1,11 +1,10 @@
 #![allow(dead_code)]
 
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Instant, UNIX_EPOCH};
 
-use eframe::wgpu::{self, ShaderSource};
+use eframe::wgpu;
 use egui::Color32;
 use egui_wgpu::RenderState;
 use engine::assets::material::Material;
@@ -18,7 +17,7 @@ use engine::component::{
 };
 use engine::context::ReadOnlyAssetContext;
 use engine::math::Transform;
-use engine::render::{Camera, SceneRenderer, SceneRendererOptions};
+use engine::render::{Camera, SceneRenderer, SceneRendererOptions, Shader};
 use engine::scene::{GameObject, Prefab, Scene};
 use engine::utils::TypeUuid;
 use nalgebra_glm::{vec3, Vec3};
@@ -26,24 +25,6 @@ use uuid::Uuid;
 
 const THUMBNAIL_SIZE: u32 = 128;
 const MAX_THUMBNAIL_JOBS_PER_FRAME: usize = 1;
-
-const TEXTURE_DOWNSCALE_SHADER: &str = r#"
-@group(0) @binding(0) var source_texture: texture_2d<f32>;
-@group(0) @binding(1) var source_sampler: sampler;
-@group(0) @binding(2) var output_texture: texture_storage_2d<rgba8unorm, write>;
-
-@compute @workgroup_size(8, 8, 1)
-fn compute_main(@builtin(global_invocation_id) id: vec3<u32>) {
-    let size = textureDimensions(output_texture);
-    if (id.x >= size.x || id.y >= size.y) {
-        return;
-    }
-
-    let uv = (vec2<f32>(id.xy) + vec2<f32>(0.5, 0.5)) / vec2<f32>(size);
-    let color = textureSampleLevel(source_texture, source_sampler, uv, 0.0);
-    textureStore(output_texture, vec2<i32>(id.xy), color);
-}
-"#;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ThumbnailKey {
@@ -336,9 +317,12 @@ impl ThumbnailService {
         {
             return Err("texture thumbnails require a 2D source texture".into());
         }
-        let downscaler = self
-            .texture_downscaler
-            .get_or_insert_with(|| TextureDownscaler::new(&render_state.device));
+        if self.texture_downscaler.is_none() {
+            self.texture_downscaler = Some(TextureDownscaler::new(context)?);
+        }
+        let Some(downscaler) = &self.texture_downscaler else {
+            return Err("texture thumbnail downscaler was not initialized".into());
+        };
         Ok(downscaler.downscale(context, render_state, &texture))
     }
 
@@ -502,59 +486,25 @@ struct TextureDownscaler {
 }
 
 impl TextureDownscaler {
-    fn new(device: &wgpu::Device) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("thumbnail_downscale_shader"),
-            source: ShaderSource::Wgsl(Cow::Borrowed(TEXTURE_DOWNSCALE_SHADER)),
-        });
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("thumbnail_downscale_bind_group_layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
-                        access: wgpu::StorageTextureAccess::WriteOnly,
-                        format: wgpu::TextureFormat::Rgba8Unorm,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                    },
-                    count: None,
-                },
-            ],
-        });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("thumbnail_downscale_pipeline_layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("thumbnail_downscale_pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("compute_main"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
-        Self {
+    fn new(context: &ReadOnlyAssetContext) -> Result<Self, String> {
+        let shader_ref = context
+            .registries
+            .assets
+            .read()
+            .load::<Shader>("shaders/thumbnail_downscale")
+            .map_err(|err| format!("failed to load thumbnail downscale shader: {err}"))?;
+        let shader = shader_ref.read();
+        let pipeline = shader.compute_pipeline.as_ref().cloned().ok_or_else(|| {
+            "thumbnail downscale shader did not build a compute pipeline".to_string()
+        })?;
+        let bind_group_layout =
+            shader.bind_group_layouts.first().cloned().ok_or_else(|| {
+                "thumbnail downscale shader did not declare bind group 0".to_string()
+            })?;
+        Ok(Self {
             pipeline,
             bind_group_layout,
-        }
+        })
     }
 
     fn downscale(
