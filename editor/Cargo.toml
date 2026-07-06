@@ -43,4 +43,7 @@ serde_json.workspace = true
 relative-path.workspace = true
 mint.workspace = true
 rusty_pool.workspace = true
+dirs.workspace = true
+image.workspace = true
+sha-1.workspace = true
 log = "0.4.27"
