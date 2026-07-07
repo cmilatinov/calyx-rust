@@ -1,11 +1,15 @@
 use crate::panel::Panel;
 use crate::selection::{Selection, SelectionType};
-use crate::widgets::{FileButton, ThumbnailPriority, ThumbnailRequest, ThumbnailStatus};
+use crate::widgets::{
+    FileButton, ThumbnailPriority, ThumbnailRequest, ThumbnailStatus, THUMBNAIL_DEFAULT_SIZE,
+    THUMBNAIL_MAX_SIZE, THUMBNAIL_MIN_SIZE,
+};
 use crate::{icons, EditorAppState};
 use egui::load::SizedTexture;
 use egui::text::LayoutJob;
 use egui::{
-    FontFamily, FontId, Frame, ImageSource, Margin, Rect, Response, Sense, TextFormat, Ui, Vec2,
+    Align, FontFamily, FontId, Frame, ImageSource, Layout, Margin, Rect, Response, Sense, Slider,
+    TextFormat, Ui, Vec2,
 };
 use engine::assets::animation_graph::AnimationGraph;
 use re_ui::list_item::ShowCollapsingResponse;
@@ -19,6 +23,7 @@ use std::{fs, io};
 pub struct PanelContentBrowser {
     selected_folder: PathBuf,
     selected_file: Option<PathBuf>,
+    thumbnail_size: f32,
 }
 
 impl PanelContentBrowser {
@@ -26,6 +31,7 @@ impl PanelContentBrowser {
         PanelContentBrowser {
             selected_folder: root_path.into(),
             selected_file: None,
+            thumbnail_size: THUMBNAIL_DEFAULT_SIZE as f32,
         }
     }
 }
@@ -75,38 +81,60 @@ impl Panel for PanelContentBrowser {
         }
 
         egui::TopBottomPanel::top("file_path")
-            .exact_height(26.0)
+            .exact_height(30.0)
             .show_inside(ui, |ui| {
                 ui.horizontal_centered(|ui| {
-                    let mut root = root_path;
-                    let path = self.selected_folder.relative_to(root.clone()).unwrap();
-                    if ui.button(">").clicked() {
-                        self.set_selected_folder(&mut state.selection, root.clone());
-                    }
-                    let mut iterator = path.components();
-                    let mut component = iterator.next();
-                    loop {
-                        if component.is_none() {
-                            break;
-                        }
-                        let name = component.unwrap();
-                        root.push(name.as_str());
-                        if ui.button(name.as_str()).clicked() {
-                            self.set_selected_folder(&mut state.selection, root.clone());
-                        }
-                        component = iterator.next();
-                        if component.is_some() {
-                            ui.label(">");
-                        }
-                    }
+                    let slider_width = 128.0;
+                    let path_width = (ui.available_width() - slider_width - 8.0).max(0.0);
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(path_width, 24.0),
+                        Layout::left_to_right(Align::Center),
+                        |ui| {
+                            let mut root = root_path;
+                            let path = self.selected_folder.relative_to(root.clone()).unwrap();
+                            if ui.button(">").clicked() {
+                                self.set_selected_folder(&mut state.selection, root.clone());
+                            }
+                            let mut iterator = path.components();
+                            let mut component = iterator.next();
+                            loop {
+                                if component.is_none() {
+                                    break;
+                                }
+                                let name = component.unwrap();
+                                root.push(name.as_str());
+                                if ui.button(name.as_str()).clicked() {
+                                    self.set_selected_folder(&mut state.selection, root.clone());
+                                }
+                                component = iterator.next();
+                                if component.is_some() {
+                                    ui.label(">");
+                                }
+                            }
+                        },
+                    );
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.add_sized(
+                            Vec2::new(slider_width, 18.0),
+                            Slider::new(
+                                &mut self.thumbnail_size,
+                                THUMBNAIL_MIN_SIZE as f32..=THUMBNAIL_MAX_SIZE as f32,
+                            )
+                            .show_value(false),
+                        )
+                        .on_hover_text("Thumbnail size");
+                    });
+                    self.thumbnail_size = self
+                        .thumbnail_size
+                        .clamp(THUMBNAIL_MIN_SIZE as f32, THUMBNAIL_MAX_SIZE as f32);
                 });
             });
 
-        const ICON_SIZE: f32 = 50.0;
-        const ICON_PADDING_X: f32 = 10.0;
-        const ICON_PADDING_Y: f32 = 5.0;
-        const ICON_SPACING: f32 = 10.0;
-        const TOTAL_WIDTH: f32 = ICON_SIZE + ICON_PADDING_X * 2.0;
+        let icon_size = self.thumbnail_size.round();
+        let icon_padding_x = (icon_size * 0.08).clamp(8.0, 18.0);
+        let icon_padding_y = 5.0;
+        let icon_spacing = 10.0;
+        let total_width = icon_size + icon_padding_x * 2.0;
         let folder_image = egui::include_image!("../../../resources/icons/folder_large.png");
         let file_image = egui::include_image!("../../../resources/icons/body_dark_large.png");
         egui::CentralPanel::default()
@@ -120,12 +148,12 @@ impl Panel for PanelContentBrowser {
                     let width = ui.available_width();
                     let spacing = ui.style().spacing.item_spacing;
                     ui.style_mut().spacing.item_spacing = Vec2::ZERO;
-                    let num_nodes_per_row = ((width / TOTAL_WIDTH) as usize).max(1);
+                    let num_nodes_per_row = ((width / total_width) as usize).max(1);
                     ui.horizontal_wrapped(|ui| {
                         for (idx, node) in nodes.iter().enumerate() {
                             let is_dir = node.is_dir();
                             let is_selected = self.is_selected(state, node, is_dir);
-                            let image_size = Vec2::splat(ICON_SIZE);
+                            let image_size = Vec2::splat(icon_size);
                             let image_src = if is_dir {
                                 folder_image.clone()
                             } else {
@@ -137,8 +165,8 @@ impl Panel for PanelContentBrowser {
                                 node.file_name().unwrap().to_str().unwrap(),
                                 image_src,
                                 image_size,
-                                ICON_SPACING,
-                                Vec2::new(ICON_PADDING_X, ICON_PADDING_Y),
+                                icon_spacing,
+                                Vec2::new(icon_padding_x, icon_padding_y),
                                 is_selected,
                             );
                             if res.clicked() || res.secondary_clicked() {
@@ -152,7 +180,7 @@ impl Panel for PanelContentBrowser {
                             }
                             if idx % num_nodes_per_row == num_nodes_per_row - 1 {
                                 let remaining_width =
-                                    width - num_nodes_per_row as f32 * TOTAL_WIDTH - 1.0;
+                                    width - num_nodes_per_row as f32 * total_width - 1.0;
                                 if remaining_width > 0.0 {
                                     let (_, rect) = ui.allocate_space(Vec2::new(
                                         remaining_width,
@@ -163,7 +191,7 @@ impl Panel for PanelContentBrowser {
                             }
                         }
                         let remaining_width =
-                            width - (nodes.len() % num_nodes_per_row) as f32 * TOTAL_WIDTH - 1.0;
+                            width - (nodes.len() % num_nodes_per_row) as f32 * total_width - 1.0;
                         if remaining_width > 0.0 {
                             let (_, rect) = ui
                                 .allocate_space(Vec2::new(remaining_width, ui.available_height()));

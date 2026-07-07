@@ -30,20 +30,24 @@ use nalgebra_glm::{vec3, Vec3};
 use sha1::{Digest, Sha1};
 use uuid::Uuid;
 
-const THUMBNAIL_SIZE: u32 = 128;
-const THUMBNAIL_CACHE_VERSION: u32 = 4;
+const THUMBNAIL_CACHE_VERSION: u32 = 5;
 const THUMBNAIL_MAX_FAILURES: u8 = 3;
-const THUMBNAIL_DEFAULT_FRAME_MARGIN: f32 = 1.08;
-const THUMBNAIL_MIN_FRAME_MARGIN: f32 = 1.0;
+pub const THUMBNAIL_DEFAULT_SIZE: u32 = 256;
+pub const THUMBNAIL_MIN_SIZE: u32 = 64;
+pub const THUMBNAIL_MAX_SIZE: u32 = 256;
+pub const THUMBNAIL_DEFAULT_FRAME_MARGIN: f32 = 0.5;
+pub const THUMBNAIL_MIN_FRAME_MARGIN: f32 = 0.1;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ThumbnailRenderSettings {
+    pub size_px: u32,
     pub frame_margin: f32,
 }
 
 impl Default for ThumbnailRenderSettings {
     fn default() -> Self {
         Self {
+            size_px: THUMBNAIL_DEFAULT_SIZE,
             frame_margin: THUMBNAIL_DEFAULT_FRAME_MARGIN,
         }
     }
@@ -51,7 +55,27 @@ impl Default for ThumbnailRenderSettings {
 
 impl ThumbnailRenderSettings {
     pub fn with_frame_margin(frame_margin: f32) -> Self {
-        Self { frame_margin }.sanitized()
+        Self {
+            frame_margin,
+            ..Default::default()
+        }
+        .sanitized()
+    }
+
+    pub fn with_size_px(size_px: u32) -> Self {
+        Self {
+            size_px,
+            ..Default::default()
+        }
+        .sanitized()
+    }
+
+    pub fn with_size_and_frame_margin(size_px: u32, frame_margin: f32) -> Self {
+        Self {
+            size_px,
+            frame_margin,
+        }
+        .sanitized()
     }
 
     fn cache_key(self) -> String {
@@ -60,12 +84,16 @@ impl ThumbnailRenderSettings {
     }
 
     fn sanitized(self) -> Self {
+        let size_px = self.size_px.clamp(THUMBNAIL_MIN_SIZE, THUMBNAIL_MAX_SIZE);
         let frame_margin = if self.frame_margin.is_finite() {
             self.frame_margin.max(THUMBNAIL_MIN_FRAME_MARGIN)
         } else {
             THUMBNAIL_DEFAULT_FRAME_MARGIN
         };
-        Self { frame_margin }
+        Self {
+            size_px,
+            frame_margin,
+        }
     }
 }
 
@@ -160,10 +188,12 @@ fn thumbnail_source_label(request: &ThumbnailRequest) -> String {
 
 struct ThumbnailCache {
     root: PathBuf,
+    size_px: u32,
 }
 
 impl ThumbnailCache {
     fn new(context: &ReadOnlyAssetContext, render_settings: ThumbnailRenderSettings) -> Self {
+        let render_settings = render_settings.sanitized();
         let asset_root = context.registries.assets.read().root_path().clone();
         let project_hash = project_cache_hash(&asset_root);
         let cache_root = dirs::cache_dir()
@@ -173,10 +203,13 @@ impl ThumbnailCache {
             .join("thumbnails")
             .join(project_hash)
             .join(format!("v{THUMBNAIL_CACHE_VERSION}"))
-            .join(format!("{THUMBNAIL_SIZE}px"))
+            .join(format!("{}px", render_settings.size_px))
             .join(render_settings.cache_key());
 
-        Self { root: cache_root }
+        Self {
+            root: cache_root,
+            size_px: render_settings.size_px,
+        }
     }
 
     fn load(
@@ -197,14 +230,14 @@ impl ThumbnailCache {
                 )
             })?
             .to_rgba8();
-        if image.width() != THUMBNAIL_SIZE || image.height() != THUMBNAIL_SIZE {
+        if image.width() != self.size_px || image.height() != self.size_px {
             return Err(format!(
                 "cached thumbnail {} has size {}x{}, expected {}x{}",
                 path.display(),
                 image.width(),
                 image.height(),
-                THUMBNAIL_SIZE,
-                THUMBNAIL_SIZE
+                self.size_px,
+                self.size_px
             ));
         }
 
@@ -221,8 +254,8 @@ impl ThumbnailCache {
         request: &ThumbnailRequest,
         texture: &Texture,
     ) -> Result<(), String> {
-        let pixels = read_texture_rgba8(render_state, texture)?;
-        let image: RgbaImage = ImageBuffer::from_vec(THUMBNAIL_SIZE, THUMBNAIL_SIZE, pixels)
+        let pixels = read_texture_rgba8(render_state, texture, self.size_px)?;
+        let image: RgbaImage = ImageBuffer::from_vec(self.size_px, self.size_px, pixels)
             .ok_or_else(|| "thumbnail readback returned an unexpected byte count".to_string())?;
         let path = self.path(request);
         let parent = path
@@ -416,7 +449,11 @@ fn texture_from_rgba8(context: &ReadOnlyAssetContext, label: &str, image: &RgbaI
     texture
 }
 
-fn read_texture_rgba8(render_state: &RenderState, texture: &Texture) -> Result<Vec<u8>, String> {
+fn read_texture_rgba8(
+    render_state: &RenderState,
+    texture: &Texture,
+    expected_size_px: u32,
+) -> Result<Vec<u8>, String> {
     if texture.descriptor.format != wgpu::TextureFormat::Rgba8Unorm {
         return Err(format!(
             "thumbnail cache requires Rgba8Unorm textures, got {:?}",
@@ -432,10 +469,10 @@ fn read_texture_rgba8(render_state: &RenderState, texture: &Texture) -> Result<V
 
     let width = texture.descriptor.size.width;
     let height = texture.descriptor.size.height;
-    if width != THUMBNAIL_SIZE || height != THUMBNAIL_SIZE {
+    if width != expected_size_px || height != expected_size_px {
         return Err(format!(
             "thumbnail cache requires {}x{} textures, got {}x{}",
-            THUMBNAIL_SIZE, THUMBNAIL_SIZE, width, height
+            expected_size_px, expected_size_px, width, height
         ));
     }
 
@@ -959,7 +996,12 @@ impl ThumbnailGenerator {
         let Some(downscaler) = &self.texture_downscaler else {
             return Err("texture thumbnail downscaler was not initialized".into());
         };
-        Ok(downscaler.downscale(context, render_state, &texture))
+        Ok(downscaler.downscale(
+            context,
+            render_state,
+            &texture,
+            self.render_settings.size_px,
+        ))
     }
 
     fn generate_material_thumbnail(
@@ -1050,7 +1092,12 @@ impl ThumbnailGenerator {
         let Some(downscaler) = &self.skybox_front_face_downscaler else {
             return Err("skybox thumbnail downscaler was not initialized".into());
         };
-        Ok(downscaler.downscale_front_face(context, render_state, &source))
+        Ok(downscaler.downscale_front_face(
+            context,
+            render_state,
+            &source,
+            self.render_settings.size_px,
+        ))
     }
 
     fn generate_prefab_thumbnail(
@@ -1084,6 +1131,7 @@ impl ThumbnailGenerator {
         scene: &Scene,
         bounds: Bounds,
     ) -> Result<Texture, String> {
+        let size_px = self.render_settings.size_px;
         let (camera, camera_transform) =
             camera_for_bounds(bounds, self.render_settings.frame_margin);
         {
@@ -1096,10 +1144,10 @@ impl ThumbnailGenerator {
                         samples: 1,
                         clear_color: Color32::TRANSPARENT,
                     },
-                    (THUMBNAIL_SIZE, THUMBNAIL_SIZE),
+                    (size_px, size_px),
                 )
             });
-            renderer.resize_textures(THUMBNAIL_SIZE, THUMBNAIL_SIZE);
+            renderer.resize_textures(size_px, size_px);
             renderer.render_scene_base(render_state, &camera, &camera_transform, scene, None);
             renderer.finalize_scene(render_state);
         }
@@ -1113,7 +1161,7 @@ impl ThumbnailGenerator {
         let Some(renderer) = &self.scene_renderer else {
             return Err("thumbnail scene renderer was not initialized".into());
         };
-        Ok(downscaler.downscale(context, render_state, renderer.scene_texture()))
+        Ok(downscaler.downscale(context, render_state, renderer.scene_texture(), size_px))
     }
 }
 
@@ -1149,8 +1197,10 @@ impl SkyboxFrontFaceDownscaler {
         context: &ReadOnlyAssetContext,
         render_state: &RenderState,
         source: &Texture,
+        size_px: u32,
     ) -> Texture {
-        let thumbnail = thumbnail_output_texture(context, "thumbnail_skybox_front_face_output");
+        let thumbnail =
+            thumbnail_output_texture(context, "thumbnail_skybox_front_face_output", size_px);
         let bind_group = render_state
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1180,11 +1230,7 @@ impl SkyboxFrontFaceDownscaler {
             });
             compute_pass.set_pipeline(&self.pipeline);
             compute_pass.set_bind_group(0, &bind_group, &[]);
-            compute_pass.dispatch_workgroups(
-                THUMBNAIL_SIZE.div_ceil(8),
-                THUMBNAIL_SIZE.div_ceil(8),
-                1,
-            );
+            compute_pass.dispatch_workgroups(size_px.div_ceil(8), size_px.div_ceil(8), 1);
         }
         render_state.queue.submit(Some(encoder.finish()));
         thumbnail
@@ -1196,14 +1242,18 @@ struct TextureDownscaler {
     bind_group_layout: wgpu::BindGroupLayout,
 }
 
-fn thumbnail_output_texture(context: &ReadOnlyAssetContext, label: &'static str) -> Texture {
+fn thumbnail_output_texture(
+    context: &ReadOnlyAssetContext,
+    label: &'static str,
+    size_px: u32,
+) -> Texture {
     Texture::new(
         context.render_context.clone(),
         &wgpu::TextureDescriptor {
             label: Some(label),
             size: wgpu::Extent3d {
-                width: THUMBNAIL_SIZE,
-                height: THUMBNAIL_SIZE,
+                width: size_px,
+                height: size_px,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -1248,8 +1298,15 @@ impl TextureDownscaler {
         context: &ReadOnlyAssetContext,
         render_state: &RenderState,
         source: &Texture,
+        size_px: u32,
     ) -> Texture {
-        self.downscale_view(context, render_state, &source.view, &source.sampler)
+        self.downscale_view(
+            context,
+            render_state,
+            &source.view,
+            &source.sampler,
+            size_px,
+        )
     }
 
     fn downscale_view(
@@ -1258,8 +1315,10 @@ impl TextureDownscaler {
         render_state: &RenderState,
         source_view: &wgpu::TextureView,
         source_sampler: &wgpu::Sampler,
+        size_px: u32,
     ) -> Texture {
-        let thumbnail = thumbnail_output_texture(context, "thumbnail_texture_downscale_output");
+        let thumbnail =
+            thumbnail_output_texture(context, "thumbnail_texture_downscale_output", size_px);
         let bind_group = render_state
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1293,11 +1352,7 @@ impl TextureDownscaler {
             });
             compute_pass.set_pipeline(&self.pipeline);
             compute_pass.set_bind_group(0, &bind_group, &[]);
-            compute_pass.dispatch_workgroups(
-                THUMBNAIL_SIZE.div_ceil(8),
-                THUMBNAIL_SIZE.div_ceil(8),
-                1,
-            );
+            compute_pass.dispatch_workgroups(size_px.div_ceil(8), size_px.div_ceil(8), 1);
         }
         render_state.queue.submit(Some(encoder.finish()));
         thumbnail
@@ -1627,8 +1682,7 @@ mod tests {
     }
 
     fn assert_camera_encloses(bounds: Bounds) {
-        let (camera, transform) =
-            camera_for_bounds(bounds, ThumbnailRenderSettings::default().frame_margin);
+        let (camera, transform) = camera_for_bounds(bounds, 1.0);
         let tan_half_x = (camera.fov_x * 0.5).tan();
         let tan_half_y = (camera.fov_x * 0.5).tan();
 
@@ -1673,11 +1727,23 @@ mod tests {
     #[test]
     fn thumbnail_frame_margin_is_configurable_and_clamped() {
         assert_eq!(
+            ThumbnailRenderSettings::default().size_px,
+            THUMBNAIL_DEFAULT_SIZE
+        );
+        assert_eq!(
             ThumbnailRenderSettings::default().frame_margin,
             THUMBNAIL_DEFAULT_FRAME_MARGIN
         );
         assert_eq!(
-            ThumbnailRenderSettings::with_frame_margin(0.5).frame_margin,
+            ThumbnailRenderSettings::with_size_px(1).size_px,
+            THUMBNAIL_MIN_SIZE
+        );
+        assert_eq!(
+            ThumbnailRenderSettings::with_size_px(u32::MAX).size_px,
+            THUMBNAIL_MAX_SIZE
+        );
+        assert_eq!(
+            ThumbnailRenderSettings::with_frame_margin(0.0).frame_margin,
             THUMBNAIL_MIN_FRAME_MARGIN
         );
         assert_eq!(
@@ -1691,7 +1757,7 @@ mod tests {
         };
         let (_, default_transform) =
             camera_for_bounds(bounds, ThumbnailRenderSettings::default().frame_margin);
-        let (_, wider_transform) = camera_for_bounds(bounds, 1.25);
+        let (_, wider_transform) = camera_for_bounds(bounds, 1.0);
 
         assert!(wider_transform.position.norm() > default_transform.position.norm());
     }
