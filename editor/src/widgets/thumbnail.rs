@@ -30,7 +30,7 @@ use nalgebra_glm::{vec3, Vec3};
 use sha1::{Digest, Sha1};
 use uuid::Uuid;
 
-const THUMBNAIL_CACHE_VERSION: u32 = 5;
+const THUMBNAIL_CACHE_VERSION: u32 = 6;
 const THUMBNAIL_MAX_FAILURES: u8 = 3;
 pub const THUMBNAIL_DEFAULT_SIZE: u32 = 256;
 pub const THUMBNAIL_MIN_SIZE: u32 = 64;
@@ -416,7 +416,7 @@ fn texture_from_rgba8(context: &ReadOnlyAssetContext, label: &str, image: &RgbaI
             usage: wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_DST
                 | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
+            view_formats: &[wgpu::TextureFormat::Rgba8UnormSrgb],
         },
         Some(wgpu::SamplerDescriptor {
             label: Some(label),
@@ -428,7 +428,7 @@ fn texture_from_rgba8(context: &ReadOnlyAssetContext, label: &str, image: &RgbaI
             mipmap_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         }),
-        None,
+        Some(thumbnail_display_view_descriptor()),
         true,
     );
     context.render_context.queue().write_texture(
@@ -447,6 +447,20 @@ fn texture_from_rgba8(context: &ReadOnlyAssetContext, label: &str, image: &RgbaI
         size,
     );
     texture
+}
+
+fn thumbnail_display_view_descriptor() -> wgpu::TextureViewDescriptor<'static> {
+    wgpu::TextureViewDescriptor {
+        format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+        ..Default::default()
+    }
+}
+
+fn thumbnail_storage_view(texture: &Texture) -> wgpu::TextureView {
+    texture.texture.create_view(&wgpu::TextureViewDescriptor {
+        format: Some(wgpu::TextureFormat::Rgba8Unorm),
+        ..Default::default()
+    })
 }
 
 fn read_texture_rgba8(
@@ -1201,6 +1215,7 @@ impl SkyboxFrontFaceDownscaler {
     ) -> Texture {
         let thumbnail =
             thumbnail_output_texture(context, "thumbnail_skybox_front_face_output", size_px);
+        let thumbnail_storage_view = thumbnail_storage_view(&thumbnail);
         let bind_group = render_state
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1213,7 +1228,7 @@ impl SkyboxFrontFaceDownscaler {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&thumbnail.view),
+                        resource: wgpu::BindingResource::TextureView(&thumbnail_storage_view),
                     },
                 ],
             });
@@ -1263,10 +1278,10 @@ fn thumbnail_output_texture(
             usage: wgpu::TextureUsages::STORAGE_BINDING
                 | wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
+            view_formats: &[wgpu::TextureFormat::Rgba8UnormSrgb],
         },
         None,
-        None,
+        Some(thumbnail_display_view_descriptor()),
         true,
     )
 }
@@ -1319,6 +1334,7 @@ impl TextureDownscaler {
     ) -> Texture {
         let thumbnail =
             thumbnail_output_texture(context, "thumbnail_texture_downscale_output", size_px);
+        let thumbnail_storage_view = thumbnail_storage_view(&thumbnail);
         let bind_group = render_state
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1335,7 +1351,7 @@ impl TextureDownscaler {
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: wgpu::BindingResource::TextureView(&thumbnail.view),
+                        resource: wgpu::BindingResource::TextureView(&thumbnail_storage_view),
                     },
                 ],
             });
@@ -1522,15 +1538,15 @@ fn camera_for_bounds(bounds: Bounds, frame_margin: f32) -> (Camera, Transform) {
 
     let tan_half_x = (FOV_X * 0.5).tan();
     let tan_half_y = (FOV_X * 0.5).tan();
-    let mut distance = MIN_DISTANCE.max(radius);
+    let mut fit_distance = MIN_DISTANCE.max(radius);
     for corner in bounds.corners() {
         let offset = corner - center;
         let view_offset = unit_transform.inverse_transform_direction(&offset);
-        distance = distance.max(view_offset.x.abs() / tan_half_x - view_offset.z);
-        distance = distance.max(view_offset.y.abs() / tan_half_y - view_offset.z);
-        distance = distance.max(0.01 - view_offset.z);
+        fit_distance = fit_distance.max(view_offset.x.abs() / tan_half_x - view_offset.z);
+        fit_distance = fit_distance.max(view_offset.y.abs() / tan_half_y - view_offset.z);
+        fit_distance = fit_distance.max(0.01 - view_offset.z);
     }
-    distance = (distance * frame_margin).max(MIN_DISTANCE);
+    let distance = (fit_distance + radius * frame_margin).max(MIN_DISTANCE);
 
     let camera_transform = thumbnail_camera_transform(center, view_direction, distance);
     let max_depth = bounds
@@ -1681,8 +1697,8 @@ mod tests {
         assert_eq!(pipeline.status(key), ThumbnailStatus::Missing);
     }
 
-    fn assert_camera_encloses(bounds: Bounds) {
-        let (camera, transform) = camera_for_bounds(bounds, 1.0);
+    fn assert_camera_encloses_with_margin(bounds: Bounds, frame_margin: f32) {
+        let (camera, transform) = camera_for_bounds(bounds, frame_margin);
         let tan_half_x = (camera.fov_x * 0.5).tan();
         let tan_half_y = (camera.fov_x * 0.5).tan();
 
@@ -1708,6 +1724,10 @@ mod tests {
         }
     }
 
+    fn assert_camera_encloses(bounds: Bounds) {
+        assert_camera_encloses_with_margin(bounds, ThumbnailRenderSettings::default().frame_margin);
+    }
+
     #[test]
     fn thumbnail_camera_encloses_bounds() {
         assert_camera_encloses(Bounds {
@@ -1721,6 +1741,18 @@ mod tests {
         assert_camera_encloses(Bounds {
             min: vec3(-0.5, -0.5, -4.0),
             max: vec3(0.5, 0.5, 4.0),
+        });
+    }
+
+    #[test]
+    fn thumbnail_camera_default_margin_encloses_asymmetric_prefab_bounds() {
+        assert_camera_encloses(Bounds {
+            min: vec3(-4.6, -0.8, -2.2),
+            max: vec3(5.9, 2.4, 1.7),
+        });
+        assert_camera_encloses(Bounds {
+            min: vec3(-1.3, -1.1, -6.5),
+            max: vec3(3.8, 3.6, 2.1),
         });
     }
 
@@ -1758,8 +1790,13 @@ mod tests {
         let (_, default_transform) =
             camera_for_bounds(bounds, ThumbnailRenderSettings::default().frame_margin);
         let (_, wider_transform) = camera_for_bounds(bounds, 1.0);
+        let center = bounds.center();
+        let default_distance = (default_transform.position - center).norm();
+        let wider_distance = (wider_transform.position - center).norm();
 
-        assert!(wider_transform.position.norm() > default_transform.position.norm());
+        assert!(wider_distance > default_distance);
+        assert_camera_encloses_with_margin(bounds, ThumbnailRenderSettings::default().frame_margin);
+        assert_camera_encloses_with_margin(bounds, 1.0);
     }
 
     #[test]
