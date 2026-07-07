@@ -1120,7 +1120,13 @@ impl ThumbnailGenerator {
             },
         );
         add_preview_lighting(&mut scene);
-        self.render_scene_thumbnail(context, render_state, &scene, bounds)
+        self.render_scene_thumbnail(
+            context,
+            render_state,
+            &scene,
+            bounds,
+            self.render_settings.frame_margin,
+        )
     }
 
     fn generate_mesh_thumbnail(
@@ -1150,7 +1156,13 @@ impl ThumbnailGenerator {
             },
         );
         add_preview_lighting(&mut scene);
-        self.render_scene_thumbnail(context, render_state, &scene, bounds)
+        self.render_scene_thumbnail(
+            context,
+            render_state,
+            &scene,
+            bounds,
+            self.render_settings.frame_margin,
+        )
     }
 
     fn generate_skybox_thumbnail(
@@ -1205,7 +1217,13 @@ impl ThumbnailGenerator {
         };
         let bounds = scene_mesh_bounds(context, &scene, root).unwrap_or_default();
         add_preview_lighting(&mut scene);
-        self.render_scene_thumbnail(context, render_state, &scene, bounds)
+        self.render_scene_thumbnail(
+            context,
+            render_state,
+            &scene,
+            bounds,
+            self.render_settings.frame_margin,
+        )
     }
 
     fn render_scene_thumbnail(
@@ -1214,10 +1232,10 @@ impl ThumbnailGenerator {
         render_state: &RenderState,
         scene: &Scene,
         bounds: Bounds,
+        frame_margin: f32,
     ) -> Result<Texture, String> {
         let size_px = self.render_settings.size_px;
-        let (camera, camera_transform) =
-            camera_for_bounds(bounds, self.render_settings.frame_margin);
+        let (camera, camera_transform) = camera_for_bounds(bounds, frame_margin);
         {
             let renderer = self.scene_renderer.get_or_insert_with(|| {
                 SceneRenderer::new(
@@ -1867,6 +1885,26 @@ mod tests {
 
         assert!(wider_distance > default_distance);
         assert_camera_encloses_with_margin(bounds, ThumbnailRenderSettings::default().frame_margin);
+        assert_camera_encloses_with_margin(bounds, 1.0);
+    }
+
+    #[test]
+    fn material_thumbnail_camera_uses_configured_frame_margin() {
+        let bounds = Bounds::unit();
+        let (_, tight_transform) = camera_for_bounds(
+            bounds,
+            ThumbnailRenderSettings::with_frame_margin(0.1).frame_margin,
+        );
+        let (_, wider_transform) = camera_for_bounds(
+            bounds,
+            ThumbnailRenderSettings::with_frame_margin(1.0).frame_margin,
+        );
+        let center = bounds.center();
+        let tight_distance = (tight_transform.position - center).norm();
+        let wider_distance = (wider_transform.position - center).norm();
+
+        assert!(wider_distance > tight_distance);
+        assert_camera_encloses_with_margin(bounds, 0.1);
         assert_camera_encloses_with_margin(bounds, 1.0);
     }
 
