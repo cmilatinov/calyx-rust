@@ -26,7 +26,7 @@ use engine::scene::{GameObject, Prefab, Scene};
 use engine::utils::TypeUuid;
 use image::{ColorType, DynamicImage, ImageBuffer, ImageFormat, ImageReader, RgbaImage};
 use nalgebra::UnitQuaternion;
-use nalgebra_glm::{vec3, Vec3};
+use nalgebra_glm::{vec3, vec4, Vec3};
 use sha1::{Digest, Sha1};
 use uuid::Uuid;
 
@@ -1626,20 +1626,44 @@ fn camera_for_bounds(bounds: Bounds, frame_margin: f32) -> (Camera, Transform) {
     let center = bounds.center();
     let radius = bounds.radius();
     let view_direction = vec3(0.9, 0.55, -0.85).normalize();
-    let unit_transform = thumbnail_camera_transform(center, view_direction, 1.0);
-
-    let screen_fit = 1.0 - frame_margin * 2.0;
-    let tan_half_x = (FOV_X * 0.5).tan() * screen_fit;
-    let tan_half_y = (FOV_X * 0.5).tan() * screen_fit;
-    let mut fit_distance = MIN_DISTANCE;
-    for corner in bounds.corners() {
-        let offset = corner - center;
-        let view_offset = unit_transform.inverse_transform_direction(&offset);
-        fit_distance = fit_distance.max(view_offset.x.abs() / tan_half_x - view_offset.z);
-        fit_distance = fit_distance.max(view_offset.y.abs() / tan_half_y - view_offset.z);
-        fit_distance = fit_distance.max(0.01 - view_offset.z);
+    let screen_fit = (1.0 - frame_margin * 2.0).max(0.01);
+    let fit_camera = Camera::new(ASPECT, FOV_X, MIN_DISTANCE, 100_000.0);
+    let mut distance = radius.max(MIN_DISTANCE);
+    while distance < 100_000.0
+        && !bounds_fit_screen_space(
+            bounds,
+            &fit_camera,
+            &thumbnail_camera_transform(center, view_direction, distance),
+            screen_fit,
+        )
+    {
+        distance *= 2.0;
     }
-    let distance = fit_distance.max(MIN_DISTANCE);
+    if !bounds_fit_screen_space(
+        bounds,
+        &fit_camera,
+        &thumbnail_camera_transform(center, view_direction, distance),
+        screen_fit,
+    ) {
+        distance = 100_000.0;
+    }
+
+    let mut near = MIN_DISTANCE;
+    let mut far = distance;
+    for _ in 0..32 {
+        let mid = (near + far) * 0.5;
+        if bounds_fit_screen_space(
+            bounds,
+            &fit_camera,
+            &thumbnail_camera_transform(center, view_direction, mid),
+            screen_fit,
+        ) {
+            far = mid;
+        } else {
+            near = mid;
+        }
+    }
+    let distance = far.max(MIN_DISTANCE);
 
     let camera_transform = thumbnail_camera_transform(center, view_direction, distance);
     let max_depth = bounds
@@ -1649,6 +1673,31 @@ fn camera_for_bounds(bounds: Bounds, frame_margin: f32) -> (Camera, Transform) {
         .fold(distance, f32::max);
     let camera = Camera::new(ASPECT, FOV_X, 0.01, max_depth + radius.max(1.0));
     (camera, camera_transform)
+}
+
+fn bounds_fit_screen_space(
+    bounds: Bounds,
+    camera: &Camera,
+    camera_transform: &Transform,
+    screen_fit: f32,
+) -> bool {
+    bounds.corners().into_iter().all(|corner| {
+        project_corner(camera, camera_transform, corner).is_some_and(|projected| {
+            projected.x.abs() <= screen_fit && projected.y.abs() <= screen_fit
+        })
+    })
+}
+
+fn project_corner(camera: &Camera, camera_transform: &Transform, corner: Vec3) -> Option<Vec3> {
+    let view = camera_transform.inverse_matrix() * vec4(corner.x, corner.y, corner.z, 1.0);
+    if view.z <= camera.near_plane {
+        return None;
+    }
+    let clip = camera.projection * view;
+    if clip.w.abs() <= f32::EPSILON {
+        return None;
+    }
+    Some(vec3(clip.x / clip.w, clip.y / clip.w, clip.z / clip.w))
 }
 
 fn thumbnail_camera_transform(center: Vec3, view_direction: Vec3, distance: f32) -> Transform {
@@ -1794,8 +1843,6 @@ mod tests {
         let (camera, transform) = camera_for_bounds(bounds, frame_margin);
         let frame_margin = ThumbnailRenderSettings::with_frame_margin(frame_margin).frame_margin;
         let screen_fit = 1.0 - frame_margin * 2.0;
-        let tan_half_x = (camera.fov_x * 0.5).tan();
-        let tan_half_y = (camera.fov_x * 0.5).tan();
 
         for corner in bounds.corners() {
             let view = transform.inverse_transform_position(&corner);
@@ -1808,29 +1855,28 @@ mod tests {
                 depth <= camera.far_plane,
                 "corner {corner:?} is beyond the far plane at view-space {view:?}"
             );
+            let projected = project_corner(&camera, &transform, corner)
+                .unwrap_or_else(|| panic!("corner {corner:?} could not be projected"));
             assert!(
-                view.x.abs() <= depth * tan_half_x * screen_fit + 0.001,
-                "corner {corner:?} is outside horizontal screen-space margin at view-space {view:?}"
+                projected.x.abs() <= screen_fit + 0.001,
+                "corner {corner:?} is outside horizontal screen-space margin at NDC {projected:?}"
             );
             assert!(
-                view.y.abs() <= depth * tan_half_y * screen_fit + 0.001,
-                "corner {corner:?} is outside vertical screen-space margin at view-space {view:?}"
+                projected.y.abs() <= screen_fit + 0.001,
+                "corner {corner:?} is outside vertical screen-space margin at NDC {projected:?}"
             );
         }
     }
 
     fn max_projected_extent(bounds: Bounds, frame_margin: f32) -> f32 {
         let (camera, transform) = camera_for_bounds(bounds, frame_margin);
-        let tan_half_x = (camera.fov_x * 0.5).tan();
-        let tan_half_y = (camera.fov_x * 0.5).tan();
         bounds
             .corners()
             .into_iter()
             .map(|corner| {
-                let view = transform.inverse_transform_position(&corner);
-                let horizontal = view.x.abs() / (view.z * tan_half_x);
-                let vertical = view.y.abs() / (view.z * tan_half_y);
-                horizontal.max(vertical)
+                let projected = project_corner(&camera, &transform, corner)
+                    .unwrap_or_else(|| panic!("corner {corner:?} could not be projected"));
+                projected.x.abs().max(projected.y.abs())
             })
             .fold(0.0, f32::max)
     }
