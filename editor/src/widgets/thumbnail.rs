@@ -821,6 +821,7 @@ impl ThumbnailService {
         }
 
         state.render_settings = render_settings;
+        state.cache_epoch = state.cache_epoch.wrapping_add(1);
         state.pipeline = ThumbnailPipeline::default();
         state.textures.clear();
         drop(state);
@@ -1619,7 +1620,7 @@ fn add_preview_lighting(scene: &mut Scene) {
 fn camera_for_bounds(bounds: Bounds, frame_margin: f32) -> (Camera, Transform) {
     const ASPECT: f32 = 1.0;
     const FOV_X: f32 = 40.0f32.to_radians();
-    const MIN_DISTANCE: f32 = 1.2;
+    const MIN_DISTANCE: f32 = 0.01;
 
     let frame_margin = ThumbnailRenderSettings::with_frame_margin(frame_margin).frame_margin;
     let center = bounds.center();
@@ -1630,7 +1631,7 @@ fn camera_for_bounds(bounds: Bounds, frame_margin: f32) -> (Camera, Transform) {
     let screen_fit = 1.0 - frame_margin * 2.0;
     let tan_half_x = (FOV_X * 0.5).tan() * screen_fit;
     let tan_half_y = (FOV_X * 0.5).tan() * screen_fit;
-    let mut fit_distance = MIN_DISTANCE.max(radius);
+    let mut fit_distance = MIN_DISTANCE;
     for corner in bounds.corners() {
         let offset = corner - center;
         let view_offset = unit_transform.inverse_transform_direction(&offset);
@@ -1818,6 +1819,22 @@ mod tests {
         }
     }
 
+    fn max_projected_extent(bounds: Bounds, frame_margin: f32) -> f32 {
+        let (camera, transform) = camera_for_bounds(bounds, frame_margin);
+        let tan_half_x = (camera.fov_x * 0.5).tan();
+        let tan_half_y = (camera.fov_x * 0.5).tan();
+        bounds
+            .corners()
+            .into_iter()
+            .map(|corner| {
+                let view = transform.inverse_transform_position(&corner);
+                let horizontal = view.x.abs() / (view.z * tan_half_x);
+                let vertical = view.y.abs() / (view.z * tan_half_y);
+                horizontal.max(vertical)
+            })
+            .fold(0.0, f32::max)
+    }
+
     fn assert_camera_encloses(bounds: Bounds) {
         assert_camera_encloses_with_margin(bounds, ThumbnailRenderSettings::default().frame_margin);
     }
@@ -1898,6 +1915,31 @@ mod tests {
     }
 
     #[test]
+    fn thumbnail_frame_margin_is_screen_space_padding() {
+        let bounds = Bounds {
+            min: vec3(-5.0, -1.5, -2.0),
+            max: vec3(6.0, 2.5, 1.0),
+        };
+
+        let no_margin_extent = max_projected_extent(bounds, 0.0);
+        let ten_percent_extent = max_projected_extent(bounds, 0.1);
+        let twenty_five_percent_extent = max_projected_extent(bounds, 0.25);
+
+        assert!(
+            (no_margin_extent - 1.0).abs() <= 0.001,
+            "expected no-margin extent near full viewport, got {no_margin_extent}"
+        );
+        assert!(
+            (ten_percent_extent - 0.8).abs() <= 0.001,
+            "expected 10% per-side margin to fit central 80%, got {ten_percent_extent}"
+        );
+        assert!(
+            (twenty_five_percent_extent - 0.5).abs() <= 0.001,
+            "expected 25% per-side margin to fit central 50%, got {twenty_five_percent_extent}"
+        );
+    }
+
+    #[test]
     fn material_thumbnail_camera_uses_configured_frame_margin() {
         let bounds = Bounds::unit();
         let (_, tight_transform) = camera_for_bounds(
@@ -1915,6 +1957,18 @@ mod tests {
         assert!(wider_distance > tight_distance);
         assert_camera_encloses_with_margin(bounds, 0.1);
         assert_camera_encloses_with_margin(bounds, 1.0);
+    }
+
+    #[test]
+    fn changing_render_settings_invalidates_in_flight_results() {
+        let mut service = ThumbnailService::default();
+        let original_epoch = service.shared.state.lock().unwrap().cache_epoch;
+
+        service.set_render_settings(ThumbnailRenderSettings::with_frame_margin(0.25));
+
+        let state = service.shared.state.lock().unwrap();
+        assert_eq!(state.render_settings.frame_margin, 0.25);
+        assert_eq!(state.cache_epoch, original_epoch.wrapping_add(1));
     }
 
     #[test]
