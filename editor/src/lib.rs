@@ -163,6 +163,14 @@ impl EditorApp {
         let project_path = project_path.into();
         log::info!("Starting editor for project {}", project_path.display());
         let asset_context = AssetContext::new(cc, project_path.join("assets"))?;
+        let content_browser_root = {
+            let registry = asset_context.registries.assets.read();
+            registry
+                .asset_paths()
+                .last()
+                .cloned()
+                .unwrap_or_else(|| registry.root_path().clone())
+        };
         let mut game = GameContext::new(asset_context.clone());
         let assembly_status = Ref::new(ProjectAssemblyStatus::default());
         game.resources.insert(assembly_status.clone());
@@ -175,13 +183,7 @@ impl EditorApp {
         if !project_manager.write().load_existing_assemblies() {
             project_manager.read().build_assemblies();
         }
-        let panels = Panels::new(
-            project_manager
-                .read()
-                .current_project()
-                .root_directory()
-                .clone(),
-        );
+        let panels = Panels::new(content_browser_root);
         Self::apply_style(cc);
         Ok(Self {
             fps: 0,

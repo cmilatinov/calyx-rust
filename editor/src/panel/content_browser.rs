@@ -44,14 +44,12 @@ impl Panel for PanelContentBrowser {
     }
 
     fn ui(&mut self, ui: &mut Ui, state: &mut EditorAppState) {
-        let root_path = state
-            .game
-            .assets
-            .registries
-            .assets
-            .read()
-            .root_path()
-            .clone();
+        let root_path = self.browser_root_path(state);
+        if !self.selected_folder.starts_with(&root_path) {
+            self.selected_folder = root_path.clone();
+            self.selected_file = None;
+            state.selection = Selection::none();
+        }
 
         egui::SidePanel::left("file_tree")
             .resizable(true)
@@ -222,6 +220,15 @@ impl Panel for PanelContentBrowser {
 }
 
 impl PanelContentBrowser {
+    fn browser_root_path(&self, state: &EditorAppState) -> PathBuf {
+        let registry = state.game.assets.registries.assets.read();
+        registry
+            .asset_paths()
+            .last()
+            .cloned()
+            .unwrap_or_else(|| registry.root_path().clone())
+    }
+
     fn handle_thumbnail_zoom_input(&mut self, ui: &Ui) {
         if !ui.rect_contains_pointer(ui.max_rect()) {
             return;
@@ -373,14 +380,7 @@ impl PanelContentBrowser {
 
         if response.clicked() {
             self.selected_folder = if is_selected {
-                state
-                    .game
-                    .assets
-                    .registries
-                    .assets
-                    .read()
-                    .root_path()
-                    .clone()
+                self.browser_root_path(state)
             } else {
                 curr_path
             };
