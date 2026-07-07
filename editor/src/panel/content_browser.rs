@@ -221,7 +221,7 @@ impl PanelContentBrowser {
         let registry = state.game.assets.registries.assets.read();
         registry
             .asset_paths()
-            .last()
+            .first()
             .cloned()
             .unwrap_or_else(|| registry.root_path().clone())
     }
