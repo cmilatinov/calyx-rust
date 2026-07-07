@@ -31,8 +31,43 @@ use sha1::{Digest, Sha1};
 use uuid::Uuid;
 
 const THUMBNAIL_SIZE: u32 = 128;
-const THUMBNAIL_CACHE_VERSION: u32 = 3;
+const THUMBNAIL_CACHE_VERSION: u32 = 4;
 const THUMBNAIL_MAX_FAILURES: u8 = 3;
+const THUMBNAIL_DEFAULT_FRAME_MARGIN: f32 = 1.08;
+const THUMBNAIL_MIN_FRAME_MARGIN: f32 = 1.0;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ThumbnailRenderSettings {
+    pub frame_margin: f32,
+}
+
+impl Default for ThumbnailRenderSettings {
+    fn default() -> Self {
+        Self {
+            frame_margin: THUMBNAIL_DEFAULT_FRAME_MARGIN,
+        }
+    }
+}
+
+impl ThumbnailRenderSettings {
+    pub fn with_frame_margin(frame_margin: f32) -> Self {
+        Self { frame_margin }.sanitized()
+    }
+
+    fn cache_key(self) -> String {
+        let frame_margin_millis = (self.sanitized().frame_margin * 1000.0).round() as u32;
+        format!("frame-margin-{frame_margin_millis}")
+    }
+
+    fn sanitized(self) -> Self {
+        let frame_margin = if self.frame_margin.is_finite() {
+            self.frame_margin.max(THUMBNAIL_MIN_FRAME_MARGIN)
+        } else {
+            THUMBNAIL_DEFAULT_FRAME_MARGIN
+        };
+        Self { frame_margin }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ThumbnailKey {
@@ -128,7 +163,7 @@ struct ThumbnailCache {
 }
 
 impl ThumbnailCache {
-    fn new(context: &ReadOnlyAssetContext) -> Self {
+    fn new(context: &ReadOnlyAssetContext, render_settings: ThumbnailRenderSettings) -> Self {
         let asset_root = context.registries.assets.read().root_path().clone();
         let project_hash = project_cache_hash(&asset_root);
         let cache_root = dirs::cache_dir()
@@ -138,7 +173,8 @@ impl ThumbnailCache {
             .join("thumbnails")
             .join(project_hash)
             .join(format!("v{THUMBNAIL_CACHE_VERSION}"))
-            .join(format!("{THUMBNAIL_SIZE}px"));
+            .join(format!("{THUMBNAIL_SIZE}px"))
+            .join(render_settings.cache_key());
 
         Self { root: cache_root }
     }
@@ -651,29 +687,66 @@ struct ThumbnailShared {
 struct ThumbnailState {
     pipeline: ThumbnailPipeline,
     textures: HashMap<ThumbnailKey, Texture>,
+    render_settings: ThumbnailRenderSettings,
     stop: bool,
 }
 
-#[derive(Default)]
 struct ThumbnailGenerator {
+    render_settings: ThumbnailRenderSettings,
     texture_downscaler: Option<TextureDownscaler>,
     scene_renderer: Option<SceneRenderer>,
     skybox_front_face_downscaler: Option<SkyboxFrontFaceDownscaler>,
 }
 
-impl Default for ThumbnailService {
+impl Default for ThumbnailGenerator {
     fn default() -> Self {
         Self {
+            render_settings: ThumbnailRenderSettings::default(),
+            texture_downscaler: None,
+            scene_renderer: None,
+            skybox_front_face_downscaler: None,
+        }
+    }
+}
+
+impl Default for ThumbnailService {
+    fn default() -> Self {
+        Self::with_render_settings(ThumbnailRenderSettings::default())
+    }
+}
+
+impl ThumbnailService {
+    pub fn with_render_settings(render_settings: ThumbnailRenderSettings) -> Self {
+        Self {
             shared: Arc::new(ThumbnailShared {
-                state: Mutex::new(ThumbnailState::default()),
+                state: Mutex::new(ThumbnailState {
+                    render_settings: render_settings.sanitized(),
+                    ..Default::default()
+                }),
                 wake: Condvar::new(),
             }),
             worker: None,
         }
     }
-}
 
-impl ThumbnailService {
+    pub fn render_settings(&self) -> ThumbnailRenderSettings {
+        self.shared.state.lock().unwrap().render_settings
+    }
+
+    pub fn set_render_settings(&mut self, render_settings: ThumbnailRenderSettings) {
+        let render_settings = render_settings.sanitized();
+        let mut state = self.shared.state.lock().unwrap();
+        if state.render_settings == render_settings {
+            return;
+        }
+
+        state.render_settings = render_settings;
+        state.pipeline = ThumbnailPipeline::default();
+        state.textures.clear();
+        drop(state);
+        self.shared.wake.notify_one();
+    }
+
     pub fn request(
         &mut self,
         request: ThumbnailRequest,
@@ -726,10 +799,11 @@ impl ThumbnailService {
         }
 
         let shared = self.shared.clone();
+        let render_settings = self.render_settings();
         self.worker = Some(
             thread::Builder::new()
                 .name("thumbnail-generator".into())
-                .spawn(move || thumbnail_worker_loop(shared, context))
+                .spawn(move || thumbnail_worker_loop(shared, context, render_settings))
                 .expect("failed to spawn thumbnail generation worker"),
         );
         self.shared.wake.notify_one();
@@ -751,23 +825,31 @@ impl Drop for ThumbnailService {
     }
 }
 
-fn thumbnail_worker_loop(shared: Arc<ThumbnailShared>, context: ReadOnlyAssetContext) {
-    let cache = ThumbnailCache::new(&context);
-    let mut generator = ThumbnailGenerator::default();
+fn thumbnail_worker_loop(
+    shared: Arc<ThumbnailShared>,
+    context: ReadOnlyAssetContext,
+    render_settings: ThumbnailRenderSettings,
+) {
+    let mut generator = ThumbnailGenerator {
+        render_settings,
+        ..Default::default()
+    };
     loop {
-        let job = {
+        let (job, render_settings) = {
             let mut state = shared.state.lock().unwrap();
             loop {
                 if state.stop {
                     return;
                 }
                 if let Some(job) = state.pipeline.start_next() {
-                    break job;
+                    break (job, state.render_settings);
                 }
                 state = shared.wake.wait(state).unwrap();
             }
         };
 
+        generator.render_settings = render_settings;
+        let cache = ThumbnailCache::new(&context, render_settings);
         let key = job.key();
         let started_at = Instant::now();
         let render_state = context.render_context.render_state();
@@ -1002,7 +1084,8 @@ impl ThumbnailGenerator {
         scene: &Scene,
         bounds: Bounds,
     ) -> Result<Texture, String> {
-        let (camera, camera_transform) = camera_for_bounds(bounds);
+        let (camera, camera_transform) =
+            camera_for_bounds(bounds, self.render_settings.frame_margin);
         {
             let renderer = self.scene_renderer.get_or_insert_with(|| {
                 SceneRenderer::new(
@@ -1371,12 +1454,12 @@ fn add_preview_lighting(scene: &mut Scene) {
     );
 }
 
-fn camera_for_bounds(bounds: Bounds) -> (Camera, Transform) {
+fn camera_for_bounds(bounds: Bounds, frame_margin: f32) -> (Camera, Transform) {
     const ASPECT: f32 = 1.0;
     const FOV_X: f32 = 40.0f32.to_radians();
-    const FRAME_MARGIN: f32 = 1.2;
     const MIN_DISTANCE: f32 = 1.2;
 
+    let frame_margin = ThumbnailRenderSettings::with_frame_margin(frame_margin).frame_margin;
     let center = bounds.center();
     let radius = bounds.radius();
     let view_direction = vec3(0.9, 0.55, -0.85).normalize();
@@ -1392,7 +1475,7 @@ fn camera_for_bounds(bounds: Bounds) -> (Camera, Transform) {
         distance = distance.max(view_offset.y.abs() / tan_half_y - view_offset.z);
         distance = distance.max(0.01 - view_offset.z);
     }
-    distance = (distance * FRAME_MARGIN).max(MIN_DISTANCE);
+    distance = (distance * frame_margin).max(MIN_DISTANCE);
 
     let camera_transform = thumbnail_camera_transform(center, view_direction, distance);
     let max_depth = bounds
@@ -1544,7 +1627,8 @@ mod tests {
     }
 
     fn assert_camera_encloses(bounds: Bounds) {
-        let (camera, transform) = camera_for_bounds(bounds);
+        let (camera, transform) =
+            camera_for_bounds(bounds, ThumbnailRenderSettings::default().frame_margin);
         let tan_half_x = (camera.fov_x * 0.5).tan();
         let tan_half_y = (camera.fov_x * 0.5).tan();
 
@@ -1584,6 +1668,32 @@ mod tests {
             min: vec3(-0.5, -0.5, -4.0),
             max: vec3(0.5, 0.5, 4.0),
         });
+    }
+
+    #[test]
+    fn thumbnail_frame_margin_is_configurable_and_clamped() {
+        assert_eq!(
+            ThumbnailRenderSettings::default().frame_margin,
+            THUMBNAIL_DEFAULT_FRAME_MARGIN
+        );
+        assert_eq!(
+            ThumbnailRenderSettings::with_frame_margin(0.5).frame_margin,
+            THUMBNAIL_MIN_FRAME_MARGIN
+        );
+        assert_eq!(
+            ThumbnailRenderSettings::with_frame_margin(f32::NAN).frame_margin,
+            THUMBNAIL_DEFAULT_FRAME_MARGIN
+        );
+
+        let bounds = Bounds {
+            min: vec3(-2.0, -1.0, -0.25),
+            max: vec3(2.0, 1.0, 0.25),
+        };
+        let (_, default_transform) =
+            camera_for_bounds(bounds, ThumbnailRenderSettings::default().frame_margin);
+        let (_, wider_transform) = camera_for_bounds(bounds, 1.25);
+
+        assert!(wider_transform.position.norm() > default_transform.position.norm());
     }
 
     #[test]
