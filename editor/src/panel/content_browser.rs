@@ -9,7 +9,7 @@ use egui::load::SizedTexture;
 use egui::text::LayoutJob;
 use egui::{
     Align, FontFamily, FontId, Frame, ImageSource, Layout, Margin, Rect, Response, Sense, Slider,
-    TextFormat, Ui, Vec2,
+    TextFormat, TextStyle, Ui, Vec2,
 };
 use engine::assets::animation_graph::AnimationGraph;
 use re_ui::list_item::ShowCollapsingResponse;
@@ -139,6 +139,10 @@ impl Panel for PanelContentBrowser {
         let icon_padding_y = 5.0;
         let icon_spacing = 10.0;
         let total_width = icon_size + icon_padding_x * 2.0;
+        let row_height = icon_size
+            + icon_padding_y * 2.0
+            + icon_spacing
+            + ui.text_style_height(&TextStyle::Button);
         let folder_image = egui::include_image!("../../../resources/icons/folder_large.png");
         let file_image = egui::include_image!("../../../resources/icons/body_dark_large.png");
         egui::CentralPanel::default()
@@ -186,22 +190,21 @@ impl Panel for PanelContentBrowser {
                                 let remaining_width =
                                     width - num_nodes_per_row as f32 * total_width - 1.0;
                                 if remaining_width > 0.0 {
-                                    let (_, rect) = ui.allocate_space(Vec2::new(
-                                        remaining_width,
-                                        ui.available_height(),
-                                    ));
+                                    let (_, rect) =
+                                        ui.allocate_space(Vec2::new(remaining_width, row_height));
                                     self.empty_space_interaction(ui, rect);
                                 }
                             }
                         }
-                        let remaining_width =
-                            width - (nodes.len() % num_nodes_per_row) as f32 * total_width - 1.0;
-                        if remaining_width > 0.0 {
-                            let (_, rect) = ui
-                                .allocate_space(Vec2::new(remaining_width, ui.available_height()));
+                        let last_row_count = nodes.len() % num_nodes_per_row;
+                        let remaining_width = width - last_row_count as f32 * total_width - 1.0;
+                        if last_row_count > 0 && remaining_width > 0.0 {
+                            let (_, rect) =
+                                ui.allocate_space(Vec2::new(remaining_width, row_height));
                             self.empty_space_interaction(ui, rect);
                         }
                     });
+                    ui.add_space(8.0);
                     ui.style_mut().spacing.item_spacing = spacing;
                     let (_, rect) = ui.allocate_space(ui.available_size());
                     self.empty_space_interaction(ui, rect);
