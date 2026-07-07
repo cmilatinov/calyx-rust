@@ -1,8 +1,8 @@
 use crate::panel::Panel;
 use crate::selection::{Selection, SelectionType};
 use crate::widgets::{
-    FileButton, ThumbnailPriority, ThumbnailRequest, ThumbnailStatus, THUMBNAIL_DEFAULT_SIZE,
-    THUMBNAIL_MAX_SIZE, THUMBNAIL_MIN_SIZE,
+    FileButton, ThumbnailPriority, ThumbnailRequest, ThumbnailStatus, THUMBNAIL_MAX_SIZE,
+    THUMBNAIL_MIN_SIZE,
 };
 use crate::{icons, EditorAppState};
 use egui::load::SizedTexture;
@@ -20,10 +20,12 @@ use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
+const CONTENT_BROWSER_THUMBNAIL_DEFAULT_SIZE_PX: f32 = THUMBNAIL_MIN_SIZE as f32;
+
 pub struct PanelContentBrowser {
     selected_folder: PathBuf,
     selected_file: Option<PathBuf>,
-    thumbnail_size: f32,
+    thumbnail_size_px: f32,
 }
 
 impl PanelContentBrowser {
@@ -31,7 +33,7 @@ impl PanelContentBrowser {
         PanelContentBrowser {
             selected_folder: root_path.into(),
             selected_file: None,
-            thumbnail_size: THUMBNAIL_DEFAULT_SIZE as f32,
+            thumbnail_size_px: CONTENT_BROWSER_THUMBNAIL_DEFAULT_SIZE_PX,
         }
     }
 }
@@ -117,20 +119,22 @@ impl Panel for PanelContentBrowser {
                         ui.add_sized(
                             Vec2::new(slider_width, 18.0),
                             Slider::new(
-                                &mut self.thumbnail_size,
+                                &mut self.thumbnail_size_px,
                                 THUMBNAIL_MIN_SIZE as f32..=THUMBNAIL_MAX_SIZE as f32,
                             )
                             .show_value(false),
                         )
                         .on_hover_text("Thumbnail size");
                     });
-                    self.thumbnail_size = self
-                        .thumbnail_size
+                    self.thumbnail_size_px = self
+                        .thumbnail_size_px
                         .clamp(THUMBNAIL_MIN_SIZE as f32, THUMBNAIL_MAX_SIZE as f32);
                 });
             });
 
-        let icon_size = self.thumbnail_size.round();
+        let pixels_per_point = ui.pixels_per_point().max(f32::EPSILON);
+        let icon_size_px = self.thumbnail_size_px.round();
+        let icon_size = icon_size_px / pixels_per_point;
         let icon_padding_x = (icon_size * 0.08).clamp(8.0, 18.0);
         let icon_padding_y = 5.0;
         let icon_spacing = 10.0;
@@ -143,6 +147,7 @@ impl Panel for PanelContentBrowser {
                 ..Frame::central_panel(ui.style())
             })
             .show_inside(ui, |ui| {
+                self.handle_thumbnail_zoom_input(ui);
                 egui::ScrollArea::both().show(ui, |ui| {
                     ui.set_clip_rect(ui.max_rect().expand(3.0));
                     let width = ui.available_width();
@@ -215,6 +220,26 @@ impl Panel for PanelContentBrowser {
 }
 
 impl PanelContentBrowser {
+    fn handle_thumbnail_zoom_input(&mut self, ui: &Ui) {
+        if !ui.rect_contains_pointer(ui.max_rect()) {
+            return;
+        }
+
+        let zoom_delta = ui.input(|input| {
+            if input.modifiers.ctrl {
+                input.zoom_delta()
+            } else {
+                1.0
+            }
+        });
+        if (zoom_delta - 1.0).abs() <= f32::EPSILON {
+            return;
+        }
+
+        self.thumbnail_size_px = (self.thumbnail_size_px * zoom_delta)
+            .clamp(THUMBNAIL_MIN_SIZE as f32, THUMBNAIL_MAX_SIZE as f32);
+    }
+
     fn asset_thumbnail_image(
         &self,
         state: &mut EditorAppState,
