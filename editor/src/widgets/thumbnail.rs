@@ -34,8 +34,9 @@ const THUMBNAIL_MAX_FAILURES: u8 = 3;
 pub const THUMBNAIL_DEFAULT_SIZE: u32 = 512;
 pub const THUMBNAIL_MIN_SIZE: u32 = 64;
 pub const THUMBNAIL_MAX_SIZE: u32 = 512;
-pub const THUMBNAIL_DEFAULT_FRAME_MARGIN: f32 = 0.5;
-pub const THUMBNAIL_MIN_FRAME_MARGIN: f32 = 0.1;
+pub const THUMBNAIL_DEFAULT_FRAME_MARGIN: f32 = 0.1;
+pub const THUMBNAIL_MIN_FRAME_MARGIN: f32 = 0.0;
+pub const THUMBNAIL_MAX_FRAME_MARGIN: f32 = 0.45;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ThumbnailRenderSettings {
@@ -85,7 +86,8 @@ impl ThumbnailRenderSettings {
     fn sanitized(self) -> Self {
         let size_px = self.size_px.clamp(THUMBNAIL_MIN_SIZE, THUMBNAIL_MAX_SIZE);
         let frame_margin = if self.frame_margin.is_finite() {
-            self.frame_margin.max(THUMBNAIL_MIN_FRAME_MARGIN)
+            self.frame_margin
+                .clamp(THUMBNAIL_MIN_FRAME_MARGIN, THUMBNAIL_MAX_FRAME_MARGIN)
         } else {
             THUMBNAIL_DEFAULT_FRAME_MARGIN
         };
@@ -1625,8 +1627,9 @@ fn camera_for_bounds(bounds: Bounds, frame_margin: f32) -> (Camera, Transform) {
     let view_direction = vec3(0.9, 0.55, -0.85).normalize();
     let unit_transform = thumbnail_camera_transform(center, view_direction, 1.0);
 
-    let tan_half_x = (FOV_X * 0.5).tan();
-    let tan_half_y = (FOV_X * 0.5).tan();
+    let screen_fit = 1.0 - frame_margin * 2.0;
+    let tan_half_x = (FOV_X * 0.5).tan() * screen_fit;
+    let tan_half_y = (FOV_X * 0.5).tan() * screen_fit;
     let mut fit_distance = MIN_DISTANCE.max(radius);
     for corner in bounds.corners() {
         let offset = corner - center;
@@ -1635,7 +1638,7 @@ fn camera_for_bounds(bounds: Bounds, frame_margin: f32) -> (Camera, Transform) {
         fit_distance = fit_distance.max(view_offset.y.abs() / tan_half_y - view_offset.z);
         fit_distance = fit_distance.max(0.01 - view_offset.z);
     }
-    let distance = (fit_distance + radius * frame_margin).max(MIN_DISTANCE);
+    let distance = fit_distance.max(MIN_DISTANCE);
 
     let camera_transform = thumbnail_camera_transform(center, view_direction, distance);
     let max_depth = bounds
@@ -1788,6 +1791,8 @@ mod tests {
 
     fn assert_camera_encloses_with_margin(bounds: Bounds, frame_margin: f32) {
         let (camera, transform) = camera_for_bounds(bounds, frame_margin);
+        let frame_margin = ThumbnailRenderSettings::with_frame_margin(frame_margin).frame_margin;
+        let screen_fit = 1.0 - frame_margin * 2.0;
         let tan_half_x = (camera.fov_x * 0.5).tan();
         let tan_half_y = (camera.fov_x * 0.5).tan();
 
@@ -1803,12 +1808,12 @@ mod tests {
                 "corner {corner:?} is beyond the far plane at view-space {view:?}"
             );
             assert!(
-                view.x.abs() <= depth * tan_half_x + 0.001,
-                "corner {corner:?} is outside horizontal frustum at view-space {view:?}"
+                view.x.abs() <= depth * tan_half_x * screen_fit + 0.001,
+                "corner {corner:?} is outside horizontal screen-space margin at view-space {view:?}"
             );
             assert!(
-                view.y.abs() <= depth * tan_half_y + 0.001,
-                "corner {corner:?} is outside vertical frustum at view-space {view:?}"
+                view.y.abs() <= depth * tan_half_y * screen_fit + 0.001,
+                "corner {corner:?} is outside vertical screen-space margin at view-space {view:?}"
             );
         }
     }
@@ -1866,6 +1871,10 @@ mod tests {
         assert_eq!(
             ThumbnailRenderSettings::with_frame_margin(0.0).frame_margin,
             THUMBNAIL_MIN_FRAME_MARGIN
+        );
+        assert_eq!(
+            ThumbnailRenderSettings::with_frame_margin(1.0).frame_margin,
+            THUMBNAIL_MAX_FRAME_MARGIN
         );
         assert_eq!(
             ThumbnailRenderSettings::with_frame_margin(f32::NAN).frame_margin,
