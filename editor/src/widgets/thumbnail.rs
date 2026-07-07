@@ -1109,9 +1109,9 @@ impl ThumbnailGenerator {
             .read()
             .sphere()
             .ok_or_else(|| "missing sphere mesh for material thumbnail render".to_string())?;
-        let bounds = {
+        let camera_fit = {
             let sphere = sphere_ref.read();
-            Bounds::from_mesh(&sphere).unwrap_or_default()
+            CameraFit::from_mesh(&sphere, &Transform::default()).unwrap_or_default()
         };
         let mut scene = context.scene();
         let game_object = scene.create(None, None);
@@ -1127,7 +1127,7 @@ impl ThumbnailGenerator {
             context,
             render_state,
             &scene,
-            bounds,
+            camera_fit,
             self.render_settings.frame_margin,
         )
     }
@@ -1145,9 +1145,9 @@ impl ThumbnailGenerator {
             .load_by_id::<Mesh>(asset_id)
             .map_err(|err| format!("failed to load mesh thumbnail source: {err}"))?;
         let material = default_material_ref(context)?;
-        let bounds = {
+        let camera_fit = {
             let mesh = mesh_ref.read();
-            Bounds::from_mesh(&mesh).unwrap_or_default()
+            CameraFit::from_mesh(&mesh, &Transform::default()).unwrap_or_default()
         };
         let mut scene = context.scene();
         let game_object = scene.create(None, None);
@@ -1163,7 +1163,7 @@ impl ThumbnailGenerator {
             context,
             render_state,
             &scene,
-            bounds,
+            camera_fit,
             self.render_settings.frame_margin,
         )
     }
@@ -1218,13 +1218,13 @@ impl ThumbnailGenerator {
                 .instantiate_prefab(&prefab, None)
                 .ok_or_else(|| "prefab thumbnail source could not be instantiated".to_string())?
         };
-        let bounds = scene_mesh_bounds(context, &scene, root).unwrap_or_default();
+        let camera_fit = scene_mesh_camera_fit(context, &scene, root).unwrap_or_default();
         add_preview_lighting(&mut scene);
         self.render_scene_thumbnail(
             context,
             render_state,
             &scene,
-            bounds,
+            camera_fit,
             self.render_settings.frame_margin,
         )
     }
@@ -1234,11 +1234,11 @@ impl ThumbnailGenerator {
         context: &ReadOnlyAssetContext,
         render_state: &RenderState,
         scene: &Scene,
-        bounds: Bounds,
+        camera_fit: CameraFit,
         frame_margin: f32,
     ) -> Result<Texture, String> {
         let size_px = self.render_settings.size_px;
-        let (camera, camera_transform) = camera_for_bounds(bounds, frame_margin);
+        let (camera, camera_transform) = camera_for_fit(&camera_fit, frame_margin);
         {
             let renderer = self.scene_renderer.get_or_insert_with(|| {
                 SceneRenderer::new(
@@ -1487,23 +1487,17 @@ impl Bounds {
         }
     }
 
-    fn from_mesh(mesh: &Mesh) -> Option<Self> {
-        let mut vertices = mesh.vertices.iter();
-        let first = *vertices.next()?;
+    fn from_points(points: &[Vec3]) -> Option<Self> {
+        let mut points = points.iter();
+        let first = *points.next()?;
         let mut bounds = Self {
             min: first,
             max: first,
         };
-        for vertex in vertices {
-            bounds.include(*vertex);
+        for point in points {
+            bounds.include(*point);
         }
         Some(bounds)
-    }
-
-    fn include_mesh(&mut self, mesh: &Mesh, transform: &Transform) {
-        for vertex in &mesh.vertices {
-            self.include(transform.transform_position(vertex));
-        }
     }
 
     fn include(&mut self, point: Vec3) {
@@ -1538,12 +1532,59 @@ impl Bounds {
     }
 }
 
-fn scene_mesh_bounds(
+#[derive(Clone, Debug)]
+struct CameraFit {
+    bounds: Bounds,
+    points: Vec<Vec3>,
+}
+
+impl Default for CameraFit {
+    fn default() -> Self {
+        Self::from_bounds(Bounds::unit())
+    }
+}
+
+impl CameraFit {
+    fn from_bounds(bounds: Bounds) -> Self {
+        Self {
+            bounds,
+            points: bounds.corners().to_vec(),
+        }
+    }
+
+    fn from_mesh(mesh: &Mesh, transform: &Transform) -> Option<Self> {
+        let points = mesh
+            .vertices
+            .iter()
+            .map(|vertex| transform.transform_position(vertex))
+            .collect::<Vec<_>>();
+        Self::from_points(points)
+    }
+
+    fn from_points(points: Vec<Vec3>) -> Option<Self> {
+        let bounds = Bounds::from_points(&points)?;
+        Some(Self { bounds, points })
+    }
+
+    fn center(&self) -> Vec3 {
+        self.bounds.center()
+    }
+
+    fn radius(&self) -> f32 {
+        let center = self.center();
+        self.points
+            .iter()
+            .map(|point| (*point - center).norm())
+            .fold(0.5, f32::max)
+    }
+}
+
+fn scene_mesh_camera_fit(
     context: &ReadOnlyAssetContext,
     scene: &Scene,
     root: GameObject,
-) -> Option<Bounds> {
-    let mut bounds = None;
+) -> Option<CameraFit> {
+    let mut points = Vec::new();
     for game_object in std::iter::once(root).chain(scene.descendants(root)) {
         let transform = scene.world_transform(game_object);
         if let Some(mesh_ref) = scene
@@ -1553,8 +1594,7 @@ fn scene_mesh_bounds(
             .flatten()
         {
             let mesh = mesh_ref.read();
-            let bounds = bounds.get_or_insert_with(Bounds::unit);
-            bounds.include_mesh(&mesh, &transform);
+            append_transformed_mesh_points(&mut points, &mesh, &transform);
         }
         if let Some(mesh_ref) = scene
             .read_component::<ComponentSkinnedMesh, _, _>(game_object, |component| {
@@ -1563,11 +1603,17 @@ fn scene_mesh_bounds(
             .flatten()
         {
             let mesh = mesh_ref.read();
-            let bounds = bounds.get_or_insert_with(Bounds::unit);
-            bounds.include_mesh(&mesh, &transform);
+            append_transformed_mesh_points(&mut points, &mesh, &transform);
         }
     }
-    bounds
+    CameraFit::from_points(points)
+}
+
+fn append_transformed_mesh_points(points: &mut Vec<Vec3>, mesh: &Mesh, transform: &Transform) {
+    points.reserve(mesh.vertices.len());
+    for vertex in &mesh.vertices {
+        points.push(transform.transform_position(vertex));
+    }
 }
 
 fn default_material_ref(context: &ReadOnlyAssetContext) -> Result<AssetRef<Material>, String> {
@@ -1618,20 +1664,24 @@ fn add_preview_lighting(scene: &mut Scene) {
 }
 
 fn camera_for_bounds(bounds: Bounds, frame_margin: f32) -> (Camera, Transform) {
+    camera_for_fit(&CameraFit::from_bounds(bounds), frame_margin)
+}
+
+fn camera_for_fit(camera_fit: &CameraFit, frame_margin: f32) -> (Camera, Transform) {
     const ASPECT: f32 = 1.0;
     const FOV_X: f32 = 40.0f32.to_radians();
     const MIN_DISTANCE: f32 = 0.01;
 
     let frame_margin = ThumbnailRenderSettings::with_frame_margin(frame_margin).frame_margin;
-    let center = bounds.center();
-    let radius = bounds.radius();
+    let center = camera_fit.center();
+    let radius = camera_fit.radius();
     let view_direction = vec3(0.9, 0.55, -0.85).normalize();
     let screen_fit = (1.0 - frame_margin * 2.0).max(0.01);
     let fit_camera = Camera::new(ASPECT, FOV_X, MIN_DISTANCE, 100_000.0);
     let mut distance = radius.max(MIN_DISTANCE);
     while distance < 100_000.0
         && !bounds_fit_screen_space(
-            bounds,
+            camera_fit,
             &fit_camera,
             &thumbnail_camera_transform(center, view_direction, distance),
             screen_fit,
@@ -1640,7 +1690,7 @@ fn camera_for_bounds(bounds: Bounds, frame_margin: f32) -> (Camera, Transform) {
         distance *= 2.0;
     }
     if !bounds_fit_screen_space(
-        bounds,
+        camera_fit,
         &fit_camera,
         &thumbnail_camera_transform(center, view_direction, distance),
         screen_fit,
@@ -1653,7 +1703,7 @@ fn camera_for_bounds(bounds: Bounds, frame_margin: f32) -> (Camera, Transform) {
     for _ in 0..32 {
         let mid = (near + far) * 0.5;
         if bounds_fit_screen_space(
-            bounds,
+            camera_fit,
             &fit_camera,
             &thumbnail_camera_transform(center, view_direction, mid),
             screen_fit,
@@ -1666,8 +1716,10 @@ fn camera_for_bounds(bounds: Bounds, frame_margin: f32) -> (Camera, Transform) {
     let distance = far.max(MIN_DISTANCE);
 
     let camera_transform = thumbnail_camera_transform(center, view_direction, distance);
-    let max_depth = bounds
-        .corners()
+    let max_depth = camera_fit
+        .points
+        .iter()
+        .copied()
         .into_iter()
         .map(|corner| camera_transform.inverse_transform_position(&corner).z)
         .fold(distance, f32::max);
@@ -1676,12 +1728,12 @@ fn camera_for_bounds(bounds: Bounds, frame_margin: f32) -> (Camera, Transform) {
 }
 
 fn bounds_fit_screen_space(
-    bounds: Bounds,
+    camera_fit: &CameraFit,
     camera: &Camera,
     camera_transform: &Transform,
     screen_fit: f32,
 ) -> bool {
-    bounds.corners().into_iter().all(|corner| {
+    camera_fit.points.iter().copied().all(|corner| {
         project_corner(camera, camera_transform, corner).is_some_and(|projected| {
             projected.x.abs() <= screen_fit && projected.y.abs() <= screen_fit
         })
@@ -1870,8 +1922,20 @@ mod tests {
 
     fn max_projected_extent(bounds: Bounds, frame_margin: f32) -> f32 {
         let (camera, transform) = camera_for_bounds(bounds, frame_margin);
-        bounds
-            .corners()
+        max_projected_extent_for_points(bounds.corners(), &camera, &transform)
+    }
+
+    fn max_fit_projected_extent(camera_fit: &CameraFit, frame_margin: f32) -> f32 {
+        let (camera, transform) = camera_for_fit(camera_fit, frame_margin);
+        max_projected_extent_for_points(camera_fit.points.iter().copied(), &camera, &transform)
+    }
+
+    fn max_projected_extent_for_points(
+        points: impl IntoIterator<Item = Vec3>,
+        camera: &Camera,
+        transform: &Transform,
+    ) -> f32 {
+        points
             .into_iter()
             .map(|corner| {
                 let projected = project_corner(&camera, &transform, corner)
@@ -1982,6 +2046,35 @@ mod tests {
         assert!(
             (twenty_five_percent_extent - 0.5).abs() <= 0.001,
             "expected 25% per-side margin to fit central 50%, got {twenty_five_percent_extent}"
+        );
+    }
+
+    #[test]
+    fn thumbnail_camera_fits_actual_points_instead_of_empty_bounds_corners() {
+        let points = vec![vec3(-5.0, -5.0, -5.0), vec3(5.0, 5.0, 5.0)];
+        let camera_fit = CameraFit::from_points(points).expect("test points should produce bounds");
+
+        let (_, bounds_transform) = camera_for_bounds(
+            camera_fit.bounds,
+            ThumbnailRenderSettings::default().frame_margin,
+        );
+        let (_, points_transform) =
+            camera_for_fit(&camera_fit, ThumbnailRenderSettings::default().frame_margin);
+        let center = camera_fit.center();
+        let bounds_distance = (bounds_transform.position - center).norm();
+        let points_distance = (points_transform.position - center).norm();
+
+        assert!(
+            points_distance < bounds_distance,
+            "point-fit distance {points_distance} should be closer than AABB-fit distance {bounds_distance}"
+        );
+        assert!(
+            (max_fit_projected_extent(
+                &camera_fit,
+                ThumbnailRenderSettings::default().frame_margin
+            ) - 0.95)
+                .abs()
+                <= 0.001
         );
     }
 
