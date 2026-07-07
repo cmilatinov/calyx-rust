@@ -149,7 +149,6 @@ impl Panel for PanelContentBrowser {
             .show_inside(ui, |ui| {
                 self.handle_thumbnail_zoom_input(ui);
                 egui::ScrollArea::both().show(ui, |ui| {
-                    ui.set_clip_rect(ui.max_rect().expand(3.0));
                     let width = ui.available_width();
                     let spacing = ui.style().spacing.item_spacing;
                     ui.style_mut().spacing.item_spacing = Vec2::ZERO;
