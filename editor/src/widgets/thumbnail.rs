@@ -452,6 +452,7 @@ fn texture_from_rgba8(context: &ReadOnlyAssetContext, label: &str, image: &RgbaI
 fn thumbnail_display_view_descriptor() -> wgpu::TextureViewDescriptor<'static> {
     wgpu::TextureViewDescriptor {
         format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+        usage: Some(wgpu::TextureUsages::TEXTURE_BINDING),
         ..Default::default()
     }
 }
