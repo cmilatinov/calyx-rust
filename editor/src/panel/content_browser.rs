@@ -138,9 +138,11 @@ impl Panel for PanelContentBrowser {
         let icon_spacing = 10.0;
         let total_width = icon_size + icon_padding_x * 2.0;
         let row_height = icon_size
-            + icon_padding_y * 2.0
+            + icon_padding_y * 3.0
             + icon_spacing
             + ui.text_style_height(&TextStyle::Button);
+        let bottom_padding =
+            (ui.text_style_height(&TextStyle::Button) + icon_padding_y * 3.0).max(32.0);
         let folder_image = egui::include_image!("../../../resources/icons/folder_large.png");
         let file_image = egui::include_image!("../../../resources/icons/body_dark_large.png");
         egui::CentralPanel::default()
@@ -202,9 +204,8 @@ impl Panel for PanelContentBrowser {
                             self.empty_space_interaction(ui, rect);
                         }
                     });
-                    ui.add_space(8.0);
                     ui.style_mut().spacing.item_spacing = spacing;
-                    let (_, rect) = ui.allocate_space(ui.available_size());
+                    let (_, rect) = ui.allocate_space(Vec2::new(width.max(1.0), bottom_padding));
                     self.empty_space_interaction(ui, rect);
                 });
             });
