@@ -1673,47 +1673,39 @@ fn camera_for_fit(camera_fit: &CameraFit, frame_margin: f32) -> (Camera, Transfo
     const MIN_DISTANCE: f32 = 0.01;
 
     let frame_margin = ThumbnailRenderSettings::with_frame_margin(frame_margin).frame_margin;
-    let center = camera_fit.center();
+    let mut center = camera_fit.center();
     let radius = camera_fit.radius();
     let view_direction = vec3(0.9, 0.55, -0.85).normalize();
     let screen_fit = (1.0 - frame_margin * 2.0).max(0.01);
     let fit_camera = Camera::new(ASPECT, FOV_X, MIN_DISTANCE, 100_000.0);
-    let mut distance = radius.max(MIN_DISTANCE);
-    while distance < 100_000.0
-        && !bounds_fit_screen_space(
-            camera_fit,
-            &fit_camera,
-            &thumbnail_camera_transform(center, view_direction, distance),
-            screen_fit,
-        )
-    {
-        distance *= 2.0;
-    }
-    if !bounds_fit_screen_space(
+    let mut distance = fit_camera_distance(
         camera_fit,
         &fit_camera,
-        &thumbnail_camera_transform(center, view_direction, distance),
+        center,
+        view_direction,
         screen_fit,
-    ) {
-        distance = 100_000.0;
-    }
+        radius,
+    );
 
-    let mut near = MIN_DISTANCE;
-    let mut far = distance;
-    for _ in 0..32 {
-        let mid = (near + far) * 0.5;
-        if bounds_fit_screen_space(
+    for _ in 0..8 {
+        let camera_transform = thumbnail_camera_transform(center, view_direction, distance);
+        let Some(local_shift) = screen_centering_shift(camera_fit, &fit_camera, &camera_transform)
+        else {
+            break;
+        };
+        if local_shift.x.abs().max(local_shift.y.abs()) <= 0.0001 {
+            break;
+        }
+        center += camera_transform.transform_direction(&local_shift);
+        distance = fit_camera_distance(
             camera_fit,
             &fit_camera,
-            &thumbnail_camera_transform(center, view_direction, mid),
+            center,
+            view_direction,
             screen_fit,
-        ) {
-            far = mid;
-        } else {
-            near = mid;
-        }
+            radius,
+        );
     }
-    let distance = far.max(MIN_DISTANCE);
 
     let camera_transform = thumbnail_camera_transform(center, view_direction, distance);
     let max_depth = camera_fit
@@ -1727,6 +1719,54 @@ fn camera_for_fit(camera_fit: &CameraFit, frame_margin: f32) -> (Camera, Transfo
     (camera, camera_transform)
 }
 
+fn fit_camera_distance(
+    camera_fit: &CameraFit,
+    camera: &Camera,
+    center: Vec3,
+    view_direction: Vec3,
+    screen_fit: f32,
+    radius: f32,
+) -> f32 {
+    const MIN_DISTANCE: f32 = 0.01;
+
+    let mut distance = radius.max(MIN_DISTANCE);
+    while distance < 100_000.0
+        && !bounds_fit_screen_space(
+            camera_fit,
+            camera,
+            &thumbnail_camera_transform(center, view_direction, distance),
+            screen_fit,
+        )
+    {
+        distance *= 2.0;
+    }
+    if !bounds_fit_screen_space(
+        camera_fit,
+        camera,
+        &thumbnail_camera_transform(center, view_direction, distance),
+        screen_fit,
+    ) {
+        distance = 100_000.0;
+    }
+
+    let mut near = MIN_DISTANCE;
+    let mut far = distance;
+    for _ in 0..32 {
+        let mid = (near + far) * 0.5;
+        if bounds_fit_screen_space(
+            camera_fit,
+            camera,
+            &thumbnail_camera_transform(center, view_direction, mid),
+            screen_fit,
+        ) {
+            far = mid;
+        } else {
+            near = mid;
+        }
+    }
+    far.max(MIN_DISTANCE)
+}
+
 fn bounds_fit_screen_space(
     camera_fit: &CameraFit,
     camera: &Camera,
@@ -1738,6 +1778,70 @@ fn bounds_fit_screen_space(
             projected.x.abs() <= screen_fit && projected.y.abs() <= screen_fit
         })
     })
+}
+
+fn screen_centering_shift(
+    camera_fit: &CameraFit,
+    camera: &Camera,
+    camera_transform: &Transform,
+) -> Option<Vec3> {
+    let view_points = camera_fit
+        .points
+        .iter()
+        .map(|point| camera_transform.inverse_transform_position(point))
+        .filter(|point| point.z > camera.near_plane)
+        .collect::<Vec<_>>();
+    if view_points.is_empty() {
+        return None;
+    }
+
+    Some(vec3(
+        solve_screen_axis_shift(&view_points, camera.projection[(0, 0)], |point| point.x),
+        solve_screen_axis_shift(&view_points, camera.projection[(1, 1)], |point| point.y),
+        0.0,
+    ))
+}
+
+fn solve_screen_axis_shift(
+    view_points: &[Vec3],
+    projection_scale: f32,
+    axis: impl Fn(&Vec3) -> f32,
+) -> f32 {
+    let (mut min_axis, mut max_axis) = (f32::INFINITY, f32::NEG_INFINITY);
+    for point in view_points {
+        let value = axis(point);
+        min_axis = min_axis.min(value);
+        max_axis = max_axis.max(value);
+    }
+
+    let range = (max_axis - min_axis).abs().max(1.0);
+    let mut low = min_axis - range * 4.0;
+    let mut high = max_axis + range * 4.0;
+    for _ in 0..40 {
+        let mid = (low + high) * 0.5;
+        let center = projected_axis_center(view_points, projection_scale, &axis, mid);
+        if center > 0.0 {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    (low + high) * 0.5
+}
+
+fn projected_axis_center(
+    view_points: &[Vec3],
+    projection_scale: f32,
+    axis: impl Fn(&Vec3) -> f32,
+    shift: f32,
+) -> f32 {
+    let (mut min_projected, mut max_projected) = (f32::INFINITY, f32::NEG_INFINITY);
+    for point in view_points {
+        let projected = projection_scale * (axis(point) - shift) / point.z;
+        min_projected = min_projected.min(projected);
+        max_projected = max_projected.max(projected);
+    }
+    (min_projected + max_projected) * 0.5
 }
 
 fn project_corner(camera: &Camera, camera_transform: &Transform, corner: Vec3) -> Option<Vec3> {
@@ -1930,6 +2034,23 @@ mod tests {
         max_projected_extent_for_points(camera_fit.points.iter().copied(), &camera, &transform)
     }
 
+    fn projected_fit_center(camera_fit: &CameraFit, frame_margin: f32) -> Vec3 {
+        let (camera, transform) = camera_for_fit(camera_fit, frame_margin);
+        let (mut min_projected, mut max_projected) = (
+            vec3(f32::INFINITY, f32::INFINITY, f32::INFINITY),
+            vec3(f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY),
+        );
+        for point in camera_fit.points.iter().copied() {
+            let projected = project_corner(&camera, &transform, point)
+                .unwrap_or_else(|| panic!("point {point:?} could not be projected"));
+            min_projected.x = min_projected.x.min(projected.x);
+            min_projected.y = min_projected.y.min(projected.y);
+            max_projected.x = max_projected.x.max(projected.x);
+            max_projected.y = max_projected.y.max(projected.y);
+        }
+        (min_projected + max_projected) * 0.5
+    }
+
     fn max_projected_extent_for_points(
         points: impl IntoIterator<Item = Vec3>,
         camera: &Camera,
@@ -2067,6 +2188,36 @@ mod tests {
         assert!(
             points_distance < bounds_distance,
             "point-fit distance {points_distance} should be closer than AABB-fit distance {bounds_distance}"
+        );
+        assert!(
+            (max_fit_projected_extent(
+                &camera_fit,
+                ThumbnailRenderSettings::default().frame_margin
+            ) - 0.95)
+                .abs()
+                <= 0.001
+        );
+    }
+
+    #[test]
+    fn thumbnail_camera_centers_projected_points() {
+        let points = vec![
+            vec3(-4.0, -0.5, -2.0),
+            vec3(6.0, 2.0, 1.0),
+            vec3(2.5, -3.0, 2.0),
+            vec3(1.0, 0.75, -1.5),
+        ];
+        let camera_fit = CameraFit::from_points(points).expect("test points should produce bounds");
+        let projected_center =
+            projected_fit_center(&camera_fit, ThumbnailRenderSettings::default().frame_margin);
+
+        assert!(
+            projected_center.x.abs() <= 0.001,
+            "expected projected x center near zero, got {projected_center:?}"
+        );
+        assert!(
+            projected_center.y.abs() <= 0.001,
+            "expected projected y center near zero, got {projected_center:?}"
         );
         assert!(
             (max_fit_projected_extent(
