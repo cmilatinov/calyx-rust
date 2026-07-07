@@ -150,60 +150,65 @@ impl Panel for PanelContentBrowser {
             })
             .show_inside(ui, |ui| {
                 self.handle_thumbnail_zoom_input(ui);
-                egui::ScrollArea::both().show(ui, |ui| {
-                    let width = ui.available_width();
-                    let spacing = ui.style().spacing.item_spacing;
-                    ui.style_mut().spacing.item_spacing = Vec2::ZERO;
-                    let num_nodes_per_row = ((width / total_width) as usize).max(1);
-                    ui.horizontal_wrapped(|ui| {
-                        for (idx, node) in nodes.iter().enumerate() {
-                            let is_dir = node.is_dir();
-                            let is_selected = self.is_selected(state, node, is_dir);
-                            let image_size = Vec2::splat(icon_size);
-                            let image_src = if is_dir {
-                                folder_image.clone()
-                            } else {
-                                self.asset_thumbnail_image(state, node, image_size)
-                                    .unwrap_or_else(|| file_image.clone())
-                            };
-                            let res = PanelContentBrowser::render_file_button(
-                                ui,
-                                node.file_name().unwrap().to_str().unwrap(),
-                                image_src,
-                                image_size,
-                                icon_spacing,
-                                Vec2::new(icon_padding_x, icon_padding_y),
-                                is_selected,
-                            );
-                            if res.clicked() || res.secondary_clicked() {
-                                self.set_selected_file(state, node.clone());
-                            }
-                            if is_selected && is_dir && res.double_clicked() {
-                                self.set_selected_folder(&mut state.selection, node.clone());
-                            }
-                            if !is_dir {
-                                self.asset_context_menu(state, &res, node);
-                            }
-                            if idx % num_nodes_per_row == num_nodes_per_row - 1 {
-                                let remaining_width =
-                                    width - num_nodes_per_row as f32 * total_width - 1.0;
-                                if remaining_width > 0.0 {
-                                    let (_, rect) =
-                                        ui.allocate_space(Vec2::new(remaining_width, row_height));
-                                    self.empty_space_interaction(ui, rect);
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        let width = ui.available_width();
+                        let spacing = ui.style().spacing.item_spacing;
+                        ui.style_mut().spacing.item_spacing = Vec2::ZERO;
+                        let num_nodes_per_row = ((width / total_width) as usize).max(1);
+                        ui.horizontal_wrapped(|ui| {
+                            for (idx, node) in nodes.iter().enumerate() {
+                                let is_dir = node.is_dir();
+                                let is_selected = self.is_selected(state, node, is_dir);
+                                let image_size = Vec2::splat(icon_size);
+                                let image_src = if is_dir {
+                                    folder_image.clone()
+                                } else {
+                                    self.asset_thumbnail_image(state, node, image_size)
+                                        .unwrap_or_else(|| file_image.clone())
+                                };
+                                let res = PanelContentBrowser::render_file_button(
+                                    ui,
+                                    node.file_name().unwrap().to_str().unwrap(),
+                                    image_src,
+                                    image_size,
+                                    icon_spacing,
+                                    Vec2::new(icon_padding_x, icon_padding_y),
+                                    is_selected,
+                                );
+                                if res.clicked() || res.secondary_clicked() {
+                                    self.set_selected_file(state, node.clone());
+                                }
+                                if is_selected && is_dir && res.double_clicked() {
+                                    self.set_selected_folder(&mut state.selection, node.clone());
+                                }
+                                if !is_dir {
+                                    self.asset_context_menu(state, &res, node);
+                                }
+                                if idx % num_nodes_per_row == num_nodes_per_row - 1 {
+                                    let remaining_width =
+                                        width - num_nodes_per_row as f32 * total_width - 1.0;
+                                    if remaining_width > 0.0 {
+                                        let (_, rect) = ui
+                                            .allocate_space(Vec2::new(remaining_width, row_height));
+                                        self.empty_space_interaction(ui, rect);
+                                    }
                                 }
                             }
-                        }
-                        let last_row_count = nodes.len() % num_nodes_per_row;
-                        let remaining_width = width - last_row_count as f32 * total_width - 1.0;
-                        if last_row_count > 0 && remaining_width > 0.0 {
-                            let (_, rect) =
-                                ui.allocate_space(Vec2::new(remaining_width, row_height));
-                            self.empty_space_interaction(ui, rect);
-                        }
+                            let last_row_count = nodes.len() % num_nodes_per_row;
+                            let remaining_width = width - last_row_count as f32 * total_width - 1.0;
+                            if last_row_count > 0 && remaining_width > 0.0 {
+                                let (_, rect) =
+                                    ui.allocate_space(Vec2::new(remaining_width, row_height));
+                                self.empty_space_interaction(ui, rect);
+                            }
+                        });
+                        ui.add_space(
+                            ui.text_style_height(&TextStyle::Button) + icon_padding_y * 2.0,
+                        );
+                        ui.style_mut().spacing.item_spacing = spacing;
                     });
-                    ui.style_mut().spacing.item_spacing = spacing;
-                });
             });
     }
 
