@@ -464,6 +464,16 @@ impl EditorApp {
         });
     }
 
+    fn tools_menu(&mut self, ui: &mut Ui) {
+        ui.menu_button("Tools", |ui| {
+            if ui.button("Invalidate Thumbnail Cache").clicked() {
+                self.state.thumbnails.invalidate_cache();
+                log::info!("Queued thumbnail cache invalidation");
+                ui.close_menu();
+            }
+        });
+    }
+
     fn new_interaction(&mut self) {
         self.state.game.scenes.load_default_scene();
         log::info!("Created new scene from default scene");
@@ -577,6 +587,7 @@ impl EditorApp {
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 self.file_menu(ui);
+                self.tools_menu(ui);
 
                 if Self::icon_button(ui, include_image!("../../resources/icons/compile_dark.png"))
                     .clicked()

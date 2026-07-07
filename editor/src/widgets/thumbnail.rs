@@ -30,7 +30,6 @@ use nalgebra_glm::{vec3, Vec3};
 use sha1::{Digest, Sha1};
 use uuid::Uuid;
 
-const THUMBNAIL_CACHE_VERSION: u32 = 6;
 const THUMBNAIL_MAX_FAILURES: u8 = 3;
 pub const THUMBNAIL_DEFAULT_SIZE: u32 = 512;
 pub const THUMBNAIL_MIN_SIZE: u32 = 64;
@@ -192,17 +191,20 @@ struct ThumbnailCache {
 }
 
 impl ThumbnailCache {
-    fn new(context: &ReadOnlyAssetContext, render_settings: ThumbnailRenderSettings) -> Self {
-        let render_settings = render_settings.sanitized();
+    fn project_root(context: &ReadOnlyAssetContext) -> PathBuf {
         let asset_root = context.registries.assets.read().root_path().clone();
         let project_hash = project_cache_hash(&asset_root);
-        let cache_root = dirs::cache_dir()
+        dirs::cache_dir()
             .unwrap_or_else(std::env::temp_dir)
             .join("Calyx")
             .join("Editor")
             .join("thumbnails")
             .join(project_hash)
-            .join(format!("v{THUMBNAIL_CACHE_VERSION}"))
+    }
+
+    fn new(context: &ReadOnlyAssetContext, render_settings: ThumbnailRenderSettings) -> Self {
+        let render_settings = render_settings.sanitized();
+        let cache_root = Self::project_root(context)
             .join(format!("{}px", render_settings.size_px))
             .join(render_settings.cache_key());
 
@@ -210,6 +212,19 @@ impl ThumbnailCache {
             root: cache_root,
             size_px: render_settings.size_px,
         }
+    }
+
+    fn invalidate_project(context: &ReadOnlyAssetContext) -> Result<(), String> {
+        let root = Self::project_root(context);
+        if !root.exists() {
+            return Ok(());
+        }
+        fs::remove_dir_all(&root).map_err(|err| {
+            format!(
+                "failed to remove thumbnail cache directory {}: {err}",
+                root.display()
+            )
+        })
     }
 
     fn load(
@@ -740,7 +755,18 @@ struct ThumbnailState {
     pipeline: ThumbnailPipeline,
     textures: HashMap<ThumbnailKey, Texture>,
     render_settings: ThumbnailRenderSettings,
+    cache_epoch: u64,
+    invalidate_cache: bool,
     stop: bool,
+}
+
+enum ThumbnailWorkerCommand {
+    Generate {
+        job: ThumbnailJob,
+        render_settings: ThumbnailRenderSettings,
+        cache_epoch: u64,
+    },
+    InvalidateCache,
 }
 
 struct ThumbnailGenerator {
@@ -793,6 +819,16 @@ impl ThumbnailService {
         }
 
         state.render_settings = render_settings;
+        state.pipeline = ThumbnailPipeline::default();
+        state.textures.clear();
+        drop(state);
+        self.shared.wake.notify_one();
+    }
+
+    pub fn invalidate_cache(&mut self) {
+        let mut state = self.shared.state.lock().unwrap();
+        state.cache_epoch = state.cache_epoch.wrapping_add(1);
+        state.invalidate_cache = true;
         state.pipeline = ThumbnailPipeline::default();
         state.textures.clear();
         drop(state);
@@ -887,17 +923,38 @@ fn thumbnail_worker_loop(
         ..Default::default()
     };
     loop {
-        let (job, render_settings) = {
+        let command = {
             let mut state = shared.state.lock().unwrap();
             loop {
                 if state.stop {
                     return;
                 }
+                if state.invalidate_cache {
+                    state.invalidate_cache = false;
+                    break ThumbnailWorkerCommand::InvalidateCache;
+                }
                 if let Some(job) = state.pipeline.start_next() {
-                    break (job, state.render_settings);
+                    break ThumbnailWorkerCommand::Generate {
+                        job,
+                        render_settings: state.render_settings,
+                        cache_epoch: state.cache_epoch,
+                    };
                 }
                 state = shared.wake.wait(state).unwrap();
             }
+        };
+
+        let ThumbnailWorkerCommand::Generate {
+            job,
+            render_settings,
+            cache_epoch,
+        } = command
+        else {
+            match ThumbnailCache::invalidate_project(&context) {
+                Ok(()) => log::info!("Invalidated thumbnail cache"),
+                Err(err) => log::warn!("{err}"),
+            }
+            continue;
         };
 
         generator.render_settings = render_settings;
@@ -908,7 +965,8 @@ fn thumbnail_worker_loop(
         match cache.load(&context, &job.request) {
             Ok(Some(texture)) => {
                 let mut state = shared.state.lock().unwrap();
-                let status_updated = state.pipeline.complete(key);
+                let status_updated =
+                    state.cache_epoch == cache_epoch && state.pipeline.complete(key);
                 if status_updated {
                     state.textures.insert(key, texture);
                 }
@@ -919,9 +977,17 @@ fn thumbnail_worker_loop(
 
         match generator.generate(&context, render_state, &job.request) {
             Ok(texture) => {
-                let _ = cache.store(render_state, &job.request, &texture);
+                let should_store = {
+                    let state = shared.state.lock().unwrap();
+                    state.cache_epoch == cache_epoch
+                        && matches!(state.pipeline.status(key), ThumbnailStatus::InProgress)
+                };
+                if should_store {
+                    let _ = cache.store(render_state, &job.request, &texture);
+                }
                 let mut state = shared.state.lock().unwrap();
-                let status_updated = state.pipeline.complete(key);
+                let status_updated =
+                    state.cache_epoch == cache_epoch && state.pipeline.complete(key);
                 if status_updated {
                     log::trace!(
                         "Generated thumbnail asset={} type={} version={} path={} texture_size={}x{} format={:?} elapsed_ms={}",
@@ -939,6 +1005,9 @@ fn thumbnail_worker_loop(
             }
             Err(message) => {
                 let mut state = shared.state.lock().unwrap();
+                if state.cache_epoch != cache_epoch {
+                    continue;
+                }
                 let status_updated = state.pipeline.fail(key, message.as_str());
                 let failure_count = state.pipeline.failure_count(key);
                 if status_updated && failure_count <= THUMBNAIL_MAX_FAILURES {
@@ -1158,6 +1227,7 @@ impl ThumbnailGenerator {
                         gizmos: false,
                         samples: 1,
                         clear_color: Color32::TRANSPARENT,
+                        mesh_cull_mode: None,
                     },
                     (size_px, size_px),
                 )
@@ -1496,7 +1566,7 @@ fn add_preview_lighting(scene: &mut Scene) {
         ComponentAmbientLight {
             active: true,
             color: Color32::from_rgb(210, 220, 232),
-            intensity: 0.22,
+            intensity: 0.12,
         },
     );
 
