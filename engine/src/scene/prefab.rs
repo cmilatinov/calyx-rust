@@ -97,9 +97,13 @@ impl Asset for Prefab {
             let mut mesh_names = HashSet::new();
             let mut meshes = Vec::new();
             for mesh in &scene.meshes {
-                let name = imported_sub_asset_name(&meta.name, &mesh.name, "mesh", &mut mesh_names);
-                let mesh_ref = asset_registry
-                    .create_or_update(name, Mesh::from_russimp_mesh(&game.render_context, mesh))?;
+                let name = imported_sub_asset_name(&mesh.name, "mesh", &mut mesh_names);
+                let mesh_ref = asset_registry.create_or_update_sub_asset(
+                    meta.id,
+                    &meta.name,
+                    &name,
+                    Mesh::from_russimp_mesh(&game.render_context, mesh),
+                )?;
                 meshes.push(mesh_ref.clone());
                 bones.extend(mesh.bones.iter().enumerate().map(|(i, b)| {
                     let offset_matrix = math::mat4_from_russimp(&b.offset_matrix);
@@ -123,14 +127,14 @@ impl Asset for Prefab {
             let mut animation_names = HashSet::new();
             let mut animations = Vec::new();
             for anim in &scene.animations {
-                let name = imported_sub_asset_name(
+                let name =
+                    imported_sub_asset_name(anim.name.as_str(), "animation", &mut animation_names);
+                let anim_ref = asset_registry.create_or_update_sub_asset(
+                    meta.id,
                     &meta.name,
-                    anim.name.as_str(),
-                    "animation",
-                    &mut animation_names,
-                );
-                let anim_ref = asset_registry
-                    .create_or_update(name.clone(), Animation::from_russimp_animation(anim))?;
+                    &name,
+                    Animation::from_russimp_animation(anim),
+                )?;
                 animations.push(anim_ref.id());
             }
 
@@ -174,7 +178,6 @@ impl Asset for Prefab {
 }
 
 fn imported_sub_asset_name(
-    parent_name: &str,
     source_name: &str,
     fallback_name: &str,
     used_names: &mut HashSet<String>,
@@ -190,7 +193,7 @@ fn imported_sub_asset_name(
         candidate = format!("{stem}_{suffix}");
         suffix += 1;
     }
-    format!("{parent_name}/{candidate}")
+    candidate
 }
 
 #[cfg(test)]
@@ -202,17 +205,14 @@ mod tests {
         let mut used_names = HashSet::new();
 
         assert_eq!(
-            imported_sub_asset_name("models/tank", "Tracks", "mesh", &mut used_names),
-            "models/tank/Tracks"
+            imported_sub_asset_name("Tracks", "mesh", &mut used_names),
+            "Tracks"
         );
         assert_eq!(
-            imported_sub_asset_name("models/tank", "Tracks", "mesh", &mut used_names),
-            "models/tank/Tracks_1"
+            imported_sub_asset_name("Tracks", "mesh", &mut used_names),
+            "Tracks_1"
         );
-        assert_eq!(
-            imported_sub_asset_name("models/tank", "", "mesh", &mut used_names),
-            "models/tank/mesh"
-        );
+        assert_eq!(imported_sub_asset_name("", "mesh", &mut used_names), "mesh");
     }
 }
 

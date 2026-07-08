@@ -315,6 +315,10 @@ impl SkyboxFrontFaceDownscaler {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&source.sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
                         resource: wgpu::BindingResource::TextureView(&thumbnail_storage_view),
                     },
                 ],

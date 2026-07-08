@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Condvar, Mutex};
@@ -133,7 +133,7 @@ impl ThumbnailRequest {
         Some(Self {
             asset_id: meta.id,
             asset_type: meta.type_uuid,
-            source_version: source_version(meta.path.as_deref()),
+            source_version: thumbnail_source_version(registry, meta.id),
             source_path: meta.path,
         })
     }
@@ -173,6 +173,94 @@ fn source_version(path: Option<&Path>) -> u64 {
         })
         .unwrap_or_default();
     modified ^ metadata.len().rotate_left(32)
+}
+
+fn thumbnail_source_version(registry: &AssetRegistry, asset_id: Uuid) -> u64 {
+    let mut visited = HashSet::new();
+    asset_source_version(registry, asset_id, &mut visited)
+}
+
+fn asset_source_version(
+    registry: &AssetRegistry,
+    asset_id: Uuid,
+    visited: &mut HashSet<Uuid>,
+) -> u64 {
+    if !visited.insert(asset_id) {
+        return 0;
+    }
+
+    let Some(meta) = registry.asset_meta_from_id(asset_id) else {
+        return 0;
+    };
+
+    let mut hasher = Sha1::new();
+    hasher.update(meta.id.as_bytes());
+    hasher.update(meta.type_uuid.as_bytes());
+    hasher.update(source_version(meta.path.as_deref()).to_le_bytes());
+
+    for child in meta.children {
+        hasher.update(child.as_bytes());
+        hasher.update(asset_source_version(registry, child, visited).to_le_bytes());
+    }
+
+    for dependency in referenced_asset_ids(registry, meta.path.as_deref()) {
+        hasher.update(dependency.as_bytes());
+        hasher.update(asset_source_version(registry, dependency, visited).to_le_bytes());
+    }
+
+    let digest = hasher.finalize();
+    u64::from_le_bytes(digest[0..8].try_into().unwrap_or_default())
+}
+
+fn referenced_asset_ids(registry: &AssetRegistry, path: Option<&Path>) -> Vec<Uuid> {
+    let Some(path) = path else {
+        return Vec::new();
+    };
+    if !matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("cxmat" | "cxprefab")
+    ) {
+        return Vec::new();
+    }
+    let Ok(file) = fs::File::open(path) else {
+        return Vec::new();
+    };
+    let Ok(value) = serde_json::from_reader::<_, serde_json::Value>(file) else {
+        return Vec::new();
+    };
+
+    let mut ids = Vec::new();
+    collect_asset_ids_from_json(registry, &value, &mut ids);
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
+fn collect_asset_ids_from_json(
+    registry: &AssetRegistry,
+    value: &serde_json::Value,
+    ids: &mut Vec<Uuid>,
+) {
+    match value {
+        serde_json::Value::String(value) => {
+            if let Ok(id) = Uuid::parse_str(value) {
+                if registry.asset_meta_from_id(id).is_some() {
+                    ids.push(id);
+                }
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                collect_asset_ids_from_json(registry, value, ids);
+            }
+        }
+        serde_json::Value::Object(values) => {
+            for value in values.values() {
+                collect_asset_ids_from_json(registry, value, ids);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn thumbnail_asset_type_name(asset_type: Uuid) -> &'static str {

@@ -226,7 +226,16 @@ fn thumbnail_worker_loop(
                         && matches!(state.pipeline.status(key), ThumbnailStatus::InProgress)
                 };
                 if should_store {
-                    let _ = cache.store(render_state, &job.request, &texture);
+                    if let Err(err) = cache.store(render_state, &job.request, &texture) {
+                        log::warn!(
+                            "Failed to store thumbnail cache asset={} type={} version={} path={} error={}",
+                            job.request.asset_id,
+                            thumbnail_asset_type_name(job.request.asset_type),
+                            job.request.source_version,
+                            thumbnail_source_label(&job.request),
+                            err
+                        );
+                    }
                 }
                 let mut state = shared.state.lock().unwrap();
                 let status_updated =

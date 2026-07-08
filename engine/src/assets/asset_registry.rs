@@ -460,9 +460,23 @@ impl AssetRegistry {
         name: String,
         value: A,
     ) -> Result<Ref<A>, AssetError> {
-        let id = self
-            .asset_id(name.as_str())
-            .unwrap_or_else(|| utils::uuid_from_str(name.as_str()));
+        let id = if let Some(id) = self.asset_id(name.as_str()) {
+            if let Some(meta) = self.asset_meta_from_id(id) {
+                if meta.path.is_some() || meta.parent.is_some() {
+                    return Err(
+                        AssetError::AlreadyExists.with_source(format!("asset name `{name}`"))
+                    );
+                }
+                if meta.type_uuid != A::type_uuid() {
+                    return Err(AssetError::TypeMismatch
+                        .with_type(A::asset_name())
+                        .with_source(format!("asset name `{name}`")));
+                }
+            }
+            id
+        } else {
+            utils::uuid_from_str(name.as_str())
+        };
 
         if let Some(asset_ref) = self.asset_cache().get(&id).cloned() {
             let Some(asset_ref) = asset_ref.try_downcast::<A>() else {
@@ -480,6 +494,55 @@ impl AssetRegistry {
 
         let asset = Ref::from_id_value(id, value);
         self.upsert_in_memory_asset_meta::<A>(id, name);
+        self.asset_cache_mut().insert(id, asset.as_asset());
+        Ok(asset)
+    }
+
+    /// Creates or refreshes an imported sub-asset owned by `parent_id`.
+    pub fn create_or_update_sub_asset<A: Asset + TypeUuid>(
+        &self,
+        parent_id: Uuid,
+        parent_name: &str,
+        local_name: &str,
+        value: A,
+    ) -> Result<Ref<A>, AssetError> {
+        let canonical_name = Self::sub_asset_name(parent_name, local_name);
+        let id = if let Some(id) = self.asset_id(&canonical_name) {
+            if let Some(meta) = self.asset_meta_from_id(id) {
+                if meta.path.is_some()
+                    || meta.parent.is_some_and(|existing| existing != parent_id)
+                    || meta.name != local_name
+                {
+                    return Err(AssetError::AlreadyExists
+                        .with_source(format!("asset name `{canonical_name}`")));
+                }
+                if meta.type_uuid != A::type_uuid() {
+                    return Err(AssetError::TypeMismatch
+                        .with_type(A::asset_name())
+                        .with_source(format!("asset name `{canonical_name}`")));
+                }
+            }
+            id
+        } else {
+            utils::uuid_from_str(canonical_name.as_str())
+        };
+
+        if let Some(asset_ref) = self.asset_cache().get(&id).cloned() {
+            let Some(asset_ref) = asset_ref.try_downcast::<A>() else {
+                return Err(AssetError::TypeMismatch
+                    .with_type(A::asset_name())
+                    .with_source(format!("asset name `{canonical_name}`")));
+            };
+            {
+                let mut asset = asset_ref.write();
+                *asset = value;
+            }
+            self.upsert_sub_asset_meta::<A>(id, parent_id, parent_name, local_name);
+            return Ok(asset_ref);
+        }
+
+        let asset = Ref::from_id_value(id, value);
+        self.upsert_sub_asset_meta::<A>(id, parent_id, parent_name, local_name);
         self.asset_cache_mut().insert(id, asset.as_asset());
         Ok(asset)
     }
@@ -503,6 +566,34 @@ impl AssetRegistry {
                     .map(|meta| meta.children.clone())
                     .unwrap_or_default(),
                 path: existing_meta.and_then(|meta| meta.path),
+            },
+        );
+    }
+
+    fn upsert_sub_asset_meta<A: Asset + TypeUuid>(
+        &self,
+        id: Uuid,
+        parent_id: Uuid,
+        parent_name: &str,
+        local_name: &str,
+    ) {
+        let canonical_name = Self::sub_asset_name(parent_name, local_name);
+        let display_name = self.asset_display_name::<A>(local_name);
+        let mut data = self.asset_data_mut();
+        data.names.insert(
+            RelativePathBuf::from(canonical_name.as_str()).normalize(),
+            id,
+        );
+        data.meta.insert(
+            id,
+            AssetMeta {
+                id,
+                type_uuid: A::type_uuid(),
+                display_name,
+                name: local_name.to_string(),
+                parent: Some(parent_id),
+                children: Default::default(),
+                path: None,
             },
         );
     }
@@ -962,6 +1053,22 @@ impl AssetRegistry {
             .with_extension("")
     }
 
+    fn sub_asset_name(parent_name: &str, local_name: &str) -> String {
+        let mut path = RelativePathBuf::from(parent_name).normalize();
+        path.push(local_name);
+        path.normalize().to_string()
+    }
+
+    fn local_sub_asset_name(parent_name: &str, child_name: &str) -> String {
+        let parent_name = RelativePathBuf::from(parent_name).normalize().to_string();
+        let child_name = RelativePathBuf::from(child_name).normalize().to_string();
+        child_name
+            .strip_prefix(parent_name.as_str())
+            .and_then(|local| local.strip_prefix('/'))
+            .unwrap_or(child_name.as_str())
+            .to_string()
+    }
+
     fn load_meta_file(
         &self,
         asset_path: &Path,
@@ -978,12 +1085,12 @@ impl AssetRegistry {
             meta.main.id,
         );
         for child in meta.inner.iter_mut() {
+            child.name = Self::local_sub_asset_name(&meta.main.name, &child.name);
             child.parent = Some(meta.main.id);
-            let mut path = meta_path.with_extension("");
-            path.push(child.name.as_str());
+            let name = Self::sub_asset_name(&meta.main.name, &child.name);
             data.meta.insert(child.id, child.clone());
             data.names
-                .insert(Self::relative_asset_path(asset_path, &path), child.id);
+                .insert(RelativePathBuf::from(name.as_str()).normalize(), child.id);
         }
         Ok(meta)
     }
@@ -992,6 +1099,110 @@ impl AssetRegistry {
         let file = File::create(meta_path).map_err(Box::new)?;
         let writer = BufWriter::new(file);
         Ok(serde_json::to_writer_pretty(writer, meta).map_err(Box::new)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::assets::error::AssetErrorKind;
+    use crate::test_utils::test_registries_with_assets;
+    use serde_json::json;
+
+    fn temp_asset_root(prefix: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("{prefix}-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&path).expect("failed to create temp asset root");
+        path
+    }
+
+    fn write_parent_with_child_meta(root: &Path, child_name: &str) -> (Uuid, Uuid) {
+        let parent_id = Uuid::new_v4();
+        let child_id = Uuid::new_v4();
+        std::fs::write(root.join("parent.fbx"), b"").expect("failed to write parent asset");
+        std::fs::write(
+            root.join("parent.meta"),
+            serde_json::to_vec_pretty(&json!({
+                "main": {
+                    "id": parent_id,
+                    "name": "parent",
+                    "display_name": "parent",
+                    "type_uuid": Prefab::type_uuid(),
+                },
+                "inner": [
+                    {
+                        "id": child_id,
+                        "name": child_name,
+                        "display_name": child_name,
+                        "type_uuid": Mesh::type_uuid(),
+                    }
+                ]
+            }))
+            .expect("failed to encode test meta"),
+        )
+        .expect("failed to write parent meta");
+        (parent_id, child_id)
+    }
+
+    #[test]
+    fn create_or_update_rejects_disk_asset_name() {
+        let root = temp_asset_root("calyx-disk-create-or-update");
+        std::fs::write(root.join("existing.obj"), b"").expect("failed to write test asset");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+
+        let result =
+            registry.create_or_update("existing".into(), Mesh::new(&registry.render_context));
+
+        assert!(matches!(
+            result,
+            Err(AssetError {
+                kind: AssetErrorKind::AlreadyExists,
+                ..
+            })
+        ));
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn sub_asset_meta_uses_local_names_and_canonical_lookup() {
+        let root = temp_asset_root("calyx-local-subasset-meta");
+        let (parent_id, child_id) = write_parent_with_child_meta(&root, "Body");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+
+        assert_eq!(registry.asset_id("parent/Body"), Some(child_id));
+        assert_eq!(
+            registry.asset_meta_from_id(child_id).map(|meta| meta.name),
+            Some("Body".into())
+        );
+        assert_eq!(
+            registry
+                .asset_meta_from_id(child_id)
+                .and_then(|meta| meta.parent),
+            Some(parent_id)
+        );
+        assert_eq!(
+            registry
+                .asset_meta_from_id(parent_id)
+                .map(|meta| meta.children),
+            Some(vec![child_id])
+        );
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn sub_asset_meta_normalizes_legacy_full_child_names() {
+        let root = temp_asset_root("calyx-legacy-subasset-meta");
+        let (_, child_id) = write_parent_with_child_meta(&root, "parent/Body");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+
+        assert_eq!(registry.asset_id("parent/Body"), Some(child_id));
+        assert_eq!(
+            registry.asset_meta_from_id(child_id).map(|meta| meta.name),
+            Some("Body".into())
+        );
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
 }
 

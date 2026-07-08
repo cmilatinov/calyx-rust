@@ -14,7 +14,23 @@ fn compute_main(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
 
-    let uv = (vec2<f32>(id.xy) + vec2<f32>(0.5, 0.5)) / vec2<f32>(size);
-    let color = textureSampleLevel(source_texture, source_sampler, uv, 0.0);
-    textureStore(output_texture, vec2<i32>(id.xy), color);
+    let source_size = vec2f(textureDimensions(source_texture));
+    let output_size = vec2f(size);
+    let ratio = source_size / output_size;
+    let source_lod = clamp(
+        log2(max(max(ratio.x, ratio.y), 1.0)),
+        0.0,
+        f32(textureNumLevels(source_texture) - 1u),
+    );
+
+    var color = vec4f(0.0);
+    for (var y = 0u; y < 2u; y++) {
+        for (var x = 0u; x < 2u; x++) {
+            let offset = (vec2f(f32(x), f32(y)) + vec2f(0.5)) * 0.5;
+            let uv = (vec2f(id.xy) + offset) / output_size;
+            color += textureSampleLevel(source_texture, source_sampler, uv, source_lod);
+        }
+    }
+
+    textureStore(output_texture, vec2<i32>(id.xy), color * 0.25);
 }

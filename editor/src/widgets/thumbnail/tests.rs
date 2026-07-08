@@ -80,6 +80,62 @@ fn source_version_is_zero_for_missing_sources_and_changes_for_file_size() {
 }
 
 #[test]
+fn thumbnail_request_source_version_includes_referenced_asset_sources() {
+    let root = std::env::temp_dir().join(format!(
+        "calyx-thumbnail-dependency-version-{}",
+        Uuid::new_v4()
+    ));
+    let texture_dir = root.join("textures");
+    let material_dir = root.join("materials");
+    fs::create_dir_all(&texture_dir).expect("failed to create texture dir");
+    fs::create_dir_all(&material_dir).expect("failed to create material dir");
+    let texture_path = texture_dir.join("source.png");
+    let material_path = material_dir.join("mat.cxmat");
+    fs::write(&texture_path, b"a").expect("failed to write texture source");
+    fs::write(&material_path, "{}").expect("failed to write placeholder material source");
+
+    let context = engine::test_support::test_asset_context_with_assets(vec![root.clone()]);
+    let registry = context.registries.assets.read();
+    let texture_id = registry
+        .asset_id("textures/source")
+        .expect("texture asset should be registered");
+    fs::write(
+        &material_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "shader": Uuid::nil(),
+            "variables": [
+                {
+                    "group": 3,
+                    "binding": 0,
+                    "offset": null,
+                    "name": "texture_diffuse",
+                    "span": null,
+                    "value": {
+                        "Texture2D": {
+                            "Asset": texture_id
+                        }
+                    }
+                }
+            ]
+        }))
+        .expect("failed to encode material source"),
+    )
+    .expect("failed to write material source");
+
+    let first = ThumbnailRequest::from_asset_path(&registry, &material_path)
+        .expect("material should support thumbnails")
+        .source_version;
+    fs::write(&texture_path, b"changed").expect("failed to rewrite texture source");
+    let second = ThumbnailRequest::from_asset_path(&registry, &material_path)
+        .expect("material should support thumbnails")
+        .source_version;
+
+    assert_ne!(first, second);
+    drop(registry);
+    fs::remove_dir_all(root).expect("failed to remove temp asset root");
+}
+
+#[test]
 fn thumbnail_type_names_cover_supported_and_unknown_assets() {
     assert_eq!(thumbnail_asset_type_name(Texture::type_uuid()), "texture");
     assert_eq!(thumbnail_asset_type_name(Material::type_uuid()), "material");
