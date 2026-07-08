@@ -145,7 +145,7 @@ impl ThumbnailCache {
         }
     }
 
-    fn path(&self, request: &ThumbnailRequest) -> PathBuf {
+    pub(super) fn path(&self, request: &ThumbnailRequest) -> PathBuf {
         self.root
             .join(thumbnail_asset_type_name(request.asset_type))
             .join(format!(

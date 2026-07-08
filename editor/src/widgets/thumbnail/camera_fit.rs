@@ -46,7 +46,7 @@ impl Bounds {
         (self.min + self.max) * 0.5
     }
 
-    fn radius(&self) -> f32 {
+    pub(super) fn radius(&self) -> f32 {
         let extents = self.max - self.min;
         extents.norm().max(0.5) * 0.5
     }
@@ -103,7 +103,7 @@ impl CameraFit {
         self.bounds.center()
     }
 
-    fn radius(&self) -> f32 {
+    pub(super) fn radius(&self) -> f32 {
         let center = self.center();
         self.points
             .iter()

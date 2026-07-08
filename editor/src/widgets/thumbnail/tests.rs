@@ -1,3 +1,4 @@
+use super::cache::ThumbnailCache;
 use super::camera_fit::*;
 use super::generator::SkyboxFrontFaceDownscaler;
 use super::pipeline::*;
@@ -11,6 +12,128 @@ fn request(source_version: u64) -> ThumbnailRequest {
         source_path: Some(PathBuf::from("assets/texture.png")),
         source_version,
     }
+}
+
+#[test]
+fn render_settings_sanitize_size_margin_and_cache_key() {
+    let settings = ThumbnailRenderSettings::with_size_and_frame_margin(1, f32::NAN);
+    assert_eq!(settings.size_px, THUMBNAIL_MIN_SIZE);
+    assert_eq!(settings.frame_margin, THUMBNAIL_DEFAULT_FRAME_MARGIN);
+    assert_eq!(settings.cache_key(), "frame-margin-25");
+
+    let settings = ThumbnailRenderSettings::with_size_and_frame_margin(u32::MAX, f32::INFINITY);
+    assert_eq!(settings.size_px, THUMBNAIL_MAX_SIZE);
+    assert_eq!(settings.frame_margin, THUMBNAIL_DEFAULT_FRAME_MARGIN);
+
+    let settings = ThumbnailRenderSettings::with_size_and_frame_margin(256, -1.0);
+    assert_eq!(settings.size_px, 256);
+    assert_eq!(settings.frame_margin, THUMBNAIL_MIN_FRAME_MARGIN);
+    assert_eq!(settings.cache_key(), "frame-margin-0");
+
+    let settings = ThumbnailRenderSettings::with_size_and_frame_margin(256, 1.0);
+    assert_eq!(settings.frame_margin, THUMBNAIL_MAX_FRAME_MARGIN);
+    assert_eq!(settings.cache_key(), "frame-margin-450");
+}
+
+#[test]
+fn thumbnail_request_key_uses_asset_id_and_source_version_only() {
+    let request = ThumbnailRequest {
+        asset_id: Uuid::from_u128(0xabc),
+        asset_type: Mesh::type_uuid(),
+        source_path: Some(PathBuf::from("assets/meshes/tank.obj")),
+        source_version: 42,
+    };
+    let same_key_different_type_and_path = ThumbnailRequest {
+        asset_type: Texture::type_uuid(),
+        source_path: Some(PathBuf::from("assets/textures/tank.png")),
+        ..request.clone()
+    };
+
+    assert_eq!(
+        request.key(),
+        ThumbnailKey {
+            asset_id: request.asset_id,
+            source_version: request.source_version
+        }
+    );
+    assert_eq!(request.key(), same_key_different_type_and_path.key());
+}
+
+#[test]
+fn source_version_is_zero_for_missing_sources_and_changes_for_file_size() {
+    let path = std::env::temp_dir().join(format!(
+        "calyx-thumbnail-source-version-{}.tmp",
+        Uuid::new_v4()
+    ));
+    assert_eq!(source_version(None), 0);
+    assert_eq!(source_version(Some(&path)), 0);
+
+    fs::write(&path, b"abc").expect("failed to write temp thumbnail source");
+    let first = source_version(Some(&path));
+    fs::write(&path, b"abcdef").expect("failed to rewrite temp thumbnail source");
+    let second = source_version(Some(&path));
+    let _ = fs::remove_file(&path);
+
+    assert_ne!(first, 0);
+    assert_ne!(second, 0);
+    assert_ne!(first, second);
+}
+
+#[test]
+fn thumbnail_type_names_cover_supported_and_unknown_assets() {
+    assert_eq!(thumbnail_asset_type_name(Texture::type_uuid()), "texture");
+    assert_eq!(thumbnail_asset_type_name(Material::type_uuid()), "material");
+    assert_eq!(thumbnail_asset_type_name(Mesh::type_uuid()), "mesh");
+    assert_eq!(thumbnail_asset_type_name(Prefab::type_uuid()), "prefab");
+    assert_eq!(thumbnail_asset_type_name(Skybox::type_uuid()), "skybox");
+    assert_eq!(thumbnail_asset_type_name(Uuid::nil()), "unknown");
+
+    assert!(ThumbnailRequest::is_supported_asset_type(Mesh::type_uuid()));
+    assert!(!ThumbnailRequest::is_supported_asset_type(Uuid::nil()));
+}
+
+#[test]
+fn thumbnail_cache_path_includes_size_settings_type_and_request_identity() {
+    let assets_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets");
+    let assets_path = dunce::canonicalize(assets_path).expect("assets dir not found");
+    let context = engine::test_support::test_asset_context_with_assets(vec![assets_path]);
+    let context = context.lock_read();
+    let settings = ThumbnailRenderSettings::with_size_and_frame_margin(256, 0.123);
+    let cache = ThumbnailCache::new(&context, settings);
+    let request = ThumbnailRequest {
+        asset_id: Uuid::from_u128(0x1234),
+        asset_type: Prefab::type_uuid(),
+        source_path: Some(PathBuf::from("assets/prefabs/tank.cxprefab")),
+        source_version: 0xfeed_beef,
+    };
+
+    let path = cache.path(&request);
+    let path_text = path.to_string_lossy().replace('\\', "/");
+    assert!(path_text.contains("/Calyx/Editor/thumbnails/"));
+    assert!(path_text.contains("/256px/frame-margin-123/prefab/"));
+    assert!(path_text.ends_with("/00000000-0000-0000-0000-000000001234-00000000feedbeef.png"));
+}
+
+#[test]
+fn camera_fit_from_points_tracks_bounds_center_and_radius() {
+    let points = vec![
+        vec3(-1.0, -2.0, 0.0),
+        vec3(3.0, 4.0, 2.0),
+        vec3(1.0, -1.0, -2.0),
+    ];
+    let camera_fit = CameraFit::from_points(points.clone()).expect("points should produce fit");
+
+    assert_eq!(camera_fit.bounds.min, vec3(-1.0, -2.0, -2.0));
+    assert_eq!(camera_fit.bounds.max, vec3(3.0, 4.0, 2.0));
+    assert_eq!(camera_fit.center(), vec3(1.0, 1.0, 0.0));
+    assert_eq!(camera_fit.points, points);
+    let expected_radius = camera_fit
+        .points
+        .iter()
+        .map(|point| (*point - camera_fit.center()).norm())
+        .fold(0.5, f32::max);
+    assert_eq!(camera_fit.radius(), expected_radius);
+    assert!(CameraFit::from_points(Vec::new()).is_none());
 }
 
 #[test]
