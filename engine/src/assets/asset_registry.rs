@@ -460,8 +460,11 @@ impl AssetRegistry {
         name: String,
         value: A,
     ) -> Result<Ref<A>, AssetError> {
-        let id = if let Some(id) = self.asset_id(name.as_str()) {
-            if let Some(meta) = self.asset_meta_from_id(id) {
+        let display_name = self.asset_display_name::<A>(&name);
+        let path = RelativePathBuf::from(name.as_str()).normalize();
+        let mut data = self.asset_data_mut();
+        let id = if let Some(id) = data.names.get(&path).copied() {
+            if let Some(meta) = data.meta.get(&id) {
                 if meta.path.is_some() || meta.parent.is_some() {
                     return Err(
                         AssetError::AlreadyExists.with_source(format!("asset name `{name}`"))
@@ -478,7 +481,8 @@ impl AssetRegistry {
             utils::uuid_from_str(name.as_str())
         };
 
-        if let Some(asset_ref) = self.asset_cache().get(&id).cloned() {
+        let mut cache = self.asset_cache_mut();
+        if let Some(asset_ref) = cache.get(&id).cloned() {
             let Some(asset_ref) = asset_ref.try_downcast::<A>() else {
                 return Err(AssetError::TypeMismatch
                     .with_type(A::asset_name())
@@ -488,13 +492,13 @@ impl AssetRegistry {
                 let mut asset = asset_ref.write();
                 *asset = value;
             }
-            self.upsert_in_memory_asset_meta::<A>(id, name);
+            Self::upsert_in_memory_asset_meta_locked::<A>(&mut data, id, name, display_name);
             return Ok(asset_ref);
         }
 
         let asset = Ref::from_id_value(id, value);
-        self.upsert_in_memory_asset_meta::<A>(id, name);
-        self.asset_cache_mut().insert(id, asset.as_asset());
+        Self::upsert_in_memory_asset_meta_locked::<A>(&mut data, id, name, display_name);
+        cache.insert(id, asset.as_asset());
         Ok(asset)
     }
 
@@ -507,8 +511,11 @@ impl AssetRegistry {
         value: A,
     ) -> Result<Ref<A>, AssetError> {
         let canonical_name = Self::sub_asset_name(parent_name, local_name);
-        let id = if let Some(id) = self.asset_id(&canonical_name) {
-            if let Some(meta) = self.asset_meta_from_id(id) {
+        let display_name = self.asset_display_name::<A>(local_name);
+        let canonical_path = RelativePathBuf::from(canonical_name.as_str()).normalize();
+        let mut data = self.asset_data_mut();
+        let id = if let Some(id) = data.names.get(&canonical_path).copied() {
+            if let Some(meta) = data.meta.get(&id) {
                 if meta.path.is_some()
                     || meta.parent.is_some_and(|existing| existing != parent_id)
                     || meta.name != local_name
@@ -527,7 +534,8 @@ impl AssetRegistry {
             utils::uuid_from_str(canonical_name.as_str())
         };
 
-        if let Some(asset_ref) = self.asset_cache().get(&id).cloned() {
+        let mut cache = self.asset_cache_mut();
+        if let Some(asset_ref) = cache.get(&id).cloned() {
             let Some(asset_ref) = asset_ref.try_downcast::<A>() else {
                 return Err(AssetError::TypeMismatch
                     .with_type(A::asset_name())
@@ -537,19 +545,42 @@ impl AssetRegistry {
                 let mut asset = asset_ref.write();
                 *asset = value;
             }
-            self.upsert_sub_asset_meta::<A>(id, parent_id, parent_name, local_name);
+            Self::upsert_sub_asset_meta_locked::<A>(
+                &mut data,
+                id,
+                parent_id,
+                parent_name,
+                local_name,
+                display_name,
+            );
             return Ok(asset_ref);
         }
 
         let asset = Ref::from_id_value(id, value);
-        self.upsert_sub_asset_meta::<A>(id, parent_id, parent_name, local_name);
-        self.asset_cache_mut().insert(id, asset.as_asset());
+        Self::upsert_sub_asset_meta_locked::<A>(
+            &mut data,
+            id,
+            parent_id,
+            parent_name,
+            local_name,
+            display_name,
+        );
+        cache.insert(id, asset.as_asset());
         Ok(asset)
     }
 
     fn upsert_in_memory_asset_meta<A: Asset + TypeUuid>(&self, id: Uuid, name: String) {
         let display_name = self.asset_display_name::<A>(&name);
         let mut data = self.asset_data_mut();
+        Self::upsert_in_memory_asset_meta_locked::<A>(&mut data, id, name, display_name);
+    }
+
+    fn upsert_in_memory_asset_meta_locked<A: Asset + TypeUuid>(
+        data: &mut AssetData,
+        id: Uuid,
+        name: String,
+        display_name: String,
+    ) {
         let existing_meta = data.meta.get(&id).cloned();
         data.names
             .insert(RelativePathBuf::from(name.as_str()).normalize(), id);
@@ -570,16 +601,15 @@ impl AssetRegistry {
         );
     }
 
-    fn upsert_sub_asset_meta<A: Asset + TypeUuid>(
-        &self,
+    fn upsert_sub_asset_meta_locked<A: Asset + TypeUuid>(
+        data: &mut AssetData,
         id: Uuid,
         parent_id: Uuid,
         parent_name: &str,
         local_name: &str,
+        display_name: String,
     ) {
         let canonical_name = Self::sub_asset_name(parent_name, local_name);
-        let display_name = self.asset_display_name::<A>(local_name);
-        let mut data = self.asset_data_mut();
         data.names.insert(
             RelativePathBuf::from(canonical_name.as_str()).normalize(),
             id,

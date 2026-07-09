@@ -571,6 +571,27 @@ fn changing_render_settings_invalidates_in_flight_results() {
 }
 
 #[test]
+fn service_methods_recover_from_poisoned_state_lock() {
+    let mut service = ThumbnailService::default();
+    let shared = service.shared.clone();
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _state = shared.state.lock().unwrap();
+        panic!("poison thumbnail state");
+    }));
+
+    let request = request(1);
+    let status = service.request(request.clone(), ThumbnailPriority::Normal);
+
+    assert_eq!(
+        status,
+        ThumbnailStatus::Queued {
+            priority: ThumbnailPriority::Normal
+        }
+    );
+    assert_eq!(service.status(request.key()), status);
+}
+
+#[test]
 fn clear_prevents_stale_in_progress_completion() {
     let mut pipeline = ThumbnailPipeline::default();
     let request = request(1);
