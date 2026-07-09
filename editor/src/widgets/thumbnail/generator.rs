@@ -481,13 +481,13 @@ fn add_preview_lighting(scene: &mut Scene) {
         ambient,
         ComponentAmbientLight {
             active: true,
-            color: Color32::from_rgb(210, 220, 232),
-            intensity: 0.12,
+            color: Color32::from_rgb(185, 196, 210),
+            intensity: 0.07,
         },
     );
 
     let directional = scene.create(None, None);
-    let mut directional_transform = Transform::from_xyz(-3.0, 4.5, -4.0);
+    let mut directional_transform = Transform::from_xyz(-4.5, 7.0, 2.25);
     directional_transform.look_at(&vec3(0.0, 0.0, 0.0));
     scene.set_world_transform(directional, directional_transform.matrix());
     scene.add_component(
@@ -495,19 +495,19 @@ fn add_preview_lighting(scene: &mut Scene) {
         ComponentDirectionalLight {
             active: true,
             color: Color32::WHITE,
-            intensity: 0.72,
+            intensity: 1.15,
         },
     );
 
     let point = scene.create(None, None);
-    scene.set_world_transform(point, Transform::from_xyz(2.25, 2.5, -2.75).matrix());
+    scene.set_world_transform(point, Transform::from_xyz(3.5, 2.5, -4.0).matrix());
     scene.add_component(
         point,
         ComponentPointLight {
             active: true,
-            radius: 6.0,
+            radius: 7.0,
             color: Color32::WHITE,
-            intensity: 0.45,
+            intensity: 0.12,
         },
     );
 }
