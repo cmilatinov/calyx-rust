@@ -54,7 +54,6 @@ impl Default for CameraUniform {
 }
 
 /// Scene renderer feature toggles and default clear settings.
-#[derive(Default)]
 pub struct SceneRendererOptions {
     /// Whether to draw the editor grid.
     pub grid: bool,
@@ -62,9 +61,23 @@ pub struct SceneRendererOptions {
     pub gizmos: bool,
     /// Clear color used for the scene color target.
     pub clear_color: Color32,
+    /// Mesh face-culling mode used for scene geometry.
+    pub mesh_cull_mode: Option<wgpu::Face>,
     // TODO: figure out why GTX 970 isn't supporting MSAA
     /// MSAA sample count used for offscreen scene rendering.
     pub samples: u32,
+}
+
+impl Default for SceneRendererOptions {
+    fn default() -> Self {
+        Self {
+            grid: false,
+            gizmos: false,
+            clear_color: Color32::TRANSPARENT,
+            mesh_cull_mode: Some(wgpu::Face::Back),
+            samples: 0,
+        }
+    }
 }
 
 /// One draw-list entry emitted while collecting scene meshes.
@@ -269,6 +282,7 @@ impl SceneRenderer {
         self.poll_object_id_readback();
         let options = PipelineOptions::builder()
             .samples(self.options.samples)
+            .cull_mode(self.options.mesh_cull_mode)
             .fragment_targets(vec![Some(wgpu::ColorTargetState {
                 format: self.scene_texture_msaa.descriptor.format,
                 blend: None,
@@ -324,6 +338,7 @@ impl SceneRenderer {
                 &options,
                 self.skybox_renderer.skybox_id(),
                 self.sky_light_intensity,
+                self.light_manager.ambient_light(),
                 &draw_list,
                 None,
             );
@@ -839,7 +854,9 @@ impl SceneRenderer {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Rgba16Float,
-                usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+                usage: wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::COPY_SRC
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             },
             None,

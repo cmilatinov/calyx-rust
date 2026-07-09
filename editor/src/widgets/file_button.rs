@@ -31,7 +31,8 @@ impl Widget for FileButton<'_> {
             TextStyle::Button,
         );
         let text_size = text.size();
-        let desired_size = image_size + 2.0 * padding + Vec2::new(0.0, text_size.y + image_spacing);
+        let desired_size =
+            image_size + 2.0 * padding + Vec2::new(0.0, text_size.y + image_spacing + padding.y);
         let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
 
         if ui.is_rect_visible(rect) {
@@ -75,11 +76,11 @@ impl Widget for FileButton<'_> {
                 );
             }
 
-            let mut text_rect = rect.shrink2(padding);
-            text_rect.set_top(image_rect.bottom() + image_spacing);
-            text_rect.set_bottom(rect.bottom());
-            let mut text_pos = text_rect.center() - (text_size / 2.0);
-            text_pos.y -= padding.y;
+            let text_rect = Rect::from_min_size(
+                pos2(image_rect.left(), image_rect.bottom() + image_spacing),
+                Vec2::new(image_rect.width(), text_size.y),
+            );
+            let text_pos = text_rect.center() - (text_size / 2.0);
             ui.painter().galley(text_pos, text, visuals.text_color());
         }
 

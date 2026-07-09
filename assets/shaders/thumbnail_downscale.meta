@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "9909e20b-5918-45e8-b1da-5fbb4c40813f",
+    "name": "shaders/thumbnail_downscale",
+    "display_name": "thumbnail_downscale",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

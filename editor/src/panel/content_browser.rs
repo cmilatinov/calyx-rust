@@ -1,9 +1,16 @@
 use crate::panel::Panel;
 use crate::selection::{Selection, SelectionType};
-use crate::widgets::FileButton;
+use crate::widgets::{
+    FileButton, ThumbnailPriority, ThumbnailRequest, ThumbnailStatus, THUMBNAIL_MAX_SIZE,
+    THUMBNAIL_MIN_SIZE,
+};
 use crate::{icons, EditorAppState};
+use egui::load::SizedTexture;
 use egui::text::LayoutJob;
-use egui::{FontFamily, FontId, Frame, Margin, Rect, Response, Sense, TextFormat, Ui, Vec2};
+use egui::{
+    Align, FontFamily, FontId, Frame, ImageSource, Layout, Margin, Rect, Response, Sense, Slider,
+    TextFormat, TextStyle, Ui, Vec2,
+};
 use engine::assets::animation_graph::AnimationGraph;
 use re_ui::list_item::ShowCollapsingResponse;
 use relative_path::PathExt;
@@ -13,9 +20,12 @@ use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
+const CONTENT_BROWSER_THUMBNAIL_DEFAULT_SIZE_PX: f32 = THUMBNAIL_MIN_SIZE as f32;
+
 pub struct PanelContentBrowser {
     selected_folder: PathBuf,
     selected_file: Option<PathBuf>,
+    thumbnail_size_px: f32,
 }
 
 impl PanelContentBrowser {
@@ -23,6 +33,7 @@ impl PanelContentBrowser {
         PanelContentBrowser {
             selected_folder: root_path.into(),
             selected_file: None,
+            thumbnail_size_px: CONTENT_BROWSER_THUMBNAIL_DEFAULT_SIZE_PX,
         }
     }
 }
@@ -33,14 +44,12 @@ impl Panel for PanelContentBrowser {
     }
 
     fn ui(&mut self, ui: &mut Ui, state: &mut EditorAppState) {
-        let root_path = state
-            .game
-            .assets
-            .registries
-            .assets
-            .read()
-            .root_path()
-            .clone();
+        let root_path = self.browser_root_path(state);
+        if !self.selected_folder.starts_with(&root_path) {
+            self.selected_folder = root_path.clone();
+            self.selected_file = None;
+            state.selection = Selection::none();
+        }
 
         egui::SidePanel::left("file_tree")
             .resizable(true)
@@ -72,38 +81,66 @@ impl Panel for PanelContentBrowser {
         }
 
         egui::TopBottomPanel::top("file_path")
-            .exact_height(26.0)
+            .exact_height(30.0)
             .show_inside(ui, |ui| {
                 ui.horizontal_centered(|ui| {
-                    let mut root = root_path;
-                    let path = self.selected_folder.relative_to(root.clone()).unwrap();
-                    if ui.button(">").clicked() {
-                        self.set_selected_folder(&mut state.selection, root.clone());
-                    }
-                    let mut iterator = path.components();
-                    let mut component = iterator.next();
-                    loop {
-                        if component.is_none() {
-                            break;
-                        }
-                        let name = component.unwrap();
-                        root.push(name.as_str());
-                        if ui.button(name.as_str()).clicked() {
-                            self.set_selected_folder(&mut state.selection, root.clone());
-                        }
-                        component = iterator.next();
-                        if component.is_some() {
-                            ui.label(">");
-                        }
-                    }
+                    let slider_width = 128.0;
+                    let path_width = (ui.available_width() - slider_width - 8.0).max(0.0);
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(path_width, 24.0),
+                        Layout::left_to_right(Align::Center),
+                        |ui| {
+                            let mut root = root_path;
+                            let path = self.selected_folder.relative_to(root.clone()).unwrap();
+                            if ui.button(">").clicked() {
+                                self.set_selected_folder(&mut state.selection, root.clone());
+                            }
+                            let mut iterator = path.components();
+                            let mut component = iterator.next();
+                            loop {
+                                if component.is_none() {
+                                    break;
+                                }
+                                let name = component.unwrap();
+                                root.push(name.as_str());
+                                if ui.button(name.as_str()).clicked() {
+                                    self.set_selected_folder(&mut state.selection, root.clone());
+                                }
+                                component = iterator.next();
+                                if component.is_some() {
+                                    ui.label(">");
+                                }
+                            }
+                        },
+                    );
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.add_sized(
+                            Vec2::new(slider_width, 18.0),
+                            Slider::new(
+                                &mut self.thumbnail_size_px,
+                                THUMBNAIL_MIN_SIZE as f32..=THUMBNAIL_MAX_SIZE as f32,
+                            )
+                            .show_value(false),
+                        )
+                        .on_hover_text("Thumbnail size");
+                    });
+                    self.thumbnail_size_px = self
+                        .thumbnail_size_px
+                        .clamp(THUMBNAIL_MIN_SIZE as f32, THUMBNAIL_MAX_SIZE as f32);
                 });
             });
 
-        const ICON_SIZE: f32 = 50.0;
-        const ICON_PADDING_X: f32 = 10.0;
-        const ICON_PADDING_Y: f32 = 5.0;
-        const ICON_SPACING: f32 = 10.0;
-        const TOTAL_WIDTH: f32 = ICON_SIZE + ICON_PADDING_X * 2.0;
+        let pixels_per_point = ui.pixels_per_point().max(f32::EPSILON);
+        let icon_size_px = self.thumbnail_size_px.round();
+        let icon_size = icon_size_px / pixels_per_point;
+        let icon_padding_x = (icon_size * 0.08).clamp(8.0, 18.0);
+        let icon_padding_y = 5.0;
+        let icon_spacing = 10.0;
+        let total_width = icon_size + icon_padding_x * 2.0;
+        let row_height = icon_size
+            + icon_padding_y * 3.0
+            + icon_spacing
+            + ui.text_style_height(&TextStyle::Button);
         let folder_image = egui::include_image!("../../../resources/icons/folder_large.png");
         let file_image = egui::include_image!("../../../resources/icons/body_dark_large.png");
         egui::CentralPanel::default()
@@ -112,62 +149,66 @@ impl Panel for PanelContentBrowser {
                 ..Frame::central_panel(ui.style())
             })
             .show_inside(ui, |ui| {
-                egui::ScrollArea::both().show(ui, |ui| {
-                    ui.set_clip_rect(ui.max_rect().expand(3.0));
-                    let width = ui.available_width();
-                    let spacing = ui.style().spacing.item_spacing;
-                    ui.style_mut().spacing.item_spacing = Vec2::ZERO;
-                    let num_nodes_per_row = ((width / TOTAL_WIDTH) as usize).max(1);
-                    ui.horizontal_wrapped(|ui| {
-                        for (idx, node) in nodes.iter().enumerate() {
-                            let is_dir = node.is_dir();
-                            let is_selected = self.is_selected(state, node, is_dir);
-                            let res = PanelContentBrowser::render_file_button(
-                                ui,
-                                node.file_name().unwrap().to_str().unwrap(),
-                                if is_dir {
+                self.handle_thumbnail_zoom_input(ui);
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        let width = ui.available_width();
+                        let spacing = ui.style().spacing.item_spacing;
+                        ui.style_mut().spacing.item_spacing = Vec2::ZERO;
+                        let num_nodes_per_row = ((width / total_width) as usize).max(1);
+                        ui.horizontal_wrapped(|ui| {
+                            for (idx, node) in nodes.iter().enumerate() {
+                                let is_dir = node.is_dir();
+                                let is_selected = self.is_selected(state, node, is_dir);
+                                let image_size = Vec2::splat(icon_size);
+                                let image_src = if is_dir {
                                     folder_image.clone()
                                 } else {
-                                    file_image.clone()
-                                },
-                                Vec2::splat(ICON_SIZE),
-                                ICON_SPACING,
-                                Vec2::new(ICON_PADDING_X, ICON_PADDING_Y),
-                                is_selected,
-                            );
-                            if res.clicked() || res.secondary_clicked() {
-                                self.set_selected_file(state, node.clone());
-                            }
-                            if is_selected && is_dir && res.double_clicked() {
-                                self.set_selected_folder(&mut state.selection, node.clone());
-                            }
-                            if !is_dir {
-                                self.asset_context_menu(state, &res, node);
-                            }
-                            if idx % num_nodes_per_row == num_nodes_per_row - 1 {
-                                let remaining_width =
-                                    width - num_nodes_per_row as f32 * TOTAL_WIDTH - 1.0;
-                                if remaining_width > 0.0 {
-                                    let (_, rect) = ui.allocate_space(Vec2::new(
-                                        remaining_width,
-                                        ui.available_height(),
-                                    ));
-                                    self.empty_space_interaction(ui, rect);
+                                    self.asset_thumbnail_image(state, node, image_size)
+                                        .unwrap_or_else(|| file_image.clone())
+                                };
+                                let res = PanelContentBrowser::render_file_button(
+                                    ui,
+                                    node.file_name().unwrap().to_str().unwrap(),
+                                    image_src,
+                                    image_size,
+                                    icon_spacing,
+                                    Vec2::new(icon_padding_x, icon_padding_y),
+                                    is_selected,
+                                );
+                                if res.clicked() || res.secondary_clicked() {
+                                    self.set_selected_file(state, node.clone());
+                                }
+                                if is_selected && is_dir && res.double_clicked() {
+                                    self.set_selected_folder(&mut state.selection, node.clone());
+                                }
+                                if !is_dir {
+                                    self.asset_context_menu(state, &res, node);
+                                }
+                                if idx % num_nodes_per_row == num_nodes_per_row - 1 {
+                                    let remaining_width =
+                                        width - num_nodes_per_row as f32 * total_width - 1.0;
+                                    if remaining_width > 0.0 {
+                                        let (_, rect) = ui
+                                            .allocate_space(Vec2::new(remaining_width, row_height));
+                                        self.empty_space_interaction(ui, rect);
+                                    }
                                 }
                             }
-                        }
-                        let remaining_width =
-                            width - (nodes.len() % num_nodes_per_row) as f32 * TOTAL_WIDTH - 1.0;
-                        if remaining_width > 0.0 {
-                            let (_, rect) = ui
-                                .allocate_space(Vec2::new(remaining_width, ui.available_height()));
-                            self.empty_space_interaction(ui, rect);
-                        }
+                            let last_row_count = nodes.len() % num_nodes_per_row;
+                            let remaining_width = width - last_row_count as f32 * total_width - 1.0;
+                            if last_row_count > 0 && remaining_width > 0.0 {
+                                let (_, rect) =
+                                    ui.allocate_space(Vec2::new(remaining_width, row_height));
+                                self.empty_space_interaction(ui, rect);
+                            }
+                        });
+                        ui.add_space(
+                            ui.text_style_height(&TextStyle::Button) + icon_padding_y * 2.0,
+                        );
+                        ui.style_mut().spacing.item_spacing = spacing;
                     });
-                    ui.style_mut().spacing.item_spacing = spacing;
-                    let (_, rect) = ui.allocate_space(ui.available_size());
-                    self.empty_space_interaction(ui, rect);
-                });
             });
     }
 
@@ -181,6 +222,58 @@ impl Panel for PanelContentBrowser {
 }
 
 impl PanelContentBrowser {
+    fn browser_root_path(&self, state: &EditorAppState) -> PathBuf {
+        let registry = state.game.assets.registries.assets.read();
+        registry
+            .asset_paths()
+            .first()
+            .cloned()
+            .unwrap_or_else(|| registry.root_path().clone())
+    }
+
+    fn handle_thumbnail_zoom_input(&mut self, ui: &Ui) {
+        if !ui.rect_contains_pointer(ui.max_rect()) {
+            return;
+        }
+
+        let zoom_delta = ui.input(|input| {
+            if input.modifiers.ctrl {
+                input.zoom_delta()
+            } else {
+                1.0
+            }
+        });
+        if (zoom_delta - 1.0).abs() <= f32::EPSILON {
+            return;
+        }
+
+        self.thumbnail_size_px = (self.thumbnail_size_px * zoom_delta)
+            .clamp(THUMBNAIL_MIN_SIZE as f32, THUMBNAIL_MAX_SIZE as f32);
+    }
+
+    fn asset_thumbnail_image(
+        &self,
+        state: &mut EditorAppState,
+        path: &Path,
+        image_size: Vec2,
+    ) -> Option<ImageSource<'static>> {
+        let request = {
+            let registry = state.game.assets.registries.assets.read();
+            ThumbnailRequest::from_asset_path(&registry, path)
+        }?;
+        let key = request.key();
+        let status = state.thumbnails.request(request, ThumbnailPriority::Normal);
+        if !matches!(status, ThumbnailStatus::Ready) {
+            return None;
+        }
+        state.thumbnails.texture_id(key).map(|id| {
+            ImageSource::Texture(SizedTexture {
+                id,
+                size: image_size,
+            })
+        })
+    }
+
     fn empty_space_interaction(&mut self, ui: &mut Ui, rect: Rect) {
         ui.allocate_rect(rect, Sense::click()).context_menu(|ui| {
             ui.menu_button("Create New", |ui| {
@@ -289,14 +382,7 @@ impl PanelContentBrowser {
 
         if response.clicked() {
             self.selected_folder = if is_selected {
-                state
-                    .game
-                    .assets
-                    .registries
-                    .assets
-                    .read()
-                    .root_path()
-                    .clone()
+                self.browser_root_path(state)
             } else {
                 curr_path
             };

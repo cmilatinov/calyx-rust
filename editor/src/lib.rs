@@ -12,6 +12,7 @@ use self::panel::*;
 pub use self::project_manager::*;
 use crate::camera::EditorCamera;
 use crate::task_id::TaskId;
+use crate::widgets::ThumbnailService;
 use eframe::{wgpu, NativeOptions};
 use egui::{include_image, Button, CornerRadius, ImageSource, Response, Sense, Ui, Vec2};
 use egui::{Align, Layout};
@@ -78,6 +79,7 @@ pub struct EditorAppState {
     pub game_size: (f32, f32),
     pub gizmo_modes: EnumSet<GizmoMode>,
     pub gizmo_orientation: GizmoOrientation,
+    pub thumbnails: ThumbnailService,
     active_scene: ActiveSceneState,
     window_title: String,
 }
@@ -124,6 +126,7 @@ impl EditorAppState {
             game_response: Default::default(),
             gizmo_modes: GizmoMode::all_translate(),
             gizmo_orientation: GizmoOrientation::Global,
+            thumbnails: ThumbnailService::default(),
             active_scene: Default::default(),
             window_title: String::new(),
             scene_renderer: SceneRenderer::new(
@@ -133,6 +136,7 @@ impl EditorAppState {
                     gizmos: true,
                     samples: 1,
                     clear_color: Color32::from_rgb(8, 8, 8),
+                    ..Default::default()
                 },
                 initial_render_size,
             ),
@@ -159,6 +163,14 @@ impl EditorApp {
         let project_path = project_path.into();
         log::info!("Starting editor for project {}", project_path.display());
         let asset_context = AssetContext::new(cc, project_path.join("assets"))?;
+        let content_browser_root = {
+            let registry = asset_context.registries.assets.read();
+            registry
+                .asset_paths()
+                .first()
+                .cloned()
+                .unwrap_or_else(|| registry.root_path().clone())
+        };
         let mut game = GameContext::new(asset_context.clone());
         let assembly_status = Ref::new(ProjectAssemblyStatus::default());
         game.resources.insert(assembly_status.clone());
@@ -171,13 +183,7 @@ impl EditorApp {
         if !project_manager.write().load_existing_assemblies() {
             project_manager.read().build_assemblies();
         }
-        let panels = Panels::new(
-            project_manager
-                .read()
-                .current_project()
-                .root_directory()
-                .clone(),
-        );
+        let panels = Panels::new(content_browser_root);
         Self::apply_style(cc);
         Ok(Self {
             fps: 0,
@@ -237,6 +243,7 @@ impl eframe::App for EditorApp {
         self.state.game.resources.time_mut().update_time();
         self.state.game_response = None;
         self.render_views(ctx, frame);
+        self.process_thumbnail_jobs(frame);
 
         self.menu_bar(ctx);
 
@@ -282,6 +289,14 @@ impl eframe::App for EditorApp {
 }
 
 impl EditorApp {
+    fn process_thumbnail_jobs(&mut self, frame: &mut eframe::Frame) {
+        let Some(render_state) = frame.wgpu_render_state() else {
+            return;
+        };
+        let asset_context = self.state.game.assets.lock_read();
+        self.state.thumbnails.process(&asset_context, render_state);
+    }
+
     fn update_game(&mut self, ctx: &egui::Context) {
         self.state.game.scenes.prepare();
         let input = Input::from_ctx(
@@ -451,6 +466,16 @@ impl EditorApp {
         });
     }
 
+    fn tools_menu(&mut self, ui: &mut Ui) {
+        ui.menu_button("Tools", |ui| {
+            if ui.button("Invalidate Thumbnail Cache").clicked() {
+                self.state.thumbnails.invalidate_cache();
+                log::info!("Queued thumbnail cache invalidation");
+                ui.close_menu();
+            }
+        });
+    }
+
     fn new_interaction(&mut self) {
         self.state.game.scenes.load_default_scene();
         log::info!("Created new scene from default scene");
@@ -564,6 +589,7 @@ impl EditorApp {
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 self.file_menu(ui);
+                self.tools_menu(ui);
 
                 if Self::icon_button(ui, include_image!("../../resources/icons/compile_dark.png"))
                     .clicked()

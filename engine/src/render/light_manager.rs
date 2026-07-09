@@ -1,4 +1,4 @@
-use crate::component::{ComponentDirectionalLight, ComponentPointLight};
+use crate::component::{ComponentAmbientLight, ComponentDirectionalLight, ComponentPointLight};
 use crate::render::buffer::ResizableBuffer;
 use crate::render::Shader;
 use crate::scene::Scene;
@@ -28,6 +28,7 @@ struct DirectionalLight {
 pub struct LightManager {
     point_light_storage_buffer: ResizableBuffer,
     directional_light_storage_buffer: ResizableBuffer,
+    ambient_light: [f32; 4],
 }
 
 impl Default for LightManager {
@@ -39,6 +40,7 @@ impl Default for LightManager {
             directional_light_storage_buffer: ResizableBuffer::new(
                 wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             ),
+            ambient_light: [0.0, 0.0, 0.0, 1.0],
         }
     }
 }
@@ -84,6 +86,12 @@ impl LightManager {
                 Some(16),
             );
         }
+
+        self.ambient_light = Self::collect_ambient_light(scene);
+    }
+
+    pub fn ambient_light(&self) -> [f32; 4] {
+        self.ambient_light
     }
 
     pub fn storage_bind_group(
@@ -157,12 +165,25 @@ impl LightManager {
         }
         directional_lights
     }
+
+    fn collect_ambient_light(scene: &Scene) -> [f32; 4] {
+        let mut ambient = [0.0, 0.0, 0.0, 1.0];
+        let mut query = <&ComponentAmbientLight>::query();
+        for light in query.iter(&scene.world).filter(|light| light.active) {
+            let color = light.color.to_normalized_gamma_f32();
+            let intensity = light.intensity.max(0.0);
+            ambient[0] += color[0] * intensity;
+            ambient[1] += color[1] * intensity;
+            ambient[2] += color[2] * intensity;
+        }
+        ambient
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::component::{ComponentDirectionalLight, ComponentPointLight};
+    use crate::component::{ComponentAmbientLight, ComponentDirectionalLight, ComponentPointLight};
     use crate::test_utils::test_scene;
     use egui::Color32;
     use nalgebra_glm::{translation, vec3};
@@ -231,5 +252,41 @@ mod tests {
         assert_eq!(lights[0].direction, [0.0, 0.0, 1.0]);
         assert_eq!(lights[0].color, [0.0, 1.0, 0.0]);
         assert_eq!(lights[0].intensity, 0.5);
+    }
+
+    #[test]
+    fn collect_ambient_light_sums_active_lights() {
+        let mut scene = test_scene();
+        let first = scene.create(None, None);
+        scene.add_component(
+            first,
+            ComponentAmbientLight {
+                color: Color32::RED,
+                intensity: 0.25,
+                ..Default::default()
+            },
+        );
+        let second = scene.create(None, None);
+        scene.add_component(
+            second,
+            ComponentAmbientLight {
+                color: Color32::BLUE,
+                intensity: 0.5,
+                ..Default::default()
+            },
+        );
+        let inactive = scene.create(None, None);
+        scene.add_component(
+            inactive,
+            ComponentAmbientLight {
+                active: false,
+                color: Color32::GREEN,
+                intensity: 1.0,
+            },
+        );
+
+        let ambient = LightManager::collect_ambient_light(&scene);
+
+        assert_eq!(ambient, [0.25, 0.0, 0.5, 1.0]);
     }
 }

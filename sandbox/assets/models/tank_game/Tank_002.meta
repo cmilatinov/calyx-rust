@@ -3,7 +3,56 @@
     "id": "34f482da-9f74-5cba-bc42-7930c962ab77",
     "name": "models/tank_game/Tank_002",
     "display_name": "Tank_002",
-    "type_uuid": "00000000-0000-0000-0000-000000000000"
+    "type_uuid": "960f1d60-3ad4-4f1d-92d3-cceb0e0623d7"
   },
-  "inner": []
+  "inner": [
+    {
+      "id": "8434b989-0ee1-31bd-2d50-23a110550682",
+      "name": "Body",
+      "display_name": "Body",
+      "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+    },
+    {
+      "id": "5a393252-0532-06f0-5d39-ccd39e6d7e9f",
+      "name": "Turret_Pivot_GEO",
+      "display_name": "Turret_Pivot_GEO",
+      "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+    },
+    {
+      "id": "156de473-6b7e-fbfc-ce28-e6833e318a3a",
+      "name": "Gun_GEO",
+      "display_name": "Gun_GEO",
+      "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+    },
+    {
+      "id": "9c88051b-55a1-f436-eaf9-b75d65a193e2",
+      "name": "Turret_Head",
+      "display_name": "Turret_Head",
+      "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+    },
+    {
+      "id": "111e98da-e83b-6e4a-18b4-6b9acabc4e42",
+      "name": "Tracks",
+      "display_name": "Tracks",
+      "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+    },
+    {
+      "id": "0a59075d-2752-ba5b-fad5-cf8f0fe4c2f1",
+      "name": "Wheels",
+      "display_name": "Wheels",
+      "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+    },
+    {
+      "id": "0d2ad587-4904-87cf-d863-350788bfb81f",
+      "name": "Tracks_1",
+      "display_name": "Tracks_1",
+      "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+    },
+    {
+      "id": "a57b6bb0-df63-b64c-d58d-9e2e40b84a17",
+      "name": "Wheels_1",
+      "display_name": "Wheels_1",
+      "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+    }
+  ]
 }
