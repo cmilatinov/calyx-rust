@@ -1215,12 +1215,30 @@ mod tests {
         let (asset_path, meta_path, asset_id) = write_scene_with_meta(&root);
         let registries = test_registries_with_assets(vec![root.clone()]);
         let registry = registries.assets.read();
-        let event =
-            Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(asset_path);
+        let original_meta = std::fs::read(&meta_path).expect("failed to read original metadata");
+        let replacement_path = root.join("scene.cxscene.tmp");
+        std::fs::write(&replacement_path, b"replacement")
+            .expect("failed to stage replacement asset");
+        if std::fs::rename(&replacement_path, &asset_path).is_err() {
+            let backup_path = root.join("scene.cxscene.backup");
+            std::fs::rename(&asset_path, &backup_path).expect("failed to stage original asset");
+            std::fs::rename(&replacement_path, &asset_path)
+                .expect("failed to install replacement asset");
+            std::fs::remove_file(backup_path).expect("failed to remove original asset backup");
+        }
+        let event = Event::new(EventKind::Remove(notify::event::RemoveKind::File))
+            .add_path(asset_path.clone());
 
         registry.recv_notify_event(event);
 
-        assert!(meta_path.exists());
+        assert_eq!(
+            std::fs::read(&asset_path).expect("failed to read replacement asset"),
+            b"replacement"
+        );
+        assert_eq!(
+            std::fs::read(&meta_path).expect("failed to read preserved metadata"),
+            original_meta
+        );
         assert!(registry.asset_data().dirty.contains_key(&asset_id));
         drop(registry);
         std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
