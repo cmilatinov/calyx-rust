@@ -200,6 +200,7 @@ impl PanelViewport {
                     .scenes
                     .simulation_scene_mut()
                     .set_world_transform(game_object, res.matrix());
+                app_state.mark_scene_dirty();
                 self.gizmo_status(ui, &result);
             }
             gizmo_focused = self.gizmo.is_focused();
