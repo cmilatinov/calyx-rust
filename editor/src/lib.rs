@@ -12,7 +12,8 @@ use transform_gizmo_egui::{GizmoMode, GizmoOrientation};
 
 use self::panel::*;
 pub use self::project_manager::*;
-use self::scene_document::{SceneAutosave, SceneDocumentState, SceneRecovery};
+use self::scene_document::{scene_fingerprint, SceneAutosave, SceneDocumentState, SceneRecovery};
+use self::scene_history::{SceneEditSnapshot, SceneHistory};
 use crate::camera::EditorCamera;
 use crate::task_id::TaskId;
 use crate::widgets::ThumbnailService;
@@ -49,6 +50,7 @@ mod inspector;
 mod panel;
 mod project_manager;
 mod scene_document;
+mod scene_history;
 mod selection;
 mod task_id;
 mod widgets;
@@ -85,6 +87,7 @@ pub struct EditorAppState {
     pub gizmo_orientation: GizmoOrientation,
     pub thumbnails: ThumbnailService,
     scene_document: SceneDocumentState,
+    scene_history: SceneHistory,
     scene_autosave: SceneAutosave,
     recovery_prompt: Option<SceneRecovery>,
     active_scene: ActiveSceneState,
@@ -139,6 +142,7 @@ impl EditorAppState {
             gizmo_orientation: GizmoOrientation::Global,
             thumbnails: ThumbnailService::default(),
             scene_document: SceneDocumentState::default(),
+            scene_history: SceneHistory::default(),
             scene_autosave: SceneAutosave::new(&project_path),
             recovery_prompt: None,
             active_scene: Default::default(),
@@ -173,12 +177,83 @@ impl EditorAppState {
         self.scene_document.mark_dirty(Instant::now());
     }
 
+    pub fn scene_edit_snapshot(&self) -> Option<SceneEditSnapshot> {
+        if self.game.scenes.has_simulation_scene() {
+            return None;
+        }
+        Some(SceneEditSnapshot::capture(self.game.scenes.current_scene()))
+    }
+
+    pub fn commit_scene_edit(
+        &mut self,
+        label: impl Into<String>,
+        before: Option<SceneEditSnapshot>,
+    ) {
+        if self.game.scenes.has_simulation_scene() {
+            return;
+        }
+
+        let Some(before) = before else {
+            self.mark_scene_dirty();
+            return;
+        };
+
+        let after = SceneEditSnapshot::capture(self.game.scenes.current_scene());
+        let fingerprint = after.fingerprint().map(str::to_owned);
+        self.scene_history.push(label, before, after);
+        self.scene_document
+            .sync_dirty_to_fingerprint(fingerprint, Instant::now());
+    }
+
+    pub fn can_undo_scene_edit(&self) -> bool {
+        !self.game.scenes.has_simulation_scene() && self.scene_history.can_undo()
+    }
+
+    pub fn can_redo_scene_edit(&self) -> bool {
+        !self.game.scenes.has_simulation_scene() && self.scene_history.can_redo()
+    }
+
+    pub fn undo_scene_edit(&mut self) {
+        if self.game.scenes.has_simulation_scene() {
+            return;
+        }
+        let Some(restore) = self.scene_history.undo() else {
+            return;
+        };
+        self.game
+            .scenes
+            .restore_current_scene_snapshot(restore.snapshot);
+        self.scene_document
+            .sync_dirty_to_fingerprint(restore.fingerprint, Instant::now());
+        log::info!("Undid scene edit: {}", restore.label);
+    }
+
+    pub fn redo_scene_edit(&mut self) {
+        if self.game.scenes.has_simulation_scene() {
+            return;
+        }
+        let Some(restore) = self.scene_history.redo() else {
+            return;
+        };
+        self.game
+            .scenes
+            .restore_current_scene_snapshot(restore.snapshot);
+        self.scene_document
+            .sync_dirty_to_fingerprint(restore.fingerprint, Instant::now());
+        log::info!("Redid scene edit: {}", restore.label);
+    }
+
     pub fn is_scene_dirty(&self) -> bool {
         self.scene_document.is_dirty()
     }
 
     fn mark_scene_clean(&mut self) {
-        self.scene_document.mark_clean();
+        let fingerprint = scene_fingerprint(self.game.scenes.current_scene());
+        self.scene_document.mark_clean(fingerprint);
+    }
+
+    fn clear_scene_history(&mut self) {
+        self.scene_history.clear();
     }
 
     fn autosave_current_scene_now(&mut self) {
@@ -262,6 +337,7 @@ impl EditorAppState {
             self.game.scenes.set_current_scene_file(Some(file.clone()));
         }
         self.mark_scene_clean();
+        self.clear_scene_history();
         self.detect_recovery_for_current_scene();
         let object_count = self.game.scenes.current_scene().objects().count();
         let message = format!("Opened scene {} ({} objects)", file.display(), object_count);
@@ -283,6 +359,7 @@ impl EditorAppState {
             Ok(scene) => {
                 self.game.scenes.load_scene(scene.readonly());
                 self.mark_scene_clean();
+                self.clear_scene_history();
                 self.detect_recovery_for_current_scene();
                 let object_count = self.game.scenes.current_scene().objects().count();
                 let message = format!("Opened scene {label} ({object_count} objects)");
@@ -300,6 +377,7 @@ impl EditorAppState {
         self.game.scenes.load_default_scene();
         self.recovery_prompt = None;
         self.mark_scene_clean();
+        self.clear_scene_history();
         log::info!("Created new scene from default scene");
     }
 
@@ -342,7 +420,7 @@ impl EditorAppState {
         self.game
             .scenes
             .set_current_scene_file(Some(recovery.source_file.clone()));
-        self.mark_scene_clean();
+        self.clear_scene_history();
         self.mark_scene_dirty();
         self.recovery_prompt = None;
         log::info!(
@@ -486,6 +564,7 @@ impl eframe::App for EditorApp {
         self.process_thumbnail_jobs(frame);
 
         self.menu_bar(ctx);
+        self.edit_shortcuts(ctx);
 
         egui::CentralPanel::default()
             .frame(Frame {
@@ -711,6 +790,25 @@ impl EditorApp {
         });
     }
 
+    fn edit_menu(&mut self, ui: &mut Ui) {
+        ui.menu_button("Edit", |ui| {
+            if ui
+                .add_enabled(self.state.can_undo_scene_edit(), Button::new("Undo"))
+                .clicked()
+            {
+                self.state.undo_scene_edit();
+                ui.close_menu();
+            }
+            if ui
+                .add_enabled(self.state.can_redo_scene_edit(), Button::new("Redo"))
+                .clicked()
+            {
+                self.state.redo_scene_edit();
+                ui.close_menu();
+            }
+        });
+    }
+
     fn tools_menu(&mut self, ui: &mut Ui) {
         ui.menu_button("Tools", |ui| {
             if ui.button("Invalidate Thumbnail Cache").clicked() {
@@ -778,6 +876,7 @@ impl EditorApp {
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 self.file_menu(ui);
+                self.edit_menu(ui);
                 self.tools_menu(ui);
 
                 if Self::icon_button(ui, include_image!("../../resources/icons/compile_dark.png"))
@@ -857,6 +956,25 @@ impl EditorApp {
                     });
                 });
             });
+    }
+
+    fn edit_shortcuts(&mut self, ctx: &egui::Context) {
+        if ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::Z)) {
+            self.state.undo_scene_edit();
+            return;
+        }
+
+        let ctrl_shift = egui::Modifiers {
+            ctrl: true,
+            shift: true,
+            ..Default::default()
+        };
+        if ctx.input_mut(|input| {
+            input.consume_key(egui::Modifiers::CTRL, egui::Key::Y)
+                || input.consume_key(ctrl_shift, egui::Key::Z)
+        }) {
+            self.state.redo_scene_edit();
+        }
     }
 
     fn recovery_prompt(&mut self, ctx: &egui::Context) {

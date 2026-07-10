@@ -1,6 +1,6 @@
 use crate::panel::Panel;
 use crate::selection::SelectionType;
-use crate::{icons, EditorAppState};
+use crate::{icons, EditorAppState, SceneEditSnapshot};
 use egui::epaint::Vertex;
 use egui::load::SizedTexture;
 use egui::Ui;
@@ -23,12 +23,14 @@ use transform_gizmo_egui::{
 
 pub struct PanelViewport {
     gizmo: Gizmo,
+    transform_edit_before: Option<SceneEditSnapshot>,
 }
 
 impl Default for PanelViewport {
     fn default() -> Self {
         Self {
             gizmo: Gizmo::new(GizmoConfig::default()),
+            transform_edit_before: None,
         }
     }
 }
@@ -181,16 +183,25 @@ impl PanelViewport {
                 pointer_in_viewport,
                 &[transform.into()],
             ) {
+                if self.transform_edit_before.is_none() {
+                    self.transform_edit_before = app_state.scene_edit_snapshot();
+                }
                 let res: Transform = transforms[0].into();
                 app_state
                     .game
                     .scenes
                     .simulation_scene_mut()
                     .set_world_transform(game_object, res.matrix());
-                app_state.mark_scene_dirty();
                 self.gizmo_status(ui, &result);
             }
             gizmo_focused = self.gizmo.is_focused();
+        }
+
+        if self.transform_edit_before.is_some()
+            && !ui.input(|input| input.pointer.button_down(PointerButton::Primary))
+        {
+            let edit_before = self.transform_edit_before.take();
+            app_state.commit_scene_edit("Transform game object", edit_before);
         }
 
         if viewport_response.clicked_by(PointerButton::Primary) && !gizmo_focused {

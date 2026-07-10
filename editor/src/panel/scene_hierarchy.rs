@@ -1,5 +1,5 @@
 use crate::panel::Panel;
-use crate::{icons, EditorAppState, Selection, SelectionType};
+use crate::{icons, EditorAppState, SceneEditSnapshot, Selection, SelectionType};
 use egui::Ui;
 use egui::{Color32, Response};
 use engine::component::ComponentID;
@@ -57,6 +57,7 @@ impl Panel for PanelSceneHierarchy {
                     } = state;
 
                     let mut scene_changed = false;
+                    let mut edit_before = None;
                     let scene = scenes.simulation_scene_mut();
                     re_ui::list_item::list_item_scope(ui, "scene", |ui| {
                         let mut list_item = ui.list_item().draggable(false);
@@ -71,17 +72,32 @@ impl Panel for PanelSceneHierarchy {
                                 .always_show_buttons(true)
                                 .with_icon(&icons::OBJECT_TREE)
                                 .with_buttons(|ui| {
-                                    let response =
-                                        self.add_game_object_button(ui, scene, selection);
+                                    let response = self.add_game_object_button(
+                                        ui,
+                                        scene,
+                                        selection,
+                                        &mut edit_before,
+                                    );
                                     scene_changed |= response.changed();
                                     response
                                 }),
                         );
                         for root_object in scene.root_objects().collect::<Vec<_>>() {
-                            scene_changed |=
-                                self.render_scene_node(scene, selection, ui, root_object, true);
+                            scene_changed |= self.render_scene_node(
+                                scene,
+                                selection,
+                                ui,
+                                root_object,
+                                true,
+                                &mut edit_before,
+                            );
                         }
-                        scene_changed |= self.handle_root_dnd_interaction(ui, scene, &response);
+                        scene_changed |= self.handle_root_dnd_interaction(
+                            ui,
+                            scene,
+                            &response,
+                            &mut edit_before,
+                        );
 
                         let empty_space_response =
                             ui.allocate_response(ui.available_size(), egui::Sense::click());
@@ -94,10 +110,11 @@ impl Panel for PanelSceneHierarchy {
                             ui,
                             scene,
                             empty_space_response.rect,
+                            &mut edit_before,
                         );
                     });
                     if scene_changed {
-                        state.mark_scene_dirty();
+                        state.commit_scene_edit("Edit scene hierarchy", edit_before);
                     }
                 });
             });
@@ -129,6 +146,7 @@ impl PanelSceneHierarchy {
         ui: &mut Ui,
         game_object: GameObject,
         parent_visible: bool,
+        edit_before: &mut Option<SceneEditSnapshot>,
     ) -> bool {
         let mut scene_changed = false;
         let game_object_id = scene.uuid(game_object);
@@ -161,8 +179,14 @@ impl PanelSceneHierarchy {
         if !children.is_empty() {
             let res = item.show_hierarchical_with_children(ui, id, true, content, |ui| {
                 for child_node in children {
-                    scene_changed |=
-                        self.render_scene_node(scene, selection, ui, child_node, container_visible)
+                    scene_changed |= self.render_scene_node(
+                        scene,
+                        selection,
+                        ui,
+                        child_node,
+                        container_visible,
+                        edit_before,
+                    )
                 }
             });
             response = res.item_response;
@@ -182,6 +206,7 @@ impl PanelSceneHierarchy {
             &response,
             body_response.as_ref(),
             visibility_response.as_ref(),
+            edit_before,
         );
         scene_changed
     }
@@ -198,6 +223,7 @@ impl PanelSceneHierarchy {
         response: &Response,
         body_response: Option<&Response>,
         visibility_response: Option<&Response>,
+        edit_before: &mut Option<SceneEditSnapshot>,
     ) -> bool {
         let mut scene_changed = false;
         if response.double_clicked() {
@@ -215,6 +241,7 @@ impl PanelSceneHierarchy {
             *selection = Selection::from_id(SelectionType::GameObject, scene.uuid(game_object));
         }
         if visibility_response.map(|r| r.changed()).unwrap_or(false) {
+            Self::capture_edit_before(scene, edit_before);
             scene.write_component::<ComponentID, _>(game_object, |c| {
                 c.visible = is_visible;
             });
@@ -225,8 +252,14 @@ impl PanelSceneHierarchy {
                 is_visible
             );
         }
-        scene_changed |=
-            self.handle_dnd_interaction(ui, scene, game_object, response, body_response);
+        scene_changed |= self.handle_dnd_interaction(
+            ui,
+            scene,
+            game_object,
+            response,
+            body_response,
+            edit_before,
+        );
         response.context_menu(|ui| {
             if ui.button("Save as prefab").clicked() {
                 if let Some(path) = rfd::FileDialog::new()
@@ -253,6 +286,7 @@ impl PanelSceneHierarchy {
                 ui.close_menu();
             }
             if ui.button("Delete").clicked() {
+                Self::capture_edit_before(scene, edit_before);
                 log::info!(
                     "Deleted game object: object={}",
                     Self::game_object_label(scene, game_object)
@@ -263,6 +297,7 @@ impl PanelSceneHierarchy {
                 ui.close_menu();
             }
             if ui.button("New Game Object").clicked() {
+                Self::capture_edit_before(scene, edit_before);
                 let child = scene.create(None, Some(game_object));
                 log::info!(
                     "Added game object to scene: object={} parent={}",
@@ -282,6 +317,7 @@ impl PanelSceneHierarchy {
         ui: &mut Ui,
         scene: &mut Scene,
         response: &Response,
+        edit_before: &mut Option<SceneEditSnapshot>,
     ) -> bool {
         let Some(dragged_game_object) = self.dragged_game_object(ui, scene) else {
             return false;
@@ -302,7 +338,13 @@ impl PanelSceneHierarchy {
         );
 
         if let Some(drop_target) = drop_target {
-            return self.handle_drop_target(ui, scene, drop_target, dragged_game_object);
+            return self.handle_drop_target(
+                ui,
+                scene,
+                drop_target,
+                dragged_game_object,
+                edit_before,
+            );
         }
         false
     }
@@ -312,6 +354,7 @@ impl PanelSceneHierarchy {
         ui: &mut Ui,
         scene: &mut Scene,
         empty_space: egui::Rect,
+        edit_before: &mut Option<SceneEditSnapshot>,
     ) -> bool {
         let Some(dragged_game_object) = self.dragged_game_object(ui, scene) else {
             return false;
@@ -325,7 +368,13 @@ impl PanelSceneHierarchy {
                 usize::MAX,
             );
 
-            return self.handle_drop_target(ui, scene, drop_target, dragged_game_object);
+            return self.handle_drop_target(
+                ui,
+                scene,
+                drop_target,
+                dragged_game_object,
+                edit_before,
+            );
         }
         false
     }
@@ -337,6 +386,7 @@ impl PanelSceneHierarchy {
         game_object: GameObject,
         response: &Response,
         body_response: Option<&Response>,
+        edit_before: &mut Option<SceneEditSnapshot>,
     ) -> bool {
         if response.drag_started() {
             egui::DragAndDrop::set_payload(ui.ctx(), scene.uuid(game_object));
@@ -378,7 +428,13 @@ impl PanelSceneHierarchy {
         );
 
         if let Some(drop_target) = drop_target {
-            return self.handle_drop_target(ui, scene, drop_target, dragged_game_object);
+            return self.handle_drop_target(
+                ui,
+                scene,
+                drop_target,
+                dragged_game_object,
+                edit_before,
+            );
         }
         false
     }
@@ -389,6 +445,7 @@ impl PanelSceneHierarchy {
         scene: &mut Scene,
         drop_target: DropTarget<Uuid>,
         dragged_game_object: GameObject,
+        edit_before: &mut Option<SceneEditSnapshot>,
     ) -> bool {
         let Some(target_parent) = scene.find(drop_target.target_parent_id) else {
             return false;
@@ -408,6 +465,7 @@ impl PanelSceneHierarchy {
         );
 
         if ui.input(|i| i.pointer.any_released()) {
+            Self::capture_edit_before(scene, edit_before);
             let dragged_label = Self::game_object_label(scene, dragged_game_object);
             let parent_label = Self::game_object_label(scene, target_parent);
             let sibling_label =
@@ -447,11 +505,13 @@ impl PanelSceneHierarchy {
         ui: &mut Ui,
         scene: &mut Scene,
         selection: &Selection,
+        edit_before: &mut Option<SceneEditSnapshot>,
     ) -> Response {
         let mut res = ui
             .small_icon_button(&re_ui::icons::ADD)
             .on_hover_text("Add a new game object");
         if res.clicked() {
+            Self::capture_edit_before(scene, edit_before);
             let parent = selection
                 .last(SelectionType::GameObject)
                 .and_then(|id| scene.find(id));
@@ -467,6 +527,12 @@ impl PanelSceneHierarchy {
             res.mark_changed();
         }
         res
+    }
+
+    fn capture_edit_before(scene: &Scene, edit_before: &mut Option<SceneEditSnapshot>) {
+        if edit_before.is_none() {
+            *edit_before = Some(SceneEditSnapshot::capture(scene));
+        }
     }
 
     fn game_object_label(scene: &Scene, game_object: GameObject) -> String {

@@ -708,4 +708,38 @@ mod tests {
 
         assert_eq!(restored.parent(restored_child), Some(restored_parent));
     }
+
+    #[test]
+    fn scene_manager_restores_authoring_scene_snapshot() {
+        let mut game = crate::test_utils::test_game_context();
+        game.scenes.current_scene_mut().create(
+            Some(ComponentID {
+                name: "Kept".into(),
+                ..Default::default()
+            }),
+            None,
+        );
+        let snapshot = game.scenes.current_scene_snapshot();
+        game.scenes.current_scene_mut().create(
+            Some(ComponentID {
+                name: "Discarded".into(),
+                ..Default::default()
+            }),
+            None,
+        );
+
+        game.scenes.start_simulation();
+        assert!(game.scenes.has_simulation_scene());
+        game.scenes.restore_current_scene_snapshot(snapshot);
+
+        let names = game
+            .scenes
+            .current_scene()
+            .objects()
+            .map(|go| game.scenes.current_scene().name(go))
+            .collect::<Vec<_>>();
+        assert!(names.iter().any(|name| name == "Kept"));
+        assert!(!names.iter().any(|name| name == "Discarded"));
+        assert!(!game.scenes.has_simulation_scene());
+    }
 }

@@ -52,6 +52,7 @@ impl Panel for PanelInspector {
                             .first(SelectionType::GameObject)
                             .and_then(|id| state.game.scenes.simulation_scene().find(id))
                         {
+                            let edit_before = state.scene_edit_snapshot();
                             let mut scene_changed = false;
                             let mut entity_components = HashSet::new();
                             let mut components_to_remove = HashSet::new();
@@ -145,7 +146,7 @@ impl Panel for PanelInspector {
                                 }
                             }
                             if scene_changed {
-                                state.mark_scene_dirty();
+                                state.commit_scene_edit("Edit inspector properties", edit_before);
                             }
                         } else if let Some(asset_id) = state.selection.first(SelectionType::Asset) {
                             let asset_registry_ref = state.game.assets.registries.assets.clone();

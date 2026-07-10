@@ -3,7 +3,7 @@ use crate::context::ReadOnlyRegistryContext;
 use crate::core::ReadOnlyRef;
 use crate::input::Input;
 use crate::resource::ResourceMap;
-use crate::scene::Scene;
+use crate::scene::{Scene, SceneSnapshot};
 use std::path::PathBuf;
 
 /// Metadata tracked alongside the current authoring scene.
@@ -188,5 +188,16 @@ impl SceneManager {
     /// Returns the current authoring scene mutably.
     pub fn current_scene_mut(&mut self) -> &mut Scene {
         &mut self.current_scene
+    }
+
+    /// Captures the current authoring scene for editor history.
+    pub fn current_scene_snapshot(&self) -> SceneSnapshot {
+        self.current_scene.snapshot()
+    }
+
+    /// Restores the current authoring scene from an editor history snapshot.
+    pub fn restore_current_scene_snapshot(&mut self, snapshot: SceneSnapshot) {
+        self.stop_simulation();
+        self.current_scene = self.current_scene.restore_snapshot(snapshot);
     }
 }
