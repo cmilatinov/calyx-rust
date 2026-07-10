@@ -424,6 +424,18 @@ mod tests {
     }
 
     #[test]
+    fn recovery_baseline_keeps_recovered_scene_dirty() {
+        let mut state = SceneDocumentState::default();
+        let now = Instant::now();
+
+        state.mark_clean(Some("source".into()));
+        state.sync_dirty_to_fingerprint(Some("recovery".into()), now);
+
+        assert!(state.is_dirty());
+        assert!(state.should_autosave(now + AUTOSAVE_DELAY));
+    }
+
+    #[test]
     fn newer_edit_remains_pending_after_older_autosave_finishes() {
         let mut state = SceneDocumentState::default();
         let now = Instant::now();

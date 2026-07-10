@@ -167,8 +167,12 @@ impl EditorSceneAutosave {
     }
 
     fn mark_clean(&mut self, scene: &Scene) {
+        self.mark_clean_with_fingerprint(scene_fingerprint(scene));
+    }
+
+    fn mark_clean_with_fingerprint(&mut self, fingerprint: Option<String>) {
         self.pending = None;
-        self.document.mark_clean(scene_fingerprint(scene));
+        self.document.mark_clean(fingerprint);
     }
 
     fn write_now(&mut self, game: &GameContext) -> bool {
@@ -273,10 +277,17 @@ impl EditorSceneAutosave {
     }
 
     fn recover_scene(&mut self, game: &mut GameContext, recovery: SceneRecovery) -> bool {
-        let loaded = {
+        let (source_fingerprint, loaded) = {
             let assets = game.assets.lock_read();
-            LoadedAsset::<Scene>::from_json_file_ctx(&assets, &recovery.autosave_file)
+            let source_fingerprint =
+                LoadedAsset::<Scene>::from_json_file_ctx(&assets, &recovery.source_file)
+                    .ok()
+                    .and_then(|loaded| scene_fingerprint(&loaded.asset));
+            let loaded = LoadedAsset::<Scene>::from_json_file_ctx(&assets, &recovery.autosave_file);
+            (source_fingerprint, loaded)
         };
+        let source_fingerprint =
+            source_fingerprint.or_else(|| scene_fingerprint(game.scenes.current_scene()));
         let scene = match loaded {
             Ok(loaded) => loaded.asset,
             Err(error) => {
@@ -291,7 +302,7 @@ impl EditorSceneAutosave {
         game.scenes.load_scene(Ref::new(scene).readonly());
         game.scenes
             .set_current_scene_file(Some(recovery.source_file.clone()));
-        self.mark_clean(game.scenes.current_scene());
+        self.mark_clean_with_fingerprint(source_fingerprint);
         self.mark_dirty();
         self.recovery = None;
         log::info!(

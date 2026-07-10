@@ -1,5 +1,6 @@
 use std::any::Any;
 use std::collections::HashSet;
+use std::time::{Duration, Instant};
 
 use crate::inspector::assets::animation_graph_inspector::AnimationGraphInspector;
 use crate::inspector::inspector_registry::InspectorRegistry;
@@ -22,11 +23,21 @@ use re_ui::list_item::{LabelContent, ListItem, PropertyContent};
 use re_ui::{DesignTokens, UiExt};
 use uuid::Uuid;
 
+const KEYBOARD_EDIT_DEBOUNCE: Duration = Duration::from_millis(500);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SceneEditKind {
+    Pointer,
+    Keyboard,
+}
+
 #[derive(Default)]
 pub struct PanelInspector {
     add_component_select: SearchSelectState,
     scene_edit_before: Option<crate::SceneEditSnapshot>,
+    scene_edit_kind: Option<SceneEditKind>,
     scene_edit_changed: bool,
+    scene_edit_last_change: Option<Instant>,
 }
 
 impl Panel for PanelInspector {
@@ -261,40 +272,76 @@ impl PanelInspector {
             return;
         }
 
-        let pointer_pressed =
-            ui.input(|input| input.pointer.button_pressed(egui::PointerButton::Primary));
-        let keyboard_edit_started = ui.input(|input| {
-            input.events.iter().any(|event| {
-                matches!(
-                    event,
-                    egui::Event::Key { pressed: true, .. }
-                        | egui::Event::Text(_)
-                        | egui::Event::Paste(_)
-                )
-            })
+        let pointer_in_inspector = ui.rect_contains_pointer(ui.max_rect());
+        let edit_kind = ui.input(|input| {
+            if pointer_in_inspector && input.pointer.button_pressed(egui::PointerButton::Primary) {
+                Some(SceneEditKind::Pointer)
+            } else if pointer_in_inspector
+                && input
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, egui::Event::Text(_) | egui::Event::Paste(_)))
+            {
+                Some(SceneEditKind::Keyboard)
+            } else {
+                None
+            }
         });
-        if pointer_pressed || keyboard_edit_started {
+        if let Some(edit_kind) = edit_kind {
             self.scene_edit_before = state.scene_edit_snapshot();
+            self.scene_edit_kind = self.scene_edit_before.as_ref().map(|_| edit_kind);
         }
     }
 
     fn finish_scene_edit(&mut self, ui: &Ui, state: &mut EditorAppState, scene_changed: bool) {
         self.scene_edit_changed |= scene_changed;
-        if ui.input(|input| input.pointer.button_down(egui::PointerButton::Primary)) {
+        let Some(edit_kind) = self.scene_edit_kind else {
+            return;
+        };
+        if scene_changed && edit_kind == SceneEditKind::Keyboard {
+            self.scene_edit_last_change = Some(Instant::now());
+        }
+
+        let pointer_down =
+            ui.input(|input| input.pointer.button_down(egui::PointerButton::Primary));
+        let should_commit = match edit_kind {
+            SceneEditKind::Pointer => !pointer_down,
+            SceneEditKind::Keyboard => {
+                self.scene_edit_changed
+                    && Self::keyboard_edit_is_due(self.scene_edit_last_change, Instant::now())
+            }
+        };
+        let should_discard = !self.scene_edit_changed
+            && match edit_kind {
+                SceneEditKind::Pointer => !pointer_down,
+                SceneEditKind::Keyboard => true,
+            };
+        if !should_commit && !should_discard {
             return;
         }
 
         let Some(before) = self.scene_edit_before.take() else {
+            self.clear_scene_edit();
             return;
         };
-        if std::mem::take(&mut self.scene_edit_changed) {
+        let scene_changed = std::mem::take(&mut self.scene_edit_changed);
+        self.scene_edit_kind = None;
+        self.scene_edit_last_change = None;
+        if scene_changed {
             state.commit_scene_edit("Edit inspector properties", Some(before));
         }
     }
 
     fn clear_scene_edit(&mut self) {
         self.scene_edit_before = None;
+        self.scene_edit_kind = None;
         self.scene_edit_changed = false;
+        self.scene_edit_last_change = None;
+    }
+
+    fn keyboard_edit_is_due(last_change: Option<Instant>, now: Instant) -> bool {
+        last_change
+            .is_some_and(|last_change| now.duration_since(last_change) >= KEYBOARD_EDIT_DEBOUNCE)
     }
 
     fn display_name(type_registry: &TypeRegistry, instance: &dyn Reflect) -> &'static str {
@@ -581,6 +628,7 @@ impl PanelInspector {
 #[cfg(test)]
 mod tests {
     use super::PanelInspector;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn component_search_matches_case_insensitive_substrings() {
@@ -602,5 +650,19 @@ mod tests {
     fn component_search_treats_blank_query_as_match() {
         assert!(PanelInspector::component_matches_search("Camera", ""));
         assert!(PanelInspector::component_matches_search("Camera", "   "));
+    }
+
+    #[test]
+    fn keyboard_edits_commit_after_a_short_idle_period() {
+        let now = Instant::now();
+
+        assert!(!PanelInspector::keyboard_edit_is_due(
+            Some(now),
+            now + Duration::from_millis(499)
+        ));
+        assert!(PanelInspector::keyboard_edit_is_due(
+            Some(now),
+            now + Duration::from_millis(500)
+        ));
     }
 }
