@@ -11,6 +11,7 @@ use engine::scene::{Scene, SceneSnapshot};
 use crate::scene_document::{
     PreparedSceneAutosave, SceneAutosave, SceneDocumentRevision, SceneDocumentState, SceneRecovery,
 };
+use crate::task_id::TaskId;
 
 pub struct EditorSceneAutosave {
     document: SceneDocumentState,
@@ -95,14 +96,11 @@ impl EditorSceneAutosave {
         let storage = self.storage.clone();
         let worker_file = file.clone();
         let (sender, receiver) = mpsc::sync_channel(1);
-        game.resources
-            .background()
-            .read()
-            .thread_pool()
-            .execute(move || {
-                let result = storage.prepare(&worker_file, &snapshot);
-                let _ = sender.send(result);
-            });
+        let background = game.resources.background().clone();
+        background.write().execute(TaskId::Autosave, move || {
+            let result = storage.prepare(&worker_file, &snapshot);
+            let _ = sender.send(result);
+        });
 
         self.document.mark_autosave_started(now);
         self.pending = Some(PendingSceneAutosave {
