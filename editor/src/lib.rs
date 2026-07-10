@@ -1,20 +1,16 @@
 use std::env;
-use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc};
-use std::time::Instant;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use eframe::egui;
-use engine::assets::LoadedAsset;
 use inspector::inspector_registry::InspectorRegistry;
 use num_traits::FromPrimitive;
 use transform_gizmo_egui::{GizmoMode, GizmoOrientation};
 
 use self::panel::*;
 pub use self::project_manager::*;
-use self::scene_document::{
-    write_scene_file, PreparedSceneAutosave, SceneAutosave, SceneDocumentRevision,
-    SceneDocumentState, SceneRecovery,
-};
+use self::scene_autosave::EditorSceneAutosave;
+use self::scene_document::write_scene_file;
 use crate::camera::EditorCamera;
 use crate::task_id::TaskId;
 use crate::widgets::ThumbnailService;
@@ -31,7 +27,7 @@ use engine::error::BoxedError;
 use engine::input::{Input, InputState};
 use engine::logging::{DefaultLogger, Log};
 use engine::render::{Camera, SceneRenderer, SceneRendererOptions};
-use engine::scene::{Scene, SceneSnapshot};
+use engine::scene::Scene;
 use engine::*;
 use rapier3d::prelude::DebugRenderPipeline;
 use selection::{Selection, SelectionType};
@@ -50,6 +46,7 @@ mod icons;
 mod inspector;
 mod panel;
 mod project_manager;
+mod scene_autosave;
 mod scene_document;
 mod selection;
 mod task_id;
@@ -86,18 +83,9 @@ pub struct EditorAppState {
     pub gizmo_modes: EnumSet<GizmoMode>,
     pub gizmo_orientation: GizmoOrientation,
     pub thumbnails: ThumbnailService,
-    scene_document: SceneDocumentState,
-    scene_autosave: SceneAutosave,
-    pending_autosave: Option<PendingSceneAutosave>,
-    recovery_prompt: Option<SceneRecovery>,
+    scene_autosave: EditorSceneAutosave,
     active_scene: ActiveSceneState,
     window_title: String,
-}
-
-struct PendingSceneAutosave {
-    source_file: PathBuf,
-    revision: SceneDocumentRevision,
-    receiver: mpsc::Receiver<Result<PreparedSceneAutosave, String>>,
 }
 
 #[derive(Debug, Default)]
@@ -147,10 +135,7 @@ impl EditorAppState {
             gizmo_modes: GizmoMode::all_translate(),
             gizmo_orientation: GizmoOrientation::Global,
             thumbnails: ThumbnailService::default(),
-            scene_document: SceneDocumentState::default(),
-            scene_autosave: SceneAutosave::new(&project_path),
-            pending_autosave: None,
-            recovery_prompt: None,
+            scene_autosave: EditorSceneAutosave::new(&project_path),
             active_scene: Default::default(),
             window_title: String::new(),
             scene_renderer: SceneRenderer::new(
@@ -180,179 +165,15 @@ impl EditorAppState {
         if self.game.scenes.has_simulation_scene() {
             return;
         }
-        self.scene_document.mark_dirty(Instant::now());
+        self.scene_autosave.mark_dirty();
     }
 
     pub fn is_scene_dirty(&self) -> bool {
-        self.scene_document.is_dirty()
-    }
-
-    fn mark_scene_clean(&mut self) {
-        self.pending_autosave = None;
-        self.scene_document.mark_clean();
-    }
-
-    fn autosave_current_scene_now(&mut self) -> bool {
-        self.poll_autosave_task();
-        let Some(file) = self.game.scenes.current_scene_meta().file.clone() else {
-            return true;
-        };
-        if !self.scene_document.is_dirty() {
-            return true;
-        }
-
-        let revision = self.scene_document.current_revision();
-        if !self.scene_document.should_commit_autosave(revision) {
-            self.pending_autosave = None;
-            return true;
-        }
-        let snapshot = self.game.scenes.current_scene().snapshot();
-        self.scene_document.mark_autosave_started(Instant::now());
-        let success = self.write_autosave(&file, &snapshot);
-        self.scene_document
-            .mark_autosave_finished(revision, success);
-        if success {
-            self.pending_autosave = None;
-        }
-        success
-    }
-
-    fn autosave_current_scene_if_due(&mut self) {
-        self.poll_autosave_task();
-        if self.pending_autosave.is_some() {
-            return;
-        }
-
-        let now = Instant::now();
-        if !self.scene_document.should_autosave(now) {
-            return;
-        }
-        let Some(file) = self.game.scenes.current_scene_meta().file.clone() else {
-            return;
-        };
-        let revision = self.scene_document.current_revision();
-        let snapshot = self.game.scenes.current_scene().snapshot();
-        let autosave = self.scene_autosave.clone();
-        let worker_file = file.clone();
-        let (sender, receiver) = mpsc::sync_channel(1);
-        self.game
-            .resources
-            .background()
-            .read()
-            .thread_pool()
-            .execute(move || {
-                let result = autosave.prepare(&worker_file, &snapshot);
-                let _ = sender.send(result);
-            });
-
-        self.scene_document.mark_autosave_started(now);
-        self.pending_autosave = Some(PendingSceneAutosave {
-            source_file: file,
-            revision,
-            receiver,
-        });
-    }
-
-    fn poll_autosave_task(&mut self) {
-        let result = match self.pending_autosave.as_ref() {
-            Some(task) => match task.receiver.try_recv() {
-                Ok(result) => result,
-                Err(mpsc::TryRecvError::Empty) => return,
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    Err("background autosave worker disconnected".to_string())
-                }
-            },
-            None => return,
-        };
-        let task = self
-            .pending_autosave
-            .take()
-            .expect("pending autosave should still exist");
-
-        let prepared = match result {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                self.scene_document
-                    .mark_autosave_finished(task.revision, false);
-                log::warn!(
-                    "Failed to autosave scene {}: {}",
-                    task.source_file.display(),
-                    error
-                );
-                return;
-            }
-        };
-
-        let source_is_current = self.game.scenes.current_scene_meta().file.as_deref()
-            == Some(task.source_file.as_path());
-        if !source_is_current || !self.scene_document.should_commit_autosave(task.revision) {
-            log::trace!(
-                "Discarded stale scene autosave result: source={} autosave={}",
-                task.source_file.display(),
-                prepared.autosave_file().display()
-            );
-            return;
-        }
-
-        match prepared.commit() {
-            Ok(autosave_file) => {
-                log::info!(
-                    "Autosaved scene recovery file: source={} autosave={}",
-                    task.source_file.display(),
-                    autosave_file.display()
-                );
-                self.scene_document
-                    .mark_autosave_finished(task.revision, true);
-            }
-            Err(error) => {
-                log::warn!(
-                    "Failed to autosave scene {}: {}",
-                    task.source_file.display(),
-                    error
-                );
-                self.scene_document
-                    .mark_autosave_finished(task.revision, false);
-            }
-        }
-    }
-
-    fn write_autosave(&self, file: &Path, snapshot: &SceneSnapshot) -> bool {
-        match self.scene_autosave.write(file, snapshot) {
-            Ok(autosave_file) => {
-                log::info!(
-                    "Autosaved scene recovery file: source={} autosave={}",
-                    file.display(),
-                    autosave_file.display()
-                );
-                true
-            }
-            Err(error) => {
-                log::warn!("Failed to autosave scene {}: {}", file.display(), error);
-                false
-            }
-        }
-    }
-
-    fn detect_recovery_for_current_scene(&mut self) {
-        self.recovery_prompt = self
-            .game
-            .scenes
-            .current_scene_meta()
-            .file
-            .as_deref()
-            .and_then(|file| self.scene_autosave.recovery_for_scene(file));
-        if let Some(recovery) = &self.recovery_prompt {
-            log::info!(
-                "Detected newer scene recovery file: source={} autosave={}",
-                recovery.source_file.display(),
-                recovery.autosave_file.display()
-            );
-        }
+        self.scene_autosave.is_dirty()
     }
 
     pub fn open_scene_file(&mut self, file: PathBuf) {
-        if !self.autosave_current_scene_now() {
-            log::warn!("Kept current scene open because its recovery autosave failed");
+        if !self.scene_autosave.prepare_scene_change(&self.game) {
             return;
         }
         let scene = match self
@@ -374,16 +195,15 @@ impl EditorAppState {
         if self.game.scenes.current_scene_meta().file.is_none() {
             self.game.scenes.set_current_scene_file(Some(file.clone()));
         }
-        self.mark_scene_clean();
-        self.detect_recovery_for_current_scene();
+        let source_file = self.game.scenes.current_scene_meta().file.clone();
+        self.scene_autosave.scene_loaded(source_file.as_deref());
         let object_count = self.game.scenes.current_scene().objects().count();
         let message = format!("Opened scene {} ({} objects)", file.display(), object_count);
         log::info!("{message}");
     }
 
     pub fn open_scene_asset(&mut self, asset_id: uuid::Uuid) {
-        if !self.autosave_current_scene_now() {
-            log::warn!("Kept current scene open because its recovery autosave failed");
+        if !self.scene_autosave.prepare_scene_change(&self.game) {
             return;
         }
         let (scene, label) = {
@@ -398,8 +218,8 @@ impl EditorAppState {
         match scene {
             Ok(scene) => {
                 self.game.scenes.load_scene(scene.readonly());
-                self.mark_scene_clean();
-                self.detect_recovery_for_current_scene();
+                let source_file = self.game.scenes.current_scene_meta().file.clone();
+                self.scene_autosave.scene_loaded(source_file.as_deref());
                 let object_count = self.game.scenes.current_scene().objects().count();
                 let message = format!("Opened scene {label} ({object_count} objects)");
                 log::info!("{message}");
@@ -412,13 +232,11 @@ impl EditorAppState {
     }
 
     fn new_scene_from_default(&mut self) {
-        if !self.autosave_current_scene_now() {
-            log::warn!("Kept current scene open because its recovery autosave failed");
+        if !self.scene_autosave.prepare_scene_change(&self.game) {
             return;
         }
         self.game.scenes.load_default_scene();
-        self.recovery_prompt = None;
-        self.mark_scene_clean();
+        self.scene_autosave.new_scene_loaded();
         log::info!("Created new scene from default scene");
     }
 
@@ -429,57 +247,22 @@ impl EditorAppState {
         }
 
         self.game.scenes.set_current_scene_file(Some(file.clone()));
-        self.mark_scene_clean();
-        if let Some(previous_file) = previous_file.as_deref() {
-            if let Err(error) = self.scene_autosave.discard(previous_file) {
-                log::warn!("{error}");
-            }
-        }
-        if let Err(error) = self.scene_autosave.discard(&file) {
-            log::warn!("{error}");
-        }
+        self.scene_autosave
+            .scene_saved(previous_file.as_deref(), &file);
         true
     }
 
-    fn recover_scene(&mut self, recovery: SceneRecovery) {
-        let loaded = {
-            let assets = self.game.assets.lock_read();
-            LoadedAsset::<Scene>::from_json_file_ctx(&assets, &recovery.autosave_file)
-        };
-        let scene = match loaded {
-            Ok(loaded) => loaded.asset,
-            Err(error) => {
-                log::error!(
-                    "Failed to recover scene from {}: {}",
-                    recovery.autosave_file.display(),
-                    error
-                );
-                return;
-            }
-        };
-        self.game.scenes.load_scene(Ref::new(scene).readonly());
-        self.game
-            .scenes
-            .set_current_scene_file(Some(recovery.source_file.clone()));
-        self.mark_scene_clean();
-        self.mark_scene_dirty();
-        self.recovery_prompt = None;
-        log::info!(
-            "Recovered scene from autosave: source={} autosave={}",
-            recovery.source_file.display(),
-            recovery.autosave_file.display()
-        );
+    fn update_scene_autosave(&mut self) {
+        self.scene_autosave.update(&self.game);
     }
 
-    fn discard_recovery(&mut self, recovery: SceneRecovery) {
-        if let Err(error) = self.scene_autosave.discard(&recovery.source_file) {
-            log::warn!("{error}");
-        }
-        self.recovery_prompt = None;
-        log::info!(
-            "Discarded scene recovery file for {}",
-            recovery.source_file.display()
-        );
+    fn show_scene_recovery_prompt(&mut self, ctx: &egui::Context) {
+        self.scene_autosave
+            .show_recovery_prompt(ctx, &mut self.game);
+    }
+
+    fn shutdown_scene_autosave(&mut self) {
+        self.scene_autosave.shutdown(&self.game);
     }
 
     fn save_scene_to_file(file: PathBuf, scene: &Scene) -> bool {
@@ -616,7 +399,7 @@ impl eframe::App for EditorApp {
         self.update_game(ctx);
         self.render_view_outline(frame);
         self.update_window_title(ctx);
-        self.recovery_prompt(ctx);
+        self.state.show_scene_recovery_prompt(ctx);
 
         self.fps_counter += 1;
         if self.state.game.resources.time().timer("fps") >= 1.0 {
@@ -626,7 +409,7 @@ impl eframe::App for EditorApp {
         }
 
         self.state.game.scenes.current_scene_mut().flush_deletes();
-        self.state.autosave_current_scene_if_due();
+        self.state.update_scene_autosave();
         self.state
             .game
             .assets
@@ -639,9 +422,7 @@ impl eframe::App for EditorApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        if !self.state.autosave_current_scene_now() {
-            log::warn!("Failed to write final scene recovery autosave during editor shutdown");
-        }
+        self.state.shutdown_scene_autosave();
     }
 }
 
@@ -972,40 +753,6 @@ impl EditorApp {
                     });
                 });
             });
-    }
-
-    fn recovery_prompt(&mut self, ctx: &egui::Context) {
-        let Some(recovery) = self.state.recovery_prompt.clone() else {
-            return;
-        };
-        enum RecoveryAction {
-            Recover,
-            Discard,
-        }
-        let mut action = None;
-        egui::Modal::new(egui::Id::new("scene_recovery")).show(ctx, |ui| {
-            ui.heading("Scene Recovery");
-            ui.separator();
-            ui.label(format!(
-                "A newer recovery save exists for {}.",
-                recovery.source_file.display()
-            ));
-            ui.label(format!("{}", recovery.autosave_file.display()));
-            ui.horizontal(|ui| {
-                if ui.button("Recover").clicked() {
-                    action = Some(RecoveryAction::Recover);
-                }
-                if ui.button("Discard").clicked() {
-                    action = Some(RecoveryAction::Discard);
-                }
-            });
-        });
-
-        match action {
-            Some(RecoveryAction::Recover) => self.state.recover_scene(recovery),
-            Some(RecoveryAction::Discard) => self.state.discard_recovery(recovery),
-            None => {}
-        }
     }
 
     fn is_game_focused(&self) -> bool {
