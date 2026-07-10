@@ -1,4 +1,6 @@
-use crate::inspector::asset_inspector::{AssetInspector, ReflectAssetInspector};
+use crate::inspector::asset_inspector::{
+    AssetInspector, AssetInspectorAction, ReflectAssetInspector,
+};
 use egui::Ui;
 use engine::assets::material::Material;
 use engine::context::GameContext;
@@ -24,7 +26,12 @@ impl AssetInspector for ShaderInspector {
         true
     }
 
-    fn show_context_menu(&self, ui: &mut Ui, game: &mut GameContext, asset_id: Uuid) {
+    fn show_context_menu(
+        &self,
+        ui: &mut Ui,
+        game: &mut GameContext,
+        asset_id: Uuid,
+    ) -> AssetInspectorAction {
         if ui.button("Create Material").clicked() {
             'cleanup: {
                 let Ok(asset) = game
@@ -67,5 +74,6 @@ impl AssetInspector for ShaderInspector {
             }
             ui.close_menu();
         }
+        AssetInspectorAction::None
     }
 }

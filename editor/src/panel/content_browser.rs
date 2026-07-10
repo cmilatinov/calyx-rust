@@ -1,3 +1,4 @@
+use crate::inspector::asset_inspector::AssetInspectorAction;
 use crate::panel::Panel;
 use crate::selection::{Selection, SelectionType};
 use crate::widgets::{
@@ -311,6 +312,7 @@ impl PanelContentBrowser {
 
         let inspector_registry = &state.inspector_registry;
         let game = &mut state.game;
+        let mut action = AssetInspectorAction::None;
         response.context_menu(|ui| {
             let Some(inspector) = type_uuid
                 .and_then(|type_uuid| inspector_registry.asset_inspector_lookup(type_uuid))
@@ -319,11 +321,20 @@ impl PanelContentBrowser {
                 return;
             };
             if inspector.has_context_menu() {
-                inspector.show_context_menu(ui, game, asset_id);
+                action = inspector.show_context_menu(ui, game, asset_id);
             } else {
                 ui.label("No actions available");
             }
         });
+        Self::handle_asset_inspector_action(state, action);
+    }
+
+    fn handle_asset_inspector_action(state: &mut EditorAppState, action: AssetInspectorAction) {
+        match action {
+            AssetInspectorAction::None => {}
+            AssetInspectorAction::SceneChanged => state.mark_scene_dirty(),
+            AssetInspectorAction::OpenScene(asset_id) => state.open_scene_asset(asset_id),
+        }
     }
 
     fn render_directory(

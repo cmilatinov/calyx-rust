@@ -56,7 +56,8 @@ pub struct SceneData {
 
 /// Detached snapshot of a scene that can be restored later against a registry
 /// context.
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
+#[serde(transparent)]
 pub struct SceneSnapshot {
     data: SceneData,
 }
