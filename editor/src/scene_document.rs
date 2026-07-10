@@ -167,21 +167,9 @@ impl SceneAutosave {
 }
 
 pub fn write_scene_file(path: &Path, scene: &Scene) -> Result<(), String> {
-    let serialized = serde_json::to_vec_pretty(scene)
-        .map_err(|err| format!("failed to serialize scene file {}: {err}", path.display()))?;
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(path)
-        .map_err(|err| format!("failed to open scene file {}: {err}", path.display()))?;
-    let mut writer = BufWriter::new(file);
-    writer
-        .write_all(&serialized)
-        .map_err(|err| format!("failed to write scene file {}: {err}", path.display()))?;
-    writer
-        .flush()
-        .map_err(|err| format!("failed to flush scene file {}: {err}", path.display()))
+    prepare_json_file(path, scene, "scene file")?
+        .commit()
+        .map(|_| ())
 }
 
 struct PreparedFile {
