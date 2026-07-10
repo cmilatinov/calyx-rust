@@ -171,17 +171,20 @@ impl PanelSceneHierarchy {
             response = item.show_hierarchical(ui, content);
             body_response = None;
         }
+        let visibility_change = visibility_response
+            .as_ref()
+            .filter(|response| response.changed())
+            .map(|_| visible);
         scene_changed |= self.handle_interaction(
             ui,
             scene,
             id,
             game_object,
             is_selected,
-            visible,
             selection,
             &response,
             body_response.as_ref(),
-            visibility_response.as_ref(),
+            visibility_change,
         );
         scene_changed
     }
@@ -193,11 +196,10 @@ impl PanelSceneHierarchy {
         id: egui::Id,
         game_object: GameObject,
         is_selected: bool,
-        is_visible: bool,
         selection: &mut Selection,
         response: &Response,
         body_response: Option<&Response>,
-        visibility_response: Option<&Response>,
+        visibility_change: Option<bool>,
     ) -> bool {
         let mut scene_changed = false;
         if response.double_clicked() {
@@ -214,15 +216,15 @@ impl PanelSceneHierarchy {
         } else if response.secondary_clicked() {
             *selection = Selection::from_id(SelectionType::GameObject, scene.uuid(game_object));
         }
-        if visibility_response.map(|r| r.changed()).unwrap_or(false) {
+        if let Some(visible) = visibility_change {
             scene.write_component::<ComponentID, _>(game_object, |c| {
-                c.visible = is_visible;
+                c.visible = visible;
             });
             scene_changed = true;
             log::info!(
                 "Set game object visibility: object={} visible={}",
                 Self::game_object_label(scene, game_object),
-                is_visible
+                visible
             );
         }
         scene_changed |=
