@@ -838,6 +838,14 @@ impl AssetRegistry {
             }
             EventKind::Remove(_) => {
                 for file in paths_iter {
+                    if file.is_file() {
+                        log::trace!(
+                            "Treating removal notification for existing path as replacement: {}",
+                            file.display()
+                        );
+                        self.mark_path_dirty(file);
+                        continue;
+                    }
                     let meta_path = file.with_extension("meta");
                     match std::fs::remove_file(&meta_path) {
                         Ok(()) => log::info!("Removed asset metadata {}", meta_path.display()),
@@ -869,7 +877,13 @@ impl AssetRegistry {
                     .and_then(|ext| ext.to_str())
                     .map(|ext| (ext, f))
             })
-            .filter_map(|(ext, f)| if ext != "meta" { Some(f) } else { None })
+            .filter_map(|(ext, f)| {
+                if matches!(ext, "meta" | "tmp") {
+                    None
+                } else {
+                    Some(f)
+                }
+            })
     }
 
     /// Returns the asset UUID for `name`, if known.
@@ -1171,6 +1185,80 @@ mod tests {
         )
         .expect("failed to write parent meta");
         (parent_id, child_id)
+    }
+
+    fn write_scene_with_meta(root: &Path) -> (PathBuf, PathBuf, Uuid) {
+        let asset_id = Uuid::new_v4();
+        let asset_path = root.join("scene.cxscene");
+        let meta_path = root.join("scene.meta");
+        std::fs::write(&asset_path, b"{}").expect("failed to write scene asset");
+        std::fs::write(
+            &meta_path,
+            serde_json::to_vec_pretty(&json!({
+                "main": {
+                    "id": asset_id,
+                    "name": "scene",
+                    "display_name": "scene",
+                    "type_uuid": Scene::type_uuid(),
+                },
+                "inner": []
+            }))
+            .expect("failed to encode scene meta"),
+        )
+        .expect("failed to write scene meta");
+        (asset_path, meta_path, asset_id)
+    }
+
+    #[test]
+    fn remove_event_for_replaced_asset_preserves_metadata() {
+        let root = temp_asset_root("calyx-asset-replacement-event");
+        let (asset_path, meta_path, asset_id) = write_scene_with_meta(&root);
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        let original_meta = std::fs::read(&meta_path).expect("failed to read original metadata");
+        let replacement_path = root.join("scene.cxscene.tmp");
+        std::fs::write(&replacement_path, b"replacement")
+            .expect("failed to stage replacement asset");
+        if std::fs::rename(&replacement_path, &asset_path).is_err() {
+            let backup_path = root.join("scene.cxscene.backup");
+            std::fs::rename(&asset_path, &backup_path).expect("failed to stage original asset");
+            std::fs::rename(&replacement_path, &asset_path)
+                .expect("failed to install replacement asset");
+            std::fs::remove_file(backup_path).expect("failed to remove original asset backup");
+        }
+        let event = Event::new(EventKind::Remove(notify::event::RemoveKind::File))
+            .add_path(asset_path.clone());
+
+        registry.recv_notify_event(event);
+
+        assert_eq!(
+            std::fs::read(&asset_path).expect("failed to read replacement asset"),
+            b"replacement"
+        );
+        assert_eq!(
+            std::fs::read(&meta_path).expect("failed to read preserved metadata"),
+            original_meta
+        );
+        assert!(registry.asset_data().dirty.contains_key(&asset_id));
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn remove_event_for_deleted_asset_removes_metadata() {
+        let root = temp_asset_root("calyx-asset-deletion-event");
+        let (asset_path, meta_path, _) = write_scene_with_meta(&root);
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        std::fs::remove_file(&asset_path).expect("failed to delete scene asset");
+        let event =
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(asset_path);
+
+        registry.recv_notify_event(event);
+
+        assert!(!meta_path.exists());
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
 
     #[test]

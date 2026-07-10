@@ -742,4 +742,22 @@ mod tests {
         assert!(!names.iter().any(|name| name == "Discarded"));
         assert!(!game.scenes.has_simulation_scene());
     }
+
+    #[test]
+    fn scene_snapshot_serializes_like_scene() {
+        let mut scene = crate::test_utils::test_scene();
+        scene.create(
+            Some(ComponentID {
+                name: "Snapshot Object".into(),
+                ..Default::default()
+            }),
+            None,
+        );
+
+        let scene_json = serde_json::to_value(&scene).expect("scene should serialize");
+        let snapshot_json =
+            serde_json::to_value(scene.snapshot()).expect("snapshot should serialize");
+
+        assert_eq!(snapshot_json, scene_json);
+    }
 }

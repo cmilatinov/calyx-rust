@@ -25,6 +25,8 @@ use uuid::Uuid;
 #[derive(Default)]
 pub struct PanelInspector {
     add_component_select: SearchSelectState,
+    scene_edit_before: Option<crate::SceneEditSnapshot>,
+    scene_edit_changed: bool,
 }
 
 impl Panel for PanelInspector {
@@ -52,7 +54,7 @@ impl Panel for PanelInspector {
                             .first(SelectionType::GameObject)
                             .and_then(|id| state.game.scenes.simulation_scene().find(id))
                         {
-                            let edit_before = state.scene_edit_snapshot();
+                            self.begin_scene_edit(ui, state);
                             let mut scene_changed = false;
                             let mut entity_components = HashSet::new();
                             let mut components_to_remove = HashSet::new();
@@ -145,10 +147,9 @@ impl Panel for PanelInspector {
                                     );
                                 }
                             }
-                            if scene_changed {
-                                state.commit_scene_edit("Edit inspector properties", edit_before);
-                            }
+                            self.finish_scene_edit(ui, state, scene_changed);
                         } else if let Some(asset_id) = state.selection.first(SelectionType::Asset) {
+                            self.clear_scene_edit();
                             let asset_registry_ref = state.game.assets.registries.assets.clone();
                             let asset_registry = asset_registry_ref.read();
                             let Some(asset_meta) = asset_registry.asset_meta_from_id(asset_id)
@@ -198,6 +199,7 @@ impl Panel for PanelInspector {
                                 );
                         } else if let SelectionType::AnimationNode(asset_id) = state.selection.ty()
                         {
+                            self.clear_scene_edit();
                             if let Some(id) = state.selection.iter().next() {
                                 if let Ok(graph_ref) = state
                                     .game
@@ -220,6 +222,7 @@ impl Panel for PanelInspector {
                         } else if let SelectionType::AnimationTransition(asset_id) =
                             state.selection.ty()
                         {
+                            self.clear_scene_edit();
                             if let Some(id) = state.selection.iter().next() {
                                 if let Ok(graph_ref) = state
                                     .game
@@ -233,6 +236,9 @@ impl Panel for PanelInspector {
                                     AnimationGraphInspector::transition(ui, &mut graph, id);
                                 }
                             }
+                        }
+                        else {
+                            self.clear_scene_edit();
                         }
                     });
                     ui.allocate_space(ui.available_size());
@@ -250,6 +256,47 @@ impl Panel for PanelInspector {
 }
 
 impl PanelInspector {
+    fn begin_scene_edit(&mut self, ui: &Ui, state: &EditorAppState) {
+        if self.scene_edit_before.is_some() {
+            return;
+        }
+
+        let pointer_pressed =
+            ui.input(|input| input.pointer.button_pressed(egui::PointerButton::Primary));
+        let keyboard_edit_started = ui.input(|input| {
+            input.events.iter().any(|event| {
+                matches!(
+                    event,
+                    egui::Event::Key { pressed: true, .. }
+                        | egui::Event::Text(_)
+                        | egui::Event::Paste(_)
+                )
+            })
+        });
+        if pointer_pressed || keyboard_edit_started {
+            self.scene_edit_before = state.scene_edit_snapshot();
+        }
+    }
+
+    fn finish_scene_edit(&mut self, ui: &Ui, state: &mut EditorAppState, scene_changed: bool) {
+        self.scene_edit_changed |= scene_changed;
+        if ui.input(|input| input.pointer.button_down(egui::PointerButton::Primary)) {
+            return;
+        }
+
+        let Some(before) = self.scene_edit_before.take() else {
+            return;
+        };
+        if std::mem::take(&mut self.scene_edit_changed) {
+            state.commit_scene_edit("Edit inspector properties", Some(before));
+        }
+    }
+
+    fn clear_scene_edit(&mut self) {
+        self.scene_edit_before = None;
+        self.scene_edit_changed = false;
+    }
+
     fn display_name(type_registry: &TypeRegistry, instance: &dyn Reflect) -> &'static str {
         type_registry
             .type_info_by_id(instance.uuid())

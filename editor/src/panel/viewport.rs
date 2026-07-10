@@ -24,6 +24,7 @@ use transform_gizmo_egui::{
 pub struct PanelViewport {
     gizmo: Gizmo,
     transform_edit_before: Option<SceneEditSnapshot>,
+    last_viewport_pass: Option<u64>,
 }
 
 impl Default for PanelViewport {
@@ -31,6 +32,7 @@ impl Default for PanelViewport {
         Self {
             gizmo: Gizmo::new(GizmoConfig::default()),
             transform_edit_before: None,
+            last_viewport_pass: None,
         }
     }
 }
@@ -131,6 +133,10 @@ impl PanelViewport {
     }
 
     fn gizmo(&mut self, ui: &mut Ui, app_state: &mut EditorAppState, viewport_response: &Response) {
+        let pass = ui.ctx().cumulative_pass_nr();
+        let viewport_is_continuous =
+            Self::viewport_pass_is_continuous(self.last_viewport_pass, pass);
+        self.last_viewport_pass = Some(pass);
         ui.set_clip_rect(viewport_response.rect);
         let snap = ui.input(|input| input.modifiers.ctrl);
         let snap_coarse = ui.input(|input| input.modifiers.shift);
@@ -142,6 +148,7 @@ impl PanelViewport {
         };
 
         let mut gizmo_focused = false;
+        let mut selected_game_object = false;
         let pointer_in_viewport = ui.rect_contains_pointer(viewport_response.rect);
         let hovered_game_object = self.hovered_game_object(ui, viewport_response, app_state);
         app_state.hovered_game_object = hovered_game_object;
@@ -151,6 +158,7 @@ impl PanelViewport {
             .first(SelectionType::GameObject)
             .and_then(|id| app_state.game.scenes.simulation_scene().find(id))
         {
+            selected_game_object = true;
             let view_matrix = RowMatrix4::from(<DMat4 as Into<ColumnMatrix4<f64>>>::into(
                 nalgebra::convert::<Mat4, DMat4>(app_state.camera.transform.inverse_matrix()),
             ));
@@ -201,7 +209,9 @@ impl PanelViewport {
             && !ui.input(|input| input.pointer.button_down(PointerButton::Primary))
         {
             let edit_before = self.transform_edit_before.take();
-            app_state.commit_scene_edit("Transform game object", edit_before);
+            if viewport_is_continuous && selected_game_object {
+                app_state.commit_scene_edit("Transform game object", edit_before);
+            }
         }
 
         if viewport_response.clicked_by(PointerButton::Primary) && !gizmo_focused {
@@ -344,5 +354,21 @@ impl PanelViewport {
                 .clone(),
             Color32::WHITE,
         );
+    }
+
+    fn viewport_pass_is_continuous(last_pass: Option<u64>, pass: u64) -> bool {
+        last_pass.is_none_or(|last_pass| last_pass.saturating_add(1) >= pass)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PanelViewport;
+
+    #[test]
+    fn viewport_pass_continuity_rejects_inactive_tab_gaps() {
+        assert!(PanelViewport::viewport_pass_is_continuous(Some(8), 9));
+        assert!(PanelViewport::viewport_pass_is_continuous(Some(8), 8));
+        assert!(!PanelViewport::viewport_pass_is_continuous(Some(8), 10));
     }
 }
