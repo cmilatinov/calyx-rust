@@ -56,6 +56,7 @@ impl Panel for PanelSceneHierarchy {
                         ..
                     } = state;
 
+                    let mut scene_changed = false;
                     let scene = scenes.simulation_scene_mut();
                     re_ui::list_item::list_item_scope(ui, "scene", |ui| {
                         let mut list_item = ui.list_item().draggable(false);
@@ -70,13 +71,17 @@ impl Panel for PanelSceneHierarchy {
                                 .always_show_buttons(true)
                                 .with_icon(&icons::OBJECT_TREE)
                                 .with_buttons(|ui| {
-                                    self.add_game_object_button(ui, scene, selection)
+                                    let response =
+                                        self.add_game_object_button(ui, scene, selection);
+                                    scene_changed |= response.changed();
+                                    response
                                 }),
                         );
                         for root_object in scene.root_objects().collect::<Vec<_>>() {
-                            self.render_scene_node(scene, selection, ui, root_object, true);
+                            scene_changed |=
+                                self.render_scene_node(scene, selection, ui, root_object, true);
                         }
-                        self.handle_root_dnd_interaction(ui, scene, &response);
+                        scene_changed |= self.handle_root_dnd_interaction(ui, scene, &response);
 
                         let empty_space_response =
                             ui.allocate_response(ui.available_size(), egui::Sense::click());
@@ -85,12 +90,15 @@ impl Panel for PanelSceneHierarchy {
                             *selection = Selection::none();
                         }
 
-                        self.handle_empty_space_dnd_interaction(
+                        scene_changed |= self.handle_empty_space_dnd_interaction(
                             ui,
                             scene,
                             empty_space_response.rect,
                         );
                     });
+                    if scene_changed {
+                        state.mark_scene_dirty();
+                    }
                 });
             });
 
@@ -121,7 +129,8 @@ impl PanelSceneHierarchy {
         ui: &mut Ui,
         game_object: GameObject,
         parent_visible: bool,
-    ) {
+    ) -> bool {
+        let mut scene_changed = false;
         let game_object_id = scene.uuid(game_object);
         let id = ui.make_persistent_id(game_object_id);
         let name = scene.name(game_object);
@@ -152,7 +161,8 @@ impl PanelSceneHierarchy {
         if !children.is_empty() {
             let res = item.show_hierarchical_with_children(ui, id, true, content, |ui| {
                 for child_node in children {
-                    self.render_scene_node(scene, selection, ui, child_node, container_visible)
+                    scene_changed |=
+                        self.render_scene_node(scene, selection, ui, child_node, container_visible)
                 }
             });
             response = res.item_response;
@@ -161,7 +171,7 @@ impl PanelSceneHierarchy {
             response = item.show_hierarchical(ui, content);
             body_response = None;
         }
-        self.handle_interaction(
+        scene_changed |= self.handle_interaction(
             ui,
             scene,
             id,
@@ -173,6 +183,7 @@ impl PanelSceneHierarchy {
             body_response.as_ref(),
             visibility_response.as_ref(),
         );
+        scene_changed
     }
 
     fn handle_interaction(
@@ -187,7 +198,8 @@ impl PanelSceneHierarchy {
         response: &Response,
         body_response: Option<&Response>,
         visibility_response: Option<&Response>,
-    ) {
+    ) -> bool {
+        let mut scene_changed = false;
         if response.double_clicked() {
             *selection = Selection::from_id(SelectionType::GameObject, scene.uuid(game_object));
             if let Some(state) = egui::collapsing_header::CollapsingState::load(ui.ctx(), id) {
@@ -206,13 +218,15 @@ impl PanelSceneHierarchy {
             scene.write_component::<ComponentID, _>(game_object, |c| {
                 c.visible = is_visible;
             });
+            scene_changed = true;
             log::info!(
                 "Set game object visibility: object={} visible={}",
                 Self::game_object_label(scene, game_object),
                 is_visible
             );
         }
-        self.handle_dnd_interaction(ui, scene, game_object, response, body_response);
+        scene_changed |=
+            self.handle_dnd_interaction(ui, scene, game_object, response, body_response);
         response.context_menu(|ui| {
             if ui.button("Save as prefab").clicked() {
                 if let Some(path) = rfd::FileDialog::new()
@@ -244,6 +258,7 @@ impl PanelSceneHierarchy {
                     Self::game_object_label(scene, game_object)
                 );
                 scene.delete(game_object);
+                scene_changed = true;
                 *selection = Selection::none();
                 ui.close_menu();
             }
@@ -254,15 +269,22 @@ impl PanelSceneHierarchy {
                     Self::game_object_label(scene, child),
                     Self::game_object_label(scene, game_object)
                 );
+                scene_changed = true;
                 *selection = Selection::from_id(SelectionType::GameObject, scene.uuid(child));
                 ui.close_menu();
             }
         });
+        scene_changed
     }
 
-    fn handle_root_dnd_interaction(&mut self, ui: &mut Ui, scene: &mut Scene, response: &Response) {
+    fn handle_root_dnd_interaction(
+        &mut self,
+        ui: &mut Ui,
+        scene: &mut Scene,
+        response: &Response,
+    ) -> bool {
         let Some(dragged_game_object) = self.dragged_game_object(ui, scene) else {
-            return;
+            return false;
         };
 
         let item_desc = re_ui::drag_and_drop::ItemContext {
@@ -280,8 +302,9 @@ impl PanelSceneHierarchy {
         );
 
         if let Some(drop_target) = drop_target {
-            self.handle_drop_target(ui, scene, drop_target, dragged_game_object);
+            return self.handle_drop_target(ui, scene, drop_target, dragged_game_object);
         }
+        false
     }
 
     fn handle_empty_space_dnd_interaction(
@@ -289,9 +312,9 @@ impl PanelSceneHierarchy {
         ui: &mut Ui,
         scene: &mut Scene,
         empty_space: egui::Rect,
-    ) {
+    ) -> bool {
         let Some(dragged_game_object) = self.dragged_game_object(ui, scene) else {
-            return;
+            return false;
         };
 
         if ui.rect_contains_pointer(empty_space) {
@@ -302,8 +325,9 @@ impl PanelSceneHierarchy {
                 usize::MAX,
             );
 
-            self.handle_drop_target(ui, scene, drop_target, dragged_game_object);
+            return self.handle_drop_target(ui, scene, drop_target, dragged_game_object);
         }
+        false
     }
 
     fn handle_dnd_interaction(
@@ -313,12 +337,12 @@ impl PanelSceneHierarchy {
         game_object: GameObject,
         response: &Response,
         body_response: Option<&Response>,
-    ) {
+    ) -> bool {
         if response.drag_started() {
             egui::DragAndDrop::set_payload(ui.ctx(), scene.uuid(game_object));
         }
         let Some(dragged_game_object) = self.dragged_game_object(ui, scene) else {
-            return;
+            return false;
         };
 
         let game_object_id = scene.uuid(game_object);
@@ -354,8 +378,9 @@ impl PanelSceneHierarchy {
         );
 
         if let Some(drop_target) = drop_target {
-            self.handle_drop_target(ui, scene, drop_target, dragged_game_object);
+            return self.handle_drop_target(ui, scene, drop_target, dragged_game_object);
         }
+        false
     }
 
     fn handle_drop_target(
@@ -364,13 +389,13 @@ impl PanelSceneHierarchy {
         scene: &mut Scene,
         drop_target: DropTarget<Uuid>,
         dragged_game_object: GameObject,
-    ) {
+    ) -> bool {
         let Some(target_parent) = scene.find(drop_target.target_parent_id) else {
-            return;
+            return false;
         };
 
         if scene.is_descendant(dragged_game_object, target_parent) {
-            return;
+            return false;
         }
 
         let target_sibling =
@@ -399,8 +424,10 @@ impl PanelSceneHierarchy {
                 sibling_label.as_deref().unwrap_or("<end>")
             );
             egui::DragAndDrop::clear_payload(ui.ctx());
+            true
         } else {
             self.send_command(Command::SetTargetContainer(target_parent));
+            false
         }
     }
 
@@ -421,7 +448,7 @@ impl PanelSceneHierarchy {
         scene: &mut Scene,
         selection: &Selection,
     ) -> Response {
-        let res = ui
+        let mut res = ui
             .small_icon_button(&re_ui::icons::ADD)
             .on_hover_text("Add a new game object");
         if res.clicked() {
@@ -437,6 +464,7 @@ impl PanelSceneHierarchy {
                 Self::game_object_label(scene, game_object),
                 parent_label
             );
+            res.mark_changed();
         }
         res
     }

@@ -5,7 +5,9 @@ use engine::scene::Prefab;
 use engine::utils::TypeUuid;
 use uuid::Uuid;
 
-use crate::inspector::asset_inspector::{AssetInspector, ReflectAssetInspector};
+use crate::inspector::asset_inspector::{
+    AssetInspector, AssetInspectorAction, ReflectAssetInspector,
+};
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, AssetInspector)]
@@ -21,17 +23,23 @@ impl AssetInspector for PrefabInspector {
         true
     }
 
-    fn show_context_menu(&self, ui: &mut Ui, game: &mut GameContext, asset_id: Uuid) {
+    fn show_context_menu(
+        &self,
+        ui: &mut Ui,
+        game: &mut GameContext,
+        asset_id: Uuid,
+    ) -> AssetInspectorAction {
+        let mut action = AssetInspectorAction::None;
         if ui.button("Import").clicked() {
             let asset_registry = game.assets.registries.assets.read();
             let prefab_meta = asset_registry.asset_meta_from_id(asset_id);
             let Ok(asset) = asset_registry.load_dyn_by_id(asset_id) else {
                 ui.close_menu();
-                return;
+                return action;
             };
             let Some(prefab_ref) = asset.try_downcast::<Prefab>() else {
                 ui.close_menu();
-                return;
+                return action;
             };
             let prefab = prefab_ref.read();
             drop(asset_registry);
@@ -51,8 +59,10 @@ impl AssetInspector for PrefabInspector {
                     scene.name(game_object),
                     scene.uuid(game_object)
                 );
+                action = AssetInspectorAction::SceneChanged;
             }
             ui.close_menu();
         }
+        action
     }
 }

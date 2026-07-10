@@ -52,6 +52,7 @@ impl Panel for PanelInspector {
                             .first(SelectionType::GameObject)
                             .and_then(|id| state.game.scenes.simulation_scene().find(id))
                         {
+                            let mut scene_changed = false;
                             let mut entity_components = HashSet::new();
                             let mut components_to_remove = HashSet::new();
                             let component_registry_ref =
@@ -67,13 +68,14 @@ impl Panel for PanelInspector {
                                 }
                             }
 
-                            self.add_component_button_ui(
+                            let add_component_response = self.add_component_button_ui(
                                 ui,
                                 &state.game.assets.lock_read().registries,
                                 &mut state.game.scenes,
                                 &entity_components,
                                 game_object,
                             );
+                            scene_changed |= add_component_response.changed();
 
                             for (type_id, component) in component_registry.components() {
                                 let Some(instance) = (unsafe {
@@ -102,6 +104,7 @@ impl Panel for PanelInspector {
                                     type_info,
                                     field_name: None,
                                 };
+                                let before = instance.serialize();
                                 if self.show_inspector(
                                     ui,
                                     &state.inspector_registry,
@@ -109,6 +112,9 @@ impl Panel for PanelInspector {
                                     instance.as_reflect_mut(),
                                 ) {
                                     components_to_remove.insert(*type_id);
+                                }
+                                if before != instance.serialize() {
+                                    scene_changed = true;
                                 }
                             }
                             for (type_id, component) in component_registry.components() {
@@ -129,6 +135,7 @@ impl Panel for PanelInspector {
                                     .entry_mut(game_object)
                                 {
                                     component.remove_instance(&mut entry);
+                                    scene_changed = true;
                                     log::info!(
                                         "Removed component from game object: component={} type_uuid={} object={}",
                                         component_name,
@@ -136,6 +143,9 @@ impl Panel for PanelInspector {
                                         object_label
                                     );
                                 }
+                            }
+                            if scene_changed {
+                                state.mark_scene_dirty();
                             }
                         } else if let Some(asset_id) = state.selection.first(SelectionType::Asset) {
                             let asset_registry_ref = state.game.assets.registries.assets.clone();
