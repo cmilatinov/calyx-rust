@@ -116,12 +116,12 @@ impl PanelViewport {
             }))
             .sense(Sense::click_and_drag()),
         );
-        if res.clicked_by(PointerButton::Primary) {
-            res.request_focus();
-        } else if ui.input(|input| input.pointer.any_pressed())
-            && !ui.rect_contains_pointer(res.rect)
-        {
-            res.surrender_focus();
+        if ui.input(|input| input.pointer.any_pressed()) {
+            if ui.rect_contains_pointer(res.rect) {
+                res.request_focus();
+            } else {
+                res.surrender_focus();
+            }
         }
         let state = InputState {
             is_active: res.dragged_by(PointerButton::Secondary),
