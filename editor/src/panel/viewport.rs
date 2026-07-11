@@ -227,9 +227,10 @@ impl PanelViewport {
                 .and_then(|(pixel_x, pixel_y)| {
                     app_state.scene_renderer.pick_game_object(pixel_x, pixel_y)
                 });
-            app_state.selection = clicked_game_object
-                .map(|id| crate::selection::Selection::from_id(SelectionType::GameObject, id))
-                .unwrap_or_else(crate::selection::Selection::none);
+            if let Some(game_object_id) = clicked_game_object {
+                app_state.selection =
+                    crate::selection::Selection::from_id(SelectionType::GameObject, game_object_id);
+            }
         }
         if !Self::transform_shortcuts_enabled(
             viewport_response.has_focus(),
