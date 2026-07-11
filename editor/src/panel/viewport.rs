@@ -116,6 +116,13 @@ impl PanelViewport {
             }))
             .sense(Sense::click_and_drag()),
         );
+        if res.clicked_by(PointerButton::Primary) {
+            res.request_focus();
+        } else if ui.input(|input| input.pointer.any_pressed())
+            && !ui.rect_contains_pointer(res.rect)
+        {
+            res.surrender_focus();
+        }
         let state = InputState {
             is_active: res.dragged_by(PointerButton::Secondary),
             last_cursor_pos: None,
@@ -225,7 +232,7 @@ impl PanelViewport {
                 .unwrap_or_else(crate::selection::Selection::none);
         }
         if !Self::transform_shortcuts_enabled(
-            app_state.viewport_tab_active,
+            viewport_response.has_focus(),
             viewport_response.dragged_by(PointerButton::Secondary),
         ) {
             return;
@@ -363,8 +370,8 @@ impl PanelViewport {
         last_pass.is_none_or(|last_pass| last_pass.saturating_add(1) >= pass)
     }
 
-    fn transform_shortcuts_enabled(viewport_tab_active: bool, camera_dragging: bool) -> bool {
-        viewport_tab_active && !camera_dragging
+    fn transform_shortcuts_enabled(viewport_has_focus: bool, camera_dragging: bool) -> bool {
+        viewport_has_focus && !camera_dragging
     }
 }
 
@@ -380,7 +387,7 @@ mod tests {
     }
 
     #[test]
-    fn transform_shortcuts_require_the_active_viewport_tab() {
+    fn transform_shortcuts_require_viewport_focus() {
         assert!(PanelViewport::transform_shortcuts_enabled(true, false));
         assert!(!PanelViewport::transform_shortcuts_enabled(false, false));
         assert!(!PanelViewport::transform_shortcuts_enabled(true, true));

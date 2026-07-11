@@ -87,7 +87,6 @@ pub struct EditorAppState {
     pub viewport_size: (f32, f32),
     pub game_response: Option<egui::Response>,
     pub game_size: (f32, f32),
-    pub viewport_tab_active: bool,
     pub gizmo_modes: EnumSet<GizmoMode>,
     pub gizmo_orientation: GizmoOrientation,
     pub thumbnails: ThumbnailService,
@@ -142,7 +141,6 @@ impl EditorAppState {
             viewport_size: Default::default(),
             game_size: Default::default(),
             game_response: Default::default(),
-            viewport_tab_active: false,
             gizmo_modes: GizmoMode::all_translate(),
             gizmo_orientation: GizmoOrientation::Global,
             thumbnails: ThumbnailService::default(),
@@ -669,7 +667,6 @@ impl eframe::App for EditorApp {
             })
             .show(ctx, |ui| {
                 let Self { panels, state, .. } = self;
-                state.viewport_tab_active = false;
                 let mut panel_manager = PanelManager { panels, state };
                 self.tree.ui(&mut panel_manager, ui);
             });

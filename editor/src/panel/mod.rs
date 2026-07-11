@@ -105,11 +105,6 @@ impl egui_tiles::Behavior<&'static str> for PanelManager<'_> {
         tile_id: TileId,
         tab_state: &TabState,
     ) -> Response {
-        if matches!(tiles.get(tile_id), Some(Tile::Pane(pane)) if *pane == PanelViewport::name())
-            && tab_state.active
-        {
-            self.state.viewport_tab_active = true;
-        }
         let label = self.tab_title_for_tile(tiles, tile_id);
         let icon = self.panels.panel_icon(tiles, tile_id);
         let InnerResponse { response, .. } = TabWidget::new(
@@ -121,7 +116,7 @@ impl egui_tiles::Behavior<&'static str> for PanelManager<'_> {
             TabDesc {
                 label,
                 icon,
-                selected: tab_state.active,
+                selected: false,
                 hovered: false,
                 closeable: false,
             },
