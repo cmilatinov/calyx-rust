@@ -224,7 +224,10 @@ impl PanelViewport {
                 .map(|id| crate::selection::Selection::from_id(SelectionType::GameObject, id))
                 .unwrap_or_else(crate::selection::Selection::none);
         }
-        if viewport_response.dragged_by(PointerButton::Secondary) {
+        if !Self::transform_shortcuts_enabled(
+            app_state.viewport_tab_active,
+            viewport_response.dragged_by(PointerButton::Secondary),
+        ) {
             return;
         }
         if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Q)) {
@@ -359,6 +362,10 @@ impl PanelViewport {
     fn viewport_pass_is_continuous(last_pass: Option<u64>, pass: u64) -> bool {
         last_pass.is_none_or(|last_pass| last_pass.saturating_add(1) >= pass)
     }
+
+    fn transform_shortcuts_enabled(viewport_tab_active: bool, camera_dragging: bool) -> bool {
+        viewport_tab_active && !camera_dragging
+    }
 }
 
 #[cfg(test)]
@@ -370,5 +377,12 @@ mod tests {
         assert!(PanelViewport::viewport_pass_is_continuous(Some(8), 9));
         assert!(PanelViewport::viewport_pass_is_continuous(Some(8), 8));
         assert!(!PanelViewport::viewport_pass_is_continuous(Some(8), 10));
+    }
+
+    #[test]
+    fn transform_shortcuts_require_the_active_viewport_tab() {
+        assert!(PanelViewport::transform_shortcuts_enabled(true, false));
+        assert!(!PanelViewport::transform_shortcuts_enabled(false, false));
+        assert!(!PanelViewport::transform_shortcuts_enabled(true, true));
     }
 }
