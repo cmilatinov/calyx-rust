@@ -119,6 +119,9 @@ impl Panel for PanelInspector {
                                     (before, after, remove)
                                 };
                                 if remove {
+                                    if self.scene_edit_before.is_none() {
+                                        self.scene_edit_before = state.scene_edit_snapshot();
+                                    }
                                     components_to_remove.insert(*type_id);
                                 }
                                 if let (Some(before), Some(after)) = (before, after) {

@@ -344,7 +344,7 @@ mod tests {
         debouncer.record(
             InspectorValueEdit {
                 label: "Edit Transform position.1".into(),
-                key: position_y,
+                key: position_y.clone(),
                 before: json!(0.0),
                 after: json!(3.0),
             },
@@ -360,6 +360,9 @@ mod tests {
         assert_eq!(edits[0].key, position_x);
         assert_eq!(edits[0].before, json!(0.0));
         assert_eq!(edits[0].after, json!(2.0));
+        assert_eq!(edits[1].key, position_y);
+        assert_eq!(edits[1].before, json!(0.0));
+        assert_eq!(edits[1].after, json!(3.0));
     }
 
     #[test]
