@@ -10,13 +10,13 @@ use crate::selection::SelectionType;
 use crate::EditorAppState;
 use convert_case::{Case, Casing};
 use egui::scroll_area::ScrollBarVisibility;
-use egui::{Id, PopupCloseBehavior, Response, Ui};
+use egui::{Id, PopupCloseBehavior, Ui};
 use engine::assets::animation_graph::AnimationGraph;
 use engine::component::{ComponentID, ComponentTransform};
 use engine::context::ReadOnlyRegistryContext;
 use engine::reflect::type_registry::TypeRegistry;
 use engine::reflect::{AttributeValue, NamedField, Reflect, StructInfo, TypeInfo};
-use engine::scene::{GameObject, SceneManager};
+use engine::scene::GameObject;
 use engine::utils::TypeUuid;
 use re_ui::list_item::{LabelContent, ListItem, PropertyContent};
 use re_ui::{DesignTokens, UiExt};
@@ -26,7 +26,6 @@ use uuid::Uuid;
 #[derive(Default)]
 pub struct PanelInspector {
     add_component_select: SearchSelectState,
-    scene_edit_before: Option<crate::SceneEditSnapshot>,
 }
 
 impl Panel for PanelInspector {
@@ -54,9 +53,9 @@ impl Panel for PanelInspector {
                             .first(SelectionType::GameObject)
                             .and_then(|id| state.game.scenes.simulation_scene().find(id))
                         {
-                            self.begin_structural_scene_edit(ui, state);
                             let game_object_id = state.game.scenes.simulation_scene().uuid(game_object);
                             let mut structural_changed = false;
+                            let mut structural_edit_before = None;
                             let mut entity_components = HashSet::new();
                             let mut components_to_remove = HashSet::new();
                             let component_registry_ref =
@@ -72,14 +71,27 @@ impl Panel for PanelInspector {
                                 }
                             }
 
-                            let add_component_response = self.add_component_button_ui(
+                            let component_to_add = self.add_component_button_ui(
                                 ui,
                                 &state.game.assets.lock_read().registries,
-                                &mut state.game.scenes,
                                 &entity_components,
-                                game_object,
                             );
-                            structural_changed |= add_component_response.changed();
+                            if let Some((type_uuid, name)) = component_to_add {
+                                Self::capture_structural_scene_edit(
+                                    &mut structural_edit_before,
+                                    state,
+                                );
+                                let scene = state.game.scenes.simulation_scene_mut();
+                                scene.bind_component_dyn(game_object, type_uuid);
+                                entity_components.insert(type_uuid);
+                                structural_changed = true;
+                                log::info!(
+                                    "Added component to game object: component={} type_uuid={} object={}",
+                                    name,
+                                    type_uuid,
+                                    Self::game_object_label(scene, game_object)
+                                );
+                            }
 
                             for (type_id, component) in component_registry.components() {
                                 entity_components.insert(*type_id);
@@ -119,9 +131,6 @@ impl Panel for PanelInspector {
                                     (before, after, remove)
                                 };
                                 if remove {
-                                    if self.scene_edit_before.is_none() {
-                                        self.scene_edit_before = state.scene_edit_snapshot();
-                                    }
                                     components_to_remove.insert(*type_id);
                                 }
                                 if let (Some(before), Some(after)) = (before, after) {
@@ -146,6 +155,10 @@ impl Panel for PanelInspector {
                                     state.game.scenes.simulation_scene(),
                                     game_object,
                                 );
+                                Self::capture_structural_scene_edit(
+                                    &mut structural_edit_before,
+                                    state,
+                                );
                                 if let Some(mut entry) = state
                                     .game
                                     .scenes
@@ -162,9 +175,13 @@ impl Panel for PanelInspector {
                                     );
                                 }
                             }
-                            self.finish_structural_scene_edit(ui, state, structural_changed);
+                            if structural_changed {
+                                state.commit_scene_edit(
+                                    "Edit inspector components",
+                                    structural_edit_before,
+                                );
+                            }
                         } else if let Some(asset_id) = state.selection.first(SelectionType::Asset) {
-                            self.clear_scene_edit();
                             let asset_registry_ref = state.game.assets.registries.assets.clone();
                             let asset_registry = asset_registry_ref.read();
                             let Some(asset_meta) = asset_registry.asset_meta_from_id(asset_id)
@@ -214,7 +231,6 @@ impl Panel for PanelInspector {
                                 );
                         } else if let SelectionType::AnimationNode(asset_id) = state.selection.ty()
                         {
-                            self.clear_scene_edit();
                             if let Some(id) = state.selection.iter().next() {
                                 if let Ok(graph_ref) = state
                                     .game
@@ -237,7 +253,6 @@ impl Panel for PanelInspector {
                         } else if let SelectionType::AnimationTransition(asset_id) =
                             state.selection.ty()
                         {
-                            self.clear_scene_edit();
                             if let Some(id) = state.selection.iter().next() {
                                 if let Ok(graph_ref) = state
                                     .game
@@ -251,9 +266,6 @@ impl Panel for PanelInspector {
                                     AnimationGraphInspector::transition(ui, &mut graph, id);
                                 }
                             }
-                        }
-                        else {
-                            self.clear_scene_edit();
                         }
                     });
                     ui.allocate_space(ui.available_size());
@@ -271,39 +283,13 @@ impl Panel for PanelInspector {
 }
 
 impl PanelInspector {
-    fn begin_structural_scene_edit(&mut self, ui: &Ui, state: &EditorAppState) {
-        if self.scene_edit_before.is_some() {
-            return;
-        }
-
-        let pointer_in_inspector = ui.rect_contains_pointer(ui.max_rect());
-        if pointer_in_inspector
-            && ui.input(|input| input.pointer.button_pressed(egui::PointerButton::Primary))
-        {
-            self.scene_edit_before = state.scene_edit_snapshot();
-        }
-    }
-
-    fn finish_structural_scene_edit(
-        &mut self,
-        ui: &Ui,
-        state: &mut EditorAppState,
-        scene_changed: bool,
+    fn capture_structural_scene_edit(
+        before: &mut Option<crate::SceneEditSnapshot>,
+        state: &EditorAppState,
     ) {
-        if ui.input(|input| input.pointer.button_down(egui::PointerButton::Primary)) {
-            return;
+        if before.is_none() {
+            *before = state.scene_edit_snapshot();
         }
-
-        let Some(before) = self.scene_edit_before.take() else {
-            return;
-        };
-        if scene_changed {
-            state.commit_scene_edit("Edit inspector components", Some(before));
-        }
-    }
-
-    fn clear_scene_edit(&mut self) {
-        self.scene_edit_before = None;
     }
 
     fn display_name(type_registry: &TypeRegistry, instance: &dyn Reflect) -> &'static str {
@@ -473,14 +459,12 @@ impl PanelInspector {
         &mut self,
         ui: &mut Ui,
         assets: &ReadOnlyRegistryContext,
-        scenes: &mut SceneManager,
         entity_components: &HashSet<Uuid>,
-        game_object: GameObject,
-    ) -> Response {
+    ) -> Option<(Uuid, String)> {
         let num_components = assets.components.read().components().count();
         let enabled = num_components > entity_components.len();
         let mut component_to_add = None;
-        let mut res = ui
+        let res = ui
             .list_item()
             .draggable(false)
             .interactive(enabled)
@@ -517,7 +501,7 @@ impl PanelInspector {
                             }
                             shown += 1;
                             if ui.selectable_label(false, name).clicked() {
-                                component_to_add = Some((*type_uuid, name));
+                                component_to_add = Some((*type_uuid, name.to_owned()));
                                 ui.memory_mut(|mem| mem.close_popup());
                             }
                         }
@@ -533,19 +517,10 @@ impl PanelInspector {
             self.add_component_select.open();
             ui.memory_mut(|mem| mem.open_popup(id));
         }
-        if let Some((type_uuid, name)) = component_to_add {
-            let scene = scenes.simulation_scene_mut();
-            scene.bind_component_dyn(game_object, type_uuid);
+        if component_to_add.is_some() {
             self.add_component_select.clear_search();
-            log::info!(
-                "Added component to game object: component={} type_uuid={} object={}",
-                name,
-                type_uuid,
-                Self::game_object_label(scene, game_object)
-            );
-            res.mark_changed();
         }
-        res
+        component_to_add
     }
 
     fn component_matches_search(name: &str, search: &str) -> bool {
