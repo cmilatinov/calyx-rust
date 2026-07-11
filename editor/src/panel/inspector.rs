@@ -1,6 +1,5 @@
 use std::any::Any;
-use std::collections::HashSet;
-use std::time::{Duration, Instant};
+use std::collections::{BTreeSet, HashSet};
 
 use crate::inspector::assets::animation_graph_inspector::AnimationGraphInspector;
 use crate::inspector::inspector_registry::InspectorRegistry;
@@ -21,23 +20,13 @@ use engine::scene::{GameObject, SceneManager};
 use engine::utils::TypeUuid;
 use re_ui::list_item::{LabelContent, ListItem, PropertyContent};
 use re_ui::{DesignTokens, UiExt};
+use serde_json::Value;
 use uuid::Uuid;
-
-const KEYBOARD_EDIT_DEBOUNCE: Duration = Duration::from_millis(500);
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SceneEditKind {
-    Pointer,
-    Keyboard,
-}
 
 #[derive(Default)]
 pub struct PanelInspector {
     add_component_select: SearchSelectState,
     scene_edit_before: Option<crate::SceneEditSnapshot>,
-    scene_edit_kind: Option<SceneEditKind>,
-    scene_edit_changed: bool,
-    scene_edit_last_change: Option<Instant>,
 }
 
 impl Panel for PanelInspector {
@@ -65,8 +54,9 @@ impl Panel for PanelInspector {
                             .first(SelectionType::GameObject)
                             .and_then(|id| state.game.scenes.simulation_scene().find(id))
                         {
-                            self.begin_scene_edit(ui, state);
-                            let mut scene_changed = false;
+                            self.begin_structural_scene_edit(ui, state);
+                            let game_object_id = state.game.scenes.simulation_scene().uuid(game_object);
+                            let mut structural_changed = false;
                             let mut entity_components = HashSet::new();
                             let mut components_to_remove = HashSet::new();
                             let component_registry_ref =
@@ -89,24 +79,22 @@ impl Panel for PanelInspector {
                                 &entity_components,
                                 game_object,
                             );
-                            scene_changed |= add_component_response.changed();
+                            structural_changed |= add_component_response.changed();
 
                             for (type_id, component) in component_registry.components() {
+                                entity_components.insert(*type_id);
+                                let Some(TypeInfo::Struct(type_info)) =
+                                    type_registry.type_info_by_id(*type_id)
+                                else {
+                                    continue;
+                                };
                                 let Some(instance) = (unsafe {
                                     state
                                         .game
                                         .scenes
                                         .simulation_scene_mut()
                                         .get_component_ptr(game_object, &**component)
-                                        .map(|ptr| &mut *ptr)
                                 }) else {
-                                    continue;
-                                };
-
-                                entity_components.insert(*type_id);
-                                let Some(TypeInfo::Struct(type_info)) =
-                                    type_registry.type_info_by_id(*type_id)
-                                else {
                                     continue;
                                 };
                                 let simulation_scene = state.game.scenes.simulation_scene();
@@ -118,17 +106,30 @@ impl Panel for PanelInspector {
                                     type_info,
                                     field_name: None,
                                 };
-                                let before = instance.serialize();
-                                if self.show_inspector(
-                                    ui,
-                                    &state.inspector_registry,
-                                    &ctx,
-                                    instance.as_reflect_mut(),
-                                ) {
+                                let (before, after, remove) = {
+                                    let instance = unsafe { &mut *instance };
+                                    let before = instance.serialize();
+                                    let remove = self.show_inspector(
+                                        ui,
+                                        &state.inspector_registry,
+                                        &ctx,
+                                        instance.as_reflect_mut(),
+                                    );
+                                    let after = instance.serialize();
+                                    (before, after, remove)
+                                };
+                                if remove {
                                     components_to_remove.insert(*type_id);
                                 }
-                                if before != instance.serialize() {
-                                    scene_changed = true;
+                                if let (Some(before), Some(after)) = (before, after) {
+                                    let changes = Self::changed_json_values(&before, &after);
+                                    state.record_inspector_value_edits(
+                                        game_object_id,
+                                        *type_id,
+                                        &Self::type_display_name(&type_registry, *type_id)
+                                            .unwrap_or_else(|| type_id.to_string()),
+                                        changes,
+                                    );
                                 }
                             }
                             for (type_id, component) in component_registry.components() {
@@ -149,7 +150,7 @@ impl Panel for PanelInspector {
                                     .entry_mut(game_object)
                                 {
                                     component.remove_instance(&mut entry);
-                                    scene_changed = true;
+                                    structural_changed = true;
                                     log::info!(
                                         "Removed component from game object: component={} type_uuid={} object={}",
                                         component_name,
@@ -158,7 +159,7 @@ impl Panel for PanelInspector {
                                     );
                                 }
                             }
-                            self.finish_scene_edit(ui, state, scene_changed);
+                            self.finish_structural_scene_edit(ui, state, structural_changed);
                         } else if let Some(asset_id) = state.selection.first(SelectionType::Asset) {
                             self.clear_scene_edit();
                             let asset_registry_ref = state.game.assets.registries.assets.clone();
@@ -267,81 +268,39 @@ impl Panel for PanelInspector {
 }
 
 impl PanelInspector {
-    fn begin_scene_edit(&mut self, ui: &Ui, state: &EditorAppState) {
+    fn begin_structural_scene_edit(&mut self, ui: &Ui, state: &EditorAppState) {
         if self.scene_edit_before.is_some() {
             return;
         }
 
         let pointer_in_inspector = ui.rect_contains_pointer(ui.max_rect());
-        let edit_kind = ui.input(|input| {
-            if pointer_in_inspector && input.pointer.button_pressed(egui::PointerButton::Primary) {
-                Some(SceneEditKind::Pointer)
-            } else if pointer_in_inspector
-                && input
-                    .events
-                    .iter()
-                    .any(|event| matches!(event, egui::Event::Text(_) | egui::Event::Paste(_)))
-            {
-                Some(SceneEditKind::Keyboard)
-            } else {
-                None
-            }
-        });
-        if let Some(edit_kind) = edit_kind {
+        if pointer_in_inspector
+            && ui.input(|input| input.pointer.button_pressed(egui::PointerButton::Primary))
+        {
             self.scene_edit_before = state.scene_edit_snapshot();
-            self.scene_edit_kind = self.scene_edit_before.as_ref().map(|_| edit_kind);
         }
     }
 
-    fn finish_scene_edit(&mut self, ui: &Ui, state: &mut EditorAppState, scene_changed: bool) {
-        self.scene_edit_changed |= scene_changed;
-        let Some(edit_kind) = self.scene_edit_kind else {
-            return;
-        };
-        if scene_changed && edit_kind == SceneEditKind::Keyboard {
-            self.scene_edit_last_change = Some(Instant::now());
-        }
-
-        let pointer_down =
-            ui.input(|input| input.pointer.button_down(egui::PointerButton::Primary));
-        let should_commit = match edit_kind {
-            SceneEditKind::Pointer => !pointer_down,
-            SceneEditKind::Keyboard => {
-                self.scene_edit_changed
-                    && Self::keyboard_edit_is_due(self.scene_edit_last_change, Instant::now())
-            }
-        };
-        let should_discard = !self.scene_edit_changed
-            && match edit_kind {
-                SceneEditKind::Pointer => !pointer_down,
-                SceneEditKind::Keyboard => true,
-            };
-        if !should_commit && !should_discard {
+    fn finish_structural_scene_edit(
+        &mut self,
+        ui: &Ui,
+        state: &mut EditorAppState,
+        scene_changed: bool,
+    ) {
+        if ui.input(|input| input.pointer.button_down(egui::PointerButton::Primary)) {
             return;
         }
 
         let Some(before) = self.scene_edit_before.take() else {
-            self.clear_scene_edit();
             return;
         };
-        let scene_changed = std::mem::take(&mut self.scene_edit_changed);
-        self.scene_edit_kind = None;
-        self.scene_edit_last_change = None;
         if scene_changed {
-            state.commit_scene_edit("Edit inspector properties", Some(before));
+            state.commit_scene_edit("Edit inspector components", Some(before));
         }
     }
 
     fn clear_scene_edit(&mut self) {
         self.scene_edit_before = None;
-        self.scene_edit_kind = None;
-        self.scene_edit_changed = false;
-        self.scene_edit_last_change = None;
-    }
-
-    fn keyboard_edit_is_due(last_change: Option<Instant>, now: Instant) -> bool {
-        last_change
-            .is_some_and(|last_change| now.duration_since(last_change) >= KEYBOARD_EDIT_DEBOUNCE)
     }
 
     fn display_name(type_registry: &TypeRegistry, instance: &dyn Reflect) -> &'static str {
@@ -591,6 +550,42 @@ impl PanelInspector {
         search.is_empty() || name.to_lowercase().contains(&search.to_lowercase())
     }
 
+    fn changed_json_values(before: &Value, after: &Value) -> Vec<(Vec<String>, Value, Value)> {
+        let mut changes = Vec::new();
+        Self::collect_json_value_changes(before, after, &mut Vec::new(), &mut changes);
+        changes
+    }
+
+    fn collect_json_value_changes(
+        before: &Value,
+        after: &Value,
+        path: &mut Vec<String>,
+        changes: &mut Vec<(Vec<String>, Value, Value)>,
+    ) {
+        match (before, after) {
+            (Value::Object(before), Value::Object(after))
+                if before.len() == after.len()
+                    && before.keys().all(|key| after.contains_key(key)) =>
+            {
+                let keys = before.keys().cloned().collect::<BTreeSet<_>>();
+                for key in keys {
+                    path.push(key.clone());
+                    Self::collect_json_value_changes(&before[&key], &after[&key], path, changes);
+                    path.pop();
+                }
+            }
+            (Value::Array(before), Value::Array(after)) if before.len() == after.len() => {
+                for (index, (before, after)) in before.iter().zip(after).enumerate() {
+                    path.push(index.to_string());
+                    Self::collect_json_value_changes(before, after, path, changes);
+                    path.pop();
+                }
+            }
+            _ if before != after => changes.push((path.clone(), before.clone(), after.clone())),
+            _ => {}
+        }
+    }
+
     fn type_display_name(type_registry: &TypeRegistry, type_uuid: Uuid) -> Option<String> {
         type_registry
             .type_info_by_id(type_uuid)
@@ -628,7 +623,7 @@ impl PanelInspector {
 #[cfg(test)]
 mod tests {
     use super::PanelInspector;
-    use std::time::{Duration, Instant};
+    use serde_json::json;
 
     #[test]
     fn component_search_matches_case_insensitive_substrings() {
@@ -653,16 +648,26 @@ mod tests {
     }
 
     #[test]
-    fn keyboard_edits_commit_after_a_short_idle_period() {
-        let now = Instant::now();
+    fn json_value_changes_use_stable_nested_paths() {
+        let before = json!({
+            "transform": {
+                "position": [0.0, 0.0, 0.0],
+                "scale": [1.0, 1.0, 1.0]
+            }
+        });
+        let after = json!({
+            "transform": {
+                "position": [2.0, 0.0, 0.0],
+                "scale": [1.0, 3.0, 1.0]
+            }
+        });
 
-        assert!(!PanelInspector::keyboard_edit_is_due(
-            Some(now),
-            now + Duration::from_millis(499)
-        ));
-        assert!(PanelInspector::keyboard_edit_is_due(
-            Some(now),
-            now + Duration::from_millis(500)
-        ));
+        let changes = PanelInspector::changed_json_values(&before, &after);
+
+        assert_eq!(changes.len(), 2);
+        assert_eq!(changes[0].0, vec!["transform", "position", "0"]);
+        assert_eq!(changes[0].1, json!(0.0));
+        assert_eq!(changes[0].2, json!(2.0));
+        assert_eq!(changes[1].0, vec!["transform", "scale", "1"]);
     }
 }
