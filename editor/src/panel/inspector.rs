@@ -477,6 +477,10 @@ impl PanelInspector {
             )
             .on_hover_text("Add a new component to this game object");
         let id = ui.make_persistent_id("add_component_popup");
+        if res.clicked() && enabled {
+            self.add_component_select.open();
+            ui.memory_mut(|mem| mem.open_popup(id));
+        }
         egui::popup::popup_below_widget(
             ui,
             id,
@@ -513,10 +517,6 @@ impl PanelInspector {
                 );
             },
         );
-        if res.clicked() && enabled {
-            self.add_component_select.open();
-            ui.memory_mut(|mem| mem.open_popup(id));
-        }
         if component_to_add.is_some() {
             self.add_component_select.clear_search();
         }
