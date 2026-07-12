@@ -150,15 +150,15 @@ impl Widgets {
     ) {
         let id = ui.make_persistent_id(id);
         let search_id = id.with("search");
-        if state.should_request_focus {
-            ui.memory_mut(|m| m.request_focus(search_id));
-            state.should_request_focus = false;
-        }
         ui.add_space(1.0);
-        egui::TextEdit::singleline(&mut state.search)
+        let search_response = egui::TextEdit::singleline(&mut state.search)
             .id(search_id)
             .hint_text("Filter by name")
             .show(ui);
+        if state.should_request_focus {
+            search_response.response.request_focus();
+            state.should_request_focus = false;
+        }
         ui.add_space(6.0);
         add_options(ui, state.search.as_str());
     }
@@ -371,6 +371,25 @@ impl Widgets {
 mod tests {
     use super::*;
     use egui_wgpu::wgpu;
+
+    #[test]
+    fn search_select_focuses_search_field_when_opened() {
+        let context = egui::Context::default();
+        let mut state = SearchSelectState::default();
+        state.open();
+        let mut search_id = None;
+
+        let _ = context.run(Default::default(), |context| {
+            egui::CentralPanel::default().show(context, |ui| {
+                let selector_id = ui.make_persistent_id("selector");
+                search_id = Some(selector_id.with("search"));
+                Widgets::search_select_contents(ui, "selector", &mut state, |_, _| {});
+            });
+        });
+
+        assert!(context.memory(|memory| memory.has_focus(search_id.unwrap())));
+        assert!(!state.should_request_focus);
+    }
 
     #[test]
     fn texture_2d_filter_accepts_loaded_2d_texture() {
