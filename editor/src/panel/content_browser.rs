@@ -5,7 +5,7 @@ use crate::widgets::{
     FileButton, ThumbnailPriority, ThumbnailRequest, ThumbnailStatus, THUMBNAIL_MAX_SIZE,
     THUMBNAIL_MIN_SIZE,
 };
-use crate::{icons, EditorAppState};
+use crate::{icons, EditorAppState, SceneEditSnapshot};
 use egui::load::SizedTexture;
 use egui::text::LayoutJob;
 use egui::{
@@ -313,6 +313,7 @@ impl PanelContentBrowser {
         let inspector_registry = &state.inspector_registry;
         let game = &mut state.game;
         let mut action = AssetInspectorAction::None;
+        let mut edit_before = None;
         response.context_menu(|ui| {
             let Some(inspector) = type_uuid
                 .and_then(|type_uuid| inspector_registry.asset_inspector_lookup(type_uuid))
@@ -321,18 +322,29 @@ impl PanelContentBrowser {
                 return;
             };
             if inspector.has_context_menu() {
+                edit_before = if game.scenes.has_simulation_scene() {
+                    None
+                } else {
+                    Some(SceneEditSnapshot::capture(game.scenes.current_scene()))
+                };
                 action = inspector.show_context_menu(ui, game, asset_id);
             } else {
                 ui.label("No actions available");
             }
         });
-        Self::handle_asset_inspector_action(state, action);
+        Self::handle_asset_inspector_action(state, action, edit_before);
     }
 
-    fn handle_asset_inspector_action(state: &mut EditorAppState, action: AssetInspectorAction) {
+    fn handle_asset_inspector_action(
+        state: &mut EditorAppState,
+        action: AssetInspectorAction,
+        edit_before: Option<SceneEditSnapshot>,
+    ) {
         match action {
             AssetInspectorAction::None => {}
-            AssetInspectorAction::SceneChanged => state.mark_scene_dirty(),
+            AssetInspectorAction::SceneChanged => {
+                state.commit_scene_edit("Import prefab", edit_before)
+            }
             AssetInspectorAction::OpenScene(asset_id) => state.open_scene_asset(asset_id),
         }
     }

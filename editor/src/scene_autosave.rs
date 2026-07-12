@@ -9,7 +9,8 @@ use engine::core::Ref;
 use engine::scene::{Scene, SceneSnapshot};
 
 use crate::scene_document::{
-    PreparedSceneAutosave, SceneAutosave, SceneDocumentRevision, SceneDocumentState, SceneRecovery,
+    scene_fingerprint, PreparedSceneAutosave, SceneAutosave, SceneDocumentRevision,
+    SceneDocumentState, SceneRecovery,
 };
 use crate::task_id::TaskId;
 
@@ -44,6 +45,11 @@ impl EditorSceneAutosave {
         self.document.is_dirty()
     }
 
+    pub fn sync_dirty_to_fingerprint(&mut self, fingerprint: Option<String>) {
+        self.document
+            .sync_dirty_to_fingerprint(fingerprint, Instant::now());
+    }
+
     pub fn prepare_scene_change(&mut self, game: &GameContext) -> bool {
         if self.write_now(game) {
             true
@@ -53,9 +59,14 @@ impl EditorSceneAutosave {
         }
     }
 
-    pub fn scene_loaded(&mut self, source_file: Option<&Path>) {
-        self.mark_clean();
-        self.recovery = source_file.and_then(|file| self.storage.recovery_for_scene(file));
+    pub fn scene_loaded(&mut self, game: &GameContext) {
+        self.mark_clean(game.scenes.current_scene());
+        self.recovery = game
+            .scenes
+            .current_scene_meta()
+            .file
+            .as_deref()
+            .and_then(|file| self.storage.recovery_for_scene(file));
         if let Some(recovery) = &self.recovery {
             log::info!(
                 "Detected newer scene recovery file: source={} autosave={}",
@@ -65,13 +76,13 @@ impl EditorSceneAutosave {
         }
     }
 
-    pub fn new_scene_loaded(&mut self) {
+    pub fn new_scene_loaded(&mut self, scene: &Scene) {
         self.recovery = None;
-        self.mark_clean();
+        self.mark_clean(scene);
     }
 
-    pub fn scene_saved(&mut self, previous_file: Option<&Path>, file: &Path) {
-        self.mark_clean();
+    pub fn scene_saved(&mut self, previous_file: Option<&Path>, file: &Path, scene: &Scene) {
+        self.mark_clean(scene);
         if let Some(previous_file) = previous_file {
             self.discard_file(previous_file);
         }
@@ -116,9 +127,9 @@ impl EditorSceneAutosave {
         }
     }
 
-    pub fn show_recovery_prompt(&mut self, ctx: &egui::Context, game: &mut GameContext) {
+    pub fn show_recovery_prompt(&mut self, ctx: &egui::Context, game: &mut GameContext) -> bool {
         let Some(recovery) = self.recovery.clone() else {
-            return;
+            return false;
         };
 
         enum RecoveryAction {
@@ -147,14 +158,21 @@ impl EditorSceneAutosave {
 
         match action {
             Some(RecoveryAction::Recover) => self.recover_scene(game, recovery),
-            Some(RecoveryAction::Discard) => self.discard_recovery(recovery),
-            None => {}
+            Some(RecoveryAction::Discard) => {
+                self.discard_recovery(recovery);
+                false
+            }
+            None => false,
         }
     }
 
-    fn mark_clean(&mut self) {
+    fn mark_clean(&mut self, scene: &Scene) {
+        self.mark_clean_with_fingerprint(scene_fingerprint(scene));
+    }
+
+    fn mark_clean_with_fingerprint(&mut self, fingerprint: Option<String>) {
         self.pending = None;
-        self.document.mark_clean();
+        self.document.mark_clean(fingerprint);
     }
 
     fn write_now(&mut self, game: &GameContext) -> bool {
@@ -258,11 +276,18 @@ impl EditorSceneAutosave {
         }
     }
 
-    fn recover_scene(&mut self, game: &mut GameContext, recovery: SceneRecovery) {
-        let loaded = {
+    fn recover_scene(&mut self, game: &mut GameContext, recovery: SceneRecovery) -> bool {
+        let (source_fingerprint, loaded) = {
             let assets = game.assets.lock_read();
-            LoadedAsset::<Scene>::from_json_file_ctx(&assets, &recovery.autosave_file)
+            let source_fingerprint =
+                LoadedAsset::<Scene>::from_json_file_ctx(&assets, &recovery.source_file)
+                    .ok()
+                    .and_then(|loaded| scene_fingerprint(&loaded.asset));
+            let loaded = LoadedAsset::<Scene>::from_json_file_ctx(&assets, &recovery.autosave_file);
+            (source_fingerprint, loaded)
         };
+        let source_fingerprint =
+            source_fingerprint.or_else(|| scene_fingerprint(game.scenes.current_scene()));
         let scene = match loaded {
             Ok(loaded) => loaded.asset,
             Err(error) => {
@@ -271,13 +296,13 @@ impl EditorSceneAutosave {
                     recovery.autosave_file.display(),
                     error
                 );
-                return;
+                return false;
             }
         };
         game.scenes.load_scene(Ref::new(scene).readonly());
         game.scenes
             .set_current_scene_file(Some(recovery.source_file.clone()));
-        self.mark_clean();
+        self.mark_clean_with_fingerprint(source_fingerprint);
         self.mark_dirty();
         self.recovery = None;
         log::info!(
@@ -285,6 +310,7 @@ impl EditorSceneAutosave {
             recovery.source_file.display(),
             recovery.autosave_file.display()
         );
+        true
     }
 
     fn discard_recovery(&mut self, recovery: SceneRecovery) {

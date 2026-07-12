@@ -20,6 +20,7 @@ pub struct SceneRecovery {
 #[derive(Debug, Default)]
 pub struct SceneDocumentState {
     dirty: bool,
+    saved_scene_fingerprint: Option<String>,
     generation: u64,
     revision: u64,
     last_autosaved_revision: u64,
@@ -44,12 +45,29 @@ impl SceneDocumentState {
         self.last_edit_at = Some(now);
     }
 
-    pub fn mark_clean(&mut self) {
-        self.dirty = false;
-        self.generation = self.generation.saturating_add(1);
-        self.last_autosaved_revision = self.revision;
-        self.last_edit_at = None;
-        self.last_autosave_at = None;
+    pub fn mark_clean(&mut self, scene_fingerprint: Option<String>) {
+        self.saved_scene_fingerprint = scene_fingerprint;
+        self.clear_dirty();
+    }
+
+    pub fn sync_dirty_to_fingerprint(
+        &mut self,
+        current_scene_fingerprint: Option<String>,
+        now: Instant,
+    ) {
+        let dirty = match (
+            self.saved_scene_fingerprint.as_ref(),
+            current_scene_fingerprint.as_ref(),
+        ) {
+            (Some(saved), Some(current)) => saved != current,
+            _ => true,
+        };
+
+        if dirty {
+            self.mark_dirty(now);
+        } else if self.dirty {
+            self.clear_dirty();
+        }
     }
 
     pub fn current_revision(&self) -> SceneDocumentRevision {
@@ -88,6 +106,14 @@ impl SceneDocumentState {
         if success && revision.generation == self.generation {
             self.last_autosaved_revision = self.last_autosaved_revision.max(revision.revision);
         }
+    }
+
+    fn clear_dirty(&mut self) {
+        self.dirty = false;
+        self.generation = self.generation.saturating_add(1);
+        self.last_autosaved_revision = self.revision;
+        self.last_edit_at = None;
+        self.last_autosave_at = None;
     }
 }
 
@@ -322,6 +348,14 @@ fn path_hash(path: &Path) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+pub fn scene_fingerprint(scene: &Scene) -> Option<String> {
+    let value = serde_json::to_value(scene).ok()?;
+    let bytes = serde_json::to_vec(&value).ok()?;
+    let mut hasher = Sha1::new();
+    hasher.update(bytes);
+    Some(format!("{:x}", hasher.finalize()))
+}
+
 fn is_newer_recovery(autosave_modified: SystemTime, source_modified: Option<SystemTime>) -> bool {
     source_modified
         .map(|source_modified| autosave_modified > source_modified)
@@ -365,6 +399,43 @@ mod tests {
     }
 
     #[test]
+    fn dirty_sync_marks_matching_saved_fingerprint_clean() {
+        let mut state = SceneDocumentState::default();
+        let now = Instant::now();
+
+        state.mark_clean(Some("saved".into()));
+        state.mark_dirty(now);
+        state.sync_dirty_to_fingerprint(Some("saved".into()), now + Duration::from_secs(1));
+
+        assert!(!state.is_dirty());
+        assert!(!state.should_autosave(now + AUTOSAVE_DELAY + AUTOSAVE_INTERVAL));
+    }
+
+    #[test]
+    fn dirty_sync_keeps_different_fingerprint_dirty() {
+        let mut state = SceneDocumentState::default();
+        let now = Instant::now();
+
+        state.mark_clean(Some("saved".into()));
+        state.sync_dirty_to_fingerprint(Some("changed".into()), now);
+
+        assert!(state.is_dirty());
+        assert!(state.should_autosave(now + AUTOSAVE_DELAY));
+    }
+
+    #[test]
+    fn recovery_baseline_keeps_recovered_scene_dirty() {
+        let mut state = SceneDocumentState::default();
+        let now = Instant::now();
+
+        state.mark_clean(Some("source".into()));
+        state.sync_dirty_to_fingerprint(Some("recovery".into()), now);
+
+        assert!(state.is_dirty());
+        assert!(state.should_autosave(now + AUTOSAVE_DELAY));
+    }
+
+    #[test]
     fn newer_edit_remains_pending_after_older_autosave_finishes() {
         let mut state = SceneDocumentState::default();
         let now = Instant::now();
@@ -387,7 +458,7 @@ mod tests {
 
         state.mark_dirty(now);
         let stale_revision = state.current_revision();
-        state.mark_clean();
+        state.mark_clean(Some("saved".into()));
 
         assert!(!state.should_commit_autosave(stale_revision));
     }

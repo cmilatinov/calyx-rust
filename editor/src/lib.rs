@@ -10,7 +10,11 @@ use transform_gizmo_egui::{GizmoMode, GizmoOrientation};
 use self::panel::*;
 pub use self::project_manager::*;
 use self::scene_autosave::EditorSceneAutosave;
-use self::scene_document::write_scene_file;
+use self::scene_document::{scene_fingerprint, write_scene_file};
+use self::scene_history::{
+    InspectorValueDebouncer, InspectorValueEdit, InspectorValueKey, SceneEditSnapshot,
+    SceneHistory, SceneHistoryRestore,
+};
 use crate::camera::EditorCamera;
 use crate::task_id::TaskId;
 use crate::widgets::ThumbnailService;
@@ -21,6 +25,7 @@ use egui::{Color32, Frame, Margin, Shadow};
 use egui_tiles::{Container, Linear, LinearDir, Tiles, Tree};
 use egui_wgpu::wgpu::PowerPreference;
 use egui_wgpu::{SurfaceErrorAction, WgpuSetup, WgpuSetupCreateNew};
+use engine::component::ComponentTransform;
 use engine::context::{AssetContext, GameContext};
 use engine::core::Ref;
 use engine::error::BoxedError;
@@ -28,6 +33,7 @@ use engine::input::{Input, InputState};
 use engine::logging::{DefaultLogger, Log};
 use engine::render::{Camera, SceneRenderer, SceneRendererOptions};
 use engine::scene::Scene;
+use engine::utils::TypeUuid;
 use engine::*;
 use rapier3d::prelude::DebugRenderPipeline;
 use selection::{Selection, SelectionType};
@@ -48,6 +54,7 @@ mod panel;
 mod project_manager;
 mod scene_autosave;
 mod scene_document;
+mod scene_history;
 mod selection;
 mod task_id;
 mod widgets;
@@ -83,6 +90,8 @@ pub struct EditorAppState {
     pub gizmo_modes: EnumSet<GizmoMode>,
     pub gizmo_orientation: GizmoOrientation,
     pub thumbnails: ThumbnailService,
+    scene_history: SceneHistory,
+    pending_inspector_value_edits: InspectorValueDebouncer,
     scene_autosave: EditorSceneAutosave,
     active_scene: ActiveSceneState,
     window_title: String,
@@ -135,6 +144,8 @@ impl EditorAppState {
             gizmo_modes: GizmoMode::all_translate(),
             gizmo_orientation: GizmoOrientation::Global,
             thumbnails: ThumbnailService::default(),
+            scene_history: SceneHistory::default(),
+            pending_inspector_value_edits: InspectorValueDebouncer::default(),
             scene_autosave: EditorSceneAutosave::new(&project_path),
             active_scene: Default::default(),
             window_title: String::new(),
@@ -168,8 +179,241 @@ impl EditorAppState {
         self.scene_autosave.mark_dirty();
     }
 
+    pub fn scene_edit_snapshot(&self) -> Option<SceneEditSnapshot> {
+        if self.game.scenes.has_simulation_scene() {
+            return None;
+        }
+        Some(SceneEditSnapshot::capture(self.game.scenes.current_scene()))
+    }
+
+    pub fn commit_scene_edit(
+        &mut self,
+        label: impl Into<String>,
+        before: Option<SceneEditSnapshot>,
+    ) {
+        if self.game.scenes.has_simulation_scene() {
+            return;
+        }
+        self.flush_pending_inspector_value_edits();
+
+        let Some(before) = before else {
+            self.mark_scene_dirty();
+            return;
+        };
+
+        let after = SceneEditSnapshot::capture(self.game.scenes.current_scene());
+        let fingerprint = after.fingerprint().map(str::to_owned);
+        if self.scene_history.push(label, before, after) {
+            self.scene_autosave.sync_dirty_to_fingerprint(fingerprint);
+        }
+    }
+
+    pub fn record_inspector_value_edits(
+        &mut self,
+        game_object: uuid::Uuid,
+        component: uuid::Uuid,
+        component_name: &str,
+        changes: Vec<(Vec<String>, serde_json::Value, serde_json::Value)>,
+    ) {
+        if self.game.scenes.has_simulation_scene() || changes.is_empty() {
+            return;
+        }
+
+        for (value_path, before, after) in changes {
+            let value_name = if value_path.is_empty() {
+                "value".to_owned()
+            } else {
+                value_path.join(".")
+            };
+            self.pending_inspector_value_edits.record(
+                InspectorValueEdit {
+                    label: format!("Edit {component_name} {value_name}"),
+                    key: InspectorValueKey {
+                        game_object,
+                        component,
+                        value_path,
+                    },
+                    before,
+                    after,
+                },
+                std::time::Instant::now(),
+            );
+        }
+        self.sync_scene_dirty_to_current_fingerprint();
+    }
+
+    fn flush_due_inspector_value_edits(&mut self) {
+        if self.game.scenes.has_simulation_scene() {
+            self.pending_inspector_value_edits.clear();
+            return;
+        }
+        let edits = self
+            .pending_inspector_value_edits
+            .drain_due(std::time::Instant::now());
+        self.commit_inspector_value_edits(edits);
+    }
+
+    fn flush_pending_inspector_value_edits(&mut self) {
+        if self.game.scenes.has_simulation_scene() {
+            self.pending_inspector_value_edits.clear();
+            return;
+        }
+        let edits = self.pending_inspector_value_edits.drain_all();
+        self.commit_inspector_value_edits(edits);
+    }
+
+    fn commit_inspector_value_edits(&mut self, edits: Vec<InspectorValueEdit>) {
+        if edits.is_empty() {
+            return;
+        }
+
+        let mut committed = false;
+        for edit in edits {
+            committed |= self.scene_history.push_inspector_value(edit);
+        }
+        if committed {
+            self.sync_scene_dirty_to_current_fingerprint();
+        }
+    }
+
+    fn sync_scene_dirty_to_current_fingerprint(&mut self) {
+        self.scene_autosave
+            .sync_dirty_to_fingerprint(scene_fingerprint(self.game.scenes.current_scene()));
+    }
+
+    pub fn can_undo_scene_edit(&self) -> bool {
+        !self.game.scenes.has_simulation_scene()
+            && (self.scene_history.can_undo() || self.pending_inspector_value_edits.has_pending())
+    }
+
+    pub fn can_redo_scene_edit(&self) -> bool {
+        !self.game.scenes.has_simulation_scene()
+            && !self.pending_inspector_value_edits.has_pending()
+            && self.scene_history.can_redo()
+    }
+
+    pub fn undo_scene_edit(&mut self) {
+        if self.game.scenes.has_simulation_scene() {
+            return;
+        }
+        self.flush_pending_inspector_value_edits();
+        let Some(restore) = self.scene_history.undo() else {
+            return;
+        };
+        match restore {
+            SceneHistoryRestore::Scene {
+                label,
+                snapshot,
+                fingerprint,
+            } => {
+                self.game.scenes.restore_current_scene_snapshot(snapshot);
+                self.scene_autosave.sync_dirty_to_fingerprint(fingerprint);
+                log::info!("Undid scene edit: {label}");
+            }
+            SceneHistoryRestore::InspectorValue { label, key, value } => {
+                if self.restore_inspector_value(&key, value) {
+                    self.sync_scene_dirty_to_current_fingerprint();
+                    log::info!("Undid scene edit: {label}");
+                }
+            }
+        }
+    }
+
+    pub fn redo_scene_edit(&mut self) {
+        if self.game.scenes.has_simulation_scene() {
+            return;
+        }
+        self.flush_pending_inspector_value_edits();
+        let Some(restore) = self.scene_history.redo() else {
+            return;
+        };
+        match restore {
+            SceneHistoryRestore::Scene {
+                label,
+                snapshot,
+                fingerprint,
+            } => {
+                self.game.scenes.restore_current_scene_snapshot(snapshot);
+                self.scene_autosave.sync_dirty_to_fingerprint(fingerprint);
+                log::info!("Redid scene edit: {label}");
+            }
+            SceneHistoryRestore::InspectorValue { label, key, value } => {
+                if self.restore_inspector_value(&key, value) {
+                    self.sync_scene_dirty_to_current_fingerprint();
+                    log::info!("Redid scene edit: {label}");
+                }
+            }
+        }
+    }
+
     pub fn is_scene_dirty(&self) -> bool {
         self.scene_autosave.is_dirty()
+    }
+
+    fn clear_scene_history(&mut self) {
+        self.scene_history.clear();
+        self.pending_inspector_value_edits.clear();
+    }
+
+    fn restore_inspector_value(
+        &mut self,
+        key: &InspectorValueKey,
+        value: serde_json::Value,
+    ) -> bool {
+        let component_registry_ref = self.game.assets.registries.components.clone();
+        let component_registry = component_registry_ref.read();
+        let Some(component) = component_registry.component(key.component) else {
+            log::warn!(
+                "Skipped inspector history restore because component {} is no longer registered",
+                key.component
+            );
+            return false;
+        };
+        let scene = self.game.scenes.current_scene_mut();
+        let Some(game_object) = scene.find(key.game_object) else {
+            log::warn!(
+                "Skipped inspector history restore because game object {} no longer exists",
+                key.game_object
+            );
+            return false;
+        };
+        let Some(instance) = (unsafe {
+            scene
+                .get_component_ptr(game_object, component)
+                .map(|ptr| &mut *ptr)
+        }) else {
+            log::warn!(
+                "Skipped inspector history restore because component {} is missing from game object {}",
+                key.component,
+                key.game_object
+            );
+            return false;
+        };
+        let Some(mut serialized) = instance.serialize() else {
+            log::warn!(
+                "Skipped inspector history restore because component {} cannot be serialized",
+                key.component
+            );
+            return false;
+        };
+        if !set_json_value(&mut serialized, &key.value_path, value) {
+            log::warn!(
+                "Skipped inspector history restore because value path {:?} no longer exists",
+                key.value_path
+            );
+            return false;
+        }
+        if !instance.deserialize_in_place(&serialized) {
+            log::warn!(
+                "Skipped inspector history restore because component {} cannot be deserialized",
+                key.component
+            );
+            return false;
+        }
+        if key.component == ComponentTransform::type_uuid() {
+            scene.clear_transform_cache();
+        }
+        true
     }
 
     pub fn open_scene_file(&mut self, file: PathBuf) {
@@ -195,8 +439,8 @@ impl EditorAppState {
         if self.game.scenes.current_scene_meta().file.is_none() {
             self.game.scenes.set_current_scene_file(Some(file.clone()));
         }
-        let source_file = self.game.scenes.current_scene_meta().file.clone();
-        self.scene_autosave.scene_loaded(source_file.as_deref());
+        self.scene_autosave.scene_loaded(&self.game);
+        self.clear_scene_history();
         let object_count = self.game.scenes.current_scene().objects().count();
         let message = format!("Opened scene {} ({} objects)", file.display(), object_count);
         log::info!("{message}");
@@ -218,8 +462,8 @@ impl EditorAppState {
         match scene {
             Ok(scene) => {
                 self.game.scenes.load_scene(scene.readonly());
-                let source_file = self.game.scenes.current_scene_meta().file.clone();
-                self.scene_autosave.scene_loaded(source_file.as_deref());
+                self.scene_autosave.scene_loaded(&self.game);
+                self.clear_scene_history();
                 let object_count = self.game.scenes.current_scene().objects().count();
                 let message = format!("Opened scene {label} ({object_count} objects)");
                 log::info!("{message}");
@@ -236,7 +480,9 @@ impl EditorAppState {
             return;
         }
         self.game.scenes.load_default_scene();
-        self.scene_autosave.new_scene_loaded();
+        self.scene_autosave
+            .new_scene_loaded(self.game.scenes.current_scene());
+        self.clear_scene_history();
         log::info!("Created new scene from default scene");
     }
 
@@ -247,8 +493,11 @@ impl EditorAppState {
         }
 
         self.game.scenes.set_current_scene_file(Some(file.clone()));
-        self.scene_autosave
-            .scene_saved(previous_file.as_deref(), &file);
+        self.scene_autosave.scene_saved(
+            previous_file.as_deref(),
+            &file,
+            self.game.scenes.current_scene(),
+        );
         true
     }
 
@@ -257,11 +506,16 @@ impl EditorAppState {
     }
 
     fn show_scene_recovery_prompt(&mut self, ctx: &egui::Context) {
-        self.scene_autosave
-            .show_recovery_prompt(ctx, &mut self.game);
+        if self
+            .scene_autosave
+            .show_recovery_prompt(ctx, &mut self.game)
+        {
+            self.clear_scene_history();
+        }
     }
 
     fn shutdown_scene_autosave(&mut self) {
+        self.flush_pending_inspector_value_edits();
         self.scene_autosave.shutdown(&self.game);
     }
 
@@ -278,6 +532,29 @@ impl EditorAppState {
                 false
             }
         }
+    }
+}
+
+fn set_json_value(
+    target: &mut serde_json::Value,
+    path: &[String],
+    value: serde_json::Value,
+) -> bool {
+    let Some((segment, remaining)) = path.split_first() else {
+        *target = value;
+        return true;
+    };
+
+    match target {
+        serde_json::Value::Object(values) => values
+            .get_mut(segment)
+            .is_some_and(|target| set_json_value(target, remaining, value)),
+        serde_json::Value::Array(values) => segment
+            .parse::<usize>()
+            .ok()
+            .and_then(|index| values.get_mut(index))
+            .is_some_and(|target| set_json_value(target, remaining, value)),
+        _ => false,
     }
 }
 
@@ -393,6 +670,8 @@ impl eframe::App for EditorApp {
                 let mut panel_manager = PanelManager { panels, state };
                 self.tree.ui(&mut panel_manager, ui);
             });
+        self.edit_shortcuts(ctx);
+        self.state.flush_due_inspector_value_edits();
 
         self.status_bar(ctx);
 
@@ -607,6 +886,25 @@ impl EditorApp {
         });
     }
 
+    fn edit_menu(&mut self, ui: &mut Ui) {
+        ui.menu_button("Edit", |ui| {
+            if ui
+                .add_enabled(self.state.can_undo_scene_edit(), Button::new("Undo"))
+                .clicked()
+            {
+                self.state.undo_scene_edit();
+                ui.close_menu();
+            }
+            if ui
+                .add_enabled(self.state.can_redo_scene_edit(), Button::new("Redo"))
+                .clicked()
+            {
+                self.state.redo_scene_edit();
+                ui.close_menu();
+            }
+        });
+    }
+
     fn tools_menu(&mut self, ui: &mut Ui) {
         ui.menu_button("Tools", |ui| {
             if ui.button("Invalidate Thumbnail Cache").clicked() {
@@ -674,6 +972,7 @@ impl EditorApp {
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 self.file_menu(ui);
+                self.edit_menu(ui);
                 self.tools_menu(ui);
 
                 if Self::icon_button(ui, include_image!("../../resources/icons/compile_dark.png"))
@@ -701,6 +1000,7 @@ impl EditorApp {
                         );
                         self.state.game.scenes.pause_simulation();
                     } else {
+                        self.state.flush_pending_inspector_value_edits();
                         log::info!(
                             "User started scene simulation; objects={}",
                             self.state.game.scenes.current_scene().objects().count()
@@ -755,6 +1055,23 @@ impl EditorApp {
             });
     }
 
+    fn edit_shortcuts(&mut self, ctx: &egui::Context) {
+        let ctrl_shift = egui::Modifiers {
+            ctrl: true,
+            shift: true,
+            ..Default::default()
+        };
+        if ctx.input_mut(|input| {
+            input.consume_key(egui::Modifiers::CTRL, egui::Key::Y)
+                || input.consume_key(ctrl_shift, egui::Key::Z)
+        }) {
+            self.state.redo_scene_edit();
+            return;
+        }
+        if ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::Z)) {
+            self.state.undo_scene_edit();
+        }
+    }
     fn is_game_focused(&self) -> bool {
         self.panels
             .panel::<PanelGame>()
@@ -769,7 +1086,8 @@ impl EditorApp {
 
 #[cfg(test)]
 mod tests {
-    use super::ActiveSceneState;
+    use super::{set_json_value, ActiveSceneState};
+    use serde_json::json;
     use std::path::PathBuf;
 
     #[test]
@@ -810,6 +1128,23 @@ mod tests {
 
         state.set_scene(Some("scene".into()), None);
         assert_eq!(state.title("Sandbox", true), "Calyx - Sandbox - scene *");
+    }
+
+    #[test]
+    fn json_value_patch_preserves_other_component_values() {
+        let mut component = json!({
+            "position": [1.0, 2.0, 3.0],
+            "enabled": true
+        });
+
+        assert!(set_json_value(
+            &mut component,
+            &["position".into(), "1".into()],
+            json!(9.0)
+        ));
+
+        assert_eq!(component["position"], json!([1.0, 9.0, 3.0]));
+        assert_eq!(component["enabled"], json!(true));
     }
 }
 

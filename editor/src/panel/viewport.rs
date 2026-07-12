@@ -1,6 +1,6 @@
 use crate::panel::Panel;
 use crate::selection::SelectionType;
-use crate::{icons, EditorAppState};
+use crate::{icons, EditorAppState, SceneEditSnapshot};
 use egui::epaint::Vertex;
 use egui::load::SizedTexture;
 use egui::Ui;
@@ -23,12 +23,16 @@ use transform_gizmo_egui::{
 
 pub struct PanelViewport {
     gizmo: Gizmo,
+    transform_edit_before: Option<SceneEditSnapshot>,
+    last_viewport_pass: Option<u64>,
 }
 
 impl Default for PanelViewport {
     fn default() -> Self {
         Self {
             gizmo: Gizmo::new(GizmoConfig::default()),
+            transform_edit_before: None,
+            last_viewport_pass: None,
         }
     }
 }
@@ -112,6 +116,13 @@ impl PanelViewport {
             }))
             .sense(Sense::click_and_drag()),
         );
+        if ui.input(|input| input.pointer.any_pressed()) {
+            if ui.rect_contains_pointer(res.rect) {
+                res.request_focus();
+            } else {
+                res.surrender_focus();
+            }
+        }
         let state = InputState {
             is_active: res.dragged_by(PointerButton::Secondary),
             last_cursor_pos: None,
@@ -129,6 +140,10 @@ impl PanelViewport {
     }
 
     fn gizmo(&mut self, ui: &mut Ui, app_state: &mut EditorAppState, viewport_response: &Response) {
+        let pass = ui.ctx().cumulative_pass_nr();
+        let viewport_is_continuous =
+            Self::viewport_pass_is_continuous(self.last_viewport_pass, pass);
+        self.last_viewport_pass = Some(pass);
         ui.set_clip_rect(viewport_response.rect);
         let snap = ui.input(|input| input.modifiers.ctrl);
         let snap_coarse = ui.input(|input| input.modifiers.shift);
@@ -140,6 +155,7 @@ impl PanelViewport {
         };
 
         let mut gizmo_focused = false;
+        let mut selected_game_object = false;
         let pointer_in_viewport = ui.rect_contains_pointer(viewport_response.rect);
         let hovered_game_object = self.hovered_game_object(ui, viewport_response, app_state);
         app_state.hovered_game_object = hovered_game_object;
@@ -149,6 +165,7 @@ impl PanelViewport {
             .first(SelectionType::GameObject)
             .and_then(|id| app_state.game.scenes.simulation_scene().find(id))
         {
+            selected_game_object = true;
             let view_matrix = RowMatrix4::from(<DMat4 as Into<ColumnMatrix4<f64>>>::into(
                 nalgebra::convert::<Mat4, DMat4>(app_state.camera.transform.inverse_matrix()),
             ));
@@ -181,16 +198,27 @@ impl PanelViewport {
                 pointer_in_viewport,
                 &[transform.into()],
             ) {
+                if self.transform_edit_before.is_none() {
+                    self.transform_edit_before = app_state.scene_edit_snapshot();
+                }
                 let res: Transform = transforms[0].into();
                 app_state
                     .game
                     .scenes
                     .simulation_scene_mut()
                     .set_world_transform(game_object, res.matrix());
-                app_state.mark_scene_dirty();
                 self.gizmo_status(ui, &result);
             }
             gizmo_focused = self.gizmo.is_focused();
+        }
+
+        if self.transform_edit_before.is_some()
+            && !ui.input(|input| input.pointer.button_down(PointerButton::Primary))
+        {
+            let edit_before = self.transform_edit_before.take();
+            if viewport_is_continuous && selected_game_object {
+                app_state.commit_scene_edit("Transform game object", edit_before);
+            }
         }
 
         if viewport_response.clicked_by(PointerButton::Primary) && !gizmo_focused {
@@ -199,11 +227,15 @@ impl PanelViewport {
                 .and_then(|(pixel_x, pixel_y)| {
                     app_state.scene_renderer.pick_game_object(pixel_x, pixel_y)
                 });
-            app_state.selection = clicked_game_object
-                .map(|id| crate::selection::Selection::from_id(SelectionType::GameObject, id))
-                .unwrap_or_else(crate::selection::Selection::none);
+            if let Some(game_object_id) = clicked_game_object {
+                app_state.selection =
+                    crate::selection::Selection::from_id(SelectionType::GameObject, game_object_id);
+            }
         }
-        if viewport_response.dragged_by(PointerButton::Secondary) {
+        if !Self::transform_shortcuts_enabled(
+            viewport_response.has_focus(),
+            viewport_response.dragged_by(PointerButton::Secondary),
+        ) {
             return;
         }
         if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Q)) {
@@ -333,5 +365,32 @@ impl PanelViewport {
                 .clone(),
             Color32::WHITE,
         );
+    }
+
+    fn viewport_pass_is_continuous(last_pass: Option<u64>, pass: u64) -> bool {
+        last_pass.is_none_or(|last_pass| last_pass.saturating_add(1) >= pass)
+    }
+
+    fn transform_shortcuts_enabled(viewport_has_focus: bool, camera_dragging: bool) -> bool {
+        viewport_has_focus && !camera_dragging
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PanelViewport;
+
+    #[test]
+    fn viewport_pass_continuity_rejects_inactive_tab_gaps() {
+        assert!(PanelViewport::viewport_pass_is_continuous(Some(8), 9));
+        assert!(PanelViewport::viewport_pass_is_continuous(Some(8), 8));
+        assert!(!PanelViewport::viewport_pass_is_continuous(Some(8), 10));
+    }
+
+    #[test]
+    fn transform_shortcuts_require_viewport_focus() {
+        assert!(PanelViewport::transform_shortcuts_enabled(true, false));
+        assert!(!PanelViewport::transform_shortcuts_enabled(false, false));
+        assert!(!PanelViewport::transform_shortcuts_enabled(true, true));
     }
 }
