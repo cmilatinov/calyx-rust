@@ -77,6 +77,12 @@ impl ComponentRespawnState {
         self.alive && self.invulnerability_remaining > f32::EPSILON
     }
 
+    /// Returns whether gameplay should be disabled during death, respawn, or
+    /// post-spawn invulnerability.
+    pub fn is_gameplay_locked(&self) -> bool {
+        !self.alive || self.death_requested || self.is_invulnerable()
+    }
+
     pub fn request_death(&mut self) {
         self.death_requested = true;
     }
@@ -150,8 +156,9 @@ pub fn update_respawn_state(scene: &mut Scene, game_object: GameObject, dt: f32)
     let should_spawn = state.tick(dt) == Some(RespawnAction::Spawn);
     let spawned = should_spawn
         && find_spawn_transform(scene, state.team).is_some_and(|mut transform| {
-            transform.scale = scene.world_transform(game_object).scale;
-            scene.set_world_transform(game_object, transform.matrix());
+            let respawn_target = respawn_transform_target(scene, game_object);
+            transform.scale = scene.world_transform(respawn_target).scale;
+            scene.set_world_transform(respawn_target, transform.matrix());
             state.mark_spawned();
             true
         });
@@ -166,6 +173,14 @@ pub fn update_respawn_state(scene: &mut Scene, game_object: GameObject, dt: f32)
         *component = state;
     });
     spawned
+}
+
+fn respawn_transform_target(scene: &Scene, game_object: GameObject) -> GameObject {
+    scene
+        .ancestors(game_object)
+        .take_while(|parent| *parent != scene.root())
+        .last()
+        .unwrap_or(game_object)
 }
 
 pub fn find_spawn_transform(scene: &Scene, team: u32) -> Option<Transform> {
@@ -260,6 +275,26 @@ mod tests {
         assert!(!state.respawn_requested);
         assert!(state.is_invulnerable());
         assert_eq!(state.invulnerability_remaining, 1.5);
+    }
+
+    #[test]
+    fn protected_respawn_state_locks_gameplay() {
+        assert!(ComponentRespawnState {
+            alive: false,
+            ..Default::default()
+        }
+        .is_gameplay_locked());
+        assert!(ComponentRespawnState {
+            death_requested: true,
+            ..Default::default()
+        }
+        .is_gameplay_locked());
+        assert!(ComponentRespawnState {
+            invulnerability_remaining: 1.0,
+            ..Default::default()
+        }
+        .is_gameplay_locked());
+        assert!(!ComponentRespawnState::default().is_gameplay_locked());
     }
 
     #[test]
@@ -370,5 +405,38 @@ mod tests {
         let updated = scene.world_transform(player);
         assert_eq!(updated.position, vec3(8.0, 0.0, 4.0));
         assert!((updated.scale - vec3(0.5, 1.5, 2.0)).magnitude() < 1e-6);
+    }
+
+    #[test]
+    fn respawn_update_moves_the_complete_player_rig() {
+        let mut scene = engine::test_support::test_scene();
+        let spawn = scene.create(None, None);
+        let player = scene.create(None, None);
+        let tank = scene.create(None, None);
+        let camera = scene.create(None, None);
+        scene.set_parent(tank, Some(player));
+        scene.set_parent(camera, Some(player));
+        scene.set_transform(tank, &Transform::from_xyz(2.0, 0.0, 0.0).matrix());
+        scene.set_transform(camera, &Transform::from_xyz(0.0, 16.0, -10.0).matrix());
+        scene.set_world_transform(spawn, Transform::from_xyz(8.0, 0.0, 4.0).matrix());
+        scene.set_world_transform(player, Transform::from_xyz(-4.0, 0.0, 0.0).matrix());
+        scene.add_component(spawn, ComponentSpawnPoint::default());
+        scene.add_component(
+            tank,
+            ComponentRespawnState {
+                alive: false,
+                respawn_remaining: 0.0,
+                ..Default::default()
+            },
+        );
+
+        assert!(update_respawn_state(&mut scene, tank, 0.0));
+
+        assert_eq!(scene.world_transform(player).position, vec3(8.0, 0.0, 4.0));
+        assert_eq!(scene.world_transform(tank).position, vec3(10.0, 0.0, 4.0));
+        assert_eq!(
+            scene.world_transform(camera).position,
+            vec3(8.0, 16.0, -6.0)
+        );
     }
 }

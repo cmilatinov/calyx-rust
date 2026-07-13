@@ -200,7 +200,9 @@ impl ComponentUpdate for ComponentTankController {
         };
 
         if scene
-            .read_component::<ComponentRespawnState, _, _>(game_object, |state| !state.alive)
+            .read_component::<ComponentRespawnState, _, _>(game_object, |state| {
+                state.is_gameplay_locked()
+            })
             .unwrap_or(false)
         {
             return;
@@ -526,7 +528,7 @@ fn apply_projectile_damage(
     damage: f32,
 ) {
     if scene
-        .read_component::<ComponentRespawnState, _, _>(target, |state| state.is_invulnerable())
+        .read_component::<ComponentRespawnState, _, _>(target, |state| state.is_gameplay_locked())
         .unwrap_or(false)
     {
         return;
@@ -1315,5 +1317,32 @@ mod tests {
             .expect("player should keep health");
         assert_eq!(health.current_health, health.max_health);
         assert!(!health.dead);
+    }
+
+    #[test]
+    fn waiting_to_respawn_player_ignores_projectile_damage() {
+        let mut scene = engine::test_support::test_scene();
+        let player = scene.create(None, None);
+        scene.add_component(player, ComponentHealth::default());
+        scene.add_component(
+            player,
+            ComponentRespawnState {
+                alive: false,
+                respawn_remaining: 1.0,
+                ..Default::default()
+            },
+        );
+
+        apply_projectile_damage(&mut scene, player, 25.0);
+
+        let health = scene
+            .read_component::<ComponentHealth, _, _>(player, |health| *health)
+            .expect("player should keep health");
+        let state = scene
+            .read_component::<ComponentRespawnState, _, _>(player, |state| *state)
+            .expect("player should keep its respawn timer");
+        assert_eq!(health.current_health, health.max_health);
+        assert!(!state.death_requested);
+        assert_eq!(state.respawn_remaining, 1.0);
     }
 }
