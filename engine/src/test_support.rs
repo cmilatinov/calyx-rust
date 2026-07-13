@@ -223,6 +223,12 @@ pub struct HeadlessSceneRunner {
     step_seconds: f32,
 }
 
+impl Default for HeadlessSceneRunner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HeadlessSceneRunner {
     /// Creates a runner with a fresh test scene.
     pub fn new() -> Self {

@@ -281,7 +281,7 @@ impl<'a, K: Default + Debug + Copy + Send + Sync + 'static, T: Default> List<'a,
         let show_list_items = |ui: &mut Ui| {
             for index in 0..list.len() {
                 let value = list.nth_mut(index);
-                let key = create_key(&value);
+                let key = create_key(value);
                 let selected = state.selected == Some(index);
                 let response = list_item_contents(
                     ui,

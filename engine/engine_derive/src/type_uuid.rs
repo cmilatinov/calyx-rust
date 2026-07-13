@@ -22,7 +22,7 @@ fn uuid_from_str(value: &str) -> Uuid {
 fn uuid_lits(uuid: Uuid) -> Vec<LitInt> {
     uuid.as_bytes()
         .iter()
-        .map(|byte| format!("{:#X}", byte))
+        .map(|byte| format!("{byte:#X}"))
         .map(|byte_str| syn::parse_str::<LitInt>(&byte_str).unwrap())
         .collect()
 }

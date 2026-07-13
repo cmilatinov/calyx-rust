@@ -424,8 +424,10 @@ impl PanelContentBrowser {
         selected: bool,
     ) -> Response {
         let image = egui::Image::new(image_src).fit_to_exact_size(image_size);
-        let mut format = TextFormat::default();
-        format.font_id = FontId::new(11.0, FontFamily::Proportional);
+        let format = TextFormat {
+            font_id: FontId::new(11.0, FontFamily::Proportional),
+            ..Default::default()
+        };
         let mut job = LayoutJob::single_section(String::from(name), format);
         job.wrap.break_anywhere = true;
         job.wrap.overflow_character = Some('…');
@@ -459,7 +461,7 @@ impl PanelContentBrowser {
             .read()
             .asset_id_from_path(&path)
             .map(|id| Selection::from_id(SelectionType::Asset, id))
-            .unwrap_or_else(|| Selection::none());
+            .unwrap_or_else(Selection::none);
         self.selected_file = Some(path);
     }
 

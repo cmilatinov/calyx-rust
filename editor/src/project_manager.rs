@@ -321,7 +321,7 @@ impl AssemblyDependency {
     unsafe fn load(path: &Path) -> std::io::Result<Self> {
         Lib::new(path)
             .map(|lib| Self { lib })
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error.to_string()))
+            .map_err(|error| std::io::Error::other(error.to_string()))
     }
 }
 
@@ -548,10 +548,10 @@ fn rust_runtime_dirs() -> std::io::Result<Vec<PathBuf>> {
 fn rustc_print(value: &str) -> std::io::Result<PathBuf> {
     let output = Command::new("rustc").args(["--print", value]).output()?;
     if !output.status.success() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("rustc --print {value} failed with status {}", output.status),
-        ));
+        return Err(std::io::Error::other(format!(
+            "rustc --print {value} failed with status {}",
+            output.status
+        )));
     }
     let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
     Ok(PathBuf::from(path))

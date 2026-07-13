@@ -387,8 +387,8 @@ impl Scene {
         let mut id_mapping = prefab
             .data
             .components
-            .iter()
-            .map(|(game_object_id, _id)| (*game_object_id, Uuid::new_v4()))
+            .keys()
+            .map(|game_object_id| (*game_object_id, Uuid::new_v4()))
             .collect::<BiHashMap<_, _>>();
 
         let component_registry_ref = self.registries.components.clone();
@@ -448,11 +448,8 @@ impl Scene {
             }
         }
 
-        try_all!(
-            None => return None;
-            let prefab_uuid = id_mapping.get_by_left(&prefab.root);
-            let game_object = self.find(*prefab_uuid);
-        );
+        let prefab_uuid = id_mapping.get_by_left(&prefab.root)?;
+        let game_object = self.find(*prefab_uuid)?;
 
         if let Some(parent) = parent {
             self.set_parent(game_object, Some(parent));
@@ -506,7 +503,6 @@ impl Scene {
                     c.enabled
                 }
             })
-            .map(|(go, c)| (go, c))
     }
 
     pub(crate) fn new_game_object(&mut self, parent: Option<GameObject>) -> GameObject {
@@ -534,8 +530,9 @@ impl Scene {
         game_object: GameObject,
         component: T,
     ) {
-        self.entry_mut(game_object)
-            .map(|mut e| e.add_component(component));
+        if let Some(mut e) = self.entry_mut(game_object) {
+            e.add_component(component)
+        }
         if TypeId::of::<T>() == TypeId::of::<ComponentTransform>() {
             self.transforms.mark_dirty_subtree(game_object, &self.graph);
         }
@@ -557,12 +554,13 @@ impl Scene {
             return;
         };
         let default_instance = meta.default();
-        let Some(mut entry) = self.entry_mut(game_object) else {
-            return;
+        let result = {
+            let Some(mut entry) = self.entry_mut(game_object) else {
+                return;
+            };
+            component.bind_instance(&mut entry, default_instance)
         };
-        let result = component.bind_instance(&mut entry, default_instance);
         if result {
-            drop(entry);
             if type_uuid == ComponentTransform::type_uuid() {
                 self.transforms.mark_dirty_subtree(game_object, &self.graph);
             }
@@ -629,12 +627,13 @@ impl Scene {
         game_object: GameObject,
         writer: F,
     ) -> Option<()> {
-        let mut entry = self.entry_mut(game_object);
-        let result = entry
-            .as_mut()
-            .and_then(|entry| entry.get_component_mut::<T>().ok())
-            .map(writer);
-        drop(entry);
+        let result = {
+            let mut entry = self.entry_mut(game_object);
+            entry
+                .as_mut()
+                .and_then(|entry| entry.get_component_mut::<T>().ok())
+                .map(writer)
+        };
         if result.is_some() && TypeId::of::<T>() == TypeId::of::<ComponentTransform>() {
             self.transforms.mark_dirty_subtree(game_object, &self.graph);
         }

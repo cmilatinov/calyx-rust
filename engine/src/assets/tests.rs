@@ -76,14 +76,18 @@ mod tests {
         let registry = registries.assets.read();
         let name = format!("generated/test_animation_{}", Uuid::new_v4());
 
-        let mut first_value = Animation::default();
-        first_value.duration = 1.0;
+        let first_value = Animation {
+            duration: 1.0,
+            ..Default::default()
+        };
         let first = registry
             .create_or_update(name.clone(), first_value)
             .unwrap();
 
-        let mut second_value = Animation::default();
-        second_value.duration = 2.0;
+        let second_value = Animation {
+            duration: 2.0,
+            ..Default::default()
+        };
         let second = registry
             .create_or_update(name.clone(), second_value)
             .unwrap();
@@ -109,8 +113,10 @@ mod tests {
                     let name = name.clone();
                     let barrier = barrier.clone();
                     scope.spawn(move || {
-                        let mut value = Animation::default();
-                        value.duration = index as f64;
+                        let value = Animation {
+                            duration: index as f64,
+                            ..Default::default()
+                        };
                         barrier.wait();
                         assets.read().create_or_update(name, value).unwrap()
                     })
@@ -148,8 +154,10 @@ mod tests {
                     let parent_name = parent_name.clone();
                     let barrier = barrier.clone();
                     scope.spawn(move || {
-                        let mut value = Animation::default();
-                        value.duration = index as f64;
+                        let value = Animation {
+                            duration: index as f64,
+                            ..Default::default()
+                        };
                         barrier.wait();
                         assets
                             .read()
@@ -202,6 +210,6 @@ mod tests {
         let mesh = mesh.read();
         // Mesh::from_russimp_mesh creates vertex/index buffers via the GPU device
         // They're None until mark_dirty + upload, but instance_buffer is always created
-        assert!(mesh.vertices.len() > 0);
+        assert!(!mesh.vertices.is_empty());
     }
 }

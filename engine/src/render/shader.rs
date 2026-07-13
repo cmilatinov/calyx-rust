@@ -368,8 +368,8 @@ impl Shader {
 
     fn bind_group_layouts(device: &wgpu::Device, groups: &BindGroupEntries) -> BindGroupLayouts {
         groups
-            .iter()
-            .map(|(_, entries)| {
+            .values()
+            .map(|entries| {
                 device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     label: None,
                     entries: entries.as_slice(),

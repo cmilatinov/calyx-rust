@@ -1046,7 +1046,7 @@ impl EditorApp {
                                     }
                                 }
                                 len => {
-                                    ui.label(format!("{} tasks", len));
+                                    ui.label(format!("{len} tasks"));
                                 }
                             }
                         });
@@ -1081,6 +1081,74 @@ impl EditorApp {
 
     fn is_simulating(&self) -> bool {
         self.state.game.scenes.is_simulating()
+    }
+}
+
+impl EditorApp {
+    pub fn run() -> eframe::Result<()> {
+        let log = Log::new(
+            DefaultLogger::builder()
+                .app_vendor("Calyx")
+                .app_name("Editor")
+                .build(),
+        );
+        let args: Vec<String> = env::args().collect();
+
+        let Some(project_path) = env::args().nth(1).map(PathBuf::from) else {
+            log::error!("Expected 2 arguments, got {}", args.len());
+            std::process::exit(1);
+        };
+
+        let options = NativeOptions {
+            viewport: egui::ViewportBuilder {
+                inner_size: Some(egui::vec2(1600.0, 900.0)),
+                min_inner_size: Some(egui::vec2(1600.0, 900.0)),
+                decorations: Some(true),
+                ..Default::default()
+            },
+            persist_window: true,
+            renderer: eframe::Renderer::Wgpu,
+            wgpu_options: egui_wgpu::WgpuConfiguration {
+                present_mode: Default::default(),
+                desired_maximum_frame_latency: None,
+                on_surface_error: Arc::new(|_| SurfaceErrorAction::SkipFrame),
+                wgpu_setup: WgpuSetup::CreateNew(WgpuSetupCreateNew {
+                    instance_descriptor: Default::default(),
+                    power_preference: PowerPreference::HighPerformance,
+                    native_adapter_selector: None,
+                    device_descriptor: Arc::new(|_adapter| {
+                        wgpu::DeviceDescriptor {
+                            required_features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+                                | wgpu::Features::POLYGON_MODE_LINE
+                                | wgpu::Features::CLEAR_TEXTURE
+                                | wgpu::Features::FLOAT32_FILTERABLE
+                                | wgpu::Features::DEPTH32FLOAT_STENCIL8
+                                | wgpu::Features::BUFFER_BINDING_ARRAY
+                                | wgpu::Features::TEXTURE_BINDING_ARRAY
+                                | wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY
+                                | wgpu::Features::UNIFORM_BUFFER_AND_STORAGE_TEXTURE_ARRAY_NON_UNIFORM_INDEXING,
+                            required_limits: wgpu::Limits {
+                                max_storage_textures_per_shader_stage: 5,
+                                max_uniform_buffers_per_shader_stage: 30,
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        }
+                    }),
+                    trace_path: None,
+                }),
+            },
+            event_loop_builder: Some(Box::new(|builder| {
+                builder.with_any_thread(true);
+            })),
+            ..Default::default()
+        };
+        // let name = format!("Calyx — {}", ProjectManager::get().current_project().name());
+        eframe::run_native(
+            "Calyx",
+            options,
+            Box::new(move |cc| Ok(Box::new(EditorApp::new(cc, project_path, log)?))),
+        )
     }
 }
 
@@ -1145,73 +1213,5 @@ mod tests {
 
         assert_eq!(component["position"], json!([1.0, 9.0, 3.0]));
         assert_eq!(component["enabled"], json!(true));
-    }
-}
-
-impl EditorApp {
-    pub fn run() -> eframe::Result<()> {
-        let log = Log::new(
-            DefaultLogger::builder()
-                .app_vendor("Calyx")
-                .app_name("Editor")
-                .build(),
-        );
-        let args: Vec<String> = env::args().collect();
-
-        let Some(project_path) = env::args().nth(1).map(|arg| PathBuf::from(arg)) else {
-            log::error!("Expected 2 arguments, got {}", args.len());
-            std::process::exit(1);
-        };
-
-        let options = NativeOptions {
-            viewport: egui::ViewportBuilder {
-                inner_size: Some(egui::vec2(1600.0, 900.0)),
-                min_inner_size: Some(egui::vec2(1600.0, 900.0)),
-                decorations: Some(true),
-                ..Default::default()
-            },
-            persist_window: true,
-            renderer: eframe::Renderer::Wgpu,
-            wgpu_options: egui_wgpu::WgpuConfiguration {
-                present_mode: Default::default(),
-                desired_maximum_frame_latency: None,
-                on_surface_error: Arc::new(|_| SurfaceErrorAction::SkipFrame),
-                wgpu_setup: WgpuSetup::CreateNew(WgpuSetupCreateNew {
-                    instance_descriptor: Default::default(),
-                    power_preference: PowerPreference::HighPerformance,
-                    native_adapter_selector: None,
-                    device_descriptor: Arc::new(|_adapter| {
-                        wgpu::DeviceDescriptor {
-                            required_features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
-                                | wgpu::Features::POLYGON_MODE_LINE
-                                | wgpu::Features::CLEAR_TEXTURE
-                                | wgpu::Features::FLOAT32_FILTERABLE
-                                | wgpu::Features::DEPTH32FLOAT_STENCIL8
-                                | wgpu::Features::BUFFER_BINDING_ARRAY
-                                | wgpu::Features::TEXTURE_BINDING_ARRAY
-                                | wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY
-                                | wgpu::Features::UNIFORM_BUFFER_AND_STORAGE_TEXTURE_ARRAY_NON_UNIFORM_INDEXING,
-                            required_limits: wgpu::Limits {
-                                max_storage_textures_per_shader_stage: 5,
-                                max_uniform_buffers_per_shader_stage: 30,
-                                ..Default::default()
-                            },
-                            ..Default::default()
-                        }
-                    }),
-                    trace_path: None,
-                }),
-            },
-            event_loop_builder: Some(Box::new(|builder| {
-                builder.with_any_thread(true);
-            })),
-            ..Default::default()
-        };
-        // let name = format!("Calyx — {}", ProjectManager::get().current_project().name());
-        eframe::run_native(
-            "Calyx",
-            options,
-            Box::new(move |cc| Ok(Box::new(EditorApp::new(cc, project_path, log)?))),
-        )
     }
 }

@@ -214,6 +214,7 @@ impl PanelSceneHierarchy {
         scene_changed
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_interaction(
         &mut self,
         ui: &mut Ui,

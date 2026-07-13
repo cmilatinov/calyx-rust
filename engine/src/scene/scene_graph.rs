@@ -18,6 +18,7 @@ pub enum SiblingDir {
 
 /// Manages the hierarchical parent-child relationships between game objects
 /// using a directed graph (petgraph StableGraph).
+#[derive(Default)]
 pub struct SceneGraph {
     arena: StableGraph<Entity, i32>,
 }
@@ -31,14 +32,6 @@ impl WalkChildren {
     /// Advances the walker and resolves the next child against `scene`.
     pub fn next(&mut self, scene: &Scene) -> Option<GameObject> {
         scene.graph.walk_next(&mut self.walker)
-    }
-}
-
-impl Default for SceneGraph {
-    fn default() -> Self {
-        Self {
-            arena: StableGraph::default(),
-        }
     }
 }
 

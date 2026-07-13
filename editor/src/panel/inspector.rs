@@ -168,10 +168,7 @@ impl Panel for PanelInspector {
                                     component.remove_instance(&mut entry);
                                     structural_changed = true;
                                     log::info!(
-                                        "Removed component from game object: component={} type_uuid={} object={}",
-                                        component_name,
-                                        type_id,
-                                        object_label
+                                        "Removed component from game object: component={component_name} type_uuid={type_id} object={object_label}"
                                     );
                                 }
                             }
@@ -205,7 +202,7 @@ impl Panel for PanelInspector {
                                     ui,
                                     header_id,
                                     true,
-                                    LabelContent::new(format!("{}", asset_meta.name))
+                                    LabelContent::new(asset_meta.name.to_string())
                                         .truncate(true)
                                         .always_show_buttons(true)
                                         .with_buttons(|ui| {

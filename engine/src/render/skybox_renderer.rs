@@ -55,13 +55,14 @@ impl SkyboxRenderer {
         self.skybox = skybox;
     }
 
-    fn selected_skybox_ref<'a>(
+    fn selected_skybox_ref(
         skybox: Option<Uuid>,
-        assets: &'a AssetRenderState,
-    ) -> Option<&'a Ref<Skybox>> {
+        assets: &AssetRenderState,
+    ) -> Option<&Ref<Skybox>> {
         skybox.and_then(|id| assets.skybox(id))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         render_state: &RenderState,

@@ -155,10 +155,7 @@ impl MaterialInspector {
     }
 
     fn show_variable_inspector(ui: &mut Ui, game: &AssetContext, var: &mut ShaderVariable) -> bool {
-        let show_var = match &var.value {
-            ShaderVariableValue::Sampler => false,
-            _ => true,
-        };
+        let show_var = !matches!(&var.value, ShaderVariableValue::Sampler);
         if !show_var {
             return false;
         }

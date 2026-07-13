@@ -7,22 +7,12 @@ use super::GameObject;
 
 /// Manages the mapping between UUIDs, Entities, and NodeIndices,
 /// as well as tracking pending deletions and auto-naming.
+#[derive(Default)]
 pub struct GameObjectStore {
     uuid_map: HashMap<Uuid, GameObject>,
     entity_map: HashMap<Entity, NodeIndex>,
     objects_to_delete: HashSet<GameObject>,
     new_index: usize,
-}
-
-impl Default for GameObjectStore {
-    fn default() -> Self {
-        Self {
-            uuid_map: HashMap::new(),
-            entity_map: HashMap::new(),
-            objects_to_delete: HashSet::new(),
-            new_index: 0,
-        }
-    }
 }
 
 impl GameObjectStore {
@@ -74,7 +64,7 @@ impl GameObjectStore {
             "".into()
         };
         self.new_index += 1;
-        format!("Game Object{}", number)
+        format!("Game Object{number}")
     }
 
     /// Drains and returns the pending deletion queue.
