@@ -1,3 +1,4 @@
+use crate::spawn::ComponentRespawnState;
 use egui::Rect;
 use engine::component::{
     ColliderShape, Component, ComponentCamera, ComponentCollider, ComponentEventContext,
@@ -175,6 +176,12 @@ impl ComponentHealth {
         self.dead = self.current_health <= f32::EPSILON;
         self.dead
     }
+
+    pub(crate) fn restore_full(&mut self) {
+        self.max_health = self.max_health.max(0.0);
+        self.current_health = self.max_health;
+        self.dead = false;
+    }
 }
 
 impl ComponentUpdate for ComponentTankController {
@@ -191,6 +198,13 @@ impl ComponentUpdate for ComponentTankController {
         else {
             return;
         };
+
+        if scene
+            .read_component::<ComponentRespawnState, _, _>(game_object, |state| !state.alive)
+            .unwrap_or(false)
+        {
+            return;
+        }
 
         let dt = resources.time().delta_time();
         let previous_tank_transform = scene.world_transform(game_object);
@@ -511,10 +525,18 @@ fn apply_projectile_damage(
     target: engine::scene::GameObject,
     damage: f32,
 ) {
+    if scene
+        .read_component::<ComponentRespawnState, _, _>(target, |state| state.is_invulnerable())
+        .unwrap_or(false)
+    {
+        return;
+    }
+
+    let mut died = false;
     let mut should_destroy = false;
     let damaged_health = scene
         .write_component::<ComponentHealth, _>(target, |health| {
-            let died = health.apply_damage(damage);
+            died = health.apply_damage(damage);
             should_destroy = died && health.destroy_on_death;
         })
         .is_some();
@@ -525,7 +547,14 @@ fn apply_projectile_damage(
         });
     }
 
-    if should_destroy {
+    let respawn_requested = died
+        && scene
+            .write_component::<ComponentRespawnState, _>(target, |state| {
+                state.request_death();
+            })
+            .is_some();
+
+    if should_destroy && !respawn_requested {
         scene.delete(target);
     }
 }
@@ -658,11 +687,12 @@ fn yaw_rotation(direction: &Vec3) -> UnitQuaternion<f32> {
 #[cfg(test)]
 mod tests {
     use super::{
-        advance_fire_cooldown, advance_reload, can_fire, clip_from_screen, flatten_xz,
-        follow_camera_xz, is_reloading, screen_to_ground, segment_intersects_sphere,
+        advance_fire_cooldown, advance_reload, apply_projectile_damage, can_fire, clip_from_screen,
+        flatten_xz, follow_camera_xz, is_reloading, screen_to_ground, segment_intersects_sphere,
         spawn_projectile, update_projectile, yaw_rotation, ComponentHealth, ComponentProjectile,
         ComponentProjectileTarget, ComponentTankController,
     };
+    use crate::spawn::{update_respawn_state, ComponentRespawnState, ComponentSpawnPoint};
     use engine::component::{
         ColliderShape, ComponentCollider, ComponentID, ComponentRigidBody, ComponentTransform,
     };
@@ -1219,5 +1249,71 @@ mod tests {
             !scene.objects().any(|object| object == target),
             "destroy_on_death targets should be removed after lethal damage"
         );
+    }
+
+    #[test]
+    fn lethal_damage_respawns_player_and_restores_health() {
+        let mut scene = engine::test_support::test_scene();
+        let spawn = scene.create(None, None);
+        let player = scene.create(None, None);
+        scene.set_world_transform(spawn, Transform::from_xyz(8.0, 0.0, 4.0).matrix());
+        scene.set_world_transform(player, Transform::from_xyz(-4.0, 0.0, 0.0).matrix());
+        scene.add_component(spawn, ComponentSpawnPoint::default());
+        scene.add_component(
+            player,
+            ComponentHealth {
+                max_health: 40.0,
+                current_health: 40.0,
+                ..Default::default()
+            },
+        );
+        scene.add_component(
+            player,
+            ComponentRespawnState {
+                respawn_delay: 1.0,
+                ..Default::default()
+            },
+        );
+
+        apply_projectile_damage(&mut scene, player, 40.0);
+
+        assert!(scene
+            .read_component::<ComponentHealth, _, _>(player, |health| health.dead)
+            .expect("player should keep health while awaiting respawn"));
+        assert!(scene
+            .read_component::<ComponentRespawnState, _, _>(player, |state| state.death_requested)
+            .expect("lethal damage should request a respawn"));
+
+        assert!(!update_respawn_state(&mut scene, player, 0.0));
+        assert!(update_respawn_state(&mut scene, player, 1.0));
+
+        let health = scene
+            .read_component::<ComponentHealth, _, _>(player, |health| *health)
+            .expect("respawned player should keep health");
+        assert_eq!(health.current_health, 40.0);
+        assert!(!health.dead);
+        assert_eq!(scene.world_transform(player).position, vec3(8.0, 0.0, 4.0));
+    }
+
+    #[test]
+    fn invulnerable_player_ignores_projectile_damage() {
+        let mut scene = engine::test_support::test_scene();
+        let player = scene.create(None, None);
+        scene.add_component(player, ComponentHealth::default());
+        scene.add_component(
+            player,
+            ComponentRespawnState {
+                invulnerability_remaining: 1.0,
+                ..Default::default()
+            },
+        );
+
+        apply_projectile_damage(&mut scene, player, 25.0);
+
+        let health = scene
+            .read_component::<ComponentHealth, _, _>(player, |health| *health)
+            .expect("player should keep health");
+        assert_eq!(health.current_health, health.max_health);
+        assert!(!health.dead);
     }
 }

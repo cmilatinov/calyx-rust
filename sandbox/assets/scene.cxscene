@@ -126,6 +126,46 @@
         "hull_turn_speed": 2.8,
         "turret_turn_speed": 12.0,
         "muzzle_offset": 1.575
+      },
+        "f2c31eb5-c999-4125-9cb0-a72a238eca2e": {
+          "hit_radius": 1.25,
+          "hit_count": 0
+        },
+        "8f0175f4-1a76-4c43-8932-6462f9005ab4": {
+          "max_health": 100.0,
+          "current_health": 100.0,
+          "destroy_on_death": false,
+          "dead": false
+        },
+        "28ca6ba9-20bd-4077-8f35-1cf8483c6f4e": {
+          "team": 4294967295,
+          "respawn_delay": 3.0,
+          "respawn_remaining": 0.0,
+          "invulnerability_duration": 2.0,
+          "invulnerability_remaining": 0.0,
+          "alive": true,
+          "death_requested": false,
+          "respawn_requested": false
+        }
+      },
+    "c8cd2ec1-8e42-4e44-a15b-c1f75b7162da": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "c8cd2ec1-8e42-4e44-a15b-c1f75b7162da",
+        "name": "Player Spawn",
+        "visible": true
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [0.0, 0.0, 0.0],
+          "rotation": [0.0, 0.0, 0.0, 1.0],
+          "scale": [1.0, 1.0, 1.0]
+        }
+      },
+      "876c7327-0d92-4242-b567-fd9a258c6c06": {
+        "team": 4294967295,
+        "order": 0,
+        "radius": 1.0,
+        "active": true
       }
     },
     "9985d281-6c72-4fd1-83e2-1abf2a495f77": {
@@ -517,6 +557,7 @@
     "9a71cfab-2e0b-486a-83aa-37f1caebc71a": [
       "36fd779f-b09b-4912-83de-16fce6365981",
       "24b73614-e397-4e80-a669-3e64b910c53a",
+      "c8cd2ec1-8e42-4e44-a15b-c1f75b7162da",
       "1d181f5b-1544-4f00-a19e-6ba14c57288a",
       "ff3e62d5-9f0b-4e43-8f42-81744fdc8a91",
       "27b9ce07-f502-4481-a0c4-48c24358596d"

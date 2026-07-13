@@ -1,3 +1,4 @@
+use crate::tank::ComponentHealth;
 use engine::component::{
     Component, ComponentEventContext, ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
 };
@@ -154,6 +155,12 @@ pub fn update_respawn_state(scene: &mut Scene, game_object: GameObject, dt: f32)
             state.mark_spawned();
             true
         });
+
+    if spawned {
+        let _ = scene.write_component::<ComponentHealth, _>(game_object, |health| {
+            health.restore_full();
+        });
+    }
 
     let _ = scene.write_component::<ComponentRespawnState, _>(game_object, |component| {
         *component = state;

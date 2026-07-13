@@ -1,6 +1,6 @@
 pub mod game_state;
 pub mod spawn;
-mod tank;
+pub(crate) mod tank;
 
 use engine::reflect::type_registry::TypeRegistry;
 
