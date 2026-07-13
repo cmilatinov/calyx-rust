@@ -414,10 +414,13 @@ mod tests {
         let player = scene.create(None, None);
         let tank = scene.create(None, None);
         let camera = scene.create(None, None);
+        let crosshair = scene.create(None, None);
         scene.set_parent(tank, Some(player));
         scene.set_parent(camera, Some(player));
+        scene.set_parent(crosshair, Some(player));
         scene.set_transform(tank, &Transform::from_xyz(2.0, 0.0, 0.0).matrix());
         scene.set_transform(camera, &Transform::from_xyz(0.0, 16.0, -10.0).matrix());
+        scene.set_transform(crosshair, &Transform::from_xyz(0.0, 0.0, 6.0).matrix());
         scene.set_world_transform(spawn, Transform::from_xyz(8.0, 0.0, 4.0).matrix());
         scene.set_world_transform(player, Transform::from_xyz(-4.0, 0.0, 0.0).matrix());
         scene.add_component(spawn, ComponentSpawnPoint::default());
@@ -437,6 +440,10 @@ mod tests {
         assert_eq!(
             scene.world_transform(camera).position,
             vec3(8.0, 16.0, -6.0)
+        );
+        assert_eq!(
+            scene.world_transform(crosshair).position,
+            vec3(8.0, 0.0, 10.0)
         );
     }
 }
