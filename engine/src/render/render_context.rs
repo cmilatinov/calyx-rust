@@ -4,6 +4,8 @@ use egui::epaint;
 use egui_wgpu::{wgpu, Renderer};
 use std::sync::Arc;
 
+// This mirrors typed-builder's generated type state for `PipelineOptions`.
+// `fragment_targets` is the fourth field; update this alias if that field order changes.
 type ColorTargetPipelineOptions =
     PipelineOptionsBuilder<((), (), (), (Vec<Option<ColorTargetState>>,), (), ())>;
 

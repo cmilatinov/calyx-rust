@@ -1094,7 +1094,7 @@ impl EditorApp {
         );
         let args: Vec<String> = env::args().collect();
 
-        let Some(project_path) = env::args().nth(1).map(PathBuf::from) else {
+        let Some(project_path) = args.get(1).cloned().map(PathBuf::from) else {
             log::error!("Expected 2 arguments, got {}", args.len());
             std::process::exit(1);
         };
