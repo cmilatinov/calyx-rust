@@ -157,8 +157,13 @@ pub fn update_respawn_state(scene: &mut Scene, game_object: GameObject, dt: f32)
     let spawned = should_spawn
         && find_spawn_transform(scene, state.team).is_some_and(|mut transform| {
             let respawn_target = respawn_transform_target(scene, game_object);
-            transform.scale = scene.world_transform(respawn_target).scale;
-            scene.set_world_transform(respawn_target, transform.matrix());
+            let controlled_relative_transform =
+                scene.transform_relative_to(game_object, respawn_target);
+            transform.scale = scene.world_transform(game_object).scale;
+            scene.set_world_transform(
+                respawn_target,
+                transform.matrix() * controlled_relative_transform.inverse_matrix(),
+            );
             state.mark_spawned();
             true
         });
@@ -408,7 +413,7 @@ mod tests {
     }
 
     #[test]
-    fn respawn_update_moves_the_complete_player_rig() {
+    fn respawn_update_places_the_controlled_object_and_moves_its_complete_rig() {
         let mut scene = engine::test_support::test_scene();
         let spawn = scene.create(None, None);
         let player = scene.create(None, None);
@@ -435,15 +440,15 @@ mod tests {
 
         assert!(update_respawn_state(&mut scene, tank, 0.0));
 
-        assert_eq!(scene.world_transform(player).position, vec3(8.0, 0.0, 4.0));
-        assert_eq!(scene.world_transform(tank).position, vec3(10.0, 0.0, 4.0));
+        assert_eq!(scene.world_transform(player).position, vec3(6.0, 0.0, 4.0));
+        assert_eq!(scene.world_transform(tank).position, vec3(8.0, 0.0, 4.0));
         assert_eq!(
             scene.world_transform(camera).position,
-            vec3(8.0, 16.0, -6.0)
+            vec3(6.0, 16.0, -6.0)
         );
         assert_eq!(
             scene.world_transform(crosshair).position,
-            vec3(8.0, 0.0, 10.0)
+            vec3(6.0, 0.0, 10.0)
         );
     }
 }
