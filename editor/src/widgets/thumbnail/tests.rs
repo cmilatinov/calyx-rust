@@ -372,7 +372,7 @@ fn max_projected_extent_for_points(
     points
         .into_iter()
         .map(|corner| {
-            let projected = project_corner(&camera, &transform, corner)
+            let projected = project_corner(camera, transform, corner)
                 .unwrap_or_else(|| panic!("corner {corner:?} could not be projected"));
             projected.x.abs().max(projected.y.abs())
         })

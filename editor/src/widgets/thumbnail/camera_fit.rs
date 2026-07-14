@@ -197,7 +197,6 @@ pub(super) fn camera_for_fit(camera_fit: &CameraFit, frame_margin: f32) -> (Came
         .points
         .iter()
         .copied()
-        .into_iter()
         .map(|corner| camera_transform.inverse_transform_position(&corner).z)
         .fold(distance, f32::max);
     let camera = Camera::new(ASPECT, FOV_X, 0.01, max_depth + radius.max(1.0));

@@ -196,9 +196,10 @@ mod tests {
 
     #[test]
     fn advances_through_menu_lobby_playing_and_game_over() {
-        let mut state = ComponentGameState::default();
-
-        state.enter_lobby_requested = true;
+        let mut state = ComponentGameState {
+            enter_lobby_requested: true,
+            ..Default::default()
+        };
         assert_eq!(state.tick(0.25), Some(GamePhase::Lobby));
         assert_eq!(state.current_phase(), GamePhase::Lobby);
         assert_eq!(state.previous_phase(), Some(GamePhase::MainMenu));

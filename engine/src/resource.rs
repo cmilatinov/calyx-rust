@@ -40,6 +40,12 @@ pub struct ResourceMap {
     inner: HashMap<Uuid, Box<dyn Resource>>,
 }
 
+impl Default for ResourceMap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ResourceMap {
     /// Creates a resource map populated with the built-in engine resources.
     pub fn new() -> Self {

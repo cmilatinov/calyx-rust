@@ -58,11 +58,11 @@ impl InspectorRegistry {
         self.type_association
             .get(&type_uuid)
             .and_then(|id| self.type_inspectors.get(id))
-            .and_then(|inspector| Some(inspector.as_ref()))
+            .map(|inspector| inspector.as_ref())
             .or_else(|| {
                 self.type_inspectors
                     .get(&type_uuid)
-                    .and_then(|inspector| Some(inspector.as_ref()))
+                    .map(|inspector| inspector.as_ref())
             })
     }
 

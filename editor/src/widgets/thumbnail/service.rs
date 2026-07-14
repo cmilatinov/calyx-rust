@@ -270,16 +270,13 @@ fn process_thumbnail_job(
     let cache = ThumbnailCache::new(context, render_settings);
     let key = job.key();
     let render_state = context.render_context.render_state();
-    match cache.load(context, &job.request) {
-        Ok(Some(texture)) => {
-            let mut state = lock_thumbnail_state(shared);
-            let status_updated = state.cache_epoch == cache_epoch && state.pipeline.complete(key);
-            if status_updated {
-                state.textures.insert(key, texture);
-            }
-            return;
+    if let Ok(Some(texture)) = cache.load(context, &job.request) {
+        let mut state = lock_thumbnail_state(shared);
+        let status_updated = state.cache_epoch == cache_epoch && state.pipeline.complete(key);
+        if status_updated {
+            state.textures.insert(key, texture);
         }
-        Ok(None) | Err(_) => {}
+        return;
     }
 
     match generator.generate(context, render_state, &job.request) {

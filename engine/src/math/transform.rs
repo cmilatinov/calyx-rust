@@ -191,7 +191,7 @@ impl Transform {
         }
 
         // Normalize if needed
-        if (total_weight - 1.0).abs() > std::f32::EPSILON && total_weight > 0.0 {
+        if (total_weight - 1.0).abs() > f32::EPSILON && total_weight > 0.0 {
             position /= total_weight;
             scale = Vec3::new(1.0, 1.0, 1.0) + (scale - Vec3::new(1.0, 1.0, 1.0)) / total_weight;
         }

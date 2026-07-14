@@ -227,7 +227,7 @@ impl<'de, T: Asset + TypeUuid> DeserializeSeed<'de>
             .assets
             .read()
             .load_by_id::<T>(id)
-            .map_err(|err| serde::de::Error::custom(format!("{:?}", err)))
+            .map_err(|err| serde::de::Error::custom(format!("{err:?}")))
     }
 }
 

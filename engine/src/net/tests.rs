@@ -259,7 +259,7 @@ mod tests {
         net.pump();
 
         let server = net.server.server.as_ref().unwrap();
-        assert!(server.client_ids().len() >= 1);
+        assert!(!server.client_ids().is_empty());
     }
 
     #[test]

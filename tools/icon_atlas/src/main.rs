@@ -259,10 +259,12 @@ fn render_icon(path: &Path, tile_size: u32) -> Result<RgbaImage> {
 }
 
 fn render_svg(path: &Path, tile_size: u32) -> Result<RgbaImage> {
-    let mut options = resvg::usvg::Options::default();
-    options.resources_dir = fs::canonicalize(path)
-        .ok()
-        .and_then(|path| path.parent().map(Path::to_path_buf));
+    let options = resvg::usvg::Options {
+        resources_dir: fs::canonicalize(path)
+            .ok()
+            .and_then(|path| path.parent().map(Path::to_path_buf)),
+        ..Default::default()
+    };
 
     let data = fs::read(path)?;
     let tree = resvg::usvg::Tree::from_data(&data, &options)?;

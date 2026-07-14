@@ -30,6 +30,12 @@ pub struct TypeRegistry {
     pub types: HashMap<Uuid, TypeRegistration>,
 }
 
+impl Default for TypeRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TypeRegistry {
     /// Builds a registry and runs all inventory-based registration functions.
     pub fn new() -> Self {
@@ -199,7 +205,7 @@ impl TypeRegistry {
     pub fn trait_meta<T: TraitMeta + TypeUuid>(&self, type_uuid: Uuid) -> Option<&T> {
         self.type_registration_by_id(type_uuid)
             .and_then(|registration| registration.trait_meta.get(&T::type_uuid()))
-            .and_then(|meta| unsafe { Some(&*(meta.as_ref() as *const dyn TraitMeta as *const T)) })
+            .map(|meta| unsafe { &*(meta.as_ref() as *const dyn TraitMeta as *const T) })
     }
 
     /// Lists types that implement reflected trait metadata `T`.

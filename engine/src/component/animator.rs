@@ -450,6 +450,7 @@ impl ComponentAnimator {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn traverse_bone_hierarchy_static(
         snapshot: &AnimatorSnapshot,
         assets: &ReadOnlyRegistryContext,

@@ -386,7 +386,7 @@ mod tests {
     fn lerp_bool_threshold() {
         let f = AnimationParameterValue::Bool(false);
         let t = AnimationParameterValue::Bool(true);
-        let AnimationParameterValue::Bool(v) = f.clone().lerp(t.clone(), 0.4) else {
+        let AnimationParameterValue::Bool(v) = f.lerp(t, 0.4) else {
             panic!()
         };
         assert!(!v);

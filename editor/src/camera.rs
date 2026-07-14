@@ -4,7 +4,6 @@ use engine::ext::nalgebra::UnitQuaternionExt;
 use engine::input::Input;
 use engine::math::Transform;
 use engine::render::{Camera, CameraLike};
-use nalgebra;
 use nalgebra::UnitQuaternion;
 use nalgebra_glm::{Vec2, Vec3};
 

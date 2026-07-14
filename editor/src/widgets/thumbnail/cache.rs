@@ -319,8 +319,7 @@ fn read_texture_rgba8(
     let height = texture.descriptor.size.height;
     if width != expected_size_px || height != expected_size_px {
         return Err(format!(
-            "thumbnail cache requires {}x{} textures, got {}x{}",
-            expected_size_px, expected_size_px, width, height
+            "thumbnail cache requires {expected_size_px}x{expected_size_px} textures, got {width}x{height}"
         ));
     }
 

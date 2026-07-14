@@ -232,6 +232,7 @@ impl MeshRenderer {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn render_object_ids(
         &mut self,
         device: &wgpu::Device,

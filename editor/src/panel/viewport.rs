@@ -323,18 +323,20 @@ impl PanelViewport {
         );
 
         let draw_data = self.gizmo.draw();
-        let mut mesh = Mesh::default();
-        mesh.indices = draw_data.indices;
-        mesh.vertices = draw_data
-            .vertices
-            .into_iter()
-            .zip(draw_data.colors)
-            .map(|(pos, [r, g, b, a])| Vertex {
-                pos: pos.into(),
-                uv: Pos2::default(),
-                color: Rgba::from_rgba_premultiplied(r, g, b, a).into(),
-            })
-            .collect();
+        let mesh = Mesh {
+            indices: draw_data.indices,
+            vertices: draw_data
+                .vertices
+                .into_iter()
+                .zip(draw_data.colors)
+                .map(|(pos, [r, g, b, a])| Vertex {
+                    pos: pos.into(),
+                    uv: Pos2::default(),
+                    color: Rgba::from_rgba_premultiplied(r, g, b, a).into(),
+                })
+                .collect(),
+            ..Default::default()
+        };
         ui.painter_at(viewport_response.rect).add(mesh);
 
         gizmo_result

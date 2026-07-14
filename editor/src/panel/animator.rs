@@ -351,6 +351,7 @@ impl PanelAnimator {
         res
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn draw_edges(
         &mut self,
         ui: &mut Ui,

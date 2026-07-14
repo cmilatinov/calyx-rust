@@ -100,7 +100,7 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>> Synchronized<T> {
         let Some(self_client_id) = network.local_id else {
             return;
         };
-        let Ok(data) = bincode::serde::encode_to_vec(&value, bincode::config::standard()) else {
+        let Ok(data) = bincode::serde::encode_to_vec(value, bincode::config::standard()) else {
             return;
         };
         let message = GameMessage::SyncComponent {
@@ -114,10 +114,8 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>> Synchronized<T> {
             if let Err(e) = server.broadcast_message_except(self_client_id, &message) {
                 log::warn!("Failed to broadcast SyncComponent: {e}");
             }
-        } else {
-            if let Err(e) = network.client.send_message(&message) {
-                log::warn!("Failed to send SyncComponent: {e}");
-            }
+        } else if let Err(e) = network.client.send_message(&message) {
+            log::warn!("Failed to send SyncComponent: {e}");
         }
     }
 
@@ -126,9 +124,7 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>> Synchronized<T> {
         ctx: &mut ComponentEventContext,
         resources: &mut ResourceMap,
     ) -> Option<T> {
-        let Some((network, time)) = resources.resource_pair_mut::<Network, Time>() else {
-            return None;
-        };
+        let (network, time) = resources.resource_pair_mut::<Network, Time>()?;
         if ctx.scene.is_owner(ctx.game_object, network) {
             return None;
         }
@@ -171,7 +167,7 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>>
                 && *component_uuid == self.options.component_uuid =>
             {
                 if let Ok((value, _)) =
-                    bincode::serde::decode_from_slice(&data, bincode::config::standard())
+                    bincode::serde::decode_from_slice(data, bincode::config::standard())
                 {
                     self.history.insert(time.time_to_tick(*sync_time), value);
                 }

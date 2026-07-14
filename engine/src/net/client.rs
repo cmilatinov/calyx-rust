@@ -44,21 +44,21 @@ impl Client {
 
     /// Connects the client to `server_addr` using the engine's netcode protocol.
     pub fn connect(&mut self, server_addr: SocketAddr) -> Result<(), BoxedError> {
-        log::info!("Connecting to server at {}", server_addr);
+        log::info!("Connecting to server at {server_addr}");
         let socket = UdpSocket::bind("127.0.0.1:0").map_err(|e| {
-            log::error!("Failed to bind socket: {}", e);
+            log::error!("Failed to bind socket: {e}");
             Box::new(e) as Box<dyn std::error::Error + Send + Sync>
         })?;
 
         let current_time = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_err(|e| {
-                log::error!("System time error: {}", e);
+                log::error!("System time error: {e}");
                 Box::new(e) as Box<dyn std::error::Error + Send + Sync>
             })?;
 
         let client_id = Self::generate_client_id();
-        log::trace!("Generated client ID: {}", client_id);
+        log::trace!("Generated client ID: {client_id}");
 
         let authentication = ClientAuthentication::Unsecure {
             server_addr,
@@ -69,7 +69,7 @@ impl Client {
 
         self.transport = Some(
             NetcodeClientTransport::new(current_time, authentication, socket).map_err(|e| {
-                log::error!("Failed to create transport: {}", e);
+                log::error!("Failed to create transport: {e}");
                 Box::new(e) as Box<dyn std::error::Error + Send + Sync>
             })?,
         );
@@ -88,11 +88,11 @@ impl Client {
 
         if let Some(transport) = transport {
             if let Err(err) = transport.update(duration, client) {
-                log::error!("Error updating transport: {:?}", err);
+                log::error!("Error updating transport: {err:?}");
             }
 
             if let Err(err) = transport.send_packets(client) {
-                log::error!("Error sending packets: {}", err);
+                log::error!("Error sending packets: {err}");
             }
         }
 
@@ -103,7 +103,7 @@ impl Client {
                     bincode::config::standard(),
                 )
                 .map_err(|e| {
-                    log::error!("Failed to decode message from server: {}", e);
+                    log::error!("Failed to decode message from server: {e}");
                     e
                 })
                 .ok()
@@ -117,7 +117,7 @@ impl Client {
     pub fn send_message(&mut self, message: &GameMessage) -> Result<(), BoxedError> {
         let bytes =
             bincode::serde::encode_to_vec(message, bincode::config::standard()).map_err(|e| {
-                log::error!("Failed to serialize message: {}", e);
+                log::error!("Failed to serialize message: {e}");
                 Box::new(e) as Box<dyn std::error::Error + Send + Sync>
             })?;
 

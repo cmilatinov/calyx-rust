@@ -1,5 +1,3 @@
-use std::iter;
-
 use crate::assets::mesh::Mesh;
 use crate::math::{compose_transform, Transform};
 use crate::render::{Camera, GizmoInstance};
@@ -129,8 +127,8 @@ impl Gizmos<'_> {
     pub fn line(&mut self, start: &Vec3, end: &Vec3) {
         self.lines_mesh.vertices.push(*start);
         self.lines_mesh.vertices.push(*end);
-        self.lines_mesh.uvs[0].extend(iter::repeat(self.color.xy()).take(2));
-        self.lines_mesh.uvs[1].extend(iter::repeat(vec2(self.color.z, self.alpha())).take(2));
+        self.lines_mesh.uvs[0].extend(std::iter::repeat_n(self.color.xy(), 2));
+        self.lines_mesh.uvs[1].extend(std::iter::repeat_n(vec2(self.color.z, self.alpha()), 2));
     }
 
     /// Emits a colored point.
@@ -165,9 +163,9 @@ impl Gizmos<'_> {
             vec2(uv_max.x, uv_min.y),
             uv_min,
         ]);
-        self.icons_mesh.uvs[1].extend(iter::repeat(color.xy()).take(4));
-        self.icons_mesh.uvs[2].extend(iter::repeat(vec2(color.z, color.w)).take(4));
-        self.icons_mesh.uvs[3].extend(iter::repeat(vec2(self.object_id as f32, 0.0)).take(4));
+        self.icons_mesh.uvs[1].extend(std::iter::repeat_n(color.xy(), 4));
+        self.icons_mesh.uvs[2].extend(std::iter::repeat_n(vec2(color.z, color.w), 4));
+        self.icons_mesh.uvs[3].extend(std::iter::repeat_n(vec2(self.object_id as f32, 0.0), 4));
         self.icons_mesh
             .indices
             .extend([base, base + 1, base + 2, base + 2, base + 3, base]);

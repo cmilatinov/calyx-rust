@@ -111,9 +111,9 @@ impl PanelGame {
         if primary_pressed_on_viewport {
             res.request_focus();
             self.is_cursor_grabbed = true;
-        } else if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape)) {
-            self.is_cursor_grabbed = false;
-        } else if primary_pressed {
+        } else if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape))
+            || primary_pressed
+        {
             self.is_cursor_grabbed = false;
         }
         if self.is_cursor_grabbed && !res.has_focus() {

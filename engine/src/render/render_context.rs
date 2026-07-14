@@ -4,6 +4,11 @@ use egui::epaint;
 use egui_wgpu::{wgpu, Renderer};
 use std::sync::Arc;
 
+// This mirrors typed-builder's generated type state for `PipelineOptions`.
+// `fragment_targets` is the fourth field; update this alias if that field order changes.
+type ColorTargetPipelineOptions =
+    PipelineOptionsBuilder<((), (), (), (Vec<Option<ColorTargetState>>,), (), ())>;
+
 enum RenderBackend {
     Eframe {
         render_state: egui_wgpu::RenderState,
@@ -103,9 +108,7 @@ impl RenderContext {
 
     /// Returns a [`PipelineOptions`] builder pre-populated for this render
     /// target format.
-    pub fn pipeline_options_builder(
-        &self,
-    ) -> PipelineOptionsBuilder<((), (), (), (Vec<Option<ColorTargetState>>,), (), ())> {
+    pub fn pipeline_options_builder(&self) -> ColorTargetPipelineOptions {
         PipelineOptions::builder()
             .fragment_targets(vec![Some(RenderUtils::color_default(self.target_format()))])
     }

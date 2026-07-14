@@ -266,6 +266,7 @@ impl GizmoRenderer {
     }
 
     /// Collects gizmos from components and optional physics debug rendering.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_gizmos(
         &mut self,
         device: &wgpu::Device,

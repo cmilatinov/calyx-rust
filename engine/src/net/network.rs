@@ -168,7 +168,7 @@ impl Network {
             c_netobj.owner_id = client_id;
             c_netobj.id = src_ids
                 .and_then(|ids| ids.get(index).copied())
-                .unwrap_or_else(|| Self::new_id());
+                .unwrap_or_else(Self::new_id);
             if let Some(dst_ids) = dst_ids {
                 dst_ids.insert(*index, c_netobj.id);
             }
@@ -277,7 +277,7 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                     **local_id = self_client_id;
                     client.client_ids = client_ids.clone();
                     client.client_ids.retain(|cid| self_client_id != Some(*cid));
-                    log::trace!("Self connected, local_id: {:?}", self_client_id);
+                    log::trace!("Self connected, local_id: {self_client_id:?}");
                 };
                 MessageHandlerResult::Consume
             }
@@ -285,7 +285,7 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                 #[allow(unused)]
                 'client_logic: {
                     client.client_ids.push(*client_id);
-                    log::trace!("Client Connected: {:?}", client_id);
+                    log::trace!("Client Connected: {client_id:?}");
                 };
                 MessageHandlerResult::Consume
             }
@@ -293,7 +293,7 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                 #[allow(unused)]
                 'client_logic: {
                     client.client_ids.retain(|&id| id != *client_id);
-                    log::trace!("Client Disconnected: {:?}", client_id);
+                    log::trace!("Client Disconnected: {client_id:?}");
                 };
                 MessageHandlerResult::Consume
             }

@@ -54,6 +54,7 @@ pub fn layout_tree(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn layout_node(
     arena: &UiArena,
     node: UiNodeHandle,
@@ -239,6 +240,7 @@ fn ease_transition(amount: f32) -> f32 {
     amount * amount * (3.0 - 2.0 * amount)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn layout_flex(
     arena: &UiArena,
     node: UiNodeHandle,

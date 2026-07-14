@@ -2,6 +2,7 @@ use super::cache::*;
 use super::camera_fit::*;
 use super::*;
 
+#[derive(Default)]
 pub(super) struct ThumbnailGenerator {
     pub(super) render_settings: ThumbnailRenderSettings,
     texture_downscaler: Option<TextureDownscaler>,
@@ -9,16 +10,6 @@ pub(super) struct ThumbnailGenerator {
     skybox_front_face_downscaler: Option<SkyboxFrontFaceDownscaler>,
 }
 
-impl Default for ThumbnailGenerator {
-    fn default() -> Self {
-        Self {
-            render_settings: ThumbnailRenderSettings::default(),
-            texture_downscaler: None,
-            scene_renderer: None,
-            skybox_front_face_downscaler: None,
-        }
-    }
-}
 impl ThumbnailGenerator {
     pub(super) fn with_render_settings(render_settings: ThumbnailRenderSettings) -> Self {
         Self {

@@ -240,8 +240,7 @@ impl AnimationGraphInspector {
                     let source_name = graph[source].name.clone();
                     let target_name = graph[target].name.clone();
                     ui.list_item_flat_noninteractive(
-                        LabelContent::new(format!("{} -> {}", source_name, target_name))
-                            .truncate(true),
+                        LabelContent::new(format!("{source_name} -> {target_name}")).truncate(true),
                     );
                     ui.list_item_flat_noninteractive(
                         PropertyContent::new("Name").value_text_mut(&mut graph[edge_idx].name),

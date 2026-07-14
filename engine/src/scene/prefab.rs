@@ -196,26 +196,6 @@ fn imported_sub_asset_name(
     candidate
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn imported_sub_asset_names_are_unique() {
-        let mut used_names = HashSet::new();
-
-        assert_eq!(
-            imported_sub_asset_name("Tracks", "mesh", &mut used_names),
-            "Tracks"
-        );
-        assert_eq!(
-            imported_sub_asset_name("Tracks", "mesh", &mut used_names),
-            "Tracks_1"
-        );
-        assert_eq!(imported_sub_asset_name("", "mesh", &mut used_names), "mesh");
-    }
-}
-
 impl Prefab {
     fn traverse(
         registry: &AssetRegistry,
@@ -282,5 +262,25 @@ impl Prefab {
         for child in &*node.children.borrow() {
             Self::traverse(registry, bones, meshes, root, child.borrow(), parent, data);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn imported_sub_asset_names_are_unique() {
+        let mut used_names = HashSet::new();
+
+        assert_eq!(
+            imported_sub_asset_name("Tracks", "mesh", &mut used_names),
+            "Tracks"
+        );
+        assert_eq!(
+            imported_sub_asset_name("Tracks", "mesh", &mut used_names),
+            "Tracks_1"
+        );
+        assert_eq!(imported_sub_asset_name("", "mesh", &mut used_names), "mesh");
     }
 }

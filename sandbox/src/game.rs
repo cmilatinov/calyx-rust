@@ -49,7 +49,7 @@ impl GameApp {
                 .registries
                 .components
                 .write()
-                .refresh_class_lists(&mut type_registry);
+                .refresh_class_lists(&type_registry);
         }
         let mut game = GameContext::new(assets.clone());
         let scene = assets

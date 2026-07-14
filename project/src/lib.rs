@@ -77,21 +77,19 @@ impl Project {
 
         let mut file = match File::open(toml_path) {
             Ok(file) => file,
-            Err(e) => {
-                return Err(format!("Failed to find project file 'project.toml': {}", e).into())
-            }
+            Err(e) => return Err(format!("Failed to find project file 'project.toml': {e}").into()),
         };
 
         let mut toml_string = String::new();
         if let Err(e) = file.read_to_string(&mut toml_string) {
-            return Err(format!("Failed to read project file 'project.toml': {}", e).into());
+            return Err(format!("Failed to read project file 'project.toml': {e}").into());
         }
 
         let mut project: Project = match toml::from_str(&toml_string) {
             Ok(project) => project,
             Err(e) => {
                 return Err(
-                    format!("Failed to deserialize project file 'project.toml': {}", e).into(),
+                    format!("Failed to deserialize project file 'project.toml': {e}").into(),
                 );
             }
         };
@@ -153,7 +151,7 @@ mod tests {
         // Check the .toml file
         let toml_path = expected_path.join("project.toml");
         let toml_content = fs::read_to_string(toml_path).expect("Unable to load toml content");
-        assert!(toml_content.contains(&format!("name = \"{}\"", name)));
+        assert!(toml_content.contains(&format!("name = \"{name}\"")));
         assert!(toml_content.contains(&format!(
             "root_directory = \"{}\"",
             expected_path.clone().display()

@@ -221,7 +221,8 @@ impl AssetRegistry {
         let (tx, _rx) = std::sync::mpsc::channel();
         let watcher =
             RecommendedWatcher::new(tx, Config::default()).expect("failed to create watcher");
-        let registry = Ref::new_cyclic(|weak| {
+
+        Ref::new_cyclic(|weak| {
             let mut r = Self {
                 render_context,
                 asset_registry: weak,
@@ -238,8 +239,7 @@ impl AssetRegistry {
             r.register_default_asset_types();
             r.build_meta().expect("failed to build asset metadata");
             r
-        });
-        registry
+        })
     }
 }
 impl AssetRegistry {
@@ -449,7 +449,7 @@ impl AssetRegistry {
         let asset = Ref::from_id_value(id, value);
         self.upsert_in_memory_asset_meta::<A>(id, name);
         self.asset_cache_mut().insert(id, asset.as_asset());
-        log::info!("Created in-memory asset {} ({})", asset_name, id);
+        log::info!("Created in-memory asset {asset_name} ({id})");
         Ok(asset)
     }
 
@@ -984,7 +984,7 @@ impl AssetRegistry {
                 let path = match path {
                     Ok(path) => path,
                     Err(err) => {
-                        log::warn!("Skipping asset path while building metadata: {}", err);
+                        log::warn!("Skipping asset path while building metadata: {err}");
                         continue;
                     }
                 };
@@ -1143,184 +1143,6 @@ impl AssetRegistry {
         let file = File::create(meta_path).map_err(Box::new)?;
         let writer = BufWriter::new(file);
         Ok(serde_json::to_writer_pretty(writer, meta).map_err(Box::new)?)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::assets::error::AssetErrorKind;
-    use crate::test_utils::test_registries_with_assets;
-    use serde_json::json;
-
-    fn temp_asset_root(prefix: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!("{prefix}-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&path).expect("failed to create temp asset root");
-        path
-    }
-
-    fn write_parent_with_child_meta(root: &Path, child_name: &str) -> (Uuid, Uuid) {
-        let parent_id = Uuid::new_v4();
-        let child_id = Uuid::new_v4();
-        std::fs::write(root.join("parent.fbx"), b"").expect("failed to write parent asset");
-        std::fs::write(
-            root.join("parent.meta"),
-            serde_json::to_vec_pretty(&json!({
-                "main": {
-                    "id": parent_id,
-                    "name": "parent",
-                    "display_name": "parent",
-                    "type_uuid": Prefab::type_uuid(),
-                },
-                "inner": [
-                    {
-                        "id": child_id,
-                        "name": child_name,
-                        "display_name": child_name,
-                        "type_uuid": Mesh::type_uuid(),
-                    }
-                ]
-            }))
-            .expect("failed to encode test meta"),
-        )
-        .expect("failed to write parent meta");
-        (parent_id, child_id)
-    }
-
-    fn write_scene_with_meta(root: &Path) -> (PathBuf, PathBuf, Uuid) {
-        let asset_id = Uuid::new_v4();
-        let asset_path = root.join("scene.cxscene");
-        let meta_path = root.join("scene.meta");
-        std::fs::write(&asset_path, b"{}").expect("failed to write scene asset");
-        std::fs::write(
-            &meta_path,
-            serde_json::to_vec_pretty(&json!({
-                "main": {
-                    "id": asset_id,
-                    "name": "scene",
-                    "display_name": "scene",
-                    "type_uuid": Scene::type_uuid(),
-                },
-                "inner": []
-            }))
-            .expect("failed to encode scene meta"),
-        )
-        .expect("failed to write scene meta");
-        (asset_path, meta_path, asset_id)
-    }
-
-    #[test]
-    fn remove_event_for_replaced_asset_preserves_metadata() {
-        let root = temp_asset_root("calyx-asset-replacement-event");
-        let (asset_path, meta_path, asset_id) = write_scene_with_meta(&root);
-        let registries = test_registries_with_assets(vec![root.clone()]);
-        let registry = registries.assets.read();
-        let original_meta = std::fs::read(&meta_path).expect("failed to read original metadata");
-        let replacement_path = root.join("scene.cxscene.tmp");
-        std::fs::write(&replacement_path, b"replacement")
-            .expect("failed to stage replacement asset");
-        if std::fs::rename(&replacement_path, &asset_path).is_err() {
-            let backup_path = root.join("scene.cxscene.backup");
-            std::fs::rename(&asset_path, &backup_path).expect("failed to stage original asset");
-            std::fs::rename(&replacement_path, &asset_path)
-                .expect("failed to install replacement asset");
-            std::fs::remove_file(backup_path).expect("failed to remove original asset backup");
-        }
-        let event = Event::new(EventKind::Remove(notify::event::RemoveKind::File))
-            .add_path(asset_path.clone());
-
-        registry.recv_notify_event(event);
-
-        assert_eq!(
-            std::fs::read(&asset_path).expect("failed to read replacement asset"),
-            b"replacement"
-        );
-        assert_eq!(
-            std::fs::read(&meta_path).expect("failed to read preserved metadata"),
-            original_meta
-        );
-        assert!(registry.asset_data().dirty.contains_key(&asset_id));
-        drop(registry);
-        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
-    }
-
-    #[test]
-    fn remove_event_for_deleted_asset_removes_metadata() {
-        let root = temp_asset_root("calyx-asset-deletion-event");
-        let (asset_path, meta_path, _) = write_scene_with_meta(&root);
-        let registries = test_registries_with_assets(vec![root.clone()]);
-        let registry = registries.assets.read();
-        std::fs::remove_file(&asset_path).expect("failed to delete scene asset");
-        let event =
-            Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(asset_path);
-
-        registry.recv_notify_event(event);
-
-        assert!(!meta_path.exists());
-        drop(registry);
-        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
-    }
-
-    #[test]
-    fn create_or_update_rejects_disk_asset_name() {
-        let root = temp_asset_root("calyx-disk-create-or-update");
-        std::fs::write(root.join("existing.obj"), b"").expect("failed to write test asset");
-        let registries = test_registries_with_assets(vec![root.clone()]);
-        let registry = registries.assets.read();
-
-        let result =
-            registry.create_or_update("existing".into(), Mesh::new(&registry.render_context));
-
-        assert!(matches!(
-            result,
-            Err(AssetError {
-                kind: AssetErrorKind::AlreadyExists,
-                ..
-            })
-        ));
-        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
-    }
-
-    #[test]
-    fn sub_asset_meta_uses_local_names_and_canonical_lookup() {
-        let root = temp_asset_root("calyx-local-subasset-meta");
-        let (parent_id, child_id) = write_parent_with_child_meta(&root, "Body");
-        let registries = test_registries_with_assets(vec![root.clone()]);
-        let registry = registries.assets.read();
-
-        assert_eq!(registry.asset_id("parent/Body"), Some(child_id));
-        assert_eq!(
-            registry.asset_meta_from_id(child_id).map(|meta| meta.name),
-            Some("Body".into())
-        );
-        assert_eq!(
-            registry
-                .asset_meta_from_id(child_id)
-                .and_then(|meta| meta.parent),
-            Some(parent_id)
-        );
-        assert_eq!(
-            registry
-                .asset_meta_from_id(parent_id)
-                .map(|meta| meta.children),
-            Some(vec![child_id])
-        );
-        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
-    }
-
-    #[test]
-    fn sub_asset_meta_normalizes_legacy_full_child_names() {
-        let root = temp_asset_root("calyx-legacy-subasset-meta");
-        let (_, child_id) = write_parent_with_child_meta(&root, "parent/Body");
-        let registries = test_registries_with_assets(vec![root.clone()]);
-        let registry = registries.assets.read();
-
-        assert_eq!(registry.asset_id("parent/Body"), Some(child_id));
-        assert_eq!(
-            registry.asset_meta_from_id(child_id).map(|meta| meta.name),
-            Some("Body".into())
-        );
-        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
 }
 
@@ -1647,5 +1469,183 @@ impl AssetRegistry {
             );
             scene
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::assets::error::AssetErrorKind;
+    use crate::test_utils::test_registries_with_assets;
+    use serde_json::json;
+
+    fn temp_asset_root(prefix: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("{prefix}-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&path).expect("failed to create temp asset root");
+        path
+    }
+
+    fn write_parent_with_child_meta(root: &Path, child_name: &str) -> (Uuid, Uuid) {
+        let parent_id = Uuid::new_v4();
+        let child_id = Uuid::new_v4();
+        std::fs::write(root.join("parent.fbx"), b"").expect("failed to write parent asset");
+        std::fs::write(
+            root.join("parent.meta"),
+            serde_json::to_vec_pretty(&json!({
+                "main": {
+                    "id": parent_id,
+                    "name": "parent",
+                    "display_name": "parent",
+                    "type_uuid": Prefab::type_uuid(),
+                },
+                "inner": [
+                    {
+                        "id": child_id,
+                        "name": child_name,
+                        "display_name": child_name,
+                        "type_uuid": Mesh::type_uuid(),
+                    }
+                ]
+            }))
+            .expect("failed to encode test meta"),
+        )
+        .expect("failed to write parent meta");
+        (parent_id, child_id)
+    }
+
+    fn write_scene_with_meta(root: &Path) -> (PathBuf, PathBuf, Uuid) {
+        let asset_id = Uuid::new_v4();
+        let asset_path = root.join("scene.cxscene");
+        let meta_path = root.join("scene.meta");
+        std::fs::write(&asset_path, b"{}").expect("failed to write scene asset");
+        std::fs::write(
+            &meta_path,
+            serde_json::to_vec_pretty(&json!({
+                "main": {
+                    "id": asset_id,
+                    "name": "scene",
+                    "display_name": "scene",
+                    "type_uuid": Scene::type_uuid(),
+                },
+                "inner": []
+            }))
+            .expect("failed to encode scene meta"),
+        )
+        .expect("failed to write scene meta");
+        (asset_path, meta_path, asset_id)
+    }
+
+    #[test]
+    fn remove_event_for_replaced_asset_preserves_metadata() {
+        let root = temp_asset_root("calyx-asset-replacement-event");
+        let (asset_path, meta_path, asset_id) = write_scene_with_meta(&root);
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        let original_meta = std::fs::read(&meta_path).expect("failed to read original metadata");
+        let replacement_path = root.join("scene.cxscene.tmp");
+        std::fs::write(&replacement_path, b"replacement")
+            .expect("failed to stage replacement asset");
+        if std::fs::rename(&replacement_path, &asset_path).is_err() {
+            let backup_path = root.join("scene.cxscene.backup");
+            std::fs::rename(&asset_path, &backup_path).expect("failed to stage original asset");
+            std::fs::rename(&replacement_path, &asset_path)
+                .expect("failed to install replacement asset");
+            std::fs::remove_file(backup_path).expect("failed to remove original asset backup");
+        }
+        let event = Event::new(EventKind::Remove(notify::event::RemoveKind::File))
+            .add_path(asset_path.clone());
+
+        registry.recv_notify_event(event);
+
+        assert_eq!(
+            std::fs::read(&asset_path).expect("failed to read replacement asset"),
+            b"replacement"
+        );
+        assert_eq!(
+            std::fs::read(&meta_path).expect("failed to read preserved metadata"),
+            original_meta
+        );
+        assert!(registry.asset_data().dirty.contains_key(&asset_id));
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn remove_event_for_deleted_asset_removes_metadata() {
+        let root = temp_asset_root("calyx-asset-deletion-event");
+        let (asset_path, meta_path, _) = write_scene_with_meta(&root);
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        std::fs::remove_file(&asset_path).expect("failed to delete scene asset");
+        let event =
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(asset_path);
+
+        registry.recv_notify_event(event);
+
+        assert!(!meta_path.exists());
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn create_or_update_rejects_disk_asset_name() {
+        let root = temp_asset_root("calyx-disk-create-or-update");
+        std::fs::write(root.join("existing.obj"), b"").expect("failed to write test asset");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+
+        let result =
+            registry.create_or_update("existing".into(), Mesh::new(&registry.render_context));
+
+        assert!(matches!(
+            result,
+            Err(AssetError {
+                kind: AssetErrorKind::AlreadyExists,
+                ..
+            })
+        ));
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn sub_asset_meta_uses_local_names_and_canonical_lookup() {
+        let root = temp_asset_root("calyx-local-subasset-meta");
+        let (parent_id, child_id) = write_parent_with_child_meta(&root, "Body");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+
+        assert_eq!(registry.asset_id("parent/Body"), Some(child_id));
+        assert_eq!(
+            registry.asset_meta_from_id(child_id).map(|meta| meta.name),
+            Some("Body".into())
+        );
+        assert_eq!(
+            registry
+                .asset_meta_from_id(child_id)
+                .and_then(|meta| meta.parent),
+            Some(parent_id)
+        );
+        assert_eq!(
+            registry
+                .asset_meta_from_id(parent_id)
+                .map(|meta| meta.children),
+            Some(vec![child_id])
+        );
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn sub_asset_meta_normalizes_legacy_full_child_names() {
+        let root = temp_asset_root("calyx-legacy-subasset-meta");
+        let (_, child_id) = write_parent_with_child_meta(&root, "parent/Body");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+
+        assert_eq!(registry.asset_id("parent/Body"), Some(child_id));
+        assert_eq!(
+            registry.asset_meta_from_id(child_id).map(|meta| meta.name),
+            Some("Body".into())
+        );
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
 }

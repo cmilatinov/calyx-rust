@@ -60,16 +60,16 @@ impl Server {
 
         server.update(duration);
         if let Err(err) = transport.update(duration, server) {
-            log::error!("Error updating server transport: {:?}", err);
+            log::error!("Error updating server transport: {err:?}");
         }
 
         while let Some(event) = server.get_event() {
             match &event {
                 renet::ServerEvent::ClientConnected { client_id } => {
-                    log::info!("Client connected: {}", client_id);
+                    log::info!("Client connected: {client_id}");
                 }
                 renet::ServerEvent::ClientDisconnected { client_id, reason } => {
-                    log::info!("Client disconnected: {}, reason: {}", client_id, reason);
+                    log::info!("Client disconnected: {client_id}, reason: {reason}");
                 }
             }
             queue.queue_message(GameMessage::ServerEvent(match event {
@@ -94,9 +94,7 @@ impl Server {
                             )
                             .map_err(|e| {
                                 log::error!(
-                                    "Failed to decode message from client {}: {}",
-                                    client_id,
-                                    e
+                                    "Failed to decode message from client {client_id}: {e}"
                                 );
                                 e
                             })
