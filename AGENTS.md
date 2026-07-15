@@ -12,6 +12,8 @@ When making repository changes, follow the Gitflow rules in `.steering/gitflow.m
 
 After a branch has been pushed or a PR has been opened, make review updates as normal follow-up commits on the same branch. Do not amend, rebase, or force-push a published branch unless the user explicitly asks for history rewriting.
 
+When addressing completed code-review comments, resolve their threads and add a single-sentence reply that names the implementing commit, for example: `Addressed in #abcdef: documented coupling in x file.`
+
 When asked what is or is not implemented, or asked to fetch/pick the next highest-priority task, consult the Todoist `Calyx` project first. For implementation work, use the `Codebase Improvements` section unless the user names another section.
 
 When the user says a PR was merged and asks to continue or move on, sync `staging`, create a fresh Gitflow branch, pick the next highest-priority Todoist task plus tightly connected tasks, implement, validate, push, and open a PR.
