@@ -180,8 +180,7 @@ pub fn update_respawn_state(scene: &mut Scene, game_object: GameObject, dt: f32)
 fn respawn_transform_target(scene: &Scene, game_object: GameObject) -> GameObject {
     scene
         .ancestors(game_object)
-        .take_while(|parent| *parent != scene.root())
-        .last()
+        .find(|parent| *parent != scene.root())
         .unwrap_or(game_object)
 }
 
@@ -447,6 +446,37 @@ mod tests {
         assert_eq!(
             scene.world_transform(crosshair).position,
             vec3(6.0, 0.0, 10.0)
+        );
+    }
+
+    #[test]
+    fn respawn_does_not_move_siblings_under_a_shared_group() {
+        let mut scene = engine::test_support::test_scene();
+        let spawn = scene.create(None, None);
+        let players = scene.create(None, None);
+        let player = scene.create(None, Some(players));
+        let tank = scene.create(None, Some(player));
+        let other_player = scene.create(None, Some(players));
+        scene.set_world_transform(spawn, Transform::from_xyz(8.0, 0.0, 4.0).matrix());
+        scene.set_world_transform(player, Transform::from_xyz(-4.0, 0.0, 0.0).matrix());
+        scene.set_world_transform(other_player, Transform::from_xyz(12.0, 0.0, 0.0).matrix());
+        scene.add_component(spawn, ComponentSpawnPoint::default());
+        scene.add_component(
+            tank,
+            ComponentRespawnState {
+                alive: false,
+                respawn_remaining: 0.0,
+                ..Default::default()
+            },
+        );
+
+        assert!(update_respawn_state(&mut scene, tank, 0.0));
+
+        assert_eq!(scene.world_transform(tank).position, vec3(8.0, 0.0, 4.0));
+        assert_eq!(scene.world_transform(player).position, vec3(8.0, 0.0, 4.0));
+        assert_eq!(
+            scene.world_transform(other_player).position,
+            vec3(12.0, 0.0, 0.0)
         );
     }
 
