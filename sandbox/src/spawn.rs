@@ -155,15 +155,12 @@ pub fn update_respawn_state(scene: &mut Scene, game_object: GameObject, dt: f32)
 
     let should_spawn = state.tick(dt) == Some(RespawnAction::Spawn);
     let spawned = should_spawn
-        && find_spawn_transform(scene, state.team).is_some_and(|mut transform| {
+        && find_spawn_transform(scene, state.team).is_some_and(|transform| {
             let respawn_target = respawn_transform_target(scene, game_object);
-            let controlled_relative_transform =
-                scene.transform_relative_to(game_object, respawn_target);
-            transform.scale = scene.world_transform(game_object).scale;
-            scene.set_world_transform(
-                respawn_target,
-                transform.matrix() * controlled_relative_transform.inverse_matrix(),
-            );
+            let mut target_transform = scene.world_transform(respawn_target);
+            target_transform.position +=
+                transform.position - scene.world_transform(game_object).position;
+            scene.set_world_transform(respawn_target, target_transform.matrix());
             state.mark_spawned();
             true
         });
@@ -212,6 +209,7 @@ mod tests {
         RespawnAction, SPAWN_TEAM_ANY,
     };
     use engine::math::Transform;
+    use nalgebra::UnitQuaternion;
     use nalgebra_glm::vec3;
 
     #[test]
@@ -450,5 +448,51 @@ mod tests {
             scene.world_transform(crosshair).position,
             vec3(6.0, 0.0, 10.0)
         );
+    }
+
+    #[test]
+    fn respawn_preserves_rig_rotation_when_the_controlled_object_has_turned() {
+        let mut scene = engine::test_support::test_scene();
+        let spawn = scene.create(None, None);
+        let player = scene.create(None, None);
+        let tank = scene.create(None, None);
+        let camera = scene.create(None, None);
+        scene.set_parent(tank, Some(player));
+        scene.set_parent(camera, Some(player));
+        scene.set_transform(
+            tank,
+            &Transform::from_components(
+                vec3(2.0, 0.0, 0.0),
+                UnitQuaternion::from_euler_angles(0.0, 1.0, 0.0),
+                vec3(1.0, 1.0, 1.0),
+            )
+            .matrix(),
+        );
+        scene.set_transform(
+            camera,
+            &Transform::from_components(
+                vec3(0.0, 16.0, -10.0),
+                UnitQuaternion::from_euler_angles(0.8, 0.2, 0.0),
+                vec3(1.0, 1.0, 1.0),
+            )
+            .matrix(),
+        );
+        scene.set_world_transform(spawn, Transform::from_xyz(8.0, 0.0, 4.0).matrix());
+        scene.set_world_transform(player, Transform::from_xyz(-4.0, 0.0, 0.0).matrix());
+        scene.add_component(spawn, ComponentSpawnPoint::default());
+        scene.add_component(
+            tank,
+            ComponentRespawnState {
+                alive: false,
+                respawn_remaining: 0.0,
+                ..Default::default()
+            },
+        );
+        let camera_rotation = scene.world_transform(camera).rotation;
+
+        assert!(update_respawn_state(&mut scene, tank, 0.0));
+
+        assert_eq!(scene.world_transform(tank).position, vec3(8.0, 0.0, 4.0));
+        assert_eq!(scene.world_transform(camera).rotation, camera_rotation);
     }
 }
