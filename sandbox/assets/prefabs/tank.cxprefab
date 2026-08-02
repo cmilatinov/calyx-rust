@@ -63,6 +63,26 @@
           "hull_turn_speed": 2.8,
           "turret_turn_speed": 12.0,
           "muzzle_offset": 1.575
+        },
+        "f2c31eb5-c999-4125-9cb0-a72a238eca2e": {
+          "hit_radius": 1.25,
+          "hit_count": 0
+        },
+        "8f0175f4-1a76-4c43-8932-6462f9005ab4": {
+          "max_health": 100.0,
+          "current_health": 100.0,
+          "destroy_on_death": false,
+          "dead": false
+        },
+        "28ca6ba9-20bd-4077-8f35-1cf8483c6f4e": {
+          "team": 4294967295,
+          "respawn_delay": 3.0,
+          "respawn_remaining": 0.0,
+          "invulnerability_duration": 2.0,
+          "invulnerability_remaining": 0.0,
+          "alive": true,
+          "death_requested": false,
+          "respawn_requested": false
         }
       },
       "9985d281-6c72-4fd1-83e2-1abf2a495f77": {
