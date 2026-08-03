@@ -125,6 +125,7 @@ impl GameApp {
             ammo_loaded: state.ammo,
             ammo_capacity: state.max_ammo,
             reload_remaining: state.reload_remaining,
+            fire_cooldown_remaining: state.fire_cooldown_remaining,
         }
         .build(ui)
     }
@@ -137,6 +138,7 @@ struct TankHudState {
     ammo: u32,
     max_ammo: u32,
     reload_remaining: f32,
+    fire_cooldown_remaining: f32,
 }
 
 fn tank_hud_state(scene: &Scene) -> TankHudState {
@@ -155,6 +157,7 @@ fn tank_hud_state(scene: &Scene) -> TankHudState {
                 ammo: controller.ammo,
                 max_ammo: controller.max_ammo,
                 reload_remaining: controller.reload_remaining,
+                fire_cooldown_remaining: controller.fire_cooldown_remaining,
             })
         })
         .unwrap_or_default()
@@ -228,6 +231,7 @@ struct SandboxHud<'a> {
     ammo_loaded: u32,
     ammo_capacity: u32,
     reload_remaining: f32,
+    fire_cooldown_remaining: f32,
 }
 
 impl Widget for SandboxHud<'_> {
@@ -257,6 +261,7 @@ impl Widget for SandboxHud<'_> {
             loaded: self.ammo_loaded,
             capacity: self.ammo_capacity,
             reload_remaining: self.reload_remaining,
+            fire_cooldown_remaining: self.fire_cooldown_remaining,
             size: ammo_size,
             margin: EdgeInsets {
                 top: self.viewport.height() - ammo_size.height - margin,
@@ -342,6 +347,7 @@ struct AmmoHud<'a> {
     loaded: u32,
     capacity: u32,
     reload_remaining: f32,
+    fire_cooldown_remaining: f32,
     size: UiSize,
     margin: EdgeInsets,
 }
@@ -363,7 +369,7 @@ impl Widget for AmmoHud<'_> {
         let reload = hud_text(
             ui,
             "hud-ammo-reload",
-            reload_label(self.reload_remaining),
+            weapon_status_label(self.reload_remaining, self.fire_cooldown_remaining),
             self.style.label_style(self.style.text),
         );
         let loaded_ratio = if self.capacity > 0 {
@@ -426,9 +432,11 @@ fn progress_meter(
         .pointer_events(ui, PointerEvents::None)
 }
 
-fn reload_label(reload_remaining: f32) -> String {
+fn weapon_status_label(reload_remaining: f32, fire_cooldown_remaining: f32) -> String {
     if reload_remaining > f32::EPSILON {
         format!("RELOADING {reload_remaining:.1}s")
+    } else if fire_cooldown_remaining > f32::EPSILON {
+        format!("COOLDOWN {fire_cooldown_remaining:.1}s")
     } else {
         "READY".to_string()
     }
@@ -591,7 +599,7 @@ fn main() -> eframe::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        reload_label, tank_hud_state, ComponentHealth, ComponentTankController, TankHudState,
+        tank_hud_state, weapon_status_label, ComponentHealth, ComponentTankController, TankHudState,
     };
 
     #[test]
@@ -612,6 +620,7 @@ mod tests {
                 ammo: 2,
                 max_ammo: 6,
                 reload_remaining: 0.8,
+                fire_cooldown_remaining: 0.2,
                 ..Default::default()
             },
         );
@@ -624,13 +633,15 @@ mod tests {
                 ammo: 2,
                 max_ammo: 6,
                 reload_remaining: 0.8,
+                fire_cooldown_remaining: 0.2,
             }
         );
     }
 
     #[test]
-    fn reload_label_reports_remaining_cooldown() {
-        assert_eq!(reload_label(0.0), "READY");
-        assert_eq!(reload_label(1.25), "RELOADING 1.2s");
+    fn weapon_status_label_reports_reload_and_fire_cooldowns() {
+        assert_eq!(weapon_status_label(0.0, 0.0), "READY");
+        assert_eq!(weapon_status_label(1.25, 0.2), "RELOADING 1.2s");
+        assert_eq!(weapon_status_label(0.0, 0.35), "COOLDOWN 0.3s");
     }
 }
