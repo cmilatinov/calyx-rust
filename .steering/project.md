@@ -4,7 +4,7 @@ inclusion: auto
 
 # Calyx Engine — Project Overview
 
-Calyx is a 3D game engine and editor written in Rust, targeting a multiplayer tank game. The workspace has four crates:
+Calyx is a 3D game engine and editor written in Rust, targeting a multiplayer tank game. The workspace has five crates:
 
 ## Workspace Crates
 
@@ -60,22 +60,6 @@ Example game project. Compiles as dynamic library (plugin) with `plugin_main` en
 - Hot-reload: file watcher → AssetRegistry reload. Shader preprocessor handles #include.
 - Networking: Renet client/server, fixed tick rate, message queue with typed handlers.
 - Scene files: `.cxscene` (JSON serialized SceneData).
-
-## Todoist Planning
-- When asked what is implemented, what is not implemented, or what task to do next, consult Todoist before answering.
-- Use the Todoist `Calyx` project as the source of truth for planned work.
-- When asked for the next highest-priority engineering task, inspect the `Codebase Improvements` section and pick the highest Todoist priority item, grouping nearby tasks only when they share the same files or system boundary.
-- When the user says a PR was merged and asks to continue, sync `staging`, create a fresh Gitflow branch, implement the selected Todoist work, validate it, push the branch, and open a PR.
-
-## Git And PR Conventions
-- Always use Gitflow branch naming: `feature/...`, `fix/...`, `refactor/...`, `docs/...`, `chore/...`.
-- Always use commit prefixes in this style: `feat: ...`, `fix: ...`, `refactor: ...`, `chore: ...`, `docs: ...`.
-- Never use git worktrees for this project; if a branch switch is needed with uncommitted changes present, stash them first.
-- If a PR target branch is not specified, assume the target branch is `staging`.
-- When opening a GitHub PR, always create it as ready for review, never draft.
-- When opening a GitHub PR, always include the related Todoist task or tasks from the `Calyx` board.
-- When opening a GitHub PR, always explain the motivation for the change in 1-2 sentences.
-- When opening a GitHub PR, always mention tests added and the verification run before committing.
 
 ## Build Notes
 - Windows: uses `rust-lld.exe` linker, `-Cprefer-dynamic` for fast iteration.
