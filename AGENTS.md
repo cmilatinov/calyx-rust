@@ -4,6 +4,7 @@ Use these files for Calyx-specific context:
 
 - [.steering/project.md](.steering/project.md) - workspace architecture and project conventions.
 - [.steering/planning.md](.steering/planning.md) - roadmap source, priorities, and current product direction.
+- [.steering/autonomy.md](.steering/autonomy.md) - autonomous execution authority and escalation boundaries.
 - [.steering/hud-ui.md](.steering/hud-ui.md) - runtime HUD/UI architecture and linked requirements.
 
 Use the reusable workflow skills for generic engineering process:
