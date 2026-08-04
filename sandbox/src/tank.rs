@@ -432,7 +432,7 @@ fn spawn_projectile(
     );
     let projectile_transform = Transform::from_components(
         barrel_transform.position + direction * controller.muzzle_offset,
-        yaw_rotation(&direction),
+        barrel_transform.rotation,
         vec3(
             controller.projectile_radius * 2.0,
             controller.projectile_radius * 2.0,
@@ -1124,6 +1124,15 @@ mod tests {
             }),
             None,
         );
+        scene.set_world_transform(
+            barrel,
+            Transform::from_components(
+                vec3(0.0, 0.0, 0.0),
+                UnitQuaternion::from_euler_angles(0.0, std::f32::consts::FRAC_PI_2, 0.0),
+                vec3(1.0, 1.0, 1.0),
+            )
+            .matrix(),
+        );
         let controller = ComponentTankController {
             barrel: GameObjectRef::new(scene.uuid(barrel)),
             projectile_radius: 0.25,
@@ -1146,6 +1155,15 @@ mod tests {
         assert_eq!(projectile_component.damage, 17.0);
         assert_eq!(projectile_component.lifetime_remaining, 1.5);
         assert_eq!(projectile_component.radius, 0.25);
+        assert!((projectile_component.direction.x - 1.0).abs() < 1e-5);
+        assert!(projectile_component.direction.z.abs() < 1e-5);
+        assert!(
+            scene
+                .world_transform(projectile)
+                .rotation
+                .angle_to(&scene.world_transform(barrel).rotation)
+                < 1e-5
+        );
 
         let rigid_body = scene
             .read_component::<ComponentRigidBody, _, _>(projectile, |component| {
