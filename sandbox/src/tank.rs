@@ -15,6 +15,7 @@ use engine::scene::GameObjectRef;
 use engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use nalgebra::UnitQuaternion;
 use nalgebra_glm::{vec3, vec4, Mat4, Vec3, Vec4};
+use rapier3d::prelude::QueryFilter;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, TypeUuid, Serialize, Deserialize, Component, Reflect)]
@@ -258,7 +259,21 @@ fn update_hull(
             controller.reverse_speed
         };
         let forward = flatten_xz(transform.forward());
-        transform.translate(&(forward * (throttle * speed * dt)));
+        let movement = forward * (throttle * speed * dt);
+        if let Some(hit) = scene.physics.cast_shape(
+            ColliderShape::Cuboid {
+                half_extents: vec3(0.75, 0.5, 1.0),
+            },
+            transform.position + vec3(0.0, 0.75, 0.0),
+            transform.rotation,
+            movement,
+            1.0,
+            QueryFilter::exclude_dynamic(),
+        ) {
+            transform.translate(&(movement * (hit.hit.time_of_impact - 0.001).max(0.0)));
+        } else {
+            transform.translate(&movement);
+        }
         changed = true;
     }
 

@@ -552,51 +552,51 @@
         "material": "0b90da62-df89-b912-f547-aeb5b1ca08a1"
       }
     },
-    "a1000000-0000-4000-8000-000000000001": {
-      "02289c92-3412-406e-a7e5-3bbb15d7041e": { "id": "a1000000-0000-4000-8000-000000000001", "name": "Arena Floor", "visible": true },
-      "c5b3b71f-1f14-4b5b-9881-436118684d29": { "transform": { "position": [0.0, -0.5, 11.0], "rotation": [0.0, 0.0, 0.0, 1.0], "scale": [14.0, 0.5, 15.0] } },
+    "92d77a7d-6ec0-41d8-b179-8e441c3ff88e": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": { "id": "92d77a7d-6ec0-41d8-b179-8e441c3ff88e", "name": "Arena Floor", "visible": true },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": { "transform": { "position": [0.0, -0.5, 11.0], "rotation": [0.0, 0.0, 0.0, 1.0], "scale": [28.0, 1.0, 30.0] } },
       "93fd32b1-7127-4c88-8e89-893512af58de": { "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32", "material": "c35634f8-fdee-c217-bc6b-22ab01eac817" },
       "53a682cb-a207-4c4c-8795-63f38351c7ef": { "enabled": true, "shape": { "Cuboid": { "half_extents": [14.0, 0.5, 15.0] } }, "friction": 0.8, "density": 100.0 },
       "8cac1bae-e3c3-4ee6-b672-7689e9c10f7e": { "enabled": true, "ty": "Fixed", "mass": 100.0, "gravity_scale": 0.0, "can_sleep": false }
     },
-    "a1000000-0000-4000-8000-000000000002": {
-      "02289c92-3412-406e-a7e5-3bbb15d7041e": { "id": "a1000000-0000-4000-8000-000000000002", "name": "Arena North Wall", "visible": true },
-      "c5b3b71f-1f14-4b5b-9881-436118684d29": { "transform": { "position": [0.0, 1.0, 26.0], "rotation": [0.0, 0.0, 0.0, 1.0], "scale": [14.0, 1.5, 0.5] } },
+    "4623c97e-4c4a-4503-addd-77d68af17f58": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": { "id": "4623c97e-4c4a-4503-addd-77d68af17f58", "name": "Arena North Wall", "visible": true },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": { "transform": { "position": [0.0, 1.0, 26.0], "rotation": [0.0, 0.0, 0.0, 1.0], "scale": [28.0, 3.0, 1.0] } },
       "93fd32b1-7127-4c88-8e89-893512af58de": { "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32", "material": "c35634f8-fdee-c217-bc6b-22ab01eac817" },
       "53a682cb-a207-4c4c-8795-63f38351c7ef": { "enabled": true, "shape": { "Cuboid": { "half_extents": [14.0, 1.5, 0.5] } }, "friction": 0.8, "density": 100.0 },
       "8cac1bae-e3c3-4ee6-b672-7689e9c10f7e": { "enabled": true, "ty": "Fixed", "mass": 100.0, "gravity_scale": 0.0, "can_sleep": false }
     },
-    "a1000000-0000-4000-8000-000000000003": {
-      "02289c92-3412-406e-a7e5-3bbb15d7041e": { "id": "a1000000-0000-4000-8000-000000000003", "name": "Arena South Wall", "visible": true },
-      "c5b3b71f-1f14-4b5b-9881-436118684d29": { "transform": { "position": [0.0, 1.0, -4.0], "rotation": [0.0, 0.0, 0.0, 1.0], "scale": [14.0, 1.5, 0.5] } },
+    "90473641-f804-4280-a4be-6bffdd9635bb": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": { "id": "90473641-f804-4280-a4be-6bffdd9635bb", "name": "Arena South Wall", "visible": true },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": { "transform": { "position": [0.0, 1.0, -4.0], "rotation": [0.0, 0.0, 0.0, 1.0], "scale": [28.0, 3.0, 1.0] } },
       "93fd32b1-7127-4c88-8e89-893512af58de": { "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32", "material": "c35634f8-fdee-c217-bc6b-22ab01eac817" },
       "53a682cb-a207-4c4c-8795-63f38351c7ef": { "enabled": true, "shape": { "Cuboid": { "half_extents": [14.0, 1.5, 0.5] } }, "friction": 0.8, "density": 100.0 },
       "8cac1bae-e3c3-4ee6-b672-7689e9c10f7e": { "enabled": true, "ty": "Fixed", "mass": 100.0, "gravity_scale": 0.0, "can_sleep": false }
     },
-    "a1000000-0000-4000-8000-000000000004": {
-      "02289c92-3412-406e-a7e5-3bbb15d7041e": { "id": "a1000000-0000-4000-8000-000000000004", "name": "Arena West Wall", "visible": true },
-      "c5b3b71f-1f14-4b5b-9881-436118684d29": { "transform": { "position": [-14.0, 1.0, 11.0], "rotation": [0.0, 0.0, 0.0, 1.0], "scale": [0.5, 1.5, 15.0] } },
+    "272c0387-4ecb-4c71-baf5-ee84bc0bacf6": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": { "id": "272c0387-4ecb-4c71-baf5-ee84bc0bacf6", "name": "Arena West Wall", "visible": true },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": { "transform": { "position": [-14.0, 1.0, 11.0], "rotation": [0.0, 0.0, 0.0, 1.0], "scale": [1.0, 3.0, 30.0] } },
       "93fd32b1-7127-4c88-8e89-893512af58de": { "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32", "material": "c35634f8-fdee-c217-bc6b-22ab01eac817" },
       "53a682cb-a207-4c4c-8795-63f38351c7ef": { "enabled": true, "shape": { "Cuboid": { "half_extents": [0.5, 1.5, 15.0] } }, "friction": 0.8, "density": 100.0 },
       "8cac1bae-e3c3-4ee6-b672-7689e9c10f7e": { "enabled": true, "ty": "Fixed", "mass": 100.0, "gravity_scale": 0.0, "can_sleep": false }
     },
-    "a1000000-0000-4000-8000-000000000005": {
-      "02289c92-3412-406e-a7e5-3bbb15d7041e": { "id": "a1000000-0000-4000-8000-000000000005", "name": "Arena East Wall", "visible": true },
-      "c5b3b71f-1f14-4b5b-9881-436118684d29": { "transform": { "position": [14.0, 1.0, 11.0], "rotation": [0.0, 0.0, 0.0, 1.0], "scale": [0.5, 1.5, 15.0] } },
+    "0695f273-be59-42f5-b8c3-9b8a111c9fee": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": { "id": "0695f273-be59-42f5-b8c3-9b8a111c9fee", "name": "Arena East Wall", "visible": true },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": { "transform": { "position": [14.0, 1.0, 11.0], "rotation": [0.0, 0.0, 0.0, 1.0], "scale": [1.0, 3.0, 30.0] } },
       "93fd32b1-7127-4c88-8e89-893512af58de": { "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32", "material": "c35634f8-fdee-c217-bc6b-22ab01eac817" },
       "53a682cb-a207-4c4c-8795-63f38351c7ef": { "enabled": true, "shape": { "Cuboid": { "half_extents": [0.5, 1.5, 15.0] } }, "friction": 0.8, "density": 100.0 },
       "8cac1bae-e3c3-4ee6-b672-7689e9c10f7e": { "enabled": true, "ty": "Fixed", "mass": 100.0, "gravity_scale": 0.0, "can_sleep": false }
     },
-    "a1000000-0000-4000-8000-000000000006": {
-      "02289c92-3412-406e-a7e5-3bbb15d7041e": { "id": "a1000000-0000-4000-8000-000000000006", "name": "Arena Cover West", "visible": true },
-      "c5b3b71f-1f14-4b5b-9881-436118684d29": { "transform": { "position": [-6.0, 0.75, 8.0], "rotation": [0.0, 0.0, 0.0, 1.0], "scale": [2.0, 0.75, 1.0] } },
+    "9176f0de-e7de-4bb5-b7ec-23ed381e6ae9": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": { "id": "9176f0de-e7de-4bb5-b7ec-23ed381e6ae9", "name": "Arena Cover West", "visible": true },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": { "transform": { "position": [-6.0, 0.75, 8.0], "rotation": [0.0, 0.0, 0.0, 1.0], "scale": [4.0, 1.5, 2.0] } },
       "93fd32b1-7127-4c88-8e89-893512af58de": { "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32", "material": "c35634f8-fdee-c217-bc6b-22ab01eac817" },
       "53a682cb-a207-4c4c-8795-63f38351c7ef": { "enabled": true, "shape": { "Cuboid": { "half_extents": [2.0, 0.75, 1.0] } }, "friction": 0.8, "density": 100.0 },
       "8cac1bae-e3c3-4ee6-b672-7689e9c10f7e": { "enabled": true, "ty": "Fixed", "mass": 100.0, "gravity_scale": 0.0, "can_sleep": false }
     },
-    "a1000000-0000-4000-8000-000000000007": {
-      "02289c92-3412-406e-a7e5-3bbb15d7041e": { "id": "a1000000-0000-4000-8000-000000000007", "name": "Arena Cover East", "visible": true },
-      "c5b3b71f-1f14-4b5b-9881-436118684d29": { "transform": { "position": [6.0, 0.75, 12.0], "rotation": [0.0, 0.0, 0.0, 1.0], "scale": [2.0, 0.75, 1.0] } },
+    "fbacaab7-94e8-4a85-9818-23779135e894": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": { "id": "fbacaab7-94e8-4a85-9818-23779135e894", "name": "Arena Cover East", "visible": true },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": { "transform": { "position": [6.0, 0.75, 12.0], "rotation": [0.0, 0.0, 0.0, 1.0], "scale": [4.0, 1.5, 2.0] } },
       "93fd32b1-7127-4c88-8e89-893512af58de": { "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32", "material": "c35634f8-fdee-c217-bc6b-22ab01eac817" },
       "53a682cb-a207-4c4c-8795-63f38351c7ef": { "enabled": true, "shape": { "Cuboid": { "half_extents": [2.0, 0.75, 1.0] } }, "friction": 0.8, "density": 100.0 },
       "8cac1bae-e3c3-4ee6-b672-7689e9c10f7e": { "enabled": true, "ty": "Fixed", "mass": 100.0, "gravity_scale": 0.0, "can_sleep": false }
@@ -609,13 +609,13 @@
       "1d181f5b-1544-4f00-a19e-6ba14c57288a",
       "ff3e62d5-9f0b-4e43-8f42-81744fdc8a91",
       "27b9ce07-f502-4481-a0c4-48c24358596d",
-      "a1000000-0000-4000-8000-000000000001",
-      "a1000000-0000-4000-8000-000000000002",
-      "a1000000-0000-4000-8000-000000000003",
-      "a1000000-0000-4000-8000-000000000004",
-      "a1000000-0000-4000-8000-000000000005",
-      "a1000000-0000-4000-8000-000000000006",
-      "a1000000-0000-4000-8000-000000000007"
+      "92d77a7d-6ec0-41d8-b179-8e441c3ff88e",
+      "4623c97e-4c4a-4503-addd-77d68af17f58",
+      "90473641-f804-4280-a4be-6bffdd9635bb",
+      "272c0387-4ecb-4c71-baf5-ee84bc0bacf6",
+      "0695f273-be59-42f5-b8c3-9b8a111c9fee",
+      "9176f0de-e7de-4bb5-b7ec-23ed381e6ae9",
+      "fbacaab7-94e8-4a85-9818-23779135e894"
     ],
     "1d181f5b-1544-4f00-a19e-6ba14c57288a": [
       "a0e5ad62-7bb8-4b12-9160-c2bd84f5d4dd",
