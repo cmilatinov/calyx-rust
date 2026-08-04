@@ -363,7 +363,7 @@ impl PhysicsContext {
                 (*rb.translation() - transform.position).magnitude_squared() > 1e-8;
             let rotation_changed = rb.rotation().angle_to(&transform.rotation).abs() > 1e-5;
             if c_rb.ty != RigidBodyType::Dynamic || position_changed {
-                rb.set_position(transform.position.into(), true);
+                rb.set_translation(transform.position, true);
             }
             if c_rb.ty != RigidBodyType::Dynamic || rotation_changed {
                 rb.set_rotation(transform.rotation, true);

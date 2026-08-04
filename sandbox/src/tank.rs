@@ -1180,6 +1180,24 @@ mod tests {
             panic!("projectile collider should be a sphere");
         };
         assert_eq!(radius, controller.projectile_radius);
+
+        let expected_rotation = scene.world_transform(barrel).rotation;
+        scene.prepare();
+        let mut runner = engine::test_support::HeadlessSceneRunner::from_scene(scene);
+        for step in 1..=10 {
+            runner.step();
+            let projectile = runner
+                .scene()
+                .objects()
+                .find(|object| runner.scene().name(*object) == "Projectile")
+                .expect("projectile should survive the first updates");
+            let actual_rotation = runner.scene().world_transform(projectile).rotation;
+            let angle = actual_rotation.angle_to(&expected_rotation);
+            assert!(
+                angle < 1e-5,
+                "projectile rotation changed by {angle} radians on step {step}: {actual_rotation:?}"
+            );
+        }
     }
 
     #[test]
