@@ -15,6 +15,8 @@ use engine::ui::{
     UiRect, UiRuntime, UiSize, Widget,
 };
 use sandbox::plugin_main;
+use sandbox::spawn::ComponentRespawnState;
+use sandbox::tank::{ComponentHealth, ComponentTankController};
 use std::path::PathBuf;
 use std::sync::Arc;
 #[cfg(unix)]
@@ -114,32 +116,59 @@ impl GameApp {
         })
     }
 
-    fn sandbox_ui(ui: &mut UiArena, viewport: UiRect) -> UiNodeHandle {
-        let effects = [
-            StatusEffectHud {
-                name: "Armor",
-                stacks: 2,
-                progress: 0.64,
-            },
-            StatusEffectHud {
-                name: "Reload",
-                stacks: 1,
-                progress: 0.38,
-            },
-        ];
+    fn sandbox_ui(ui: &mut UiArena, viewport: UiRect, state: TankHudState) -> UiNodeHandle {
         SandboxHud {
             viewport,
             style: HudStyle::default(),
-            health: 82.0,
-            max_health: 100.0,
+            health: state.health,
+            max_health: state.max_health,
             weapon_name: "Cannon",
-            ammo_loaded: 5,
-            ammo_capacity: 6,
-            ammo_reserve: 24,
-            effects: &effects,
+            ammo_loaded: state.ammo,
+            ammo_capacity: state.max_ammo,
+            reload_remaining: state.reload_remaining,
+            fire_cooldown_remaining: state.fire_cooldown_remaining,
+            gameplay_locked: state.gameplay_locked,
         }
         .build(ui)
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct TankHudState {
+    health: f32,
+    max_health: f32,
+    ammo: u32,
+    max_ammo: u32,
+    reload_remaining: f32,
+    fire_cooldown_remaining: f32,
+    gameplay_locked: bool,
+}
+
+fn tank_hud_state(scene: &Scene) -> TankHudState {
+    scene
+        .objects()
+        .find_map(|game_object| {
+            let controller = scene
+                .read_component::<ComponentTankController, _, _>(game_object, |component| {
+                    *component
+                })?;
+            let health = scene
+                .read_component::<ComponentHealth, _, _>(game_object, |component| *component)?;
+            Some(TankHudState {
+                health: health.current_health,
+                max_health: health.max_health,
+                ammo: controller.ammo,
+                max_ammo: controller.max_ammo,
+                reload_remaining: controller.reload_remaining,
+                fire_cooldown_remaining: controller.fire_cooldown_remaining,
+                gameplay_locked: scene
+                    .read_component::<ComponentRespawnState, _, _>(game_object, |component| {
+                        component.is_gameplay_locked()
+                    })
+                    .unwrap_or(false),
+            })
+        })
+        .unwrap_or_default()
 }
 
 #[derive(Clone, Copy)]
@@ -152,7 +181,6 @@ struct HudStyle {
     muted: UiColor,
     health: UiColor,
     ammo: UiColor,
-    effect: UiColor,
     bar_background: UiColor,
 }
 
@@ -167,7 +195,6 @@ impl Default for HudStyle {
             muted: UiColor::rgba(170, 174, 170, 210),
             health: UiColor::rgba(92, 205, 110, 245),
             ammo: UiColor::rgba(238, 217, 132, 245),
-            effect: UiColor::rgba(118, 178, 245, 235),
             bar_background: UiColor::rgba(34, 36, 38, 220),
         }
     }
@@ -211,8 +238,9 @@ struct SandboxHud<'a> {
     weapon_name: &'a str,
     ammo_loaded: u32,
     ammo_capacity: u32,
-    ammo_reserve: u32,
-    effects: &'a [StatusEffectHud<'a>],
+    reload_remaining: f32,
+    fire_cooldown_remaining: f32,
+    gameplay_locked: bool,
 }
 
 impl Widget for SandboxHud<'_> {
@@ -220,7 +248,6 @@ impl Widget for SandboxHud<'_> {
         let margin = self.style.margin(self.viewport);
         let health_size = UiSize::new((self.viewport.width() * 0.28).clamp(250.0, 340.0), 76.0);
         let ammo_size = UiSize::new((self.viewport.width() * 0.22).clamp(220.0, 300.0), 80.0);
-        let effects_size = UiSize::new((self.viewport.width() * 0.24).clamp(230.0, 310.0), 124.0);
 
         let health = HealthHud {
             id: "hud-health",
@@ -242,7 +269,9 @@ impl Widget for SandboxHud<'_> {
             weapon_name: self.weapon_name,
             loaded: self.ammo_loaded,
             capacity: self.ammo_capacity,
-            reserve: self.ammo_reserve,
+            reload_remaining: self.reload_remaining,
+            fire_cooldown_remaining: self.fire_cooldown_remaining,
+            gameplay_locked: self.gameplay_locked,
             size: ammo_size,
             margin: EdgeInsets {
                 top: self.viewport.height() - ammo_size.height - margin,
@@ -252,26 +281,12 @@ impl Widget for SandboxHud<'_> {
             },
         }
         .build(ui);
-        let effects = StatusEffectsHud {
-            id: "hud-effects",
-            style: self.style,
-            effects: self.effects,
-            size: effects_size,
-            margin: EdgeInsets {
-                top: margin,
-                right: 0.0,
-                bottom: 0.0,
-                left: (self.viewport.width() - effects_size.width - margin).max(margin),
-            },
-        }
-        .build(ui);
-
         ui.stack()
             .id(ui, "sandbox-ui")
             .width(ui, UiLength::Px(self.viewport.width()))
             .height(ui, UiLength::Px(self.viewport.height()))
             .pointer_events(ui, PointerEvents::None)
-            .children(ui, [health, ammo, effects])
+            .children(ui, [health, ammo])
     }
 }
 
@@ -341,7 +356,9 @@ struct AmmoHud<'a> {
     weapon_name: &'a str,
     loaded: u32,
     capacity: u32,
-    reserve: u32,
+    reload_remaining: f32,
+    fire_cooldown_remaining: f32,
+    gameplay_locked: bool,
     size: UiSize,
     margin: EdgeInsets,
 }
@@ -360,10 +377,15 @@ impl Widget for AmmoHud<'_> {
             format!("{}/{}", self.loaded, self.capacity),
             self.style.value_style(self.style.ammo, 24.0),
         );
-        let reserve = hud_text(
+        let reload = hud_text(
             ui,
-            "hud-ammo-reserve",
-            format!("RESERVE {}", self.reserve),
+            "hud-ammo-reload",
+            weapon_status_label(
+                self.capacity,
+                self.reload_remaining,
+                self.fire_cooldown_remaining,
+                self.gameplay_locked,
+            ),
             self.style.label_style(self.style.text),
         );
         let loaded_ratio = if self.capacity > 0 {
@@ -391,58 +413,8 @@ impl Widget for AmmoHud<'_> {
             .margin(ui, self.margin)
             .child(ui, label)
             .child(ui, ammo)
-            .child(ui, reserve)
+            .child(ui, reload)
             .child(ui, meter)
-    }
-}
-
-struct StatusEffectHud<'a> {
-    name: &'a str,
-    stacks: u8,
-    progress: f32,
-}
-
-struct StatusEffectsHud<'a> {
-    id: &'static str,
-    style: HudStyle,
-    effects: &'a [StatusEffectHud<'a>],
-    size: UiSize,
-    margin: EdgeInsets,
-}
-
-impl Widget for StatusEffectsHud<'_> {
-    fn build(&self, ui: &mut UiArena) -> UiNodeHandle {
-        let title = hud_text(
-            ui,
-            "hud-effects-title",
-            "STATUS",
-            self.style.label_style(self.style.muted),
-        );
-        let mut panel = ui
-            .column()
-            .id(ui, self.id)
-            .style(ui, self.style.panel_style())
-            .width(ui, UiLength::Px(self.size.width))
-            .height(ui, UiLength::Px(self.size.height))
-            .margin(ui, self.margin)
-            .child(ui, title);
-
-        if self.effects.is_empty() {
-            let clear = hud_text(
-                ui,
-                "hud-effects-clear",
-                "CLEAR",
-                self.style.value_style(self.style.text, 14.0),
-            );
-            panel = panel.child(ui, clear);
-        } else {
-            for (index, effect) in self.effects.iter().enumerate() {
-                let row = effect_row(ui, self.style, index, effect);
-                panel = panel.child(ui, row);
-            }
-        }
-
-        panel
     }
 }
 
@@ -476,46 +448,23 @@ fn progress_meter(
         .pointer_events(ui, PointerEvents::None)
 }
 
-fn effect_row(
-    ui: &mut UiArena,
-    style: HudStyle,
-    index: usize,
-    effect: &StatusEffectHud<'_>,
-) -> UiNodeHandle {
-    let name = hud_text(
-        ui,
-        format!("hud-effect-{index}-name"),
-        effect.name.to_uppercase(),
-        style.value_style(style.text, 12.0),
-    );
-    let stacks = hud_text(
-        ui,
-        format!("hud-effect-{index}-stacks"),
-        format!("x{}", effect.stacks.max(1)),
-        style.label_style(style.effect),
-    );
-    let header = ui
-        .row()
-        .id(ui, format!("hud-effect-{index}-header"))
-        .justify_content(ui, JustifyContent::SpaceBetween)
-        .pointer_events(ui, PointerEvents::None)
-        .child(ui, name)
-        .child(ui, stacks);
-    let timer = progress_meter(
-        ui,
-        format!("hud-effect-{index}-timer"),
-        effect.progress,
-        style.effect,
-        style.bar_background,
-        style.outline,
-    );
-
-    ui.column()
-        .id(ui, format!("hud-effect-{index}"))
-        .gap(ui, 3.0)
-        .pointer_events(ui, PointerEvents::None)
-        .child(ui, header)
-        .child(ui, timer)
+fn weapon_status_label(
+    capacity: u32,
+    reload_remaining: f32,
+    fire_cooldown_remaining: f32,
+    gameplay_locked: bool,
+) -> String {
+    if capacity == 0 {
+        "DISABLED".to_string()
+    } else if gameplay_locked {
+        "SYSTEM LOCKED".to_string()
+    } else if reload_remaining > f32::EPSILON {
+        format!("RELOADING {reload_remaining:.1}s")
+    } else if fire_cooldown_remaining > f32::EPSILON {
+        format!("COOLDOWN {fire_cooldown_remaining:.1}s")
+    } else {
+        "READY".to_string()
+    }
 }
 
 impl eframe::App for GameApp {
@@ -551,8 +500,27 @@ impl eframe::App for GameApp {
                     UiPoint::new(rect.min.x, rect.min.y),
                     UiSize::new(rect.width(), rect.height()),
                 );
+                // The HUD is non-interactive, so update gameplay before taking the
+                // snapshot that will be painted this frame.
+                let state = InputState {
+                    is_active: true,
+                    last_cursor_pos: None,
+                    ..Default::default()
+                };
+                let input = Input::from_ctx(ui.ctx(), Some(&response), state);
+                let hud_state = {
+                    let assets = self.game.assets.lock_read();
+                    let GameContext {
+                        scenes, resources, ..
+                    } = &mut self.game;
+                    let scene = scenes.current_scene_mut();
+                    scene.prepare();
+                    scene.update(&assets.registries, resources, &input);
+                    tank_hud_state(scene)
+                };
+
                 self.ui_arena.clear();
-                let sandbox_ui = Self::sandbox_ui(&mut self.ui_arena, viewport);
+                let sandbox_ui = Self::sandbox_ui(&mut self.ui_arena, viewport, hud_state);
                 let ui_frame = self.ui_runtime.frame(
                     &self.ui_arena,
                     sandbox_ui,
@@ -560,20 +528,6 @@ impl eframe::App for GameApp {
                     Self::pointer_input(ui.ctx()),
                     &self.ui_theme,
                 );
-
-                let state = InputState {
-                    is_active: !ui_frame.consumed_pointer,
-                    last_cursor_pos: None,
-                    ..Default::default()
-                };
-                let input = Input::from_ctx(ui.ctx(), Some(&response), state);
-                let assets = self.game.assets.lock_read();
-                let GameContext {
-                    scenes, resources, ..
-                } = &mut self.game;
-                let scene = scenes.current_scene_mut();
-                scene.prepare();
-                scene.update(&assets.registries, resources, &input);
 
                 let mut backend = EguiUiBackend::new(ui.painter());
                 render_commands(
@@ -669,4 +623,65 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(|cc| Ok(GameApp::new(cc).map(Box::new)?)),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        tank_hud_state, weapon_status_label, ComponentHealth, ComponentRespawnState,
+        ComponentTankController, TankHudState,
+    };
+
+    #[test]
+    fn tank_hud_state_reads_live_health_and_ammo() {
+        let mut scene = engine::test_support::test_scene();
+        let tank = scene.create(None, None);
+        scene.add_component(
+            tank,
+            ComponentHealth {
+                current_health: 42.0,
+                max_health: 90.0,
+                ..Default::default()
+            },
+        );
+        scene.add_component(
+            tank,
+            ComponentTankController {
+                ammo: 2,
+                max_ammo: 6,
+                reload_remaining: 0.8,
+                fire_cooldown_remaining: 0.2,
+                ..Default::default()
+            },
+        );
+        scene.add_component(
+            tank,
+            ComponentRespawnState {
+                alive: false,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(
+            tank_hud_state(&scene),
+            TankHudState {
+                health: 42.0,
+                max_health: 90.0,
+                ammo: 2,
+                max_ammo: 6,
+                reload_remaining: 0.8,
+                fire_cooldown_remaining: 0.2,
+                gameplay_locked: true,
+            }
+        );
+    }
+
+    #[test]
+    fn weapon_status_label_reports_gameplay_locks_and_cooldowns() {
+        assert_eq!(weapon_status_label(6, 0.0, 0.0, false), "READY");
+        assert_eq!(weapon_status_label(6, 1.25, 0.2, false), "RELOADING 1.2s");
+        assert_eq!(weapon_status_label(6, 0.0, 0.35, false), "COOLDOWN 0.3s");
+        assert_eq!(weapon_status_label(6, 1.25, 0.35, true), "SYSTEM LOCKED");
+        assert_eq!(weapon_status_label(0, 0.0, 0.0, false), "DISABLED");
+    }
 }

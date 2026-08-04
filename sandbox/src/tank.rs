@@ -432,7 +432,7 @@ fn spawn_projectile(
     );
     let projectile_transform = Transform::from_components(
         barrel_transform.position + direction * controller.muzzle_offset,
-        yaw_rotation(&direction),
+        barrel_transform.rotation,
         vec3(
             controller.projectile_radius * 2.0,
             controller.projectile_radius * 2.0,
@@ -1124,6 +1124,15 @@ mod tests {
             }),
             None,
         );
+        scene.set_world_transform(
+            barrel,
+            Transform::from_components(
+                vec3(0.0, 0.0, 0.0),
+                UnitQuaternion::from_euler_angles(0.0, std::f32::consts::FRAC_PI_2, 0.0),
+                vec3(1.0, 1.0, 1.0),
+            )
+            .matrix(),
+        );
         let controller = ComponentTankController {
             barrel: GameObjectRef::new(scene.uuid(barrel)),
             projectile_radius: 0.25,
@@ -1146,6 +1155,15 @@ mod tests {
         assert_eq!(projectile_component.damage, 17.0);
         assert_eq!(projectile_component.lifetime_remaining, 1.5);
         assert_eq!(projectile_component.radius, 0.25);
+        assert!((projectile_component.direction.x - 1.0).abs() < 1e-5);
+        assert!(projectile_component.direction.z.abs() < 1e-5);
+        assert!(
+            scene
+                .world_transform(projectile)
+                .rotation
+                .angle_to(&scene.world_transform(barrel).rotation)
+                < 1e-5
+        );
 
         let rigid_body = scene
             .read_component::<ComponentRigidBody, _, _>(projectile, |component| {
@@ -1162,6 +1180,24 @@ mod tests {
             panic!("projectile collider should be a sphere");
         };
         assert_eq!(radius, controller.projectile_radius);
+
+        let expected_rotation = scene.world_transform(barrel).rotation;
+        scene.prepare();
+        let mut runner = engine::test_support::HeadlessSceneRunner::from_scene(scene);
+        for step in 1..=10 {
+            runner.step();
+            let projectile = runner
+                .scene()
+                .objects()
+                .find(|object| runner.scene().name(*object) == "Projectile")
+                .expect("projectile should survive the first updates");
+            let actual_rotation = runner.scene().world_transform(projectile).rotation;
+            let angle = actual_rotation.angle_to(&expected_rotation);
+            assert!(
+                angle < 1e-5,
+                "projectile rotation changed by {angle} radians on step {step}: {actual_rotation:?}"
+            );
+        }
     }
 
     #[test]
