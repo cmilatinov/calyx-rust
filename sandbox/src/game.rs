@@ -381,6 +381,7 @@ impl Widget for AmmoHud<'_> {
             ui,
             "hud-ammo-reload",
             weapon_status_label(
+                self.capacity,
                 self.reload_remaining,
                 self.fire_cooldown_remaining,
                 self.gameplay_locked,
@@ -448,11 +449,14 @@ fn progress_meter(
 }
 
 fn weapon_status_label(
+    capacity: u32,
     reload_remaining: f32,
     fire_cooldown_remaining: f32,
     gameplay_locked: bool,
 ) -> String {
-    if gameplay_locked {
+    if capacity == 0 {
+        "DISABLED".to_string()
+    } else if gameplay_locked {
         "SYSTEM LOCKED".to_string()
     } else if reload_remaining > f32::EPSILON {
         format!("RELOADING {reload_remaining:.1}s")
@@ -496,7 +500,25 @@ impl eframe::App for GameApp {
                     UiPoint::new(rect.min.x, rect.min.y),
                     UiSize::new(rect.width(), rect.height()),
                 );
-                let hud_state = tank_hud_state(self.game.scenes.current_scene());
+                // The HUD is non-interactive, so update gameplay before taking the
+                // snapshot that will be painted this frame.
+                let state = InputState {
+                    is_active: true,
+                    last_cursor_pos: None,
+                    ..Default::default()
+                };
+                let input = Input::from_ctx(ui.ctx(), Some(&response), state);
+                let hud_state = {
+                    let assets = self.game.assets.lock_read();
+                    let GameContext {
+                        scenes, resources, ..
+                    } = &mut self.game;
+                    let scene = scenes.current_scene_mut();
+                    scene.prepare();
+                    scene.update(&assets.registries, resources, &input);
+                    tank_hud_state(scene)
+                };
+
                 self.ui_arena.clear();
                 let sandbox_ui = Self::sandbox_ui(&mut self.ui_arena, viewport, hud_state);
                 let ui_frame = self.ui_runtime.frame(
@@ -506,20 +528,6 @@ impl eframe::App for GameApp {
                     Self::pointer_input(ui.ctx()),
                     &self.ui_theme,
                 );
-
-                let state = InputState {
-                    is_active: !ui_frame.consumed_pointer,
-                    last_cursor_pos: None,
-                    ..Default::default()
-                };
-                let input = Input::from_ctx(ui.ctx(), Some(&response), state);
-                let assets = self.game.assets.lock_read();
-                let GameContext {
-                    scenes, resources, ..
-                } = &mut self.game;
-                let scene = scenes.current_scene_mut();
-                scene.prepare();
-                scene.update(&assets.registries, resources, &input);
 
                 let mut backend = EguiUiBackend::new(ui.painter());
                 render_commands(
@@ -670,9 +678,10 @@ mod tests {
 
     #[test]
     fn weapon_status_label_reports_gameplay_locks_and_cooldowns() {
-        assert_eq!(weapon_status_label(0.0, 0.0, false), "READY");
-        assert_eq!(weapon_status_label(1.25, 0.2, false), "RELOADING 1.2s");
-        assert_eq!(weapon_status_label(0.0, 0.35, false), "COOLDOWN 0.3s");
-        assert_eq!(weapon_status_label(1.25, 0.35, true), "SYSTEM LOCKED");
+        assert_eq!(weapon_status_label(6, 0.0, 0.0, false), "READY");
+        assert_eq!(weapon_status_label(6, 1.25, 0.2, false), "RELOADING 1.2s");
+        assert_eq!(weapon_status_label(6, 0.0, 0.35, false), "COOLDOWN 0.3s");
+        assert_eq!(weapon_status_label(6, 1.25, 0.35, true), "SYSTEM LOCKED");
+        assert_eq!(weapon_status_label(0, 0.0, 0.0, false), "DISABLED");
     }
 }
