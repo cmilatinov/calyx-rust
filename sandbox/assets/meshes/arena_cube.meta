@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "4d2d87eb-60b4-4dcc-b3d4-67bc444396c9",
+    "name": "meshes/arena_cube",
+    "display_name": "arena_cube",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}

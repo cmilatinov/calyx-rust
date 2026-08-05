@@ -189,6 +189,8 @@ fn cover_cells(columns: u32, rows: u32) -> Vec<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::{cover_cells, generate_arena, perimeter_cells, ComponentArena};
+    use engine::assets::AssetAccess;
+    use engine::component::ComponentMesh;
     use engine::component::{ColliderShape, ComponentCollider, ComponentRigidBody};
     use rapier3d::dynamics::RigidBodyType;
     use std::collections::HashSet;
@@ -244,10 +246,11 @@ mod tests {
 
     #[test]
     fn sandbox_scene_generates_arena_when_started() {
-        let assets = engine::test_support::test_asset_context_with_assets(vec![
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),
-            std::env::current_dir().unwrap().join("assets"),
-        ]);
+        let assets =
+            engine::test_support::test_asset_context_with_assets(vec![std::path::PathBuf::from(
+                env!("CARGO_MANIFEST_DIR"),
+            )
+            .join("assets")]);
         let scene_ref = assets
             .registries
             .assets
@@ -267,6 +270,31 @@ mod tests {
 
         scene.start();
         assert_eq!(scene.children(arena).count(), 68);
+        let registries = assets.registries.lock_read();
+        for object in scene.children(arena) {
+            let (mesh_id, material_id, mesh_resolves, material_resolves) = scene
+                .read_component::<ComponentMesh, _, _>(object, |renderer| {
+                    (
+                        renderer.mesh.id(),
+                        renderer.material.id(),
+                        renderer.mesh.get_ref(&registries).is_some(),
+                        renderer.material.get_ref(&registries).is_some(),
+                    )
+                })
+                .expect("generated arena object should have a mesh renderer");
+            assert!(!mesh_id.is_nil());
+            assert!(!material_id.is_nil());
+            assert_eq!(mesh_id.to_string(), "4d2d87eb-60b4-4dcc-b3d4-67bc444396c9");
+            assert_eq!(
+                material_id.to_string(),
+                "0b90da62-df89-b912-f547-aeb5b1ca08a1"
+            );
+            assert!(mesh_resolves, "mesh asset {mesh_id} should resolve");
+            assert!(
+                material_resolves,
+                "material asset {material_id} should resolve"
+            );
+        }
 
         scene.start();
         assert_eq!(scene.children(arena).count(), 68);

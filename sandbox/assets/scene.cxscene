@@ -566,8 +566,8 @@
         }
       },
       "8591392e-d5f6-4543-89eb-93bc865073ea": {
-        "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32",
-        "material": "c35634f8-fdee-c217-bc6b-22ab01eac817",
+        "mesh": "4d2d87eb-60b4-4dcc-b3d4-67bc444396c9",
+        "material": "0b90da62-df89-b912-f547-aeb5b1ca08a1",
         "columns": 15,
         "rows": 16,
         "cell_size": 2.0
