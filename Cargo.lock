@@ -6589,6 +6589,7 @@ dependencies = [
  "log",
  "nalgebra",
  "nalgebra-glm",
+ "rapier3d",
  "serde",
  "serde_json",
  "winit",

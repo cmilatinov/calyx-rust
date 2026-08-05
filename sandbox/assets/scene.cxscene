@@ -551,6 +551,27 @@
         "mesh": "f8a12e80-8f16-5965-b549-d1dfa1bddead",
         "material": "0b90da62-df89-b912-f547-aeb5b1ca08a1"
       }
+    },
+    "de2a2612-fa64-4fb4-8801-55a27df12564": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "de2a2612-fa64-4fb4-8801-55a27df12564",
+        "name": "Arena",
+        "visible": true
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [0.0, 0.0, 11.0],
+          "rotation": [0.0, 0.0, 0.0, 1.0],
+          "scale": [1.0, 1.0, 1.0]
+        }
+      },
+      "8591392e-d5f6-4543-89eb-93bc865073ea": {
+        "mesh": "4d2d87eb-60b4-4dcc-b3d4-67bc444396c9",
+        "material": "0b90da62-df89-b912-f547-aeb5b1ca08a1",
+        "columns": 15,
+        "rows": 16,
+        "cell_size": 2.0
+      }
     }
   },
   "hierarchy": {
@@ -559,7 +580,8 @@
       "c8cd2ec1-8e42-4e44-a15b-c1f75b7162da",
       "1d181f5b-1544-4f00-a19e-6ba14c57288a",
       "ff3e62d5-9f0b-4e43-8f42-81744fdc8a91",
-      "27b9ce07-f502-4481-a0c4-48c24358596d"
+      "27b9ce07-f502-4481-a0c4-48c24358596d",
+      "de2a2612-fa64-4fb4-8801-55a27df12564"
     ],
     "1d181f5b-1544-4f00-a19e-6ba14c57288a": [
       "a0e5ad62-7bb8-4b12-9160-c2bd84f5d4dd",

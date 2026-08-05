@@ -8,6 +8,7 @@ use engine::component::{
 use engine::core::TimeType;
 use engine::input::Input;
 use engine::math::Transform;
+use engine::physics::PhysicsContext;
 use engine::reflect::{Reflect, ReflectDefault};
 use engine::render::Camera;
 use engine::resource::ResourceMap;
@@ -15,7 +16,12 @@ use engine::scene::GameObjectRef;
 use engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use nalgebra::UnitQuaternion;
 use nalgebra_glm::{vec3, vec4, Mat4, Vec3, Vec4};
+use rapier3d::prelude::QueryFilter;
 use serde::{Deserialize, Serialize};
+
+const TANK_COLLIDER_HALF_EXTENTS: Vec3 = Vec3::new(0.75, 0.5, 1.0);
+const TANK_COLLIDER_OFFSET: Vec3 = Vec3::new(0.0, 0.75, 0.0);
+const COLLISION_SKIN: f32 = 0.01;
 
 #[derive(Clone, Copy, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "21b467c0-9409-4a7f-b750-418809609eb1"]
@@ -258,7 +264,8 @@ fn update_hull(
             controller.reverse_speed
         };
         let forward = flatten_xz(transform.forward());
-        transform.translate(&(forward * (throttle * speed * dt)));
+        let movement = forward * (throttle * speed * dt);
+        transform.translate(&resolve_hull_movement(&scene.physics, &transform, movement));
         changed = true;
     }
 
@@ -270,6 +277,42 @@ fn update_hull(
         });
     }
     scene.world_transform(game_object)
+}
+
+fn resolve_hull_movement(physics: &PhysicsContext, transform: &Transform, movement: Vec3) -> Vec3 {
+    let mut resolved = Vec3::zeros();
+    let mut remaining = movement;
+
+    for _ in 0..2 {
+        let distance = remaining.magnitude();
+        if distance <= f32::EPSILON {
+            break;
+        }
+        let Some(hit) = physics.cast_shape(
+            ColliderShape::Cuboid {
+                half_extents: TANK_COLLIDER_HALF_EXTENTS,
+            },
+            transform.position + resolved + TANK_COLLIDER_OFFSET,
+            transform.rotation,
+            remaining,
+            1.0,
+            QueryFilter::exclude_dynamic(),
+        ) else {
+            resolved += remaining;
+            break;
+        };
+
+        let time_of_impact = hit.hit.time_of_impact.clamp(0.0, 1.0);
+        let safe_time = (time_of_impact - COLLISION_SKIN / distance).max(0.0);
+        resolved += remaining * safe_time;
+
+        let untraveled = remaining * (1.0 - time_of_impact);
+        let normal = transform.rotation * hit.hit.normal1.into_inner();
+        remaining = untraveled - normal * untraveled.dot(&normal);
+        remaining.y = 0.0;
+    }
+
+    resolved
 }
 
 fn update_turret(
@@ -690,9 +733,9 @@ fn yaw_rotation(direction: &Vec3) -> UnitQuaternion<f32> {
 mod tests {
     use super::{
         advance_fire_cooldown, advance_reload, apply_projectile_damage, can_fire, clip_from_screen,
-        flatten_xz, follow_camera_xz, is_reloading, screen_to_ground, segment_intersects_sphere,
-        spawn_projectile, update_projectile, yaw_rotation, ComponentHealth, ComponentProjectile,
-        ComponentProjectileTarget, ComponentTankController,
+        flatten_xz, follow_camera_xz, is_reloading, resolve_hull_movement, screen_to_ground,
+        segment_intersects_sphere, spawn_projectile, update_projectile, yaw_rotation,
+        ComponentHealth, ComponentProjectile, ComponentProjectileTarget, ComponentTankController,
     };
     use crate::spawn::{update_respawn_state, ComponentRespawnState, ComponentSpawnPoint};
     use engine::component::{
@@ -703,6 +746,7 @@ mod tests {
     use engine::scene::GameObjectRef;
     use nalgebra::UnitQuaternion;
     use nalgebra_glm::vec3;
+    use rapier3d::dynamics::RigidBodyType;
     use serde_json::Value;
 
     const COMPONENT_ID_TYPE: &str = "02289c92-3412-406e-a7e5-3bbb15d7041e";
@@ -915,7 +959,7 @@ mod tests {
         game.scenes.start_simulation();
         assert_eq!(
             game.scenes.simulation_scene().objects().count(),
-            authoring_object_count
+            authoring_object_count + 68
         );
         let initial_camera_transform = {
             let scene = game.scenes.simulation_scene();
@@ -1031,6 +1075,65 @@ mod tests {
         assert!((camera_transform.position.y - 16.0).abs() < 1e-6);
         assert!((camera_transform.position.z - -3.0).abs() < 1e-6);
         assert_eq!(camera_transform.rotation, rotation);
+    }
+
+    #[test]
+    fn hull_movement_stops_before_middle_cover() {
+        let mut scene = engine::test_support::test_scene();
+        add_fixed_cube(&mut scene, vec3(0.0, 1.0, 3.0), vec3(1.0, 1.0, 1.0));
+        scene.prepare();
+
+        let movement = resolve_hull_movement(
+            &scene.physics,
+            &Transform::from_xyz(0.0, 0.0, 0.0),
+            vec3(0.0, 0.0, 4.0),
+        );
+
+        assert!(movement.z > 0.9);
+        assert!(movement.z < 1.0);
+    }
+
+    #[test]
+    fn diagonal_hull_movement_slides_along_wall() {
+        let mut scene = engine::test_support::test_scene();
+        add_fixed_cube(&mut scene, vec3(2.0, 1.0, 0.0), vec3(0.5, 1.0, 10.0));
+        scene.prepare();
+
+        let movement = resolve_hull_movement(
+            &scene.physics,
+            &Transform::from_xyz(0.0, 0.0, 0.0),
+            vec3(3.0, 0.0, 2.0),
+        );
+
+        assert!(movement.x > 0.7);
+        assert!(movement.x < 0.75);
+        assert!(movement.z > 1.9);
+    }
+
+    fn add_fixed_cube(
+        scene: &mut engine::scene::Scene,
+        position: nalgebra_glm::Vec3,
+        half_extents: nalgebra_glm::Vec3,
+    ) {
+        let object = scene.create(None, None);
+        scene.set_transform(
+            object,
+            &Transform::from_components(position, Default::default(), vec3(1.0, 1.0, 1.0)).matrix(),
+        );
+        scene.add_component(
+            object,
+            ComponentRigidBody {
+                ty: RigidBodyType::Fixed,
+                ..Default::default()
+            },
+        );
+        scene.add_component(
+            object,
+            ComponentCollider {
+                shape: ColliderShape::Cuboid { half_extents },
+                ..Default::default()
+            },
+        );
     }
 
     #[test]

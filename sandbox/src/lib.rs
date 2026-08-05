@@ -1,3 +1,4 @@
+pub mod arena;
 pub mod game_state;
 pub mod spawn;
 pub mod tank;
@@ -17,6 +18,7 @@ pub extern "C" fn plugin_main(registry: &mut TypeRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::arena::ComponentArena;
     use crate::game_state::ComponentGameState;
     use crate::spawn::{ComponentRespawnState, ComponentSpawnPoint};
     use crate::tank::ComponentTankController;
@@ -33,6 +35,7 @@ mod tests {
         assert!(registry
             .type_registration::<ComponentTankController>()
             .is_some());
+        assert!(registry.type_registration::<ComponentArena>().is_some());
         assert!(registry.type_registration::<ComponentGameState>().is_some());
         assert!(registry
             .type_registration::<ComponentSpawnPoint>()
