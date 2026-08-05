@@ -105,7 +105,9 @@ impl SceneManager {
     pub fn start_simulation(&mut self) {
         if self.simulation_scene.is_none() {
             let snapshot = self.current_scene.snapshot();
-            self.simulation_scene = Some(self.current_scene.restore_snapshot(snapshot));
+            let mut simulation_scene = self.current_scene.restore_snapshot(snapshot);
+            simulation_scene.start();
+            self.simulation_scene = Some(simulation_scene);
         }
 
         self.simulation_running = true;

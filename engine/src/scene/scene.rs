@@ -77,6 +77,7 @@ pub struct Scene {
     root: GameObject,
     camera: Option<GameObject>,
     registries: ReadOnlyRegistryContext,
+    started: bool,
 }
 
 impl Scene {
@@ -104,6 +105,7 @@ impl Scene {
             root,
             camera: Default::default(),
             registries: assets,
+            started: false,
         }
     }
 }
@@ -645,6 +647,32 @@ impl Scene {
     pub fn prepare(&mut self) {
         self.flush_deletes();
         PhysicsContext::prepare(self);
+    }
+
+    /// Invokes one-time start hooks for all components currently in the scene.
+    pub fn start(&mut self) {
+        if self.started {
+            return;
+        }
+        self.started = true;
+
+        let registries = self.registries.clone();
+        let component_registry_ref = registries.components.clone();
+        let component_registry = component_registry_ref.read();
+        let game_objects: Vec<GameObject> = <Entity>::query()
+            .iter(&self.world)
+            .filter_map(|entity| self.game_object_from_entity(*entity))
+            .collect();
+
+        for (_type_uuid, starter) in component_registry.components_with_start() {
+            for &game_object in &game_objects {
+                starter.start(ComponentEventContext {
+                    registries: &registries,
+                    scene: self,
+                    game_object,
+                });
+            }
+        }
     }
 
     /// Advances physics and all registered component update hooks for one

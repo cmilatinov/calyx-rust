@@ -959,7 +959,7 @@ mod tests {
         game.scenes.start_simulation();
         assert_eq!(
             game.scenes.simulation_scene().objects().count(),
-            authoring_object_count
+            authoring_object_count + 68
         );
         let initial_camera_transform = {
             let scene = game.scenes.simulation_scene();

@@ -236,7 +236,8 @@ impl HeadlessSceneRunner {
     }
 
     /// Creates a runner for an existing scene.
-    pub fn from_scene(scene: Scene) -> Self {
+    pub fn from_scene(mut scene: Scene) -> Self {
+        scene.start();
         Self {
             registries: scene.registries().clone(),
             resources: ResourceMap::new(),
@@ -252,7 +253,8 @@ impl HeadlessSceneRunner {
     }
 
     /// Replaces the currently loaded scene.
-    pub fn load_scene(&mut self, scene: Scene) {
+    pub fn load_scene(&mut self, mut scene: Scene) {
+        scene.start();
         self.registries = scene.registries().clone();
         self.scene = scene;
     }

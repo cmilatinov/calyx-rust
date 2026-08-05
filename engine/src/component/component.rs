@@ -27,7 +27,7 @@ use crate::utils::TypeUuidDynamic;
 ///
 /// ```ignore
 /// #[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
-/// #[reflect(Component, ComponentUpdate, ComponentReset)]
+/// #[reflect(Component, ComponentStart, ComponentUpdate, ComponentReset)]
 /// struct PlayerController {
 ///     speed: f32,
 /// }
@@ -102,9 +102,10 @@ pub struct ComponentEventContext<'a> {
 /// 1. A value is constructed from defaults, deserialization, or gameplay code.
 /// 2. The value is bound to a `GameObject`.
 /// 3. If the type reflects `ComponentReset`, `reset` runs once after binding.
-/// 4. Each simulation frame runs `Scene::prepare`, then `Scene::update`, which
+/// 4. If the type reflects `ComponentStart`, `start` runs once when the scene starts.
+/// 5. Each simulation frame runs `Scene::prepare`, then `Scene::update`, which
 ///    calls reflected `ComponentUpdate` hooks for active components.
-/// 5. When removed, `destroy` runs before the component leaves the object.
+/// 6. When removed, `destroy` runs before the component leaves the object.
 ///
 /// Physics is stepped inside scene preparation/update code before component
 /// update hooks observe the frame's simulation state. Components should read
@@ -130,6 +131,17 @@ pub trait Component: TypeUuidDynamic + ComponentInstance {
     /// read-only visualization. It receives `&Scene`, not `&mut Scene`, by
     /// design.
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {}
+}
+
+/// One-time hook invoked when a scene begins runtime simulation.
+///
+/// The `&self` receiver is the prototype instance from the registry. Read the
+/// actual component through `ctx.scene`, matching [`ComponentUpdate`]. Start
+/// hooks run before the scene's first physics preparation and frame update.
+#[allow(missing_docs)]
+#[reflect_trait]
+pub trait ComponentStart: Send + Sync {
+    fn start(&self, ctx: ComponentEventContext);
 }
 
 /// Per-frame update hook, discovered via `#[reflect(ComponentUpdate)]`.

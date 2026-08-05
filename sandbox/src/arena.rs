@@ -1,12 +1,10 @@
 use engine::assets::{material::Material, mesh::Mesh, AssetRef};
 use engine::component::{
     ColliderShape, Component, ComponentCollider, ComponentEventContext, ComponentID, ComponentMesh,
-    ComponentRigidBody, ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
+    ComponentRigidBody, ComponentStart, ReflectComponent, ReflectComponentStart,
 };
-use engine::input::Input;
 use engine::math::Transform;
 use engine::reflect::{Reflect, ReflectDefault};
-use engine::resource::ResourceMap;
 use engine::scene::{GameObject, Scene};
 use engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use nalgebra_glm::vec3;
@@ -19,7 +17,7 @@ const COVER_ROWS: [u32; 3] = [6, 8, 12];
 
 #[derive(Clone, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "8591392e-d5f6-4543-89eb-93bc865073ea"]
-#[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate)]
+#[reflect(Default, TypeUuidDynamic, Component, ComponentStart)]
 #[reflect_attr(name = "Arena Generator")]
 #[serde(default)]
 #[repr(C)]
@@ -29,9 +27,6 @@ pub struct ComponentArena {
     pub columns: u32,
     pub rows: u32,
     pub cell_size: f32,
-    #[serde(skip)]
-    #[reflect_skip]
-    generated: bool,
 }
 
 impl Default for ComponentArena {
@@ -42,35 +37,25 @@ impl Default for ComponentArena {
             columns: 15,
             rows: 16,
             cell_size: 2.0,
-            generated: false,
         }
     }
 }
 
 impl Component for ComponentArena {}
 
-impl ComponentUpdate for ComponentArena {
-    fn update(
+impl ComponentStart for ComponentArena {
+    fn start(
         &self,
         ComponentEventContext {
             scene, game_object, ..
         }: ComponentEventContext,
-        _resources: &mut ResourceMap,
-        _input: &Input,
     ) {
         let Some(arena) =
             scene.read_component::<ComponentArena, _, _>(game_object, |arena| arena.clone())
         else {
             return;
         };
-        if arena.generated {
-            return;
-        }
-
         generate_arena(scene, game_object, &arena);
-        let _ = scene.write_component::<ComponentArena, _>(game_object, |arena| {
-            arena.generated = true;
-        });
     }
 }
 
@@ -255,5 +240,35 @@ mod tests {
             };
             assert_eq!(half_extents, nalgebra_glm::vec3(1.0, 1.0, 1.0));
         }
+    }
+
+    #[test]
+    fn sandbox_scene_generates_arena_when_started() {
+        let assets = engine::test_support::test_asset_context_with_assets(vec![
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),
+            std::env::current_dir().unwrap().join("assets"),
+        ]);
+        let scene_ref = assets
+            .registries
+            .assets
+            .read()
+            .reload_by_path::<engine::scene::Scene>(
+                &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("assets")
+                    .join("scene.cxscene"),
+            )
+            .expect("sandbox scene should load");
+        let mut scene = scene_ref.read().clone();
+        let arena = scene
+            .objects()
+            .find(|object| scene.name(*object) == "Arena")
+            .expect("sandbox scene should contain an Arena generator");
+        assert_eq!(scene.children(arena).count(), 0);
+
+        scene.start();
+        assert_eq!(scene.children(arena).count(), 68);
+
+        scene.start();
+        assert_eq!(scene.children(arena).count(), 68);
     }
 }
