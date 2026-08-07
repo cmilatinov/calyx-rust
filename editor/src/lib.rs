@@ -804,7 +804,7 @@ impl EditorApp {
         if let Some((node, c)) = scene.main_camera() {
             game_renderer.options_mut().clear_color = c.clear_color;
             let (width, height) = Self::get_physical_size(ctx, *game_size);
-            if width == 0 || height == 0 {
+            if !Self::has_renderable_size(width, height) {
                 let mut encoder =
                     render_state
                         .device
@@ -855,6 +855,10 @@ impl EditorApp {
         let width = window_size.width() * viewport_size.0 * pixels_per_point;
         let height = window_size.height() * viewport_size.1 * pixels_per_point;
         (width as u32, height as u32)
+    }
+
+    fn has_renderable_size(width: u32, height: u32) -> bool {
+        width != 0 && height != 0
     }
 }
 
@@ -1154,7 +1158,7 @@ impl EditorApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{set_json_value, ActiveSceneState};
+    use super::{set_json_value, ActiveSceneState, EditorApp};
     use serde_json::json;
     use std::path::PathBuf;
 
@@ -1213,5 +1217,12 @@ mod tests {
 
         assert_eq!(component["position"], json!([1.0, 9.0, 3.0]));
         assert_eq!(component["enabled"], json!(true));
+    }
+
+    #[test]
+    fn zero_sized_game_viewport_is_not_renderable() {
+        assert!(!EditorApp::has_renderable_size(0, 720));
+        assert!(!EditorApp::has_renderable_size(1280, 0));
+        assert!(EditorApp::has_renderable_size(1280, 720));
     }
 }
