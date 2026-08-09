@@ -63,12 +63,12 @@ name (`sandbox::tank::ComponentHealth`), or the bare type name
 | CLI | Protocol | Notes |
 |---|---|---|
 | `ping`, `info`, `shutdown` | `ping`/`info`/`shutdown` | `info` includes `assemblies_loaded`, `is_simulating`, `object_count`, and an `input_debug` block |
-| `play`, `pause`, `stop` | `play`/`pause`/`stop` | same semantics as the toolbar buttons; `stop` discards simulation edits |
-| `step --frames N` | `step_frames` | ensures simulation, advances exactly N editor frames, pauses, then responds; only one step may be in flight at a time |
+| `play`, `pause`, `stop` | `play`/`pause`/`stop` | same semantics as the toolbar buttons; `stop` discards simulation edits. `pause`, `stop`, and `load_scene` cancel an in-flight `step_frames` (that client gets a `cancelled` error) |
+| `step --frames N` | `step_frames` | ensures simulation, advances exactly N editor frames, pauses, then responds; only one step may be in flight at a time, and disconnecting mid-step pauses the simulation |
 | `wait --frames N` / `wait --simulating BOOL` | `wait_frames` / client-side polling | |
 | `scene load/save/state` | `load_scene`/`save_scene`/`get_scene_state` | paths resolve against the editor's working directory (repo root when using `launch`) |
 | `objects`, `object get/create/delete` | `list_objects`/`get_object`/... | `get_object` returns local + world transforms and component list; `delete` clears the editor selection when it removes the selected object or one of its ancestors |
-| `component get/set/add/types` | `get_component`/`set_component`/... | `set` replaces the whole component; fields missing from the JSON fall back to serde defaults, so round-trip `get` first and edit. `add` refuses a component the object already has (use `set`) and refuses `ComponentID` |
+| `component get/set/add/types` | `get_component`/`set_component`/... | `set` replaces the whole component; fields missing from the JSON fall back to serde defaults, so round-trip `get` first and edit. `add` refuses a component the object already has (use `set`) and refuses `ComponentID`. `set` on `ComponentID` may rename but never change `id`, which indexes the object |
 | `transform OBJ --position X Y Z [--rotation X Y Z] [--scale X Y Z] [--world]` | `set_transform` | rotation is XYZ Euler degrees |
 | `select`, `pick X Y --space S --target T` | `select`/`pick` | pick uses the GPU object-id buffer of the chosen renderer |
 | `focus-game [--release-grab]` | `focus_game` | activates the Game tab and grabs gameplay input focus |
