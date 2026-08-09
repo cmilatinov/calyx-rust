@@ -59,7 +59,7 @@ pub fn launch(
             run.env("PATH", joined);
         }
     }
-    let child = run
+    let mut child = run
         .spawn()
         .map_err(|error| CtlError::Transport(format!("failed to spawn editor: {error}")))?;
     eprintln!(
@@ -70,11 +70,33 @@ pub fn launch(
     let deadline = Instant::now() + timeout;
     loop {
         if Instant::now() > deadline {
+            // The editor is useless to us now and would otherwise linger
+            // holding the cargo target-dir lock.
+            let _ = child.kill();
+            let _ = child.wait();
             return Err(CtlError::Timeout(format!(
                 "editor did not become ready within {timeout:?}; check logs/ for errors"
             )));
         }
         std::thread::sleep(Duration::from_millis(250));
+
+        // A bad project path (or a link failure) exits before the server is
+        // reachable; without this the loop would wait out the full timeout
+        // with the child's stderr already discarded.
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return Err(CtlError::Transport(format!(
+                    "editor exited with {status} before becoming ready; check logs/ for errors"
+                )));
+            }
+            Ok(None) => {}
+            Err(error) => {
+                return Err(CtlError::Transport(format!(
+                    "cannot poll editor process: {error}"
+                )));
+            }
+        }
+
         let Ok(info) = discover(project) else {
             continue;
         };

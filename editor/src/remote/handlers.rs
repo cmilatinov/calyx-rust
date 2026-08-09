@@ -170,6 +170,12 @@ impl EditorApp {
                 if frames == 0 {
                     return Err((ErrorKind::BadRequest, "frames must be at least 1".into()));
                 }
+                if runtime.has_pending_step() {
+                    return Err((
+                        ErrorKind::BadRequest,
+                        "a step_frames operation is already in progress".into(),
+                    ));
+                }
                 self.state.flush_pending_inspector_value_edits();
                 self.state.game.scenes.start_simulation();
                 runtime.pending.push(PendingOp::StepFrames {
@@ -218,15 +224,61 @@ impl EditorApp {
             Command::DeleteObject { object } => {
                 let scene = self.state.game.scenes.simulation_scene_mut();
                 let game_object = resolve_object(scene, &object)?;
+                let removed = std::iter::once(game_object)
+                    .chain(scene.descendants(game_object))
+                    .map(|object| scene.uuid(object))
+                    .collect::<Vec<_>>();
                 scene.delete(game_object);
+                // Mirrors the scene-hierarchy delete path: a selection pointing
+                // at a removed object would keep the inspector and
+                // `get_selection` reporting an object that no longer exists.
+                if self.state.selection.is(SelectionType::GameObject)
+                    && self
+                        .state
+                        .selection
+                        .iter()
+                        .any(|selected| removed.contains(&selected))
+                {
+                    self.state.selection = Selection::none();
+                }
                 self.state.mark_scene_dirty();
                 Ok(Some(serde_json::Value::Null))
             }
             Command::AddComponent { object, component } => {
                 let type_uuid = resolve_component_type(&self.state, &component)?;
+                if type_uuid == ComponentID::type_uuid() {
+                    return Err((
+                        ErrorKind::BadRequest,
+                        "ComponentID is managed by the scene and cannot be added".into(),
+                    ));
+                }
+                let registry_ref = self.state.game.assets.registries.components.clone();
+                let registry = registry_ref.read();
+                let prototype = registry.component(type_uuid).ok_or_else(|| {
+                    (
+                        ErrorKind::NotFound,
+                        format!("unknown component {type_uuid}"),
+                    )
+                })?;
                 let scene = self.state.game.scenes.simulation_scene_mut();
                 let game_object = resolve_object(scene, &object)?;
+                // Rebinding an existing component silently resets its state, so
+                // require an explicit `set_component` instead.
+                let present = scene
+                    .entry(game_object)
+                    .is_some_and(|entry| prototype.get_instance(&entry).is_some());
+                if present {
+                    return Err((
+                        ErrorKind::BadRequest,
+                        format!(
+                            "{} already has component {}",
+                            scene.name(game_object),
+                            component
+                        ),
+                    ));
+                }
                 scene.bind_component_dyn(game_object, type_uuid);
+                drop(registry);
                 self.state.mark_scene_dirty();
                 Ok(Some(serde_json::Value::Null))
             }
@@ -262,10 +314,10 @@ impl EditorApp {
 
             Command::InjectInput { events } => {
                 let buckets = compile_input_events(&events, runtime)?;
-                let done_at_frame = runtime.schedule_events(buckets);
+                let done_at_hook = runtime.schedule_events(buckets);
                 runtime.pending.push(PendingOp::InputDrain {
                     slot: ResponseSlot { ..*slot },
-                    done_at_frame,
+                    done_at_hook,
                 });
                 Ok(None)
             }
@@ -751,11 +803,28 @@ fn compile_input_events(
     let mut buckets: Vec<Vec<egui::Event>> = Vec::new();
     let mut cursor = 0usize;
 
-    fn bucket(buckets: &mut Vec<Vec<egui::Event>>, index: usize) -> &mut Vec<egui::Event> {
+    /// One bucket is allocated per frame the script spans, so an unbounded
+    /// wait or hold would allocate billions of vectors on the main thread.
+    const MAX_SCHEDULE_FRAMES: usize = 36_000; // ten minutes at 60 fps
+
+    fn too_long(frames: usize) -> (ErrorKind, String) {
+        (
+            ErrorKind::BadRequest,
+            format!("input script spans {frames} frames; the limit is {MAX_SCHEDULE_FRAMES}"),
+        )
+    }
+
+    fn bucket(
+        buckets: &mut Vec<Vec<egui::Event>>,
+        index: usize,
+    ) -> Result<&mut Vec<egui::Event>, (ErrorKind, String)> {
+        if index >= MAX_SCHEDULE_FRAMES {
+            return Err(too_long(index.saturating_add(1)));
+        }
         if buckets.len() <= index {
             buckets.resize_with(index + 1, Vec::new);
         }
-        &mut buckets[index]
+        Ok(&mut buckets[index])
     }
 
     let resolve_pos = |x: f32,
@@ -785,24 +854,25 @@ fn compile_input_events(
         match event {
             InputEventSpec::KeyDown { key, modifiers } => {
                 let key = parse_key(key)?;
-                bucket(&mut buckets, cursor).push(key_event(key, true, modifiers));
+                bucket(&mut buckets, cursor)?.push(key_event(key, true, modifiers));
             }
             InputEventSpec::KeyUp { key, modifiers } => {
                 let key = parse_key(key)?;
-                bucket(&mut buckets, cursor).push(key_event(key, false, modifiers));
+                bucket(&mut buckets, cursor)?.push(key_event(key, false, modifiers));
             }
             InputEventSpec::KeyPress { key, hold_frames } => {
                 let key = parse_key(key)?;
                 let hold = hold_frames.unwrap_or(1).max(1) as usize;
-                bucket(&mut buckets, cursor).push(key_event(key, true, &None));
-                bucket(&mut buckets, cursor + hold).push(key_event(key, false, &None));
+                let release = cursor.saturating_add(hold);
+                bucket(&mut buckets, cursor)?.push(key_event(key, true, &None));
+                bucket(&mut buckets, release)?.push(key_event(key, false, &None));
             }
             InputEventSpec::Text { text } => {
-                bucket(&mut buckets, cursor).push(egui::Event::Text(text.clone()));
+                bucket(&mut buckets, cursor)?.push(egui::Event::Text(text.clone()));
             }
             InputEventSpec::PointerMove { x, y, space } => {
                 let pos = resolve_pos(*x, *y, *space)?;
-                bucket(&mut buckets, cursor).push(egui::Event::PointerMoved(pos));
+                bucket(&mut buckets, cursor)?.push(egui::Event::PointerMoved(pos));
             }
             InputEventSpec::PointerDown {
                 x,
@@ -811,7 +881,7 @@ fn compile_input_events(
                 space,
             } => {
                 let pos = resolve_pos(*x, *y, *space)?;
-                let events = bucket(&mut buckets, cursor);
+                let events = bucket(&mut buckets, cursor)?;
                 events.push(egui::Event::PointerMoved(pos));
                 events.push(pointer_button_event(pos, *button, true));
             }
@@ -822,7 +892,7 @@ fn compile_input_events(
                 space,
             } => {
                 let pos = resolve_pos(*x, *y, *space)?;
-                let events = bucket(&mut buckets, cursor);
+                let events = bucket(&mut buckets, cursor)?;
                 events.push(egui::Event::PointerMoved(pos));
                 events.push(pointer_button_event(pos, *button, false));
             }
@@ -833,20 +903,24 @@ fn compile_input_events(
                 space,
             } => {
                 let pos = resolve_pos(*x, *y, *space)?;
-                let events = bucket(&mut buckets, cursor);
+                let events = bucket(&mut buckets, cursor)?;
                 events.push(egui::Event::PointerMoved(pos));
                 events.push(pointer_button_event(pos, *button, true));
-                bucket(&mut buckets, cursor + 1).push(pointer_button_event(pos, *button, false));
+                bucket(&mut buckets, cursor.saturating_add(1))?
+                    .push(pointer_button_event(pos, *button, false));
             }
             InputEventSpec::Scroll { dx, dy } => {
-                bucket(&mut buckets, cursor).push(egui::Event::MouseWheel {
+                bucket(&mut buckets, cursor)?.push(egui::Event::MouseWheel {
                     unit: egui::MouseWheelUnit::Point,
                     delta: egui::vec2(*dx, *dy),
                     modifiers: egui::Modifiers::default(),
                 });
             }
             InputEventSpec::Wait { frames } => {
-                cursor += *frames as usize;
+                cursor = cursor.saturating_add(*frames as usize);
+                if cursor > MAX_SCHEDULE_FRAMES {
+                    return Err(too_long(cursor));
+                }
             }
         }
     }
@@ -897,5 +971,63 @@ fn pointer_button_event(pos: egui::Pos2, button: PointerButtonSpec, pressed: boo
         },
         pressed,
         modifiers: egui::Modifiers::default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::remote::runtime::tests::test_runtime;
+
+    #[test]
+    fn oversized_waits_are_rejected_instead_of_allocating() {
+        let runtime = test_runtime();
+        let events = [InputEventSpec::Wait { frames: u32::MAX }];
+        let (kind, message) = compile_input_events(&events, &runtime)
+            .expect_err("an unbounded wait must not allocate a bucket per frame");
+        assert_eq!(kind, ErrorKind::BadRequest);
+        assert!(message.contains("frames"), "unexpected message: {message}");
+    }
+
+    #[test]
+    fn oversized_key_holds_are_rejected() {
+        let runtime = test_runtime();
+        let events = [InputEventSpec::KeyPress {
+            key: "W".to_string(),
+            hold_frames: Some(u32::MAX),
+        }];
+        let (kind, _) = compile_input_events(&events, &runtime)
+            .expect_err("an unbounded hold must not allocate a bucket per frame");
+        assert_eq!(kind, ErrorKind::BadRequest);
+    }
+
+    #[test]
+    fn key_press_schedules_the_release_after_the_hold() {
+        let runtime = test_runtime();
+        let events = [InputEventSpec::KeyPress {
+            key: "W".to_string(),
+            hold_frames: Some(3),
+        }];
+        let buckets = compile_input_events(&events, &runtime).expect("script should compile");
+        assert_eq!(buckets.len(), 4, "press at 0, release at 3");
+        assert_eq!(buckets[0].len(), 1);
+        assert_eq!(buckets[3].len(), 1);
+        assert!(buckets[1].is_empty() && buckets[2].is_empty());
+    }
+
+    #[test]
+    fn a_trailing_wait_extends_the_schedule() {
+        let runtime = test_runtime();
+        let events = [
+            InputEventSpec::KeyDown {
+                key: "W".to_string(),
+                modifiers: None,
+            },
+            InputEventSpec::Wait { frames: 4 },
+        ];
+        let buckets = compile_input_events(&events, &runtime).expect("script should compile");
+        // The response must not land before the waited-out frames elapse.
+        assert_eq!(buckets.len(), 4);
+        assert_eq!(buckets[0].len(), 1);
     }
 }

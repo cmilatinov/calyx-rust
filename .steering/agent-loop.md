@@ -42,6 +42,11 @@ calyx_ctl stop                                           # discards the play cop
 calyx_ctl shutdown
 ```
 
+`launch` returns once the editor answers a ping, but the editor keeps running
+afterwards, so run it detached (a background job) rather than as a foreground
+command whose output you wait on. It fails fast if the editor exits first
+instead of waiting out the readiness timeout.
+
 `calyx_ctl` binaries land in the cargo target dir (`target/debug/calyx_ctl.exe`
 by default). **Invoke the built exe directly instead of `cargo run -p
 calyx_ctl`** once it exists: the editor's background assembly build holds the
@@ -59,11 +64,11 @@ name (`sandbox::tank::ComponentHealth`), or the bare type name
 |---|---|---|
 | `ping`, `info`, `shutdown` | `ping`/`info`/`shutdown` | `info` includes `assemblies_loaded`, `is_simulating`, `object_count`, and an `input_debug` block |
 | `play`, `pause`, `stop` | `play`/`pause`/`stop` | same semantics as the toolbar buttons; `stop` discards simulation edits |
-| `step --frames N` | `step_frames` | ensures simulation, advances exactly N editor frames, pauses, then responds |
+| `step --frames N` | `step_frames` | ensures simulation, advances exactly N editor frames, pauses, then responds; only one step may be in flight at a time |
 | `wait --frames N` / `wait --simulating BOOL` | `wait_frames` / client-side polling | |
 | `scene load/save/state` | `load_scene`/`save_scene`/`get_scene_state` | paths resolve against the editor's working directory (repo root when using `launch`) |
-| `objects`, `object get/create/delete` | `list_objects`/`get_object`/... | `get_object` returns local + world transforms and component list |
-| `component get/set/add/types` | `get_component`/`set_component`/... | `set` replaces the whole component; fields missing from the JSON fall back to serde defaults, so round-trip `get` first and edit |
+| `objects`, `object get/create/delete` | `list_objects`/`get_object`/... | `get_object` returns local + world transforms and component list; `delete` clears the editor selection when it removes the selected object or one of its ancestors |
+| `component get/set/add/types` | `get_component`/`set_component`/... | `set` replaces the whole component; fields missing from the JSON fall back to serde defaults, so round-trip `get` first and edit. `add` refuses a component the object already has (use `set`) and refuses `ComponentID` |
 | `transform OBJ --position X Y Z [--rotation X Y Z] [--scale X Y Z] [--world]` | `set_transform` | rotation is XYZ Euler degrees |
 | `select`, `pick X Y --space S --target T` | `select`/`pick` | pick uses the GPU object-id buffer of the chosen renderer |
 | `focus-game [--release-grab]` | `focus_game` | activates the Game tab and grabs gameplay input focus |
@@ -89,6 +94,10 @@ has been delivered.
 - `input raw` takes an `InputEventSpec` array for scripted sequences, e.g.
   `[{"type":"key_down","key":"W"},{"type":"wait","frames":30},{"type":"key_up","key":"W"}]`.
   Key names are egui names (`W`, `Space`, `Escape`, `ArrowLeft`).
+- One bucket is allocated per frame a script spans, so a script may not span
+  more than 36000 frames (ten minutes at 60 fps). `key_press` schedules its
+  release `hold_frames` later but does not advance the cursor, so holds in one
+  script overlap; use `wait` to sequence events.
 - Keep hands off the real mouse/keyboard while injecting - OS input
   interleaves with synthetic events.
 
@@ -126,15 +135,22 @@ has been delivered.
 - **No auth**: the server is localhost-only and trusts every connection. It is
   a development tool.
 
-## Known limitation (main)
+## Known limitation: tank movement in editor simulation
 
-Plugin (game DLL) scene *writes* are currently lost in editor simulation on
-`main`: component updates run, input reaches them (`info.input_debug`
-confirms), but `set_world_transform`/`write_component` calls from the DLL do
-not persist, while the same writes from editor-side code do. Reproduce with
-the quick-start recipe: the Tank's `move_forward` axis reads 1.0 (probe) yet
-its transform never changes. This is the pre-existing bug being investigated
-on `fix/editor-simulation-input` (engine `dylib` experiments); it is not a
-remote-control issue. Until it lands, verify plugin gameplay in the
-standalone game (`cargo run -p sandbox`) and use the editor loop for
-editor-side behavior, scene/asset workflows, and state inspection.
+On `main`, the sandbox tank does not respond to injected movement input during
+editor simulation, so do not treat "the tank did not move" as a verdict on your
+change. Reproduce with the quick-start recipe: with `info.input_debug`
+reporting `game_focused: true` and `keys_down: ["W"]` while `is_simulating` is
+true, the Tank's world transform stays at the origin.
+
+The cause is on the gameplay/simulation side, not in the remote control layer:
+
+- A remote `transform` write to a plain object (for example `Target A`)
+  persists during simulation, so remote mutation itself works.
+- The same write to `Tank` persists while paused or stopped but is reverted
+  within a frame while simulating, so game code is actively driving the tank's
+  transform back rather than failing to write it.
+
+Until that is fixed, verify tank gameplay in the standalone game
+(`cargo run -p sandbox`) and use the editor loop for editor-side behavior,
+scene and asset workflows, input plumbing, and state inspection.

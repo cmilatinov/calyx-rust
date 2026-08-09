@@ -24,9 +24,11 @@ pub enum PendingOp {
     /// Counting down simulated frames for `step_frames`; pauses on zero.
     StepFrames { slot: ResponseSlot, remaining: u32 },
     /// Waiting until every scheduled synthetic input event has been delivered.
+    /// Tracked in raw-input hooks rather than frames because scheduling happens
+    /// after the current frame's hook has already run.
     InputDrain {
         slot: ResponseSlot,
-        done_at_frame: u64,
+        done_at_hook: u64,
     },
     /// Waiting for a number of frames to elapse.
     WaitFrames {
@@ -70,6 +72,10 @@ pub struct RemoteRuntime {
     pub project_path: PathBuf,
     /// Monotonic frame counter, incremented at the end of every editor frame.
     pub frame_index: u64,
+    /// Number of raw-input hooks that have run. Input delivery is tracked
+    /// against this rather than `frame_index`, whose increment happens at the
+    /// end of the frame in which a script is scheduled.
+    pub hooks_run: u64,
     /// Synthetic egui events scheduled per upcoming frame; the front entry is
     /// delivered on the next `raw_input_hook` call.
     pub input_schedule: VecDeque<Vec<egui::Event>>,
@@ -90,6 +96,7 @@ impl RemoteRuntime {
             server,
             project_path,
             frame_index: 0,
+            hooks_run: 0,
             input_schedule: VecDeque::new(),
             pending: Vec::new(),
             pending_window_shots: Vec::new(),
@@ -113,21 +120,32 @@ impl RemoteRuntime {
     }
 
     /// Merges per-frame event buckets into the schedule. Bucket `i` is
-    /// delivered `i + 1` raw-input hooks from now.
+    /// delivered by the `i + 1`th raw-input hook from now. Returns the hook
+    /// count at which the last bucket will have been delivered.
     pub fn schedule_events(&mut self, buckets: Vec<Vec<egui::Event>>) -> u64 {
-        let last_offset = buckets.len() as u64;
+        let bucket_count = buckets.len() as u64;
         for (offset, events) in buckets.into_iter().enumerate() {
             if self.input_schedule.len() <= offset {
                 self.input_schedule.resize_with(offset + 1, Vec::new);
             }
             self.input_schedule[offset].extend(events);
         }
-        self.frame_index + last_offset
+        self.hooks_run + bucket_count
     }
 
     /// Returns the events to inject into the current frame's raw input.
     pub fn take_scheduled_events(&mut self) -> Vec<egui::Event> {
+        self.hooks_run += 1;
         self.input_schedule.pop_front().unwrap_or_default()
+    }
+
+    /// Whether a `step_frames` operation is already counting down. A second
+    /// one would strand the first: whichever finishes earlier pauses the
+    /// simulation, and the other then stops advancing.
+    pub fn has_pending_step(&self) -> bool {
+        self.pending
+            .iter()
+            .any(|op| matches!(op, PendingOp::StepFrames { .. }))
     }
 
     /// Registers a texture screenshot readback with the standard deadline.
@@ -155,6 +173,7 @@ impl RemoteRuntime {
         simulated: bool,
     ) -> bool {
         let frame_index = self.frame_index;
+        let hooks_run = self.hooks_run;
         let mut pause_simulation = false;
         let mut finished = Vec::new();
 
@@ -169,8 +188,12 @@ impl RemoteRuntime {
                         finished.push((index, Ok(serde_json::Value::Null)));
                     }
                 }
-                PendingOp::InputDrain { done_at_frame, .. }
-                | PendingOp::WaitFrames { done_at_frame, .. } => {
+                PendingOp::InputDrain { done_at_hook, .. } => {
+                    if hooks_run >= *done_at_hook {
+                        finished.push((index, Ok(serde_json::Value::Null)));
+                    }
+                }
+                PendingOp::WaitFrames { done_at_frame, .. } => {
                     if frame_index >= *done_at_frame {
                         finished.push((index, Ok(serde_json::Value::Null)));
                     }
@@ -256,4 +279,94 @@ pub fn color_image_to_rgba(image: &egui::ColorImage) -> Option<image::RgbaImage>
         pixels.extend_from_slice(&color.to_array());
     }
     image::RgbaImage::from_raw(width as u32, height as u32, pixels)
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use crate::remote::server::RemoteConfig;
+
+    /// A runtime backed by a real server on an ephemeral port. Deferred
+    /// operations and input scheduling need no editor state.
+    pub(crate) fn test_runtime() -> RemoteRuntime {
+        let project_path =
+            std::env::temp_dir().join(format!("calyx-runtime-test-{}", uuid::Uuid::new_v4()));
+        let server = RemoteServer::start(RemoteConfig {
+            port: 0,
+            discovery_path: project_path.join(".calyx").join("remote.json"),
+        })
+        .expect("server should bind an ephemeral port");
+        RemoteRuntime::new(server, project_path)
+    }
+
+    fn key_event() -> egui::Event {
+        egui::Event::Key {
+            key: egui::Key::W,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::default(),
+        }
+    }
+
+    #[test]
+    fn input_drain_waits_for_every_scheduled_bucket() {
+        let mut runtime = test_runtime();
+        // Scheduling happens during `update`, after this frame's raw-input
+        // hook has already run and popped its bucket.
+        runtime.take_scheduled_events();
+
+        let done_at_hook = runtime.schedule_events(vec![vec![key_event()], vec![key_event()]]);
+
+        // Each later hook delivers one bucket, and the deadline must not be
+        // reached until the last one has actually been delivered.
+        for _ in 0..2 {
+            assert!(
+                runtime.hooks_run < done_at_hook,
+                "drain completed while {} bucket(s) were still undelivered",
+                runtime.input_schedule.len()
+            );
+            assert!(!runtime.take_scheduled_events().is_empty());
+        }
+        assert_eq!(runtime.hooks_run, done_at_hook);
+        assert!(runtime.input_schedule.is_empty());
+    }
+
+    #[test]
+    fn input_drain_deadline_is_independent_of_the_frame_counter() {
+        let mut runtime = test_runtime();
+        runtime.take_scheduled_events();
+        let done_at_hook = runtime.schedule_events(vec![vec![key_event()]]);
+
+        // Frames advancing without raw-input hooks must not complete a drain.
+        for _ in 0..5 {
+            runtime.frame_index += 1;
+        }
+        assert!(runtime.hooks_run < done_at_hook);
+
+        runtime.take_scheduled_events();
+        assert_eq!(runtime.hooks_run, done_at_hook);
+    }
+
+    #[test]
+    fn concurrent_step_operations_are_detected() {
+        let mut runtime = test_runtime();
+        let slot = ResponseSlot {
+            client: 1,
+            request_id: 1,
+        };
+        assert!(!runtime.has_pending_step());
+
+        runtime
+            .pending
+            .push(PendingOp::StepFrames { slot, remaining: 4 });
+        assert!(runtime.has_pending_step());
+
+        runtime.pending.clear();
+        runtime.pending.push(PendingOp::WaitFrames {
+            slot,
+            done_at_frame: 10,
+        });
+        assert!(!runtime.has_pending_step());
+    }
 }
