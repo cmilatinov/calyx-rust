@@ -835,6 +835,72 @@ impl SceneRenderer {
         });
     }
 
+    /// Submits an asynchronous copy of the resolved scene color texture into a
+    /// CPU-readable buffer, or `None` when the texture has no size yet.
+    ///
+    /// Poll the returned [`TextureReadback`] with
+    /// [`TextureReadback::try_finish`] on subsequent frames.
+    pub fn submit_scene_texture_readback(&self) -> Option<TextureReadback> {
+        let (width, height) = self.scene_texture_size();
+        if width == 0 || height == 0 {
+            return None;
+        }
+
+        let unpadded_bytes_per_row = width * TextureReadback::BYTES_PER_PIXEL;
+        let padded_bytes_per_row = unpadded_bytes_per_row
+            .div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+            * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+
+        let device = self.asset_context.render_context.device();
+        let queue = self.asset_context.render_context.queue();
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("scene_texture_readback"),
+            size: padded_bytes_per_row as u64 * height as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("scene_texture_readback"),
+        });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.scene_texture.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit(Some(encoder.finish()));
+
+        let slice = buffer.slice(..);
+        let (tx, rx) = mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+
+        Some(TextureReadback {
+            buffer,
+            receiver: rx,
+            width,
+            height,
+            padded_bytes_per_row,
+        })
+    }
+
     fn create_textures(
         render_context: Arc<RenderContext>,
         width: u32,
@@ -1049,6 +1115,103 @@ impl SceneRenderer {
     }
 }
 
+/// Poll state of an asynchronous scene texture readback.
+pub enum ReadbackPoll {
+    /// The GPU copy or buffer mapping has not completed yet.
+    Pending,
+    /// The image is ready.
+    Ready(image::RgbaImage),
+    /// The readback failed and will never complete.
+    Failed(String),
+}
+
+/// An in-flight asynchronous copy of the resolved scene color texture
+/// (`Rgba16Float`) into CPU memory, created by
+/// [`SceneRenderer::submit_scene_texture_readback`].
+pub struct TextureReadback {
+    buffer: wgpu::Buffer,
+    receiver: mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
+    width: u32,
+    height: u32,
+    padded_bytes_per_row: u32,
+}
+
+impl TextureReadback {
+    const BYTES_PER_PIXEL: u32 = 8; // Rgba16Float
+
+    /// Polls the readback without blocking. Once this returns
+    /// [`ReadbackPoll::Ready`] or [`ReadbackPoll::Failed`] the readback is
+    /// finished and must not be polled again.
+    pub fn try_finish(&mut self, render_context: &RenderContext) -> ReadbackPoll {
+        let _ = render_context.device().poll(wgpu::Maintain::Poll);
+        match self.receiver.try_recv() {
+            Err(mpsc::TryRecvError::Empty) => return ReadbackPoll::Pending,
+            Ok(Err(error)) => return ReadbackPoll::Failed(error.to_string()),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                return ReadbackPoll::Failed("readback channel disconnected".into())
+            }
+            Ok(Ok(())) => {}
+        }
+
+        let data = self.buffer.slice(..).get_mapped_range();
+        let mut pixels = Vec::with_capacity(self.width as usize * self.height as usize * 4);
+        for row in 0..self.height {
+            let start = (row * self.padded_bytes_per_row) as usize;
+            let end = start + (self.width * Self::BYTES_PER_PIXEL) as usize;
+            for texel in data[start..end].chunks_exact(Self::BYTES_PER_PIXEL as usize) {
+                for (channel, bytes) in texel.chunks_exact(2).enumerate() {
+                    let value = half_to_f32(u16::from_le_bytes([bytes[0], bytes[1]]));
+                    // Alpha is coverage, not color; only color channels are
+                    // sRGB-encoded for display.
+                    pixels.push(if channel == 3 {
+                        (value.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
+                    } else {
+                        linear_to_srgb(value)
+                    });
+                }
+            }
+        }
+        drop(data);
+        self.buffer.unmap();
+
+        match image::RgbaImage::from_raw(self.width, self.height, pixels) {
+            Some(image) => ReadbackPoll::Ready(image),
+            None => ReadbackPoll::Failed("readback produced a malformed image".into()),
+        }
+    }
+}
+
+fn half_to_f32(half: u16) -> f32 {
+    let sign = (half >> 15) as u32;
+    let exponent = ((half >> 10) & 0x1f) as u32;
+    let fraction = (half & 0x3ff) as u32;
+    let bits = if exponent == 0 {
+        if fraction == 0 {
+            sign << 31
+        } else {
+            // Subnormal half: renormalize into an f32 exponent.
+            let shift = fraction.leading_zeros() - 21;
+            let fraction = (fraction << (shift + 1)) & 0x3ff;
+            (sign << 31) | ((113 - shift) << 23) | (fraction << 13)
+        }
+    } else if exponent == 0x1f {
+        (sign << 31) | (0xff << 23) | (fraction << 13)
+    } else {
+        (sign << 31) | ((exponent + 112) << 23) | (fraction << 13)
+    };
+    f32::from_bits(bits)
+}
+
+fn linear_to_srgb(value: f32) -> u8 {
+    let value = value.clamp(0.0, 1.0);
+    let encoded = if value <= 0.003_130_8 {
+        value * 12.92
+    } else {
+        1.055 * value.powf(1.0 / 2.4) - 0.055
+    };
+    (encoded * 255.0 + 0.5) as u8
+}
+
 fn register_object_id(
     object_id_lookup: &mut HashMap<Uuid, u32>,
     object_ids_build: &mut Vec<Uuid>,
@@ -1061,4 +1224,32 @@ fn register_object_id(
     let object_id = object_ids_build.len() as u32;
     object_id_lookup.insert(game_object_id, object_id);
     object_id
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{half_to_f32, linear_to_srgb};
+
+    #[test]
+    fn half_floats_decode() {
+        assert_eq!(half_to_f32(0x0000), 0.0);
+        assert_eq!(half_to_f32(0x3c00), 1.0);
+        assert_eq!(half_to_f32(0xbc00), -1.0);
+        assert_eq!(half_to_f32(0x3800), 0.5);
+        assert_eq!(half_to_f32(0x4248), 3.140625);
+        // Smallest positive subnormal half.
+        assert_eq!(half_to_f32(0x0001), 5.960_464_5e-8);
+        assert!(half_to_f32(0x7c00).is_infinite());
+        assert!(half_to_f32(0x7e00).is_nan());
+    }
+
+    #[test]
+    fn linear_values_encode_to_srgb_bytes() {
+        assert_eq!(linear_to_srgb(0.0), 0);
+        assert_eq!(linear_to_srgb(1.0), 255);
+        assert_eq!(linear_to_srgb(2.5), 255);
+        assert_eq!(linear_to_srgb(-1.0), 0);
+        // Mid grey: linear 0.2158 is approximately sRGB 128.
+        assert_eq!(linear_to_srgb(0.2158), 128);
+    }
 }

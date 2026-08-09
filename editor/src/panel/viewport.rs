@@ -136,6 +136,7 @@ impl PanelViewport {
             res.rect.width() / screen_rect.width(),
             res.rect.height() / screen_rect.height(),
         );
+        app_state.viewport_response = Some(res.clone());
         res
     }
 

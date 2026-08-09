@@ -1,5 +1,13 @@
 [workspace]
-members = ["engine", "editor", "project", "sandbox", "tools/icon_atlas"]
+members = [
+    "engine",
+    "editor",
+    "project",
+    "sandbox",
+    "tools/icon_atlas",
+    "tools/remote_protocol",
+    "tools/calyx_ctl",
+]
 resolver = "2"
 
 [profile.release-with-debug]
