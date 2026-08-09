@@ -52,6 +52,7 @@ mod icons;
 mod inspector;
 mod panel;
 mod project_manager;
+mod remote;
 mod scene_autosave;
 mod scene_document;
 mod scene_history;
@@ -67,6 +68,7 @@ pub struct EditorApp {
     tree: Tree<&'static str>,
     panels: Panels,
     physics_debug_pipeline: DebugRenderPipeline,
+    remote: Option<remote::RemoteRuntime>,
     // Drop runtime/editor state before the project manager so assembly-backed
     // scene components and registry trait objects are destroyed while the
     // project assembly is still loaded.
@@ -85,6 +87,7 @@ pub struct EditorAppState {
     pub selection: Selection,
     pub hovered_game_object: Option<uuid::Uuid>,
     pub viewport_size: (f32, f32),
+    pub viewport_response: Option<egui::Response>,
     pub game_response: Option<egui::Response>,
     pub game_size: (f32, f32),
     pub gizmo_modes: EnumSet<GizmoMode>,
@@ -139,6 +142,7 @@ impl EditorAppState {
             selection: Default::default(),
             hovered_game_object: None,
             viewport_size: Default::default(),
+            viewport_response: Default::default(),
             game_size: Default::default(),
             game_response: Default::default(),
             gizmo_modes: GizmoMode::all_translate(),
@@ -416,9 +420,9 @@ impl EditorAppState {
         true
     }
 
-    pub fn open_scene_file(&mut self, file: PathBuf) {
+    pub fn open_scene_file(&mut self, file: PathBuf) -> bool {
         if !self.scene_autosave.prepare_scene_change(&self.game) {
-            return;
+            return false;
         }
         let scene = match self
             .game
@@ -432,7 +436,7 @@ impl EditorAppState {
             Err(error) => {
                 let message = format!("Failed to open scene {}: {}", file.display(), error);
                 log::error!("{message}");
-                return;
+                return false;
             }
         };
         self.game.scenes.load_scene(scene.readonly());
@@ -444,6 +448,7 @@ impl EditorAppState {
         let object_count = self.game.scenes.current_scene().objects().count();
         let message = format!("Opened scene {} ({} objects)", file.display(), object_count);
         log::info!("{message}");
+        true
     }
 
     pub fn open_scene_asset(&mut self, asset_id: uuid::Uuid) {
@@ -590,11 +595,21 @@ impl EditorApp {
         }
         let panels = Panels::new(content_browser_root);
         Self::apply_style(cc);
+        let remote = remote::remote_config_from_env(&project_path).and_then(|config| {
+            match remote::RemoteServer::start(config) {
+                Ok(server) => Some(remote::RemoteRuntime::new(server, project_path.clone())),
+                Err(error) => {
+                    log::error!("Failed to start remote control server: {error}");
+                    None
+                }
+            }
+        });
         Ok(Self {
             fps: 0,
             fps_counter: 0,
             tree,
             panels,
+            remote,
             physics_debug_pipeline: DebugRenderPipeline::new(
                 Default::default(),
                 Default::default(),
@@ -651,6 +666,8 @@ impl eframe::App for EditorApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.state.game.resources.time_mut().update_time();
         self.state.game_response = None;
+        self.state.viewport_response = None;
+        self.remote_update_begin(ctx);
         self.render_views(ctx, frame);
         self.process_thumbnail_jobs(frame);
 
@@ -675,6 +692,7 @@ impl eframe::App for EditorApp {
 
         self.status_bar(ctx);
 
+        let simulated = self.state.game.scenes.is_simulating();
         self.update_game(ctx);
         self.render_view_outline(frame);
         self.update_window_title(ctx);
@@ -697,7 +715,12 @@ impl eframe::App for EditorApp {
             .read()
             .reload_assets();
 
+        self.remote_update_end(simulated);
         ctx.request_repaint();
+    }
+
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        self.remote_raw_input_hook(raw_input);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

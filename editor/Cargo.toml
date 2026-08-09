@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 engine = { path = "../engine" }
 project = { path = "../project" }
+remote_protocol = { path = "../tools/remote_protocol" }
 eframe.workspace = true
 egui.workspace = true
 egui_extras.workspace = true
