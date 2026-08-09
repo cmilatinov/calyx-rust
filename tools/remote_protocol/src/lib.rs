@@ -88,6 +88,9 @@ pub enum ErrorKind {
     Unsupported,
     /// A deferred operation did not complete within its frame deadline.
     Timeout,
+    /// A deferred operation was abandoned before completing because the editor
+    /// state it depended on was changed by another command.
+    Cancelled,
     /// An unexpected internal failure.
     Internal,
 }

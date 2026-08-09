@@ -148,6 +148,36 @@ impl RemoteRuntime {
             .any(|op| matches!(op, PendingOp::StepFrames { .. }))
     }
 
+    /// Abandons every pending step operation, answering each with `message`.
+    /// Commands that take the simulation out of the running state must call
+    /// this: `poll_pending` only counts down while the simulation advances, so
+    /// an interrupted step would otherwise never answer its client.
+    pub fn cancel_pending_steps(&mut self, message: &str) {
+        let mut index = 0;
+        while index < self.pending.len() {
+            if matches!(self.pending[index], PendingOp::StepFrames { .. }) {
+                let op = self.pending.swap_remove(index);
+                self.respond_error(op.slot(), ErrorKind::Cancelled, message);
+            } else {
+                index += 1;
+            }
+        }
+    }
+
+    /// Drops every pending operation belonging to a disconnected client.
+    /// Returns `true` when one of them was a step, whose countdown was the only
+    /// thing that would have paused the simulation again.
+    pub fn drop_client(&mut self, client: ClientId) -> bool {
+        let had_step = self
+            .pending
+            .iter()
+            .any(|op| op.slot().client == client && matches!(op, PendingOp::StepFrames { .. }));
+        self.pending.retain(|op| op.slot().client != client);
+        self.pending_window_shots
+            .retain(|shot| shot.slot.client != client);
+        had_step
+    }
+
     /// Registers a texture screenshot readback with the standard deadline.
     pub fn push_texture_shot(
         &mut self,
@@ -346,6 +376,61 @@ pub(crate) mod tests {
 
         runtime.take_scheduled_events();
         assert_eq!(runtime.hooks_run, done_at_hook);
+    }
+
+    #[test]
+    fn cancelling_steps_clears_them_and_leaves_other_operations() {
+        let mut runtime = test_runtime();
+        let slot = ResponseSlot {
+            client: 1,
+            request_id: 1,
+        };
+        runtime
+            .pending
+            .push(PendingOp::StepFrames { slot, remaining: 4 });
+        runtime.pending.push(PendingOp::WaitFrames {
+            slot,
+            done_at_frame: 10,
+        });
+        runtime
+            .pending
+            .push(PendingOp::StepFrames { slot, remaining: 9 });
+
+        runtime.cancel_pending_steps("interrupted");
+
+        assert!(!runtime.has_pending_step());
+        assert_eq!(runtime.pending.len(), 1, "the wait must survive");
+    }
+
+    #[test]
+    fn dropping_a_client_reports_an_abandoned_step() {
+        let mut runtime = test_runtime();
+        let stepping = ResponseSlot {
+            client: 1,
+            request_id: 1,
+        };
+        let waiting = ResponseSlot {
+            client: 2,
+            request_id: 1,
+        };
+        runtime.pending.push(PendingOp::StepFrames {
+            slot: stepping,
+            remaining: 4,
+        });
+        runtime.pending.push(PendingOp::WaitFrames {
+            slot: waiting,
+            done_at_frame: 10,
+        });
+
+        assert!(
+            !runtime.drop_client(waiting.client),
+            "dropping a waiter must not ask the caller to pause"
+        );
+        assert!(
+            runtime.drop_client(stepping.client),
+            "dropping a stepper must ask the caller to pause"
+        );
+        assert!(runtime.pending.is_empty());
     }
 
     #[test]

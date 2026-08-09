@@ -37,10 +37,12 @@ impl EditorApp {
                         .respond(client, &parse_error_response(message));
                 }
                 Incoming::Disconnected(client) => {
-                    runtime.pending.retain(|op| op.slot().client != client);
-                    runtime
-                        .pending_window_shots
-                        .retain(|shot| shot.slot.client != client);
+                    if runtime.drop_client(client) {
+                        // `step_frames` started the simulation and only the
+                        // op's completion pauses it again; dropping it
+                        // silently would leave the editor simulating forever.
+                        self.state.game.scenes.pause_simulation();
+                    }
                 }
             }
         }
@@ -159,10 +161,12 @@ impl EditorApp {
                 Ok(Some(serde_json::Value::Null))
             }
             Command::Pause => {
+                runtime.cancel_pending_steps("simulation was paused before the step finished");
                 self.state.game.scenes.pause_simulation();
                 Ok(Some(serde_json::Value::Null))
             }
             Command::Stop => {
+                runtime.cancel_pending_steps("simulation was stopped before the step finished");
                 self.state.game.scenes.stop_simulation();
                 Ok(Some(serde_json::Value::Null))
             }
@@ -184,7 +188,10 @@ impl EditorApp {
                 });
                 Ok(None)
             }
-            Command::LoadScene { path } => self.remote_load_scene(path),
+            Command::LoadScene { path } => {
+                runtime.cancel_pending_steps("a scene was loaded before the step finished");
+                self.remote_load_scene(path)
+            }
             Command::SaveScene { path } => self.remote_save_scene(path),
 
             Command::GetSceneState => {
@@ -522,6 +529,24 @@ impl EditorApp {
         })?;
         let scene = self.state.game.scenes.simulation_scene_mut();
         let game_object = resolve_object(scene, object)?;
+
+        // `GameObjectStore` indexes objects by `ComponentID::id` and offers no
+        // reindex, so letting the value carry a different id - or omit it and
+        // fall back to a freshly generated serde default - would leave the
+        // object reachable under neither the old nor the new UUID.
+        let indexed_id = (type_uuid == ComponentID::type_uuid()).then(|| scene.uuid(game_object));
+        if let Some(indexed_id) = indexed_id {
+            let requested = value.get("id").and_then(serde_json::Value::as_str);
+            if let Some(requested) = requested {
+                if requested.parse::<Uuid>() != Ok(indexed_id) {
+                    return Err((
+                        ErrorKind::BadRequest,
+                        format!("game object ids are immutable; expected {indexed_id}"),
+                    ));
+                }
+            }
+        }
+
         let Some(instance) = (unsafe {
             scene
                 .get_component_ptr(game_object, prototype)
@@ -537,6 +562,10 @@ impl EditorApp {
                 ErrorKind::BadRequest,
                 "value does not deserialize into the component type".into(),
             ));
+        }
+        if let Some(indexed_id) = indexed_id {
+            // Restores the id when the value omitted it and serde defaulted it.
+            let _ = scene.write_component::<ComponentID, _>(game_object, |id| id.id = indexed_id);
         }
         if type_uuid == ComponentTransform::type_uuid() {
             scene.clear_transform_cache();
