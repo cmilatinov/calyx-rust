@@ -1,0 +1,25 @@
+name: Feature Tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - staging
+
+permissions:
+  contents: read
+
+jobs:
+  feature-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install headless graphics dependencies
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libegl1-mesa-dev libvulkan1 mesa-vulkan-drivers
+      - name: Run engine feature regressions
+        run: cargo test -p engine --test feature_regressions
+      - name: Run sandbox feature regressions
+        run: cargo test -p sandbox --test feature_regressions
+      - name: Run editor input and render regressions
+        run: cargo test -p editor
