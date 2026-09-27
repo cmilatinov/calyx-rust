@@ -7,9 +7,10 @@ inclusion: auto
 ## Source Of Truth
 
 - Repository Engineering Tasks are GitHub Issues in `cmilatinov/calyx-rust`.
-- Roadmap priority and status live in the [Calyx Roadmap](https://github.com/users/cmilatinov/projects/1).
+- Roadmap priority and status live in the [Calyx Project](https://github.com/users/cmilatinov/projects/1).
 - Project priority runs from `P1` (highest) through `P4` (lowest). Use the live project field options if they change.
-- Imported Todoist links and IDs are historical context only. Do not use Todoist as the execution source.
+- Roadmap Epics are repository issues with native subissues. Use blocking links for prerequisites, not parent membership.
+- The Project's `Tasks`, `Open by Epic`, and `Closed Issues` views group Engineering Tasks by parent issue.
 
 Use `github-issues-workflow` to select, refine, create, or close Engineering Tasks. Use `github-projects-workflow` for roadmap Epic and project-field changes.
 
