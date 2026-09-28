@@ -12,6 +12,11 @@ inclusion: auto
 
 Use `github-issues-workflow` to select, refine, create, or close Engineering Tasks. Use `github-projects-workflow` for roadmap Epic and project-field changes.
 
+## Pull Requests
+
+- Open every new pull request against `main` unless the user explicitly directs another base.
+- Implementation pull requests reference their GitHub Engineering Task; documentation and process-only changes need no new issue.
+
 ## Current Product Direction
 
 Prioritize the first-playable single-player tank loop:
