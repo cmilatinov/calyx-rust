@@ -459,14 +459,27 @@ fn cargo_build_args(profile: &str, target_dir: &Path) -> Vec<String> {
 }
 
 fn assembly_build_target_dir() -> PathBuf {
-    let Some(mut profile_dir) = std::env::current_exe()
+    std::env::current_exe()
         .ok()
-        .and_then(|path| path.parent().map(Path::to_path_buf))
-    else {
+        .map(|path| assembly_build_target_dir_from_exe(&path))
+        .unwrap_or_else(|| PathBuf::from("target"))
+}
+
+fn assembly_build_target_dir_from_exe(executable: &Path) -> PathBuf {
+    let Some(mut profile_dir) = executable.parent() else {
         return PathBuf::from("target");
     };
     if profile_dir.file_name().is_some_and(|name| name == "deps") {
-        profile_dir.pop();
+        profile_dir = profile_dir.parent().unwrap_or(profile_dir);
+    } else if profile_dir.file_name().is_some_and(|name| name == "out") {
+        // Cargo's newer layout is <profile>/build/<package>/<hash>/out.
+        if let Some(build_dir) = profile_dir
+            .ancestors()
+            .nth(3)
+            .filter(|path| path.file_name().is_some_and(|name| name == "build"))
+        {
+            profile_dir = build_dir.parent().unwrap_or(profile_dir);
+        }
     }
     profile_dir
         .parent()
@@ -588,11 +601,12 @@ fn assembly_target_dir(profile: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::{
-        assembly_artifact_path, assembly_build_target_dir, assembly_target_dir, cargo_build_args,
-        copy_runtime_dependencies, is_rust_runtime_library, ProjectAssemblyStatus,
+        assembly_artifact_path, assembly_build_target_dir_from_exe, assembly_target_dir,
+        cargo_build_args, copy_runtime_dependencies, is_rust_runtime_library,
+        ProjectAssemblyStatus,
     };
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -630,8 +644,20 @@ mod tests {
 
     #[test]
     fn assembly_paths_use_isolated_target_dir() {
-        let target = assembly_build_target_dir();
-        assert!(target.ends_with("target"));
+        let target = PathBuf::from("custom-output");
+        for executable in [
+            "custom-output/debug/editor",
+            "custom-output/debug/deps/editor-hash",
+            "custom-output/debug/build/editor/hash/out/editor-hash",
+            "custom-output/release-with-debug/editor",
+            "custom-output/release-with-debug/build/editor/hash/out/editor-hash",
+        ] {
+            assert_eq!(
+                assembly_build_target_dir_from_exe(Path::new(executable)),
+                target,
+                "incorrect target directory for {executable}"
+            );
+        }
         assert_eq!(
             assembly_artifact_path(&target, "dev", "sandbox"),
             target
