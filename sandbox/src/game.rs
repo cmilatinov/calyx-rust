@@ -17,13 +17,11 @@ use engine::ui::{
 use sandbox::plugin_main;
 use std::path::PathBuf;
 use std::sync::Arc;
-#[cfg(unix)]
-#[cfg(feature = "wayland")]
-use winit::platform::wayland::EventLoopBuilderExtWayland;
 #[cfg(windows)]
 use winit::platform::windows::EventLoopBuilderExtWindows;
-#[cfg(unix)]
-#[cfg(feature = "x11")]
+// winit's default features enable X11 on Linux. Dependency features are not
+// exposed as cfg(feature = "...") values in this crate.
+#[cfg(target_os = "linux")]
 use winit::platform::x11::EventLoopBuilderExtX11;
 
 struct GameApp {
