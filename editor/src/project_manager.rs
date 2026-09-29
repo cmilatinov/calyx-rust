@@ -89,6 +89,10 @@ impl ProjectManager {
         &self,
         scenes: &mut SceneManager,
     ) -> Result<Option<PathBuf>, BoxedError> {
+        if scenes.has_simulation_scene() {
+            scenes.start_simulation();
+            return Ok(None);
+        }
         let Some(path) = self.current_project.startup_scene_path() else {
             scenes.start_simulation();
             return Ok(None);
