@@ -1001,6 +1001,26 @@ impl EditorApp {
                         self.state.game.scenes.pause_simulation();
                     } else {
                         self.state.flush_pending_inspector_value_edits();
+                        let runtime = self.project_manager.read().runtime_settings().clone();
+                        if runtime.window.width != 0 && runtime.window.height != 0 {
+                            self.state.game_aspect =
+                                Some((runtime.window.width, runtime.window.height));
+                        }
+                        match self
+                            .project_manager
+                            .read()
+                            .load_startup_scene(&mut self.state.game.scenes)
+                        {
+                            Ok(Some(path)) => log::info!(
+                                "Loaded configured startup scene for simulation: {}",
+                                path.display()
+                            ),
+                            Ok(None) => {}
+                            Err(error) => {
+                                log::error!("Failed to load configured startup scene: {error}");
+                                return;
+                            }
+                        }
                         log::info!(
                             "User started scene simulation; objects={}",
                             self.state.game.scenes.current_scene().objects().count()

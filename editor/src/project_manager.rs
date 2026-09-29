@@ -12,8 +12,9 @@ use engine::error::BoxedError;
 use engine::reflect::type_registry::TypeRegistry;
 use engine::reflect::TypeInfo;
 use engine::resource::Resource;
+use engine::scene::{Scene, SceneManager};
 use engine::utils::TypeUuid;
-use project::Project;
+use project::{Project, RuntimeSettings};
 use rusty_pool::JoinHandle;
 
 #[derive(Default, Resource, TypeUuid)]
@@ -74,6 +75,32 @@ impl ProjectManager {
 
     pub fn current_project(&self) -> &Project {
         &self.current_project
+    }
+
+    /// Returns the runtime defaults declared by the current project.
+    pub fn runtime_settings(&self) -> &RuntimeSettings {
+        self.current_project.runtime()
+    }
+
+    /// Loads the project's configured startup scene into the shared runtime.
+    ///
+    /// A project without a startup scene leaves the current editor scene alone.
+    pub fn load_startup_scene(
+        &self,
+        scenes: &mut SceneManager,
+    ) -> Result<Option<PathBuf>, BoxedError> {
+        let Some(path) = self.current_project.startup_scene_path() else {
+            return Ok(None);
+        };
+        let scene = self
+            .context
+            .registries
+            .assets
+            .read()
+            .reload_by_path::<Scene>(&path)
+            .map_err(Box::new)?;
+        scenes.load_scene(scene.readonly());
+        Ok(Some(path))
     }
 
     fn root_project_dir(&self) -> PathBuf {
