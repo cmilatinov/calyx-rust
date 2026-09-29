@@ -97,6 +97,10 @@ impl ProjectManager {
             scenes.start_simulation();
             return Ok(None);
         };
+        if configured_scene_is_current(scenes, &path) {
+            scenes.start_simulation();
+            return Ok(Some(path));
+        }
         let scene = self
             .context
             .registries
@@ -314,6 +318,21 @@ impl ProjectManager {
             .write()
             .set_loaded(self.assemblies_loaded());
     }
+}
+
+fn configured_scene_is_current(scenes: &SceneManager, startup_scene: &Path) -> bool {
+    scene_paths_match(scenes.current_scene_meta().file.as_deref(), startup_scene)
+}
+
+fn scene_paths_match(current_scene: Option<&Path>, startup_scene: &Path) -> bool {
+    let Some(current_scene) = current_scene else {
+        return false;
+    };
+    current_scene == startup_scene
+        || matches!(
+            (dunce::canonicalize(current_scene), dunce::canonicalize(startup_scene)),
+            (Ok(current_scene), Ok(startup_scene)) if current_scene == startup_scene
+        )
 }
 
 struct PreloadedAssemblyDependencies {
@@ -621,7 +640,8 @@ fn assembly_target_dir(profile: &str) -> &str {
 mod tests {
     use super::{
         assembly_artifact_path, assembly_build_target_dir, assembly_target_dir, cargo_build_args,
-        copy_runtime_dependencies, is_rust_runtime_library, ProjectAssemblyStatus,
+        copy_runtime_dependencies, is_rust_runtime_library, scene_paths_match,
+        ProjectAssemblyStatus,
     };
     use std::fs;
     use std::path::Path;
@@ -719,5 +739,30 @@ mod tests {
         assert!(!is_rust_runtime_library(Path::new(
             "librustc_driver-1815a83be396bd1c.so"
         )));
+    }
+
+    #[test]
+    fn configured_scene_path_matches_the_open_scene_after_canonicalization() {
+        let root = std::env::temp_dir().join(format!(
+            "calyx-project-manager-path-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let scene = root.join("scene.cxscene");
+        fs::write(&scene, "{}").unwrap();
+
+        assert!(scene_paths_match(
+            Some(&scene),
+            &root.join(".").join("scene.cxscene")
+        ));
+        assert!(!scene_paths_match(
+            Some(&scene),
+            &root.join("other.cxscene")
+        ));
+
+        fs::remove_dir_all(root).unwrap();
     }
 }
