@@ -82,14 +82,15 @@ impl ProjectManager {
         self.current_project.runtime()
     }
 
-    /// Loads the project's configured startup scene into the shared runtime.
+    /// Starts the shared runtime from the project's configured startup scene.
     ///
     /// A project without a startup scene leaves the current editor scene alone.
-    pub fn load_startup_scene(
+    pub fn start_simulation(
         &self,
         scenes: &mut SceneManager,
     ) -> Result<Option<PathBuf>, BoxedError> {
         let Some(path) = self.current_project.startup_scene_path() else {
+            scenes.start_simulation();
             return Ok(None);
         };
         let scene = self
@@ -99,7 +100,7 @@ impl ProjectManager {
             .read()
             .reload_by_path::<Scene>(&path)
             .map_err(Box::new)?;
-        scenes.load_scene(scene.readonly());
+        scenes.start_simulation_from_scene(scene.readonly());
         Ok(Some(path))
     }
 

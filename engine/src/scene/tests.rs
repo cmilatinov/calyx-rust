@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::component::{ComponentCamera, ComponentID};
+    use crate::core::Ref;
     use crate::scene::{GameObject, Scene, SceneData, SiblingDir};
     use crate::test_utils::test_scene;
     use nalgebra_glm::{self as glm, Vec3};
@@ -741,6 +742,78 @@ mod tests {
         assert!(names.iter().any(|name| name == "Kept"));
         assert!(!names.iter().any(|name| name == "Discarded"));
         assert!(!game.scenes.has_simulation_scene());
+    }
+
+    #[test]
+    fn scene_manager_starts_configured_scene_without_replacing_authoring_scene() {
+        let mut game = crate::test_utils::test_game_context();
+        game.scenes.current_scene_mut().create(
+            Some(ComponentID {
+                name: "Authoring".into(),
+                ..Default::default()
+            }),
+            None,
+        );
+        let mut configured = test_scene();
+        configured.create(
+            Some(ComponentID {
+                name: "Configured".into(),
+                ..Default::default()
+            }),
+            None,
+        );
+
+        game.scenes
+            .start_simulation_from_scene(Ref::new(configured).readonly());
+
+        let authoring_names = game
+            .scenes
+            .current_scene()
+            .objects()
+            .map(|go| game.scenes.current_scene().name(go))
+            .collect::<Vec<_>>();
+        let simulation_names = game
+            .scenes
+            .simulation_scene()
+            .objects()
+            .map(|go| game.scenes.simulation_scene().name(go))
+            .collect::<Vec<_>>();
+        assert!(authoring_names.iter().any(|name| name == "Authoring"));
+        assert!(!authoring_names.iter().any(|name| name == "Configured"));
+        assert!(simulation_names.iter().any(|name| name == "Configured"));
+    }
+
+    #[test]
+    fn scene_manager_resumes_configured_simulation_without_reloading() {
+        let mut game = crate::test_utils::test_game_context();
+        let mut configured = test_scene();
+        configured.create(
+            Some(ComponentID {
+                name: "Configured".into(),
+                ..Default::default()
+            }),
+            None,
+        );
+        game.scenes
+            .start_simulation_from_scene(Ref::new(configured).readonly());
+        game.scenes.simulation_scene_mut().create(
+            Some(ComponentID {
+                name: "Retained".into(),
+                ..Default::default()
+            }),
+            None,
+        );
+        game.scenes.pause_simulation();
+
+        game.scenes
+            .start_simulation_from_scene(Ref::new(test_scene()).readonly());
+
+        assert!(game.scenes.is_simulating());
+        assert!(game.scenes.simulation_scene().objects().any(|go| game
+            .scenes
+            .simulation_scene()
+            .name(go)
+            == "Retained"));
     }
 
     #[test]

@@ -1009,7 +1009,7 @@ impl EditorApp {
                         match self
                             .project_manager
                             .read()
-                            .load_startup_scene(&mut self.state.game.scenes)
+                            .start_simulation(&mut self.state.game.scenes)
                         {
                             Ok(Some(path)) => log::info!(
                                 "Loaded configured startup scene for simulation: {}",
