@@ -12,8 +12,9 @@ use engine::error::BoxedError;
 use engine::reflect::type_registry::TypeRegistry;
 use engine::reflect::TypeInfo;
 use engine::resource::Resource;
+use engine::scene::{Scene, SceneManager};
 use engine::utils::TypeUuid;
-use project::Project;
+use project::{Project, RuntimeSettings};
 use rusty_pool::JoinHandle;
 
 #[derive(Default, Resource, TypeUuid)]
@@ -74,6 +75,41 @@ impl ProjectManager {
 
     pub fn current_project(&self) -> &Project {
         &self.current_project
+    }
+
+    /// Returns the runtime defaults declared by the current project.
+    pub fn runtime_settings(&self) -> &RuntimeSettings {
+        self.current_project.runtime()
+    }
+
+    /// Starts the shared runtime from the project's configured startup scene.
+    ///
+    /// A project without a startup scene leaves the current editor scene alone.
+    pub fn start_simulation(
+        &self,
+        scenes: &mut SceneManager,
+    ) -> Result<Option<PathBuf>, BoxedError> {
+        if scenes.has_simulation_scene() {
+            scenes.start_simulation();
+            return Ok(None);
+        }
+        let Some(path) = self.current_project.startup_scene_path() else {
+            scenes.start_simulation();
+            return Ok(None);
+        };
+        if configured_scene_is_current(scenes, &path) {
+            scenes.start_simulation();
+            return Ok(Some(path));
+        }
+        let scene = self
+            .context
+            .registries
+            .assets
+            .read()
+            .reload_by_path::<Scene>(&path)
+            .map_err(Box::new)?;
+        scenes.start_simulation_from_scene(scene.readonly());
+        Ok(Some(path))
     }
 
     fn root_project_dir(&self) -> PathBuf {
@@ -282,6 +318,21 @@ impl ProjectManager {
             .write()
             .set_loaded(self.assemblies_loaded());
     }
+}
+
+fn configured_scene_is_current(scenes: &SceneManager, startup_scene: &Path) -> bool {
+    scene_paths_match(scenes.current_scene_meta().file.as_deref(), startup_scene)
+}
+
+fn scene_paths_match(current_scene: Option<&Path>, startup_scene: &Path) -> bool {
+    let Some(current_scene) = current_scene else {
+        return false;
+    };
+    current_scene == startup_scene
+        || matches!(
+            (dunce::canonicalize(current_scene), dunce::canonicalize(startup_scene)),
+            (Ok(current_scene), Ok(startup_scene)) if current_scene == startup_scene
+        )
 }
 
 struct PreloadedAssemblyDependencies {
@@ -589,7 +640,8 @@ fn assembly_target_dir(profile: &str) -> &str {
 mod tests {
     use super::{
         assembly_artifact_path, assembly_build_target_dir, assembly_target_dir, cargo_build_args,
-        copy_runtime_dependencies, is_rust_runtime_library, ProjectAssemblyStatus,
+        copy_runtime_dependencies, is_rust_runtime_library, scene_paths_match,
+        ProjectAssemblyStatus,
     };
     use std::fs;
     use std::path::Path;
@@ -687,5 +739,30 @@ mod tests {
         assert!(!is_rust_runtime_library(Path::new(
             "librustc_driver-1815a83be396bd1c.so"
         )));
+    }
+
+    #[test]
+    fn configured_scene_path_matches_the_open_scene_after_canonicalization() {
+        let root = std::env::temp_dir().join(format!(
+            "calyx-project-manager-path-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let scene = root.join("scene.cxscene");
+        fs::write(&scene, "{}").unwrap();
+
+        assert!(scene_paths_match(
+            Some(&scene),
+            &root.join(".").join("scene.cxscene")
+        ));
+        assert!(!scene_paths_match(
+            Some(&scene),
+            &root.join("other.cxscene")
+        ));
+
+        fs::remove_dir_all(root).unwrap();
     }
 }
