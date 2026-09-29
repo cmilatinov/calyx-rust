@@ -112,6 +112,20 @@ impl SceneManager {
         log::info!("Scene simulation started");
     }
 
+    /// Starts simulation from `scene` without replacing the authoring scene.
+    ///
+    /// If a simulation copy already exists, this resumes it rather than
+    /// discarding paused state.
+    pub fn start_simulation_from_scene(&mut self, scene: ReadOnlyRef<Scene>) {
+        if self.simulation_scene.is_none() {
+            let snapshot = scene.read().snapshot();
+            self.simulation_scene = Some(self.current_scene.restore_snapshot(snapshot));
+        }
+
+        self.simulation_running = true;
+        log::info!("Scene simulation started from configured scene");
+    }
+
     /// Pauses simulation updates while preserving the simulation scene.
     pub fn pause_simulation(&mut self) {
         self.simulation_running = false;
