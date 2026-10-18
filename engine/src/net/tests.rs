@@ -295,10 +295,10 @@ mod tests {
         // Check client received it
         let mut received_time = None;
         struct TimeCapture;
-        impl MessageHandler<Option<f32>, GameMessage> for TimeCapture {
+        impl MessageHandler<Option<f64>, GameMessage> for TimeCapture {
             fn handle_message(
                 &mut self,
-                out: &mut Option<f32>,
+                out: &mut Option<f64>,
                 msg: &GameMessage,
             ) -> MessageHandlerResult {
                 if let GameMessage::SyncTime { current_time } = msg {
@@ -371,10 +371,10 @@ mod tests {
 
         let mut received_time = None;
         struct Capture;
-        impl MessageHandler<Option<f32>, GameMessage> for Capture {
+        impl MessageHandler<Option<f64>, GameMessage> for Capture {
             fn handle_message(
                 &mut self,
-                out: &mut Option<f32>,
+                out: &mut Option<f64>,
                 msg: &GameMessage,
             ) -> MessageHandlerResult {
                 if let GameMessage::SyncTime { current_time } = msg {
