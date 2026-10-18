@@ -1057,10 +1057,10 @@ impl EditorApp {
                             if !background.task_list().is_empty() {
                                 ui.add(egui::Spinner::new().size(15.0));
                             }
-                            match background.task_list().len() {
+                            match background.task_count() {
                                 0 => {}
                                 1 => {
-                                    let id = background.task_list().iter().next().unwrap();
+                                    let id = background.task_list().keys().next().unwrap();
                                     if let Some(task_id) = TaskId::from_isize(*id) {
                                         ui.label(task_id.message());
                                     }
