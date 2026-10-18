@@ -2,12 +2,14 @@ use sharedlib::{Lib, Symbol};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::task_id::TaskId;
 use engine::background::Background;
 use engine::context::AssetContext;
-use engine::core::{Ref, WeakRef};
+use engine::core::Ref;
 use engine::error::BoxedError;
 use engine::reflect::type_registry::TypeRegistry;
 use engine::reflect::TypeInfo;
@@ -39,7 +41,7 @@ pub struct ProjectManager {
     context: AssetContext,
     background: Ref<Background>,
     assembly_status: Ref<ProjectAssemblyStatus>,
-    project_manager: WeakRef<ProjectManager>,
+    builds: AssemblyBuildQueue,
     // Keep the dynamic assembly after contexts/registries in field order so
     // plugin-backed trait objects and scene components drop before the library
     // is unloaded during editor shutdown.
@@ -56,12 +58,12 @@ impl ProjectManager {
         let project_directory = dunce::canonicalize(project_directory.into()).map_err(Box::new)?;
         log::info!("Loading project from {}", project_directory.display());
         let current_project = Project::load(project_directory)?;
-        Ok(Ref::new_cyclic(move |weak| Self {
+        Ok(Ref::new(Self {
             current_project,
             context,
             background,
             assembly_status,
-            project_manager: weak,
+            builds: AssemblyBuildQueue::new(),
             assembly: None,
         }))
     }
@@ -116,76 +118,34 @@ impl ProjectManager {
         self.current_project.root_directory().clone()
     }
 
+    /// Builds the project assembly on the background pool.
+    ///
+    /// The task only runs cargo and reports the library path; the UI thread
+    /// loads it from [`Self::load_completed_build`].
     pub fn build_assemblies(&self) -> JoinHandle<()> {
         let root = self.root_project_dir();
         let project_name = self.current_project().name().to_string();
         let target_dir = assembly_build_target_dir();
-        let project_manager_ref = self.project_manager.upgrade().unwrap();
+        let reporter = self.builds.reporter();
         self.background.write().execute(TaskId::Build, move || {
             let profile = assembly_profile();
             let args = cargo_build_args(profile, &target_dir);
             let source = assembly_artifact_path(&target_dir, profile, &project_name);
-            let loaded_existing = source.exists();
-            if loaded_existing {
-                log::info!(
-                    "Loading existing project assembly before background build: {}",
-                    source.display()
-                );
-                project_manager_ref.write().load_assemblies();
-            }
-            log::info!(
-                "Building project assemblies in {} with profile {}",
-                root.display(),
-                profile
-            );
-            let output = Command::new("cargo").current_dir(root).args(&args).output();
-            let command = format!("cargo {}", args.join(" "));
-            match output {
-                Ok(output) if output.status.success() => {
-                    log_command_output(
-                        command.as_str(),
-                        &output.stdout,
-                        &output.stderr,
-                        CommandOutputStatus::Success,
-                    );
-                    log::info!("Project assemblies built successfully");
-                    if !source.exists() {
-                        log::error!("Project assembly was not produced at {}", source.display());
-                        return;
-                    }
-                    project_manager_ref.write().load_assemblies();
-                }
-                Ok(output) => {
-                    log_command_output(
-                        command.as_str(),
-                        &output.stdout,
-                        &output.stderr,
-                        CommandOutputStatus::Failure,
-                    );
-                    log::error!(
-                        "Project assembly build failed with status {}",
-                        output.status
-                    );
-                    if source.exists() && !loaded_existing {
-                        log::warn!(
-                            "Loading existing project assembly after failed build: {}",
-                            source.display()
-                        );
-                        project_manager_ref.write().load_assemblies();
-                    }
-                }
-                Err(err) => {
-                    log::error!("Failed to start project assembly build: {err}");
-                    if source.exists() && !loaded_existing {
-                        log::warn!(
-                            "Loading existing project assembly after build command failed: {}",
-                            source.display()
-                        );
-                        project_manager_ref.write().load_assemblies();
-                    }
-                }
-            }
+            let outcome = build_assembly(&root, profile, &args, source);
+            // The receiver only goes away with the project manager.
+            let _ = reporter.send(outcome);
         })
+    }
+
+    /// Loads the next assembly reported by a finished background build.
+    ///
+    /// Call once per frame on the UI thread so the library swap and type
+    /// re-registration never race with code using the plugin's types.
+    pub fn load_completed_build(&mut self) -> bool {
+        match self.builds.next_load(self.assemblies_loaded()) {
+            Some(source) => self.load_assembly(&source),
+            None => false,
+        }
     }
 
     pub fn load_existing_assemblies(&mut self) -> bool {
@@ -196,7 +156,7 @@ impl ProjectManager {
             return false;
         }
         log::info!("Loading existing project assembly: {}", source.display());
-        self.load_assemblies()
+        self.load_assembly(&source)
     }
 
     fn assembly_source_path(&self) -> PathBuf {
@@ -207,11 +167,9 @@ impl ProjectManager {
         )
     }
 
-    pub fn load_assemblies(&mut self) -> bool {
-        let root = self.root_project_dir();
-        log::trace!("Loading project assemblies from {}", root.display());
-        let source = self.assembly_source_path();
-        let target = match shadow_copy_assembly(&source, self.current_project().name().as_str()) {
+    fn load_assembly(&mut self, source: &Path) -> bool {
+        log::trace!("Loading project assembly from {}", source.display());
+        let target = match shadow_copy_assembly(source, self.current_project().name().as_str()) {
             Ok(target) => target,
             Err(err) => {
                 log::error!(
@@ -317,6 +275,108 @@ impl ProjectManager {
         self.assembly_status
             .write()
             .set_loaded(self.assemblies_loaded());
+    }
+}
+
+/// Result of one background assembly build, reported to the UI thread.
+#[derive(Debug, PartialEq)]
+enum AssemblyBuildOutcome {
+    /// The build succeeded and produced the library at this path.
+    Built(PathBuf),
+    /// The build failed; the path is the previously built library, if any.
+    Failed(PathBuf),
+}
+
+/// Hands finished background builds to the UI thread, one load per build.
+struct AssemblyBuildQueue {
+    sender: Sender<AssemblyBuildOutcome>,
+    receiver: Mutex<Receiver<AssemblyBuildOutcome>>,
+}
+
+impl AssemblyBuildQueue {
+    fn new() -> Self {
+        let (sender, receiver) = mpsc::channel();
+        Self {
+            sender,
+            receiver: Mutex::new(receiver),
+        }
+    }
+
+    fn reporter(&self) -> Sender<AssemblyBuildOutcome> {
+        self.sender.clone()
+    }
+
+    /// Returns the library to load for the next finished build, if any.
+    ///
+    /// A failed build keeps the loaded assembly, and only falls back to the
+    /// previous library when nothing is loaded yet.
+    fn next_load(&self, assembly_loaded: bool) -> Option<PathBuf> {
+        let outcome = self
+            .receiver
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .try_recv()
+            .ok()?;
+        match outcome {
+            AssemblyBuildOutcome::Built(source) => Some(source),
+            AssemblyBuildOutcome::Failed(source) if !assembly_loaded && source.exists() => {
+                log::warn!(
+                    "Loading existing project assembly after failed build: {}",
+                    source.display()
+                );
+                Some(source)
+            }
+            AssemblyBuildOutcome::Failed(_) => None,
+        }
+    }
+}
+
+/// Runs cargo for the project assembly and reports where the library is.
+fn build_assembly(
+    root: &Path,
+    profile: &str,
+    args: &[String],
+    source: PathBuf,
+) -> AssemblyBuildOutcome {
+    log::info!(
+        "Building project assemblies in {} with profile {}",
+        root.display(),
+        profile
+    );
+    let output = Command::new("cargo").current_dir(root).args(args).output();
+    let command = format!("cargo {}", args.join(" "));
+    match output {
+        Ok(output) if output.status.success() => {
+            log_command_output(
+                command.as_str(),
+                &output.stdout,
+                &output.stderr,
+                CommandOutputStatus::Success,
+            );
+            log::info!("Project assemblies built successfully");
+            if !source.exists() {
+                log::error!("Project assembly was not produced at {}", source.display());
+                return AssemblyBuildOutcome::Failed(source);
+            }
+            AssemblyBuildOutcome::Built(source)
+        }
+        Ok(output) => {
+            log_command_output(
+                command.as_str(),
+                &output.stdout,
+                &output.stderr,
+                CommandOutputStatus::Failure,
+            );
+            log::error!(
+                "Project assembly build failed with status {}",
+                output.status
+            );
+            AssemblyBuildOutcome::Failed(source)
+        }
+        Err(err) => {
+            log::error!("Failed to start project assembly build: {err}");
+            AssemblyBuildOutcome::Failed(source)
+        }
     }
 }
 
@@ -641,7 +701,7 @@ mod tests {
     use super::{
         assembly_artifact_path, assembly_build_target_dir, assembly_target_dir, cargo_build_args,
         copy_runtime_dependencies, is_rust_runtime_library, scene_paths_match,
-        ProjectAssemblyStatus,
+        AssemblyBuildOutcome, AssemblyBuildQueue, ProjectAssemblyStatus,
     };
     use std::fs;
     use std::path::Path;
@@ -762,6 +822,85 @@ mod tests {
             Some(&scene),
             &root.join("other.cxscene")
         ));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn completed_build_is_loaded_once_on_the_polling_thread() {
+        let queue = AssemblyBuildQueue::new();
+        assert_eq!(queue.next_load(false), None);
+
+        let built = Path::new("built.dll").to_path_buf();
+        let reporter = queue.reporter();
+        std::thread::spawn(move || reporter.send(AssemblyBuildOutcome::Built(built)).unwrap())
+            .join()
+            .unwrap();
+
+        assert_eq!(
+            queue.next_load(true),
+            Some(Path::new("built.dll").to_path_buf())
+        );
+        assert_eq!(queue.next_load(true), None);
+    }
+
+    #[test]
+    fn each_completed_build_is_loaded_once_in_order() {
+        let queue = AssemblyBuildQueue::new();
+        let reporter = queue.reporter();
+        reporter
+            .send(AssemblyBuildOutcome::Built(
+                Path::new("first.dll").to_path_buf(),
+            ))
+            .unwrap();
+        reporter
+            .send(AssemblyBuildOutcome::Built(
+                Path::new("second.dll").to_path_buf(),
+            ))
+            .unwrap();
+
+        assert_eq!(
+            queue.next_load(true),
+            Some(Path::new("first.dll").to_path_buf())
+        );
+        assert_eq!(
+            queue.next_load(true),
+            Some(Path::new("second.dll").to_path_buf())
+        );
+        assert_eq!(queue.next_load(true), None);
+    }
+
+    #[test]
+    fn failed_build_keeps_the_loaded_assembly() {
+        let root = std::env::temp_dir().join(format!(
+            "calyx-assembly-failed-build-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let existing = root.join(engine::utils::lib_file_name("sandbox"));
+        fs::write(&existing, b"sandbox").unwrap();
+        let queue = AssemblyBuildQueue::new();
+
+        queue
+            .reporter()
+            .send(AssemblyBuildOutcome::Failed(existing.clone()))
+            .unwrap();
+        assert_eq!(queue.next_load(true), None);
+
+        queue
+            .reporter()
+            .send(AssemblyBuildOutcome::Failed(existing.clone()))
+            .unwrap();
+        assert_eq!(queue.next_load(false), Some(existing.clone()));
+
+        queue
+            .reporter()
+            .send(AssemblyBuildOutcome::Failed(root.join("missing.dll")))
+            .unwrap();
+        assert_eq!(queue.next_load(false), None);
 
         fs::remove_dir_all(root).unwrap();
     }

@@ -649,6 +649,7 @@ impl EditorApp {
 
 impl eframe::App for EditorApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.project_manager.write().load_completed_build();
         self.state.game.resources.time_mut().update_time();
         self.state.game_response = None;
         self.render_views(ctx, frame);
