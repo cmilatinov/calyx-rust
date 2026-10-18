@@ -461,8 +461,8 @@ impl ComponentAnimator {
         mut parent_transform: Mat4,
         pose: &mut AnimatorPose,
     ) {
-        let bind_pose = scene.transform(game_object);
-        let mut local_transform = bind_pose.matrix();
+        let mut local_transform = scene.transform(game_object).matrix();
+        let mut captured_bind_pose = None;
         'calc_bone_transform: {
             let Some(entry) = scene.entry(game_object) else {
                 break 'calc_bone_transform;
@@ -470,6 +470,12 @@ impl ComponentAnimator {
             let Ok(c_bone) = entry.get_component::<ComponentBone>() else {
                 break 'calc_bone_transform;
             };
+            let bind_pose = c_bone
+                .bind_pose
+                .unwrap_or_else(|| scene.transform(game_object));
+            if c_bone.bind_pose.is_none() {
+                captured_bind_pose = Some(bind_pose);
+            }
             let Some(node) = snapshot
                 .current_state
                 .and_then(|nid| animation_graph.graph.node_weight(nid))
@@ -492,6 +498,13 @@ impl ComponentAnimator {
                     * c_bone.offset_matrix)
                     .into(),
             };
+        }
+        if let Some(bind_pose) = captured_bind_pose {
+            if let Some(mut entry) = scene.entry_mut(game_object) {
+                if let Ok(c_bone) = entry.get_component_mut::<ComponentBone>() {
+                    c_bone.bind_pose = Some(bind_pose);
+                }
+            }
         }
         parent_transform *= local_transform;
         scene.set_transform(game_object, &local_transform);
@@ -572,7 +585,9 @@ impl ComponentAnimator {
             }
             AnimationMotion::BlendTree1D(tree) => {
                 if tree.motions.is_empty() {
-                    log::warn!("Blend tree for bone '{bone_name}' has no motions; using bind pose");
+                    crate::logging::warn_once(format!("empty-blend-tree:{tree:p}"), || {
+                        "Blend tree has no motions; using bind pose".to_string()
+                    });
                     return *bind_pose;
                 }
                 let neighbors = tree.nearest_neighbors(2, parameters);
@@ -595,7 +610,9 @@ impl ComponentAnimator {
             }
             AnimationMotion::BlendTree2D(tree) => {
                 if tree.motions.is_empty() {
-                    log::warn!("Blend tree for bone '{bone_name}' has no motions; using bind pose");
+                    crate::logging::warn_once(format!("empty-blend-tree:{tree:p}"), || {
+                        "Blend tree has no motions; using bind pose".to_string()
+                    });
                     return *bind_pose;
                 }
                 let neighbors = tree.nearest_neighbors(4, parameters);

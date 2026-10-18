@@ -612,7 +612,9 @@ impl SceneRenderer {
                 let Some(index) =
                     skinning_instance_index(mesh.bone_transforms.len(), mesh.bones.len())
                 else {
-                    log::warn!("Skinned mesh {mesh_id} has no bones; skipping skinning upload");
+                    crate::logging::warn_once(format!("boneless-skinned-mesh:{mesh_id}"), || {
+                        format!("Skinned mesh {mesh_id} has no bones; skipping skinning upload")
+                    });
                     continue;
                 };
                 skinned_meshes.insert(mesh_id);
