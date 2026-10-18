@@ -202,16 +202,23 @@ impl PhysicsContext {
         })
     }
 
-    /// Removes Rapier objects whose owning scene entities have been deleted.
+    /// Removes Rapier objects whose owning scene entities have been deleted
+    /// or no longer carry the rigid body / collider component.
     fn remove_stale_physics_objects(scene: &mut Scene) {
-        let live_entities: HashSet<Entity> =
-            <Entity>::query().iter(&scene.world).copied().collect();
+        let live_bodies: HashSet<Entity> = <(Entity, &ComponentRigidBody)>::query()
+            .iter(&scene.world)
+            .map(|(&entity, _)| entity)
+            .collect();
+        let live_colliders: HashSet<Entity> = <(Entity, &ComponentCollider)>::query()
+            .iter(&scene.world)
+            .map(|(&entity, _)| entity)
+            .collect();
         let stale_bodies: Vec<_> = scene
             .physics
             .entity_rigid_body
             .iter()
             .filter_map(|(&entity, &handle)| {
-                (!live_entities.contains(&entity)).then_some((entity, handle))
+                (!live_bodies.contains(&entity)).then_some((entity, handle))
             })
             .collect();
 
@@ -232,7 +239,7 @@ impl PhysicsContext {
             .entity_collider
             .iter()
             .filter_map(|(&entity, &handle)| {
-                (!live_entities.contains(&entity) || scene.physics.colliders.get(handle).is_none())
+                (!live_colliders.contains(&entity) || scene.physics.colliders.get(handle).is_none())
                     .then_some((entity, handle))
             })
             .collect();
@@ -251,7 +258,7 @@ impl PhysicsContext {
         }
 
         scene.physics.collider_entity.retain(|handle, entity| {
-            live_entities.contains(entity) && scene.physics.colliders.get(*handle).is_some()
+            live_colliders.contains(entity) && scene.physics.colliders.get(*handle).is_some()
         });
     }
 

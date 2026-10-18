@@ -485,4 +485,50 @@ mod tests {
             "involves() should find events for collider a_col"
         );
     }
+
+    #[test]
+    fn prepare_removes_body_when_rigid_body_component_removed() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        scene.add_component(go, ComponentRigidBody::default());
+        scene.add_component(go, ComponentCollider::default());
+        scene.prepare();
+        assert_eq!(scene.physics.bodies.len(), 1);
+
+        scene
+            .world
+            .entry(go.entity)
+            .unwrap()
+            .remove_component::<ComponentRigidBody>();
+        scene.prepare();
+
+        assert_eq!(scene.physics.bodies.len(), 0);
+        assert!(!scene.physics.entity_rigid_body.contains_key(&go.entity));
+        // The collider survives, detached, and is now a standalone collider.
+        assert_eq!(scene.physics.colliders.len(), 1);
+        let handle = scene.physics.entity_collider[&go.entity];
+        assert!(scene.physics.colliders[handle].parent().is_none());
+    }
+
+    #[test]
+    fn prepare_removes_collider_when_collider_component_removed() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        scene.add_component(go, ComponentRigidBody::default());
+        scene.add_component(go, ComponentCollider::default());
+        scene.prepare();
+        assert_eq!(scene.physics.colliders.len(), 1);
+
+        scene
+            .world
+            .entry(go.entity)
+            .unwrap()
+            .remove_component::<ComponentCollider>();
+        scene.prepare();
+
+        assert_eq!(scene.physics.colliders.len(), 0);
+        assert!(!scene.physics.entity_collider.contains_key(&go.entity));
+        assert!(scene.physics.collider_entity.is_empty());
+        assert_eq!(scene.physics.bodies.len(), 1);
+    }
 }
