@@ -32,17 +32,21 @@ fn derive_uuid_attr(input: &DeriveInput) -> syn::Result<Option<Uuid>> {
         if !attr.path().is_ident("uuid") {
             continue;
         }
-        if let Meta::NameValue(MetaNameValue {
-            value: Expr::Lit(ExprLit {
-                lit: Lit::Str(lit), ..
-            }),
-            ..
-        }) = &attr.meta
-        {
-            return Uuid::parse_str(lit.value().as_str())
+        return match &attr.meta {
+            Meta::NameValue(MetaNameValue {
+                value:
+                    Expr::Lit(ExprLit {
+                        lit: Lit::Str(lit), ..
+                    }),
+                ..
+            }) => Uuid::parse_str(lit.value().as_str())
                 .map(Some)
-                .map_err(|err| syn::Error::new_spanned(lit, format!("invalid uuid: {err}")));
-        }
+                .map_err(|err| syn::Error::new_spanned(lit, format!("invalid uuid: {err}"))),
+            meta => Err(syn::Error::new_spanned(
+                meta,
+                "expected `#[uuid = \"...\"]` with a string literal",
+            )),
+        };
     }
     Ok(None)
 }
