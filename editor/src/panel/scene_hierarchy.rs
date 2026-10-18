@@ -270,20 +270,34 @@ impl PanelSceneHierarchy {
                     .add_filter("cxprefab", &["cxprefab"])
                     .save_file()
                 {
-                    if let Ok(file) = std::fs::OpenOptions::new()
+                    match std::fs::OpenOptions::new()
                         .create(true)
                         .write(true)
                         .truncate(true)
                         .open(&path)
                     {
-                        let prefab = scene.create_prefab(game_object);
-                        let writer = BufWriter::new(file);
-                        serde_json::to_writer_pretty(writer, &prefab).unwrap();
-                        log::info!(
-                            "Saved prefab from game object: object={} path={}",
-                            Self::game_object_label(scene, game_object),
-                            path.display()
-                        );
+                        Ok(file) => {
+                            let prefab = scene.create_prefab(game_object);
+                            let writer = BufWriter::new(file);
+                            match serde_json::to_writer_pretty(writer, &prefab) {
+                                Ok(()) => log::info!(
+                                    "Saved prefab from game object: object={} path={}",
+                                    Self::game_object_label(scene, game_object),
+                                    path.display()
+                                ),
+                                Err(err) => log::error!(
+                                    "Failed to write prefab: object={} path={} error={}",
+                                    Self::game_object_label(scene, game_object),
+                                    path.display(),
+                                    err
+                                ),
+                            }
+                        }
+                        Err(err) => log::error!(
+                            "Failed to create prefab file: path={} error={}",
+                            path.display(),
+                            err
+                        ),
                     }
                 }
                 ui.close_menu();
@@ -399,11 +413,25 @@ impl PanelSceneHierarchy {
         };
 
         let game_object_id = scene.uuid(game_object);
-        let parent = scene.parent(game_object).unwrap();
+        let Some(parent) = scene.parent(game_object) else {
+            log::error!(
+                "Cannot move game object without a parent: object={}",
+                Self::game_object_label(scene, game_object)
+            );
+            return false;
+        };
         let parent_id = scene.uuid(parent);
-        let position_index_in_parent = scene
-            .index_in_parent(parent, game_object, SiblingDir::Before)
-            .unwrap() as usize;
+        let Some(position_index_in_parent) =
+            scene.index_in_parent(parent, game_object, SiblingDir::Before)
+        else {
+            log::error!(
+                "Cannot find game object in its parent: object={} parent={}",
+                Self::game_object_label(scene, game_object),
+                Self::game_object_label(scene, parent)
+            );
+            return false;
+        };
+        let position_index_in_parent = position_index_in_parent as usize;
 
         let previous_container_id = if position_index_in_parent > 0 {
             scene
