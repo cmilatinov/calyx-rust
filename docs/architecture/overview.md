@@ -1,7 +1,3 @@
----
-inclusion: auto
----
-
 # Calyx Engine — Project Overview
 
 Calyx is a 3D game engine and editor written in Rust, targeting a multiplayer tank game. The workspace has five crates:
