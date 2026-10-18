@@ -7,7 +7,7 @@ The user is the product validator and merge authority. The agent owns routine en
 For the active Calyx product direction, the agent may autonomously:
 
 - Select the highest-priority unblocked Engineering Task from the Calyx Project when the user has not selected one.
-- Move the selected issue through Todo, In progress, In review, and Done as its state changes.
+- Move the selected issue through Todo, In Progress, In Review, and Done as its state changes.
 - Sync `main`, create a scoped branch, implement the task, validate it, self-review it, commit, push, and open a ready-for-review PR.
 - Update the issue, project fields, and PR description to reflect completed work and validation.
 - Address valid automated or human review comments with follow-up commits, then reply to and resolve the corresponding threads.
