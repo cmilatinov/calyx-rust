@@ -259,6 +259,105 @@ mod tests {
         assert!(scene.find(uuid).is_none());
     }
 
+    // HashSet drain order is randomized per set, so repeat to hit both orders.
+    const DELETE_ORDER_ITERATIONS: usize = 32;
+
+    #[test]
+    fn delete_parent_and_child_queued_together() {
+        for swap in [false, true] {
+            for _ in 0..DELETE_ORDER_ITERATIONS {
+                let mut scene = test_scene();
+                let keep = scene.create(None, None);
+                let parent = scene.create(None, None);
+                let child = scene.create(None, Some(parent));
+                let grandchild = scene.create(None, Some(child));
+                let (parent_uuid, child_uuid) = (scene.uuid(parent), scene.uuid(child));
+                let grandchild_uuid = scene.uuid(grandchild);
+
+                if swap {
+                    scene.delete(child);
+                    scene.delete(parent);
+                } else {
+                    scene.delete(parent);
+                    scene.delete(child);
+                }
+                scene.delete(grandchild);
+                scene.flush_deletes();
+
+                assert!(scene.find(parent_uuid).is_none());
+                assert!(scene.find(child_uuid).is_none());
+                assert!(scene.find(grandchild_uuid).is_none());
+                assert!(scene.find(scene.uuid(keep)).is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn delete_twice() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        let uuid = scene.uuid(go);
+
+        scene.delete(go);
+        scene.delete(go);
+        scene.flush_deletes();
+        assert!(scene.find(uuid).is_none());
+
+        scene.delete(go);
+        scene.flush_deletes();
+    }
+
+    #[test]
+    fn delete_stale_handle() {
+        let mut scene = test_scene();
+        let stale = scene.create(None, None);
+        let other = scene.create(None, None);
+        scene.delete(stale);
+        scene.flush_deletes();
+
+        scene.delete(stale);
+        scene.flush_deletes();
+
+        assert!(scene.find(scene.uuid(other)).is_some());
+    }
+
+    #[test]
+    fn delete_root_is_ignored() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        let root = scene.root();
+
+        scene.delete(root);
+        scene.flush_deletes();
+
+        assert!(scene.find(scene.uuid(go)).is_some());
+        assert!(scene.find(scene.root_id()).is_some());
+    }
+
+    #[test]
+    fn delete_keeps_sibling_order_contiguous() {
+        let mut scene = test_scene();
+        let parent = scene.create(None, None);
+        let c0 = scene.create(None, Some(parent));
+        let c1 = scene.create(None, Some(parent));
+        let c2 = scene.create(None, Some(parent));
+        let c3 = scene.create(None, Some(parent));
+
+        scene.delete(c1);
+        scene.delete(c2);
+        scene.flush_deletes();
+
+        let ordered: Vec<GameObject> = scene.children_ordered(parent).collect();
+        assert_eq!(ordered, vec![c0, c3]);
+
+        let c4 = scene.create(None, Some(parent));
+        let ordered: Vec<GameObject> = scene.children_ordered(parent).collect();
+        assert_eq!(ordered, vec![c0, c3, c4]);
+        assert_eq!(scene.child_at(parent, 0), Some(c0));
+        assert_eq!(scene.child_at(parent, 1), Some(c3));
+        assert_eq!(scene.child_at(parent, 2), Some(c4));
+    }
+
     // --- Descendants & Ancestors ---
 
     #[test]

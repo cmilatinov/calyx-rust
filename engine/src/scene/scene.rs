@@ -685,13 +685,36 @@ impl Scene {
     }
 
     /// Applies all queued deletions immediately.
+    ///
+    /// Handles that no longer exist, the root, and handles whose ancestor is
+    /// also queued are skipped, so each queued subtree is removed exactly once
+    /// regardless of queue order.
     pub fn flush_deletes(&mut self) {
-        for game_object in self.store.drain_deletions() {
-            let parent = self.parent(game_object).unwrap_or(self.root);
-            let index = self
+        let queued: HashSet<GameObject> = self
+            .store
+            .drain_deletions()
+            .into_iter()
+            .filter(|go| *go != self.root && self.graph.game_object_from_node(go.node) == Some(*go))
+            .collect();
+        let roots: Vec<GameObject> = queued
+            .iter()
+            .copied()
+            .filter(|go| {
+                !self
+                    .ancestors(*go)
+                    .any(|ancestor| queued.contains(&ancestor))
+            })
+            .collect();
+        for game_object in roots {
+            let Some(parent) = self.parent(game_object) else {
+                continue;
+            };
+            let Some(index) = self
                 .graph
                 .index_in_parent(parent, game_object, SiblingDir::Before)
-                .unwrap();
+            else {
+                continue;
+            };
             self.graph.shift_edge_weights(parent, index, -1);
             let to_delete: Vec<_> = self
                 .graph
