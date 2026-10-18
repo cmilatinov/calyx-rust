@@ -26,6 +26,7 @@ mod tests {
     fn plugin_main_exports_only_sandbox_reflection_types() {
         let mut registry = TypeRegistry {
             types: Default::default(),
+            identities: Default::default(),
         };
 
         plugin_main(&mut registry);
