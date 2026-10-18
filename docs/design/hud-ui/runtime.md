@@ -1,10 +1,6 @@
----
-inclusion: auto
----
-
 # HUD / Runtime UI Behavior
 
-See [HUD / Runtime UI Architecture](hud-ui.md) for layout and styling requirements.
+See [HUD / Runtime UI Architecture](architecture.md) for layout and styling requirements.
 
 ## Interaction
 
