@@ -1,5 +1,6 @@
 use crate as engine;
 use crate::component::{Component, ReflectComponent};
+use crate::math::Transform;
 use crate::reflect::{Reflect, ReflectDefault};
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use nalgebra_glm::Mat4;
@@ -21,6 +22,9 @@ pub struct ComponentBone {
     /// Inverse bind matrix used for skinning.
     #[reflect_skip]
     pub offset_matrix: Mat4,
+    /// Rest-pose local transform, captured before the animator first overwrites it.
+    #[reflect_skip]
+    pub bind_pose: Option<Transform>,
 }
 
 impl Component for ComponentBone {}
