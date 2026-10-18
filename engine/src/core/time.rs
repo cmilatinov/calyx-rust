@@ -8,6 +8,10 @@ use std::time::{Duration, Instant};
 /// Floating-point time representation used across the engine.
 pub type TimeType = f32;
 
+/// Double-precision representation for absolute time and tick indices, which
+/// must stay accurate over long sessions.
+pub type AbsoluteTime = f64;
+
 /// Frame timer and fixed-tick conversion utility.
 #[derive(Resource, TypeUuid)]
 #[uuid = "b0a01abf-afee-4107-94e8-6e2fbab21f72"]
@@ -16,11 +20,11 @@ pub struct Time {
     timers: RefCell<HashMap<&'static str, Instant>>,
     last_time: Instant,
     tick_rate: TimeType,
-    tick_period: TimeType,
+    tick_period: AbsoluteTime,
     /// Scaled elapsed runtime in seconds.
-    pub time: TimeType,
+    pub time: AbsoluteTime,
     /// Unscaled elapsed runtime in seconds.
-    pub static_time: TimeType,
+    pub static_time: AbsoluteTime,
     /// Scaled frame delta in seconds.
     pub delta_time: TimeType,
     /// Unscaled frame delta in seconds.
@@ -30,9 +34,9 @@ pub struct Time {
 }
 
 macro_rules! time_member_getter {
-    ($member:ident) => {
+    ($member:ident: $ty:ty) => {
         #[doc = concat!("Returns `self.", stringify!($member), "`.")]
-        pub fn $member(&self) -> TimeType {
+        pub fn $member(&self) -> $ty {
             self.$member
         }
     };
@@ -53,7 +57,7 @@ impl Time {
             timers: RefCell::new(HashMap::new()),
             last_time: Instant::now(),
             tick_rate,
-            tick_period: 1.0 / tick_rate,
+            tick_period: 1.0 / AbsoluteTime::from(tick_rate),
             time: 0.0,
             static_time: 0.0,
             delta_time: 0.0,
@@ -65,18 +69,18 @@ impl Time {
     /// Advances the timer using wall-clock elapsed time since the last update.
     pub fn update_time(&mut self) {
         self.static_delta_time = self.last_time.elapsed().as_secs_f32();
-        self.static_time += self.static_delta_time;
+        self.static_time += AbsoluteTime::from(self.static_delta_time);
         self.delta_time = self.static_delta_time * self.time_scale;
-        self.time += self.delta_time;
+        self.time += AbsoluteTime::from(self.delta_time);
         self.last_time = Instant::now();
     }
 
     /// Advances the timer by an explicit `delta` in seconds.
     pub fn advance_by(&mut self, delta: TimeType) {
         self.static_delta_time = delta;
-        self.static_time += delta;
+        self.static_time += AbsoluteTime::from(delta);
         self.delta_time = delta * self.time_scale;
-        self.time += self.delta_time;
+        self.time += AbsoluteTime::from(self.delta_time);
     }
 
     /// Returns the elapsed time since the named timer was first observed or
@@ -108,15 +112,15 @@ impl Time {
     }
 
     /// Converts `time` in seconds into a fixed-tick index.
-    pub fn time_to_tick(&self, time: TimeType) -> u32 {
+    pub fn time_to_tick(&self, time: AbsoluteTime) -> u32 {
         (time / self.tick_period) as u32
     }
 
-    time_member_getter!(time);
-    time_member_getter!(delta_time);
-    time_member_getter!(static_time);
-    time_member_getter!(static_delta_time);
-    time_member_getter!(time_scale);
+    time_member_getter!(time: AbsoluteTime);
+    time_member_getter!(delta_time: TimeType);
+    time_member_getter!(static_time: AbsoluteTime);
+    time_member_getter!(static_delta_time: TimeType);
+    time_member_getter!(time_scale: TimeType);
 }
 
 #[cfg(test)]
@@ -144,6 +148,23 @@ mod tests {
         assert_eq!(t.time_to_tick(0.0), 0);
         assert_eq!(t.time_to_tick(0.25), 2);
         assert_eq!(t.time_to_tick(1.0), 10);
+    }
+
+    #[test]
+    fn tick_indices_stay_exact_after_more_than_a_day() {
+        // 128 Hz and 0.25 s steps are exactly representable, so any drift
+        // comes from the accumulator precision alone.
+        let mut t = Time::new(128.0);
+        let steps = 400_000u32; // 100_000 s, longer than a day
+        for _ in 0..steps {
+            t.advance_by(0.25);
+        }
+        assert!(t.time() > 86_400.0);
+        assert_eq!(t.time(), 100_000.0);
+        assert_eq!(t.static_time(), 100_000.0);
+        assert_eq!(t.current_tick(), 100_000 * 128);
+        assert_eq!(t.time_to_tick(t.time() + 1.0 / 128.0), 100_000 * 128 + 1);
+        assert_eq!(t.time_to_tick(t.time() - 1.0 / 128.0), 100_000 * 128 - 1);
     }
 
     #[test]

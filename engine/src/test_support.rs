@@ -361,7 +361,7 @@ impl HeadlessSceneRunner {
 
         let raw_input = RawInput {
             screen_rect: Some(self.screen_rect),
-            time: Some(self.resources.time().static_time() as f64),
+            time: Some(self.resources.time().static_time()),
             predicted_dt: self.step_seconds,
             modifiers: self.modifiers,
             events: std::mem::take(&mut self.pending_events),
