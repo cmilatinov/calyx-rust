@@ -122,6 +122,9 @@ where
             .collect::<Vec<_>>();
         motions.sort_by(|a, b| b.0.total_cmp(&a.0));
         motions.truncate(n);
+        if motions.is_empty() {
+            return motions;
+        }
         if motions[0].0 == f32::INFINITY {
             motions[0].0 = 1.0;
             motions.truncate(1);
@@ -457,5 +460,15 @@ mod tests {
         };
         let neighbors = tree.nearest_neighbors(2, &HashMap::new());
         assert!(neighbors.is_empty());
+    }
+
+    #[test]
+    fn nearest_neighbors_empty_tree_returns_empty() {
+        let pid = Uuid::new_v4();
+        let tree: BlendTree<1> = BlendTree {
+            parameters: vec![pid],
+            motions: vec![],
+        };
+        assert!(tree.nearest_neighbors(2, &make_params(pid, 0.5)).is_empty());
     }
 }
