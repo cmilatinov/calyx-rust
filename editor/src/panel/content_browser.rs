@@ -77,10 +77,7 @@ impl Panel for PanelContentBrowser {
                     continue;
                 }
                 if file_name_str(&curr_path).is_none() {
-                    log::error!(
-                        "Skipping entry whose file name is not valid UTF-8: path={}",
-                        curr_path.display()
-                    );
+                    warn_skipped_entry(&curr_path);
                     continue;
                 }
                 nodes.push(curr_path);
@@ -99,10 +96,18 @@ impl Panel for PanelContentBrowser {
                         |ui| {
                             let mut root = root_path;
                             let Some(names) = breadcrumb_names(&root, &self.selected_folder) else {
-                                log::error!(
-                                    "Cannot show breadcrumbs for folder: folder={} root={}",
-                                    self.selected_folder.display(),
-                                    root.display()
+                                engine::logging::warn_once(
+                                    format!(
+                                        "content_browser:breadcrumbs:{}",
+                                        self.selected_folder.display()
+                                    ),
+                                    || {
+                                        format!(
+                                            "Cannot show breadcrumbs for folder: folder={} root={}",
+                                            self.selected_folder.display(),
+                                            root.display()
+                                        )
+                                    },
                                 );
                                 return;
                             };
@@ -371,10 +376,7 @@ impl PanelContentBrowser {
         let collapsing_id = ui.make_persistent_id(&curr_path);
         let is_selected = self.selected_folder == curr_path;
         let Some(text) = file_name_str(&curr_path) else {
-            log::error!(
-                "Skipping folder whose name is not valid UTF-8: path={}",
-                curr_path.display()
-            );
+            warn_skipped_entry(&curr_path);
             return;
         };
 
@@ -501,6 +503,17 @@ impl PanelContentBrowser {
 /// no file name or the name is not valid UTF-8.
 fn file_name_str(path: &Path) -> Option<&str> {
     path.file_name()?.to_str()
+}
+
+/// Warns once per path that an entry was skipped because its name is not valid
+/// UTF-8. The content browser rescans every frame, so the warning is deduplicated.
+fn warn_skipped_entry(path: &Path) {
+    engine::logging::warn_once(format!("content_browser:skipped:{path:?}"), || {
+        format!(
+            "Skipping entry whose file name is not valid UTF-8: path={}",
+            path.display()
+        )
+    });
 }
 
 /// Returns the names of the folders between `root` and `folder`, outermost
