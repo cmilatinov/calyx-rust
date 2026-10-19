@@ -68,20 +68,7 @@ impl InputState {
         }
     }
 
-    /// Returns a mutable copy-on-write action map owned by this state, detaching it
-    /// from any project asset.
-    pub fn action_map_mut(&mut self) -> &mut ActionMap {
-        if let ActionMapSource::Asset(map) = &self.action_map {
-            let detached = map.read().clone();
-            self.action_map = ActionMapSource::Owned(Arc::new(detached));
-        }
-        match &mut self.action_map {
-            ActionMapSource::Owned(map) => Arc::make_mut(map),
-            ActionMapSource::Asset(_) => unreachable!("action map was detached above"),
-        }
-    }
-
-    /// Replaces the active action map.
+    /// Replaces the active action map, no longer following the project asset.
     pub fn set_action_map(&mut self, action_map: ActionMap) {
         self.action_map = ActionMapSource::Owned(Arc::new(action_map));
     }

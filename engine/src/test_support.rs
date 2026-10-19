@@ -3,7 +3,7 @@ use crate::class_registry::ComponentRegistry;
 use crate::component::{Component, ComponentID};
 use crate::context::{AssetContext, GameContext, ReadOnlyRegistryContext, RegistryContext};
 use crate::core::Ref;
-use crate::input::{ActionMap, Input};
+use crate::input::Input;
 use crate::reflect::type_registry::TypeRegistry;
 use crate::render::RenderContext;
 use crate::resource::ResourceMap;
@@ -440,11 +440,6 @@ impl HeadlessSceneRunner {
     /// Returns the runner resource map mutably.
     pub fn resources_mut(&mut self) -> &mut ResourceMap {
         &mut self.resources
-    }
-
-    /// Returns the mutable action map used for synthetic input.
-    pub fn action_map_mut(&mut self) -> &mut ActionMap {
-        self.resources.input_mut().action_map_mut()
     }
 
     /// Enables or disables input processing.
