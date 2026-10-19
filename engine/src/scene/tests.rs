@@ -219,6 +219,25 @@ mod tests {
     }
 
     #[test]
+    fn set_parent_with_self_as_sibling_reparents_to_new_parent() {
+        let mut scene = test_scene();
+        let old_parent = scene.create(None, None);
+        let new_parent = scene.create(None, None);
+        let go = scene.create(None, Some(old_parent));
+        let existing = scene.create(None, Some(new_parent));
+
+        scene
+            .set_parent_with_sibling(go, Some(new_parent), Some((go, SiblingDir::Before)))
+            .unwrap();
+        assert_eq!(scene.parent(go), Some(new_parent));
+        assert_eq!(
+            scene.children_ordered(new_parent).collect::<Vec<_>>(),
+            vec![existing, go]
+        );
+        assert_eq!(scene.children(old_parent).count(), 0);
+    }
+
+    #[test]
     fn index_in_parent() {
         let mut scene = test_scene();
         let parent = scene.create(None, None);

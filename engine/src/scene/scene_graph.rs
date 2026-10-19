@@ -209,12 +209,17 @@ impl SceneGraph {
         if self.is_descendant(game_object, parent) {
             return Err(SceneError::HierarchyCycle);
         }
-        if sibling
-            .as_ref()
-            .is_some_and(|(sibling, _)| *sibling == game_object)
-        {
-            return Ok(());
-        }
+        // Dropping an object next to itself is a no-op under its own parent and
+        // an unresolvable sibling (append) under any other parent.
+        let sibling = match sibling {
+            Some((sibling, _)) if sibling == game_object => {
+                if self.parent(game_object) == Some(parent) {
+                    return Ok(());
+                }
+                None
+            }
+            sibling => sibling,
+        };
 
         if let Some((old_parent, edge)) = self.parent(game_object).and_then(|old_parent| {
             self.arena
