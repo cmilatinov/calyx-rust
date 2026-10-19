@@ -379,6 +379,45 @@ impl Scene {
         }
     }
 
+    /// Checks that `prefab` references only objects it contains and has an
+    /// acyclic hierarchy, so instantiation cannot fail midway.
+    fn validate_prefab(prefab: &Prefab) -> Result<(), SceneError> {
+        let components = &prefab.data.components;
+        if !components.contains_key(&prefab.root) {
+            return Err(SceneError::InvalidPrefab(format!(
+                "root object {} is missing",
+                prefab.root
+            )));
+        }
+        let mut parents = HashMap::new();
+        for (parent_id, children) in prefab.data.hierarchy.iter() {
+            if !components.contains_key(parent_id) {
+                return Err(SceneError::InvalidPrefab(format!(
+                    "hierarchy parent {parent_id} is missing"
+                )));
+            }
+            for child_id in children {
+                if !components.contains_key(child_id) {
+                    return Err(SceneError::InvalidPrefab(format!(
+                        "hierarchy child {child_id} is missing"
+                    )));
+                }
+                parents.insert(*child_id, *parent_id);
+            }
+        }
+        for start in parents.keys() {
+            let mut current = *start;
+            let mut steps = 0;
+            while let Some(parent_id) = parents.get(&current) {
+                steps += 1;
+                if steps > parents.len() {
+                    return Err(SceneError::HierarchyCycle);
+                }
+                current = *parent_id;
+            }
+        }
+        Ok(())
+    }
     /// Instantiates `prefab` into the scene and remaps any embedded
     /// [`GameObjectRef`] values to the newly created objects.
     ///
@@ -388,12 +427,7 @@ impl Scene {
         prefab: &Prefab,
         parent: Option<GameObject>,
     ) -> Result<GameObject, SceneError> {
-        if !prefab.data.components.contains_key(&prefab.root) {
-            return Err(SceneError::InvalidPrefab(format!(
-                "root object {} is missing",
-                prefab.root
-            )));
-        }
+        Self::validate_prefab(prefab)?;
         let mut id_mapping = prefab
             .data
             .components

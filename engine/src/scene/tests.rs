@@ -823,12 +823,38 @@ mod tests {
         prefab.data.hierarchy.insert(root_id, vec![child_id]);
         prefab.data.hierarchy.insert(child_id, vec![root_id]);
 
+        let object_count = scene.root_objects().count();
+        let entity_count = scene.world.len();
+
         let result = scene.instantiate_prefab(&prefab, None);
 
         assert!(matches!(
             result,
             Err(crate::scene::SceneError::HierarchyCycle)
         ));
+        assert_eq!(scene.root_objects().count(), object_count);
+        assert_eq!(scene.world.len(), entity_count);
+    }
+
+    #[test]
+    fn instantiate_prefab_returns_error_for_hierarchy_entry_outside_prefab() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+        let root = scene.create(None, None);
+        let mut prefab = scene.create_prefab(root);
+        prefab
+            .data
+            .hierarchy
+            .insert(scene.uuid(root), vec![Uuid::new_v4()]);
+        let entity_count = scene.world.len();
+
+        let result = scene.instantiate_prefab(&prefab, None);
+
+        assert!(matches!(
+            result,
+            Err(crate::scene::SceneError::InvalidPrefab(_))
+        ));
+        assert_eq!(scene.world.len(), entity_count);
     }
 
     // --- Serialization ---
