@@ -238,6 +238,7 @@ mod tests {
     fn transform_registry() -> TypeRegistry {
         let mut reg = TypeRegistry {
             types: Default::default(),
+            identities: Default::default(),
         };
         Transform::register(&mut reg);
         reg
@@ -262,6 +263,7 @@ mod tests {
     fn enum_type_info_stores_variants() {
         let mut reg = TypeRegistry {
             types: Default::default(),
+            identities: Default::default(),
         };
         ExampleEnum::register(&mut reg);
 

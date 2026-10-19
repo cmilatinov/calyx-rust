@@ -235,6 +235,7 @@ impl ProjectManager {
                             target.display()
                         );
                         let mut registry = self.context.registries.types.write();
+                        registry.begin_plugin_load();
                         let before = registry.types.keys().copied().collect::<HashSet<_>>();
                         load_fn.get()(&mut registry);
                         let mut registered_count = 0usize;
