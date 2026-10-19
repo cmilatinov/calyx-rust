@@ -278,7 +278,7 @@ impl Mesh {
         {
             if bone_ids[index] != -1 {
                 bone_ids[index..].rotate_right(1);
-                bone_weights[index..].rotate_left(1);
+                bone_weights[index..].rotate_right(1);
             }
             bone_ids[index] = bone_index;
             bone_weights[index] = weight;
@@ -525,5 +525,22 @@ impl Mesh {
     /// Marks the mesh so its GPU buffers are rebuilt on the next render pass.
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Mesh;
+
+    #[test]
+    fn heavier_bone_weight_shifts_lighter_ones_with_their_bones() {
+        let mut bone_ids = [-1; 4];
+        let mut bone_weights = [0.0; 4];
+
+        Mesh::insert_bone_weight(0, 0.3, &mut bone_ids, &mut bone_weights);
+        Mesh::insert_bone_weight(1, 0.7, &mut bone_ids, &mut bone_weights);
+
+        assert_eq!(bone_ids, [1, 0, -1, -1]);
+        assert_eq!(bone_weights, [0.7, 0.3, 0.0, 0.0]);
     }
 }
