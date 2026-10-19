@@ -5,7 +5,7 @@ use egui::load::SizedTexture;
 use egui::{Context, Direction, Image, ImageSource, InnerResponse, Layout, Rect, Sense};
 use engine::context::{AssetContext, GameContext};
 use engine::error::DynError;
-use engine::input::{Input, InputState};
+use engine::input::Input;
 use engine::logging::{DefaultLogger, Log};
 use engine::render::{Camera, SceneRenderer, SceneRendererOptions};
 use engine::scene::Scene;
@@ -502,12 +502,12 @@ impl eframe::App for GameApp {
                 );
                 // The HUD is non-interactive, so update gameplay before taking the
                 // snapshot that will be painted this frame.
-                let state = InputState {
-                    is_active: true,
-                    last_cursor_pos: None,
-                    ..Default::default()
-                };
-                let input = Input::from_ctx(ui.ctx(), Some(&response), state);
+                let input = Input::from_ctx(
+                    ui.ctx(),
+                    Some(&response),
+                    self.game.resources.input_mut(),
+                    true,
+                );
                 let hud_state = {
                     let assets = self.game.assets.lock_read();
                     let GameContext {
