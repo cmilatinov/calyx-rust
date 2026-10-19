@@ -789,18 +789,14 @@ mod tests {
 
     #[test]
     fn sandbox_scene_deserializes_objects() {
-        let assets = engine::test_support::test_asset_context_with_assets(vec![
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),
-            std::env::current_dir().unwrap().join("assets"),
-        ]);
+        let test_assets = engine::test_support::TestAssets::sandbox();
+        let assets = test_assets.asset_context();
         let scene_ref = assets
             .registries
             .assets
             .read()
             .reload_by_path::<engine::scene::Scene>(
-                &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("assets")
-                    .join("scene.cxscene"),
+                &test_assets.sandbox_root().join("scene.cxscene"),
             )
             .expect("sandbox scene should load");
 
@@ -830,18 +826,14 @@ mod tests {
 
     #[test]
     fn editor_simulation_start_preserves_sandbox_camera_transform() {
-        let assets = engine::test_support::test_asset_context_with_assets(vec![
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),
-            std::env::current_dir().unwrap().join("assets"),
-        ]);
+        let test_assets = engine::test_support::TestAssets::sandbox();
+        let assets = test_assets.asset_context();
         let scene_ref = assets
             .registries
             .assets
             .read()
             .reload_by_path::<engine::scene::Scene>(
-                &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("assets")
-                    .join("scene.cxscene"),
+                &test_assets.sandbox_root().join("scene.cxscene"),
             )
             .expect("sandbox scene should load");
 
@@ -894,18 +886,14 @@ mod tests {
 
     #[test]
     fn editor_simulation_first_update_preserves_camera_without_input() {
-        let assets = engine::test_support::test_asset_context_with_assets(vec![
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),
-            std::env::current_dir().unwrap().join("assets"),
-        ]);
+        let test_assets = engine::test_support::TestAssets::sandbox();
+        let assets = test_assets.asset_context();
         let scene_ref = assets
             .registries
             .assets
             .read()
             .reload_by_path::<engine::scene::Scene>(
-                &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("assets")
-                    .join("scene.cxscene"),
+                &test_assets.sandbox_root().join("scene.cxscene"),
             )
             .expect("sandbox scene should load");
 
@@ -973,18 +961,14 @@ mod tests {
 
     #[test]
     fn sandbox_shooting_does_not_move_targets() {
-        let assets = engine::test_support::test_asset_context_with_assets(vec![
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),
-            std::env::current_dir().unwrap().join("assets"),
-        ]);
+        let test_assets = engine::test_support::TestAssets::sandbox();
+        let assets = test_assets.asset_context();
         let scene_ref = assets
             .registries
             .assets
             .read()
             .reload_by_path::<engine::scene::Scene>(
-                &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("assets")
-                    .join("scene.cxscene"),
+                &test_assets.sandbox_root().join("scene.cxscene"),
             )
             .expect("sandbox scene should load");
         let scene = scene_ref.read().clone();
