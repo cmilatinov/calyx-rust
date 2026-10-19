@@ -350,6 +350,21 @@ mod tests {
     }
 
     #[test]
+    fn delete_removes_cycle_when_several_members_are_queued() {
+        let mut scene = test_scene();
+        let a = scene.create(None, None);
+        let b = scene.create(None, Some(a));
+        scene.set_parent(a, Some(b));
+
+        scene.delete(a);
+        scene.delete(b);
+        scene.flush_deletes();
+
+        assert!(scene.find(scene.uuid(a)).is_none());
+        assert!(scene.find(scene.uuid(b)).is_none());
+    }
+
+    #[test]
     fn delete_keeps_sibling_order_contiguous() {
         let mut scene = test_scene();
         let parent = scene.create(None, None);

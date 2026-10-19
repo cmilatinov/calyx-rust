@@ -700,20 +700,31 @@ impl Scene {
             .iter()
             .copied()
             .filter(|go| {
-                // Stop at the first repeated node so cyclic hierarchies neither
-                // loop forever nor count `go` as its own ancestor.
+                // Collect ancestors until the chain ends, repeats, or returns to
+                // `go` itself (so `go` is never its own ancestor).
                 let mut visited = HashSet::from([*go]);
+                let mut chain = Vec::new();
+                let mut on_cycle = false;
                 let mut current = self.parent(*go);
                 while let Some(ancestor) = current {
+                    if ancestor == *go {
+                        on_cycle = true;
+                        break;
+                    }
                     if !visited.insert(ancestor) {
                         break;
                     }
-                    if queued.contains(&ancestor) {
-                        return false;
-                    }
+                    chain.push(ancestor);
                     current = self.parent(ancestor);
                 }
-                true
+                let mut queued_ancestors = chain.iter().filter(|a| queued.contains(*a));
+                if on_cycle {
+                    // Only the queued cycle member with the lowest node index
+                    // stays a root so the cycle is deleted exactly once.
+                    queued_ancestors.all(|a| a.node.index() > go.node.index())
+                } else {
+                    queued_ancestors.next().is_none()
+                }
             })
             .collect();
         for game_object in roots {
