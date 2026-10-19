@@ -43,23 +43,26 @@ impl AssetInspector for PrefabInspector {
             };
             let prefab = prefab_ref.read();
             drop(asset_registry);
-            if let Some(game_object) = game
+            match game
                 .scenes
                 .simulation_scene_mut()
                 .instantiate_prefab(&prefab, None)
             {
-                let scene = game.scenes.simulation_scene();
-                log::info!(
-                    "Instantiated prefab: prefab={} asset_id={} root_object={} ({})",
-                    prefab_meta
-                        .as_ref()
-                        .map(|meta| meta.display_name.as_str())
-                        .unwrap_or("<unknown>"),
-                    asset_id,
-                    scene.name(game_object),
-                    scene.uuid(game_object)
-                );
-                action = AssetInspectorAction::SceneChanged;
+                Ok(game_object) => {
+                    let scene = game.scenes.simulation_scene();
+                    log::info!(
+                        "Instantiated prefab: prefab={} asset_id={} root_object={} ({})",
+                        prefab_meta
+                            .as_ref()
+                            .map(|meta| meta.display_name.as_str())
+                            .unwrap_or("<unknown>"),
+                        asset_id,
+                        scene.name(game_object),
+                        scene.uuid(game_object)
+                    );
+                    action = AssetInspectorAction::SceneChanged;
+                }
+                Err(err) => log::error!("Failed to instantiate prefab asset_id={asset_id}: {err}"),
             }
             ui.close_menu();
         }

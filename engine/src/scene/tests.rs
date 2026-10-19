@@ -781,9 +781,7 @@ mod tests {
 
         let prefab = scene.create_prefab(parent);
         let instance = scene.instantiate_prefab(&prefab, None);
-        assert!(instance.is_some());
-
-        let instance_go = instance.unwrap();
+        let instance_go = instance.expect("prefab should instantiate");
         let instance_name = scene.name(instance_go);
         assert_eq!(instance_name, "PrefabRoot");
 
@@ -796,6 +794,135 @@ mod tests {
         assert_ne!(scene.uuid(instance_go), scene.uuid(parent));
     }
 
+    #[test]
+    fn instantiate_prefab_returns_error_for_missing_root() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+        let root = scene.create(None, None);
+        let mut prefab = scene.create_prefab(root);
+        prefab.root = Uuid::new_v4();
+        let object_count = scene.root_objects().count();
+
+        let result = scene.instantiate_prefab(&prefab, None);
+
+        assert!(matches!(
+            result,
+            Err(crate::scene::SceneError::InvalidPrefab(_))
+        ));
+        assert_eq!(scene.root_objects().count(), object_count);
+    }
+
+    #[test]
+    fn instantiate_prefab_returns_error_for_hierarchy_cycle() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+        let root = scene.create(None, None);
+        let a = scene.create(None, None);
+        let b = scene.create(None, None);
+        let mut prefab = scene.create_prefab(root);
+        for go in [a, b] {
+            prefab.data.components.insert(
+                scene.uuid(go),
+                scene.create_prefab(go).data.components[&scene.uuid(go)].clone(),
+            );
+        }
+        prefab.data.hierarchy.clear();
+        prefab
+            .data
+            .hierarchy
+            .insert(scene.uuid(a), vec![scene.uuid(b)]);
+        prefab
+            .data
+            .hierarchy
+            .insert(scene.uuid(b), vec![scene.uuid(a)]);
+        let object_count = scene.root_objects().count();
+        let entity_count = scene.world.len();
+
+        let result = scene.instantiate_prefab(&prefab, None);
+
+        assert!(matches!(
+            result,
+            Err(crate::scene::SceneError::HierarchyCycle)
+        ));
+        assert_eq!(scene.root_objects().count(), object_count);
+        assert_eq!(scene.world.len(), entity_count);
+    }
+
+    #[test]
+    fn instantiate_prefab_returns_error_for_hierarchy_entry_outside_prefab() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+        let root = scene.create(None, None);
+        let mut prefab = scene.create_prefab(root);
+        prefab
+            .data
+            .hierarchy
+            .insert(scene.uuid(root), vec![Uuid::new_v4()]);
+        let entity_count = scene.world.len();
+
+        let result = scene.instantiate_prefab(&prefab, None);
+
+        assert!(matches!(
+            result,
+            Err(crate::scene::SceneError::InvalidPrefab(_))
+        ));
+        assert_eq!(scene.world.len(), entity_count);
+    }
+
+    #[test]
+    fn instantiate_prefab_returns_error_for_disconnected_or_duplicate_parent_objects() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+        let root = scene.create(None, None);
+        let other = scene.create(None, None);
+        let (root_id, other_id) = (scene.uuid(root), scene.uuid(other));
+        let mut prefab = scene.create_prefab(root);
+        prefab.data.components.insert(
+            other_id,
+            scene.create_prefab(other).data.components[&other_id].clone(),
+        );
+        let entity_count = scene.world.len();
+
+        let disconnected = scene.instantiate_prefab(&prefab, None);
+        prefab
+            .data
+            .hierarchy
+            .insert(root_id, vec![other_id, other_id]);
+        let duplicate = scene.instantiate_prefab(&prefab, None);
+
+        assert!(matches!(
+            disconnected,
+            Err(crate::scene::SceneError::InvalidPrefab(_))
+        ));
+        assert!(matches!(
+            duplicate,
+            Err(crate::scene::SceneError::InvalidPrefab(_))
+        ));
+        assert_eq!(scene.world.len(), entity_count);
+    }
+
+    #[test]
+    fn instantiate_prefab_returns_error_for_missing_id_component() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+        let root = scene.create(None, None);
+        let mut prefab = scene.create_prefab(root);
+        prefab
+            .data
+            .components
+            .get_mut(&prefab.root)
+            .unwrap()
+            .remove(&<ComponentID as crate::utils::TypeUuid>::type_uuid());
+        let entity_count = scene.world.len();
+
+        let result = scene.instantiate_prefab(&prefab, None);
+
+        assert!(matches!(
+            result,
+            Err(crate::scene::SceneError::InvalidPrefab(_))
+        ));
+        assert_eq!(scene.world.len(), entity_count);
+    }
     // --- Serialization ---
 
     #[test]

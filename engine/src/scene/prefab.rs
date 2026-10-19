@@ -1,5 +1,6 @@
 use crate::assets::animation::Animation;
 use crate::assets::error::AssetError;
+use crate::assets::material::Material;
 use crate::assets::mesh::Mesh;
 use crate::assets::{Asset, AssetRegistry, LoadedAsset};
 use crate::component::{
@@ -22,6 +23,7 @@ use std::io::BufReader;
 use std::path::Path;
 use uuid::Uuid;
 
+const DEFAULT_MATERIAL_NAME: &str = "materials/default";
 const AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS: &[u8; 27] = b"IMPORT_FBX_PRESERVE_PIVOTS\0";
 
 /// Serialized subtree asset that can be instantiated into a [`crate::scene::Scene`].
@@ -71,9 +73,19 @@ impl Asset for Prefab {
     where
         Self: Sized,
     {
-        let ext = path.extension().and_then(|ext| ext.to_str()).unwrap();
+        let load_error = || {
+            AssetError::LoadError
+                .with_path(path)
+                .with_type(Self::asset_name())
+        };
+        let ext = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .ok_or_else(|| load_error().with_source("path has no valid file extension"))?;
         let asset_registry = game.registries.assets.read();
-        let meta = asset_registry.asset_meta_from_path(path).unwrap();
+        let meta = asset_registry
+            .asset_meta_from_path(path)
+            .ok_or_else(|| load_error().with_source("asset metadata not found"))?;
         if ext == "fbx" || ext == "dae" {
             let props: PropertyStore = [(
                 AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS as &[u8],
@@ -82,7 +94,8 @@ impl Asset for Prefab {
             .into_iter()
             .into();
             let scene = russimp_ng::scene::Scene::from_file_with_props(
-                path.to_str().unwrap(),
+                path.to_str()
+                    .ok_or_else(|| load_error().with_source("path is not valid UTF-8"))?,
                 vec![
                     PostProcess::Triangulate,
                     PostProcess::GenerateSmoothNormals,
@@ -121,7 +134,7 @@ impl Asset for Prefab {
                     root,
                     None,
                     &mut data,
-                );
+                )?;
             }
 
             let mut animation_names = HashSet::new();
@@ -196,6 +209,17 @@ fn imported_sub_asset_name(
     candidate
 }
 
+/// Resolves the default material assigned to imported meshes.
+fn default_material_id(registry: &AssetRegistry) -> Result<Uuid, AssetError> {
+    registry.asset_id(DEFAULT_MATERIAL_NAME).ok_or_else(|| {
+        AssetError::NotFound
+            .with_type(Material::asset_name())
+            .with_source(format!(
+                "default material '{DEFAULT_MATERIAL_NAME}' not found"
+            ))
+    })
+}
+
 impl Prefab {
     fn traverse(
         registry: &AssetRegistry,
@@ -205,7 +229,7 @@ impl Prefab {
         node: &russimp_ng::node::Node,
         mut parent: Option<Uuid>,
         data: &mut SceneData,
-    ) {
+    ) -> Result<(), AssetError> {
         let matrix: Mat4 = math::mat4_from_russimp(&node.transformation);
         let id = utils::uuid_from_str(node.name.as_str());
         if let Some(parent_id) = parent {
@@ -228,7 +252,7 @@ impl Prefab {
         );
         if !node.meshes.is_empty() && node.meshes[0] < meshes.len() as u32 {
             let mesh_ref = meshes[node.meshes[0] as usize].clone();
-            let material_id = registry.asset_id("materials/default").unwrap();
+            let material_id = default_material_id(registry)?;
             let mesh = mesh_ref.read();
             if !mesh.bones.is_empty() {
                 entry.insert(
@@ -260,14 +284,54 @@ impl Prefab {
             );
         }
         for child in &*node.children.borrow() {
-            Self::traverse(registry, bones, meshes, root, child.borrow(), parent, data);
+            Self::traverse(registry, bones, meshes, root, child.borrow(), parent, data)?;
         }
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::test_game_context;
+
+    #[test]
+    fn from_file_returns_error_for_path_without_extension() {
+        let context = test_game_context().assets.lock_read();
+        let path = std::env::temp_dir().join(format!("prefab-{}", Uuid::new_v4()));
+
+        let Err(err) = Prefab::from_file(&context, &path) else {
+            panic!("path without extension should fail");
+        };
+
+        assert_eq!(err.asset_type, Some(Prefab::asset_name()));
+        assert_eq!(err.path.as_deref(), Some(path.as_path()));
+    }
+
+    #[test]
+    fn from_file_returns_error_for_unregistered_path() {
+        let context = test_game_context().assets.lock_read();
+        let path = std::env::temp_dir().join(format!("prefab-{}.fbx", Uuid::new_v4()));
+
+        let Err(err) = Prefab::from_file(&context, &path) else {
+            panic!("path without asset metadata should fail");
+        };
+
+        assert_eq!(err.asset_type, Some(Prefab::asset_name()));
+        assert_eq!(err.path.as_deref(), Some(path.as_path()));
+    }
+
+    #[test]
+    fn default_material_id_returns_error_when_missing() {
+        let context = test_game_context().assets.lock_read();
+        let registry = context.registries.assets.read();
+
+        let Err(err) = default_material_id(&registry) else {
+            panic!("missing default material should fail");
+        };
+
+        assert_eq!(err.kind, AssetError::NotFound.kind);
+    }
 
     #[test]
     fn imported_sub_asset_names_are_unique() {
