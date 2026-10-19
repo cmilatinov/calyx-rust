@@ -473,19 +473,27 @@ impl PanelSceneHierarchy {
             let parent_label = Self::game_object_label(scene, target_parent);
             let sibling_label =
                 target_sibling.map(|sibling| Self::game_object_label(scene, sibling));
-            scene.set_parent_with_sibling(
+            let result = scene.set_parent_with_sibling(
                 dragged_game_object,
                 Some(target_parent),
                 target_sibling.map(|sibling| (sibling, SiblingDir::Before)),
             );
-            log::info!(
-                "Reparented game object: object={} parent={} before={}",
-                dragged_label,
-                parent_label,
-                sibling_label.as_deref().unwrap_or("<end>")
-            );
             egui::DragAndDrop::clear_payload(ui.ctx());
-            true
+            match result {
+                Ok(()) => {
+                    log::info!(
+                        "Reparented game object: object={} parent={} before={}",
+                        dragged_label,
+                        parent_label,
+                        sibling_label.as_deref().unwrap_or("<end>")
+                    );
+                    true
+                }
+                Err(err) => {
+                    log::warn!("Failed to reparent game object {dragged_label}: {err}");
+                    false
+                }
+            }
         } else {
             self.send_command(Command::SetTargetContainer(target_parent));
             false

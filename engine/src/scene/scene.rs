@@ -24,7 +24,7 @@ use crate::resource::ResourceMap;
 use crate::scene::game_object_store::GameObjectStore;
 use crate::scene::scene_graph::SceneGraph;
 use crate::scene::transform_cache::TransformCache;
-use crate::scene::{GameObjectRef, Prefab};
+use crate::scene::{GameObjectRef, Prefab, SceneError};
 use crate::try_all;
 use crate::utils::{ContextSeed, TypeUuid};
 
@@ -207,7 +207,9 @@ impl From<(&ReadOnlyRegistryContext, SceneData)> for Scene {
                     None => continue;
                     let child = scene.find(child_id);
                 );
-                scene.set_parent(child, Some(parent));
+                if let Err(err) = scene.set_parent(child, Some(parent)) {
+                    log::warn!("Skipping invalid scene hierarchy entry: {err}");
+                }
             }
         }
         scene
@@ -444,7 +446,7 @@ impl Scene {
                     let new_child_id = id_mapping.get_by_left(child_id);
                     let child = self.find(*new_child_id);
                 );
-                self.set_parent(child, Some(parent));
+                let _ = self.set_parent(child, Some(parent));
             }
         }
 
@@ -452,16 +454,21 @@ impl Scene {
         let game_object = self.find(*prefab_uuid)?;
 
         if let Some(parent) = parent {
-            self.set_parent(game_object, Some(parent));
+            let _ = self.set_parent(game_object, Some(parent));
         }
 
         Some(game_object)
     }
 
     /// Reparents `game_object` under `parent`, appending it after existing
-    /// siblings.
-    pub fn set_parent(&mut self, game_object: GameObject, parent: Option<GameObject>) {
-        self.set_parent_with_sibling(game_object, parent, None);
+    /// siblings. Fails with [`SceneError::HierarchyCycle`] when `parent` is
+    /// inside `game_object`'s own subtree.
+    pub fn set_parent(
+        &mut self,
+        game_object: GameObject,
+        parent: Option<GameObject>,
+    ) -> Result<(), SceneError> {
+        self.set_parent_with_sibling(game_object, parent, None)
     }
 
     /// Reparents `game_object` and optionally inserts it relative to `sibling`.
@@ -470,10 +477,11 @@ impl Scene {
         game_object: GameObject,
         parent: Option<GameObject>,
         sibling: Option<(GameObject, SiblingDir)>,
-    ) {
+    ) -> Result<(), SceneError> {
         let parent = parent.unwrap_or(self.root);
-        self.graph.set_parent(game_object, parent, sibling);
+        self.graph.set_parent(game_object, parent, sibling)?;
         self.transforms.mark_dirty_subtree(game_object, &self.graph);
+        Ok(())
     }
 
     /// Returns the insertion index that would place `sibling` before or after
