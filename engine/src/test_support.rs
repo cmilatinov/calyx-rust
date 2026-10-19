@@ -103,7 +103,7 @@ impl TestAssets {
     fn copy(engine: bool, sandbox: bool) -> Self {
         let dir = std::env::temp_dir().join(format!("calyx-test-assets-{}", uuid::Uuid::new_v4()));
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-        let mut copy_root = |source: &str, name: &str| {
+        let copy_root = |source: &str, name: &str| {
             let source = dunce::canonicalize(workspace.join(source))
                 .unwrap_or_else(|e| panic!("{source} dir not found: {e}"));
             let target = dir.join(name);
