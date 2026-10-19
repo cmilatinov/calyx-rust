@@ -21,4 +21,6 @@ pub mod skybox;
 pub mod texture;
 
 #[cfg(test)]
+mod import_snapshots;
+#[cfg(test)]
 mod tests;
