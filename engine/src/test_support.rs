@@ -3,7 +3,7 @@ use crate::class_registry::ComponentRegistry;
 use crate::component::{Component, ComponentID};
 use crate::context::{AssetContext, GameContext, ReadOnlyRegistryContext, RegistryContext};
 use crate::core::Ref;
-use crate::input::{ActionMap, Input, InputState};
+use crate::input::{ActionMap, Input};
 use crate::reflect::type_registry::TypeRegistry;
 use crate::render::RenderContext;
 use crate::resource::ResourceMap;
@@ -382,7 +382,6 @@ pub struct HeadlessSceneRunner {
     resources: ResourceMap,
     scene: Scene,
     input_context: egui::Context,
-    action_map: ActionMap,
     input_active: bool,
     pending_events: Vec<Event>,
     modifiers: Modifiers,
@@ -409,7 +408,6 @@ impl HeadlessSceneRunner {
             resources: ResourceMap::new(),
             scene,
             input_context: egui::Context::default(),
-            action_map: ActionMap::default(),
             input_active: true,
             pending_events: Vec::new(),
             modifiers: Modifiers::default(),
@@ -446,7 +444,7 @@ impl HeadlessSceneRunner {
 
     /// Returns the mutable action map used for synthetic input.
     pub fn action_map_mut(&mut self) -> &mut ActionMap {
-        &mut self.action_map
+        self.resources.input_mut().action_map_mut()
     }
 
     /// Enables or disables input processing.
@@ -539,11 +537,8 @@ impl HeadlessSceneRunner {
         let input = Input::from_ctx(
             &self.input_context,
             None,
-            InputState {
-                is_active: self.input_active,
-                last_cursor_pos: None,
-                action_map: self.action_map.clone(),
-            },
+            self.resources.input_mut(),
+            self.input_active,
         );
         self.scene
             .update(&self.registries, &mut self.resources, &input);
@@ -702,16 +697,21 @@ pub fn assert_component_value<T, V, F>(
 
 #[cfg(test)]
 mod tests {
-    use super::{test_registries, HeadlessSceneRunner, SceneBuilder, TestAssets};
+    use super::{
+        test_asset_context_with_assets, test_registries, HeadlessSceneRunner, SceneBuilder,
+        TestAssets,
+    };
     use crate as engine;
     use crate::component::{
         Component, ComponentEventContext, ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
     };
+    use crate::context::GameContext;
     use crate::input::Input;
+    use crate::input::{ActionMap, InputBinding, PROJECT_ACTION_MAP_NAME};
     use crate::reflect::{Reflect, ReflectDefault};
     use crate::resource::{Resource, ResourceMap};
     use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
-    use egui::Key;
+    use egui::{Key, PointerButton, Pos2, Vec2};
     use serde::{Deserialize, Serialize};
 
     #[derive(Default, Resource, TypeUuid)]
@@ -720,6 +720,7 @@ mod tests {
     struct InputProbe {
         shoot_presses: usize,
         forward_axis: f32,
+        cursor_delta: Vec2,
     }
 
     #[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
@@ -737,6 +738,7 @@ mod tests {
                 probe.shoot_presses += 1;
             }
             probe.forward_axis = input.axis("move_forward");
+            probe.cursor_delta = input.cursor_delta();
         }
     }
 
@@ -801,5 +803,101 @@ mod tests {
         assert!(copy.starts_with(std::env::temp_dir()));
         drop(assets);
         assert!(!copy.exists(), "temporary copy should be removed on drop");
+    }
+
+    fn input_probe_runner() -> HeadlessSceneRunner {
+        let mut builder = SceneBuilder::new(test_registries());
+        let game_object = builder.spawn("input-probe");
+        builder.add_component(game_object, TestInputComponent);
+        let mut runner = HeadlessSceneRunner::from_scene(builder.finish());
+        runner.resources_mut().insert(InputProbe::default());
+        runner
+    }
+
+    fn shoot_presses(runner: &HeadlessSceneRunner) -> usize {
+        runner
+            .resources()
+            .resource::<InputProbe>()
+            .unwrap()
+            .shoot_presses
+    }
+
+    #[test]
+    fn rebound_action_fires_on_the_new_binding() {
+        let mut runner = input_probe_runner();
+        let mut map = ActionMap::new();
+        map.bind_action("shoot", InputBinding::Key(Key::Enter));
+        runner.resources_mut().input_mut().set_action_map(map);
+
+        runner.press_key(Key::Space);
+        runner.step();
+        assert_eq!(shoot_presses(&runner), 0);
+
+        runner.release_key(Key::Space);
+        runner.press_key(Key::Enter);
+        runner.step();
+        assert_eq!(shoot_presses(&runner), 1);
+    }
+
+    #[test]
+    fn project_action_map_asset_drives_the_scene() {
+        let dir = std::env::temp_dir().join(format!("calyx-input-asset-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut map = ActionMap::new();
+        map.bind_action(
+            "shoot",
+            InputBinding::PointerButton(PointerButton::Secondary),
+        );
+        let asset_path = dir.join(format!("{PROJECT_ACTION_MAP_NAME}.cxinput"));
+        serde_json::to_writer_pretty(std::fs::File::create(&asset_path).unwrap(), &map).unwrap();
+
+        let assets = test_asset_context_with_assets(vec![dir.clone()]);
+        let game = GameContext::new(assets.clone());
+        let mut builder = SceneBuilder::new(assets.registries.lock_read());
+        let game_object = builder.spawn("input-probe");
+        builder.add_component(game_object, TestInputComponent);
+        let mut runner = HeadlessSceneRunner::from_scene(builder.finish());
+        runner.resources_mut().insert(InputProbe::default());
+        runner
+            .resources_mut()
+            .insert(game.resources.input().clone());
+
+        runner.press_key(Key::Space);
+        runner.step();
+        assert_eq!(shoot_presses(&runner), 0);
+
+        runner.release_key(Key::Space);
+        runner.press_pointer_button(Pos2::new(10.0, 10.0), PointerButton::Secondary);
+        runner.step();
+        assert_eq!(shoot_presses(&runner), 1);
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn cursor_delta_reports_movement_since_the_previous_frame() {
+        let mut runner = input_probe_runner();
+        let delta = |runner: &HeadlessSceneRunner| {
+            runner
+                .resources()
+                .resource::<InputProbe>()
+                .unwrap()
+                .cursor_delta
+        };
+
+        runner.move_pointer(Pos2::new(10.0, 10.0));
+        runner.step();
+        assert_eq!(delta(&runner), Vec2::ZERO);
+
+        runner.move_pointer(Pos2::new(25.0, 12.0));
+        runner.step();
+        assert_eq!(delta(&runner), Vec2::new(15.0, 2.0));
+
+        runner.step();
+        assert_eq!(delta(&runner), Vec2::ZERO);
+
+        runner.move_pointer(Pos2::new(35.0, 12.0));
+        runner.step();
+        assert_eq!(delta(&runner), Vec2::new(10.0, 0.0));
     }
 }

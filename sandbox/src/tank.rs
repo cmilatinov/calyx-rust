@@ -922,15 +922,7 @@ mod tests {
         };
 
         let ctx = egui::Context::default();
-        let input = engine::input::Input::from_ctx(
-            &ctx,
-            None,
-            engine::input::InputState {
-                is_active: false,
-                last_cursor_pos: None,
-                ..Default::default()
-            },
-        );
+        let input = engine::input::Input::from_ctx(&ctx, None, game.resources.input_mut(), false);
         let registries = game.assets.lock_read().registries;
         game.scenes.update(&registries, &mut game.resources, &input);
 

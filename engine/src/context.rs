@@ -139,10 +139,14 @@ pub struct GameContext {
 impl GameContext {
     /// Creates a new game context with default runtime resources.
     pub fn new(assets: AssetContext) -> Self {
+        let mut resources = ResourceMap::new();
+        resources
+            .input_mut()
+            .load_project_action_map(&assets.registries.assets.read());
         Self {
             scenes: SceneManager::new(assets.registries.assets.readonly()),
             assets,
-            resources: ResourceMap::new(),
+            resources,
         }
     }
 
