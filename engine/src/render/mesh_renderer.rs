@@ -1,4 +1,5 @@
 use crate::assets::material::MaterialBindGroupCacheKey;
+use crate::assets::mesh::Mesh;
 use crate::assets::texture::Texture;
 use crate::assets::AssetId;
 use crate::context::ReadOnlyAssetContext;
@@ -147,6 +148,7 @@ impl MeshRenderer {
         });
 
         let mut last: (AssetId, AssetId, AssetId) = Default::default();
+        let mut last_chunk = usize::MAX;
         for &(shader_id, mat_id, mesh_id, ref instances) in draw_list {
             let Some(shader) = assets.shader(shader_id) else {
                 continue;
@@ -168,14 +170,16 @@ impl MeshRenderer {
                     }
                 }
             }
-            if mesh_id != last.2 {
-                let Some(mesh_instance_group) = assets.mesh_instance_group(mesh_id) else {
+            let (chunk, local_instances) = Mesh::instance_chunk(instances);
+            if mesh_id != last.2 || chunk != last_chunk {
+                let Some(mesh_instance_group) = assets.mesh_instance_group(mesh_id, chunk) else {
                     continue;
                 };
                 render_pass.set_bind_group(1, mesh_instance_group, &[]);
+                last_chunk = chunk;
             }
             RenderUtils::bind_mesh_buffers(&mut render_pass, mesh);
-            RenderUtils::draw_mesh_instanced(&mut render_pass, mesh, instances.clone());
+            RenderUtils::draw_mesh_instanced(&mut render_pass, mesh, local_instances);
             last = (shader_id, mat_id, mesh_id);
         }
 
@@ -287,19 +291,22 @@ impl MeshRenderer {
         render_pass.set_bind_group(0, &camera_bind_group, &[]);
 
         let mut last_mesh_id = AssetId::default();
+        let mut last_chunk = usize::MAX;
         for &(_, _, mesh_id, ref instances) in draw_list {
             let Some(mesh) = assets.mesh(mesh_id) else {
                 continue;
             };
-            if mesh_id != last_mesh_id {
-                let Some(mesh_instance_group) = assets.mesh_instance_group(mesh_id) else {
+            let (chunk, local_instances) = Mesh::instance_chunk(instances);
+            if mesh_id != last_mesh_id || chunk != last_chunk {
+                let Some(mesh_instance_group) = assets.mesh_instance_group(mesh_id, chunk) else {
                     continue;
                 };
                 render_pass.set_bind_group(1, mesh_instance_group, &[]);
                 RenderUtils::bind_mesh_buffers(&mut render_pass, mesh);
                 last_mesh_id = mesh_id;
+                last_chunk = chunk;
             }
-            RenderUtils::draw_mesh_instanced(&mut render_pass, mesh, instances.clone());
+            RenderUtils::draw_mesh_instanced(&mut render_pass, mesh, local_instances);
         }
 
         if let Some(gizmo_renderer) = gizmo_renderer {

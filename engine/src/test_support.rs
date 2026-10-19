@@ -23,31 +23,100 @@ const MAX_CONNECT_ITERS: usize = 100;
 /// Default fixed simulation step used by headless test runners.
 pub const FIXED_TEST_STEP_SECONDS: f32 = 1.0 / 60.0;
 
+struct TestGpu {
+    adapter: wgpu::Adapter,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+}
+
+/// Features the editor requests that scene and gizmo shaders rely on; enabled
+/// here when the test adapter supports them.
+fn desired_test_features() -> wgpu::Features {
+    wgpu::Features::BUFFER_BINDING_ARRAY
+        | wgpu::Features::TEXTURE_BINDING_ARRAY
+        | wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY
+        | wgpu::Features::UNIFORM_BUFFER_AND_STORAGE_TEXTURE_ARRAY_NON_UNIFORM_INDEXING
+}
+
+/// Limits matching the editor's device, clamped to what the adapter supports.
+fn test_limits(adapter: &wgpu::Adapter) -> wgpu::Limits {
+    let supported = adapter.limits();
+    wgpu::Limits {
+        max_storage_textures_per_shader_stage: 5
+            .min(supported.max_storage_textures_per_shader_stage),
+        max_uniform_buffers_per_shader_stage: 30
+            .min(supported.max_uniform_buffers_per_shader_stage),
+        ..Default::default()
+    }
+}
+
+fn test_gpu() -> &'static TestGpu {
+    static GPU: OnceLock<TestGpu> = OnceLock::new();
+    GPU.get_or_init(|| {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            ..Default::default()
+        });
+        let request_adapter = |force_fallback_adapter| {
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter,
+            }))
+        };
+        let adapter = request_adapter(false)
+            .or_else(|| request_adapter(true))
+            .expect("no wgpu adapter found, including fallback adapter");
+        let (device, queue) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                required_features: desired_test_features() & adapter.features(),
+                required_limits: test_limits(&adapter),
+                ..Default::default()
+            },
+            None,
+        ))
+        .expect("failed to create wgpu device");
+        TestGpu {
+            adapter,
+            device,
+            queue,
+        }
+    })
+}
+
 /// Returns a shared headless render context suitable for tests.
 pub fn test_render_context() -> Arc<RenderContext> {
     static RENDER_CONTEXT: OnceLock<Arc<RenderContext>> = OnceLock::new();
     RENDER_CONTEXT
         .get_or_init(|| {
-            let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-                backends: wgpu::Backends::all(),
-                ..Default::default()
-            });
-            let request_adapter = |force_fallback_adapter| {
-                pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::LowPower,
-                    compatible_surface: None,
-                    force_fallback_adapter,
-                }))
-            };
-            let adapter = request_adapter(false)
-                .or_else(|| request_adapter(true))
-                .expect("no wgpu adapter found, including fallback adapter");
-            let (device, queue) =
-                pollster::block_on(adapter.request_device(&Default::default(), None))
-                    .expect("failed to create wgpu device");
-            Arc::new(RenderContext::headless(Arc::new(device), Arc::new(queue)))
+            let gpu = test_gpu();
+            Arc::new(RenderContext::headless(
+                Arc::new(gpu.device.clone()),
+                Arc::new(gpu.queue.clone()),
+            ))
         })
         .clone()
+}
+
+/// Returns an egui-wgpu render state backed by the shared test device, for
+/// tests that drive renderers which take a `RenderState`.
+pub fn test_render_state() -> egui_wgpu::RenderState {
+    let gpu = test_gpu();
+    let target_format = wgpu::TextureFormat::Bgra8Unorm;
+    egui_wgpu::RenderState {
+        adapter: gpu.adapter.clone(),
+        available_adapters: vec![gpu.adapter.clone()],
+        device: gpu.device.clone(),
+        queue: gpu.queue.clone(),
+        target_format,
+        renderer: Arc::new(egui::mutex::RwLock::new(egui_wgpu::Renderer::new(
+            &gpu.device,
+            target_format,
+            None,
+            1,
+            false,
+        ))),
+    }
 }
 
 fn build_type_registry() -> Ref<TypeRegistry> {

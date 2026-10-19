@@ -27,7 +27,7 @@ impl AssetRenderState {
         LockedAssetRenderState {
             mesh_instance_groups: meshes
                 .iter()
-                .map(|(id, m)| (*id, m.instance_bind_group(device)))
+                .map(|(id, m)| (*id, m.instance_bind_groups(device)))
                 .collect(),
             meshes,
             materials: self.materials.lock_read(),
@@ -55,7 +55,7 @@ impl AssetRenderState {
 
 pub(crate) struct LockedAssetRenderState<'a> {
     pub meshes: HashMap<AssetId, RwLockReadGuard<'a, Mesh>>,
-    pub mesh_instance_groups: HashMap<AssetId, wgpu::BindGroup>,
+    pub mesh_instance_groups: HashMap<AssetId, Vec<wgpu::BindGroup>>,
     pub materials: HashMap<AssetId, RwLockReadGuard<'a, Material>>,
     pub textures: HashMap<AssetId, RwLockReadGuard<'a, Texture>>,
     pub shaders: HashMap<AssetId, RwLockReadGuard<'a, Shader>>,
@@ -67,8 +67,8 @@ impl LockedAssetRenderState<'_> {
     pub fn mesh(&self, id: AssetId) -> Option<&RwLockReadGuard<'_, Mesh>> {
         self.meshes.get(&id)
     }
-    pub fn mesh_instance_group(&self, id: AssetId) -> Option<&wgpu::BindGroup> {
-        self.mesh_instance_groups.get(&id)
+    pub fn mesh_instance_group(&self, id: AssetId, chunk: usize) -> Option<&wgpu::BindGroup> {
+        self.mesh_instance_groups.get(&id)?.get(chunk)
     }
     pub fn material(&self, id: AssetId) -> Option<&RwLockReadGuard<'_, Material>> {
         self.materials.get(&id)
