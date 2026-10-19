@@ -185,9 +185,9 @@ impl TypeRegistry {
     >(
         &mut self,
     ) {
-        let Some(registration) = self.types.get_mut(&T::type_uuid()) else {
+        if !self.types.contains_key(&T::type_uuid()) {
             return;
-        };
+        }
         let meta_uuid = M::type_uuid();
         let meta_identity = std::any::type_name::<M>();
         if let Some(existing) = self.identities.trait_meta.get(&meta_uuid) {
@@ -198,15 +198,29 @@ impl TypeRegistry {
                 );
             }
         }
+        let replaced = self
+            .identities
+            .trait_meta
+            .get(&meta_uuid)
+            .is_some_and(|existing| existing.0 != meta_identity);
+        if replaced {
+            // Stale registrations from earlier plugin passes may still hold the
+            // old metadata object, which must not be read back as the new type.
+            for registration in self.types.values_mut() {
+                registration.trait_meta.remove(&meta_uuid);
+            }
+        }
         let generation = self
             .identities
             .owner_generation(self.identities.trait_meta.get(&meta_uuid));
         self.identities
             .trait_meta
             .insert(meta_uuid, (meta_identity.to_string(), generation));
-        registration
-            .trait_meta
-            .insert(meta_uuid, Box::new(M::trait_meta()));
+        if let Some(registration) = self.types.get_mut(&T::type_uuid()) {
+            registration
+                .trait_meta
+                .insert(meta_uuid, Box::new(M::trait_meta()));
+        }
     }
 
     /// Inserts a fresh registration for `T`, panicking if its UUID already
@@ -610,5 +624,17 @@ mod tests {
             msg.contains("DupMetaA") && msg.contains("DupMetaB"),
             "{msg}"
         );
+    }
+
+    #[test]
+    fn replacing_plugin_trait_meta_purges_stale_metadata_objects() {
+        let mut reg = foo_registry();
+        reg.begin_plugin_load();
+        reg.meta_impls::<Foo, DupMetaA>();
+        reg.begin_plugin_load();
+        Bar::register(&mut reg);
+        reg.meta_impls::<Bar, DupMetaB>();
+        assert!(reg.trait_meta::<DupMetaB>(Foo::type_uuid()).is_none());
+        assert!(reg.trait_meta::<DupMetaB>(Bar::type_uuid()).is_some());
     }
 }
