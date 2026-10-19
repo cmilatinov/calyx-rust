@@ -379,38 +379,52 @@ impl Scene {
         }
     }
 
-    /// Checks that `prefab` references only objects it contains and has an
-    /// acyclic hierarchy, so instantiation cannot fail midway.
-    fn validate_prefab(prefab: &Prefab) -> Result<(), SceneError> {
+    /// Checks that `prefab` is a single well-formed tree rooted at its root
+    /// object, so instantiation cannot fail midway or leave stray objects.
+    fn validate_prefab(&self, prefab: &Prefab) -> Result<(), SceneError> {
+        let invalid = |reason: String| Err(SceneError::InvalidPrefab(reason));
         let components = &prefab.data.components;
         if !components.contains_key(&prefab.root) {
-            return Err(SceneError::InvalidPrefab(format!(
-                "root object {} is missing",
-                prefab.root
-            )));
+            return invalid(format!("root object {} is missing", prefab.root));
+        }
+        let component_registry = self.registries.components.read();
+        let id_component = component_registry.component(ComponentID::type_uuid());
+        for (object_id, object_components) in components {
+            let has_id = id_component.as_ref().is_some_and(|component| {
+                object_components
+                    .get(&ComponentID::type_uuid())
+                    .is_some_and(|data| component.deserialize(data).is_some())
+            });
+            if !has_id {
+                return invalid(format!("object {object_id} has no valid ID component"));
+            }
         }
         let mut parents = HashMap::new();
         for (parent_id, children) in prefab.data.hierarchy.iter() {
             if !components.contains_key(parent_id) {
-                return Err(SceneError::InvalidPrefab(format!(
-                    "hierarchy parent {parent_id} is missing"
-                )));
+                return invalid(format!("hierarchy parent {parent_id} is missing"));
             }
             for child_id in children {
                 if !components.contains_key(child_id) {
-                    return Err(SceneError::InvalidPrefab(format!(
-                        "hierarchy child {child_id} is missing"
-                    )));
+                    return invalid(format!("hierarchy child {child_id} is missing"));
                 }
-                parents.insert(*child_id, *parent_id);
+                if *child_id == prefab.root {
+                    return invalid(format!("root object {child_id} has a parent"));
+                }
+                if parents.insert(*child_id, *parent_id).is_some() {
+                    return invalid(format!("object {child_id} has multiple parents"));
+                }
             }
         }
-        for start in parents.keys() {
-            let mut current = *start;
+        for object_id in components.keys() {
+            let mut current = *object_id;
             let mut steps = 0;
-            while let Some(parent_id) = parents.get(&current) {
+            while current != prefab.root {
+                let Some(parent_id) = parents.get(&current) else {
+                    return invalid(format!("object {object_id} is not reachable from the root"));
+                };
                 steps += 1;
-                if steps > parents.len() {
+                if steps > components.len() {
                     return Err(SceneError::HierarchyCycle);
                 }
                 current = *parent_id;
@@ -427,7 +441,7 @@ impl Scene {
         prefab: &Prefab,
         parent: Option<GameObject>,
     ) -> Result<GameObject, SceneError> {
-        Self::validate_prefab(prefab)?;
+        self.validate_prefab(prefab)?;
         let mut id_mapping = prefab
             .data
             .components
