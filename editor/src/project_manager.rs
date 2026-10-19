@@ -131,7 +131,12 @@ impl ProjectManager {
             let profile = assembly_profile();
             let args = cargo_build_args(profile, &target_dir);
             let source = assembly_artifact_path(&target_dir, profile, &project_name);
-            let outcome = build_assembly(&root, profile, &args, source);
+            let outcome = match build_assembly(&root, profile, &args, source) {
+                AssemblyBuildOutcome::Built(source) => {
+                    snapshot_built_assembly(source, &project_name)
+                }
+                failed => failed,
+            };
             // The receiver only goes away with the project manager.
             let _ = reporter.send(outcome);
         })
@@ -143,7 +148,8 @@ impl ProjectManager {
     /// re-registration never race with code using the plugin's types.
     pub fn load_completed_build(&mut self) -> bool {
         match self.builds.next_load(self.assemblies_loaded()) {
-            Some(source) => self.load_assembly(&source),
+            Some(AssemblyLoad::Snapshot(target)) => self.load_shadow_copy(&target),
+            Some(AssemblyLoad::Source(source)) => self.load_assembly(&source),
             None => false,
         }
     }
@@ -180,6 +186,11 @@ impl ProjectManager {
                 return false;
             }
         };
+        self.load_shadow_copy(&target)
+    }
+
+    /// Loads a shadow copy prepared by [`shadow_copy_assembly`].
+    fn load_shadow_copy(&mut self, target: &Path) -> bool {
         unsafe {
             let _preloaded_dependencies =
                 match PreloadedAssemblyDependencies::load(target.parent(), target.file_name()) {
@@ -202,7 +213,7 @@ impl ProjectManager {
                     None
                 }
             };
-            match Lib::new(&target) {
+            match Lib::new(target) {
                 Ok(lib) => {
                     {
                         let load_fn = match lib
@@ -281,10 +292,20 @@ impl ProjectManager {
 /// Result of one background assembly build, reported to the UI thread.
 #[derive(Debug, PartialEq)]
 enum AssemblyBuildOutcome {
-    /// The build succeeded and produced the library at this path.
+    /// The build succeeded; the path is a shadow copy of its library, taken
+    /// before the worker is released so later builds cannot change it.
     Built(PathBuf),
     /// The build failed; the path is the previously built library, if any.
     Failed(PathBuf),
+}
+
+/// What the UI thread loads for a finished build.
+#[derive(Debug, PartialEq)]
+enum AssemblyLoad {
+    /// A shadow copy taken by the build task, loaded as is.
+    Snapshot(PathBuf),
+    /// A previously built library, shadow-copied before loading.
+    Source(PathBuf),
 }
 
 /// Hands finished background builds to the UI thread, one load per build.
@@ -310,7 +331,7 @@ impl AssemblyBuildQueue {
     ///
     /// A failed build keeps the loaded assembly, and only falls back to the
     /// previous library when nothing is loaded yet.
-    fn next_load(&self, assembly_loaded: bool) -> Option<PathBuf> {
+    fn next_load(&self, assembly_loaded: bool) -> Option<AssemblyLoad> {
         let outcome = self
             .receiver
             .lock()
@@ -318,15 +339,30 @@ impl AssemblyBuildQueue {
             .try_recv()
             .ok()?;
         match outcome {
-            AssemblyBuildOutcome::Built(source) => Some(source),
+            AssemblyBuildOutcome::Built(target) => Some(AssemblyLoad::Snapshot(target)),
             AssemblyBuildOutcome::Failed(source) if !assembly_loaded && source.exists() => {
                 log::warn!(
                     "Loading existing project assembly after failed build: {}",
                     source.display()
                 );
-                Some(source)
+                Some(AssemblyLoad::Source(source))
             }
             AssemblyBuildOutcome::Failed(_) => None,
+        }
+    }
+}
+
+/// Shadow-copies a freshly built library so the UI thread loads exactly this
+/// build, even if another build replaces the artifact before it is loaded.
+fn snapshot_built_assembly(source: PathBuf, project_name: &str) -> AssemblyBuildOutcome {
+    match shadow_copy_assembly(&source, project_name) {
+        Ok(target) => AssemblyBuildOutcome::Built(target),
+        Err(err) => {
+            log::error!(
+                "Failed to prepare project assembly {}: {err}",
+                source.display()
+            );
+            AssemblyBuildOutcome::Failed(source)
         }
     }
 }
@@ -701,7 +737,7 @@ mod tests {
     use super::{
         assembly_artifact_path, assembly_build_target_dir, assembly_target_dir, cargo_build_args,
         copy_runtime_dependencies, is_rust_runtime_library, scene_paths_match,
-        AssemblyBuildOutcome, AssemblyBuildQueue, ProjectAssemblyStatus,
+        AssemblyBuildOutcome, AssemblyBuildQueue, AssemblyLoad, ProjectAssemblyStatus,
     };
     use std::fs;
     use std::path::Path;
@@ -839,7 +875,7 @@ mod tests {
 
         assert_eq!(
             queue.next_load(true),
-            Some(Path::new("built.dll").to_path_buf())
+            Some(AssemblyLoad::Snapshot(Path::new("built.dll").to_path_buf()))
         );
         assert_eq!(queue.next_load(true), None);
     }
@@ -861,11 +897,13 @@ mod tests {
 
         assert_eq!(
             queue.next_load(true),
-            Some(Path::new("first.dll").to_path_buf())
+            Some(AssemblyLoad::Snapshot(Path::new("first.dll").to_path_buf()))
         );
         assert_eq!(
             queue.next_load(true),
-            Some(Path::new("second.dll").to_path_buf())
+            Some(AssemblyLoad::Snapshot(
+                Path::new("second.dll").to_path_buf()
+            ))
         );
         assert_eq!(queue.next_load(true), None);
     }
@@ -894,7 +932,10 @@ mod tests {
             .reporter()
             .send(AssemblyBuildOutcome::Failed(existing.clone()))
             .unwrap();
-        assert_eq!(queue.next_load(false), Some(existing.clone()));
+        assert_eq!(
+            queue.next_load(false),
+            Some(AssemblyLoad::Source(existing.clone()))
+        );
 
         queue
             .reporter()
