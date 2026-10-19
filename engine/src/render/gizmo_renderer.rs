@@ -64,13 +64,61 @@ pub struct GizmoRenderer {
     icon_object_id_shader: Shader,
     gizmo_bind_group: wgpu::BindGroup,
     icon_texture: IconTexture,
-    circle_bind_group: wgpu::BindGroup,
-    cube_bind_group: wgpu::BindGroup,
     lines_bind_group: wgpu::BindGroup,
     points_bind_group: wgpu::BindGroup,
 
-    circle_instance_buffer: wgpu::Buffer,
-    cube_instance_buffer: wgpu::Buffer,
+    circle_instances: InstanceChunks,
+    cube_instances: InstanceChunks,
+}
+
+/// Instance uniform buffers holding at most `Mesh::MAX_INSTANCES` gizmo
+/// instances each, so lists beyond the cap are drawn in further batches.
+struct InstanceChunks {
+    label: &'static str,
+    chunks: Vec<(wgpu::Buffer, wgpu::BindGroup)>,
+}
+
+impl InstanceChunks {
+    fn new(label: &'static str) -> Self {
+        Self {
+            label,
+            chunks: Vec::new(),
+        }
+    }
+
+    /// Uploads `instances` split into cap-sized chunks, growing buffers as needed.
+    fn upload(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layout: &wgpu::BindGroupLayout,
+        instances: &[GizmoInstance],
+    ) {
+        for (index, batch) in instances.chunks(Mesh::MAX_INSTANCES).enumerate() {
+            if index >= self.chunks.len() {
+                let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(self.label),
+                    size: (size_of::<GizmoInstance>() * Mesh::MAX_INSTANCES) as u64,
+                    usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some(self.label),
+                    layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buffer.as_entire_binding(),
+                    }],
+                });
+                self.chunks.push((buffer, bind_group));
+            }
+            queue.write_buffer(
+                &self.chunks[index].0,
+                0 as wgpu::BufferAddress,
+                bytemuck::cast_slice(batch),
+            );
+        }
+    }
 }
 
 struct IconTexture {
@@ -91,18 +139,6 @@ impl GizmoRenderer {
         let device = game.render_context.device();
         let queue = game.render_context.queue();
 
-        let circle_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("circle_instance_buffer"),
-            size: (size_of::<GizmoInstance>() * Mesh::MAX_INSTANCES) as u64,
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let cube_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cube_instance_buffer"),
-            size: (size_of::<GizmoInstance>() * Mesh::MAX_INSTANCES) as u64,
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
         let single_instance_buffer = device.create_buffer_init(&wgpu_buffer_init_desc(
             BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             &[GizmoInstance {
@@ -146,24 +182,6 @@ impl GizmoRenderer {
             }],
         });
 
-        let circle_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("circle_bind_group"),
-            layout: &shader.bind_group_layouts[1],
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: circle_instance_buffer.as_entire_binding(),
-            }],
-        });
-
-        let cube_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("cube_bind_group"),
-            layout: &shader.bind_group_layouts[1],
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: cube_instance_buffer.as_entire_binding(),
-            }],
-        });
-
         let icon_texture = Self::create_icon_texture(
             device,
             queue,
@@ -187,13 +205,11 @@ impl GizmoRenderer {
             icon_object_id_shader,
             gizmo_bind_group,
             icon_texture,
-            circle_bind_group,
-            cube_bind_group,
             lines_bind_group,
             points_bind_group,
 
-            circle_instance_buffer,
-            cube_instance_buffer,
+            circle_instances: InstanceChunks::new("circle_instance_buffer"),
+            cube_instances: InstanceChunks::new("cube_instance_buffer"),
 
             component_registry: game.registries.components.clone(),
         };
@@ -222,17 +238,17 @@ impl GizmoRenderer {
     }
 
     fn load_buffers(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        queue.write_buffer(
-            &self.circle_instance_buffer,
-            0 as wgpu::BufferAddress,
-            bytemuck::cast_slice(
-                &self.circle_list[..self.circle_list.len().min(Mesh::MAX_INSTANCES)],
-            ),
+        self.circle_instances.upload(
+            device,
+            queue,
+            &self.shader.bind_group_layouts[1],
+            &self.circle_list,
         );
-        queue.write_buffer(
-            &self.cube_instance_buffer,
-            0 as wgpu::BufferAddress,
-            bytemuck::cast_slice(&self.cube_list[..self.cube_list.len().min(Mesh::MAX_INSTANCES)]),
+        self.cube_instances.upload(
+            device,
+            queue,
+            &self.shader.bind_group_layouts[1],
+            &self.cube_list,
         );
         RenderUtils::rebuild_mesh_data(device, queue, &mut self.wire_circle_mesh);
         RenderUtils::rebuild_mesh_data(device, queue, &mut self.wire_cube_mesh);
@@ -367,11 +383,17 @@ impl GizmoRenderer {
                 render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
 
                 RenderUtils::bind_mesh_buffers(render_pass, &self.wire_circle_mesh);
-                render_pass.set_bind_group(1, &self.circle_bind_group, &[]);
-                render_pass.draw(
-                    0..(self.wire_circle_mesh.vertices.len() as u32),
-                    0..(self.circle_list.len() as u32),
-                );
+                for (batch, (_, bind_group)) in self
+                    .circle_list
+                    .chunks(Mesh::MAX_INSTANCES)
+                    .zip(&self.circle_instances.chunks)
+                {
+                    render_pass.set_bind_group(1, bind_group, &[]);
+                    render_pass.draw(
+                        0..(self.wire_circle_mesh.vertices.len() as u32),
+                        0..(batch.len() as u32),
+                    );
+                }
             }
         }
 
@@ -381,12 +403,18 @@ impl GizmoRenderer {
                 render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
 
                 RenderUtils::bind_mesh_buffers(render_pass, &self.wire_cube_mesh);
-                render_pass.set_bind_group(1, &self.cube_bind_group, &[]);
-                render_pass.draw_indexed(
-                    0..(self.wire_cube_mesh.indices.len() as u32),
-                    0,
-                    0..(self.cube_list.len() as u32),
-                );
+                for (batch, (_, bind_group)) in self
+                    .cube_list
+                    .chunks(Mesh::MAX_INSTANCES)
+                    .zip(&self.cube_instances.chunks)
+                {
+                    render_pass.set_bind_group(1, bind_group, &[]);
+                    render_pass.draw_indexed(
+                        0..(self.wire_cube_mesh.indices.len() as u32),
+                        0,
+                        0..(batch.len() as u32),
+                    );
+                }
             }
         }
 
@@ -656,5 +684,35 @@ mod tests {
         shader.build_pipeline(&icon_options);
 
         assert!(shader.get_pipeline(&icon_options).is_some());
+    }
+
+    #[test]
+    fn instance_chunks_hold_gizmo_instances_beyond_the_cap() {
+        let context = test_asset_context_with_assets(vec![assets_path()]);
+        let read_only_context = context.lock_read();
+        let shader = Shader::from_file(
+            &read_only_context,
+            &assets_path().join("shaders/gizmos.wgsl"),
+        )
+        .expect("gizmo shader should load")
+        .asset;
+        let instance = GizmoInstance {
+            transform: Mat4::identity().into(),
+            color: [1.0; 4],
+            enable_normals: 0,
+            use_uv_colors: 0,
+            _padding: Default::default(),
+        };
+        let instances = vec![instance; Mesh::MAX_INSTANCES * 2 + 1];
+        let mut chunks = InstanceChunks::new("test_instance_buffer");
+
+        chunks.upload(
+            read_only_context.render_context.device(),
+            read_only_context.render_context.queue(),
+            &shader.bind_group_layouts[1],
+            &instances,
+        );
+
+        assert_eq!(chunks.chunks.len(), 3);
     }
 }
