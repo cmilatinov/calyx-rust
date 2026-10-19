@@ -706,12 +706,12 @@ mod tests {
         Component, ComponentEventContext, ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
     };
     use crate::context::GameContext;
-    use crate::input::Input;
     use crate::input::{ActionMap, InputBinding, PROJECT_ACTION_MAP_NAME};
+    use crate::input::{Input, InputState};
     use crate::reflect::{Reflect, ReflectDefault};
     use crate::resource::{Resource, ResourceMap};
     use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
-    use egui::{Key, PointerButton, Pos2, Vec2};
+    use egui::{Key, PointerButton, Pos2, RawInput, Vec2};
     use serde::{Deserialize, Serialize};
 
     #[derive(Default, Resource, TypeUuid)]
@@ -871,6 +871,24 @@ mod tests {
         runner.step();
         assert_eq!(shoot_presses(&runner), 1);
 
+        // A hot reload updates the asset handle in place; the running input follows it.
+        let mut reloaded = ActionMap::new();
+        reloaded.bind_action("shoot", InputBinding::Key(Key::Enter));
+        let handle = assets
+            .registries
+            .assets
+            .read()
+            .load::<ActionMap>(PROJECT_ACTION_MAP_NAME)
+            .unwrap();
+        *handle.write() = reloaded;
+        runner.release_pointer_button(Pos2::new(10.0, 10.0), PointerButton::Secondary);
+        runner.press_pointer_button(Pos2::new(10.0, 10.0), PointerButton::Secondary);
+        runner.step();
+        assert_eq!(shoot_presses(&runner), 1);
+        runner.press_key(Key::Enter);
+        runner.step();
+        assert_eq!(shoot_presses(&runner), 2);
+
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -899,5 +917,29 @@ mod tests {
         runner.move_pointer(Pos2::new(35.0, 12.0));
         runner.step();
         assert_eq!(delta(&runner), Vec2::new(10.0, 0.0));
+    }
+
+    #[test]
+    fn input_surfaces_in_one_pass_share_the_cursor_delta() {
+        let ctx = egui::Context::default();
+        let mut state = InputState::default();
+        let pass = |position: Pos2| RawInput {
+            events: vec![egui::Event::PointerMoved(position)],
+            ..Default::default()
+        };
+
+        ctx.begin_pass(pass(Pos2::new(10.0, 10.0)));
+        Input::from_ctx(&ctx, None, &mut state, true);
+        let _ = ctx.end_pass();
+
+        ctx.begin_pass(pass(Pos2::new(25.0, 12.0)));
+        let first = Input::from_ctx(&ctx, None, &mut state, true);
+        let second = Input::from_ctx(&ctx, None, &mut state, true);
+        let inactive = Input::from_ctx(&ctx, None, &mut state, false);
+        let _ = ctx.end_pass();
+
+        assert_eq!(first.cursor_delta(), Vec2::new(15.0, 2.0));
+        assert_eq!(second.cursor_delta(), Vec2::new(15.0, 2.0));
+        assert_eq!(inactive.cursor_delta(), Vec2::ZERO);
     }
 }

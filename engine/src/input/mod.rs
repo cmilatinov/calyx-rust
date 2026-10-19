@@ -6,6 +6,7 @@ use std::sync::Arc;
 use crate as engine;
 use crate::assets::{Asset, AssetRegistry, LoadedAsset};
 use crate::context::ReadOnlyAssetContext;
+use crate::core::Ref;
 use crate::resource::Resource;
 use crate::utils::TypeUuid;
 use egui::{Key, Modifiers, PointerButton};
@@ -19,10 +20,36 @@ pub const PROJECT_ACTION_MAP_NAME: &str = "input";
 #[uuid = "5b0a8e0f-3c1d-4a59-9d52-7f6b2a1c8e47"]
 #[repr(C)]
 pub struct InputState {
-    /// Pointer position sampled on the previous frame, used for cursor deltas.
-    last_cursor_pos: Option<egui::Pos2>,
+    /// Pass and pointer position of the last cursor sample, used for cursor deltas.
+    last_cursor_sample: Option<CursorSample>,
     /// Action map used to interpret raw egui input.
-    action_map: Arc<ActionMap>,
+    action_map: ActionMapSource,
+}
+
+/// Cursor movement sampled during one egui pass, shared by every input surface in it.
+#[derive(Clone, Copy)]
+struct CursorSample {
+    pass: u64,
+    pos: Option<egui::Pos2>,
+    delta: egui::Vec2,
+}
+
+/// Where the active action map lives.
+#[derive(Clone)]
+enum ActionMapSource {
+    /// A map owned by the input state.
+    Owned(Arc<ActionMap>),
+    /// A project asset handle, so hot reloads reach the running input.
+    Asset(Ref<ActionMap>),
+}
+
+impl ActionMapSource {
+    fn with<R>(&self, reader: impl FnOnce(&ActionMap) -> R) -> R {
+        match self {
+            Self::Owned(map) => reader(map),
+            Self::Asset(map) => reader(&map.read()),
+        }
+    }
 }
 
 impl Default for InputState {
@@ -35,32 +62,52 @@ impl InputState {
     /// Creates input state that interprets input through `action_map`.
     pub fn new(action_map: ActionMap) -> Self {
         Self {
-            last_cursor_pos: None,
-            action_map: Arc::new(action_map),
+            last_cursor_sample: None,
+            action_map: ActionMapSource::Owned(Arc::new(action_map)),
         }
     }
 
-    /// Returns the active action map.
-    pub fn action_map(&self) -> &ActionMap {
-        &self.action_map
-    }
-
-    /// Returns the active action map mutably.
+    /// Returns a mutable copy-on-write action map owned by this state, detaching it
+    /// from any project asset.
     pub fn action_map_mut(&mut self) -> &mut ActionMap {
-        Arc::make_mut(&mut self.action_map)
+        if let ActionMapSource::Asset(map) = &self.action_map {
+            let detached = map.read().clone();
+            self.action_map = ActionMapSource::Owned(Arc::new(detached));
+        }
+        match &mut self.action_map {
+            ActionMapSource::Owned(map) => Arc::make_mut(map),
+            ActionMapSource::Asset(_) => unreachable!("action map was detached above"),
+        }
     }
 
     /// Replaces the active action map.
     pub fn set_action_map(&mut self, action_map: ActionMap) {
-        self.action_map = Arc::new(action_map);
+        self.action_map = ActionMapSource::Owned(Arc::new(action_map));
     }
 
-    /// Switches to the project's action map asset when one exists, keeping the
-    /// current map otherwise.
+    /// Follows the project's action map asset when one exists, keeping the current
+    /// map otherwise. Hot reloads of the asset apply to later frames.
     pub fn load_project_action_map(&mut self, assets: &AssetRegistry) {
         if let Ok(action_map) = assets.load::<ActionMap>(PROJECT_ACTION_MAP_NAME) {
-            self.set_action_map(action_map.read().clone());
+            self.action_map = ActionMapSource::Asset(action_map);
         }
+    }
+
+    /// Returns cursor movement for the current egui pass, sampling the pointer once
+    /// per pass so several input surfaces in one frame see the same delta.
+    fn cursor_sample(&mut self, context: &egui::Context) -> CursorSample {
+        let pass = context.cumulative_pass_nr();
+        if let Some(sample) = self.last_cursor_sample.filter(|sample| sample.pass == pass) {
+            return sample;
+        }
+        let pos = context.input(|input| input.pointer.latest_pos());
+        let delta = match (self.last_cursor_sample.and_then(|s| s.pos), pos) {
+            (Some(last), Some(pos)) => pos - last,
+            _ => egui::Vec2::ZERO,
+        };
+        let sample = CursorSample { pass, pos, delta };
+        self.last_cursor_sample = Some(sample);
+        sample
     }
 }
 
@@ -69,7 +116,7 @@ pub struct Input<'a> {
     context: &'a egui::Context,
     res: Option<&'a egui::Response>,
     is_active: bool,
-    action_map: Arc<ActionMap>,
+    action_map: ActionMapSource,
     cursor_delta: egui::Vec2,
 }
 
@@ -82,21 +129,19 @@ impl<'a> Input<'a> {
         state: &mut InputState,
         is_active: bool,
     ) -> Self {
-        let pointer_pos = context.input(|input| input.pointer.latest_pos());
-        let cursor_delta = match (state.last_cursor_pos, pointer_pos) {
-            (Some(last), Some(pos)) if is_active => pos - last,
-            _ => egui::Vec2::ZERO,
-        };
-        state.last_cursor_pos = pointer_pos;
+        let cursor_delta = state.cursor_sample(context).delta;
         Self {
             context,
             res,
             is_active,
             action_map: state.action_map.clone(),
-            cursor_delta,
+            cursor_delta: if is_active {
+                cursor_delta
+            } else {
+                egui::Vec2::ZERO
+            },
         }
     }
-
     /// Returns the underlying egui context.
     pub fn ctx(&self) -> &egui::Context {
         self.context
@@ -138,8 +183,10 @@ impl<'a> Input<'a> {
             return ActionState::default();
         }
 
-        self.context
-            .input(|input| self.action_map.action(name, input).unwrap_or_default())
+        self.context.input(|input| {
+            self.action_map
+                .with(|map| map.action(name, input).unwrap_or_default())
+        })
     }
 
     /// Resolves a named axis into a scalar value.
@@ -148,8 +195,10 @@ impl<'a> Input<'a> {
             return 0.0;
         }
 
-        self.context
-            .input(|input| self.action_map.axis(name, input).unwrap_or_default())
+        self.context.input(|input| {
+            self.action_map
+                .with(|map| map.axis(name, input).unwrap_or_default())
+        })
     }
 
     /// Returns pointer movement since the previous frame.
