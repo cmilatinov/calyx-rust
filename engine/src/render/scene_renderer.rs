@@ -1,4 +1,4 @@
-use super::RenderContext;
+﻿use super::RenderContext;
 use crate::assets::material::Material;
 use crate::assets::mesh::{Instance, Mesh};
 use crate::assets::texture::Texture;
@@ -140,6 +140,11 @@ pub struct SceneRenderer {
     selected_game_object: Option<Uuid>,
     hovered_game_object: Option<Uuid>,
     sky_light_intensity: f32,
+}
+
+/// Instance index of the next skinned draw in a mesh's shared bone buffer, or `None` for a mesh without bones.
+fn skinning_instance_index(uploaded_bone_transforms: usize, num_bones: usize) -> Option<usize> {
+    uploaded_bone_transforms.checked_div(num_bones)
 }
 
 impl SceneRenderer {
@@ -602,8 +607,16 @@ impl SceneRenderer {
                 if !skinned_meshes.contains(&mesh_id) {
                     mesh.bone_transforms.clear();
                 }
+                let Some(index) =
+                    skinning_instance_index(mesh.bone_transforms.len(), mesh.bones.len())
+                else {
+                    crate::logging::warn_once(format!("boneless-skinned-mesh:{mesh_id}"), || {
+                        format!("Skinned mesh {mesh_id} has no bones; skipping skinning upload")
+                    });
+                    continue;
+                };
                 skinned_meshes.insert(mesh_id);
-                bone_transform_index = mesh.bone_transforms.len() / mesh.bones.len();
+                bone_transform_index = index;
                 mesh.bone_transforms
                     .extend(c_skinned_mesh.bone_transforms.iter().copied());
             }
@@ -1202,5 +1215,22 @@ mod tests {
                 "instance {index} was not drawn at its transform"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod skinning_tests {
+    use super::skinning_instance_index;
+
+    #[test]
+    fn mesh_without_bones_has_no_instance_index() {
+        assert_eq!(skinning_instance_index(0, 0), None);
+        assert_eq!(skinning_instance_index(8, 0), None);
+    }
+
+    #[test]
+    fn instance_index_counts_uploaded_bone_sets() {
+        assert_eq!(skinning_instance_index(0, 4), Some(0));
+        assert_eq!(skinning_instance_index(8, 4), Some(2));
     }
 }

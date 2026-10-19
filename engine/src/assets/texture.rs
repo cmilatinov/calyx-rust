@@ -47,6 +47,15 @@ impl Asset for Texture {
         game: &ReadOnlyAssetContext,
         path: &Path,
     ) -> Result<LoadedAsset<Self>, AssetError> {
+        let texture_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| {
+                AssetError::LoadError
+                    .with_path(path)
+                    .with_type(Self::asset_name())
+                    .with_source("file name is missing or not valid UTF-8")
+            })?;
         let reader = ImageReader::open(path)
             .map_err(|err| AssetError::LoadError.with_path(path).with_source(err))?;
         let texture_data = Self::transform_texture(
@@ -56,7 +65,6 @@ impl Asset for Texture {
         );
         let texture_depth = texture_data.color().bytes_per_pixel() as u32;
         let texture_format = Self::texture_format(texture_data.color());
-        let texture_name = path.file_name().unwrap().to_str().unwrap();
         let texture_size = wgpu::Extent3d {
             width: texture_data.width(),
             height: texture_data.height(),

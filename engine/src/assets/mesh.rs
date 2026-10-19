@@ -221,8 +221,14 @@ impl Asset for Mesh {
         game: &ReadOnlyAssetContext,
         path: &Path,
     ) -> Result<LoadedAsset<Self>, AssetError> {
+        let scene_path = path.to_str().ok_or_else(|| {
+            AssetError::LoadError
+                .with_path(path)
+                .with_type(Self::asset_name())
+                .with_source("path is not valid UTF-8")
+        })?;
         let scene = Scene::from_file(
-            path.to_str().unwrap(),
+            scene_path,
             vec![
                 PostProcess::Triangulate,
                 PostProcess::GenerateSmoothNormals,

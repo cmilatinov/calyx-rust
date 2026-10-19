@@ -69,14 +69,16 @@ pub struct PhysicsContext {
 impl PhysicsContext {
     const TIME_STEP: f32 = 1.0 / 60.0;
 
-    fn rigid_body_from_component(
+    fn isometry(transform: &Transform) -> Isometry<f32> {
+        Isometry::from_parts(Translation3::from(transform.position), transform.rotation)
+    }
+
+    pub(super) fn rigid_body_from_component(
         transform: &Transform,
         rigid_body: &ComponentRigidBody,
     ) -> RigidBody {
-        let (z, y, x) = transform.rotation.euler_angles();
         RigidBodyBuilder::new(rigid_body.ty)
-            .translation(transform.position)
-            .rotation(Vector3::new(x, y, z))
+            .position(Self::isometry(transform))
             .enabled(rigid_body.enabled)
             .additional_mass(rigid_body.mass)
             .gravity_scale(rigid_body.gravity_scale)
@@ -103,11 +105,12 @@ impl PhysicsContext {
         }
     }
 
-    fn collider_from_component(transform: &Transform, collider: &ComponentCollider) -> Collider {
-        let (z, y, x) = transform.rotation.euler_angles();
+    pub(super) fn collider_from_component(
+        transform: &Transform,
+        collider: &ComponentCollider,
+    ) -> Collider {
         ColliderBuilder::new(Self::collider_shape(collider.shape))
-            .position(transform.position.into())
-            .rotation(Vector3::new(x, y, z))
+            .position(Self::isometry(transform))
             .friction(collider.friction)
             .density(collider.density)
             .active_events(ActiveEvents::COLLISION_EVENTS | ActiveEvents::CONTACT_FORCE_EVENTS)
