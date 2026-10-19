@@ -700,9 +700,20 @@ impl Scene {
             .iter()
             .copied()
             .filter(|go| {
-                !self
-                    .ancestors(*go)
-                    .any(|ancestor| queued.contains(&ancestor))
+                // Stop at the first repeated node so cyclic hierarchies neither
+                // loop forever nor count `go` as its own ancestor.
+                let mut visited = HashSet::from([*go]);
+                let mut current = self.parent(*go);
+                while let Some(ancestor) = current {
+                    if !visited.insert(ancestor) {
+                        break;
+                    }
+                    if queued.contains(&ancestor) {
+                        return false;
+                    }
+                    current = self.parent(ancestor);
+                }
+                true
             })
             .collect();
         for game_object in roots {

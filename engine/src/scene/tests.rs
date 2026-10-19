@@ -335,6 +335,21 @@ mod tests {
     }
 
     #[test]
+    fn delete_in_cyclic_hierarchy_does_not_hang() {
+        let mut scene = test_scene();
+        let a = scene.create(None, None);
+        let b = scene.create(None, Some(a));
+        let leaf = scene.create(None, Some(b));
+        scene.set_parent(a, Some(b));
+
+        scene.delete(a);
+        scene.delete(leaf);
+        scene.flush_deletes();
+
+        assert!(scene.find(scene.uuid(leaf)).is_none());
+    }
+
+    #[test]
     fn delete_keeps_sibling_order_contiguous() {
         let mut scene = test_scene();
         let parent = scene.create(None, None);
