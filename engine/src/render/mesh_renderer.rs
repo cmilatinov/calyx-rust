@@ -361,18 +361,13 @@ mod tests {
     use super::*;
     use crate::assets::material::Material;
     use crate::assets::Asset;
-    use crate::test_utils::test_asset_context_with_assets;
-    use std::path::PathBuf;
+    use crate::test_utils::TestAssets;
     use uuid::Uuid;
-
-    fn assets_path() -> PathBuf {
-        let assets_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets");
-        dunce::canonicalize(assets_path).expect("assets dir not found")
-    }
 
     #[test]
     fn prunes_material_bind_group_cache_to_live_materials() {
-        let context = test_asset_context_with_assets(vec![assets_path()]);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
         let read_only_context = context.lock_read();
         let asset_registry = read_only_context.registries.assets.read();
         let shader = asset_registry
@@ -411,11 +406,12 @@ mod tests {
 
     #[test]
     fn object_id_shader_builds_pipeline_with_skinning_path() {
-        let context = test_asset_context_with_assets(vec![assets_path()]);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
         let read_only_context = context.lock_read();
         let mut shader = Shader::from_file(
             &read_only_context,
-            &assets_path().join("shaders/object_id.wgsl"),
+            &assets.engine_root().join("shaders/object_id.wgsl"),
         )
         .expect("object id shader should load")
         .asset;

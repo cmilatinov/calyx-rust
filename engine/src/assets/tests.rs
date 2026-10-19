@@ -5,22 +5,23 @@ mod tests {
     use crate::assets::mesh::Mesh;
     use crate::assets::texture::Texture;
     use crate::assets::Asset;
-    use crate::test_utils::{test_game_context, test_registries_with_assets};
+    use crate::test_utils::{test_game_context, test_registries_with_assets, TestAssets};
+
     use crate::utils::TypeUuid;
     use std::fs;
-    use std::path::PathBuf;
     use std::sync::{Arc, Barrier};
     use uuid::Uuid;
 
-    fn asset_registries() -> crate::context::ReadOnlyRegistryContext {
-        let assets_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets");
-        let assets_path = dunce::canonicalize(assets_path).expect("assets dir not found");
-        test_registries_with_assets(vec![assets_path])
+    /// Registries over a temporary asset copy; keep the `TestAssets` alive while they are used.
+    fn asset_registries() -> (TestAssets, crate::context::ReadOnlyRegistryContext) {
+        let assets = TestAssets::engine();
+        let registries = assets.registries();
+        (assets, registries)
     }
 
     #[test]
     fn load_mesh_by_name() {
-        let registries = asset_registries();
+        let (_assets, registries) = asset_registries();
         let registry = registries.assets.read();
         let mesh = registry.load::<Mesh>("meshes/cube");
         assert!(mesh.is_ok(), "failed to load cube mesh: {:?}", mesh.err());
@@ -32,7 +33,7 @@ mod tests {
 
     #[test]
     fn load_texture_by_name() {
-        let registries = asset_registries();
+        let (_assets, registries) = asset_registries();
         let registry = registries.assets.read();
         let texture = registry.load::<Texture>("textures/white");
         assert!(
@@ -49,7 +50,7 @@ mod tests {
 
     #[test]
     fn load_nonexistent_asset_returns_error() {
-        let registries = asset_registries();
+        let (_assets, registries) = asset_registries();
         let registry = registries.assets.read();
         let result = registry.load::<Mesh>("meshes/does_not_exist");
         let err = match result {
@@ -62,7 +63,7 @@ mod tests {
 
     #[test]
     fn asset_meta_lookup() {
-        let registries = asset_registries();
+        let (_assets, registries) = asset_registries();
         let registry = registries.assets.read();
         let id = registry.asset_id("meshes/cube");
         assert!(id.is_some());
@@ -74,7 +75,7 @@ mod tests {
 
     #[test]
     fn create_or_update_reuses_existing_asset_ref() {
-        let registries = asset_registries();
+        let (_assets, registries) = asset_registries();
         let registry = registries.assets.read();
         let name = format!("generated/test_animation_{}", Uuid::new_v4());
 
@@ -104,7 +105,7 @@ mod tests {
     fn concurrent_create_or_update_reuses_single_asset_ref() {
         const THREADS: usize = 16;
 
-        let registries = asset_registries();
+        let (_assets, registries) = asset_registries();
         let name = format!("generated/test_animation_{}", Uuid::new_v4());
         let barrier = Arc::new(Barrier::new(THREADS));
 
@@ -142,7 +143,7 @@ mod tests {
     fn concurrent_create_or_update_sub_asset_reuses_single_asset_ref() {
         const THREADS: usize = 16;
 
-        let registries = asset_registries();
+        let (_assets, registries) = asset_registries();
         let parent_id = Uuid::new_v4();
         let parent_name = format!("generated/test_parent_{}", Uuid::new_v4());
         let local_name = "clip";
@@ -206,7 +207,7 @@ mod tests {
 
     #[test]
     fn loaded_mesh_has_gpu_buffers() {
-        let registries = asset_registries();
+        let (_assets, registries) = asset_registries();
         let registry = registries.assets.read();
         let mesh = registry.load::<Mesh>("meshes/cube").unwrap();
         let mesh = mesh.read();

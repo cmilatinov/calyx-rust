@@ -625,21 +625,16 @@ impl GizmoRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::test_asset_context_with_assets;
-    use std::path::PathBuf;
-
-    fn assets_path() -> PathBuf {
-        let assets_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets");
-        dunce::canonicalize(assets_path).expect("assets dir not found")
-    }
+    use crate::test_utils::TestAssets;
 
     #[test]
     fn gizmo_icon_shader_builds_pipeline() {
-        let context = test_asset_context_with_assets(vec![assets_path()]);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
         let read_only_context = context.lock_read();
         let mut shader = Shader::from_file(
             &read_only_context,
-            &assets_path().join("shaders/gizmo_icons.wgsl"),
+            &assets.engine_root().join("shaders/gizmo_icons.wgsl"),
         )
         .expect("icon shader should load")
         .asset;
@@ -660,11 +655,14 @@ mod tests {
 
     #[test]
     fn gizmo_icon_object_id_shader_builds_pipeline() {
-        let context = test_asset_context_with_assets(vec![assets_path()]);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
         let read_only_context = context.lock_read();
         let mut shader = Shader::from_file(
             &read_only_context,
-            &assets_path().join("shaders/gizmo_icon_object_id.wgsl"),
+            &assets
+                .engine_root()
+                .join("shaders/gizmo_icon_object_id.wgsl"),
         )
         .expect("icon object id shader should load")
         .asset;
