@@ -24,7 +24,7 @@ use crate::resource::ResourceMap;
 use crate::scene::game_object_store::GameObjectStore;
 use crate::scene::scene_graph::SceneGraph;
 use crate::scene::transform_cache::TransformCache;
-use crate::scene::{GameObjectRef, Prefab};
+use crate::scene::{GameObjectRef, Prefab, SceneError};
 use crate::try_all;
 use crate::utils::{ContextSeed, TypeUuid};
 
@@ -379,11 +379,19 @@ impl Scene {
 
     /// Instantiates `prefab` into the scene and remaps any embedded
     /// [`GameObjectRef`] values to the newly created objects.
+    ///
+    /// Returns [`SceneError::InvalidPrefab`] when the prefab data is malformed.
     pub fn instantiate_prefab(
         &mut self,
         prefab: &Prefab,
         parent: Option<GameObject>,
-    ) -> Option<GameObject> {
+    ) -> Result<GameObject, SceneError> {
+        if !prefab.data.components.contains_key(&prefab.root) {
+            return Err(SceneError::InvalidPrefab(format!(
+                "root object {} is missing",
+                prefab.root
+            )));
+        }
         let mut id_mapping = prefab
             .data
             .components
@@ -397,13 +405,19 @@ impl Scene {
         let type_registry = type_registry_ref.read();
         for (game_object_id, _components) in prefab.data.components.iter() {
             let game_object = self.new_game_object(None);
-            let new_game_object_id = *id_mapping.get_by_left(game_object_id).unwrap();
+            let new_game_object_id = *id_mapping.get_by_left(game_object_id).ok_or_else(|| {
+                SceneError::InvalidPrefab(format!("object {game_object_id} has no mapped id"))
+            })?;
             self.store.register_uuid(new_game_object_id, game_object);
         }
 
         for (game_object_id, components) in prefab.data.components.iter() {
-            let new_game_object_id = *id_mapping.get_by_left(game_object_id).unwrap();
-            let game_object = self.find(new_game_object_id).unwrap();
+            let new_game_object_id = *id_mapping.get_by_left(game_object_id).ok_or_else(|| {
+                SceneError::InvalidPrefab(format!("object {game_object_id} has no mapped id"))
+            })?;
+            let game_object = self.find(new_game_object_id).ok_or_else(|| {
+                SceneError::InvalidPrefab(format!("object {game_object_id} was not created"))
+            })?;
             for (component_id, data) in components {
                 try_all!(
                     None => continue;
@@ -421,7 +435,11 @@ impl Scene {
                     log::trace!("{} - {}", name, field.name);
                     field
                         .set(&mut *instance, GameObjectRef::new(*target_id))
-                        .unwrap();
+                        .ok_or_else(|| {
+                            SceneError::InvalidPrefab(format!(
+                                "failed to remap object reference field {name} on object {game_object_id}"
+                            ))
+                        })?;
                 }
                 let _ = component.bind_instance(&mut entry, instance);
             }
@@ -448,14 +466,18 @@ impl Scene {
             }
         }
 
-        let prefab_uuid = id_mapping.get_by_left(&prefab.root)?;
-        let game_object = self.find(*prefab_uuid)?;
+        let prefab_uuid = id_mapping.get_by_left(&prefab.root).ok_or_else(|| {
+            SceneError::InvalidPrefab(format!("root object {} is missing", prefab.root))
+        })?;
+        let game_object = self.find(*prefab_uuid).ok_or_else(|| {
+            SceneError::InvalidPrefab(format!("root object {} was not created", prefab.root))
+        })?;
 
         if let Some(parent) = parent {
             self.set_parent(game_object, Some(parent));
         }
 
-        Some(game_object)
+        Ok(game_object)
     }
 
     /// Reparents `game_object` under `parent`, appending it after existing

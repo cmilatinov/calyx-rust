@@ -538,9 +538,7 @@ mod tests {
 
         let prefab = scene.create_prefab(parent);
         let instance = scene.instantiate_prefab(&prefab, None);
-        assert!(instance.is_some());
-
-        let instance_go = instance.unwrap();
+        let instance_go = instance.expect("prefab should instantiate");
         let instance_name = scene.name(instance_go);
         assert_eq!(instance_name, "PrefabRoot");
 
@@ -551,6 +549,24 @@ mod tests {
 
         // Instance UUIDs should differ from original
         assert_ne!(scene.uuid(instance_go), scene.uuid(parent));
+    }
+
+    #[test]
+    fn instantiate_prefab_returns_error_for_missing_root() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+        let root = scene.create(None, None);
+        let mut prefab = scene.create_prefab(root);
+        prefab.root = Uuid::new_v4();
+        let object_count = scene.root_objects().count();
+
+        let result = scene.instantiate_prefab(&prefab, None);
+
+        assert!(matches!(
+            result,
+            Err(crate::scene::SceneError::InvalidPrefab(_))
+        ));
+        assert_eq!(scene.root_objects().count(), object_count);
     }
 
     // --- Serialization ---
