@@ -236,6 +236,21 @@ mod tests {
     }
 
     #[test]
+    fn constructed_body_and_collider_match_transform_rotation() {
+        let rotation = UnitQuaternion::from_euler_angles(0.3, 0.75, -0.5);
+        let transform =
+            Transform::from_components(vec3(1.0, 2.0, 3.0), rotation, vec3(1.0, 1.0, 1.0));
+
+        let body =
+            PhysicsContext::rigid_body_from_component(&transform, &ComponentRigidBody::default());
+        let collider =
+            PhysicsContext::collider_from_component(&transform, &ComponentCollider::default());
+
+        assert!(body.rotation().angle_to(&rotation) < 1e-5);
+        assert!(collider.rotation().angle_to(&rotation) < 1e-5);
+    }
+
+    #[test]
     fn cuboid_collider_shape() {
         let mut scene = test_scene();
         let go = scene.create(None, None);

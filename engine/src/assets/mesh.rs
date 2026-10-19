@@ -1,5 +1,6 @@
 use std::cmp::min;
 use std::collections::HashMap;
+use std::ops::Range;
 use std::path::Path;
 
 use egui_wgpu::wgpu;
@@ -116,7 +117,8 @@ pub struct Mesh {
     pub(crate) bone_transforms: Vec<BoneTransform>,
     pub(crate) index_buffer: Option<wgpu::Buffer>,
     pub(crate) vertex_buffer: Option<wgpu::Buffer>,
-    pub(crate) instance_buffer: wgpu::Buffer,
+    /// One uniform buffer per `MAX_INSTANCES`-sized chunk of `instances`.
+    pub(crate) instance_buffers: Vec<wgpu::Buffer>,
     pub(crate) bone_buffer: ResizableBuffer,
 
     pub(crate) instance_bind_group_layout: wgpu::BindGroupLayout,
@@ -147,12 +149,7 @@ impl Mesh {
     pub fn new(render_context: &RenderContext) -> Self {
         let device = render_context.device();
 
-        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("instance_buffer"),
-            size: (std::mem::size_of::<MeshUniforms>()) as u64,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
-            mapped_at_creation: false,
-        });
+        let instance_buffers = vec![Self::create_instance_buffer(device)];
 
         let instance_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -199,7 +196,7 @@ impl Mesh {
             bone_transforms: Default::default(),
             index_buffer: None,
             vertex_buffer: None,
-            instance_buffer,
+            instance_buffers,
             bone_buffer: ResizableBuffer::new(
                 wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
             ),
@@ -224,8 +221,14 @@ impl Asset for Mesh {
         game: &ReadOnlyAssetContext,
         path: &Path,
     ) -> Result<LoadedAsset<Self>, AssetError> {
+        let scene_path = path.to_str().ok_or_else(|| {
+            AssetError::LoadError
+                .with_path(path)
+                .with_type(Self::asset_name())
+                .with_source("path is not valid UTF-8")
+        })?;
         let scene = Scene::from_file(
-            path.to_str().unwrap(),
+            scene_path,
             vec![
                 PostProcess::Triangulate,
                 PostProcess::GenerateSmoothNormals,
@@ -410,21 +413,56 @@ impl Mesh {
         )));
     }
 
-    fn rebuild_instance_buffer(&self, queue: &wgpu::Queue) {
-        let mut instances: [Instance; Self::MAX_INSTANCES] = Default::default();
-        for (i, instance) in self.instances.iter().take(Self::MAX_INSTANCES).enumerate() {
-            instances[i] = *instance;
-        }
-        let uniforms = MeshUniforms {
-            num_bones: self.bones.len() as u32,
-            _padding: Default::default(),
-            instances,
-        };
-        queue.write_buffer(
-            &self.instance_buffer,
-            0 as wgpu::BufferAddress,
-            bytemuck::cast_slice([uniforms].as_slice()),
+    fn create_instance_buffer(device: &wgpu::Device) -> wgpu::Buffer {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("instance_buffer"),
+            size: (std::mem::size_of::<MeshUniforms>()) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
+            mapped_at_creation: false,
+        })
+    }
+
+    /// Maps a range of mesh instance indices that does not cross a chunk
+    /// boundary to its chunk index and the range local to that chunk.
+    pub(crate) fn instance_chunk(range: &Range<u32>) -> (usize, Range<u32>) {
+        let cap = Self::MAX_INSTANCES as u32;
+        let offset = range.start % cap;
+        debug_assert!(
+            range.is_empty() || (range.end - 1) / cap == range.start / cap,
+            "instance range {range:?} crosses an instance chunk boundary"
         );
+        (
+            (range.start / cap) as usize,
+            offset..(offset + range.end - range.start),
+        )
+    }
+
+    fn rebuild_instance_buffer(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        let chunk_count = self.instances.len().div_ceil(Self::MAX_INSTANCES).max(1);
+        self.instance_buffers.truncate(chunk_count);
+        while self.instance_buffers.len() < chunk_count {
+            self.instance_buffers
+                .push(Self::create_instance_buffer(device));
+        }
+        for (i, buffer) in self.instance_buffers.iter().enumerate() {
+            let mut instances: [Instance; Self::MAX_INSTANCES] = Default::default();
+            for (slot, instance) in instances
+                .iter_mut()
+                .zip(self.instances.iter().skip(i * Self::MAX_INSTANCES))
+            {
+                *slot = *instance;
+            }
+            let uniforms = MeshUniforms {
+                num_bones: self.bones.len() as u32,
+                _padding: Default::default(),
+                instances,
+            };
+            queue.write_buffer(
+                buffer,
+                0 as wgpu::BufferAddress,
+                bytemuck::cast_slice([uniforms].as_slice()),
+            );
+        }
     }
 
     fn rebuild_bone_buffer(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
@@ -457,25 +495,31 @@ impl Mesh {
     }
 
     pub(crate) fn rebuild_instance_data(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        self.rebuild_instance_buffer(queue);
+        self.rebuild_instance_buffer(device, queue);
         self.rebuild_bone_buffer(device, queue);
     }
 
-    pub(crate) fn instance_bind_group(&self, device: &wgpu::Device) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("instance_bind_group"),
-            layout: &self.instance_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.instance_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.bone_buffer.get_wgpu_buffer().as_entire_binding(),
-                },
-            ],
-        })
+    /// Creates one instance bind group per instance buffer chunk.
+    pub(crate) fn instance_bind_groups(&self, device: &wgpu::Device) -> Vec<wgpu::BindGroup> {
+        self.instance_buffers
+            .iter()
+            .map(|instance_buffer| {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("instance_bind_group"),
+                    layout: &self.instance_bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: instance_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: self.bone_buffer.get_wgpu_buffer().as_entire_binding(),
+                        },
+                    ],
+                })
+            })
+            .collect()
     }
 
     /// Marks the mesh so its GPU buffers are rebuilt on the next render pass.

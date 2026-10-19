@@ -462,6 +462,7 @@ impl ComponentAnimator {
         pose: &mut AnimatorPose,
     ) {
         let mut local_transform = scene.transform(game_object).matrix();
+        let mut captured_bind_pose = None;
         'calc_bone_transform: {
             let Some(entry) = scene.entry(game_object) else {
                 break 'calc_bone_transform;
@@ -469,6 +470,12 @@ impl ComponentAnimator {
             let Ok(c_bone) = entry.get_component::<ComponentBone>() else {
                 break 'calc_bone_transform;
             };
+            let bind_pose = c_bone
+                .bind_pose
+                .unwrap_or_else(|| scene.transform(game_object));
+            if c_bone.bind_pose.is_none() {
+                captured_bind_pose = Some(bind_pose);
+            }
             let Some(node) = snapshot
                 .current_state
                 .and_then(|nid| animation_graph.graph.node_weight(nid))
@@ -481,6 +488,7 @@ impl ComponentAnimator {
                 &node.motion,
                 &c_bone.name,
                 snapshot.time,
+                &bind_pose,
             )
             .matrix();
             pose.bone_transforms[c_bone.index] = BoneTransform {
@@ -490,6 +498,13 @@ impl ComponentAnimator {
                     * c_bone.offset_matrix)
                     .into(),
             };
+        }
+        if let Some(bind_pose) = captured_bind_pose {
+            if let Some(mut entry) = scene.entry_mut(game_object) {
+                if let Ok(c_bone) = entry.get_component_mut::<ComponentBone>() {
+                    c_bone.bind_pose = Some(bind_pose);
+                }
+            }
         }
         parent_transform *= local_transform;
         scene.set_transform(game_object, &local_transform);
@@ -512,14 +527,17 @@ impl ComponentAnimator {
         keyframes: &[T],
         ticks: TimeType,
         mut accessor: F,
-    ) -> (&T, &T) {
+    ) -> Option<(&T, &T)> {
+        if keyframes.is_empty() {
+            return None;
+        }
         let index = keyframes
             .binary_search_by(|k| accessor(k).partial_cmp(&ticks).unwrap_or(Ordering::Less))
             .unwrap_or_else(|index| index) as isize;
         let max_index = (keyframes.len() - 1) as isize;
         let prev = (index - 1).clamp(0, max_index) as usize;
         let next = index.clamp(0, max_index) as usize;
-        (&keyframes[prev], &keyframes[next])
+        Some((&keyframes[prev], &keyframes[next]))
     }
 
     fn progression(prev_time: f32, next_time: f32, time: f32) -> f32 {
@@ -547,6 +565,7 @@ impl ComponentAnimator {
         motion: &AnimationMotion,
         bone_name: &str,
         time: f32,
+        bind_pose: &Transform,
     ) -> Transform {
         match motion {
             AnimationMotion::AnimationClip(clip) => {
@@ -561,57 +580,129 @@ impl ComponentAnimator {
                     keyframes,
                     (clip.speed * time * animation.ticks_per_second as f32)
                         % animation.duration as f32,
+                    bind_pose,
                 )
             }
             AnimationMotion::BlendTree1D(tree) => {
-                Transform::nlerp(tree.nearest_neighbors(2, parameters).into_iter().map(
-                    |(weight, neighbor)| {
-                        (
-                            weight,
-                            Self::motion_local_bone_transform_static(
-                                parameters,
-                                assets,
-                                &neighbor.motion,
-                                bone_name,
-                                time,
-                            ),
-                        )
-                    },
-                ))
+                if tree.motions.is_empty() {
+                    crate::logging::warn_once(format!("empty-blend-tree:{tree:p}"), || {
+                        "Blend tree has no motions; using bind pose".to_string()
+                    });
+                    return *bind_pose;
+                }
+                let neighbors = tree.nearest_neighbors(2, parameters);
+                if neighbors.is_empty() {
+                    return *bind_pose;
+                }
+                Transform::nlerp(neighbors.into_iter().map(|(weight, neighbor)| {
+                    (
+                        weight,
+                        Self::motion_local_bone_transform_static(
+                            parameters,
+                            assets,
+                            &neighbor.motion,
+                            bone_name,
+                            time,
+                            bind_pose,
+                        ),
+                    )
+                }))
             }
             AnimationMotion::BlendTree2D(tree) => {
-                Transform::nlerp(tree.nearest_neighbors(4, parameters).into_iter().map(
-                    |(weight, neighbor)| {
-                        (
-                            weight,
-                            Self::motion_local_bone_transform_static(
-                                parameters,
-                                assets,
-                                &neighbor.motion,
-                                bone_name,
-                                time,
-                            ),
-                        )
-                    },
-                ))
+                if tree.motions.is_empty() {
+                    crate::logging::warn_once(format!("empty-blend-tree:{tree:p}"), || {
+                        "Blend tree has no motions; using bind pose".to_string()
+                    });
+                    return *bind_pose;
+                }
+                let neighbors = tree.nearest_neighbors(4, parameters);
+                if neighbors.is_empty() {
+                    return *bind_pose;
+                }
+                Transform::nlerp(neighbors.into_iter().map(|(weight, neighbor)| {
+                    (
+                        weight,
+                        Self::motion_local_bone_transform_static(
+                            parameters,
+                            assets,
+                            &neighbor.motion,
+                            bone_name,
+                            time,
+                            bind_pose,
+                        ),
+                    )
+                }))
             }
         }
     }
 
-    fn animation_local_bone_transform(keyframes: &AnimationKeyFrames, ticks: f32) -> Transform {
-        let (prev, next) = Self::find_keyframes(&keyframes.positions, ticks, |k| k.time as f32);
-        let position = Self::interpolate_vector(prev, next, ticks);
-
-        let (prev, next) = Self::find_keyframes(&keyframes.rotations, ticks, |k| k.time as f32);
-        let rotation = Self::interpolate_quat(prev, next, ticks);
-
-        let (prev, next) = Self::find_keyframes(&keyframes.scaling, ticks, |k| k.time as f32);
-        let scale = Self::interpolate_vector(prev, next, ticks);
+    fn animation_local_bone_transform(
+        keyframes: &AnimationKeyFrames,
+        ticks: f32,
+        bind_pose: &Transform,
+    ) -> Transform {
+        // Channels without keyframes keep the bind pose value.
+        let position = Self::find_keyframes(&keyframes.positions, ticks, |k| k.time as f32)
+            .map(|(prev, next)| Self::interpolate_vector(prev, next, ticks))
+            .unwrap_or(bind_pose.position);
+        let rotation = Self::find_keyframes(&keyframes.rotations, ticks, |k| k.time as f32)
+            .map(|(prev, next)| Self::interpolate_quat(prev, next, ticks))
+            .unwrap_or(bind_pose.rotation);
+        let scale = Self::find_keyframes(&keyframes.scaling, ticks, |k| k.time as f32)
+            .map(|(prev, next)| Self::interpolate_vector(prev, next, ticks))
+            .unwrap_or(bind_pose.scale);
 
         Transform {
             position,
             rotation,
             scale,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::assets::animation_graph::{AnimationMotion, BlendTree};
+    use crate::test_utils::test_registries;
+
+    fn bind_pose() -> Transform {
+        Transform::from_xyz(1.0, 2.0, 3.0)
+    }
+
+    #[test]
+    fn find_keyframes_on_empty_channel_returns_none() {
+        let keyframes: Vec<VectorKeyFrame> = vec![];
+        assert!(ComponentAnimator::find_keyframes(&keyframes, 0.0, |k| k.time as f32).is_none());
+    }
+
+    #[test]
+    fn empty_channels_keep_bind_pose() {
+        let keyframes = AnimationKeyFrames {
+            positions: vec![],
+            rotations: vec![],
+            scaling: vec![],
+        };
+        let result =
+            ComponentAnimator::animation_local_bone_transform(&keyframes, 0.5, &bind_pose());
+        assert_eq!(result.position, bind_pose().position);
+        assert_eq!(result.rotation, bind_pose().rotation);
+        assert_eq!(result.scale, bind_pose().scale);
+    }
+
+    #[test]
+    fn empty_blend_tree_evaluates_to_bind_pose() {
+        let assets = test_registries();
+        let motion = AnimationMotion::BlendTree1D(BlendTree::<1>::default());
+        let result = ComponentAnimator::motion_local_bone_transform_static(
+            &HashMap::new(),
+            &assets,
+            &motion,
+            "bone",
+            0.0,
+            &bind_pose(),
+        );
+        assert_eq!(result.position, bind_pose().position);
+        assert!(!result.rotation.coords.iter().any(|c| c.is_nan()));
     }
 }
