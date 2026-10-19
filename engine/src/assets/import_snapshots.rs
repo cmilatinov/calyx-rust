@@ -87,7 +87,13 @@ impl Shape {
             centroid = centroid.map(|value| value / area);
         }
         let size = norm(sub(bounds_max, bounds_min));
-        let unitless = |value: f64, power: i32| if size > 0.0 { value / size.powi(power) } else { value };
+        let unitless = |value: f64, power: i32| {
+            if size > 0.0 {
+                value / size.powi(power)
+            } else {
+                value
+            }
+        };
         Self {
             triangles: indices.len() / 3,
             size,
@@ -163,7 +169,9 @@ impl MeshSummary {
             let corner_normals = triangle
                 .iter()
                 .map(|&index| to_f64(&mesh.normals[index as usize]))
-                .fold([0.0; 3], |sum, normal| [0, 1, 2].map(|axis| sum[axis] + normal[axis]));
+                .fold([0.0; 3], |sum, normal| {
+                    [0, 1, 2].map(|axis| sum[axis] + normal[axis])
+                });
             normal_alignment += area * dot(corner_normals, face).signum();
             for &index in triangle {
                 let vertex = &mesh.vertices[index as usize];
@@ -171,7 +179,10 @@ impl MeshSummary {
                 position_normals
                     .entry([vertex.x, vertex.y, vertex.z].map(f32::to_bits))
                     .or_insert_with(HashMap::new)
-                    .insert([normal.x, normal.y, normal.z].map(f32::to_bits), to_f64(normal));
+                    .insert(
+                        [normal.x, normal.y, normal.z].map(f32::to_bits),
+                        to_f64(normal),
+                    );
             }
             for (summary, uvs) in uv_channels.iter_mut().zip(&channels) {
                 let [ua, ub, uc] = [0, 1, 2].map(|i| uvs[triangle[i] as usize]);

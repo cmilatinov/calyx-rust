@@ -211,7 +211,7 @@ mod tests {
         let registry = registries.assets.read();
         let mesh = registry.load::<Mesh>("meshes/cube").unwrap();
         let mesh = mesh.read();
-        // Mesh::from_russimp_mesh creates vertex/index buffers via the GPU device
+        // Mesh::from_imported creates vertex/index buffers via the GPU device
         // They're None until mark_dirty + upload, but instance_buffer is always created
         assert!(!mesh.vertices.is_empty());
     }

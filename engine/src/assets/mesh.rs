@@ -1,21 +1,20 @@
-use std::cmp::min;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::Path;
 
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
-use nalgebra_glm::{vec2, vec3, vec4, IVec4, Mat4, Vec2, Vec3, Vec4};
-use russimp_ng::scene::{PostProcess, Scene};
+use nalgebra_glm::{vec4, IVec4, Mat4, Vec2, Vec3, Vec4};
 
 use super::LoadedAsset;
+use crate as engine;
 use crate::assets::error::AssetError;
+use crate::assets::import::{self, ImportedMesh};
 use crate::assets::Asset;
 use crate::context::ReadOnlyAssetContext;
 use crate::render::buffer::{wgpu_buffer_init_desc, BufferLayout, ResizableBuffer};
 use crate::render::RenderContext;
 use crate::utils::TypeUuid;
-use crate::{self as engine, math};
 
 const CX_MESH_NUM_UV_CHANNELS: usize = 4;
 
@@ -221,27 +220,7 @@ impl Asset for Mesh {
         game: &ReadOnlyAssetContext,
         path: &Path,
     ) -> Result<LoadedAsset<Self>, AssetError> {
-        let scene_path = path.to_str().ok_or_else(|| {
-            AssetError::LoadError
-                .with_path(path)
-                .with_type(Self::asset_name())
-                .with_source("path is not valid UTF-8")
-        })?;
-        let scene = Scene::from_file(
-            scene_path,
-            vec![
-                PostProcess::Triangulate,
-                PostProcess::GenerateSmoothNormals,
-                PostProcess::FlipUVs,
-                PostProcess::FlipWindingOrder,
-                PostProcess::JoinIdenticalVertices,
-            ],
-        )
-        .map_err(|err| {
-            AssetError::from(err)
-                .with_path(path)
-                .with_type(Self::asset_name())
-        })?;
+        let scene = import::import(path).map_err(|err| err.with_type(Self::asset_name()))?;
 
         // Assuming you want to load the first mesh in the scene
         let mesh = scene.meshes.first().ok_or(
@@ -252,11 +231,11 @@ impl Asset for Mesh {
         log::info!(
             "Loaded mesh {} ({} vertices, {} faces, {} bones)",
             path.display(),
-            mesh.vertices.len(),
-            mesh.faces.len(),
+            mesh.positions.len(),
+            mesh.indices.len() / 3,
             mesh.bones.len()
         );
-        Ok(LoadedAsset::new(Mesh::from_russimp_mesh(
+        Ok(LoadedAsset::new(Mesh::from_imported(
             &game.render_context,
             mesh,
         )))
@@ -317,35 +296,15 @@ impl Mesh {
         (bone_indices, bone_weights)
     }
 
-    /// Builds a mesh asset from a Russimp mesh.
-    pub fn from_russimp_mesh(
-        render_context: &RenderContext,
-        mesh: &russimp_ng::mesh::Mesh,
-    ) -> Self {
-        let indices = mesh
-            .faces
-            .iter()
-            .flat_map(|face| face.0.iter().cloned())
-            .collect();
-        let mut vertices = vec![Vec3::zeros(); mesh.vertices.len()];
-        let mut normals = vec![Vec3::zeros(); mesh.vertices.len()];
-
-        let num_uvs: usize = min(mesh.uv_components.len(), CX_MESH_NUM_UV_CHANNELS);
-        let mut uvs = [
-            vec![Vec2::zeros(); mesh.vertices.len()],
-            vec![Vec2::zeros(); mesh.vertices.len()],
-            vec![Vec2::zeros(); mesh.vertices.len()],
-            vec![Vec2::zeros(); mesh.vertices.len()],
-        ];
-
-        for (i, vertex) in mesh.vertices.iter().enumerate() {
-            vertices[i] = vec3(vertex.x, vertex.y, vertex.z);
-            normals[i] = vec3(mesh.normals[i].x, mesh.normals[i].y, mesh.normals[i].z);
-            for (j, coord) in uvs.iter_mut().enumerate().take(num_uvs) {
-                if let Some(tex_coord) = mesh.texture_coords[j].as_ref() {
-                    coord[i] = vec2(tex_coord[i].x, tex_coord[i].y);
-                }
-            }
+    /// Builds a mesh asset from an imported mesh.
+    pub(crate) fn from_imported(render_context: &RenderContext, mesh: &ImportedMesh) -> Self {
+        let indices = mesh.indices.clone();
+        let vertices = mesh.positions.clone();
+        let normals = mesh.normals.clone();
+        let mut uvs: [Vec<Vec2>; CX_MESH_NUM_UV_CHANNELS] =
+            std::array::from_fn(|_| vec![Vec2::zeros(); mesh.positions.len()]);
+        for (channel, imported) in uvs.iter_mut().zip(&mesh.uvs) {
+            channel.clone_from(imported);
         }
 
         let bones = mesh
@@ -357,18 +316,14 @@ impl Mesh {
                     bone.name.clone(),
                     BoneInfo {
                         index: bone_index,
-                        inverse_bind_transform: math::mat4_from_russimp(&bone.offset_matrix),
+                        inverse_bind_transform: bone.inverse_bind_transform,
                     },
                 )
             })
             .collect();
         let (bone_indices, bone_weights) = Self::bind_bone_weights(
-            mesh.vertices.len(),
-            mesh.bones.iter().map(|bone| {
-                bone.weights
-                    .iter()
-                    .map(|weight| (weight.vertex_id, weight.weight))
-            }),
+            mesh.positions.len(),
+            mesh.bones.iter().map(|bone| bone.weights.iter().copied()),
         );
 
         Self {

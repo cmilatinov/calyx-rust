@@ -6,7 +6,6 @@ use nalgebra_glm::{vec3, Mat4, Vec3};
 
 /// Distance traits and helper implementations for common math types.
 pub use dist::*;
-use russimp_ng::Matrix4x4;
 /// Transform type and helpers for local and world-space math.
 pub use transform::*;
 
@@ -82,14 +81,6 @@ pub fn fit_aspect(aspect: f32, available: impl Into<Vector2<f32>>) -> Vector2<f3
             y: available.x / aspect,
         }
     }
-}
-
-/// Converts a Russimp matrix into the engine's `Mat4` representation.
-pub fn mat4_from_russimp(matrix: &Matrix4x4) -> Mat4 {
-    Mat4::from_row_slice(&[
-        matrix.a1, matrix.a2, matrix.a3, matrix.a4, matrix.b1, matrix.b2, matrix.b3, matrix.b4,
-        matrix.c1, matrix.c2, matrix.c3, matrix.c4, matrix.d1, matrix.d2, matrix.d3, matrix.d4,
-    ])
 }
 
 #[cfg(test)]

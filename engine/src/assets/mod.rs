@@ -10,6 +10,7 @@ mod asset;
 mod asset_registry;
 /// Asset loading and type errors.
 pub mod error;
+pub(crate) mod import;
 mod loaded_asset;
 /// Material assets and shader variable bindings.
 pub mod material;
