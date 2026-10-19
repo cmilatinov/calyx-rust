@@ -28,6 +28,50 @@ pub struct TypeRegistration {
 pub struct TypeRegistry {
     /// Registered types keyed by stable type UUID.
     pub types: HashMap<Uuid, TypeRegistration>,
+    /// Rust type identities behind registered UUIDs, used to detect collisions.
+    ///
+    /// Kept outside [`TypeRegistration`] and appended after `types` so the layout
+    /// of `types` stays stable for already-built plugin assemblies.
+    pub identities: RegistryIdentities,
+}
+
+/// Rust type name recorded for a registered UUID, with the registration pass
+/// that recorded it.
+///
+/// Compared by name rather than `TypeId` because a rebuilt plugin assembly can
+/// assign a new `TypeId` to the same source type. Owned so it survives unloading
+/// the assembly that registered it.
+pub type TypeIdentity = (String, u64);
+
+/// Registry-wide record of which Rust type owns each registered UUID.
+#[repr(C)]
+#[derive(Default)]
+pub struct RegistryIdentities {
+    /// Reflected types keyed by type UUID.
+    pub types: HashMap<Uuid, TypeIdentity>,
+    /// Trait metadata types keyed by trait metadata UUID.
+    pub trait_meta: HashMap<Uuid, TypeIdentity>,
+    /// Current registration pass. Pass 0 is the host; each plugin load starts a new one.
+    pub generation: u64,
+}
+
+impl RegistryIdentities {
+    /// Generation to record for a UUID owner, given any existing owner.
+    fn owner_generation(&self, existing: Option<&TypeIdentity>) -> u64 {
+        // Host-owned UUIDs stay protected when a plugin re-registers the same type.
+        match existing {
+            Some((_, 0)) => 0,
+            _ => self.generation,
+        }
+    }
+
+    /// Whether registering `name` conflicts with the recorded owner of its UUID.
+    ///
+    /// A different type conflicts unless its previous owner came from an earlier
+    /// plugin pass, since a rebuilt plugin may rename or move its types.
+    fn conflicts(&self, existing: &TypeIdentity, name: &str) -> bool {
+        existing.0 != name && (existing.1 == 0 || existing.1 >= self.generation)
+    }
 }
 
 impl Default for TypeRegistry {
@@ -41,6 +85,7 @@ impl TypeRegistry {
     pub fn new() -> Self {
         let mut registry = Self {
             types: Default::default(),
+            identities: Default::default(),
         };
         for f in inventory::iter::<TypeRegistrationFn> {
             f.0(&mut registry)
@@ -50,6 +95,12 @@ impl TypeRegistry {
 }
 
 impl TypeRegistry {
+    /// Starts a new plugin registration pass. Types registered by earlier plugin
+    /// passes may then be replaced by differently named types with the same UUID.
+    pub fn begin_plugin_load(&mut self) {
+        self.identities.generation += 1;
+    }
+
     /// Registers a reflected type explicitly.
     pub fn register<T: ReflectedType + 'static>(&mut self) {
         T::register(self)
@@ -57,13 +108,7 @@ impl TypeRegistry {
 
     /// Creates a placeholder registration entry for `T`.
     pub fn meta<T: TypeUuid + 'static>(&mut self) {
-        self.types.insert(
-            T::type_uuid(),
-            TypeRegistration {
-                trait_meta: HashMap::new(),
-                type_info: TypeInfo::None,
-            },
-        );
+        self.insert_registration::<T>(TypeInfo::None);
     }
 
     /// Begins building struct metadata for `T`.
@@ -72,18 +117,12 @@ impl TypeRegistry {
         attrs: AttributeMap,
     ) -> StructInfoBuilder<'_> {
         let type_uuid = T::type_uuid();
-        self.types.insert(
-            type_uuid,
-            TypeRegistration {
-                trait_meta: HashMap::new(),
-                type_info: TypeInfo::Struct(StructInfo {
-                    type_name: std::any::type_name::<T>(),
-                    type_id: TypeId::of::<T>(),
-                    attrs,
-                    fields: HashMap::new(),
-                }),
-            },
-        );
+        self.insert_registration::<T>(TypeInfo::Struct(StructInfo {
+            type_name: std::any::type_name::<T>(),
+            type_id: TypeId::of::<T>(),
+            attrs,
+            fields: HashMap::new(),
+        }));
         let registration = self.types.get_mut(&type_uuid).unwrap();
         if let TypeInfo::Struct(ref mut type_info) = registration.type_info {
             StructInfoBuilder { type_info }
@@ -95,18 +134,12 @@ impl TypeRegistry {
     /// Begins building enum metadata for `T`.
     pub fn meta_enum<T: TypeUuid + 'static>(&mut self, attrs: AttributeMap) -> EnumInfoBuilder<'_> {
         let type_uuid = T::type_uuid();
-        self.types.insert(
-            type_uuid,
-            TypeRegistration {
-                trait_meta: HashMap::new(),
-                type_info: TypeInfo::Enum(EnumInfo {
-                    type_name: std::any::type_name::<T>(),
-                    type_id: TypeId::of::<T>(),
-                    attrs,
-                    variants: Vec::new(),
-                }),
-            },
-        );
+        self.insert_registration::<T>(TypeInfo::Enum(EnumInfo {
+            type_name: std::any::type_name::<T>(),
+            type_id: TypeId::of::<T>(),
+            attrs,
+            variants: Vec::new(),
+        }));
         let registration = self.types.get_mut(&type_uuid).unwrap();
         if let TypeInfo::Enum(ref mut type_info) = registration.type_info {
             EnumInfoBuilder { type_info }
@@ -117,50 +150,32 @@ impl TypeRegistry {
 
     /// Registers list metadata for `T` with element type `E`.
     pub fn meta_list<T: TypeUuid + 'static, E: TypeUuid + 'static>(&mut self) {
-        self.types.insert(
-            T::type_uuid(),
-            TypeRegistration {
-                trait_meta: HashMap::new(),
-                type_info: TypeInfo::List(ListInfo {
-                    type_name: std::any::type_name::<T>(),
-                    type_id: TypeId::of::<T>(),
-                    element: TypeDescriptor::of::<E>(),
-                }),
-            },
-        );
+        self.insert_registration::<T>(TypeInfo::List(ListInfo {
+            type_name: std::any::type_name::<T>(),
+            type_id: TypeId::of::<T>(),
+            element: TypeDescriptor::of::<E>(),
+        }));
     }
 
     /// Registers option metadata for `T` with wrapped value type `V`.
     pub fn meta_option<T: TypeUuid + 'static, V: TypeUuid + 'static>(&mut self) {
-        self.types.insert(
-            T::type_uuid(),
-            TypeRegistration {
-                trait_meta: HashMap::new(),
-                type_info: TypeInfo::Option(OptionInfo {
-                    type_name: std::any::type_name::<T>(),
-                    type_id: TypeId::of::<T>(),
-                    value: TypeDescriptor::of::<V>(),
-                }),
-            },
-        );
+        self.insert_registration::<T>(TypeInfo::Option(OptionInfo {
+            type_name: std::any::type_name::<T>(),
+            type_id: TypeId::of::<T>(),
+            value: TypeDescriptor::of::<V>(),
+        }));
     }
 
     /// Registers map metadata for `T` with key `K` and value `V`.
     pub fn meta_map<T: TypeUuid + 'static, K: TypeUuid + 'static, V: TypeUuid + 'static>(
         &mut self,
     ) {
-        self.types.insert(
-            T::type_uuid(),
-            TypeRegistration {
-                trait_meta: HashMap::new(),
-                type_info: TypeInfo::Map(MapInfo {
-                    type_name: std::any::type_name::<T>(),
-                    type_id: TypeId::of::<T>(),
-                    key: TypeDescriptor::of::<K>(),
-                    value: TypeDescriptor::of::<V>(),
-                }),
-            },
-        );
+        self.insert_registration::<T>(TypeInfo::Map(MapInfo {
+            type_name: std::any::type_name::<T>(),
+            type_id: TypeId::of::<T>(),
+            key: TypeDescriptor::of::<K>(),
+            value: TypeDescriptor::of::<V>(),
+        }));
     }
 
     /// Attaches reflected trait metadata `M` to `T`.
@@ -170,13 +185,70 @@ impl TypeRegistry {
     >(
         &mut self,
     ) {
-        self.types
-            .get_mut(&T::type_uuid())
-            .and_then(|registration| {
-                registration
-                    .trait_meta
-                    .insert(M::type_uuid(), Box::new(M::trait_meta()))
-            });
+        if !self.types.contains_key(&T::type_uuid()) {
+            return;
+        }
+        let meta_uuid = M::type_uuid();
+        let meta_identity = std::any::type_name::<M>();
+        if let Some(existing) = self.identities.trait_meta.get(&meta_uuid) {
+            if self.identities.conflicts(existing, meta_identity) {
+                panic!(
+                    "duplicate trait metadata UUID {meta_uuid}: `{}` conflicts with already registered `{}`",
+                    meta_identity, existing.0
+                );
+            }
+        }
+        let replaced = self
+            .identities
+            .trait_meta
+            .get(&meta_uuid)
+            .is_some_and(|existing| existing.0 != meta_identity);
+        if replaced {
+            // Stale registrations from earlier plugin passes may still hold the
+            // old metadata object, which must not be read back as the new type.
+            for registration in self.types.values_mut() {
+                registration.trait_meta.remove(&meta_uuid);
+            }
+        }
+        let generation = self
+            .identities
+            .owner_generation(self.identities.trait_meta.get(&meta_uuid));
+        self.identities
+            .trait_meta
+            .insert(meta_uuid, (meta_identity.to_string(), generation));
+        if let Some(registration) = self.types.get_mut(&T::type_uuid()) {
+            registration
+                .trait_meta
+                .insert(meta_uuid, Box::new(M::trait_meta()));
+        }
+    }
+
+    /// Inserts a fresh registration for `T`, panicking if its UUID already
+    /// belongs to a different type. Re-registering the same type replaces it.
+    fn insert_registration<T: TypeUuid + 'static>(&mut self, type_info: TypeInfo) {
+        let type_uuid = T::type_uuid();
+        let type_name = std::any::type_name::<T>();
+        if let Some(existing) = self.identities.types.get(&type_uuid) {
+            if self.identities.conflicts(existing, type_name) {
+                panic!(
+                    "duplicate type UUID {type_uuid}: `{type_name}` conflicts with already registered `{}`",
+                    existing.0
+                );
+            }
+        }
+        let generation = self
+            .identities
+            .owner_generation(self.identities.types.get(&type_uuid));
+        self.identities
+            .types
+            .insert(type_uuid, (type_name.to_string(), generation));
+        self.types.insert(
+            type_uuid,
+            TypeRegistration {
+                trait_meta: HashMap::new(),
+                type_info,
+            },
+        );
     }
 
     /// Looks up type info for `T`.
@@ -324,12 +396,14 @@ mod tests {
     fn empty_registry() -> TypeRegistry {
         TypeRegistry {
             types: Default::default(),
+            identities: Default::default(),
         }
     }
 
     fn foo_registry() -> TypeRegistry {
         let mut registry = TypeRegistry {
             types: Default::default(),
+            identities: Default::default(),
         };
         Foo::register(&mut registry);
         registry
@@ -415,5 +489,152 @@ mod tests {
         };
         assert_eq!(info.key.type_uuid, String::type_uuid());
         assert_eq!(info.value.type_uuid, f32::type_uuid());
+    }
+
+    #[derive(TypeUuid)]
+    #[uuid = "3b0c2f5e-8d4a-4f6e-9a1b-7c5d2e8f1a40"]
+    struct DupA;
+
+    #[derive(TypeUuid)]
+    #[uuid = "3b0c2f5e-8d4a-4f6e-9a1b-7c5d2e8f1a40"]
+    struct DupB;
+
+    #[derive(Default, TypeUuid, Reflect)]
+    #[allow(unused)]
+    #[repr(C)]
+    struct Bar {
+        data: f32,
+    }
+
+    #[derive(TypeUuid)]
+    #[uuid = "9e1d7a62-5b3c-4c8f-a2d4-0f6b8c3e7a15"]
+    struct DupMetaA;
+
+    #[derive(TypeUuid)]
+    #[uuid = "9e1d7a62-5b3c-4c8f-a2d4-0f6b8c3e7a15"]
+    struct DupMetaB;
+
+    impl TraitMeta for DupMetaA {}
+    impl TraitMeta for DupMetaB {}
+    impl<T: Reflect> TraitMetaFrom<T> for DupMetaA {
+        fn trait_meta() -> Self {
+            DupMetaA
+        }
+    }
+    impl<T: Reflect> TraitMetaFrom<T> for DupMetaB {
+        fn trait_meta() -> Self {
+            DupMetaB
+        }
+    }
+
+    fn panic_message(f: impl FnOnce() + std::panic::UnwindSafe) -> String {
+        let err = std::panic::catch_unwind(f).expect_err("expected a panic");
+        err.downcast_ref::<String>()
+            .cloned()
+            .or_else(|| err.downcast_ref::<&str>().map(|s| s.to_string()))
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn duplicate_uuid_for_different_type_is_rejected_with_both_names() {
+        let mut reg = empty_registry();
+        reg.meta::<DupA>();
+        let msg = panic_message(std::panic::AssertUnwindSafe(|| {
+            reg.meta_struct::<DupB>(AttributeMap::new());
+        }));
+        assert!(msg.contains("DupA") && msg.contains("DupB"), "{msg}");
+
+        let mut reg = empty_registry();
+        reg.meta_struct::<DupA>(AttributeMap::new());
+        let msg = panic_message(std::panic::AssertUnwindSafe(|| {
+            reg.meta_enum::<DupB>(AttributeMap::new());
+        }));
+        assert!(msg.contains("DupA") && msg.contains("DupB"), "{msg}");
+    }
+
+    #[test]
+    fn reregistering_same_type_is_idempotent() {
+        let mut reg = foo_registry();
+        Foo::register(&mut reg);
+        assert_eq!(reg.types.len(), 1);
+        assert!(reg.type_registration::<Foo>().is_some());
+        assert_eq!(reg.list_types::<ReflectDefault>().len(), 1);
+    }
+
+    #[test]
+    fn duplicate_trait_meta_uuid_is_rejected_with_both_names() {
+        let mut reg = empty_registry();
+        reg.meta::<DupA>();
+        reg.meta_impls::<Foo, DupMetaA>();
+        Foo::register(&mut reg);
+        reg.meta_impls::<Foo, DupMetaA>();
+        reg.meta_impls::<Foo, DupMetaA>();
+        let msg = panic_message(std::panic::AssertUnwindSafe(|| {
+            reg.meta_impls::<Foo, DupMetaB>();
+        }));
+        assert!(
+            msg.contains("DupMetaA") && msg.contains("DupMetaB"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn duplicate_trait_meta_uuid_is_rejected_across_target_types() {
+        let mut reg = foo_registry();
+        Bar::register(&mut reg);
+        reg.meta_impls::<Foo, DupMetaA>();
+        let msg = panic_message(std::panic::AssertUnwindSafe(|| {
+            reg.meta_impls::<Bar, DupMetaB>();
+        }));
+        assert!(
+            msg.contains("DupMetaA") && msg.contains("DupMetaB"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn plugin_reload_may_replace_a_renamed_plugin_type_but_not_a_host_type() {
+        let mut reg = empty_registry();
+        reg.meta::<DupA>();
+        reg.begin_plugin_load();
+        let msg = panic_message(std::panic::AssertUnwindSafe(|| {
+            reg.meta::<DupB>();
+        }));
+        assert!(msg.contains("DupA") && msg.contains("DupB"), "{msg}");
+
+        let mut reg = empty_registry();
+        reg.begin_plugin_load();
+        reg.meta::<DupA>();
+        reg.begin_plugin_load();
+        reg.meta::<DupB>();
+        assert!(reg.type_registration::<DupB>().is_some());
+    }
+
+    #[test]
+    fn plugin_reusing_a_host_trait_meta_keeps_it_protected() {
+        let mut reg = foo_registry();
+        reg.meta_impls::<Foo, DupMetaA>();
+        reg.begin_plugin_load();
+        reg.meta_impls::<Foo, DupMetaA>();
+        reg.begin_plugin_load();
+        let msg = panic_message(std::panic::AssertUnwindSafe(|| {
+            reg.meta_impls::<Foo, DupMetaB>();
+        }));
+        assert!(
+            msg.contains("DupMetaA") && msg.contains("DupMetaB"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn replacing_plugin_trait_meta_purges_stale_metadata_objects() {
+        let mut reg = foo_registry();
+        reg.begin_plugin_load();
+        reg.meta_impls::<Foo, DupMetaA>();
+        reg.begin_plugin_load();
+        Bar::register(&mut reg);
+        reg.meta_impls::<Bar, DupMetaB>();
+        assert!(reg.trait_meta::<DupMetaB>(Foo::type_uuid()).is_none());
+        assert!(reg.trait_meta::<DupMetaB>(Bar::type_uuid()).is_some());
     }
 }

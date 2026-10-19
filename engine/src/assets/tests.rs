@@ -1,9 +1,12 @@
 #[cfg(test)]
 mod tests {
     use crate::assets::animation::Animation;
+    use crate::assets::error::AssetErrorKind;
     use crate::assets::mesh::Mesh;
     use crate::assets::texture::Texture;
-    use crate::test_utils::{test_registries_with_assets, TestAssets};
+    use crate::assets::Asset;
+    use crate::test_utils::{test_game_context, test_registries_with_assets, TestAssets};
+
     use crate::utils::TypeUuid;
     use std::fs;
     use std::sync::{Arc, Barrier};
@@ -211,5 +214,62 @@ mod tests {
         // Mesh::from_russimp_mesh creates vertex/index buffers via the GPU device
         // They're None until mark_dirty + upload, but instance_buffer is always created
         assert!(!mesh.vertices.is_empty());
+    }
+
+    /// Builds a file name that is not valid UTF-8 on the current platform.
+    fn non_utf8_file_name(stem: &str, ext: &str) -> std::ffi::OsString {
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            let mut bytes = stem.as_bytes().to_vec();
+            bytes.push(0xff);
+            bytes.extend_from_slice(format!(".{ext}").as_bytes());
+            std::ffi::OsString::from_vec(bytes)
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStringExt;
+            let mut wide: Vec<u16> = stem.encode_utf16().collect();
+            wide.push(0xD800);
+            wide.extend(format!(".{ext}").encode_utf16());
+            std::ffi::OsString::from_wide(&wide)
+        }
+    }
+
+    #[test]
+    fn texture_from_file_reports_non_utf8_file_name() {
+        let context = test_game_context().assets.lock_read();
+        let dir = std::env::temp_dir().join(format!("texture-name-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("failed to create temp directory");
+        let path = dir.join(non_utf8_file_name("texture", "png"));
+        image::RgbaImage::new(1, 1)
+            .save_with_format(&path, image::ImageFormat::Png)
+            .expect("failed to write temp texture");
+
+        let result = Texture::from_file(&context, &path);
+        fs::remove_dir_all(&dir).expect("failed to remove temp directory");
+
+        let Err(err) = result else {
+            panic!("non-UTF-8 file name should fail to load");
+        };
+        assert_eq!(err.kind, AssetErrorKind::LoadError);
+        assert_eq!(err.asset_type, Some(Texture::asset_name()));
+        assert_eq!(err.path.as_deref(), Some(path.as_path()));
+    }
+
+    #[test]
+    fn mesh_from_file_reports_non_utf8_path() {
+        let context = test_game_context().assets.lock_read();
+        let dir = std::env::temp_dir().join(format!("mesh-path-{}", Uuid::new_v4()));
+        let path = dir.join(non_utf8_file_name("mesh", "obj"));
+
+        let result = Mesh::from_file(&context, &path);
+
+        let Err(err) = result else {
+            panic!("non-UTF-8 path should fail to load");
+        };
+        assert_eq!(err.kind, AssetErrorKind::LoadError);
+        assert_eq!(err.asset_type, Some(Mesh::asset_name()));
+        assert_eq!(err.path.as_deref(), Some(path.as_path()));
     }
 }
