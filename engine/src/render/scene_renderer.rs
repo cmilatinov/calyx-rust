@@ -1100,17 +1100,11 @@ mod tests {
     use crate::math::Transform;
     use crate::render::{Camera, Shader};
     use crate::test_support::SceneBuilder;
-    use crate::test_utils::test_asset_context_with_assets;
+    use crate::test_utils::TestAssets;
     use nalgebra::UnitQuaternion;
     use nalgebra_glm::{vec3, vec4};
-    use std::path::PathBuf;
 
     const VIEWPORT: u32 = 512;
-
-    fn assets_path() -> PathBuf {
-        let assets_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets");
-        dunce::canonicalize(assets_path).expect("assets dir not found")
-    }
 
     fn batch(start: u32, count: u32) -> Vec<Range<u32>> {
         let mut draw_list = Vec::new();
@@ -1145,7 +1139,8 @@ mod tests {
         const COLUMNS: u32 = 9;
         const ROWS: u32 = 5;
         const SPACING: f32 = 3.0;
-        let context = test_asset_context_with_assets(vec![assets_path()]);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
         let read_only_context = context.lock_read();
         let (cube, material) = {
             let registry = read_only_context.registries.assets.read();
