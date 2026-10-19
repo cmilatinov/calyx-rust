@@ -285,6 +285,38 @@ impl Mesh {
         }
     }
 
+    /// Keeps the four heaviest bone influences of each vertex, normalised to sum to one.
+    /// `bones` yields each bone's `(vertex, weight)` influences, in bone index order.
+    fn bind_bone_weights(
+        vertex_count: usize,
+        bones: impl IntoIterator<Item = impl IntoIterator<Item = (u32, f32)>>,
+    ) -> (Vec<IVec4>, Vec<Vec4>) {
+        let mut bone_indices = vec![vec4::<i32>(-1, -1, -1, -1); vertex_count];
+        let mut bone_weights = vec![vec4(0.0, 0.0, 0.0, 0.0); vertex_count];
+        for (bone_index, weights) in bones.into_iter().enumerate() {
+            for (vertex, weight) in weights {
+                Self::insert_bone_weight(
+                    bone_index as i32,
+                    weight,
+                    bone_indices[vertex as usize].as_mut_slice(),
+                    bone_weights[vertex as usize].as_mut_slice(),
+                );
+            }
+        }
+        for (indices, weights) in bone_indices.iter().zip(bone_weights.iter_mut()) {
+            let sum: f32 = indices
+                .iter()
+                .zip(weights.iter())
+                .filter(|(index, _)| **index >= 0)
+                .map(|(_, weight)| *weight)
+                .sum();
+            if sum > 0.00001 {
+                *weights /= sum;
+            }
+        }
+        (bone_indices, bone_weights)
+    }
+
     /// Builds a mesh asset from a Russimp mesh.
     pub fn from_russimp_mesh(
         render_context: &RenderContext,
@@ -316,48 +348,28 @@ impl Mesh {
             }
         }
 
-        let mut bones = HashMap::new();
-        let mut bone_indices = vec![vec4::<i32>(-1, -1, -1, -1); mesh.vertices.len()];
-        let mut bone_weights = vec![vec4(0.0, 0.0, 0.0, 0.0); mesh.vertices.len()];
-
-        for (bone_index, bone) in mesh.bones.iter().enumerate() {
-            let inverse_bind_transform = math::mat4_from_russimp(&bone.offset_matrix);
-            bones.insert(
-                bone.name.clone(),
-                BoneInfo {
-                    index: bone_index,
-                    inverse_bind_transform,
-                },
-            );
-            for weight in &bone.weights {
-                let vertex_bone_ids = bone_indices[weight.vertex_id as usize].as_mut_slice();
-                let vertex_bone_weights = bone_weights[weight.vertex_id as usize].as_mut_slice();
-                Self::insert_bone_weight(
-                    bone_index as i32,
-                    weight.weight,
-                    vertex_bone_ids,
-                    vertex_bone_weights,
-                );
-            }
-            for (index, weight) in bone_weights.iter_mut().enumerate() {
-                let vertex_bone_ids = bone_indices[index];
-                let sum = vertex_bone_ids.as_slice().iter().enumerate().fold(
-                    0.0,
-                    |sum, (idx, bone_index)| {
-                        sum + if *bone_index >= 0 {
-                            weight.as_slice()[idx]
-                        } else {
-                            0.0
-                        }
+        let bones = mesh
+            .bones
+            .iter()
+            .enumerate()
+            .map(|(bone_index, bone)| {
+                (
+                    bone.name.clone(),
+                    BoneInfo {
+                        index: bone_index,
+                        inverse_bind_transform: math::mat4_from_russimp(&bone.offset_matrix),
                     },
-                );
-                if sum > 0.00001 {
-                    for w in weight.as_mut_slice() {
-                        *w /= sum;
-                    }
-                }
-            }
-        }
+                )
+            })
+            .collect();
+        let (bone_indices, bone_weights) = Self::bind_bone_weights(
+            mesh.vertices.len(),
+            mesh.bones.iter().map(|bone| {
+                bone.weights
+                    .iter()
+                    .map(|weight| (weight.vertex_id, weight.weight))
+            }),
+        );
 
         Self {
             indices,
@@ -531,6 +543,7 @@ impl Mesh {
 #[cfg(test)]
 mod tests {
     use super::Mesh;
+    use nalgebra_glm::{IVec4, Vec4};
 
     #[test]
     fn heavier_bone_weight_shifts_lighter_ones_with_their_bones() {
@@ -542,5 +555,14 @@ mod tests {
 
         assert_eq!(bone_ids, [1, 0, -1, -1]);
         assert_eq!(bone_weights, [0.7, 0.3, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn bone_weights_are_normalised_once_every_bone_is_bound() {
+        let (bone_indices, bone_weights) =
+            Mesh::bind_bone_weights(1, [vec![(0, 0.15)], vec![(0, 0.35)]]);
+
+        assert_eq!(bone_indices[0], IVec4::new(1, 0, -1, -1));
+        assert!((bone_weights[0] - Vec4::new(0.7, 0.3, 0.0, 0.0)).norm() < 1e-6);
     }
 }
