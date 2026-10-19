@@ -1,7 +1,9 @@
 mod engine {
     pub mod utils {
+        pub use uuid::Uuid;
+
         pub trait TypeUuid {
-            const UUID: &'static [u8; 16];
+            fn type_uuid() -> Uuid;
         }
     }
 }
@@ -13,5 +15,5 @@ use engine::utils::TypeUuid;
 struct Explicit;
 
 fn main() {
-    assert_eq!(Explicit::UUID[0], 0x6f);
+    assert_eq!(Explicit::type_uuid().as_bytes()[0], 0x6f);
 }

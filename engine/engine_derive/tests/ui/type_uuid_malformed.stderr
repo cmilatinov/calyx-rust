@@ -1,5 +1,5 @@
 error: invalid uuid: invalid character: expected an optional prefix of `urn:uuid:` followed by [0-9a-fA-F-], found `n` at 1
-  --> tests/ui/type_uuid_malformed.rs:10:10
+  --> tests/ui/type_uuid_malformed.rs:12:10
    |
-10 | #[uuid = "not-a-uuid"]
+12 | #[uuid = "not-a-uuid"]
    |          ^^^^^^^^^^^^

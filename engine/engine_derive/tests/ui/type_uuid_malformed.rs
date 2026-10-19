@@ -1,7 +1,9 @@
 mod engine {
     pub mod utils {
+        pub use uuid::Uuid;
+
         pub trait TypeUuid {
-            const UUID: &'static [u8; 16];
+            fn type_uuid() -> Uuid;
         }
     }
 }
