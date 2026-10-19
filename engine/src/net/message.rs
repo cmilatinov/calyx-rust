@@ -171,6 +171,12 @@ impl<T> MessageQueue<T> {
         self.messages.push_back(message);
     }
 
+    /// Number of queued messages, used by tests to detect a drained network.
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.messages.len()
+    }
+
     /// Dispatches queued messages to `handler`.
     ///
     /// Messages that return [`MessageHandlerResult::Consume`] are removed.

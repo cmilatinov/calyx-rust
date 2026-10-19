@@ -1135,6 +1135,7 @@ fn full_frame_loop_handles_responsive_layout_interaction_and_backend_output() {
 fn theme_and_style_are_registered_for_reflection() {
     let mut registry = TypeRegistry {
         types: Default::default(),
+        identities: Default::default(),
     };
     Theme::register(&mut registry);
     Style::register(&mut registry);

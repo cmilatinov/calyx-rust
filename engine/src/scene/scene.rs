@@ -207,7 +207,9 @@ impl From<(&ReadOnlyRegistryContext, SceneData)> for Scene {
                     None => continue;
                     let child = scene.find(child_id);
                 );
-                scene.set_parent(child, Some(parent));
+                if let Err(err) = scene.set_parent(child, Some(parent)) {
+                    log::warn!("Skipping invalid scene hierarchy entry: {err}");
+                }
             }
         }
         scene
@@ -462,7 +464,7 @@ impl Scene {
                     let new_child_id = id_mapping.get_by_left(child_id);
                     let child = self.find(*new_child_id);
                 );
-                self.set_parent(child, Some(parent));
+                self.set_parent(child, Some(parent))?;
             }
         }
 
@@ -474,16 +476,21 @@ impl Scene {
         })?;
 
         if let Some(parent) = parent {
-            self.set_parent(game_object, Some(parent));
+            self.set_parent(game_object, Some(parent))?;
         }
 
         Ok(game_object)
     }
 
     /// Reparents `game_object` under `parent`, appending it after existing
-    /// siblings.
-    pub fn set_parent(&mut self, game_object: GameObject, parent: Option<GameObject>) {
-        self.set_parent_with_sibling(game_object, parent, None);
+    /// siblings. Fails with [`SceneError::HierarchyCycle`] when `parent` is
+    /// inside `game_object`'s own subtree.
+    pub fn set_parent(
+        &mut self,
+        game_object: GameObject,
+        parent: Option<GameObject>,
+    ) -> Result<(), SceneError> {
+        self.set_parent_with_sibling(game_object, parent, None)
     }
 
     /// Reparents `game_object` and optionally inserts it relative to `sibling`.
@@ -492,10 +499,11 @@ impl Scene {
         game_object: GameObject,
         parent: Option<GameObject>,
         sibling: Option<(GameObject, SiblingDir)>,
-    ) {
+    ) -> Result<(), SceneError> {
         let parent = parent.unwrap_or(self.root);
-        self.graph.set_parent(game_object, parent, sibling);
+        self.graph.set_parent(game_object, parent, sibling)?;
         self.transforms.mark_dirty_subtree(game_object, &self.graph);
+        Ok(())
     }
 
     /// Returns the insertion index that would place `sibling` before or after
@@ -707,13 +715,58 @@ impl Scene {
     }
 
     /// Applies all queued deletions immediately.
+    ///
+    /// Handles that no longer exist, the root, and handles whose ancestor is
+    /// also queued are skipped, so each queued subtree is removed exactly once
+    /// regardless of queue order.
     pub fn flush_deletes(&mut self) {
-        for game_object in self.store.drain_deletions() {
-            let parent = self.parent(game_object).unwrap_or(self.root);
-            let index = self
+        let queued: HashSet<GameObject> = self
+            .store
+            .drain_deletions()
+            .into_iter()
+            .filter(|go| *go != self.root && self.graph.game_object_from_node(go.node) == Some(*go))
+            .collect();
+        let roots: Vec<GameObject> = queued
+            .iter()
+            .copied()
+            .filter(|go| {
+                // Collect ancestors until the chain ends, repeats, or returns to
+                // `go` itself (so `go` is never its own ancestor).
+                let mut visited = HashSet::from([*go]);
+                let mut chain = Vec::new();
+                let mut on_cycle = false;
+                let mut current = self.parent(*go);
+                while let Some(ancestor) = current {
+                    if ancestor == *go {
+                        on_cycle = true;
+                        break;
+                    }
+                    if !visited.insert(ancestor) {
+                        break;
+                    }
+                    chain.push(ancestor);
+                    current = self.parent(ancestor);
+                }
+                let mut queued_ancestors = chain.iter().filter(|a| queued.contains(*a));
+                if on_cycle {
+                    // Only the queued cycle member with the lowest node index
+                    // stays a root so the cycle is deleted exactly once.
+                    queued_ancestors.all(|a| a.node.index() > go.node.index())
+                } else {
+                    queued_ancestors.next().is_none()
+                }
+            })
+            .collect();
+        for game_object in roots {
+            let Some(parent) = self.parent(game_object) else {
+                continue;
+            };
+            let Some(index) = self
                 .graph
                 .index_in_parent(parent, game_object, SiblingDir::Before)
-                .unwrap();
+            else {
+                continue;
+            };
             self.graph.shift_edge_weights(parent, index, -1);
             let to_delete: Vec<_> = self
                 .graph
