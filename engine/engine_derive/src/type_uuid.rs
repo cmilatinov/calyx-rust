@@ -8,7 +8,7 @@ use syn::{
 };
 use uuid::Uuid;
 
-use crate::fq::FQTypeUuid;
+use crate::fq::{FQTypeUuid, FQUuid};
 
 fn uuid_from_str(value: &str) -> Uuid {
     let mut hasher = sha1::Sha1::new();
@@ -62,12 +62,13 @@ pub fn derive_type_uuid(input: TokenStream) -> TokenStream {
     };
     let bytes = uuid_lits(uuid);
     let fq_type_uuid = FQTypeUuid;
+    let fq_uuid = FQUuid;
     quote! {
         #[automatically_derived]
         impl #impl_generics #fq_type_uuid for #name #ty_generics #where_clause {
-            const UUID: &'static [u8; 16] = &[
-                #( #bytes ),*
-            ];
+            fn type_uuid() -> #fq_uuid {
+                #fq_uuid::from_bytes([ #( #bytes ),* ])
+            }
         }
     }
     .into()
@@ -95,12 +96,13 @@ pub fn extern_type_uuid(input: TokenStream) -> TokenStream {
     let uuid = Uuid::parse_str(&uuid_str.value()).expect("Value was not a valid UUID");
     let bytes = uuid_lits(uuid);
     let fq_type_uuid = FQTypeUuid;
+    let fq_uuid = FQUuid;
     (quote! {
         #[automatically_derived]
         impl #fq_type_uuid for #path {
-            const UUID: &'static [u8; 16] = &[
-                #( #bytes ),*
-            ];
+            fn type_uuid() -> #fq_uuid {
+                #fq_uuid::from_bytes([ #( #bytes ),* ])
+            }
         }
     })
     .into()

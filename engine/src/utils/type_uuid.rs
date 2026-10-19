@@ -4,30 +4,20 @@ pub use uuid::Uuid;
 
 pub use engine_derive::{reflect_trait, TypeUuid};
 
-/// Trait for types with a stable compile-time UUID.
+/// Trait for types with a stable UUID.
 pub trait TypeUuid {
-    /// Backing UUID bytes for this type.
-    const UUID: &'static [u8; 16];
     /// Returns this type's UUID.
-    fn type_uuid() -> Uuid {
-        Uuid::from_bytes(*Self::UUID)
-    }
+    fn type_uuid() -> Uuid;
 }
 
 #[reflect_trait]
 /// Object-safe UUID access used by reflection and resource systems.
 pub trait TypeUuidDynamic {
-    /// Returns the UUID bytes for this value's concrete type.
-    fn uuid_bytes(&self) -> &'static [u8; 16];
     /// Returns the UUID for this value's concrete type.
     fn uuid(&self) -> Uuid;
 }
 
 impl<T: TypeUuid> TypeUuidDynamic for T {
-    fn uuid_bytes(&self) -> &'static [u8; 16] {
-        Self::UUID
-    }
-
     fn uuid(&self) -> Uuid {
         Self::type_uuid()
     }
