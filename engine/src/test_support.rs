@@ -942,4 +942,29 @@ mod tests {
         assert_eq!(second.cursor_delta(), Vec2::new(15.0, 2.0));
         assert_eq!(inactive.cursor_delta(), Vec2::ZERO);
     }
+
+    #[test]
+    fn malformed_project_action_map_is_reported() {
+        let dir = std::env::temp_dir().join(format!("calyx-input-bad-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(format!("{PROJECT_ACTION_MAP_NAME}.cxinput")),
+            "not json",
+        )
+        .unwrap();
+        let assets = test_asset_context_with_assets(vec![dir.clone()]);
+
+        let mut state = InputState::default();
+        let result = state.load_project_action_map(&assets.registries.assets.read());
+        assert!(result.is_err());
+
+        let empty = std::env::temp_dir().join(format!("calyx-input-none-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&empty).unwrap();
+        let assets = test_asset_context_with_assets(vec![empty.clone()]);
+        let result = state.load_project_action_map(&assets.registries.assets.read());
+        assert!(result.is_ok());
+
+        std::fs::remove_dir_all(dir).unwrap();
+        std::fs::remove_dir_all(empty).unwrap();
+    }
 }

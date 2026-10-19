@@ -4,6 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate as engine;
+use crate::assets::error::{AssetError, AssetErrorKind};
 use crate::assets::{Asset, AssetRegistry, LoadedAsset};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
@@ -85,11 +86,18 @@ impl InputState {
         self.action_map = ActionMapSource::Owned(Arc::new(action_map));
     }
 
-    /// Follows the project's action map asset when one exists, keeping the current
-    /// map otherwise. Hot reloads of the asset apply to later frames.
-    pub fn load_project_action_map(&mut self, assets: &AssetRegistry) {
-        if let Ok(action_map) = assets.load::<ActionMap>(PROJECT_ACTION_MAP_NAME) {
-            self.action_map = ActionMapSource::Asset(action_map);
+    /// Follows the project's action map asset when one exists. A project without
+    /// one keeps the current map; a map that fails to load is reported as an error
+    /// and also leaves the current map in place. Hot reloads of the asset apply to
+    /// later frames.
+    pub fn load_project_action_map(&mut self, assets: &AssetRegistry) -> Result<(), AssetError> {
+        match assets.load::<ActionMap>(PROJECT_ACTION_MAP_NAME) {
+            Ok(action_map) => {
+                self.action_map = ActionMapSource::Asset(action_map);
+                Ok(())
+            }
+            Err(error) if error.kind == AssetErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
         }
     }
 
