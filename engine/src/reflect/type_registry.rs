@@ -35,8 +35,12 @@ pub struct TypeRegistry {
     pub identities: RegistryIdentities,
 }
 
-/// Rust type identity (`TypeId` and type name) recorded for a registered UUID.
-pub type TypeIdentity = (TypeId, &'static str);
+/// Rust type name recorded for a registered UUID.
+///
+/// Compared by name rather than `TypeId` because a rebuilt plugin assembly can
+/// assign a new `TypeId` to the same source type. Owned so it survives unloading
+/// the assembly that registered it.
+pub type TypeIdentity = String;
 
 /// Registry-wide record of which Rust type owns each registered UUID.
 #[repr(C)]
@@ -157,16 +161,18 @@ impl TypeRegistry {
             return;
         };
         let meta_uuid = M::type_uuid();
-        let meta_identity = (TypeId::of::<M>(), std::any::type_name::<M>());
+        let meta_identity = std::any::type_name::<M>();
         if let Some(existing) = self.identities.trait_meta.get(&meta_uuid) {
-            if existing.0 != meta_identity.0 {
+            if existing != meta_identity {
                 panic!(
                     "duplicate trait metadata UUID {meta_uuid}: `{}` conflicts with already registered `{}`",
-                    meta_identity.1, existing.1
+                    meta_identity, existing
                 );
             }
         }
-        self.identities.trait_meta.insert(meta_uuid, meta_identity);
+        self.identities
+            .trait_meta
+            .insert(meta_uuid, meta_identity.to_string());
         registration
             .trait_meta
             .insert(meta_uuid, Box::new(M::trait_meta()));
@@ -176,19 +182,18 @@ impl TypeRegistry {
     /// belongs to a different type. Re-registering the same type replaces it.
     fn insert_registration<T: TypeUuid + 'static>(&mut self, type_info: TypeInfo) {
         let type_uuid = T::type_uuid();
-        let type_id = TypeId::of::<T>();
         let type_name = std::any::type_name::<T>();
         if let Some(existing) = self.identities.types.get(&type_uuid) {
-            if existing.0 != type_id {
+            if existing != type_name {
                 panic!(
                     "duplicate type UUID {type_uuid}: `{type_name}` conflicts with already registered `{}`",
-                    existing.1
+                    existing
                 );
             }
         }
         self.identities
             .types
-            .insert(type_uuid, (type_id, type_name));
+            .insert(type_uuid, type_name.to_string());
         self.types.insert(
             type_uuid,
             TypeRegistration {
