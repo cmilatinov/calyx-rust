@@ -132,6 +132,7 @@ impl Asset for Prefab {
                     &meshes,
                     root,
                     root,
+                    &root.name,
                     None,
                     &mut data,
                 )?;
@@ -221,17 +222,22 @@ fn default_material_id(registry: &AssetRegistry) -> Result<Uuid, AssetError> {
 }
 
 impl Prefab {
+    /// Adds `node` and its subtree to `data`. Each object's id is seeded from its node's path,
+    /// so nodes that share a name or have none stay distinct, and the same file always produces
+    /// the same ids.
+    #[allow(clippy::too_many_arguments)]
     fn traverse(
         registry: &AssetRegistry,
         bones: &HashMap<String, (usize, Mat4)>,
         meshes: &Vec<Ref<Mesh>>,
         root: &russimp_ng::node::Node,
         node: &russimp_ng::node::Node,
+        path: &str,
         mut parent: Option<Uuid>,
         data: &mut SceneData,
     ) -> Result<(), AssetError> {
         let matrix: Mat4 = math::mat4_from_russimp(&node.transformation);
-        let id = utils::uuid_from_str(node.name.as_str());
+        let id = utils::uuid_from_str(path);
         if let Some(parent_id) = parent {
             data.hierarchy.entry(parent_id).or_default().push(id);
         }
@@ -283,8 +289,19 @@ impl Prefab {
                 }),
             );
         }
-        for child in &*node.children.borrow() {
-            Self::traverse(registry, bones, meshes, root, child.borrow(), parent, data)?;
+        for (index, child) in node.children.borrow().iter().enumerate() {
+            let child: &russimp_ng::node::Node = child.borrow();
+            let child_path = format!("{path}/{index}:{}", child.name);
+            Self::traverse(
+                registry,
+                bones,
+                meshes,
+                root,
+                child,
+                &child_path,
+                parent,
+                data,
+            )?;
         }
         Ok(())
     }
@@ -346,5 +363,30 @@ mod tests {
             "Tracks_1"
         );
         assert_eq!(imported_sub_asset_name("", "mesh", &mut used_names), "mesh");
+    }
+
+    /// Imports the sandbox tank, whose left and right parts share node names.
+    fn import_tank() -> Prefab {
+        use crate::test_utils::{test_asset_context_with_assets, TestAssets};
+        let (engine, sandbox) = (TestAssets::engine(), TestAssets::sandbox());
+        let context = test_asset_context_with_assets([engine.roots(), sandbox.roots()].concat());
+        let context = context.lock_read();
+        let path = sandbox.sandbox_root().join("models/tank_game/Tank_002.fbx");
+        Prefab::from_file(&context, &path)
+            .unwrap_or_else(|e| panic!("failed to import the tank: {e}"))
+            .asset
+    }
+
+    #[test]
+    fn imported_nodes_sharing_a_name_stay_distinct_and_stable() {
+        let tank = import_tank();
+        let children = tank.data.hierarchy.values().flatten().collect::<Vec<_>>();
+        let distinct = children.iter().collect::<HashSet<_>>();
+
+        assert_eq!(distinct.len(), children.len(), "a node id appears twice");
+        assert_eq!(tank.data.components.len(), children.len() + 1);
+        let again = import_tank();
+        assert_eq!(again.root, tank.root);
+        assert_eq!(again.data.hierarchy, tank.data.hierarchy);
     }
 }
