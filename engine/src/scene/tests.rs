@@ -124,6 +124,120 @@ mod tests {
     }
 
     #[test]
+    fn set_parent_rejects_self_parenting() {
+        let mut scene = test_scene();
+        let parent = scene.create(None, None);
+        let go = scene.create(None, Some(parent));
+
+        assert!(scene.set_parent(go, Some(go)).is_err());
+        assert_eq!(scene.parent(go), Some(parent));
+        assert_eq!(scene.children_ordered(parent).collect::<Vec<_>>(), vec![go]);
+    }
+
+    #[test]
+    fn set_parent_rejects_grandchild_parent() {
+        let mut scene = test_scene();
+        let a = scene.create(None, None);
+        let b = scene.create(None, Some(a));
+        let c = scene.create(None, Some(b));
+
+        assert!(scene.set_parent(a, Some(c)).is_err());
+        assert!(scene
+            .set_parent_with_sibling(a, Some(c), Some((c, SiblingDir::Before)))
+            .is_err());
+        assert_eq!(scene.parent(a), Some(scene.root()));
+        assert_eq!(scene.parent(b), Some(a));
+        assert_eq!(scene.parent(c), Some(b));
+        assert_eq!(scene.children_ordered(a).collect::<Vec<_>>(), vec![b]);
+        assert_eq!(scene.children_ordered(b).collect::<Vec<_>>(), vec![c]);
+    }
+
+    #[test]
+    fn set_parent_with_sibling_moves_within_same_parent() {
+        let mut scene = test_scene();
+        let parent = scene.create(None, None);
+        let c0 = scene.create(None, Some(parent));
+        let c1 = scene.create(None, Some(parent));
+        let c2 = scene.create(None, Some(parent));
+        let c3 = scene.create(None, Some(parent));
+
+        // Forward: c0 before c3 -> c1, c2, c0, c3 (not a swap).
+        scene
+            .set_parent_with_sibling(c0, Some(parent), Some((c3, SiblingDir::Before)))
+            .unwrap();
+        assert_eq!(
+            scene.children_ordered(parent).collect::<Vec<_>>(),
+            vec![c1, c2, c0, c3]
+        );
+
+        // Backward: c3 before c1 -> c3, c1, c2, c0.
+        scene
+            .set_parent_with_sibling(c3, Some(parent), Some((c1, SiblingDir::Before)))
+            .unwrap();
+        assert_eq!(
+            scene.children_ordered(parent).collect::<Vec<_>>(),
+            vec![c3, c1, c2, c0]
+        );
+
+        // After the last sibling.
+        scene
+            .set_parent_with_sibling(c3, Some(parent), Some((c0, SiblingDir::After)))
+            .unwrap();
+        assert_eq!(
+            scene.children_ordered(parent).collect::<Vec<_>>(),
+            vec![c1, c2, c0, c3]
+        );
+    }
+
+    #[test]
+    fn set_parent_without_sibling_appends_within_same_parent() {
+        let mut scene = test_scene();
+        let parent = scene.create(None, None);
+        let c0 = scene.create(None, Some(parent));
+        let c1 = scene.create(None, Some(parent));
+        let c2 = scene.create(None, Some(parent));
+
+        scene.set_parent(c0, Some(parent)).unwrap();
+        assert_eq!(
+            scene.children_ordered(parent).collect::<Vec<_>>(),
+            vec![c1, c2, c0]
+        );
+    }
+
+    #[test]
+    fn set_parent_with_unrelated_sibling_appends() {
+        let mut scene = test_scene();
+        let parent = scene.create(None, None);
+        let c0 = scene.create(None, Some(parent));
+        let other = scene.create(None, None);
+        let stray = scene.create(None, Some(other));
+
+        scene
+            .set_parent_with_sibling(c0, Some(parent), Some((stray, SiblingDir::Before)))
+            .unwrap();
+        assert_eq!(scene.children_ordered(parent).collect::<Vec<_>>(), vec![c0]);
+    }
+
+    #[test]
+    fn set_parent_with_self_as_sibling_reparents_to_new_parent() {
+        let mut scene = test_scene();
+        let old_parent = scene.create(None, None);
+        let new_parent = scene.create(None, None);
+        let go = scene.create(None, Some(old_parent));
+        let existing = scene.create(None, Some(new_parent));
+
+        scene
+            .set_parent_with_sibling(go, Some(new_parent), Some((go, SiblingDir::Before)))
+            .unwrap();
+        assert_eq!(scene.parent(go), Some(new_parent));
+        assert_eq!(
+            scene.children_ordered(new_parent).collect::<Vec<_>>(),
+            vec![existing, go]
+        );
+        assert_eq!(scene.children(old_parent).count(), 0);
+    }
+
+    #[test]
     fn index_in_parent() {
         let mut scene = test_scene();
         let parent = scene.create(None, None);
