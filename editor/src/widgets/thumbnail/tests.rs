@@ -150,9 +150,8 @@ fn thumbnail_type_names_cover_supported_and_unknown_assets() {
 
 #[test]
 fn thumbnail_cache_path_includes_size_settings_type_and_request_identity() {
-    let assets_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets");
-    let assets_path = dunce::canonicalize(assets_path).expect("assets dir not found");
-    let context = engine::test_support::test_asset_context_with_assets(vec![assets_path]);
+    let assets = engine::test_support::TestAssets::engine();
+    let context = assets.asset_context();
     let context = context.lock_read();
     let settings = ThumbnailRenderSettings::with_size_and_frame_margin(256, 0.123);
     let cache = ThumbnailCache::new(&context, settings);
@@ -640,9 +639,8 @@ fn material_and_skybox_assets_are_supported_for_thumbnails() {
 
 #[test]
 fn skybox_front_face_shader_builds() {
-    let assets_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets");
-    let assets_path = dunce::canonicalize(assets_path).expect("assets dir not found");
-    let context = engine::test_support::test_asset_context_with_assets(vec![assets_path]);
+    let assets = engine::test_support::TestAssets::engine();
+    let context = assets.asset_context();
     let context = context.lock_read();
 
     SkyboxFrontFaceDownscaler::new(&context)

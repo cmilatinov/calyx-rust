@@ -247,18 +247,13 @@ fn icon_uv_rect(icon: GizmoIcon) -> [glm::Vec2; 2] {
 mod tests {
     use super::*;
     use crate::assets::mesh::Mesh;
-    use crate::test_utils::test_asset_context_with_assets;
+    use crate::test_utils::TestAssets;
     use nalgebra_glm::vec3;
-    use std::path::PathBuf;
-
-    fn assets_path() -> PathBuf {
-        let assets_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets");
-        dunce::canonicalize(assets_path).expect("assets dir not found")
-    }
 
     #[test]
     fn icon_size_is_clamped_to_pixel_range() {
-        let asset_context = test_asset_context_with_assets(vec![assets_path()]);
+        let assets = TestAssets::engine();
+        let asset_context = assets.asset_context();
         let context = asset_context.lock_read();
         let camera = Camera::default();
         let camera_transform = Transform::default();
@@ -296,7 +291,8 @@ mod tests {
 
     #[test]
     fn icon_mesh_stores_object_id_for_picking() {
-        let asset_context = test_asset_context_with_assets(vec![assets_path()]);
+        let assets = TestAssets::engine();
+        let asset_context = assets.asset_context();
         let context = asset_context.lock_read();
         let camera = Camera::default();
         let camera_transform = Transform::default();
