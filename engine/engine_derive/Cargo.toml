@@ -13,3 +13,6 @@ darling.workspace = true
 
 [lib]
 proc-macro = true
+
+[dev-dependencies]
+trybuild = "1"

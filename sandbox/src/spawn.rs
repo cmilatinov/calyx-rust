@@ -420,9 +420,9 @@ mod tests {
         let tank = scene.create(None, None);
         let camera = scene.create(None, None);
         let crosshair = scene.create(None, None);
-        scene.set_parent(tank, Some(player));
-        scene.set_parent(camera, Some(player));
-        scene.set_parent(crosshair, Some(player));
+        scene.set_parent(tank, Some(player)).unwrap();
+        scene.set_parent(camera, Some(player)).unwrap();
+        scene.set_parent(crosshair, Some(player)).unwrap();
         scene.set_transform(tank, &Transform::from_xyz(2.0, 0.0, 0.0).matrix());
         scene.set_transform(camera, &Transform::from_xyz(0.0, 16.0, -10.0).matrix());
         scene.set_transform(crosshair, &Transform::from_xyz(0.0, 0.0, 6.0).matrix());
@@ -490,8 +490,8 @@ mod tests {
         let player = scene.create(None, None);
         let tank = scene.create(None, None);
         let camera = scene.create(None, None);
-        scene.set_parent(tank, Some(player));
-        scene.set_parent(camera, Some(player));
+        scene.set_parent(tank, Some(player)).unwrap();
+        scene.set_parent(camera, Some(player)).unwrap();
         scene.set_transform(
             tank,
             &Transform::from_components(

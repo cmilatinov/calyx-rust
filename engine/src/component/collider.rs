@@ -96,6 +96,7 @@ mod tests {
     fn collider_shape_registers_enum_type_info() {
         let mut registry = crate::reflect::type_registry::TypeRegistry {
             types: Default::default(),
+            identities: Default::default(),
         };
         ColliderShape::register(&mut registry);
 
