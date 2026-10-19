@@ -56,6 +56,15 @@ pub struct RegistryIdentities {
 }
 
 impl RegistryIdentities {
+    /// Generation to record for a UUID owner, given any existing owner.
+    fn owner_generation(&self, existing: Option<&TypeIdentity>) -> u64 {
+        // Host-owned UUIDs stay protected when a plugin re-registers the same type.
+        match existing {
+            Some((_, 0)) => 0,
+            _ => self.generation,
+        }
+    }
+
     /// Whether registering `name` conflicts with the recorded owner of its UUID.
     ///
     /// A different type conflicts unless its previous owner came from an earlier
@@ -180,7 +189,6 @@ impl TypeRegistry {
             return;
         };
         let meta_uuid = M::type_uuid();
-        let generation = self.identities.generation;
         let meta_identity = std::any::type_name::<M>();
         if let Some(existing) = self.identities.trait_meta.get(&meta_uuid) {
             if self.identities.conflicts(existing, meta_identity) {
@@ -190,6 +198,9 @@ impl TypeRegistry {
                 );
             }
         }
+        let generation = self
+            .identities
+            .owner_generation(self.identities.trait_meta.get(&meta_uuid));
         self.identities
             .trait_meta
             .insert(meta_uuid, (meta_identity.to_string(), generation));
@@ -203,7 +214,6 @@ impl TypeRegistry {
     fn insert_registration<T: TypeUuid + 'static>(&mut self, type_info: TypeInfo) {
         let type_uuid = T::type_uuid();
         let type_name = std::any::type_name::<T>();
-        let generation = self.identities.generation;
         if let Some(existing) = self.identities.types.get(&type_uuid) {
             if self.identities.conflicts(existing, type_name) {
                 panic!(
@@ -212,6 +222,9 @@ impl TypeRegistry {
                 );
             }
         }
+        let generation = self
+            .identities
+            .owner_generation(self.identities.types.get(&type_uuid));
         self.identities
             .types
             .insert(type_uuid, (type_name.to_string(), generation));
@@ -581,5 +594,21 @@ mod tests {
         reg.begin_plugin_load();
         reg.meta::<DupB>();
         assert!(reg.type_registration::<DupB>().is_some());
+    }
+
+    #[test]
+    fn plugin_reusing_a_host_trait_meta_keeps_it_protected() {
+        let mut reg = foo_registry();
+        reg.meta_impls::<Foo, DupMetaA>();
+        reg.begin_plugin_load();
+        reg.meta_impls::<Foo, DupMetaA>();
+        reg.begin_plugin_load();
+        let msg = panic_message(std::panic::AssertUnwindSafe(|| {
+            reg.meta_impls::<Foo, DupMetaB>();
+        }));
+        assert!(
+            msg.contains("DupMetaA") && msg.contains("DupMetaB"),
+            "{msg}"
+        );
     }
 }
