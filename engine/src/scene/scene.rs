@@ -693,13 +693,58 @@ impl Scene {
     }
 
     /// Applies all queued deletions immediately.
+    ///
+    /// Handles that no longer exist, the root, and handles whose ancestor is
+    /// also queued are skipped, so each queued subtree is removed exactly once
+    /// regardless of queue order.
     pub fn flush_deletes(&mut self) {
-        for game_object in self.store.drain_deletions() {
-            let parent = self.parent(game_object).unwrap_or(self.root);
-            let index = self
+        let queued: HashSet<GameObject> = self
+            .store
+            .drain_deletions()
+            .into_iter()
+            .filter(|go| *go != self.root && self.graph.game_object_from_node(go.node) == Some(*go))
+            .collect();
+        let roots: Vec<GameObject> = queued
+            .iter()
+            .copied()
+            .filter(|go| {
+                // Collect ancestors until the chain ends, repeats, or returns to
+                // `go` itself (so `go` is never its own ancestor).
+                let mut visited = HashSet::from([*go]);
+                let mut chain = Vec::new();
+                let mut on_cycle = false;
+                let mut current = self.parent(*go);
+                while let Some(ancestor) = current {
+                    if ancestor == *go {
+                        on_cycle = true;
+                        break;
+                    }
+                    if !visited.insert(ancestor) {
+                        break;
+                    }
+                    chain.push(ancestor);
+                    current = self.parent(ancestor);
+                }
+                let mut queued_ancestors = chain.iter().filter(|a| queued.contains(*a));
+                if on_cycle {
+                    // Only the queued cycle member with the lowest node index
+                    // stays a root so the cycle is deleted exactly once.
+                    queued_ancestors.all(|a| a.node.index() > go.node.index())
+                } else {
+                    queued_ancestors.next().is_none()
+                }
+            })
+            .collect();
+        for game_object in roots {
+            let Some(parent) = self.parent(game_object) else {
+                continue;
+            };
+            let Some(index) = self
                 .graph
                 .index_in_parent(parent, game_object, SiblingDir::Before)
-                .unwrap();
+            else {
+                continue;
+            };
             self.graph.shift_edge_weights(parent, index, -1);
             let to_delete: Vec<_> = self
                 .graph
