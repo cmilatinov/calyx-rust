@@ -30,3 +30,11 @@ every object and material part of an OBJ file.
 `fbx/TwoMaterials.fbx` was made with Blender 4.0: the default cube, named `Cube`, with materials
 `Red` and `Blue`, its top face using `Blue`, exported with default settings. It checks that a
 prefab keeps every material part of one FBX node.
+
+## TwoSkins
+
+`gltf/TwoSkins.gltf` is a hand-built model written by a script: two meshes skinned by one
+Hip, Spine and Arm joint tree, whose skins list the joints in different orders and counts (the
+body's `[Hip, Spine]`, the arm's `[Arm, Spine, Hip]`), and a one-second clip that moves the hip
+and turns the spine but has no channel for the arm. It checks that each skinned mesh follows its
+own bones.

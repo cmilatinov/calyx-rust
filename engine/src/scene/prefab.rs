@@ -16,7 +16,7 @@ use crate::{self as engine, utils};
 use nalgebra_glm::Mat4;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::io::BufReader;
 use std::path::Path;
 use uuid::Uuid;
@@ -86,7 +86,7 @@ impl Asset for Prefab {
         if ext != "cxprefab" {
             let scene = import::import(path).map_err(|err| err.with_type(Self::asset_name()))?;
 
-            let mut bones = HashMap::new();
+            let mut bones = HashSet::new();
             let mut mesh_names = HashSet::new();
             let mut meshes = Vec::new();
             for mesh in &scene.meshes {
@@ -98,12 +98,7 @@ impl Asset for Prefab {
                     Mesh::from_imported(&game.render_context, mesh),
                 )?;
                 meshes.push(mesh_ref.clone());
-                bones.extend(
-                    mesh.bones
-                        .iter()
-                        .enumerate()
-                        .map(|(i, b)| (b.name.clone(), (i, b.inverse_bind_transform))),
-                );
+                bones.extend(mesh.bones.iter().map(|bone| bone.name.clone()));
             }
 
             let (data, root) = Self::scene_data(&asset_registry, &bones, &meshes, &scene.root)?;
@@ -216,7 +211,7 @@ impl Prefab {
     /// distinct, and the same file always produces the same ids.
     fn scene_data(
         registry: &AssetRegistry,
-        bones: &HashMap<String, (usize, Mat4)>,
+        bones: &HashSet<String>,
         meshes: &[Ref<Mesh>],
         root: &ImportedNode,
     ) -> Result<(SceneData, Uuid), AssetError> {
@@ -231,7 +226,7 @@ impl Prefab {
     #[allow(clippy::too_many_arguments)]
     fn traverse(
         registry: &AssetRegistry,
-        bones: &HashMap<String, (usize, Mat4)>,
+        bones: &HashSet<String>,
         meshes: &[Ref<Mesh>],
         root_id: Uuid,
         node: &ImportedNode,
@@ -295,14 +290,12 @@ impl Prefab {
             );
         }
         let entry = data.components.entry(id).or_default();
-        if let Some((index, offset_matrix)) = bones.get(&node.name) {
+        // Each skinned mesh keeps its own bone indices and inverse bind matrices, and finds its
+        // bones by name.
+        if bones.contains(&node.name) {
             entry.insert(
                 ComponentBone::type_uuid(),
-                json!({
-                    "name": node.name.clone(),
-                    "index": index,
-                    "offset_matrix": offset_matrix
-                }),
+                json!({ "name": node.name.clone() }),
             );
         }
         for (index, child) in node.children.iter().enumerate() {
@@ -402,9 +395,9 @@ mod tests {
             ],
         );
 
-        let (data, root_id) = Prefab::scene_data(&registry, &HashMap::new(), &[], &root).unwrap();
+        let (data, root_id) = Prefab::scene_data(&registry, &HashSet::new(), &[], &root).unwrap();
         let (again, again_root_id) =
-            Prefab::scene_data(&registry, &HashMap::new(), &[], &root).unwrap();
+            Prefab::scene_data(&registry, &HashSet::new(), &[], &root).unwrap();
 
         assert_eq!(data.components.len(), 5);
         assert_eq!(data.hierarchy[&root_id].len(), 3);

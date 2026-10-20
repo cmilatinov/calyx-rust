@@ -3,10 +3,11 @@ use crate::component::{Component, ReflectComponent};
 use crate::math::Transform;
 use crate::reflect::{Reflect, ReflectDefault};
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
-use nalgebra_glm::Mat4;
 use serde::{Deserialize, Serialize};
 
-/// Scene component attached to a skeleton bone node.
+/// Scene component attached to a skeleton bone node. Each skinned mesh finds its bones by name
+/// and keeps their indices and inverse bind matrices itself, since meshes sharing a skeleton can
+/// order its bones differently.
 #[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "4a83ab8d-8a10-462a-90bd-8a0cf7f32b7f"]
 #[reflect(Default, TypeUuidDynamic, Component)]
@@ -16,12 +17,6 @@ use serde::{Deserialize, Serialize};
 pub struct ComponentBone {
     /// Bone name as authored in the source mesh.
     pub name: String,
-    /// Bone index inside the owning mesh skeleton.
-    #[reflect_attr(hide)]
-    pub index: usize,
-    /// Inverse bind matrix used for skinning.
-    #[reflect_skip]
-    pub offset_matrix: Mat4,
     /// Rest-pose local transform, captured before the animator first overwrites it.
     #[reflect_skip]
     pub bind_pose: Option<Transform>,

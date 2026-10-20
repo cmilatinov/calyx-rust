@@ -289,7 +289,8 @@ struct PrefabNodes {
     root: Uuid,
     children: HashMap<Uuid, Vec<Uuid>>,
     transforms: HashMap<Uuid, Transform>,
-    bones: HashMap<Uuid, ComponentBone>,
+    /// Bone name of each bone object.
+    bones: HashMap<Uuid, String>,
     meshes: Vec<(Uuid, Uuid, bool)>,
 }
 
@@ -306,16 +307,7 @@ impl PrefabNodes {
                 );
             }
             if let Some(value) = components.get(&ComponentBone::type_uuid()) {
-                bones.insert(
-                    *id,
-                    ComponentBone {
-                        name: value["name"].as_str().unwrap().to_string(),
-                        index: value["index"].as_u64().unwrap() as usize,
-                        offset_matrix: serde_json::from_value(value["offset_matrix"].clone())
-                            .unwrap(),
-                        bind_pose: None,
-                    },
-                );
+                bones.insert(*id, value["name"].as_str().unwrap().to_string());
             }
             for (type_uuid, skinned) in [
                 (ComponentMesh::type_uuid(), false),
@@ -366,30 +358,48 @@ impl PrefabNodes {
             .unwrap_or_else(Mat4::identity)
     }
 
-    /// Root-relative node transforms and the skinning matrices indexed by bone index.
-    fn pose(&self, local: &impl Fn(Uuid) -> Mat4) -> (HashMap<Uuid, Mat4>, Vec<Mat4>) {
-        let mut world = HashMap::new();
-        let bone_count = self
-            .bones
-            .values()
-            .map(|bone| bone.index + 1)
-            .max()
-            .unwrap_or(0);
-        let mut skinning = vec![Mat4::identity(); bone_count];
+    /// Root-relative node transforms, and those of the bones by bone name.
+    fn pose(&self, local: &impl Fn(Uuid) -> Mat4) -> Pose {
+        let mut pose = Pose {
+            world: HashMap::new(),
+            bones: HashMap::new(),
+        };
         self.walk(local, &mut |id, transform| {
-            world.insert(id, *transform);
-            if let Some(bone) = self.bones.get(&id) {
-                skinning[bone.index] = transform * bone.offset_matrix;
+            pose.world.insert(id, *transform);
+            if let Some(name) = self.bones.get(&id) {
+                pose.bones.insert(name.clone(), *transform);
             }
         });
-        (world, skinning)
+        pose
     }
 
     fn bone_transforms(&self, world: &HashMap<Uuid, Mat4>) -> BTreeMap<String, [f64; 16]> {
         self.bones
             .iter()
-            .map(|(id, bone)| (bone.name.clone(), matrix(&world[id])))
+            .map(|(id, name)| (name.clone(), matrix(&world[id])))
             .collect()
+    }
+}
+
+/// Root-relative transforms of a posed prefab.
+struct Pose {
+    world: HashMap<Uuid, Mat4>,
+    bones: HashMap<String, Mat4>,
+}
+
+impl Pose {
+    /// The skinning matrices of `mesh` by its own bone indices, as the animator builds them: each
+    /// of the mesh's bones follows the bone object of the same name.
+    fn skinning(&self, mesh: &Mesh) -> Vec<Mat4> {
+        let mut skinning = vec![Mat4::identity(); mesh.bones.len()];
+        for (name, bone) in &mesh.bones {
+            if let (Some(transform), Some(slot)) =
+                (self.bones.get(name), skinning.get_mut(bone.index))
+            {
+                *slot = transform * bone.inverse_bind_transform;
+            }
+        }
+        skinning
     }
 }
 
@@ -426,7 +436,7 @@ impl PrefabSummary {
         let registry = context.registries.assets.read();
         let nodes = PrefabNodes::new(prefab);
         let static_local = |id| nodes.static_local(id);
-        let (bind_world, bind_skinning) = nodes.pose(&static_local);
+        let bind = nodes.pose(&static_local);
 
         let mut instances = nodes
             .meshes
@@ -436,18 +446,18 @@ impl PrefabSummary {
                 let mesh_ref = mesh.read();
                 let root_shape = if *skinned {
                     Shape::new(
-                        &skinned_positions(&mesh_ref, &bind_skinning),
+                        &skinned_positions(&mesh_ref, &bind.skinning(&mesh_ref)),
                         &mesh_ref.indices,
                     )
                 } else {
                     Shape::new(
-                        &placed_positions(&mesh_ref, &bind_world[id]),
+                        &placed_positions(&mesh_ref, &bind.world[id]),
                         &mesh_ref.indices,
                     )
                 };
                 let summary = MeshInstanceSummary {
                     skinned: *skinned,
-                    root_transform: matrix(&bind_world[id]),
+                    root_transform: matrix(&bind.world[id]),
                     mesh: MeshSummary::new(&mesh_ref),
                     root_shape,
                 };
@@ -477,11 +487,11 @@ impl PrefabSummary {
                         let ticks = ((time_seconds * animation.ticks_per_second) as f32)
                             % animation.duration as f32;
                         let local = |id: Uuid| {
-                            let Some(bone) = nodes.bones.get(&id) else {
+                            let Some(name) = nodes.bones.get(&id) else {
                                 return nodes.static_local(id);
                             };
-                            let Some(keyframes) = animation.node_keyframes.get(&bone.name) else {
-                                return Mat4::identity();
+                            let Some(keyframes) = animation.node_keyframes.get(name) else {
+                                return nodes.static_local(id);
                             };
                             let bind_pose = nodes.transforms.get(&id).copied().unwrap_or_default();
                             ComponentAnimator::animation_local_bone_transform(
@@ -489,16 +499,19 @@ impl PrefabSummary {
                             )
                             .matrix()
                         };
-                        let (world, skinning) = nodes.pose(&local);
+                        let pose = nodes.pose(&local);
                         AnimationSample {
                             time_seconds,
-                            bones: nodes.bone_transforms(&world),
+                            bones: nodes.bone_transforms(&pose.world),
                             skinned_shapes: instances
                                 .iter()
                                 .filter(|(summary, _)| summary.skinned)
                                 .map(|(_, mesh)| {
                                     let mesh = mesh.read();
-                                    Shape::new(&skinned_positions(&mesh, &skinning), &mesh.indices)
+                                    Shape::new(
+                                        &skinned_positions(&mesh, &pose.skinning(&mesh)),
+                                        &mesh.indices,
+                                    )
                                 })
                                 .collect(),
                         }
@@ -513,7 +526,7 @@ impl PrefabSummary {
 
         Self {
             meshes: instances.into_iter().map(|(summary, _)| summary).collect(),
-            bones: nodes.bone_transforms(&bind_world),
+            bones: nodes.bone_transforms(&bind.world),
             animations,
         }
     }
@@ -750,5 +763,16 @@ fn rigged_figure_glb_matches_snapshot() {
         TestAssets::fixtures_root,
         "glb/RiggedFigure.glb",
         "rigged_figure_glb",
+    );
+}
+
+/// Two meshes skinned by one joint tree, whose skins list the joints in different orders and
+/// counts: each mesh follows its own bones.
+#[test]
+fn two_skins_gltf_matches_snapshot() {
+    prefab_snapshot(
+        TestAssets::fixtures_root,
+        "gltf/TwoSkins.gltf",
+        "two_skins_gltf",
     );
 }
