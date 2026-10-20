@@ -53,7 +53,8 @@ typed-builder.workspace = true
 rand.workspace = true
 log.workspace = true
 env_filter.workspace = true
-russimp-ng.workspace = true
+ufbx.workspace = true
+gltf.workspace = true
 pollster.workspace = true
 
 [dev-dependencies]

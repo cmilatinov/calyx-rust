@@ -3,7 +3,7 @@ use crate::class_registry::ComponentRegistry;
 use crate::component::{Component, ComponentID};
 use crate::context::{AssetContext, GameContext, ReadOnlyRegistryContext, RegistryContext};
 use crate::core::Ref;
-use crate::input::{ActionMap, Input, InputState};
+use crate::input::Input;
 use crate::reflect::type_registry::TypeRegistry;
 use crate::render::RenderContext;
 use crate::resource::ResourceMap;
@@ -12,7 +12,9 @@ use egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput, Rect, Vec2};
 use egui_wgpu::wgpu;
 use nalgebra_glm::{distance, Mat4, Vec3};
 use std::fmt::Debug;
-use std::path::PathBuf;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -21,33 +23,102 @@ const DEFAULT_TEST_SCREEN_SIZE: Vec2 = Vec2::new(1280.0, 720.0);
 const MAX_CONNECT_ITERS: usize = 100;
 
 /// Default fixed simulation step used by headless test runners.
-pub const FIXED_TEST_STEP_SECONDS: f32 = 1.0 / 60.0;
+pub const FIXED_TEST_STEP_SECONDS: f64 = 1.0 / 60.0;
+
+struct TestGpu {
+    adapter: wgpu::Adapter,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+}
+
+/// Features the editor requests that scene and gizmo shaders rely on; enabled
+/// here when the test adapter supports them.
+fn desired_test_features() -> wgpu::Features {
+    wgpu::Features::BUFFER_BINDING_ARRAY
+        | wgpu::Features::TEXTURE_BINDING_ARRAY
+        | wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY
+        | wgpu::Features::UNIFORM_BUFFER_AND_STORAGE_TEXTURE_ARRAY_NON_UNIFORM_INDEXING
+}
+
+/// Limits matching the editor's device, clamped to what the adapter supports.
+fn test_limits(adapter: &wgpu::Adapter) -> wgpu::Limits {
+    let supported = adapter.limits();
+    wgpu::Limits {
+        max_storage_textures_per_shader_stage: 5
+            .min(supported.max_storage_textures_per_shader_stage),
+        max_uniform_buffers_per_shader_stage: 30
+            .min(supported.max_uniform_buffers_per_shader_stage),
+        ..Default::default()
+    }
+}
+
+fn test_gpu() -> &'static TestGpu {
+    static GPU: OnceLock<TestGpu> = OnceLock::new();
+    GPU.get_or_init(|| {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            ..Default::default()
+        });
+        let request_adapter = |force_fallback_adapter| {
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter,
+            }))
+        };
+        let adapter = request_adapter(false)
+            .or_else(|| request_adapter(true))
+            .expect("no wgpu adapter found, including fallback adapter");
+        let (device, queue) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                required_features: desired_test_features() & adapter.features(),
+                required_limits: test_limits(&adapter),
+                ..Default::default()
+            },
+            None,
+        ))
+        .expect("failed to create wgpu device");
+        TestGpu {
+            adapter,
+            device,
+            queue,
+        }
+    })
+}
 
 /// Returns a shared headless render context suitable for tests.
 pub fn test_render_context() -> Arc<RenderContext> {
     static RENDER_CONTEXT: OnceLock<Arc<RenderContext>> = OnceLock::new();
     RENDER_CONTEXT
         .get_or_init(|| {
-            let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-                backends: wgpu::Backends::all(),
-                ..Default::default()
-            });
-            let request_adapter = |force_fallback_adapter| {
-                pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::LowPower,
-                    compatible_surface: None,
-                    force_fallback_adapter,
-                }))
-            };
-            let adapter = request_adapter(false)
-                .or_else(|| request_adapter(true))
-                .expect("no wgpu adapter found, including fallback adapter");
-            let (device, queue) =
-                pollster::block_on(adapter.request_device(&Default::default(), None))
-                    .expect("failed to create wgpu device");
-            Arc::new(RenderContext::headless(Arc::new(device), Arc::new(queue)))
+            let gpu = test_gpu();
+            Arc::new(RenderContext::headless(
+                Arc::new(gpu.device.clone()),
+                Arc::new(gpu.queue.clone()),
+            ))
         })
         .clone()
+}
+
+/// Returns an egui-wgpu render state backed by the shared test device, for
+/// tests that drive renderers which take a `RenderState`.
+pub fn test_render_state() -> egui_wgpu::RenderState {
+    let gpu = test_gpu();
+    let target_format = wgpu::TextureFormat::Bgra8Unorm;
+    egui_wgpu::RenderState {
+        adapter: gpu.adapter.clone(),
+        available_adapters: vec![gpu.adapter.clone()],
+        device: gpu.device.clone(),
+        queue: gpu.queue.clone(),
+        target_format,
+        renderer: Arc::new(egui::mutex::RwLock::new(egui_wgpu::Renderer::new(
+            &gpu.device,
+            target_format,
+            None,
+            1,
+            false,
+        ))),
+    }
 }
 
 fn build_type_registry() -> Ref<TypeRegistry> {
@@ -74,6 +145,119 @@ pub fn test_registries() -> ReadOnlyRegistryContext {
         types: type_registry.readonly(),
         components: component_registry.readonly(),
     }
+}
+
+/// Temporary copy of the repository asset roots for tests that load assets.
+///
+/// The asset registry rewrites `.meta` files while scanning, so tests must never point it at the
+/// tracked asset directories. The copy is deleted when the value is dropped, so keep it alive for
+/// as long as the registry or context built over it is in use.
+pub struct TestAssets {
+    dir: PathBuf,
+    engine_root: Option<PathBuf>,
+    sandbox_root: Option<PathBuf>,
+    fixtures_root: Option<PathBuf>,
+}
+
+impl TestAssets {
+    /// Copies the engine asset root (`assets/`).
+    pub fn engine() -> Self {
+        Self::copy(true, false, false)
+    }
+
+    /// Copies the sandbox asset root (`sandbox/assets/`).
+    pub fn sandbox() -> Self {
+        Self::copy(false, true, false)
+    }
+
+    /// Copies the engine and sandbox asset roots and the model fixtures
+    /// (`engine/tests/fixtures/models/`).
+    pub fn models() -> Self {
+        Self::copy(true, true, true)
+    }
+
+    fn copy(engine: bool, sandbox: bool, fixtures: bool) -> Self {
+        let dir = std::env::temp_dir().join(format!("calyx-test-assets-{}", uuid::Uuid::new_v4()));
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let copy_root = |source: &str, name: &str| {
+            let source = dunce::canonicalize(workspace.join(source))
+                .unwrap_or_else(|e| panic!("{source} dir not found: {e}"));
+            let target = dir.join(name);
+            copy_dir_all(&source, &target)
+                .unwrap_or_else(|e| panic!("failed to copy {}: {e}", source.display()));
+            target
+        };
+        let engine_root = engine.then(|| copy_root("assets", "assets"));
+        let sandbox_root = sandbox.then(|| copy_root("sandbox/assets", "sandbox_assets"));
+        let fixtures_root =
+            fixtures.then(|| copy_root("engine/tests/fixtures/models", "fixture_assets"));
+        Self {
+            dir,
+            engine_root,
+            sandbox_root,
+            fixtures_root,
+        }
+    }
+
+    /// Copied engine asset root.
+    pub fn engine_root(&self) -> &Path {
+        self.engine_root
+            .as_deref()
+            .expect("engine assets not copied")
+    }
+
+    /// Copied sandbox asset root.
+    pub fn sandbox_root(&self) -> &Path {
+        self.sandbox_root
+            .as_deref()
+            .expect("sandbox assets not copied")
+    }
+
+    /// Copied model fixtures root.
+    pub fn fixtures_root(&self) -> &Path {
+        self.fixtures_root
+            .as_deref()
+            .expect("model fixtures not copied")
+    }
+
+    /// All copied asset roots, suitable for building a registry.
+    pub fn roots(&self) -> Vec<PathBuf> {
+        [&self.engine_root, &self.sandbox_root, &self.fixtures_root]
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect()
+    }
+
+    /// Builds a registry context over the copied roots.
+    pub fn registries(&self) -> ReadOnlyRegistryContext {
+        test_registries_with_assets(self.roots())
+    }
+
+    /// Builds an asset context over the copied roots.
+    pub fn asset_context(&self) -> AssetContext {
+        test_asset_context_with_assets(self.roots())
+    }
+}
+
+impl Drop for TestAssets {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.dir);
+    }
+}
+
+fn copy_dir_all(source: &Path, target: &Path) -> io::Result<()> {
+    fs::create_dir_all(target)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let destination = target.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_all(&entry.path(), &destination)?;
+        } else {
+            fs::copy(entry.path(), destination)?;
+        }
+    }
+    Ok(())
 }
 
 /// Builds a registry context backed by the provided asset roots.
@@ -215,12 +399,11 @@ pub struct HeadlessSceneRunner {
     resources: ResourceMap,
     scene: Scene,
     input_context: egui::Context,
-    action_map: ActionMap,
     input_active: bool,
     pending_events: Vec<Event>,
     modifiers: Modifiers,
     screen_rect: Rect,
-    step_seconds: f32,
+    step_seconds: f64,
 }
 
 impl Default for HeadlessSceneRunner {
@@ -242,7 +425,6 @@ impl HeadlessSceneRunner {
             resources: ResourceMap::new(),
             scene,
             input_context: egui::Context::default(),
-            action_map: ActionMap::default(),
             input_active: true,
             pending_events: Vec::new(),
             modifiers: Modifiers::default(),
@@ -277,18 +459,13 @@ impl HeadlessSceneRunner {
         &mut self.resources
     }
 
-    /// Returns the mutable action map used for synthetic input.
-    pub fn action_map_mut(&mut self) -> &mut ActionMap {
-        &mut self.action_map
-    }
-
     /// Enables or disables input processing.
     pub fn set_input_active(&mut self, active: bool) {
         self.input_active = active;
     }
 
     /// Overrides the fixed step duration in seconds.
-    pub fn set_step_seconds(&mut self, seconds: f32) {
+    pub fn set_step_seconds(&mut self, seconds: f64) {
         self.step_seconds = seconds;
     }
 
@@ -361,8 +538,8 @@ impl HeadlessSceneRunner {
 
         let raw_input = RawInput {
             screen_rect: Some(self.screen_rect),
-            time: Some(self.resources.time().static_time() as f64),
-            predicted_dt: self.step_seconds,
+            time: Some(self.resources.time().static_time()),
+            predicted_dt: self.step_seconds as f32,
             modifiers: self.modifiers,
             events: std::mem::take(&mut self.pending_events),
             ..Default::default()
@@ -372,11 +549,8 @@ impl HeadlessSceneRunner {
         let input = Input::from_ctx(
             &self.input_context,
             None,
-            InputState {
-                is_active: self.input_active,
-                last_cursor_pos: None,
-                action_map: self.action_map.clone(),
-            },
+            self.resources.input_mut(),
+            self.input_active,
         );
         self.scene
             .update(&self.registries, &mut self.resources, &input);
@@ -535,16 +709,21 @@ pub fn assert_component_value<T, V, F>(
 
 #[cfg(test)]
 mod tests {
-    use super::{test_registries, HeadlessSceneRunner, SceneBuilder};
+    use super::{
+        test_asset_context_with_assets, test_registries, HeadlessSceneRunner, SceneBuilder,
+        TestAssets,
+    };
     use crate as engine;
     use crate::component::{
         Component, ComponentEventContext, ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
     };
-    use crate::input::Input;
+    use crate::context::GameContext;
+    use crate::input::{ActionMap, InputBinding, PROJECT_ACTION_MAP_NAME};
+    use crate::input::{Input, InputState};
     use crate::reflect::{Reflect, ReflectDefault};
     use crate::resource::{Resource, ResourceMap};
     use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
-    use egui::Key;
+    use egui::{Key, PointerButton, Pos2, RawInput, Vec2};
     use serde::{Deserialize, Serialize};
 
     #[derive(Default, Resource, TypeUuid)]
@@ -553,6 +732,7 @@ mod tests {
     struct InputProbe {
         shoot_presses: usize,
         forward_axis: f32,
+        cursor_delta: Vec2,
     }
 
     #[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
@@ -570,6 +750,7 @@ mod tests {
                 probe.shoot_presses += 1;
             }
             probe.forward_axis = input.axis("move_forward");
+            probe.cursor_delta = input.cursor_delta();
         }
     }
 
@@ -596,5 +777,206 @@ mod tests {
 
         let probe = runner.resources().resource::<InputProbe>().unwrap();
         assert_eq!(probe.forward_axis, 0.0);
+    }
+
+    /// Lists every file under `root` with its size and modification time.
+    fn snapshot(root: &std::path::Path) -> Vec<(std::path::PathBuf, u64, std::time::SystemTime)> {
+        let mut files = Vec::new();
+        let mut pending = vec![root.to_path_buf()];
+        while let Some(dir) = pending.pop() {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let entry = entry.unwrap();
+                let metadata = entry.metadata().unwrap();
+                if metadata.is_dir() {
+                    pending.push(entry.path());
+                } else {
+                    files.push((entry.path(), metadata.len(), metadata.modified().unwrap()));
+                }
+            }
+        }
+        files.sort();
+        files
+    }
+
+    #[test]
+    fn loading_test_assets_does_not_modify_source_asset_directory() {
+        let source =
+            dunce::canonicalize(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets"))
+                .unwrap();
+        let before = snapshot(&source);
+
+        let assets = TestAssets::engine();
+        let registries = assets.registries();
+        assert!(registries.assets.read().asset_id("meshes/cube").is_some());
+        drop(registries);
+
+        assert_eq!(before, snapshot(&source));
+        let copy = assets.engine_root().to_path_buf();
+        assert!(copy.starts_with(std::env::temp_dir()));
+        drop(assets);
+        assert!(!copy.exists(), "temporary copy should be removed on drop");
+    }
+
+    fn input_probe_runner() -> HeadlessSceneRunner {
+        let mut builder = SceneBuilder::new(test_registries());
+        let game_object = builder.spawn("input-probe");
+        builder.add_component(game_object, TestInputComponent);
+        let mut runner = HeadlessSceneRunner::from_scene(builder.finish());
+        runner.resources_mut().insert(InputProbe::default());
+        runner
+    }
+
+    fn shoot_presses(runner: &HeadlessSceneRunner) -> usize {
+        runner
+            .resources()
+            .resource::<InputProbe>()
+            .unwrap()
+            .shoot_presses
+    }
+
+    #[test]
+    fn rebound_action_fires_on_the_new_binding() {
+        let mut runner = input_probe_runner();
+        let mut map = ActionMap::new();
+        map.bind_action("shoot", InputBinding::Key(Key::Enter));
+        runner.resources_mut().input_mut().set_action_map(map);
+
+        runner.press_key(Key::Space);
+        runner.step();
+        assert_eq!(shoot_presses(&runner), 0);
+
+        runner.release_key(Key::Space);
+        runner.press_key(Key::Enter);
+        runner.step();
+        assert_eq!(shoot_presses(&runner), 1);
+    }
+
+    #[test]
+    fn project_action_map_asset_drives_the_scene() {
+        let dir = std::env::temp_dir().join(format!("calyx-input-asset-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut map = ActionMap::new();
+        map.bind_action(
+            "shoot",
+            InputBinding::PointerButton(PointerButton::Secondary),
+        );
+        let asset_path = dir.join(format!("{PROJECT_ACTION_MAP_NAME}.cxinput"));
+        serde_json::to_writer_pretty(std::fs::File::create(&asset_path).unwrap(), &map).unwrap();
+
+        let assets = test_asset_context_with_assets(vec![dir.clone()]);
+        let game = GameContext::new(assets.clone());
+        let mut builder = SceneBuilder::new(assets.registries.lock_read());
+        let game_object = builder.spawn("input-probe");
+        builder.add_component(game_object, TestInputComponent);
+        let mut runner = HeadlessSceneRunner::from_scene(builder.finish());
+        runner.resources_mut().insert(InputProbe::default());
+        runner
+            .resources_mut()
+            .insert(game.resources.input().clone());
+
+        runner.press_key(Key::Space);
+        runner.step();
+        assert_eq!(shoot_presses(&runner), 0);
+
+        runner.release_key(Key::Space);
+        runner.press_pointer_button(Pos2::new(10.0, 10.0), PointerButton::Secondary);
+        runner.step();
+        assert_eq!(shoot_presses(&runner), 1);
+
+        // A hot reload updates the asset handle in place; the running input follows it.
+        let mut reloaded = ActionMap::new();
+        reloaded.bind_action("shoot", InputBinding::Key(Key::Enter));
+        let handle = assets
+            .registries
+            .assets
+            .read()
+            .load::<ActionMap>(PROJECT_ACTION_MAP_NAME)
+            .unwrap();
+        *handle.write() = reloaded;
+        runner.release_pointer_button(Pos2::new(10.0, 10.0), PointerButton::Secondary);
+        runner.press_pointer_button(Pos2::new(10.0, 10.0), PointerButton::Secondary);
+        runner.step();
+        assert_eq!(shoot_presses(&runner), 1);
+        runner.press_key(Key::Enter);
+        runner.step();
+        assert_eq!(shoot_presses(&runner), 2);
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn cursor_delta_reports_movement_since_the_previous_frame() {
+        let mut runner = input_probe_runner();
+        let delta = |runner: &HeadlessSceneRunner| {
+            runner
+                .resources()
+                .resource::<InputProbe>()
+                .unwrap()
+                .cursor_delta
+        };
+
+        runner.move_pointer(Pos2::new(10.0, 10.0));
+        runner.step();
+        assert_eq!(delta(&runner), Vec2::ZERO);
+
+        runner.move_pointer(Pos2::new(25.0, 12.0));
+        runner.step();
+        assert_eq!(delta(&runner), Vec2::new(15.0, 2.0));
+
+        runner.step();
+        assert_eq!(delta(&runner), Vec2::ZERO);
+
+        runner.move_pointer(Pos2::new(35.0, 12.0));
+        runner.step();
+        assert_eq!(delta(&runner), Vec2::new(10.0, 0.0));
+    }
+
+    #[test]
+    fn input_surfaces_in_one_pass_share_the_cursor_delta() {
+        let ctx = egui::Context::default();
+        let mut state = InputState::default();
+        let pass = |position: Pos2| RawInput {
+            events: vec![egui::Event::PointerMoved(position)],
+            ..Default::default()
+        };
+
+        ctx.begin_pass(pass(Pos2::new(10.0, 10.0)));
+        Input::from_ctx(&ctx, None, &mut state, true);
+        let _ = ctx.end_pass();
+
+        ctx.begin_pass(pass(Pos2::new(25.0, 12.0)));
+        let first = Input::from_ctx(&ctx, None, &mut state, true);
+        let second = Input::from_ctx(&ctx, None, &mut state, true);
+        let inactive = Input::from_ctx(&ctx, None, &mut state, false);
+        let _ = ctx.end_pass();
+
+        assert_eq!(first.cursor_delta(), Vec2::new(15.0, 2.0));
+        assert_eq!(second.cursor_delta(), Vec2::new(15.0, 2.0));
+        assert_eq!(inactive.cursor_delta(), Vec2::ZERO);
+    }
+
+    #[test]
+    fn malformed_project_action_map_is_reported() {
+        let dir = std::env::temp_dir().join(format!("calyx-input-bad-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(format!("{PROJECT_ACTION_MAP_NAME}.cxinput")),
+            "not json",
+        )
+        .unwrap();
+        let assets = test_asset_context_with_assets(vec![dir.clone()]);
+
+        let mut state = InputState::default();
+        let result = state.load_project_action_map(&assets.registries.assets.read());
+        assert!(result.is_err());
+
+        let empty = std::env::temp_dir().join(format!("calyx-input-none-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&empty).unwrap();
+        let assets = test_asset_context_with_assets(vec![empty.clone()]);
+        let result = state.load_project_action_map(&assets.registries.assets.read());
+        assert!(result.is_ok());
+
+        std::fs::remove_dir_all(dir).unwrap();
+        std::fs::remove_dir_all(empty).unwrap();
     }
 }

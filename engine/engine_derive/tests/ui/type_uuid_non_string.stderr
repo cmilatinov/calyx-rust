@@ -1,0 +1,11 @@
+error: expected `#[uuid = "..."]` with a string literal
+  --> tests/ui/type_uuid_non_string.rs:12:3
+   |
+12 | #[uuid = 123]
+   |   ^^^^^^^^^^
+
+error: expected `#[uuid = "..."]` with a string literal
+  --> tests/ui/type_uuid_non_string.rs:16:3
+   |
+16 | #[uuid("6f1c2d3e-4a5b-4c6d-8e7f-0a1b2c3d4e5f")]
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

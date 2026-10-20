@@ -1,5 +1,6 @@
 use crate::background::Background;
 use crate::core::{Ref, Time};
+use crate::input::InputState;
 use crate::net::Network;
 use crate::physics::PhysicsConfiguration;
 use crate::utils::{TypeUuid, TypeUuidDynamic};
@@ -56,6 +57,7 @@ impl ResourceMap {
         resources.insert::<Ref<Background>>(Background::new());
         resources.insert_default::<Network>();
         resources.insert_default::<PhysicsConfiguration>();
+        resources.insert_default::<InputState>();
         resources
     }
 
@@ -150,6 +152,18 @@ impl ResourceMap {
     #[inline]
     pub fn network_mut(&mut self) -> &mut Network {
         self.resource_mut::<Network>().unwrap()
+    }
+
+    /// Returns the persistent input state resource.
+    #[inline]
+    pub fn input(&self) -> &InputState {
+        self.resource::<InputState>().unwrap()
+    }
+
+    /// Returns the persistent input state resource mutably.
+    #[inline]
+    pub fn input_mut(&mut self) -> &mut InputState {
+        self.resource_mut::<InputState>().unwrap()
     }
 
     /// Returns the physics configuration resource.

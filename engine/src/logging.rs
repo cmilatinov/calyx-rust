@@ -1,7 +1,7 @@
 use chrono::Local;
 use env_filter::Filter;
 use log::{Metadata, Record, SetLoggerError};
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -10,6 +10,20 @@ use typed_builder::TypedBuilder;
 
 const LOG_HISTORY_LIMIT: usize = 1000;
 static LOG_HISTORY: OnceLock<Mutex<VecDeque<LogEntry>>> = OnceLock::new();
+
+static WARNED_KEYS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+/// Logs a warning the first time `key` is seen, so per-frame problems do not flood the log.
+pub fn warn_once(key: impl Into<String>, message: impl FnOnce() -> String) {
+    let warned = WARNED_KEYS.get_or_init(Default::default);
+    let first = warned
+        .lock()
+        .map(|mut keys| keys.insert(key.into()))
+        .unwrap_or(false);
+    if first {
+        log::warn!("{}", message());
+    }
+}
 
 /// One log entry retained for editor console display.
 #[derive(Clone, Debug, PartialEq, Eq)]

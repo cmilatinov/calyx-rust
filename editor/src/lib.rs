@@ -29,7 +29,7 @@ use engine::component::ComponentTransform;
 use engine::context::{AssetContext, GameContext};
 use engine::core::Ref;
 use engine::error::BoxedError;
-use engine::input::{Input, InputState};
+use engine::input::Input;
 use engine::logging::{DefaultLogger, Log};
 use engine::render::{Camera, SceneRenderer, SceneRendererOptions};
 use engine::scene::Scene;
@@ -52,6 +52,7 @@ mod icons;
 mod inspector;
 mod panel;
 mod project_manager;
+mod remote;
 mod scene_autosave;
 mod scene_document;
 mod scene_history;
@@ -67,6 +68,7 @@ pub struct EditorApp {
     tree: Tree<&'static str>,
     panels: Panels,
     physics_debug_pipeline: DebugRenderPipeline,
+    remote: Option<remote::RemoteRuntime>,
     // Drop runtime/editor state before the project manager so assembly-backed
     // scene components and registry trait objects are destroyed while the
     // project assembly is still loaded.
@@ -85,6 +87,7 @@ pub struct EditorAppState {
     pub selection: Selection,
     pub hovered_game_object: Option<uuid::Uuid>,
     pub viewport_size: (f32, f32),
+    pub viewport_response: Option<egui::Response>,
     pub game_response: Option<egui::Response>,
     pub game_size: (f32, f32),
     pub gizmo_modes: EnumSet<GizmoMode>,
@@ -139,6 +142,7 @@ impl EditorAppState {
             selection: Default::default(),
             hovered_game_object: None,
             viewport_size: Default::default(),
+            viewport_response: Default::default(),
             game_size: Default::default(),
             game_response: Default::default(),
             gizmo_modes: GizmoMode::all_translate(),
@@ -416,9 +420,9 @@ impl EditorAppState {
         true
     }
 
-    pub fn open_scene_file(&mut self, file: PathBuf) {
+    pub fn open_scene_file(&mut self, file: PathBuf) -> bool {
         if !self.scene_autosave.prepare_scene_change(&self.game) {
-            return;
+            return false;
         }
         let scene = match self
             .game
@@ -432,7 +436,7 @@ impl EditorAppState {
             Err(error) => {
                 let message = format!("Failed to open scene {}: {}", file.display(), error);
                 log::error!("{message}");
-                return;
+                return false;
             }
         };
         self.game.scenes.load_scene(scene.readonly());
@@ -444,6 +448,7 @@ impl EditorAppState {
         let object_count = self.game.scenes.current_scene().objects().count();
         let message = format!("Opened scene {} ({} objects)", file.display(), object_count);
         log::info!("{message}");
+        true
     }
 
     pub fn open_scene_asset(&mut self, asset_id: uuid::Uuid) {
@@ -590,11 +595,21 @@ impl EditorApp {
         }
         let panels = Panels::new(content_browser_root);
         Self::apply_style(cc);
+        let remote = remote::remote_config_from_env(&project_path).and_then(|config| {
+            match remote::RemoteServer::start(config) {
+                Ok(server) => Some(remote::RemoteRuntime::new(server, project_path.clone())),
+                Err(error) => {
+                    log::error!("Failed to start remote control server: {error}");
+                    None
+                }
+            }
+        });
         Ok(Self {
             fps: 0,
             fps_counter: 0,
             tree,
             panels,
+            remote,
             physics_debug_pipeline: DebugRenderPipeline::new(
                 Default::default(),
                 Default::default(),
@@ -649,8 +664,11 @@ impl EditorApp {
 
 impl eframe::App for EditorApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.project_manager.write().load_completed_build();
         self.state.game.resources.time_mut().update_time();
         self.state.game_response = None;
+        self.state.viewport_response = None;
+        self.remote_update_begin(ctx);
         self.render_views(ctx, frame);
         self.process_thumbnail_jobs(frame);
 
@@ -675,6 +693,7 @@ impl eframe::App for EditorApp {
 
         self.status_bar(ctx);
 
+        let simulated = self.state.game.scenes.is_simulating();
         self.update_game(ctx);
         self.render_view_outline(frame);
         self.update_window_title(ctx);
@@ -697,7 +716,12 @@ impl eframe::App for EditorApp {
             .read()
             .reload_assets();
 
+        self.remote_update_end(simulated);
         ctx.request_repaint();
+    }
+
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        self.remote_raw_input_hook(raw_input);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
@@ -716,14 +740,12 @@ impl EditorApp {
 
     fn update_game(&mut self, ctx: &egui::Context) {
         self.state.game.scenes.prepare();
+        let is_active = self.is_game_focused() && self.state.game_response.is_some();
         let input = Input::from_ctx(
             ctx,
             self.state.game_response.as_ref(),
-            InputState {
-                is_active: self.is_game_focused() && self.state.game_response.is_some(),
-                last_cursor_pos: None,
-                ..Default::default()
-            },
+            self.state.game.resources.input_mut(),
+            is_active,
         );
         let assets = self.state.game.assets.lock_read();
         let GameContext {
@@ -1003,13 +1025,13 @@ impl EditorApp {
                             self.state.game.scenes.simulation_scene().objects().count()
                         );
                         self.state.game.scenes.pause_simulation();
+                    } else if let Err(error) = self.start_simulation() {
+                        log::error!("{error}");
                     } else {
-                        self.state.flush_pending_inspector_value_edits();
                         log::info!(
                             "User started scene simulation; objects={}",
                             self.state.game.scenes.current_scene().objects().count()
                         );
-                        self.state.game.scenes.start_simulation();
                     }
                 }
 
@@ -1041,10 +1063,10 @@ impl EditorApp {
                             if !background.task_list().is_empty() {
                                 ui.add(egui::Spinner::new().size(15.0));
                             }
-                            match background.task_list().len() {
+                            match background.task_count() {
                                 0 => {}
                                 1 => {
-                                    let id = background.task_list().iter().next().unwrap();
+                                    let id = background.task_list().keys().next().unwrap();
                                     if let Some(task_id) = TaskId::from_isize(*id) {
                                         ui.label(task_id.message());
                                     }
@@ -1081,6 +1103,31 @@ impl EditorApp {
             .panel::<PanelGame>()
             .map(|panel| panel.is_cursor_grabbed)
             .unwrap_or_default()
+    }
+
+    /// Starts or resumes simulation as the toolbar's play button does: the
+    /// project's runtime window sets the game aspect, and a fresh simulation
+    /// runs the configured startup scene when the project has one.
+    pub(crate) fn start_simulation(&mut self) -> Result<(), String> {
+        self.state.flush_pending_inspector_value_edits();
+        let runtime = self.project_manager.read().runtime_settings().clone();
+        if runtime.window.width != 0 && runtime.window.height != 0 {
+            self.state.game_aspect = Some((runtime.window.width, runtime.window.height));
+        }
+        match self
+            .project_manager
+            .read()
+            .start_simulation(&mut self.state.game.scenes)
+        {
+            Ok(Some(path)) => log::info!(
+                "Loaded configured startup scene for simulation: {}",
+                path.display()
+            ),
+            Ok(None) => {}
+            Err(error) => return Err(format!("Failed to load configured startup scene: {error}")),
+        }
+        self.state.game.scenes.start_simulation();
+        Ok(())
     }
 
     fn is_simulating(&self) -> bool {

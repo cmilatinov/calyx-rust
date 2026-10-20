@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::component::{ComponentCamera, ComponentID};
+    use crate::core::Ref;
     use crate::scene::{GameObject, Scene, SceneData, SiblingDir};
     use crate::test_utils::test_scene;
     use nalgebra_glm::{self as glm, Vec3};
@@ -88,7 +89,7 @@ mod tests {
         let b = scene.create(None, None);
         let child = scene.create(None, Some(a));
 
-        scene.set_parent(child, Some(b));
+        scene.set_parent(child, Some(b)).unwrap();
         assert_eq!(scene.parent(child), Some(b));
         assert_eq!(scene.children(a).count(), 0);
         assert_eq!(scene.children(b).count(), 1);
@@ -102,7 +103,9 @@ mod tests {
         let c2 = scene.create(None, Some(parent));
         let new_child = scene.create(None, None);
 
-        scene.set_parent_with_sibling(new_child, Some(parent), Some((c2, SiblingDir::Before)));
+        scene
+            .set_parent_with_sibling(new_child, Some(parent), Some((c2, SiblingDir::Before)))
+            .unwrap();
 
         let ordered: Vec<GameObject> = scene.children_ordered(parent).collect();
         assert_eq!(ordered, vec![c1, new_child, c2]);
@@ -116,10 +119,126 @@ mod tests {
         let c2 = scene.create(None, Some(parent));
         let new_child = scene.create(None, None);
 
-        scene.set_parent_with_sibling(new_child, Some(parent), Some((c1, SiblingDir::After)));
+        scene
+            .set_parent_with_sibling(new_child, Some(parent), Some((c1, SiblingDir::After)))
+            .unwrap();
 
         let ordered: Vec<GameObject> = scene.children_ordered(parent).collect();
         assert_eq!(ordered, vec![c1, new_child, c2]);
+    }
+
+    #[test]
+    fn set_parent_rejects_self_parenting() {
+        let mut scene = test_scene();
+        let parent = scene.create(None, None);
+        let go = scene.create(None, Some(parent));
+
+        assert!(scene.set_parent(go, Some(go)).is_err());
+        assert_eq!(scene.parent(go), Some(parent));
+        assert_eq!(scene.children_ordered(parent).collect::<Vec<_>>(), vec![go]);
+    }
+
+    #[test]
+    fn set_parent_rejects_grandchild_parent() {
+        let mut scene = test_scene();
+        let a = scene.create(None, None);
+        let b = scene.create(None, Some(a));
+        let c = scene.create(None, Some(b));
+
+        assert!(scene.set_parent(a, Some(c)).is_err());
+        assert!(scene
+            .set_parent_with_sibling(a, Some(c), Some((c, SiblingDir::Before)))
+            .is_err());
+        assert_eq!(scene.parent(a), Some(scene.root()));
+        assert_eq!(scene.parent(b), Some(a));
+        assert_eq!(scene.parent(c), Some(b));
+        assert_eq!(scene.children_ordered(a).collect::<Vec<_>>(), vec![b]);
+        assert_eq!(scene.children_ordered(b).collect::<Vec<_>>(), vec![c]);
+    }
+
+    #[test]
+    fn set_parent_with_sibling_moves_within_same_parent() {
+        let mut scene = test_scene();
+        let parent = scene.create(None, None);
+        let c0 = scene.create(None, Some(parent));
+        let c1 = scene.create(None, Some(parent));
+        let c2 = scene.create(None, Some(parent));
+        let c3 = scene.create(None, Some(parent));
+
+        // Forward: c0 before c3 -> c1, c2, c0, c3 (not a swap).
+        scene
+            .set_parent_with_sibling(c0, Some(parent), Some((c3, SiblingDir::Before)))
+            .unwrap();
+        assert_eq!(
+            scene.children_ordered(parent).collect::<Vec<_>>(),
+            vec![c1, c2, c0, c3]
+        );
+
+        // Backward: c3 before c1 -> c3, c1, c2, c0.
+        scene
+            .set_parent_with_sibling(c3, Some(parent), Some((c1, SiblingDir::Before)))
+            .unwrap();
+        assert_eq!(
+            scene.children_ordered(parent).collect::<Vec<_>>(),
+            vec![c3, c1, c2, c0]
+        );
+
+        // After the last sibling.
+        scene
+            .set_parent_with_sibling(c3, Some(parent), Some((c0, SiblingDir::After)))
+            .unwrap();
+        assert_eq!(
+            scene.children_ordered(parent).collect::<Vec<_>>(),
+            vec![c1, c2, c0, c3]
+        );
+    }
+
+    #[test]
+    fn set_parent_without_sibling_appends_within_same_parent() {
+        let mut scene = test_scene();
+        let parent = scene.create(None, None);
+        let c0 = scene.create(None, Some(parent));
+        let c1 = scene.create(None, Some(parent));
+        let c2 = scene.create(None, Some(parent));
+
+        scene.set_parent(c0, Some(parent)).unwrap();
+        assert_eq!(
+            scene.children_ordered(parent).collect::<Vec<_>>(),
+            vec![c1, c2, c0]
+        );
+    }
+
+    #[test]
+    fn set_parent_with_unrelated_sibling_appends() {
+        let mut scene = test_scene();
+        let parent = scene.create(None, None);
+        let c0 = scene.create(None, Some(parent));
+        let other = scene.create(None, None);
+        let stray = scene.create(None, Some(other));
+
+        scene
+            .set_parent_with_sibling(c0, Some(parent), Some((stray, SiblingDir::Before)))
+            .unwrap();
+        assert_eq!(scene.children_ordered(parent).collect::<Vec<_>>(), vec![c0]);
+    }
+
+    #[test]
+    fn set_parent_with_self_as_sibling_reparents_to_new_parent() {
+        let mut scene = test_scene();
+        let old_parent = scene.create(None, None);
+        let new_parent = scene.create(None, None);
+        let go = scene.create(None, Some(old_parent));
+        let existing = scene.create(None, Some(new_parent));
+
+        scene
+            .set_parent_with_sibling(go, Some(new_parent), Some((go, SiblingDir::Before)))
+            .unwrap();
+        assert_eq!(scene.parent(go), Some(new_parent));
+        assert_eq!(
+            scene.children_ordered(new_parent).collect::<Vec<_>>(),
+            vec![existing, go]
+        );
+        assert_eq!(scene.children(old_parent).count(), 0);
     }
 
     #[test]
@@ -256,6 +375,137 @@ mod tests {
         scene.prepare();
 
         assert!(scene.find(uuid).is_none());
+    }
+
+    // HashSet drain order is randomized per set, so repeat to hit both orders.
+    const DELETE_ORDER_ITERATIONS: usize = 32;
+
+    #[test]
+    fn delete_parent_and_child_queued_together() {
+        for swap in [false, true] {
+            for _ in 0..DELETE_ORDER_ITERATIONS {
+                let mut scene = test_scene();
+                let keep = scene.create(None, None);
+                let parent = scene.create(None, None);
+                let child = scene.create(None, Some(parent));
+                let grandchild = scene.create(None, Some(child));
+                let (parent_uuid, child_uuid) = (scene.uuid(parent), scene.uuid(child));
+                let grandchild_uuid = scene.uuid(grandchild);
+
+                if swap {
+                    scene.delete(child);
+                    scene.delete(parent);
+                } else {
+                    scene.delete(parent);
+                    scene.delete(child);
+                }
+                scene.delete(grandchild);
+                scene.flush_deletes();
+
+                assert!(scene.find(parent_uuid).is_none());
+                assert!(scene.find(child_uuid).is_none());
+                assert!(scene.find(grandchild_uuid).is_none());
+                assert!(scene.find(scene.uuid(keep)).is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn delete_twice() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        let uuid = scene.uuid(go);
+
+        scene.delete(go);
+        scene.delete(go);
+        scene.flush_deletes();
+        assert!(scene.find(uuid).is_none());
+
+        scene.delete(go);
+        scene.flush_deletes();
+    }
+
+    #[test]
+    fn delete_stale_handle() {
+        let mut scene = test_scene();
+        let stale = scene.create(None, None);
+        let other = scene.create(None, None);
+        scene.delete(stale);
+        scene.flush_deletes();
+
+        scene.delete(stale);
+        scene.flush_deletes();
+
+        assert!(scene.find(scene.uuid(other)).is_some());
+    }
+
+    #[test]
+    fn delete_root_is_ignored() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        let root = scene.root();
+
+        scene.delete(root);
+        scene.flush_deletes();
+
+        assert!(scene.find(scene.uuid(go)).is_some());
+        assert!(scene.find(scene.root_id()).is_some());
+    }
+
+    #[test]
+    fn delete_in_cyclic_hierarchy_does_not_hang() {
+        let mut scene = test_scene();
+        let a = scene.create(None, None);
+        let b = scene.create(None, Some(a));
+        let leaf = scene.create(None, Some(b));
+        // The scene refuses the edge that would close the cycle.
+        assert!(scene.set_parent(a, Some(b)).is_err());
+
+        scene.delete(a);
+        scene.delete(leaf);
+        scene.flush_deletes();
+
+        assert!(scene.find(scene.uuid(leaf)).is_none());
+    }
+
+    #[test]
+    fn delete_removes_cycle_when_several_members_are_queued() {
+        let mut scene = test_scene();
+        let a = scene.create(None, None);
+        let b = scene.create(None, Some(a));
+        // The scene refuses the edge that would close the cycle.
+        assert!(scene.set_parent(a, Some(b)).is_err());
+
+        scene.delete(a);
+        scene.delete(b);
+        scene.flush_deletes();
+
+        assert!(scene.find(scene.uuid(a)).is_none());
+        assert!(scene.find(scene.uuid(b)).is_none());
+    }
+
+    #[test]
+    fn delete_keeps_sibling_order_contiguous() {
+        let mut scene = test_scene();
+        let parent = scene.create(None, None);
+        let c0 = scene.create(None, Some(parent));
+        let c1 = scene.create(None, Some(parent));
+        let c2 = scene.create(None, Some(parent));
+        let c3 = scene.create(None, Some(parent));
+
+        scene.delete(c1);
+        scene.delete(c2);
+        scene.flush_deletes();
+
+        let ordered: Vec<GameObject> = scene.children_ordered(parent).collect();
+        assert_eq!(ordered, vec![c0, c3]);
+
+        let c4 = scene.create(None, Some(parent));
+        let ordered: Vec<GameObject> = scene.children_ordered(parent).collect();
+        assert_eq!(ordered, vec![c0, c3, c4]);
+        assert_eq!(scene.child_at(parent, 0), Some(c0));
+        assert_eq!(scene.child_at(parent, 1), Some(c3));
+        assert_eq!(scene.child_at(parent, 2), Some(c4));
     }
 
     // --- Descendants & Ancestors ---
@@ -537,9 +787,7 @@ mod tests {
 
         let prefab = scene.create_prefab(parent);
         let instance = scene.instantiate_prefab(&prefab, None);
-        assert!(instance.is_some());
-
-        let instance_go = instance.unwrap();
+        let instance_go = instance.expect("prefab should instantiate");
         let instance_name = scene.name(instance_go);
         assert_eq!(instance_name, "PrefabRoot");
 
@@ -552,6 +800,135 @@ mod tests {
         assert_ne!(scene.uuid(instance_go), scene.uuid(parent));
     }
 
+    #[test]
+    fn instantiate_prefab_returns_error_for_missing_root() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+        let root = scene.create(None, None);
+        let mut prefab = scene.create_prefab(root);
+        prefab.root = Uuid::new_v4();
+        let object_count = scene.root_objects().count();
+
+        let result = scene.instantiate_prefab(&prefab, None);
+
+        assert!(matches!(
+            result,
+            Err(crate::scene::SceneError::InvalidPrefab(_))
+        ));
+        assert_eq!(scene.root_objects().count(), object_count);
+    }
+
+    #[test]
+    fn instantiate_prefab_returns_error_for_hierarchy_cycle() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+        let root = scene.create(None, None);
+        let a = scene.create(None, None);
+        let b = scene.create(None, None);
+        let mut prefab = scene.create_prefab(root);
+        for go in [a, b] {
+            prefab.data.components.insert(
+                scene.uuid(go),
+                scene.create_prefab(go).data.components[&scene.uuid(go)].clone(),
+            );
+        }
+        prefab.data.hierarchy.clear();
+        prefab
+            .data
+            .hierarchy
+            .insert(scene.uuid(a), vec![scene.uuid(b)]);
+        prefab
+            .data
+            .hierarchy
+            .insert(scene.uuid(b), vec![scene.uuid(a)]);
+        let object_count = scene.root_objects().count();
+        let entity_count = scene.world.len();
+
+        let result = scene.instantiate_prefab(&prefab, None);
+
+        assert!(matches!(
+            result,
+            Err(crate::scene::SceneError::HierarchyCycle)
+        ));
+        assert_eq!(scene.root_objects().count(), object_count);
+        assert_eq!(scene.world.len(), entity_count);
+    }
+
+    #[test]
+    fn instantiate_prefab_returns_error_for_hierarchy_entry_outside_prefab() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+        let root = scene.create(None, None);
+        let mut prefab = scene.create_prefab(root);
+        prefab
+            .data
+            .hierarchy
+            .insert(scene.uuid(root), vec![Uuid::new_v4()]);
+        let entity_count = scene.world.len();
+
+        let result = scene.instantiate_prefab(&prefab, None);
+
+        assert!(matches!(
+            result,
+            Err(crate::scene::SceneError::InvalidPrefab(_))
+        ));
+        assert_eq!(scene.world.len(), entity_count);
+    }
+
+    #[test]
+    fn instantiate_prefab_returns_error_for_disconnected_or_duplicate_parent_objects() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+        let root = scene.create(None, None);
+        let other = scene.create(None, None);
+        let (root_id, other_id) = (scene.uuid(root), scene.uuid(other));
+        let mut prefab = scene.create_prefab(root);
+        prefab.data.components.insert(
+            other_id,
+            scene.create_prefab(other).data.components[&other_id].clone(),
+        );
+        let entity_count = scene.world.len();
+
+        let disconnected = scene.instantiate_prefab(&prefab, None);
+        prefab
+            .data
+            .hierarchy
+            .insert(root_id, vec![other_id, other_id]);
+        let duplicate = scene.instantiate_prefab(&prefab, None);
+
+        assert!(matches!(
+            disconnected,
+            Err(crate::scene::SceneError::InvalidPrefab(_))
+        ));
+        assert!(matches!(
+            duplicate,
+            Err(crate::scene::SceneError::InvalidPrefab(_))
+        ));
+        assert_eq!(scene.world.len(), entity_count);
+    }
+
+    #[test]
+    fn instantiate_prefab_returns_error_for_missing_id_component() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+        let root = scene.create(None, None);
+        let mut prefab = scene.create_prefab(root);
+        prefab
+            .data
+            .components
+            .get_mut(&prefab.root)
+            .unwrap()
+            .remove(&<ComponentID as crate::utils::TypeUuid>::type_uuid());
+        let entity_count = scene.world.len();
+
+        let result = scene.instantiate_prefab(&prefab, None);
+
+        assert!(matches!(
+            result,
+            Err(crate::scene::SceneError::InvalidPrefab(_))
+        ));
+        assert_eq!(scene.world.len(), entity_count);
+    }
     // --- Serialization ---
 
     #[test]
@@ -741,6 +1118,78 @@ mod tests {
         assert!(names.iter().any(|name| name == "Kept"));
         assert!(!names.iter().any(|name| name == "Discarded"));
         assert!(!game.scenes.has_simulation_scene());
+    }
+
+    #[test]
+    fn scene_manager_starts_configured_scene_without_replacing_authoring_scene() {
+        let mut game = crate::test_utils::test_game_context();
+        game.scenes.current_scene_mut().create(
+            Some(ComponentID {
+                name: "Authoring".into(),
+                ..Default::default()
+            }),
+            None,
+        );
+        let mut configured = test_scene();
+        configured.create(
+            Some(ComponentID {
+                name: "Configured".into(),
+                ..Default::default()
+            }),
+            None,
+        );
+
+        game.scenes
+            .start_simulation_from_scene(Ref::new(configured).readonly());
+
+        let authoring_names = game
+            .scenes
+            .current_scene()
+            .objects()
+            .map(|go| game.scenes.current_scene().name(go))
+            .collect::<Vec<_>>();
+        let simulation_names = game
+            .scenes
+            .simulation_scene()
+            .objects()
+            .map(|go| game.scenes.simulation_scene().name(go))
+            .collect::<Vec<_>>();
+        assert!(authoring_names.iter().any(|name| name == "Authoring"));
+        assert!(!authoring_names.iter().any(|name| name == "Configured"));
+        assert!(simulation_names.iter().any(|name| name == "Configured"));
+    }
+
+    #[test]
+    fn scene_manager_resumes_configured_simulation_without_reloading() {
+        let mut game = crate::test_utils::test_game_context();
+        let mut configured = test_scene();
+        configured.create(
+            Some(ComponentID {
+                name: "Configured".into(),
+                ..Default::default()
+            }),
+            None,
+        );
+        game.scenes
+            .start_simulation_from_scene(Ref::new(configured).readonly());
+        game.scenes.simulation_scene_mut().create(
+            Some(ComponentID {
+                name: "Retained".into(),
+                ..Default::default()
+            }),
+            None,
+        );
+        game.scenes.pause_simulation();
+
+        game.scenes
+            .start_simulation_from_scene(Ref::new(test_scene()).readonly());
+
+        assert!(game.scenes.is_simulating());
+        assert!(game.scenes.simulation_scene().objects().any(|go| game
+            .scenes
+            .simulation_scene()
+            .name(go)
+            == "Retained"));
     }
 
     #[test]

@@ -1,17 +1,26 @@
-# Codex Guidance
+# Repository Guidance
 
-Use the steering files in this repository as standing project instructions:
+Use these files for Calyx-specific context:
 
-- [.steering/gitflow.md](.steering/gitflow.md) - required Gitflow branching model and commit title prefixes.
-- [.steering/project.md](.steering/project.md) - Calyx workspace architecture, crate map, and project conventions.
-- [.steering/todoist.md](.steering/todoist.md) - Todoist planning, task selection, and PR reference rules.
-- [.steering/code-review.md](.steering/code-review.md) - senior-developer review checklist and keep/skip workflow.
-- [.steering/hud-ui.md](.steering/hud-ui.md) - HUD/runtime UI requirements, architecture, and testing strategy.
+- [docs/architecture/overview.md](docs/architecture/overview.md) - workspace architecture and project conventions.
+- [docs/process/planning.md](docs/process/planning.md) - roadmap source, priorities, and current product direction.
+- [docs/process/autonomy.md](docs/process/autonomy.md) - autonomous execution authority and escalation boundaries.
+- [docs/design/hud-ui/architecture.md](docs/design/hud-ui/architecture.md) - runtime HUD/UI architecture and linked requirements.
+- [docs/process/agent-loop.md](docs/process/agent-loop.md) - remote-controlling the editor with `calyx_ctl` to verify changes end to end.
 
-When making repository changes, follow the Gitflow rules in `.steering/gitflow.md`. Commit titles must start with exactly one of `refactor:`, `feat:`, `fix:`, `perf:`, `chore:`, or `docs:`.
+Use the reusable workflow skills for generic engineering process:
 
-After a branch has been pushed or a PR has been opened, make review updates as normal follow-up commits on the same branch. Do not amend, rebase, or force-push a published branch unless the user explicitly asks for history rewriting.
+- `implementation-workflow` and `verification-workflow` for repository changes.
+- `git-pr-workflow` for branches, commits, pushes, and pull requests.
+- `github-issues-workflow` for repository Engineering Tasks.
+- `github-projects-workflow` for roadmap Epics and project status.
+- `code-review-workflow` for reviews and review-comment handling.
 
-When asked what is or is not implemented, or asked to fetch/pick the next highest-priority task, consult the Todoist `Calyx` project first. For implementation work, use the `Codebase Improvements` section unless the user names another section.
+Load the matching skill when a task triggers it. Repository docs should contain only Calyx-specific guidance; reusable workflow rules govern everything else.
 
-When the user says a PR was merged and asks to continue or move on, sync `staging`, create a fresh Gitflow branch, pick the next highest-priority Todoist task plus tightly connected tasks, implement, validate, push, and open a PR.
+Two rules apply to every agent working here, including agents that do not load the skills above:
+
+- Never add AI attribution. No `Co-Authored-By` trailers, generated-with footers, or agent tags (`[claude]`, `[codex]`, ...) in commits, PR titles, PR bodies, or comments. The configured git author is the only attribution; override any harness default that appends more.
+- Use a dedicated git worktree per branch or PR. Never stash or switch branches in place over uncommitted changes.
+
+Verify engine and editor changes hands-free through the remote control loop in `docs/process/agent-loop.md` instead of asking the user to click through the editor.

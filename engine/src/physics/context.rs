@@ -69,14 +69,16 @@ pub struct PhysicsContext {
 impl PhysicsContext {
     const TIME_STEP: f32 = 1.0 / 60.0;
 
-    fn rigid_body_from_component(
+    fn isometry(transform: &Transform) -> Isometry<f32> {
+        Isometry::from_parts(Translation3::from(transform.position), transform.rotation)
+    }
+
+    pub(super) fn rigid_body_from_component(
         transform: &Transform,
         rigid_body: &ComponentRigidBody,
     ) -> RigidBody {
-        let (z, y, x) = transform.rotation.euler_angles();
         RigidBodyBuilder::new(rigid_body.ty)
-            .translation(transform.position)
-            .rotation(Vector3::new(x, y, z))
+            .position(Self::isometry(transform))
             .enabled(rigid_body.enabled)
             .additional_mass(rigid_body.mass)
             .gravity_scale(rigid_body.gravity_scale)
@@ -103,11 +105,12 @@ impl PhysicsContext {
         }
     }
 
-    fn collider_from_component(transform: &Transform, collider: &ComponentCollider) -> Collider {
-        let (z, y, x) = transform.rotation.euler_angles();
+    pub(super) fn collider_from_component(
+        transform: &Transform,
+        collider: &ComponentCollider,
+    ) -> Collider {
         ColliderBuilder::new(Self::collider_shape(collider.shape))
-            .position(transform.position.into())
-            .rotation(Vector3::new(x, y, z))
+            .position(Self::isometry(transform))
             .friction(collider.friction)
             .density(collider.density)
             .active_events(ActiveEvents::COLLISION_EVENTS | ActiveEvents::CONTACT_FORCE_EVENTS)
@@ -202,16 +205,23 @@ impl PhysicsContext {
         })
     }
 
-    /// Removes Rapier objects whose owning scene entities have been deleted.
+    /// Removes Rapier objects whose owning scene entities have been deleted
+    /// or no longer carry the rigid body / collider component.
     fn remove_stale_physics_objects(scene: &mut Scene) {
-        let live_entities: HashSet<Entity> =
-            <Entity>::query().iter(&scene.world).copied().collect();
+        let live_bodies: HashSet<Entity> = <(Entity, &ComponentRigidBody)>::query()
+            .iter(&scene.world)
+            .map(|(&entity, _)| entity)
+            .collect();
+        let live_colliders: HashSet<Entity> = <(Entity, &ComponentCollider)>::query()
+            .iter(&scene.world)
+            .map(|(&entity, _)| entity)
+            .collect();
         let stale_bodies: Vec<_> = scene
             .physics
             .entity_rigid_body
             .iter()
             .filter_map(|(&entity, &handle)| {
-                (!live_entities.contains(&entity)).then_some((entity, handle))
+                (!live_bodies.contains(&entity)).then_some((entity, handle))
             })
             .collect();
 
@@ -232,7 +242,7 @@ impl PhysicsContext {
             .entity_collider
             .iter()
             .filter_map(|(&entity, &handle)| {
-                (!live_entities.contains(&entity) || scene.physics.colliders.get(handle).is_none())
+                (!live_colliders.contains(&entity) || scene.physics.colliders.get(handle).is_none())
                     .then_some((entity, handle))
             })
             .collect();
@@ -251,7 +261,7 @@ impl PhysicsContext {
         }
 
         scene.physics.collider_entity.retain(|handle, entity| {
-            live_entities.contains(entity) && scene.physics.colliders.get(*handle).is_some()
+            live_colliders.contains(entity) && scene.physics.colliders.get(*handle).is_some()
         });
     }
 
@@ -363,7 +373,7 @@ impl PhysicsContext {
                 (*rb.translation() - transform.position).magnitude_squared() > 1e-8;
             let rotation_changed = rb.rotation().angle_to(&transform.rotation).abs() > 1e-5;
             if c_rb.ty != RigidBodyType::Dynamic || position_changed {
-                rb.set_position(transform.position.into(), true);
+                rb.set_translation(transform.position, true);
             }
             if c_rb.ty != RigidBodyType::Dynamic || rotation_changed {
                 rb.set_rotation(transform.rotation, true);

@@ -1,4 +1,4 @@
-use crate::core::TimeType;
+use crate::core::AbsoluteTime;
 use crate::net::NetworkObjectId;
 use renet::{ClientId, DefaultChannel};
 use serde::{Deserialize, Serialize};
@@ -60,10 +60,10 @@ pub enum GameMessage {
     ClientDisconnected { client_id: ClientId },
     // SYNCHRONIZATION EVENTS
     /// Periodic host-to-client clock synchronization message.
-    SyncTime { current_time: TimeType },
+    SyncTime { current_time: AbsoluteTime },
     /// Replicated component state for one network object.
     SyncComponent {
-        time: TimeType,
+        time: AbsoluteTime,
         network_object_id: NetworkObjectId,
         from_client_id: ClientId,
         component_uuid: Uuid,
@@ -96,8 +96,8 @@ impl GameMessage {
         "SelfConnected(client_ids:Vec<ClientId>),",
         "ClientConnected(client_id:ClientId),",
         "ClientDisconnected(client_id:ClientId),",
-        "SyncTime(current_time:TimeType),",
-        "SyncComponent(time:TimeType,network_object_id:NetworkObjectId,",
+        "SyncTime(current_time:AbsoluteTime),",
+        "SyncComponent(time:AbsoluteTime,network_object_id:NetworkObjectId,",
         "from_client_id:ClientId,component_uuid:Uuid,data:Vec<u8>),",
         "TransferOwnership(network_object_id:NetworkObjectId,",
         "from_client_id:ClientId,to_client_id:ClientId),",
@@ -169,6 +169,12 @@ impl<T> MessageQueue<T> {
     /// Appends a decoded message to the queue.
     pub fn queue_message(&mut self, message: T) {
         self.messages.push_back(message);
+    }
+
+    /// Number of queued messages, used by tests to detect a drained network.
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.messages.len()
     }
 
     /// Dispatches queued messages to `handler`.

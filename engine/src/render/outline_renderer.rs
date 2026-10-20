@@ -220,18 +220,13 @@ fn srgb_channel_to_linear(channel: u8) -> f32 {
 mod tests {
     use super::OutlineRenderer;
     use crate::render::RenderUtils;
-    use crate::test_utils::test_asset_context_with_assets;
+    use crate::test_utils::TestAssets;
     use egui_wgpu::wgpu::TextureFormat;
-    use std::path::PathBuf;
-
-    fn assets_path() -> PathBuf {
-        let assets_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets");
-        dunce::canonicalize(assets_path).expect("assets dir not found")
-    }
 
     #[test]
     fn outline_renderer_loads_shader_and_builds_pipeline() {
-        let context = test_asset_context_with_assets(vec![assets_path()]);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
         let read_only_context = context.lock_read();
         let device = read_only_context.render_context.device();
         let renderer = OutlineRenderer::new(&read_only_context, device);

@@ -2,10 +2,11 @@
 mod tests {
     use crate::component::{ColliderShape, ComponentCollider, ComponentRigidBody};
     use crate::core::Time;
+    use crate::math::Transform;
     use crate::physics::{PhysicsConfiguration, PhysicsContext};
     use crate::test_utils::test_scene;
     use nalgebra::UnitQuaternion;
-    use nalgebra_glm::Vec3;
+    use nalgebra_glm::{vec3, Vec3};
     use rapier3d::dynamics::RigidBodyType;
     use rapier3d::pipeline::QueryFilter;
 
@@ -188,6 +189,11 @@ mod tests {
     fn moving_dynamic_transform_syncs_to_rapier() {
         let mut scene = test_scene();
         let go = scene.create(None, None);
+        let rotation = UnitQuaternion::from_euler_angles(0.0, 0.75, 0.0);
+        scene.set_world_transform(
+            go,
+            Transform::from_components(Vec3::zeros(), rotation, vec3(1.0, 1.0, 1.0)).matrix(),
+        );
         scene.add_component(
             go,
             ComponentRigidBody {
@@ -202,25 +208,46 @@ mod tests {
         let pos = *scene.physics.bodies[handle].translation();
         assert!((pos.y - 0.0).abs() < 1e-5);
 
-        scene.set_transform(go, &nalgebra_glm::translation(&Vec3::new(0.0, 7.0, 0.0)));
+        let mut moved = scene.world_transform(go);
+        moved.position = Vec3::new(0.0, 7.0, 0.0);
+        scene.set_world_transform(go, moved.matrix());
 
         scene.prepare();
         let pos = *scene.physics.bodies[handle].translation();
+        let body_rotation = scene.physics.bodies[handle].rotation();
         assert!(
             (pos.y - 7.0).abs() < 1e-5,
             "dynamic rapier body should be at y=7 after an explicit transform edit, got y={}",
             pos.y
         );
+        assert!(body_rotation.angle_to(&rotation) < 1e-5);
 
         let time = time_with_delta(0.0);
         let config = PhysicsConfiguration::default();
         PhysicsContext::update(&mut scene, &time, &config);
         let pos = scene.world_transform(go).position;
+        let updated_rotation = scene.world_transform(go).rotation;
         assert!(
             (pos.y - 7.0).abs() < 1e-5,
             "dynamic scene transform should not be reset by a stale rapier pose, got y={}",
             pos.y
         );
+        assert!(updated_rotation.angle_to(&rotation) < 1e-5);
+    }
+
+    #[test]
+    fn constructed_body_and_collider_match_transform_rotation() {
+        let rotation = UnitQuaternion::from_euler_angles(0.3, 0.75, -0.5);
+        let transform =
+            Transform::from_components(vec3(1.0, 2.0, 3.0), rotation, vec3(1.0, 1.0, 1.0));
+
+        let body =
+            PhysicsContext::rigid_body_from_component(&transform, &ComponentRigidBody::default());
+        let collider =
+            PhysicsContext::collider_from_component(&transform, &ComponentCollider::default());
+
+        assert!(body.rotation().angle_to(&rotation) < 1e-5);
+        assert!(collider.rotation().angle_to(&rotation) < 1e-5);
     }
 
     #[test]
@@ -472,5 +499,51 @@ mod tests {
             found_via_involves,
             "involves() should find events for collider a_col"
         );
+    }
+
+    #[test]
+    fn prepare_removes_body_when_rigid_body_component_removed() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        scene.add_component(go, ComponentRigidBody::default());
+        scene.add_component(go, ComponentCollider::default());
+        scene.prepare();
+        assert_eq!(scene.physics.bodies.len(), 1);
+
+        scene
+            .world
+            .entry(go.entity)
+            .unwrap()
+            .remove_component::<ComponentRigidBody>();
+        scene.prepare();
+
+        assert_eq!(scene.physics.bodies.len(), 0);
+        assert!(!scene.physics.entity_rigid_body.contains_key(&go.entity));
+        // The collider survives, detached, and is now a standalone collider.
+        assert_eq!(scene.physics.colliders.len(), 1);
+        let handle = scene.physics.entity_collider[&go.entity];
+        assert!(scene.physics.colliders[handle].parent().is_none());
+    }
+
+    #[test]
+    fn prepare_removes_collider_when_collider_component_removed() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        scene.add_component(go, ComponentRigidBody::default());
+        scene.add_component(go, ComponentCollider::default());
+        scene.prepare();
+        assert_eq!(scene.physics.colliders.len(), 1);
+
+        scene
+            .world
+            .entry(go.entity)
+            .unwrap()
+            .remove_component::<ComponentCollider>();
+        scene.prepare();
+
+        assert_eq!(scene.physics.colliders.len(), 0);
+        assert!(!scene.physics.entity_collider.contains_key(&go.entity));
+        assert!(scene.physics.collider_entity.is_empty());
+        assert_eq!(scene.physics.bodies.len(), 1);
     }
 }

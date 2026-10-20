@@ -65,6 +65,12 @@ impl Panels {
             .and_then(|panel| (**panel).as_any().downcast_ref())
     }
 
+    pub fn panel_mut<T: Panel>(&mut self) -> Option<&mut T> {
+        self.inner
+            .get_mut(T::name())
+            .and_then(|panel| (**panel).as_any_mut().downcast_mut())
+    }
+
     fn panel_icon(
         &self,
         tiles: &Tiles<&'static str>,

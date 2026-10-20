@@ -1,16 +1,12 @@
----
-inclusion: auto
----
-
 # Calyx Engine — Project Overview
 
-Calyx is a 3D game engine and editor written in Rust, targeting a multiplayer tank game. The workspace has four crates:
+Calyx is a 3D game engine and editor written in Rust, targeting a multiplayer tank game. The workspace has five crates:
 
 ## Workspace Crates
 
 ### `engine` (library)
 Core runtime. Modules:
-- `assets/` — Asset trait, AssetRegistry (hot-reload via notify file watcher), AssetRef<T> for lazy references. Types: Mesh (russimp-ng OBJ import), Texture (PNG/JPG/WebP via image crate), Shader (WGSL + naga introspection), Material (shader variable binding), Animation, AnimationGraph, Prefab, Skybox.
+- `assets/` — Asset trait, AssetRegistry (hot-reload via notify file watcher), AssetRef<T> for lazy references. Model files import through `assets/import`, which turns a file into a library-independent imported scene (meshes, node tree, baked animations) using ufbx for FBX and OBJ and the gltf crate for glTF and GLB (materials, textures and morph targets are not imported); Collada (`.dae`) is not supported. Types: Mesh (OBJ), Texture (PNG/JPG/WebP via image crate), Shader (WGSL + naga introspection), Material (shader variable binding), Animation, AnimationGraph, Prefab (`.cxprefab`, or an FBX, glTF or GLB model imported into mesh and animation sub-assets), Skybox. Import snapshot tests compare each model against references captured from the former assimp importer, and the GLB fixture's animation against the FBX fixture's; see `engine/tests/fixtures/`.
 - `component/` — Legion ECS components. `Component` trait for destroy/draw_gizmos. `ComponentUpdate` and `ComponentReset` as separate reflect_traits for update/reset lifecycle (avoids aliased `&mut Scene`). `ComponentInstance` for type-erased serialization. Built-in: Transform, Camera, Mesh, Collider, RigidBody, DirectionalLight, PointLight, Animator, Bone, NetworkObject.
 - `scene/` — Scene (delegates to SceneGraph for hierarchy, GameObjectStore for entity/UUID mapping, TransformCache for world transforms; holds World + PhysicsContext). SceneManager for load/save/simulation. Prefab instantiation with UUID remapping. SceneData for serialized representation.
 - `render/` — wgpu-based. RenderContext (eframe or headless), SceneRenderer (mesh/skybox/grid/gizmos), ShaderPreprocessor (#include support), PBR pipeline, mip generators, Camera/Lights uniform management.
@@ -61,22 +57,6 @@ Example game project. Compiles as dynamic library (plugin) with `plugin_main` en
 - Networking: Renet client/server, fixed tick rate, message queue with typed handlers.
 - Scene files: `.cxscene` (JSON serialized SceneData).
 
-## Todoist Planning
-- When asked what is implemented, what is not implemented, or what task to do next, consult Todoist before answering.
-- Use the Todoist `Calyx` project as the source of truth for planned work.
-- When asked for the next highest-priority engineering task, inspect the `Codebase Improvements` section and pick the highest Todoist priority item, grouping nearby tasks only when they share the same files or system boundary.
-- When the user says a PR was merged and asks to continue, sync `staging`, create a fresh Gitflow branch, implement the selected Todoist work, validate it, push the branch, and open a PR.
-
-## Git And PR Conventions
-- Always use Gitflow branch naming: `feature/...`, `fix/...`, `refactor/...`, `docs/...`, `chore/...`.
-- Always use commit prefixes in this style: `feat: ...`, `fix: ...`, `refactor: ...`, `chore: ...`, `docs: ...`.
-- Never use git worktrees for this project; if a branch switch is needed with uncommitted changes present, stash them first.
-- If a PR target branch is not specified, assume the target branch is `staging`.
-- When opening a GitHub PR, always create it as ready for review, never draft.
-- When opening a GitHub PR, always include the related Todoist task or tasks from the `Calyx` board.
-- When opening a GitHub PR, always explain the motivation for the change in 1-2 sentences.
-- When opening a GitHub PR, always mention tests added and the verification run before committing.
-
 ## Build Notes
 - Windows: uses `rust-lld.exe` linker, `-Cprefer-dynamic` for fast iteration.
 - Linux: `-Clink-arg=-Wl,--undefined-version` for shared lib compat.
@@ -86,6 +66,7 @@ Example game project. Compiles as dynamic library (plugin) with `plugin_main` en
 - `.wgsl` — Shaders
 - `.png`, `.jpg`, `.jpeg`, `.webp` — Textures
 - `.obj` — Meshes
+- `.fbx`, `.gltf`, `.glb` — Models, imported as prefabs
 - `.cxscene` — Scenes
 - `.cxanim` — Animations
 - `.meta` — Asset metadata (UUID, name, type)
