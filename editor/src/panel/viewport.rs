@@ -8,7 +8,7 @@ use egui::{
     Align2, Color32, Image, ImageSource, Key, Mesh, Modifiers, PointerButton, Pos2, Response, Rgba,
     Sense, TextStyle,
 };
-use engine::input::{Input, InputState};
+use engine::input::Input;
 use engine::math::Transform;
 use engine::render::CameraLike;
 use mint::ColumnMatrix4;
@@ -123,13 +123,9 @@ impl PanelViewport {
                 res.surrender_focus();
             }
         }
-        let state = InputState {
-            is_active: res.dragged_by(PointerButton::Secondary),
-            last_cursor_pos: None,
-            ..Default::default()
-        };
+        let is_active = res.dragged_by(PointerButton::Secondary);
         let EditorAppState { camera, game, .. } = app_state;
-        let input = Input::from_ctx(ui.ctx(), Some(&res), state);
+        let input = Input::from_ctx(ui.ctx(), Some(&res), game.resources.input_mut(), is_active);
         camera.update(game.resources.time(), &input);
         let screen_rect = ui.ctx().screen_rect();
         app_state.viewport_size = (

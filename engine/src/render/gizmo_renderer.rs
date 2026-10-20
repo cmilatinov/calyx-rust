@@ -686,11 +686,12 @@ mod tests {
 
     #[test]
     fn instance_chunks_hold_gizmo_instances_beyond_the_cap() {
-        let context = test_asset_context_with_assets(vec![assets_path()]);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
         let read_only_context = context.lock_read();
         let shader = Shader::from_file(
             &read_only_context,
-            &assets_path().join("shaders/gizmos.wgsl"),
+            &assets.engine_root().join("shaders/gizmos.wgsl"),
         )
         .expect("gizmo shader should load")
         .asset;
