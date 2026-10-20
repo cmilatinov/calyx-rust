@@ -178,15 +178,15 @@ impl Panel for PanelAnimator {
 
 impl PanelAnimator {
     fn stroke() -> Stroke {
-        Stroke::new(1.5, Color32::GRAY)
+        Stroke::new(1.5_f32, Color32::GRAY)
     }
 
     fn hovered_stroke() -> Stroke {
-        Stroke::new(3.0, Color32::WHITE)
+        Stroke::new(3.0_f32, Color32::WHITE)
     }
 
     fn selected_stroke(ui: &mut Ui) -> Stroke {
-        Stroke::new(3.0, ui.visuals().selection.bg_fill)
+        Stroke::new(3.0_f32, ui.visuals().selection.bg_fill)
     }
 
     fn draw_graph(
@@ -281,9 +281,9 @@ impl PanelAnimator {
         let padding = 15.0;
         let corner_radius = 5.0;
         let stroke = if selected {
-            Stroke::new(1.0, visuals.strong_text_color())
+            Stroke::new(1.0_f32, visuals.strong_text_color())
         } else {
-            Stroke::new(1.0, visuals.weak_text_color())
+            Stroke::new(1.0_f32, visuals.weak_text_color())
         };
         let bg = if selected {
             visuals.selection.bg_fill
