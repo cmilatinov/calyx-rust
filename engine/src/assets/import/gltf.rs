@@ -1,6 +1,6 @@
 //! glTF and GLB import. Materials, textures, cameras, lights and morph targets are not imported.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use gltf::animation::util::ReadOutputs;
@@ -29,6 +29,7 @@ pub(super) fn import(path: &Path) -> Result<ImportedScene, AssetError> {
     let load_error = |error: gltf::Error| AssetError::LoadError.with_source(error.to_string());
     let gltf::Gltf { document, blob } = gltf::Gltf::open(path).map_err(load_error)?;
     let buffers = gltf::import_buffers(&document, path.parent(), blob).map_err(load_error)?;
+    let names = unique_names(document.nodes().map(|node| node.name()));
 
     // A mesh is imported once per skin it is used with, named after the first node that uses it
     // with that skin, so each node shows the mesh with its own joints, or unskinned.
@@ -43,14 +44,15 @@ pub(super) fn import(path: &Path) -> Result<ImportedScene, AssetError> {
         if mesh_parts.contains_key(&instance) {
             continue;
         }
-        let name = node_name(&node);
+        let name = &names[node.index()];
         let first = meshes.len();
         for primitive in mesh.primitives() {
             meshes.extend(import_primitive(
                 &primitive,
-                &name,
+                name,
                 skin.as_ref(),
                 &buffers,
+                &names,
             )?);
         }
         mesh_parts.insert(instance, first..meshes.len());
@@ -66,13 +68,13 @@ pub(super) fn import(path: &Path) -> Result<ImportedScene, AssetError> {
         children: scene
             .iter()
             .flat_map(|scene| scene.nodes())
-            .map(|node| import_node(&node, &mesh_parts))
+            .map(|node| import_node(&node, &mesh_parts, &names))
             .collect(),
     };
 
     let animations = document
         .animations()
-        .filter_map(|animation| import_animation(&animation, &buffers).transpose())
+        .filter_map(|animation| import_animation(&animation, &buffers, &names).transpose())
         .collect::<Result<_, _>>()?;
 
     Ok(ImportedScene {
@@ -86,21 +88,43 @@ fn buffer_data<'a>(buffers: &'a [gltf::buffer::Data], buffer: gltf::Buffer) -> O
     buffers.get(buffer.index()).map(|data| &data.0[..])
 }
 
-/// Name of a node; unnamed nodes are named after their index, so the bones and animation
-/// channels that refer to them by name stay distinct.
-fn node_name(node: &gltf::Node) -> String {
-    match node.name() {
-        Some(name) if !name.is_empty() => name.to_string(),
-        _ => format!("node_{}", node.index()),
-    }
+/// A distinct name for each node, by node index. Bones and animation channels refer to nodes by
+/// name, but glTF names are optional and need not be unique: a node keeps its name when it is the
+/// first to use it, and otherwise, or when unnamed, gets a name made from its index that no node
+/// is given.
+fn unique_names<'a>(names: impl Iterator<Item = Option<&'a str>>) -> Vec<String> {
+    let names = names
+        .map(|name| name.filter(|name| !name.is_empty()))
+        .collect::<Vec<_>>();
+    let given = names.iter().flatten().copied().collect::<HashSet<_>>();
+    let mut taken = HashSet::new();
+    names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            let mut unique = match name {
+                Some(name) if !taken.contains(*name) => name.to_string(),
+                Some(name) => format!("{name}_{index}"),
+                None => format!("node_{index}"),
+            };
+            while taken.contains(&unique)
+                || (name != &Some(unique.as_str()) && given.contains(unique.as_str()))
+            {
+                unique = format!("{unique}_{index}");
+            }
+            taken.insert(unique.clone());
+            unique
+        })
+        .collect()
 }
 
 fn import_node(
     node: &gltf::Node,
     mesh_parts: &HashMap<MeshInstance, std::ops::Range<usize>>,
+    names: &[String],
 ) -> ImportedNode {
     ImportedNode {
-        name: node_name(node),
+        name: names[node.index()].clone(),
         transform: Mat4::from(node.transform().matrix()),
         meshes: node
             .mesh()
@@ -110,7 +134,7 @@ fn import_node(
             .unwrap_or_default(),
         children: node
             .children()
-            .map(|child| import_node(&child, mesh_parts))
+            .map(|child| import_node(&child, mesh_parts, names))
             .collect(),
     }
 }
@@ -121,6 +145,7 @@ fn import_primitive(
     name: &str,
     skin: Option<&gltf::Skin>,
     buffers: &[gltf::buffer::Data],
+    names: &[String],
 ) -> Result<Option<ImportedMesh>, AssetError> {
     let reader = primitive.reader(|data| buffer_data(buffers, data));
     let Some(positions) = reader.read_positions() else {
@@ -232,7 +257,7 @@ fn import_primitive(
     }
     let (mut mesh, control_points) = builder.finish();
     if let Some(skin) = skin {
-        mesh.bones = import_skin(skin, &influences, &control_points, buffers);
+        mesh.bones = import_skin(skin, &influences, &control_points, buffers, names);
     }
     Ok(Some(mesh))
 }
@@ -244,6 +269,7 @@ fn import_skin(
     influences: &[Vec<(u16, f32)>],
     control_points: &[u32],
     buffers: &[gltf::buffer::Data],
+    names: &[String],
 ) -> Vec<ImportedBone> {
     let inverse_binds = skin
         .reader(|data| buffer_data(buffers, data))
@@ -254,7 +280,7 @@ fn import_skin(
         .joints()
         .enumerate()
         .map(|(joint, node)| ImportedBone {
-            name: node_name(&node),
+            name: names[node.index()].clone(),
             inverse_bind_transform: inverse_binds
                 .get(joint)
                 .copied()
@@ -278,6 +304,7 @@ fn import_skin(
 fn import_animation(
     animation: &gltf::Animation,
     buffers: &[gltf::buffer::Data],
+    names: &[String],
 ) -> Result<Option<ImportedAnimation>, AssetError> {
     let mut channels: HashMap<String, AnimationKeyFrames> = HashMap::new();
     let mut duration_seconds = 0.0f64;
@@ -309,7 +336,7 @@ fn import_animation(
         };
         let target = channel.target();
         let frames = channels
-            .entry(node_name(&target.node()))
+            .entry(names[target.node().index()].clone())
             .or_insert_with(|| AnimationKeyFrames {
                 positions: Vec::new(),
                 rotations: Vec::new(),
@@ -416,6 +443,33 @@ fn resample_cubic_spline(times: &[f64], values: &[[f32; 4]]) -> Vec<(f64, [f32; 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_node_gets_a_distinct_name_and_given_names_win() {
+        let names = unique_names(
+            [
+                Some("joint"),
+                Some("joint"),
+                None,
+                Some(""),
+                Some("joint_1"),
+                Some("node_2"),
+            ]
+            .into_iter(),
+        );
+
+        assert_eq!(
+            names,
+            [
+                "joint",
+                "joint_1_1",
+                "node_2_2",
+                "node_3",
+                "joint_1",
+                "node_2"
+            ]
+        );
+    }
 
     #[test]
     fn step_keys_hold_each_value_until_the_next_key() {
