@@ -481,7 +481,7 @@ impl PrefabSummary {
                                 return nodes.static_local(id);
                             };
                             let Some(keyframes) = animation.node_keyframes.get(&bone.name) else {
-                                return Mat4::identity();
+                                return nodes.static_local(id);
                             };
                             let bind_pose = nodes.transforms.get(&id).copied().unwrap_or_default();
                             ComponentAnimator::animation_local_bone_transform(

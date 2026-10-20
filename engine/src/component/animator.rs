@@ -569,12 +569,13 @@ impl ComponentAnimator {
     ) -> Transform {
         match motion {
             AnimationMotion::AnimationClip(clip) => {
+                // A bone the clip does not animate keeps its bind pose.
                 let Some(animation) = clip.animation.get_ref(assets) else {
-                    return Default::default();
+                    return *bind_pose;
                 };
                 let animation = animation.read();
                 let Some(keyframes) = animation.node_keyframes.get(bone_name) else {
-                    return Default::default();
+                    return *bind_pose;
                 };
                 Self::animation_local_bone_transform(
                     keyframes,
@@ -734,6 +735,49 @@ mod tests {
         };
         let result =
             ComponentAnimator::animation_local_bone_transform(&keyframes, 0.5, &bind_pose());
+        assert_eq!(result.position, bind_pose().position);
+        assert_eq!(result.rotation, bind_pose().rotation);
+        assert_eq!(result.scale, bind_pose().scale);
+    }
+
+    #[test]
+    fn bone_without_a_channel_keeps_bind_pose() {
+        let assets = test_registries();
+        let other_bone = AnimationKeyFrames {
+            positions: vec![VectorKeyFrame {
+                value: Vec3::new(9.0, 9.0, 9.0),
+                time: 0.0,
+            }],
+            rotations: vec![],
+            scaling: vec![],
+        };
+        let animation = assets
+            .assets
+            .read()
+            .create(
+                "partial_clip".to_string(),
+                crate::assets::animation::Animation {
+                    node_keyframes: HashMap::from([("other".to_string(), other_bone)]),
+                    duration: 1.0,
+                    ticks_per_second: 1.0,
+                },
+            )
+            .unwrap();
+        let motion =
+            AnimationMotion::AnimationClip(crate::assets::animation_graph::AnimationClip {
+                speed: 1.0,
+                animation: AssetRef::from_id(animation.id()),
+            });
+
+        let result = ComponentAnimator::motion_local_bone_transform_static(
+            &HashMap::new(),
+            &assets,
+            &motion,
+            "bone",
+            0.5,
+            &bind_pose(),
+        );
+
         assert_eq!(result.position, bind_pose().position);
         assert_eq!(result.rotation, bind_pose().rotation);
         assert_eq!(result.scale, bind_pose().scale);
