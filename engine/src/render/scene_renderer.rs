@@ -1,4 +1,4 @@
-﻿use super::RenderContext;
+use super::RenderContext;
 use crate::assets::material::Material;
 use crate::assets::mesh::{Instance, Mesh};
 use crate::assets::texture::Texture;
@@ -13,7 +13,7 @@ use crate::render::{
     Camera, GizmoRenderer, GridRenderer, LightManager, MeshRenderDefaults, MeshRenderTargets,
     MeshRenderer, OutlineRenderer, ParticleRenderer, PipelineOptions, SkyboxRenderer,
 };
-use crate::scene::Scene;
+use crate::scene::{GameObject, Scene};
 use egui::Color32;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::{wgpu, RenderState};
@@ -145,6 +145,22 @@ pub struct SceneRenderer {
 /// Instance index of the next skinned draw in a mesh's shared bone buffer, or `None` for a mesh without bones.
 fn skinning_instance_index(uploaded_bone_transforms: usize, num_bones: usize) -> Option<usize> {
     uploaded_bone_transforms.checked_div(num_bones)
+}
+
+/// World transform that places a skinned mesh. The animator skins its vertices into the space of
+/// its root bone, so the root bone's world transform places them; the mesh object's own world
+/// transform would apply every node between the root bone and the mesh a second time. A mesh
+/// whose root bone is not in the scene keeps its own transform.
+fn skinned_mesh_world_transform(
+    scene: &Scene,
+    game_object: GameObject,
+    skinned_mesh: &ComponentSkinnedMesh,
+) -> Transform {
+    let placement = skinned_mesh
+        .root_bone
+        .game_object(scene)
+        .unwrap_or(game_object);
+    scene.world_transform(placement)
 }
 
 impl SceneRenderer {
@@ -600,7 +616,7 @@ impl SceneRenderer {
                 continue;
             };
             let mesh_id = mesh_ref.id();
-            let transform = scene.world_transform(game_object);
+            let transform = skinned_mesh_world_transform(scene, game_object, c_skinned_mesh);
             let bone_transform_index;
             {
                 let mut mesh = mesh_ref.write();
@@ -1215,7 +1231,49 @@ mod tests {
 
 #[cfg(test)]
 mod skinning_tests {
-    use super::skinning_instance_index;
+    use super::{skinned_mesh_world_transform, skinning_instance_index};
+    use crate::component::ComponentSkinnedMesh;
+    use crate::scene::GameObjectRef;
+    use crate::test_support::test_scene;
+    use nalgebra_glm as glm;
+
+    #[test]
+    fn skinned_mesh_is_placed_by_its_root_bone_not_its_own_node() {
+        // A model root, a node converting axes and units, and the skinned mesh below it, as
+        // imported FBX and glTF models are laid out.
+        let mut scene = test_scene();
+        let root = scene.create(None, None);
+        scene.set_transform(root, &glm::translation(&glm::vec3(5.0, 0.0, 0.0)));
+        let converter = scene.create(None, Some(root));
+        scene.set_transform(
+            converter,
+            &(glm::rotation(-90f32.to_radians(), &glm::Vec3::x())
+                * glm::scaling(&glm::Vec3::repeat(100.0))),
+        );
+        let mesh_object = scene.create(None, Some(converter));
+        let skinned_mesh = ComponentSkinnedMesh {
+            root_bone: GameObjectRef::new(scene.uuid(root)),
+            ..Default::default()
+        };
+
+        let placed = skinned_mesh_world_transform(&scene, mesh_object, &skinned_mesh).matrix();
+
+        assert_eq!(placed, scene.world_transform(root).matrix());
+        assert_ne!(placed, scene.world_transform(mesh_object).matrix());
+    }
+
+    #[test]
+    fn skinned_mesh_without_a_root_bone_keeps_its_own_transform() {
+        let mut scene = test_scene();
+        let parent = scene.create(None, None);
+        scene.set_transform(parent, &glm::scaling(&glm::Vec3::repeat(2.0)));
+        let mesh_object = scene.create(None, Some(parent));
+
+        let placed =
+            skinned_mesh_world_transform(&scene, mesh_object, &ComponentSkinnedMesh::default());
+
+        assert_eq!(placed.matrix(), scene.world_transform(mesh_object).matrix());
+    }
 
     #[test]
     fn mesh_without_bones_has_no_instance_index() {
