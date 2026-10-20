@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
-use std::process::{Command as ProcessCommand, Stdio};
+use std::path::Path;
+use std::process::{Child, Command as ProcessCommand, Stdio};
 use std::time::{Duration, Instant};
 
 use remote_protocol::{Command, DiscoveryInfo};
@@ -51,14 +51,6 @@ pub fn launch(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    if let Some(russimp_bin) = find_russimp_bin_dir(&repo_root) {
-        let path = std::env::var_os("PATH").unwrap_or_default();
-        let mut paths = vec![russimp_bin];
-        paths.extend(std::env::split_paths(&path));
-        if let Ok(joined) = std::env::join_paths(paths) {
-            run.env("PATH", joined);
-        }
-    }
     let mut child = run
         .spawn()
         .map_err(|error| CtlError::Transport(format!("failed to spawn editor: {error}")))?;
@@ -72,8 +64,7 @@ pub fn launch(
         if Instant::now() > deadline {
             // The editor is useless to us now and would otherwise linger
             // holding the cargo target-dir lock.
-            let _ = child.kill();
-            let _ = child.wait();
+            kill_process_tree(&mut child);
             return Err(CtlError::Timeout(format!(
                 "editor did not become ready within {timeout:?}; check logs/ for errors"
             )));
@@ -109,31 +100,18 @@ pub fn launch(
     }
 }
 
-/// Locates the russimp (assimp) runtime DLL directory produced by the build
-/// script, honoring a redirected `CARGO_TARGET_DIR`. Returns `None` when the
-/// dependency is linked statically.
-fn find_russimp_bin_dir(repo_root: &Path) -> Option<PathBuf> {
-    let target_dir = std::env::var_os("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| repo_root.join("target"));
-    for profile in ["debug", "release"] {
-        let pattern = target_dir
-            .join(profile)
-            .join("build")
-            .join("russimp-sys*")
-            .join("out")
-            .join("dylib")
-            .join("bin");
-        let Some(pattern) = pattern.to_str().map(str::to_owned) else {
-            continue;
-        };
-        if let Ok(paths) = glob::glob(&pattern) {
-            for path in paths.flatten() {
-                if path.is_dir() {
-                    return Some(path);
-                }
-            }
-        }
+/// Kills `cargo run` together with the editor it spawned. Killing only the
+/// cargo process would leave the editor running on Windows, which does not
+/// take children down with their parent.
+fn kill_process_tree(child: &mut Child) {
+    #[cfg(windows)]
+    {
+        let _ = ProcessCommand::new("taskkill")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
-    None
+    let _ = child.kill();
+    let _ = child.wait();
 }

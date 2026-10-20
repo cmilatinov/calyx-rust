@@ -63,7 +63,7 @@ name (`sandbox::tank::ComponentHealth`), or the bare type name
 | CLI | Protocol | Notes |
 |---|---|---|
 | `ping`, `info`, `shutdown` | `ping`/`info`/`shutdown` | `info` includes `assemblies_loaded`, `is_simulating`, `object_count`, and an `input_debug` block |
-| `play`, `pause`, `stop` | `play`/`pause`/`stop` | same semantics as the toolbar buttons; `stop` discards simulation edits. `pause`, `stop`, and `load_scene` cancel an in-flight `step_frames` (that client gets a `cancelled` error) |
+| `play`, `pause`, `stop` | `play`/`pause`/`stop` | same semantics as the toolbar buttons, so a fresh `play` runs the project's configured startup scene; `stop` discards simulation edits. Anything that pauses, stops, or replaces the simulation - these commands, a successful `load_scene`, or the toolbar and scene loads in the editor UI - cancels an in-flight `step_frames` (that client gets a `cancelled` error) |
 | `step --frames N` | `step_frames` | ensures simulation, advances exactly N editor frames, pauses, then responds; only one step may be in flight at a time, and disconnecting mid-step pauses the simulation |
 | `wait --frames N` / `wait --simulating BOOL` | `wait_frames` / client-side polling | |
 | `scene load/save/state` | `load_scene`/`save_scene`/`get_scene_state` | paths resolve against the editor's working directory (repo root when using `launch`) |
@@ -75,6 +75,10 @@ name (`sandbox::tank::ComponentHealth`), or the bare type name
 | `input key/click/move/text/raw` | `inject_input` | see below |
 | `screenshot --target window|game|viewport --out F` | `screenshot` | PNG; `window` includes the whole UI, `game`/`viewport` are the render textures |
 | `raw '<json>'` | any | escape hatch for the full protocol |
+
+Edits to the authoring scene (`object create/delete`, `component set/add`,
+`transform`) are recorded in the editor's undo history like panel edits; edits
+made while a simulation scene exists are discarded by `stop` and not recorded.
 
 ## Input injection
 
@@ -126,9 +130,8 @@ has been delivered.
   `engine=info,editor=info,sandbox=info`. Remote commands are logged at debug
   level (`CALYX_LOG=editor=debug`).
 - **Worktrees on Windows**: building in a git worktree under
-  `.claude/worktrees/` pushes MSVC/CMake scratch paths past the Windows path
-  limit (assimp's build fails with `MSB6003`/`DirectoryNotFoundException`).
-  Set `CARGO_TARGET_DIR` to a short path whose last component is `target`
+  `.claude/worktrees/` can push native build scratch paths past the Windows
+  path limit. Set `CARGO_TARGET_DIR` to a short path whose last component is `target`
   (e.g. `C:\Users\<you>\.calyx\target` - the editor test suite asserts the
   directory name) before building there; `calyx_ctl launch` honors it, and
   the editor's assembly build inherits it via the editor exe location.

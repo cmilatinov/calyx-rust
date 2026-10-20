@@ -63,6 +63,7 @@ impl EditorApp {
         if let Some(response) = &self.state.viewport_response {
             runtime.last_viewport_rect = Some(response.rect);
         }
+        runtime.cancel_steps_unless_running(self.state.game.scenes.is_simulating());
         let render_context = self.state.game.assets.render_context.clone();
         if runtime.poll_pending(&render_context, simulated) {
             self.state.game.scenes.pause_simulation();
@@ -132,7 +133,16 @@ impl EditorApp {
             request_id: request.id,
         };
         log::debug!("Remote command from client {client}: {:?}", request.command);
+        // Remote edits go through the undo history like the panels' edits;
+        // otherwise the next undo would restore a snapshot from before them.
+        let scene_edit = scene_edit_label(&request.command).map(|label| {
+            self.state.flush_pending_inspector_value_edits();
+            (label, self.state.scene_edit_snapshot())
+        });
         let result = self.execute_remote_command(ctx, runtime, &slot, request.command);
+        if let (Some((label, before)), Ok(_)) = (scene_edit, &result) {
+            self.state.commit_scene_edit(label, before);
+        }
         match result {
             Ok(Some(data)) => runtime.respond_ok(&slot, data),
             Ok(None) => {} // Deferred; a pending op owns the response now.
@@ -156,8 +166,8 @@ impl EditorApp {
             }
 
             Command::Play => {
-                self.state.flush_pending_inspector_value_edits();
-                self.state.game.scenes.start_simulation();
+                self.start_simulation()
+                    .map_err(|error| (ErrorKind::Internal, error))?;
                 Ok(Some(serde_json::Value::Null))
             }
             Command::Pause => {
@@ -180,8 +190,8 @@ impl EditorApp {
                         "a step_frames operation is already in progress".into(),
                     ));
                 }
-                self.state.flush_pending_inspector_value_edits();
-                self.state.game.scenes.start_simulation();
+                self.start_simulation()
+                    .map_err(|error| (ErrorKind::Internal, error))?;
                 runtime.pending.push(PendingOp::StepFrames {
                     slot: ResponseSlot { ..*slot },
                     remaining: frames,
@@ -189,8 +199,11 @@ impl EditorApp {
                 Ok(None)
             }
             Command::LoadScene { path } => {
+                let loaded = self.remote_load_scene(path)?;
+                // Only a load that went through stops the simulation; a failed
+                // one leaves the step counting down.
                 runtime.cancel_pending_steps("a scene was loaded before the step finished");
-                self.remote_load_scene(path)
+                Ok(loaded)
             }
             Command::SaveScene { path } => self.remote_save_scene(path),
 
@@ -248,7 +261,6 @@ impl EditorApp {
                 {
                     self.state.selection = Selection::none();
                 }
-                self.state.mark_scene_dirty();
                 Ok(Some(serde_json::Value::Null))
             }
             Command::AddComponent { object, component } => {
@@ -286,7 +298,6 @@ impl EditorApp {
                 }
                 scene.bind_component_dyn(game_object, type_uuid);
                 drop(registry);
-                self.state.mark_scene_dirty();
                 Ok(Some(serde_json::Value::Null))
             }
             Command::Select { objects } => {
@@ -570,7 +581,6 @@ impl EditorApp {
         if type_uuid == ComponentTransform::type_uuid() {
             scene.clear_transform_cache();
         }
-        self.state.mark_scene_dirty();
         Ok(Some(serde_json::Value::Null))
     }
 
@@ -602,7 +612,6 @@ impl EditorApp {
             TransformSpace::Local => scene.set_transform(game_object, &transform.matrix()),
             TransformSpace::World => scene.set_world_transform(game_object, transform.matrix()),
         }
-        self.state.mark_scene_dirty();
         Ok(Some(transform_json(&transform)))
     }
 
@@ -617,7 +626,6 @@ impl EditorApp {
         };
         let game_object = scene.create(Some(id), parent);
         let uuid = scene.uuid(game_object);
-        self.state.mark_scene_dirty();
         Ok(Some(serde_json::json!({ "id": uuid.to_string() })))
     }
 
@@ -721,6 +729,19 @@ impl EditorApp {
                 Ok(None)
             }
         }
+    }
+}
+
+/// Names the undo entry of a command that edits the scene, or returns `None`
+/// for one that does not.
+fn scene_edit_label(command: &Command) -> Option<&'static str> {
+    match command {
+        Command::SetComponent { .. } => Some("Remote set component"),
+        Command::SetTransform { .. } => Some("Remote set transform"),
+        Command::CreateObject { .. } => Some("Remote create game object"),
+        Command::DeleteObject { .. } => Some("Remote delete game object"),
+        Command::AddComponent { .. } => Some("Remote add component"),
+        _ => None,
     }
 }
 

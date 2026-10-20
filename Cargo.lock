@@ -1209,7 +1209,6 @@ name = "calyx_ctl"
 version = "0.1.0"
 dependencies = [
  "clap",
- "glob",
  "remote_protocol",
  "serde",
  "serde_json",

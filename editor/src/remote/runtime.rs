@@ -164,6 +164,16 @@ impl RemoteRuntime {
         }
     }
 
+    /// Abandons pending steps once the simulation is no longer running at the
+    /// end of a frame. Remote commands cancel their own interruptions with a
+    /// specific message, but the toolbar's pause and stop and scene loads from
+    /// the editor UI change the simulation without going through this layer.
+    pub fn cancel_steps_unless_running(&mut self, running: bool) {
+        if !running {
+            self.cancel_pending_steps("simulation stopped running before the step finished");
+        }
+    }
+
     /// Drops every pending operation belonging to a disconnected client.
     /// Returns `true` when one of them was a step, whose countdown was the only
     /// thing that would have paused the simulation again.
@@ -398,6 +408,31 @@ pub(crate) mod tests {
 
         runtime.cancel_pending_steps("interrupted");
 
+        assert!(!runtime.has_pending_step());
+        assert_eq!(runtime.pending.len(), 1, "the wait must survive");
+    }
+
+    #[test]
+    fn steps_are_cancelled_once_the_simulation_stops_running() {
+        let mut runtime = test_runtime();
+        let slot = ResponseSlot {
+            client: 1,
+            request_id: 1,
+        };
+        runtime
+            .pending
+            .push(PendingOp::StepFrames { slot, remaining: 4 });
+        runtime.pending.push(PendingOp::WaitFrames {
+            slot,
+            done_at_frame: 10,
+        });
+
+        runtime.cancel_steps_unless_running(true);
+        assert!(runtime.has_pending_step(), "a running step must survive");
+
+        // A toolbar pause or a UI scene load leaves the step unable to count
+        // down, so it must answer instead of waiting for the client timeout.
+        runtime.cancel_steps_unless_running(false);
         assert!(!runtime.has_pending_step());
         assert_eq!(runtime.pending.len(), 1, "the wait must survive");
     }

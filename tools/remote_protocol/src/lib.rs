@@ -89,7 +89,8 @@ pub enum ErrorKind {
     /// A deferred operation did not complete within its frame deadline.
     Timeout,
     /// A deferred operation was abandoned before completing because the editor
-    /// state it depended on was changed by another command.
+    /// state it depended on was changed by another command or from the editor
+    /// UI.
     Cancelled,
     /// An unexpected internal failure.
     Internal,
@@ -112,7 +113,8 @@ pub enum Command {
     /// Closes the editor window after acknowledging the request.
     Shutdown,
 
-    /// Starts (or resumes) scene simulation.
+    /// Starts (or resumes) scene simulation as the toolbar's play button does,
+    /// running the project's configured startup scene on a fresh start.
     Play,
     /// Pauses simulation, keeping the simulation scene copy.
     Pause,

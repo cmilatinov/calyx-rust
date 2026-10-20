@@ -1021,33 +1021,13 @@ impl EditorApp {
                             self.state.game.scenes.simulation_scene().objects().count()
                         );
                         self.state.game.scenes.pause_simulation();
+                    } else if let Err(error) = self.start_simulation() {
+                        log::error!("{error}");
                     } else {
-                        self.state.flush_pending_inspector_value_edits();
-                        let runtime = self.project_manager.read().runtime_settings().clone();
-                        if runtime.window.width != 0 && runtime.window.height != 0 {
-                            self.state.game_aspect =
-                                Some((runtime.window.width, runtime.window.height));
-                        }
-                        match self
-                            .project_manager
-                            .read()
-                            .start_simulation(&mut self.state.game.scenes)
-                        {
-                            Ok(Some(path)) => log::info!(
-                                "Loaded configured startup scene for simulation: {}",
-                                path.display()
-                            ),
-                            Ok(None) => {}
-                            Err(error) => {
-                                log::error!("Failed to load configured startup scene: {error}");
-                                return;
-                            }
-                        }
                         log::info!(
                             "User started scene simulation; objects={}",
                             self.state.game.scenes.current_scene().objects().count()
                         );
-                        self.state.game.scenes.start_simulation();
                     }
                 }
 
@@ -1119,6 +1099,31 @@ impl EditorApp {
             .panel::<PanelGame>()
             .map(|panel| panel.is_cursor_grabbed)
             .unwrap_or_default()
+    }
+
+    /// Starts or resumes simulation as the toolbar's play button does: the
+    /// project's runtime window sets the game aspect, and a fresh simulation
+    /// runs the configured startup scene when the project has one.
+    pub(crate) fn start_simulation(&mut self) -> Result<(), String> {
+        self.state.flush_pending_inspector_value_edits();
+        let runtime = self.project_manager.read().runtime_settings().clone();
+        if runtime.window.width != 0 && runtime.window.height != 0 {
+            self.state.game_aspect = Some((runtime.window.width, runtime.window.height));
+        }
+        match self
+            .project_manager
+            .read()
+            .start_simulation(&mut self.state.game.scenes)
+        {
+            Ok(Some(path)) => log::info!(
+                "Loaded configured startup scene for simulation: {}",
+                path.display()
+            ),
+            Ok(None) => {}
+            Err(error) => return Err(format!("Failed to load configured startup scene: {error}")),
+        }
+        self.state.game.scenes.start_simulation();
+        Ok(())
     }
 
     fn is_simulating(&self) -> bool {
