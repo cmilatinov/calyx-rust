@@ -1,6 +1,7 @@
 use crate::inspector::asset_inspector::{
     AssetInspector, AssetInspectorAction, ReflectAssetInspector,
 };
+use crate::task_id::TaskId;
 use egui::Ui;
 use engine::assets::material::Material;
 use engine::context::GameContext;
@@ -64,9 +65,8 @@ impl AssetInspector for ShaderInspector {
                 let assets = game.assets.lock_read();
                 game.resources
                     .background()
-                    .read()
-                    .thread_pool()
-                    .execute(move || {
+                    .write()
+                    .execute(TaskId::CreateMaterial, move || {
                         let material = Material::from_shader(&assets, shader);
                         let writer = BufWriter::new(file);
                         let _ = serde_json::to_writer_pretty(writer, &material);

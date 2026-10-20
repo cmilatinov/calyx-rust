@@ -5,6 +5,7 @@ pub enum TaskId {
     Build,
     Rebuild,
     Autosave,
+    CreateMaterial,
 }
 
 impl From<TaskId> for isize {
@@ -19,6 +20,7 @@ impl TaskId {
             TaskId::Build => "Building assemblies",
             TaskId::Rebuild => "Rebuilding assemblies",
             TaskId::Autosave => "Autosaving scene",
+            TaskId::CreateMaterial => "Creating material",
         }
     }
 }
