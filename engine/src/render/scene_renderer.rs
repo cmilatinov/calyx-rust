@@ -13,7 +13,7 @@ use crate::render::{
     Camera, GizmoRenderer, GridRenderer, LightManager, MeshRenderDefaults, MeshRenderTargets,
     MeshRenderer, OutlineRenderer, ParticleRenderer, PipelineOptions, SkyboxRenderer,
 };
-use crate::scene::Scene;
+use crate::scene::{GameObject, Scene};
 use egui::Color32;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::{wgpu, RenderState};
@@ -142,6 +142,27 @@ pub struct SceneRenderer {
     sky_light_intensity: f32,
 }
 
+/// Instance index of the next skinned draw in a mesh's shared bone buffer, or `None` for a mesh without bones.
+fn skinning_instance_index(uploaded_bone_transforms: usize, num_bones: usize) -> Option<usize> {
+    uploaded_bone_transforms.checked_div(num_bones)
+}
+
+/// World transform that places a skinned mesh. The animator skins its vertices into the space of
+/// its root bone, so the root bone's world transform places them; the mesh object's own world
+/// transform would apply every node between the root bone and the mesh a second time. A mesh
+/// whose root bone is not in the scene keeps its own transform.
+fn skinned_mesh_world_transform(
+    scene: &Scene,
+    game_object: GameObject,
+    skinned_mesh: &ComponentSkinnedMesh,
+) -> Transform {
+    let placement = skinned_mesh
+        .root_bone
+        .game_object(scene)
+        .unwrap_or(game_object);
+    scene.world_transform(placement)
+}
+
 impl SceneRenderer {
     /// Creates a scene renderer for `context` with `options`.
     pub fn new(
@@ -149,9 +170,8 @@ impl SceneRenderer {
         mut options: SceneRendererOptions,
         initial_size: (u32, u32),
     ) -> Self {
-        let render_state = context.render_context.render_state();
         let asset_registry = context.registries.assets.read();
-        let device = &render_state.device;
+        let device = context.render_context.device();
         let (width, height) = if initial_size.0 == 0 || initial_size.1 == 0 {
             log::warn!("SceneRenderer created before a valid render size was available; using 1x1 initial textures");
             (1, 1)
@@ -436,8 +456,7 @@ impl SceneRenderer {
         let mut insert_instance_list = |last: (AssetId, AssetId, AssetId), instance_count: u32| {
             if last != Default::default() {
                 let entry = mesh_instances.entry(last.2).or_default();
-                let start = *entry;
-                draw_list.push((last.0, last.1, last.2, start..(start + instance_count)));
+                push_capped_batches(&mut draw_list, last, *entry, instance_count);
                 *entry += instance_count;
             }
         };
@@ -597,15 +616,23 @@ impl SceneRenderer {
                 continue;
             };
             let mesh_id = mesh_ref.id();
-            let transform = scene.world_transform(game_object);
+            let transform = skinned_mesh_world_transform(scene, game_object, c_skinned_mesh);
             let bone_transform_index;
             {
                 let mut mesh = mesh_ref.write();
                 if !skinned_meshes.contains(&mesh_id) {
                     mesh.bone_transforms.clear();
                 }
+                let Some(index) =
+                    skinning_instance_index(mesh.bone_transforms.len(), mesh.bones.len())
+                else {
+                    crate::logging::warn_once(format!("boneless-skinned-mesh:{mesh_id}"), || {
+                        format!("Skinned mesh {mesh_id} has no bones; skipping skinning upload")
+                    });
+                    continue;
+                };
                 skinned_meshes.insert(mesh_id);
-                bone_transform_index = mesh.bone_transforms.len() / mesh.bones.len();
+                bone_transform_index = index;
                 mesh.bone_transforms
                     .extend(c_skinned_mesh.bone_transforms.iter().copied());
             }
@@ -1061,4 +1088,202 @@ fn register_object_id(
     let object_id = object_ids_build.len() as u32;
     object_id_lookup.insert(game_object_id, object_id);
     object_id
+}
+
+/// Appends draw batches for `count` mesh instances starting at `start`,
+/// splitting at multiples of `Mesh::MAX_INSTANCES` so no batch reads past a
+/// single instance uniform chunk.
+fn push_capped_batches(
+    draw_list: &mut Vec<(AssetId, AssetId, AssetId, Range<u32>)>,
+    (shader_id, mat_id, mesh_id): (AssetId, AssetId, AssetId),
+    mut start: u32,
+    count: u32,
+) {
+    let cap = Mesh::MAX_INSTANCES as u32;
+    let end = start + count;
+    while start < end {
+        let batch_end = end.min((start / cap + 1) * cap);
+        draw_list.push((shader_id, mat_id, mesh_id, start..batch_end));
+        start = batch_end;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::assets::AssetRef;
+    use crate::component::ComponentMesh;
+    use crate::math::Transform;
+    use crate::render::{Camera, Shader};
+    use crate::test_support::SceneBuilder;
+    use crate::test_utils::TestAssets;
+    use nalgebra::UnitQuaternion;
+    use nalgebra_glm::{vec3, vec4};
+
+    const VIEWPORT: u32 = 512;
+
+    fn batch(start: u32, count: u32) -> Vec<Range<u32>> {
+        let mut draw_list = Vec::new();
+        let ids = (AssetId::default(), AssetId::default(), AssetId::default());
+        push_capped_batches(&mut draw_list, ids, start, count);
+        draw_list
+            .into_iter()
+            .map(|(_, _, _, range)| range)
+            .collect()
+    }
+
+    #[test]
+    fn capped_batches_never_cross_the_instance_cap() {
+        let cap = Mesh::MAX_INSTANCES as u32;
+        assert_eq!(batch(0, 0), Vec::<Range<u32>>::new());
+        assert_eq!(batch(0, cap), vec![0..cap]);
+        assert_eq!(batch(0, cap + 1), vec![0..cap, cap..(cap + 1)]);
+        assert_eq!(
+            batch(cap - 2, cap + 4),
+            vec![(cap - 2)..cap, cap..(2 * cap), (2 * cap)..(2 * cap + 2)]
+        );
+        for range in batch(7, 100) {
+            let (chunk, local) = Mesh::instance_chunk(&range);
+            assert_eq!(chunk as u32, range.start / cap);
+            assert!(local.end <= cap);
+            assert_eq!(local.end - local.start, range.end - range.start);
+        }
+    }
+
+    #[test]
+    fn renders_more_instances_of_one_mesh_than_the_instance_cap() {
+        const COLUMNS: u32 = 9;
+        const ROWS: u32 = 5;
+        const SPACING: f32 = 3.0;
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let (cube, material) = {
+            let registry = read_only_context.registries.assets.read();
+            let cube = registry.cube().expect("missing cube mesh");
+            let shader = registry
+                .load::<Shader>("shaders/pbr")
+                .expect("missing pbr shader");
+            let material = registry
+                .create_or_update(
+                    "test/instance_cap_material".into(),
+                    Material::from_shader(&read_only_context, shader),
+                )
+                .expect("material should be created");
+            (cube, material)
+        };
+
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        let mut expected = Vec::new();
+        for row in 0..ROWS {
+            for column in 0..COLUMNS {
+                let position = vec3(
+                    (column as f32 - (COLUMNS - 1) as f32 / 2.0) * SPACING,
+                    (row as f32 - (ROWS - 1) as f32 / 2.0) * SPACING,
+                    0.0,
+                );
+                let game_object = builder.spawn(format!("cube_{row}_{column}"));
+                builder.add_component(
+                    game_object,
+                    ComponentMesh {
+                        mesh: AssetRef::from_id(cube.id()),
+                        material: AssetRef::from_id(material.id()),
+                    },
+                );
+                builder.set_transform(game_object, glm::translation(&position));
+                expected.push((position, builder.scene().uuid(game_object)));
+            }
+        }
+        assert!(expected.len() > Mesh::MAX_INSTANCES);
+        let scene = builder.finish();
+
+        let camera = Camera::new(1.0, 60f32.to_radians(), 0.1, 200.0);
+        let camera_transform = Transform::from_components(
+            vec3(0.0, 0.0, -30.0),
+            UnitQuaternion::face_towards(&vec3(0.0, 0.0, 1.0), &vec3(0.0, 1.0, 0.0)),
+            vec3(1.0, 1.0, 1.0),
+        );
+        let mut renderer = SceneRenderer::new(
+            &read_only_context,
+            SceneRendererOptions {
+                samples: 1,
+                ..Default::default()
+            },
+            (VIEWPORT, VIEWPORT),
+        );
+        let render_state = crate::test_support::test_render_state();
+        renderer.render_scene_base(&render_state, &camera, &camera_transform, &scene, None);
+
+        let view_projection = camera.projection * camera_transform.inverse_matrix();
+        for (index, (position, uuid)) in expected.iter().enumerate() {
+            let clip = view_projection * vec4(position.x, position.y, position.z, 1.0);
+            let ndc = clip.xyz() / clip.w;
+            let x = ((ndc.x * 0.5 + 0.5) * VIEWPORT as f32) as u32;
+            let y = ((0.5 - ndc.y * 0.5) * VIEWPORT as f32) as u32;
+            assert_eq!(
+                renderer.pick_game_object(x, y),
+                Some(*uuid),
+                "instance {index} was not drawn at its transform"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod skinning_tests {
+    use super::{skinned_mesh_world_transform, skinning_instance_index};
+    use crate::component::ComponentSkinnedMesh;
+    use crate::scene::GameObjectRef;
+    use crate::test_support::test_scene;
+    use nalgebra_glm as glm;
+
+    #[test]
+    fn skinned_mesh_is_placed_by_its_root_bone_not_its_own_node() {
+        // A model root, a node converting axes and units, and the skinned mesh below it, as
+        // imported FBX and glTF models are laid out.
+        let mut scene = test_scene();
+        let root = scene.create(None, None);
+        scene.set_transform(root, &glm::translation(&glm::vec3(5.0, 0.0, 0.0)));
+        let converter = scene.create(None, Some(root));
+        scene.set_transform(
+            converter,
+            &(glm::rotation(-90f32.to_radians(), &glm::Vec3::x())
+                * glm::scaling(&glm::Vec3::repeat(100.0))),
+        );
+        let mesh_object = scene.create(None, Some(converter));
+        let skinned_mesh = ComponentSkinnedMesh {
+            root_bone: GameObjectRef::new(scene.uuid(root)),
+            ..Default::default()
+        };
+
+        let placed = skinned_mesh_world_transform(&scene, mesh_object, &skinned_mesh).matrix();
+
+        assert_eq!(placed, scene.world_transform(root).matrix());
+        assert_ne!(placed, scene.world_transform(mesh_object).matrix());
+    }
+
+    #[test]
+    fn skinned_mesh_without_a_root_bone_keeps_its_own_transform() {
+        let mut scene = test_scene();
+        let parent = scene.create(None, None);
+        scene.set_transform(parent, &glm::scaling(&glm::Vec3::repeat(2.0)));
+        let mesh_object = scene.create(None, Some(parent));
+
+        let placed =
+            skinned_mesh_world_transform(&scene, mesh_object, &ComponentSkinnedMesh::default());
+
+        assert_eq!(placed.matrix(), scene.world_transform(mesh_object).matrix());
+    }
+
+    #[test]
+    fn mesh_without_bones_has_no_instance_index() {
+        assert_eq!(skinning_instance_index(0, 0), None);
+        assert_eq!(skinning_instance_index(8, 0), None);
+    }
+
+    #[test]
+    fn instance_index_counts_uploaded_bone_sets() {
+        assert_eq!(skinning_instance_index(0, 4), Some(0));
+        assert_eq!(skinning_instance_index(8, 4), Some(2));
+    }
 }

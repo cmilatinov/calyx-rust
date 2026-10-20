@@ -29,7 +29,7 @@ use engine::component::ComponentTransform;
 use engine::context::{AssetContext, GameContext};
 use engine::core::Ref;
 use engine::error::BoxedError;
-use engine::input::{Input, InputState};
+use engine::input::Input;
 use engine::logging::{DefaultLogger, Log};
 use engine::render::{Camera, SceneRenderer, SceneRendererOptions};
 use engine::scene::Scene;
@@ -649,6 +649,7 @@ impl EditorApp {
 
 impl eframe::App for EditorApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.project_manager.write().load_completed_build();
         self.state.game.resources.time_mut().update_time();
         self.state.game_response = None;
         self.render_views(ctx, frame);
@@ -716,14 +717,12 @@ impl EditorApp {
 
     fn update_game(&mut self, ctx: &egui::Context) {
         self.state.game.scenes.prepare();
+        let is_active = self.is_game_focused() && self.state.game_response.is_some();
         let input = Input::from_ctx(
             ctx,
             self.state.game_response.as_ref(),
-            InputState {
-                is_active: self.is_game_focused() && self.state.game_response.is_some(),
-                last_cursor_pos: None,
-                ..Default::default()
-            },
+            self.state.game.resources.input_mut(),
+            is_active,
         );
         let assets = self.state.game.assets.lock_read();
         let GameContext {

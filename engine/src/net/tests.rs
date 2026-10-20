@@ -11,13 +11,18 @@ mod tests {
 
     const TICK: Duration = Duration::from_millis(16);
 
+    /// One server and any number of clients running in this process over loopback.
     struct TestNetwork {
         server: Network,
-        client: Network,
+        clients: Vec<Network>,
     }
 
     impl TestNetwork {
         fn new() -> Self {
+            Self::with_clients(1)
+        }
+
+        fn with_clients(client_count: usize) -> Self {
             let mut server = Network::new(60.0);
             server
                 .host("127.0.0.1:0".parse().unwrap())
@@ -25,25 +30,25 @@ mod tests {
 
             let server_addr = server.server.as_ref().unwrap().bound_addr();
 
-            let mut client = Network::new(60.0);
-            client
-                .client
-                .connect(server_addr)
-                .expect("failed to connect");
+            let clients = (0..client_count)
+                .map(|_| {
+                    let mut client = Network::new(60.0);
+                    client
+                        .client
+                        .connect(server_addr)
+                        .expect("failed to connect");
+                    client
+                })
+                .collect();
 
-            Self { server, client }
+            Self { server, clients }
         }
 
-        /// Pump both sides until the client is connected or max iterations reached.
+        /// Pump every peer until all clients are connected or max iterations reached.
         fn connect(&mut self) -> bool {
             for _ in 0..100 {
-                self.server
-                    .server
-                    .as_mut()
-                    .unwrap()
-                    .update(&mut self.server.queue, TICK);
-                self.client.client.update(&mut self.client.queue, TICK);
-                if self.client.client.is_connected() {
+                self.pump();
+                if self.clients.iter().all(|c| c.client.is_connected()) {
                     return true;
                 }
                 std::thread::sleep(Duration::from_millis(1));
@@ -51,13 +56,45 @@ mod tests {
             false
         }
 
+        /// Run one transport update on the server and on every client.
         fn pump(&mut self) {
             self.server
                 .server
                 .as_mut()
                 .unwrap()
                 .update(&mut self.server.queue, TICK);
-            self.client.client.update(&mut self.client.queue, TICK);
+            for client in &mut self.clients {
+                client.client.update(&mut client.queue, TICK);
+            }
+        }
+
+        /// Pump all peers until a number of consecutive rounds pass with no
+        /// change in any queue length, meaning in-flight messages have landed.
+        fn pump_until_drained(&mut self) {
+            const QUIET_ROUNDS: usize = 5;
+            let mut quiet = 0;
+            let mut last = self.queue_lengths();
+            for _ in 0..200 {
+                self.pump();
+                std::thread::sleep(Duration::from_millis(1));
+                let current = self.queue_lengths();
+                if current == last {
+                    quiet += 1;
+                    if quiet >= QUIET_ROUNDS {
+                        return;
+                    }
+                } else {
+                    quiet = 0;
+                    last = current;
+                }
+            }
+        }
+
+        fn queue_lengths(&self) -> Vec<usize> {
+            std::iter::once(&self.server)
+                .chain(self.clients.iter())
+                .map(|n| n.queue.len())
+                .collect()
         }
     }
 
@@ -247,7 +284,7 @@ mod tests {
     fn server_and_client_connect() {
         let mut net = TestNetwork::new();
         assert!(net.connect(), "client failed to connect to server");
-        assert!(net.client.client.is_connected());
+        assert!(net.clients[0].client.is_connected());
     }
 
     #[test]
@@ -309,10 +346,57 @@ mod tests {
                 }
             }
         }
-        net.client
+        net.clients[0]
             .queue
             .receive_messages(&mut received_time, &mut TimeCapture);
         assert_eq!(received_time, Some(99.0));
+    }
+
+    #[test]
+    fn three_peers_connect_to_one_server() {
+        let mut net = TestNetwork::with_clients(2);
+        assert!(net.connect(), "clients failed to connect to server");
+        net.pump_until_drained();
+
+        assert_eq!(net.server.server.as_ref().unwrap().client_ids().len(), 2);
+    }
+
+    #[test]
+    fn server_broadcast_reaches_both_clients() {
+        let mut net = TestNetwork::with_clients(2);
+        assert!(net.connect());
+        net.pump_until_drained();
+
+        net.server
+            .server
+            .as_mut()
+            .unwrap()
+            .broadcast_message(&GameMessage::SyncTime { current_time: 7.0 })
+            .unwrap();
+        net.pump_until_drained();
+
+        struct TimeCapture;
+        impl MessageHandler<Option<f32>, GameMessage> for TimeCapture {
+            fn handle_message(
+                &mut self,
+                out: &mut Option<f32>,
+                msg: &GameMessage,
+            ) -> MessageHandlerResult {
+                if let GameMessage::SyncTime { current_time } = msg {
+                    *out = Some(*current_time);
+                    MessageHandlerResult::Consume
+                } else {
+                    MessageHandlerResult::Ignore
+                }
+            }
+        }
+        for (i, client) in net.clients.iter_mut().enumerate() {
+            let mut received = None;
+            client
+                .queue
+                .receive_messages(&mut received, &mut TimeCapture);
+            assert_eq!(received, Some(7.0), "client {i} missed the broadcast");
+        }
     }
 
     // --- TestHarness integration tests ---

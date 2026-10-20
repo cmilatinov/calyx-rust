@@ -309,18 +309,13 @@ impl ParticleRenderer {
 #[cfg(test)]
 mod tests {
     use super::ParticleRenderer;
-    use crate::test_utils::test_asset_context_with_assets;
+    use crate::test_utils::TestAssets;
     use egui_wgpu::wgpu::TextureFormat;
-    use std::path::PathBuf;
-
-    fn assets_path() -> PathBuf {
-        let assets_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets");
-        dunce::canonicalize(assets_path).expect("assets dir not found")
-    }
 
     #[test]
     fn particle_renderer_loads_shader_and_builds_pipeline() {
-        let context = test_asset_context_with_assets(vec![assets_path()]);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
         let read_only_context = context.lock_read();
         let mut renderer = ParticleRenderer::new(&read_only_context);
         let device = read_only_context.render_context.device();

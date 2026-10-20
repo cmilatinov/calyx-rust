@@ -192,7 +192,13 @@ impl Network {
     ) -> Option<GameObject> {
         let client_id = self.local_id?;
         let prefab = prefab_ref.read();
-        let prefab_root = scene.instantiate_prefab(&prefab, None)?;
+        let prefab_root = match scene.instantiate_prefab(&prefab, None) {
+            Ok(prefab_root) => prefab_root,
+            Err(err) => {
+                log::warn!("Failed to instantiate prefab {}: {err}", prefab_ref.id());
+                return None;
+            }
+        };
         let mut index = 0;
         let mut network_object_ids = Default::default();
         Self::traverse_prefab(
@@ -385,8 +391,12 @@ impl MessageHandler<NetworkPrefabSyncContext<'_, '_>, GameMessage> for NetworkPr
                         .ok();
                 );
                 let prefab = prefab_ref.read();
-                let Some(prefab_root) = scene.instantiate_prefab(&prefab, None) else {
-                    return MessageHandlerResult::Consume;
+                let prefab_root = match scene.instantiate_prefab(&prefab, None) {
+                    Ok(prefab_root) => prefab_root,
+                    Err(err) => {
+                        log::warn!("Failed to instantiate spawned prefab {prefab_id}: {err}");
+                        return MessageHandlerResult::Consume;
+                    }
                 };
                 let mut index = 0;
                 Network::traverse_prefab(
