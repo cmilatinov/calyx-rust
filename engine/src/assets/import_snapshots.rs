@@ -178,7 +178,7 @@ impl MeshSummary {
                 let normal = &mesh.normals[index as usize];
                 position_normals
                     .entry([vertex.x, vertex.y, vertex.z].map(f32::to_bits))
-                    .or_insert_with(HashMap::new)
+                    .or_default()
                     .insert(
                         [normal.x, normal.y, normal.z].map(f32::to_bits),
                         to_f64(normal),
