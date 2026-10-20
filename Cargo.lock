@@ -1205,6 +1205,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "calyx_ctl"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "remote_protocol",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cc"
 version = "1.2.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1917,6 +1927,7 @@ dependencies = [
  "rapier3d",
  "re_ui",
  "relative-path",
+ "remote_protocol",
  "rfd",
  "rusty_pool",
  "serde",
@@ -5967,6 +5978,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bca40a312222d8ba74837cb474edef44b37f561da5f773981007a10bbaa992b0"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "remote_protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
