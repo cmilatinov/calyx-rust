@@ -63,7 +63,7 @@ impl Asset for Prefab {
     where
         Self: Sized,
     {
-        &["cxprefab", "fbx"]
+        &["cxprefab", "fbx", "gltf", "glb"]
     }
 
     fn from_file(game: &ReadOnlyAssetContext, path: &Path) -> Result<LoadedAsset<Self>, AssetError>
@@ -83,7 +83,7 @@ impl Asset for Prefab {
         let meta = asset_registry
             .asset_meta_from_path(path)
             .ok_or_else(|| load_error().with_source("asset metadata not found"))?;
-        if ext == "fbx" {
+        if ext != "cxprefab" {
             let scene = import::import(path).map_err(|err| err.with_type(Self::asset_name()))?;
 
             let mut bones = HashMap::new();
@@ -376,19 +376,31 @@ mod tests {
     #[test]
     fn malformed_model_file_returns_load_error_naming_the_file() {
         let assets = crate::test_utils::TestAssets::models();
-        let path = assets.fixtures_root().join("broken.fbx");
-        std::fs::write(&path, b"Kaydara FBX Binary    not really").unwrap();
+        let files: [(&str, &[u8]); 3] = [
+            ("broken.fbx", b"Kaydara FBX Binary  \0 not really"),
+            (
+                "broken.gltf",
+                br#"{"asset": {"version": "2.0"}, "nodes": ["#,
+            ),
+            ("broken.glb", b"glTF\x02\0\0\0\x18\0\0\0not really"),
+        ];
+        for (name, contents) in files {
+            std::fs::write(assets.fixtures_root().join(name), contents).unwrap();
+        }
         let context = assets.asset_context();
         let context = context.lock_read();
 
-        let Err(err) = Prefab::from_file(&context, &path) else {
-            panic!("malformed file should fail to import");
-        };
+        for (name, _) in files {
+            let path = assets.fixtures_root().join(name);
+            let Err(err) = Prefab::from_file(&context, &path) else {
+                panic!("malformed {name} should fail to import");
+            };
 
-        assert_eq!(err.kind, AssetError::LoadError.kind);
-        assert_eq!(err.asset_type, Some(Prefab::asset_name()));
-        assert_eq!(err.path.as_deref(), Some(path.as_path()));
-        assert!(err.source.is_some());
+            assert_eq!(err.kind, AssetError::LoadError.kind, "{name}");
+            assert_eq!(err.asset_type, Some(Prefab::asset_name()), "{name}");
+            assert_eq!(err.path.as_deref(), Some(path.as_path()), "{name}");
+            assert!(err.source.is_some(), "{name}");
+        }
     }
 
     /// Imports the sandbox tank, whose left and right parts share node names.

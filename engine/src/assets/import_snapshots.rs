@@ -1,7 +1,9 @@
 //! Import snapshot tests: each model file is imported through its asset type and summarised into
 //! order-independent metrics, then compared against a committed reference snapshot within a float
-//! tolerance. The references were captured from the assimp importer, so these tests check that
-//! later importers produce the same meshes, hierarchy, skinning and animation.
+//! tolerance. The references for OBJ and FBX files were captured from the assimp importer, so
+//! these tests check that later importers produce the same meshes, hierarchy, skinning and
+//! animation. The GLB fixture's reference was captured from the glTF importer once its animated
+//! poses were shown to match the FBX reference of the same model.
 //!
 //! Set `CALYX_UPDATE_IMPORT_SNAPSHOTS=1` to rewrite the references from the current importer.
 
@@ -25,8 +27,12 @@ use crate::scene::Prefab;
 use crate::test_utils::TestAssets;
 use crate::utils::TypeUuid;
 
-const ABSOLUTE_TOLERANCE: f64 = 1e-3;
-const RELATIVE_TOLERANCE: f64 = 1e-3;
+/// Absolute and relative tolerance of a snapshot comparison.
+const TOLERANCE: f64 = 1e-3;
+/// Tolerance of comparing two formats of one model, whose keys were resampled by the converter.
+const CROSS_FORMAT_TOLERANCE: f64 = 5e-3;
+/// Length units per metre in the FBX fixture, which Blender writes in centimetres.
+const FBX_FIXTURE_UNITS_PER_METRE: f64 = 100.0;
 const ANIMATION_SAMPLES: usize = 10;
 
 /// Order-independent metrics of a triangle soup. Every metric but `size` is divided by the
@@ -568,13 +574,27 @@ fn check_snapshot(name: &str, actual: &impl Serialize) {
         std::fs::write(&path, text).unwrap();
         return;
     }
-    let expected: Value = serde_json::from_str(
+    assert_matches(name, &read_snapshot(name), &actual, TOLERANCE);
+}
+
+fn read_snapshot(name: &str) -> Value {
+    let path = snapshot_path(name);
+    serde_json::from_str(
         &std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("missing snapshot {}: {e}", path.display())),
     )
-    .unwrap();
+    .unwrap()
+}
+
+fn assert_matches(name: &str, expected: &Value, actual: &Value, tolerance: f64) {
     let mut mismatches = Vec::new();
-    compare(&expected, &actual, name.to_string(), &mut mismatches);
+    compare(
+        expected,
+        actual,
+        name.to_string(),
+        tolerance,
+        &mut mismatches,
+    );
     assert!(
         mismatches.is_empty(),
         "import snapshot {name} differs:\n{}",
@@ -582,23 +602,29 @@ fn check_snapshot(name: &str, actual: &impl Serialize) {
     );
 }
 
-fn compare(expected: &Value, actual: &Value, path: String, mismatches: &mut Vec<String>) {
+/// Compares numbers within `tolerance`, absolute plus relative.
+fn compare(
+    expected: &Value,
+    actual: &Value,
+    path: String,
+    tolerance: f64,
+    mismatches: &mut Vec<String>,
+) {
     match (expected, actual) {
         (Value::Number(e), Value::Number(a)) => {
             let (e, a) = (e.as_f64().unwrap(), a.as_f64().unwrap());
-            let tolerance = ABSOLUTE_TOLERANCE + RELATIVE_TOLERANCE * e.abs().max(a.abs());
-            if (e - a).abs() > tolerance {
+            if (e - a).abs() > tolerance * (1.0 + e.abs().max(a.abs())) {
                 mismatches.push(format!("{path}: expected {e}, got {a}"));
             }
         }
         (Value::Array(e), Value::Array(a)) if e.len() == a.len() => {
             for (i, (e, a)) in e.iter().zip(a).enumerate() {
-                compare(e, a, format!("{path}[{i}]"), mismatches);
+                compare(e, a, format!("{path}[{i}]"), tolerance, mismatches);
             }
         }
         (Value::Object(e), Value::Object(a)) if e.keys().eq(a.keys()) => {
             for (key, e) in e {
-                compare(e, &a[key], format!("{path}.{key}"), mismatches);
+                compare(e, &a[key], format!("{path}.{key}"), tolerance, mismatches);
             }
         }
         _ if expected == actual => {}
@@ -617,17 +643,43 @@ fn mesh_snapshot(root: impl Fn(&TestAssets) -> &Path, relative_path: &str, name:
     check_snapshot(name, &MeshSummary::new(&mesh));
 }
 
-fn prefab_snapshot(root: impl Fn(&TestAssets) -> &Path, relative_path: &str, name: &str) {
+fn prefab_summary(root: impl Fn(&TestAssets) -> &Path, relative_path: &str) -> Value {
     let assets = TestAssets::models();
     let context = assets.asset_context();
     let context = context.lock_read();
     let path = root(&assets).join(relative_path);
     let loaded = Prefab::from_file(&context, &path)
         .unwrap_or_else(|e| panic!("failed to import {relative_path}: {e}"));
-    check_snapshot(
-        name,
-        &PrefabSummary::new(&context, &loaded.asset, &loaded.sub_assets),
-    );
+    serde_json::to_value(PrefabSummary::new(
+        &context,
+        &loaded.asset,
+        &loaded.sub_assets,
+    ))
+    .unwrap()
+}
+
+fn prefab_snapshot(root: impl Fn(&TestAssets) -> &Path, relative_path: &str, name: &str) {
+    check_snapshot(name, &prefab_summary(root, relative_path));
+}
+
+/// The animation samples of a prefab summary, with shape sizes dropped and bone transforms
+/// divided by `units_per_metre`, so two formats of one model compare whatever their units.
+fn animated_poses(summary: &Value, units_per_metre: f64) -> Value {
+    let mut animations = summary["animations"].clone();
+    for animation in animations.as_array_mut().unwrap() {
+        for sample in animation["samples"].as_array_mut().unwrap() {
+            for shape in sample["skinned_shapes"].as_array_mut().unwrap() {
+                shape.as_object_mut().unwrap().remove("size");
+            }
+            for bone in sample["bones"].as_object_mut().unwrap().values_mut() {
+                // Every element but the homogeneous 1 scales with the unit.
+                for value in &mut bone.as_array_mut().unwrap()[..15] {
+                    *value = (value.as_f64().unwrap() / units_per_metre).into();
+                }
+            }
+        }
+    }
+    animations
 }
 
 #[test]
@@ -674,5 +726,29 @@ fn rigged_figure_starting_at_a_later_frame_plays_like_the_original() {
         TestAssets::fixtures_root,
         "fbx/RiggedFigureOffset.fbx",
         "rigged_figure",
+    );
+}
+
+/// The fixture GLB plays like the FBX that Blender converted from it, whose reference was
+/// captured from assimp: the skinned shapes and root-space bone transforms match at every sampled
+/// time. The static pose is not compared, because Blender writes the FBX nodes at the clip's first
+/// frame rather than in the glTF rest pose.
+#[test]
+fn rigged_figure_glb_plays_like_the_fbx_reference() {
+    let actual = prefab_summary(TestAssets::fixtures_root, "glb/RiggedFigure.glb");
+    assert_matches(
+        "rigged_figure",
+        &animated_poses(&read_snapshot("rigged_figure"), FBX_FIXTURE_UNITS_PER_METRE),
+        &animated_poses(&actual, 1.0),
+        CROSS_FORMAT_TOLERANCE,
+    );
+}
+
+#[test]
+fn rigged_figure_glb_matches_snapshot() {
+    prefab_snapshot(
+        TestAssets::fixtures_root,
+        "glb/RiggedFigure.glb",
+        "rigged_figure_glb",
     );
 }
