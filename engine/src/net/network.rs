@@ -1,6 +1,6 @@
 use crate as engine;
 use crate::context::ReadOnlyAssetContext;
-use crate::core::{Ref, Time, TimeType};
+use crate::core::{AbsoluteTime, Ref, Time, TimeType};
 use crate::error::BoxedError;
 use crate::net::client::Client;
 use crate::net::server::Server;
@@ -36,6 +36,8 @@ pub struct Network {
     tick_rate: TimeType,
     tick_period: TimeType,
     accumulated_time: TimeType,
+    /// Seconds of unscaled time since the last time-sync broadcast.
+    tick_sync_timer: TimeType,
 }
 
 impl Default for Network {
@@ -68,6 +70,7 @@ impl Network {
             tick_rate,
             tick_period: 1.0 / tick_rate,
             accumulated_time: 0.0,
+            tick_sync_timer: 0.0,
         }
     }
 
@@ -83,27 +86,28 @@ impl Network {
     /// messages such as time sync.
     pub fn update(&mut self, time: &mut Time) {
         self.accumulated_time += time.static_duration().as_secs_f32();
+        self.tick_sync_timer += time.static_delta_time();
         while self.accumulated_time >= self.tick_period {
             self.accumulated_time -= self.tick_period;
             let duration = Duration::from_secs_f32(self.tick_period);
             if let Some(server) = &mut self.server {
                 server.update(&mut self.queue, duration);
-                if time.timer("NETWORK_TICK_SYNC") >= 1.0 {
+                if self.tick_sync_timer >= 1.0 {
                     if let Err(e) = server.broadcast_message_except(
                         0,
                         &GameMessage::SyncTime {
-                            current_time: time.time,
+                            current_time: time.time(),
                         },
                     ) {
                         log::warn!("Failed to broadcast time sync: {e}");
                     }
-                    time.reset_timer("NETWORK_TICK_SYNC");
+                    self.tick_sync_timer = 0.0;
                 }
             }
             self.client.update(&mut self.queue, duration);
         }
         self.queue
-            .receive_messages(&mut (&mut time.time, self.tick_rate), &mut NetworkTimeSync);
+            .receive_messages(&mut (time, self.tick_rate), &mut NetworkTimeSync);
     }
 
     /// Applies queued scene-related replication messages.
@@ -217,15 +221,15 @@ impl Network {
 }
 
 struct NetworkTimeSync;
-impl MessageHandler<(&mut TimeType, TimeType), GameMessage> for NetworkTimeSync {
+impl MessageHandler<(&mut Time, TimeType), GameMessage> for NetworkTimeSync {
     fn handle_message(
         &mut self,
-        (time_counter, tick_rate): &mut (&mut TimeType, TimeType),
+        (time, tick_rate): &mut (&mut Time, TimeType),
         message: &GameMessage,
     ) -> MessageHandlerResult {
         match message {
             GameMessage::SyncTime { current_time } => {
-                **time_counter = *current_time + (1.0 / *tick_rate);
+                time.set_time(*current_time + (1.0 / AbsoluteTime::from(*tick_rate)));
                 MessageHandlerResult::Consume
             }
             _ => MessageHandlerResult::Ignore,

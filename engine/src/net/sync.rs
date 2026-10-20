@@ -40,7 +40,7 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>> Synchronized<T> {
     }
 
     pub fn value(&self, time: &Time, network_tick_period: f32) -> Option<T> {
-        let target_time = (time.time - 3.0 * network_tick_period).max(0.0);
+        let target_time = (time.time() - 3.0 * f64::from(network_tick_period)).max(0.0);
         let render_tick = time.time_to_tick(target_time);
         let before = self.history.range(..=render_tick).next_back();
         let after = self.history.range(render_tick..).next();
@@ -104,7 +104,7 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>> Synchronized<T> {
             return;
         };
         let message = GameMessage::SyncComponent {
-            time: time.time,
+            time: time.time(),
             from_client_id: self_client_id,
             network_object_id: c_netobj_id,
             component_uuid: self.options.component_uuid,
