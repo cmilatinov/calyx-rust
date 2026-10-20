@@ -666,3 +666,13 @@ fn rigged_figure_fbx_matches_snapshot() {
         "rigged_figure",
     );
 }
+
+#[test]
+fn rigged_figure_starting_at_a_later_frame_plays_like_the_original() {
+    // The same clip with its keys moved to frames 30-60 must play from its first key.
+    prefab_snapshot(
+        TestAssets::fixtures_root,
+        "fbx/RiggedFigureOffset.fbx",
+        "rigged_figure",
+    );
+}

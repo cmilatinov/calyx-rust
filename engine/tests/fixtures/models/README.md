@@ -13,3 +13,8 @@ Test-only models loaded by the import snapshot tests through `TestAssets::models
 with default settings, the scene frame range set to the animation's own range (frames 0 to 30 at
 24 fps), and exported with leaf bones off and the animation baked. It carries the same
 attribution and licence.
+
+`fbx/RiggedFigureOffset.fbx` is the same conversion with every animation key moved 30 frames later,
+the frame range set to frames 30 to 60, and the current frame moved by the same amount, so its
+static pose matches. It checks that a clip whose playback range starts after frame 0 plays from
+its first key.

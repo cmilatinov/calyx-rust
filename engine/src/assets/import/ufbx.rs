@@ -219,12 +219,17 @@ fn import_skin(skin: &ufbx::SkinDeformer, control_points: &[u32]) -> Vec<Importe
     bones
 }
 
-/// Bakes one animation stack, or returns `None` when it animates no node.
+/// Bakes one animation stack, or returns `None` when it animates no node. Key times start at
+/// zero, so a stack whose playback range starts later plays from its first key.
 fn import_animation(
     scene: &ufbx::Scene,
     stack: &ufbx::AnimStack,
 ) -> Result<Option<ImportedAnimation>, AssetError> {
-    let baked = ufbx::bake_anim(scene, &stack.anim, ufbx::BakeOpts::default())
+    let opts = ufbx::BakeOpts {
+        trim_start_time: true,
+        ..Default::default()
+    };
+    let baked = ufbx::bake_anim(scene, &stack.anim, opts)
         .map_err(|error| AssetError::LoadError.with_source(error.description.as_ref()))?;
     if baked.nodes.is_empty() {
         return Ok(None);
