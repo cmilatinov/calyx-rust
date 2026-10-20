@@ -156,20 +156,27 @@ pub struct TestAssets {
     dir: PathBuf,
     engine_root: Option<PathBuf>,
     sandbox_root: Option<PathBuf>,
+    fixtures_root: Option<PathBuf>,
 }
 
 impl TestAssets {
     /// Copies the engine asset root (`assets/`).
     pub fn engine() -> Self {
-        Self::copy(true, false)
+        Self::copy(true, false, false)
     }
 
     /// Copies the sandbox asset root (`sandbox/assets/`).
     pub fn sandbox() -> Self {
-        Self::copy(false, true)
+        Self::copy(false, true, false)
     }
 
-    fn copy(engine: bool, sandbox: bool) -> Self {
+    /// Copies the engine and sandbox asset roots and the model fixtures
+    /// (`engine/tests/fixtures/models/`).
+    pub fn models() -> Self {
+        Self::copy(true, true, true)
+    }
+
+    fn copy(engine: bool, sandbox: bool, fixtures: bool) -> Self {
         let dir = std::env::temp_dir().join(format!("calyx-test-assets-{}", uuid::Uuid::new_v4()));
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let copy_root = |source: &str, name: &str| {
@@ -182,10 +189,13 @@ impl TestAssets {
         };
         let engine_root = engine.then(|| copy_root("assets", "assets"));
         let sandbox_root = sandbox.then(|| copy_root("sandbox/assets", "sandbox_assets"));
+        let fixtures_root =
+            fixtures.then(|| copy_root("engine/tests/fixtures/models", "fixture_assets"));
         Self {
             dir,
             engine_root,
             sandbox_root,
+            fixtures_root,
         }
     }
 
@@ -203,9 +213,16 @@ impl TestAssets {
             .expect("sandbox assets not copied")
     }
 
+    /// Copied model fixtures root.
+    pub fn fixtures_root(&self) -> &Path {
+        self.fixtures_root
+            .as_deref()
+            .expect("model fixtures not copied")
+    }
+
     /// All copied asset roots, suitable for building a registry.
     pub fn roots(&self) -> Vec<PathBuf> {
-        [&self.engine_root, &self.sandbox_root]
+        [&self.engine_root, &self.sandbox_root, &self.fixtures_root]
             .into_iter()
             .flatten()
             .cloned()

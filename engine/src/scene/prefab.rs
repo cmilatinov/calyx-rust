@@ -1,5 +1,6 @@
 use crate::assets::animation::Animation;
 use crate::assets::error::AssetError;
+use crate::assets::import::{self, ImportedNode};
 use crate::assets::material::Material;
 use crate::assets::mesh::Mesh;
 use crate::assets::{Asset, AssetRegistry, LoadedAsset};
@@ -8,23 +9,19 @@ use crate::component::{
 };
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
-use crate::math::{self, Transform};
+use crate::math::Transform;
 use crate::scene::SceneData;
 use crate::utils::TypeUuid;
 use crate::{self as engine, utils};
 use nalgebra_glm::Mat4;
-use russimp_ng::property::{Property, PropertyStore};
-use russimp_ng::scene::PostProcess;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::io::BufReader;
 use std::path::Path;
 use uuid::Uuid;
 
 const DEFAULT_MATERIAL_NAME: &str = "materials/default";
-const AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS: &[u8; 27] = b"IMPORT_FBX_PRESERVE_PIVOTS\0";
 
 /// Serialized subtree asset that can be instantiated into a [`crate::scene::Scene`].
 #[derive(Serialize, TypeUuid)]
@@ -66,7 +63,7 @@ impl Asset for Prefab {
     where
         Self: Sized,
     {
-        &["cxprefab", "fbx", "dae"]
+        &["cxprefab", "fbx"]
     }
 
     fn from_file(game: &ReadOnlyAssetContext, path: &Path) -> Result<LoadedAsset<Self>, AssetError>
@@ -86,25 +83,8 @@ impl Asset for Prefab {
         let meta = asset_registry
             .asset_meta_from_path(path)
             .ok_or_else(|| load_error().with_source("asset metadata not found"))?;
-        if ext == "fbx" || ext == "dae" {
-            let props: PropertyStore = [(
-                AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS as &[u8],
-                Property::Integer(0),
-            )]
-            .into_iter()
-            .into();
-            let scene = russimp_ng::scene::Scene::from_file_with_props(
-                path.to_str()
-                    .ok_or_else(|| load_error().with_source("path is not valid UTF-8"))?,
-                vec![
-                    PostProcess::Triangulate,
-                    PostProcess::GenerateSmoothNormals,
-                    PostProcess::FlipUVs,
-                    PostProcess::FlipWindingOrder,
-                    PostProcess::JoinIdenticalVertices,
-                ],
-                &props,
-            )?;
+        if ext == "fbx" {
+            let scene = import::import(path).map_err(|err| err.with_type(Self::asset_name()))?;
 
             let mut bones = HashMap::new();
             let mut mesh_names = HashSet::new();
@@ -115,53 +95,35 @@ impl Asset for Prefab {
                     meta.id,
                     &meta.name,
                     &name,
-                    Mesh::from_russimp_mesh(&game.render_context, mesh),
+                    Mesh::from_imported(&game.render_context, mesh),
                 )?;
                 meshes.push(mesh_ref.clone());
-                bones.extend(mesh.bones.iter().enumerate().map(|(i, b)| {
-                    let offset_matrix = math::mat4_from_russimp(&b.offset_matrix);
-                    (b.name.clone(), (i, offset_matrix))
-                }));
+                bones.extend(
+                    mesh.bones
+                        .iter()
+                        .enumerate()
+                        .map(|(i, b)| (b.name.clone(), (i, b.inverse_bind_transform))),
+                );
             }
 
-            let mut data: SceneData = Default::default();
-            if let Some(root) = &scene.root {
-                Self::traverse(
-                    &asset_registry,
-                    &bones,
-                    &meshes,
-                    root,
-                    root,
-                    None,
-                    &mut data,
-                )?;
-            }
+            let (data, root) = Self::scene_data(&asset_registry, &bones, &meshes, &scene.root)?;
 
             let mut animation_names = HashSet::new();
             let mut animations = Vec::new();
-            for anim in &scene.animations {
+            for anim in scene.animations {
                 let name =
                     imported_sub_asset_name(anim.name.as_str(), "animation", &mut animation_names);
                 let anim_ref = asset_registry.create_or_update_sub_asset(
                     meta.id,
                     &meta.name,
                     &name,
-                    Animation::from_russimp_animation(anim),
+                    Animation::from_imported(anim),
                 )?;
                 animations.push(anim_ref.id());
             }
 
             Ok(LoadedAsset {
-                asset: Self {
-                    data,
-                    root: utils::uuid_from_str(
-                        scene
-                            .root
-                            .as_ref()
-                            .map(|root| root.name.as_str())
-                            .unwrap_or("Root"),
-                    ),
-                },
+                asset: Self { data, root },
                 sub_assets: meshes
                     .into_iter()
                     .map(|mesh_ref| mesh_ref.id())
@@ -221,17 +183,36 @@ fn default_material_id(registry: &AssetRegistry) -> Result<Uuid, AssetError> {
 }
 
 impl Prefab {
+    /// Builds the scene data of an imported node tree and returns it with the root's id. Each
+    /// object's id is seeded from its node's path, so nodes that share a name or have none stay
+    /// distinct, and the same file always produces the same ids.
+    fn scene_data(
+        registry: &AssetRegistry,
+        bones: &HashMap<String, (usize, Mat4)>,
+        meshes: &[Ref<Mesh>],
+        root: &ImportedNode,
+    ) -> Result<(SceneData, Uuid), AssetError> {
+        let mut data = SceneData::default();
+        let root_id = utils::uuid_from_str(&root.name);
+        Self::traverse(
+            registry, bones, meshes, root_id, root, &root.name, None, &mut data,
+        )?;
+        Ok((data, root_id))
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn traverse(
         registry: &AssetRegistry,
         bones: &HashMap<String, (usize, Mat4)>,
-        meshes: &Vec<Ref<Mesh>>,
-        root: &russimp_ng::node::Node,
-        node: &russimp_ng::node::Node,
+        meshes: &[Ref<Mesh>],
+        root_id: Uuid,
+        node: &ImportedNode,
+        path: &str,
         mut parent: Option<Uuid>,
         data: &mut SceneData,
     ) -> Result<(), AssetError> {
-        let matrix: Mat4 = math::mat4_from_russimp(&node.transformation);
-        let id = utils::uuid_from_str(node.name.as_str());
+        let matrix: Mat4 = node.transform;
+        let id = utils::uuid_from_str(path);
         if let Some(parent_id) = parent {
             data.hierarchy.entry(parent_id).or_default().push(id);
         }
@@ -250,8 +231,8 @@ impl Prefab {
                 "transform": Transform::from(matrix)
             }),
         );
-        if !node.meshes.is_empty() && node.meshes[0] < meshes.len() as u32 {
-            let mesh_ref = meshes[node.meshes[0] as usize].clone();
+        if let Some(mesh_ref) = node.meshes.first().and_then(|&index| meshes.get(index)) {
+            let mesh_ref = mesh_ref.clone();
             let material_id = default_material_id(registry)?;
             let mesh = mesh_ref.read();
             if !mesh.bones.is_empty() {
@@ -260,7 +241,7 @@ impl Prefab {
                     json!({
                         "material": material_id.to_string(),
                         "mesh": mesh_ref.id().to_string(),
-                        "root_bone": utils::uuid_from_str(root.name.as_str())
+                        "root_bone": root_id
                     }),
                 );
             } else {
@@ -283,8 +264,18 @@ impl Prefab {
                 }),
             );
         }
-        for child in &*node.children.borrow() {
-            Self::traverse(registry, bones, meshes, root, child.borrow(), parent, data)?;
+        for (index, child) in node.children.iter().enumerate() {
+            let child_path = format!("{path}/{index}:{}", child.name);
+            Self::traverse(
+                registry,
+                bones,
+                meshes,
+                root_id,
+                child,
+                &child_path,
+                parent,
+                data,
+            )?;
         }
         Ok(())
     }
@@ -346,5 +337,81 @@ mod tests {
             "Tracks_1"
         );
         assert_eq!(imported_sub_asset_name("", "mesh", &mut used_names), "mesh");
+    }
+
+    fn node(name: &str, children: Vec<ImportedNode>) -> ImportedNode {
+        ImportedNode {
+            name: name.to_string(),
+            transform: Mat4::identity(),
+            meshes: Vec::new(),
+            children,
+        }
+    }
+
+    #[test]
+    fn nodes_with_shared_or_empty_names_stay_distinct_and_stable() {
+        let context = test_game_context().assets.lock_read();
+        let registry = context.registries.assets.read();
+        let root = node(
+            "RootNode",
+            vec![
+                node("Wheel", Vec::new()),
+                node("Wheel", Vec::new()),
+                node("", vec![node("", Vec::new())]),
+            ],
+        );
+
+        let (data, root_id) = Prefab::scene_data(&registry, &HashMap::new(), &[], &root).unwrap();
+        let (again, again_root_id) =
+            Prefab::scene_data(&registry, &HashMap::new(), &[], &root).unwrap();
+
+        assert_eq!(data.components.len(), 5);
+        assert_eq!(data.hierarchy[&root_id].len(), 3);
+        let unnamed = data.hierarchy[&root_id][2];
+        assert_eq!(data.hierarchy[&unnamed].len(), 1);
+        assert_eq!(again_root_id, root_id);
+        assert_eq!(again.hierarchy, data.hierarchy);
+    }
+
+    #[test]
+    fn malformed_model_file_returns_load_error_naming_the_file() {
+        let assets = crate::test_utils::TestAssets::models();
+        let path = assets.fixtures_root().join("broken.fbx");
+        std::fs::write(&path, b"Kaydara FBX Binary    not really").unwrap();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+
+        let Err(err) = Prefab::from_file(&context, &path) else {
+            panic!("malformed file should fail to import");
+        };
+
+        assert_eq!(err.kind, AssetError::LoadError.kind);
+        assert_eq!(err.asset_type, Some(Prefab::asset_name()));
+        assert_eq!(err.path.as_deref(), Some(path.as_path()));
+        assert!(err.source.is_some());
+    }
+
+    /// Imports the sandbox tank, whose left and right parts share node names.
+    fn import_tank() -> Prefab {
+        let assets = crate::test_utils::TestAssets::models();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let path = assets.sandbox_root().join("models/tank_game/Tank_002.fbx");
+        Prefab::from_file(&context, &path)
+            .unwrap_or_else(|e| panic!("failed to import the tank: {e}"))
+            .asset
+    }
+
+    #[test]
+    fn tank_parts_sharing_a_name_import_as_distinct_objects() {
+        let tank = import_tank();
+        let children = tank.data.hierarchy.values().flatten().collect::<Vec<_>>();
+        let distinct = children.iter().collect::<HashSet<_>>();
+
+        assert_eq!(distinct.len(), children.len(), "a node id appears twice");
+        assert_eq!(tank.data.components.len(), children.len() + 1);
+        let again = import_tank();
+        assert_eq!(again.root, tank.root);
+        assert_eq!(again.data.hierarchy, tank.data.hierarchy);
     }
 }

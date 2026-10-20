@@ -636,7 +636,7 @@ impl ComponentAnimator {
         }
     }
 
-    fn animation_local_bone_transform(
+    pub(crate) fn animation_local_bone_transform(
         keyframes: &AnimationKeyFrames,
         ticks: f32,
         bind_pose: &Transform,
