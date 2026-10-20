@@ -96,7 +96,7 @@ impl Network {
                     if let Err(e) = server.broadcast_message_except(
                         0,
                         &GameMessage::SyncTime {
-                            current_time: time.time,
+                            current_time: time.time(),
                         },
                     ) {
                         log::warn!("Failed to broadcast time sync: {e}");
@@ -107,7 +107,7 @@ impl Network {
             self.client.update(&mut self.queue, duration);
         }
         self.queue
-            .receive_messages(&mut (&mut time.time, self.tick_rate), &mut NetworkTimeSync);
+            .receive_messages(&mut (time, self.tick_rate), &mut NetworkTimeSync);
     }
 
     /// Applies queued scene-related replication messages.
@@ -221,15 +221,15 @@ impl Network {
 }
 
 struct NetworkTimeSync;
-impl MessageHandler<(&mut AbsoluteTime, TimeType), GameMessage> for NetworkTimeSync {
+impl MessageHandler<(&mut Time, TimeType), GameMessage> for NetworkTimeSync {
     fn handle_message(
         &mut self,
-        (time_counter, tick_rate): &mut (&mut AbsoluteTime, TimeType),
+        (time, tick_rate): &mut (&mut Time, TimeType),
         message: &GameMessage,
     ) -> MessageHandlerResult {
         match message {
             GameMessage::SyncTime { current_time } => {
-                **time_counter = *current_time + (1.0 / AbsoluteTime::from(*tick_rate));
+                time.set_time(*current_time + (1.0 / AbsoluteTime::from(*tick_rate)));
                 MessageHandlerResult::Consume
             }
             _ => MessageHandlerResult::Ignore,
