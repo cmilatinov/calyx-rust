@@ -18,3 +18,9 @@ attribution and licence.
 the frame range set to frames 30 to 60, and the current frame moved by the same amount, so its
 static pose matches. It checks that a clip whose playback range starts after frame 0 plays from
 its first key.
+
+## TwoObjects
+
+`obj/TwoObjects.obj` is hand-written: a textured quad in object `Left`, and an untextured quad in
+object `Right` whose two triangles use different materials. It checks that a mesh asset keeps
+every object and material part of an OBJ file.
