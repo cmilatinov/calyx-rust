@@ -23,7 +23,7 @@ const DEFAULT_TEST_SCREEN_SIZE: Vec2 = Vec2::new(1280.0, 720.0);
 const MAX_CONNECT_ITERS: usize = 100;
 
 /// Default fixed simulation step used by headless test runners.
-pub const FIXED_TEST_STEP_SECONDS: f32 = 1.0 / 60.0;
+pub const FIXED_TEST_STEP_SECONDS: f64 = 1.0 / 60.0;
 
 struct TestGpu {
     adapter: wgpu::Adapter,
@@ -403,7 +403,7 @@ pub struct HeadlessSceneRunner {
     pending_events: Vec<Event>,
     modifiers: Modifiers,
     screen_rect: Rect,
-    step_seconds: f32,
+    step_seconds: f64,
 }
 
 impl Default for HeadlessSceneRunner {
@@ -465,7 +465,7 @@ impl HeadlessSceneRunner {
     }
 
     /// Overrides the fixed step duration in seconds.
-    pub fn set_step_seconds(&mut self, seconds: f32) {
+    pub fn set_step_seconds(&mut self, seconds: f64) {
         self.step_seconds = seconds;
     }
 
@@ -539,7 +539,7 @@ impl HeadlessSceneRunner {
         let raw_input = RawInput {
             screen_rect: Some(self.screen_rect),
             time: Some(self.resources.time().static_time()),
-            predicted_dt: self.step_seconds,
+            predicted_dt: self.step_seconds as f32,
             modifiers: self.modifiers,
             events: std::mem::take(&mut self.pending_events),
             ..Default::default()

@@ -57,7 +57,7 @@ impl Time {
             timers: RefCell::new(HashMap::new()),
             last_time: Instant::now(),
             tick_rate,
-            tick_period: Self::tick_period(tick_rate),
+            tick_period: 1.0 / AbsoluteTime::from(tick_rate),
             time: 0.0,
             static_time: 0.0,
             delta_time: 0.0,
@@ -66,29 +66,25 @@ impl Time {
         }
     }
 
-    /// Returns the smaller of the exact period and the widened f32 period, so
-    /// both exact boundaries and accumulated f32 fixed steps reach their tick.
-    fn tick_period(tick_rate: TimeType) -> AbsoluteTime {
-        let exact = 1.0 / AbsoluteTime::from(tick_rate);
-        let widened = AbsoluteTime::from(1.0 / tick_rate);
-        exact.min(widened)
-    }
+    /// Fraction of a tick within which a time counts as on the boundary, so
+    /// rounding in accumulated f64 steps does not leave a tick behind.
+    const TICK_BOUNDARY_EPSILON: AbsoluteTime = 1e-6;
 
     /// Advances the timer using wall-clock elapsed time since the last update.
     pub fn update_time(&mut self) {
-        self.static_delta_time = self.last_time.elapsed().as_secs_f32();
-        self.static_time += AbsoluteTime::from(self.static_delta_time);
-        self.delta_time = self.static_delta_time * self.time_scale;
-        self.time += AbsoluteTime::from(self.delta_time);
+        let elapsed = self.last_time.elapsed().as_secs_f64();
         self.last_time = Instant::now();
+        self.advance_by(elapsed);
     }
 
-    /// Advances the timer by an explicit `delta` in seconds.
-    pub fn advance_by(&mut self, delta: TimeType) {
-        self.static_delta_time = delta;
-        self.static_time += AbsoluteTime::from(delta);
-        self.delta_time = delta * self.time_scale;
-        self.time += AbsoluteTime::from(self.delta_time);
+    /// Advances the timer by an explicit `delta` in seconds. Absolute time
+    /// accumulates the f64 delta; the frame deltas are its f32 rounding.
+    pub fn advance_by(&mut self, delta: AbsoluteTime) {
+        let scaled = delta * AbsoluteTime::from(self.time_scale);
+        self.static_delta_time = delta as TimeType;
+        self.static_time += delta;
+        self.delta_time = scaled as TimeType;
+        self.time += scaled;
     }
 
     /// Returns the elapsed time since the named timer was first observed or
@@ -116,12 +112,18 @@ impl Time {
 
     /// Returns the current fixed-tick index for scaled time.
     pub fn current_tick(&self) -> u32 {
-        (self.time / self.tick_period) as u32
+        self.time_to_tick(self.time)
     }
 
     /// Converts `time` in seconds into a fixed-tick index.
     pub fn time_to_tick(&self, time: AbsoluteTime) -> u32 {
-        (time / self.tick_period) as u32
+        let ticks = time / self.tick_period;
+        let nearest = ticks.round();
+        if (ticks - nearest).abs() <= Self::TICK_BOUNDARY_EPSILON {
+            nearest as u32
+        } else {
+            ticks as u32
+        }
     }
 
     time_member_getter!(time: AbsoluteTime);
@@ -159,9 +161,9 @@ mod tests {
     }
 
     #[test]
-    fn exact_second_boundaries_hold_when_the_f32_period_rounds_up() {
-        // 0.1_f32 rounds above 0.1, so an exact second must not fall a tick
-        // short, and neither must ten accumulated 0.1_f32 steps.
+    fn tenth_second_steps_and_exact_seconds_reach_their_tick() {
+        // Ten 0.1 s steps sum to just under 1.0 in f64; they still reach
+        // tick 10, as does an exact second.
         let mut t = Time::new(10.0);
         t.advance_by(1.0);
         assert_eq!(t.current_tick(), 10);
@@ -174,9 +176,17 @@ mod tests {
     }
 
     #[test]
+    fn exact_times_do_not_drift_ahead_over_long_sessions() {
+        // The tick period is exact, so exact times never run ahead of it.
+        let t = Time::new(100.0);
+        assert_eq!(t.time_to_tick(864_000.0), 86_400_000);
+        assert_eq!(t.time_to_tick(864_000.0 - 0.005), 86_399_999);
+    }
+
+    #[test]
     fn full_fixed_steps_reach_their_tick_when_the_period_is_inexact() {
-        // 0.01 is not representable as f32, so the step and the tick period
-        // must round the same way or each step lands just short of its tick.
+        // 0.01 is inexact even in f64, so accumulated steps land a rounding
+        // error short of each boundary and must still reach their tick.
         let mut t = Time::new(100.0);
         t.advance_by(0.01);
         assert_eq!(t.current_tick(), 1);
