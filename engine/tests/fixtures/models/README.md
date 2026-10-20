@@ -24,3 +24,9 @@ its first key.
 `obj/TwoObjects.obj` is hand-written: a textured quad in object `Left`, and an untextured quad in
 object `Right` whose two triangles use different materials. It checks that a mesh asset keeps
 every object and material part of an OBJ file.
+
+## TwoMaterials
+
+`fbx/TwoMaterials.fbx` was made with Blender 4.0: the default cube, named `Cube`, with materials
+`Red` and `Blue`, its top face using `Blue`, exported with default settings. It checks that a
+prefab keeps every material part of one FBX node.
