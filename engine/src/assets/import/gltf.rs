@@ -19,6 +19,9 @@ use crate::assets::error::AssetError;
 /// Name of the node holding the scene's root nodes, as the FBX importer names its root.
 const ROOT_NODE_NAME: &str = "RootNode";
 
+/// A mesh as one node uses it: the mesh index and the node's skin index.
+type MeshInstance = (usize, Option<usize>);
+
 /// Rate at which cubic-spline channels are resampled into linear keys.
 const CUBIC_SPLINE_SAMPLE_RATE: f64 = 30.0;
 
@@ -27,26 +30,20 @@ pub(super) fn import(path: &Path) -> Result<ImportedScene, AssetError> {
     let gltf::Gltf { document, blob } = gltf::Gltf::open(path).map_err(load_error)?;
     let buffers = gltf::import_buffers(&document, path.parent(), blob).map_err(load_error)?;
 
-    // A mesh takes its skin and its name from the first node that uses it.
-    let mut mesh_nodes = HashMap::new();
-    for node in document.nodes() {
-        if let Some(mesh) = node.mesh() {
-            let entry = mesh_nodes.entry(mesh.index()).or_insert(node.clone());
-            if entry.skin().is_none() && node.skin().is_some() {
-                *entry = node.clone();
-            }
-        }
-    }
-
+    // A mesh is imported once per skin it is used with, named after the first node that uses it
+    // with that skin, so each node shows the mesh with its own joints, or unskinned.
     let mut meshes = Vec::new();
-    let mut mesh_parts = HashMap::new();
-    for mesh in document.meshes() {
-        let node = mesh_nodes.get(&mesh.index());
-        let name = node
-            .map(node_name)
-            .or_else(|| mesh.name().map(str::to_string))
-            .unwrap_or_default();
-        let skin = node.and_then(|node| node.skin());
+    let mut mesh_parts: HashMap<MeshInstance, std::ops::Range<usize>> = HashMap::new();
+    for node in document.nodes() {
+        let Some(mesh) = node.mesh() else {
+            continue;
+        };
+        let skin = node.skin();
+        let instance = (mesh.index(), skin.as_ref().map(gltf::Skin::index));
+        if mesh_parts.contains_key(&instance) {
+            continue;
+        }
+        let name = node_name(&node);
         let first = meshes.len();
         for primitive in mesh.primitives() {
             meshes.extend(import_primitive(
@@ -56,7 +53,7 @@ pub(super) fn import(path: &Path) -> Result<ImportedScene, AssetError> {
                 &buffers,
             )?);
         }
-        mesh_parts.insert(mesh.index(), first..meshes.len());
+        mesh_parts.insert(instance, first..meshes.len());
     }
 
     let scene = document
@@ -100,14 +97,14 @@ fn node_name(node: &gltf::Node) -> String {
 
 fn import_node(
     node: &gltf::Node,
-    mesh_parts: &HashMap<usize, std::ops::Range<usize>>,
+    mesh_parts: &HashMap<MeshInstance, std::ops::Range<usize>>,
 ) -> ImportedNode {
     ImportedNode {
         name: node_name(node),
         transform: Mat4::from(node.transform().matrix()),
         meshes: node
             .mesh()
-            .and_then(|mesh| mesh_parts.get(&mesh.index()))
+            .and_then(|mesh| mesh_parts.get(&(mesh.index(), node.skin().map(|skin| skin.index()))))
             .cloned()
             .map(Iterator::collect)
             .unwrap_or_default(),
