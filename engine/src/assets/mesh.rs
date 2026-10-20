@@ -222,8 +222,8 @@ impl Asset for Mesh {
     ) -> Result<LoadedAsset<Self>, AssetError> {
         let scene = import::import(path).map_err(|err| err.with_type(Self::asset_name()))?;
 
-        // Assuming you want to load the first mesh in the scene
-        let mesh = scene.meshes.first().ok_or(
+        // A mesh asset holds the whole file: every object and material part is merged into one.
+        let mesh = ImportedMesh::merge(scene.meshes).ok_or(
             AssetError::NotFound
                 .with_path(path)
                 .with_type(Self::asset_name()),
@@ -237,7 +237,7 @@ impl Asset for Mesh {
         );
         Ok(LoadedAsset::new(Mesh::from_imported(
             &game.render_context,
-            mesh,
+            &mesh,
         )))
     }
 }
@@ -498,7 +498,9 @@ impl Mesh {
 #[cfg(test)]
 mod tests {
     use super::Mesh;
-    use nalgebra_glm::{IVec4, Vec4};
+    use crate::assets::Asset;
+    use crate::test_utils::TestAssets;
+    use nalgebra_glm::{IVec4, Vec3, Vec4};
 
     #[test]
     fn heavier_bone_weight_shifts_lighter_ones_with_their_bones() {
@@ -519,5 +521,34 @@ mod tests {
 
         assert_eq!(bone_indices[0], IVec4::new(1, 0, -1, -1));
         assert!((bone_weights[0] - Vec4::new(0.7, 0.3, 0.0, 0.0)).norm() < 1e-6);
+    }
+
+    #[test]
+    fn every_object_and_material_of_an_obj_is_imported() {
+        // A textured quad, and an untextured quad split across two materials.
+        let assets = TestAssets::models();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let path = assets.fixtures_root().join("obj/TwoObjects.obj");
+        let mesh = Mesh::from_file(&context, &path)
+            .unwrap_or_else(|e| panic!("failed to import the two objects: {e}"))
+            .asset;
+
+        assert_eq!(mesh.vertices.len(), 10);
+        assert_eq!(mesh.indices.len(), 4 * 3);
+        assert!(mesh
+            .indices
+            .iter()
+            .all(|&index| (index as usize) < mesh.vertices.len()));
+        let (min, max) = mesh.vertices.iter().fold(
+            (Vec3::repeat(f32::INFINITY), Vec3::repeat(f32::NEG_INFINITY)),
+            |(min, max), p| (min.inf(p), max.sup(p)),
+        );
+        assert_eq!((min, max), (Vec3::zeros(), Vec3::new(3.0, 1.0, 1.0)));
+        assert_eq!(mesh.normals.len(), mesh.vertices.len());
+        assert!(mesh
+            .uvs
+            .iter()
+            .all(|channel| channel.len() == mesh.vertices.len()));
     }
 }

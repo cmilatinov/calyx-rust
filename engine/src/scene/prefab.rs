@@ -512,4 +512,21 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn every_material_part_of_an_fbx_node_is_attached() {
+        // One cube node whose top face uses a second material.
+        let assets = crate::test_utils::TestAssets::models();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let path = assets.fixtures_root().join("fbx/TwoMaterials.fbx");
+        let prefab = Prefab::from_file(&context, &path)
+            .unwrap_or_else(|e| panic!("failed to import the two material cube: {e}"))
+            .asset;
+
+        assert_eq!(
+            mesh_objects(&prefab),
+            [("Cube".to_string(), false), ("Cube_1".to_string(), false)]
+        );
+    }
 }

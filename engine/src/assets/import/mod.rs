@@ -34,6 +34,51 @@ pub(crate) struct ImportedMesh {
     pub bones: Vec<ImportedBone>,
 }
 
+impl ImportedMesh {
+    /// Merges `meshes` into one mesh named after the first, in the space each mesh is given in.
+    /// UV channels missing from a mesh are filled with zeros, and bones of the same name are
+    /// merged into one. Returns `None` when there are no meshes.
+    pub(crate) fn merge(meshes: Vec<ImportedMesh>) -> Option<ImportedMesh> {
+        let mut meshes = meshes.into_iter();
+        let mut merged = meshes.next()?;
+        for mesh in meshes {
+            let offset = merged.positions.len() as u32;
+            let uv_channels = merged.uvs.len().max(mesh.uvs.len());
+            merged.uvs.resize(uv_channels, Vec::new());
+            for (channel, uvs) in merged.uvs.iter_mut().enumerate() {
+                uvs.resize(offset as usize, Vec2::zeros());
+                match mesh.uvs.get(channel) {
+                    Some(imported) => uvs.extend_from_slice(imported),
+                    None => uvs.resize(uvs.len() + mesh.positions.len(), Vec2::zeros()),
+                }
+            }
+            merged.positions.extend(mesh.positions);
+            merged.normals.extend(mesh.normals);
+            merged
+                .indices
+                .extend(mesh.indices.into_iter().map(|index| index + offset));
+            for bone in mesh.bones {
+                let weights = bone
+                    .weights
+                    .into_iter()
+                    .map(|(vertex, weight)| (vertex + offset, weight));
+                match merged
+                    .bones
+                    .iter_mut()
+                    .find(|other| other.name == bone.name)
+                {
+                    Some(other) => other.weights.extend(weights),
+                    None => merged.bones.push(ImportedBone {
+                        weights: weights.collect(),
+                        ..bone
+                    }),
+                }
+            }
+        }
+        Some(merged)
+    }
+}
+
 /// A bone influencing an [`ImportedMesh`].
 pub(crate) struct ImportedBone {
     /// Name of the node the bone follows.
