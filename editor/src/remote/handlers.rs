@@ -244,11 +244,7 @@ impl EditorApp {
             Command::DeleteObject { object } => {
                 let scene = self.state.game.scenes.simulation_scene_mut();
                 let game_object = resolve_object(scene, &object)?;
-                let removed = std::iter::once(game_object)
-                    .chain(scene.descendants(game_object))
-                    .map(|object| scene.uuid(object))
-                    .collect::<Vec<_>>();
-                scene.delete(game_object);
+                let removed = delete_now(scene, game_object);
                 // Mirrors the scene-hierarchy delete path: a selection pointing
                 // at a removed object would keep the inspector and
                 // `get_selection` reporting an object that no longer exists.
@@ -732,6 +728,20 @@ impl EditorApp {
     }
 }
 
+/// Deletes `game_object` and its descendants immediately and returns their
+/// ids. `Scene::delete` only queues the removal, and a snapshot taken before
+/// the end-of-frame flush still contains the object, so the undo entry for the
+/// command would record no change.
+fn delete_now(scene: &mut Scene, game_object: GameObject) -> Vec<Uuid> {
+    let removed = scene
+        .descendants(game_object)
+        .map(|object| scene.uuid(object))
+        .collect();
+    scene.delete(game_object);
+    scene.flush_deletes();
+    removed
+}
+
 /// Names the undo entry of a command that edits the scene, or returns `None`
 /// for one that does not.
 fn scene_edit_label(command: &Command) -> Option<&'static str> {
@@ -1028,6 +1038,26 @@ fn pointer_button_event(pos: egui::Pos2, button: PointerButtonSpec, pressed: boo
 mod tests {
     use super::*;
     use crate::remote::runtime::tests::test_runtime;
+
+    #[test]
+    fn deleting_takes_effect_before_the_edit_is_snapshotted() {
+        let mut scene = engine::test_support::test_scene();
+        let parent = scene.create(None, None);
+        let child = scene.create(None, Some(parent));
+        let ids = [scene.uuid(parent), scene.uuid(child)];
+        let before = crate::scene_history::SceneEditSnapshot::capture(&scene);
+
+        let removed = delete_now(&mut scene, parent);
+
+        let after = crate::scene_history::SceneEditSnapshot::capture(&scene);
+        assert_ne!(
+            before.fingerprint(),
+            after.fingerprint(),
+            "the undo entry would record no change"
+        );
+        assert_eq!(removed, ids);
+        assert!(ids.iter().all(|id| scene.find(*id).is_none()));
+    }
 
     #[test]
     fn oversized_waits_are_rejected_instead_of_allocating() {
