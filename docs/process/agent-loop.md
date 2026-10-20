@@ -146,13 +146,14 @@ change. Reproduce with the quick-start recipe: with `info.input_debug`
 reporting `game_focused: true` and `keys_down: ["W"]` while `is_simulating` is
 true, the Tank's world transform stays at the origin.
 
-The cause is on the gameplay/simulation side, not in the remote control layer:
-
-- A remote `transform` write to a plain object (for example `Target A`)
-  persists during simulation, so remote mutation itself works.
-- The same write to `Tank` persists while paused or stopped but is reverted
-  within a frame while simulating, so game code is actively driving the tank's
-  transform back rather than failing to write it.
+Input reaches the game: the tank controller reads `move_forward = 1.0` with a
+real delta time while W is held, and the `shoot` action fires. The stall is in
+the engine's world-transform bookkeeping during simulation: the Tank's local
+transform changes (a remote `transform Tank --position 0 0 5` shows up in
+`local_transform`), but its `world_transform` keeps reporting the origin while
+its parent `Player` is the identity. Paused, the same write updates both. The
+controller moves the tank from its world transform each frame, so it keeps
+restarting from the stale origin.
 
 Until that is fixed, verify tank gameplay in the standalone game
 (`cargo run -p sandbox`) and use the editor loop for editor-side behavior,
