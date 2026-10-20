@@ -359,7 +359,7 @@ fn import_animation(
 }
 
 /// Step keys as linear keys: each value is held until the next key time, where a second key
-/// at the same time switches to the next value.
+/// at the same time switches to the next value, which the animator plays from that time on.
 fn step_keys(times: &[f64], values: &[[f32; 4]]) -> Vec<(f64, [f32; 4])> {
     let mut keys = Vec::with_capacity(times.len() * 2);
     for (i, (&time, &value)) in times.iter().zip(values).enumerate() {
