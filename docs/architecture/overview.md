@@ -1,7 +1,3 @@
----
-inclusion: auto
----
-
 # Calyx Engine — Project Overview
 
 Calyx is a 3D game engine and editor written in Rust, targeting a multiplayer tank game. The workspace has five crates:
@@ -10,7 +6,7 @@ Calyx is a 3D game engine and editor written in Rust, targeting a multiplayer ta
 
 ### `engine` (library)
 Core runtime. Modules:
-- `assets/` — Asset trait, AssetRegistry (hot-reload via notify file watcher), AssetRef<T> for lazy references. Types: Mesh (russimp-ng OBJ import), Texture (PNG/JPG/WebP via image crate), Shader (WGSL + naga introspection), Material (shader variable binding), Animation, AnimationGraph, Prefab, Skybox.
+- `assets/` — Asset trait, AssetRegistry (hot-reload via notify file watcher), AssetRef<T> for lazy references. Model files import through `assets/import`, which turns a file into a library-independent imported scene (meshes, node tree, baked animations) using ufbx for FBX and OBJ and the gltf crate for glTF and GLB (materials, textures and morph targets are not imported); Collada (`.dae`) is not supported. Types: Mesh (OBJ), Texture (PNG/JPG/WebP via image crate), Shader (WGSL + naga introspection), Material (shader variable binding), Animation, AnimationGraph, Prefab (`.cxprefab`, or an FBX, glTF or GLB model imported into mesh and animation sub-assets), Skybox. Import snapshot tests compare each model against references captured from the former assimp importer, and the GLB fixture's animation against the FBX fixture's; see `engine/tests/fixtures/`.
 - `component/` — Legion ECS components. `Component` trait for destroy/draw_gizmos. `ComponentUpdate` and `ComponentReset` as separate reflect_traits for update/reset lifecycle (avoids aliased `&mut Scene`). `ComponentInstance` for type-erased serialization. Built-in: Transform, Camera, Mesh, Collider, RigidBody, DirectionalLight, PointLight, Animator, Bone, NetworkObject.
 - `scene/` — Scene (delegates to SceneGraph for hierarchy, GameObjectStore for entity/UUID mapping, TransformCache for world transforms; holds World + PhysicsContext). SceneManager for load/save/simulation. Prefab instantiation with UUID remapping. SceneData for serialized representation.
 - `render/` — wgpu-based. RenderContext (eframe or headless), SceneRenderer (mesh/skybox/grid/gizmos), ShaderPreprocessor (#include support), PBR pipeline, mip generators, Camera/Lights uniform management.
@@ -70,6 +66,7 @@ Example game project. Compiles as dynamic library (plugin) with `plugin_main` en
 - `.wgsl` — Shaders
 - `.png`, `.jpg`, `.jpeg`, `.webp` — Textures
 - `.obj` — Meshes
+- `.fbx`, `.gltf`, `.glb` — Models, imported as prefabs
 - `.cxscene` — Scenes
 - `.cxanim` — Animations
 - `.meta` — Asset metadata (UUID, name, type)

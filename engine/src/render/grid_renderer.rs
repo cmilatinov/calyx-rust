@@ -107,15 +107,13 @@ impl GridRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::test_asset_context_with_assets;
+    use crate::test_utils::TestAssets;
     use egui_wgpu::wgpu::util::DeviceExt;
-    use std::path::PathBuf;
 
     #[test]
     fn creates_camera_bind_group_from_grid_shader_layout() {
-        let assets_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets");
-        let assets_path = dunce::canonicalize(assets_path).expect("assets dir not found");
-        let context = test_asset_context_with_assets(vec![assets_path]);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
         let read_only_context = context.lock_read();
         let device = read_only_context.render_context.device();
         let camera_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

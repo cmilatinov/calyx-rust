@@ -1,13 +1,9 @@
----
-inclusion: auto
----
-
 # HUD / Runtime UI Architecture
 
 Related guidance:
 
-- [Runtime and backend](hud-ui-runtime.md)
-- [Testing strategy](hud-ui-testing.md)
+- [Runtime and backend](runtime.md)
+- [Testing strategy](testing.md)
 
 ## Goals
 

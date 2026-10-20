@@ -2,7 +2,7 @@
 //! coding agents) drive the editor over localhost TCP.
 //!
 //! Enabled only when the `CALYX_REMOTE_PORT` environment variable is set; the
-//! editor behaves identically otherwise. See `.steering/agent-loop.md` for the
+//! editor behaves identically otherwise. See `docs/process/agent-loop.md` for the
 //! full protocol and usage guide.
 
 mod handlers;

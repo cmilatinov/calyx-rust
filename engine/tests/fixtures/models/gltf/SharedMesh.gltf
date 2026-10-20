@@ -1,0 +1,149 @@
+{
+  "asset": {
+    "version": "2.0"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        0,
+        1,
+        2
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "Skinned",
+      "mesh": 0,
+      "skin": 0
+    },
+    {
+      "name": "Static",
+      "mesh": 0,
+      "translation": [
+        0,
+        0,
+        5
+      ]
+    },
+    {
+      "name": "Joint"
+    }
+  ],
+  "skins": [
+    {
+      "joints": [
+        2
+      ]
+    }
+  ],
+  "meshes": [
+    {
+      "name": "Shared",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "JOINTS_0": 2,
+            "WEIGHTS_0": 4
+          }
+        },
+        {
+          "attributes": {
+            "POSITION": 1,
+            "JOINTS_0": 3,
+            "WEIGHTS_0": 5
+          }
+        }
+      ]
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "byteOffset": 0,
+      "componentType": 5126,
+      "count": 3,
+      "type": "VEC3",
+      "min": [
+        0,
+        0,
+        0
+      ],
+      "max": [
+        1,
+        1,
+        0
+      ]
+    },
+    {
+      "bufferView": 0,
+      "byteOffset": 36,
+      "componentType": 5126,
+      "count": 3,
+      "type": "VEC3",
+      "min": [
+        2,
+        0,
+        0
+      ],
+      "max": [
+        3,
+        1,
+        0
+      ]
+    },
+    {
+      "bufferView": 1,
+      "byteOffset": 0,
+      "componentType": 5123,
+      "count": 3,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 1,
+      "byteOffset": 24,
+      "componentType": 5123,
+      "count": 3,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 2,
+      "byteOffset": 0,
+      "componentType": 5126,
+      "count": 3,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 2,
+      "byteOffset": 48,
+      "componentType": 5126,
+      "count": 3,
+      "type": "VEC4"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 72
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 72,
+      "byteLength": 48
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 120,
+      "byteLength": 96
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 216,
+      "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAQAAAAAAAAAAAAABAQAAAAAAAAAAAAAAAQAAAgD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAA"
+    }
+  ]
+}

@@ -1,46 +1,142 @@
 use std::collections::HashMap;
 use std::io::Error;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate as engine;
+use crate::assets::error::{AssetError, AssetErrorKind};
 use crate::assets::{Asset, AssetRegistry, LoadedAsset};
 use crate::context::ReadOnlyAssetContext;
+use crate::core::Ref;
+use crate::resource::Resource;
 use crate::utils::TypeUuid;
 use egui::{Key, Modifiers, PointerButton};
 use serde::{Deserialize, Serialize};
 
-/// Mutable input state cached between UI frames.
-#[derive(Default)]
+/// Name of the project asset (`input.cxinput`) holding the project's action map.
+pub const PROJECT_ACTION_MAP_NAME: &str = "input";
+
+/// Persistent input state that carries the action map and pointer history across frames.
+#[derive(Clone, Resource, TypeUuid)]
+#[uuid = "5b0a8e0f-3c1d-4a59-9d52-7f6b2a1c8e47"]
+#[repr(C)]
 pub struct InputState {
-    /// Whether input sampling is currently enabled.
-    pub is_active: bool,
-    /// Last known cursor position used for delta fallbacks.
-    pub last_cursor_pos: Option<egui::Pos2>,
+    /// Pass and pointer position of the last cursor sample, used for cursor deltas.
+    last_cursor_sample: Option<CursorSample>,
     /// Action map used to interpret raw egui input.
-    pub action_map: ActionMap,
+    action_map: ActionMapSource,
+}
+
+/// Cursor movement sampled during one egui pass, shared by every input surface in it.
+#[derive(Clone, Copy)]
+struct CursorSample {
+    pass: u64,
+    pos: Option<egui::Pos2>,
+    delta: egui::Vec2,
+}
+
+/// Where the active action map lives.
+#[derive(Clone)]
+enum ActionMapSource {
+    /// A map owned by the input state.
+    Owned(Arc<ActionMap>),
+    /// A project asset handle, so hot reloads reach the running input.
+    Asset(Ref<ActionMap>),
+}
+
+impl ActionMapSource {
+    fn with<R>(&self, reader: impl FnOnce(&ActionMap) -> R) -> R {
+        match self {
+            Self::Owned(map) => reader(map),
+            Self::Asset(map) => reader(&map.read()),
+        }
+    }
+}
+
+impl Default for InputState {
+    fn default() -> Self {
+        Self::new(ActionMap::default())
+    }
+}
+
+impl InputState {
+    /// Creates input state that interprets input through `action_map`.
+    pub fn new(action_map: ActionMap) -> Self {
+        Self {
+            last_cursor_sample: None,
+            action_map: ActionMapSource::Owned(Arc::new(action_map)),
+        }
+    }
+
+    /// Replaces the active action map, no longer following the project asset.
+    pub fn set_action_map(&mut self, action_map: ActionMap) {
+        self.action_map = ActionMapSource::Owned(Arc::new(action_map));
+    }
+
+    /// Follows the project's action map asset when one exists. A project without
+    /// one keeps the current map; a map that fails to load is reported as an error
+    /// and also leaves the current map in place. Hot reloads of the asset apply to
+    /// later frames.
+    pub fn load_project_action_map(&mut self, assets: &AssetRegistry) -> Result<(), AssetError> {
+        match assets.load::<ActionMap>(PROJECT_ACTION_MAP_NAME) {
+            Ok(action_map) => {
+                self.action_map = ActionMapSource::Asset(action_map);
+                Ok(())
+            }
+            Err(error) if error.kind == AssetErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Returns cursor movement for the current egui pass, sampling the pointer once
+    /// per pass so several input surfaces in one frame see the same delta.
+    fn cursor_sample(&mut self, context: &egui::Context) -> CursorSample {
+        let pass = context.cumulative_pass_nr();
+        if let Some(sample) = self.last_cursor_sample.filter(|sample| sample.pass == pass) {
+            return sample;
+        }
+        let pos = context.input(|input| input.pointer.latest_pos());
+        let delta = match (self.last_cursor_sample.and_then(|s| s.pos), pos) {
+            (Some(last), Some(pos)) => pos - last,
+            _ => egui::Vec2::ZERO,
+        };
+        let sample = CursorSample { pass, pos, delta };
+        self.last_cursor_sample = Some(sample);
+        sample
+    }
 }
 
 /// Read-only input view for the current frame.
 pub struct Input<'a> {
     context: &'a egui::Context,
     res: Option<&'a egui::Response>,
-    state: InputState,
+    is_active: bool,
+    action_map: ActionMapSource,
+    cursor_delta: egui::Vec2,
 }
 
 impl<'a> Input<'a> {
-    /// Creates a frame input wrapper from egui state.
+    /// Creates a frame input wrapper from egui state, advancing the pointer history
+    /// kept in `state`.
     pub fn from_ctx(
         context: &'a egui::Context,
         res: Option<&'a egui::Response>,
-        state: InputState,
+        state: &mut InputState,
+        is_active: bool,
     ) -> Self {
+        let cursor_delta = state.cursor_sample(context).delta;
         Self {
             context,
             res,
-            state,
+            is_active,
+            action_map: state.action_map.clone(),
+            cursor_delta: if is_active {
+                cursor_delta
+            } else {
+                egui::Vec2::ZERO
+            },
         }
     }
-
     /// Returns the underlying egui context.
     pub fn ctx(&self) -> &egui::Context {
         self.context
@@ -54,7 +150,7 @@ impl<'a> Input<'a> {
     /// Reads raw egui input when input is active.
     pub fn input<R>(&self, reader: impl FnOnce(&egui::InputState) -> R) -> Option<R> {
         self.context.input(|input| {
-            if self.state.is_active {
+            if self.is_active {
                 Some(reader(input))
             } else {
                 None
@@ -68,7 +164,7 @@ impl<'a> Input<'a> {
         reader: impl FnOnce(&mut egui::InputState) -> R,
     ) -> Option<R> {
         self.context.input_mut(|input| {
-            if self.state.is_active {
+            if self.is_active {
                 Some(reader(input))
             } else {
                 None
@@ -78,45 +174,31 @@ impl<'a> Input<'a> {
 
     /// Resolves a named action into a frame-local [`ActionState`].
     pub fn action(&self, name: &str) -> ActionState {
-        if !self.state.is_active {
+        if !self.is_active {
             return ActionState::default();
         }
 
         self.context.input(|input| {
-            self.state
-                .action_map
-                .action(name, input)
-                .unwrap_or_default()
+            self.action_map
+                .with(|map| map.action(name, input).unwrap_or_default())
         })
     }
 
     /// Resolves a named axis into a scalar value.
     pub fn axis(&self, name: &str) -> f32 {
-        if !self.state.is_active {
+        if !self.is_active {
             return 0.0;
         }
 
-        self.context
-            .input(|input| self.state.action_map.axis(name, input).unwrap_or_default())
+        self.context.input(|input| {
+            self.action_map
+                .with(|map| map.axis(name, input).unwrap_or_default())
+        })
     }
 
-    /// Returns pointer motion for the frame.
+    /// Returns pointer movement since the previous frame.
     pub fn cursor_delta(&self) -> egui::Vec2 {
-        if !self.state.is_active {
-            return egui::Vec2::ZERO;
-        }
-        if let Some(last_pos) = self.state.last_cursor_pos {
-            if let Some(pos) = self.context.input(|input| input.pointer.interact_pos()) {
-                let diff = pos - last_pos;
-                let diff_abs = diff.abs();
-                return if diff_abs.x < 0.5 || diff_abs.y < 0.5 {
-                    egui::Vec2::ZERO
-                } else {
-                    diff
-                };
-            }
-        }
-        self.context.input(|input| input.pointer.delta())
+        self.cursor_delta
     }
 }
 

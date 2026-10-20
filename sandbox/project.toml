@@ -1,2 +1,3 @@
 name = "sandbox"
 creation_date = "2023-12-17T22:54:48.635756600+00:00"
+startup_scene = "assets/scene.cxscene"

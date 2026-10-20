@@ -29,7 +29,7 @@ use engine::component::ComponentTransform;
 use engine::context::{AssetContext, GameContext};
 use engine::core::Ref;
 use engine::error::BoxedError;
-use engine::input::{Input, InputState};
+use engine::input::Input;
 use engine::logging::{DefaultLogger, Log};
 use engine::render::{Camera, SceneRenderer, SceneRendererOptions};
 use engine::scene::Scene;
@@ -664,6 +664,7 @@ impl EditorApp {
 
 impl eframe::App for EditorApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.project_manager.write().load_completed_build();
         self.state.game.resources.time_mut().update_time();
         self.state.game_response = None;
         self.state.viewport_response = None;
@@ -739,14 +740,12 @@ impl EditorApp {
 
     fn update_game(&mut self, ctx: &egui::Context) {
         self.state.game.scenes.prepare();
+        let is_active = self.is_game_focused() && self.state.game_response.is_some();
         let input = Input::from_ctx(
             ctx,
             self.state.game_response.as_ref(),
-            InputState {
-                is_active: self.is_game_focused() && self.state.game_response.is_some(),
-                last_cursor_pos: None,
-                ..Default::default()
-            },
+            self.state.game.resources.input_mut(),
+            is_active,
         );
         let assets = self.state.game.assets.lock_read();
         let GameContext {
@@ -1024,6 +1023,26 @@ impl EditorApp {
                         self.state.game.scenes.pause_simulation();
                     } else {
                         self.state.flush_pending_inspector_value_edits();
+                        let runtime = self.project_manager.read().runtime_settings().clone();
+                        if runtime.window.width != 0 && runtime.window.height != 0 {
+                            self.state.game_aspect =
+                                Some((runtime.window.width, runtime.window.height));
+                        }
+                        match self
+                            .project_manager
+                            .read()
+                            .start_simulation(&mut self.state.game.scenes)
+                        {
+                            Ok(Some(path)) => log::info!(
+                                "Loaded configured startup scene for simulation: {}",
+                                path.display()
+                            ),
+                            Ok(None) => {}
+                            Err(error) => {
+                                log::error!("Failed to load configured startup scene: {error}");
+                                return;
+                            }
+                        }
                         log::info!(
                             "User started scene simulation; objects={}",
                             self.state.game.scenes.current_scene().objects().count()

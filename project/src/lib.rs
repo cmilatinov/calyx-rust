@@ -12,8 +12,36 @@ use tinytemplate::TinyTemplate;
 pub struct Project {
     name: String,
     creation_date: String,
+    #[serde(default)]
+    startup_scene: Option<PathBuf>,
+    #[serde(default)]
+    runtime: RuntimeSettings,
     #[serde(skip)]
     root_directory: PathBuf,
+}
+
+/// Runtime defaults that belong to a project rather than a particular player.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RuntimeSettings {
+    pub window: WindowSettings,
+}
+
+/// Default window size used by runtimes that do not provide an override.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WindowSettings {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Default for WindowSettings {
+    fn default() -> Self {
+        Self {
+            width: 1280,
+            height: 720,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -41,6 +69,8 @@ impl Project {
         let project = Project {
             name,
             creation_date: Utc::now().to_rfc3339(),
+            startup_scene: None,
+            runtime: RuntimeSettings::default(),
             root_directory: project_directory,
         };
 
@@ -123,14 +153,30 @@ impl Project {
     pub fn assets_directory(&self) -> PathBuf {
         self.root_directory.join("assets")
     }
+
+    /// Returns the configured startup scene as an absolute project path.
+    pub fn startup_scene_path(&self) -> Option<PathBuf> {
+        self.startup_scene.as_ref().map(|scene| {
+            if scene.is_absolute() {
+                scene.clone()
+            } else {
+                self.root_directory.join(scene)
+            }
+        })
+    }
+
+    pub fn runtime(&self) -> &RuntimeSettings {
+        &self.runtime
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::Project;
+    use super::{Project, RuntimeSettings};
 
     #[test]
     fn project_generate_and_load() {
@@ -152,10 +198,7 @@ mod tests {
         let toml_path = expected_path.join("project.toml");
         let toml_content = fs::read_to_string(toml_path).expect("Unable to load toml content");
         assert!(toml_content.contains(&format!("name = \"{name}\"")));
-        assert!(toml_content.contains(&format!(
-            "root_directory = \"{}\"",
-            expected_path.clone().display()
-        )));
+        assert!(toml_content.contains("[runtime.window]"));
 
         // Load the project
         let loaded_project = Project::load(expected_path.clone()).unwrap();
@@ -163,8 +206,45 @@ mod tests {
         // Validate loaded project
         assert_eq!(loaded_project.name, name);
         assert_eq!(loaded_project.root_directory, expected_path);
+        assert_eq!(loaded_project.startup_scene_path(), None);
+        assert_eq!(loaded_project.runtime(), &RuntimeSettings::default());
 
         // Clean up
         fs::remove_dir_all(Path::new("temp")).unwrap();
+    }
+
+    #[test]
+    fn project_loads_configured_startup_scene_and_runtime_defaults() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("calyx-project-settings-{unique}"));
+        let assets = root.join("assets");
+        fs::create_dir_all(&assets).unwrap();
+        fs::write(assets.join("startup.cxscene"), "{}").unwrap();
+        fs::write(
+            root.join("project.toml"),
+            "name = \"Configured project\"\ncreation_date = \"2026-01-01T00:00:00Z\"\nstartup_scene = \"assets/startup.cxscene\"\n[runtime.window]\nwidth = 1024\nheight = 768\n",
+        )
+        .unwrap();
+
+        let project = Project::load(root.clone()).unwrap();
+
+        assert_eq!(
+            project.startup_scene_path(),
+            Some(root.join(PathBuf::from("assets/startup.cxscene")))
+        );
+        assert_eq!(
+            project.runtime(),
+            &RuntimeSettings {
+                window: super::WindowSettings {
+                    width: 1024,
+                    height: 768,
+                },
+            }
+        );
+
+        fs::remove_dir_all(root).unwrap();
     }
 }

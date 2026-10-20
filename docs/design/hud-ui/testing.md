@@ -1,7 +1,3 @@
----
-inclusion: auto
----
-
 # HUD / Runtime UI Testing
 
 Most tests must be deterministic and run without a window, wgpu device, or real egui rendering.

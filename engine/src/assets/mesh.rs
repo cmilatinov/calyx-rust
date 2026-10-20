@@ -1,20 +1,20 @@
-use std::cmp::min;
 use std::collections::HashMap;
+use std::ops::Range;
 use std::path::Path;
 
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
-use nalgebra_glm::{vec2, vec3, vec4, IVec4, Mat4, Vec2, Vec3, Vec4};
-use russimp_ng::scene::{PostProcess, Scene};
+use nalgebra_glm::{vec4, IVec4, Mat4, Vec2, Vec3, Vec4};
 
 use super::LoadedAsset;
+use crate as engine;
 use crate::assets::error::AssetError;
+use crate::assets::import::{self, ImportedMesh};
 use crate::assets::Asset;
 use crate::context::ReadOnlyAssetContext;
 use crate::render::buffer::{wgpu_buffer_init_desc, BufferLayout, ResizableBuffer};
 use crate::render::RenderContext;
 use crate::utils::TypeUuid;
-use crate::{self as engine, math};
 
 const CX_MESH_NUM_UV_CHANNELS: usize = 4;
 
@@ -116,7 +116,8 @@ pub struct Mesh {
     pub(crate) bone_transforms: Vec<BoneTransform>,
     pub(crate) index_buffer: Option<wgpu::Buffer>,
     pub(crate) vertex_buffer: Option<wgpu::Buffer>,
-    pub(crate) instance_buffer: wgpu::Buffer,
+    /// One uniform buffer per `MAX_INSTANCES`-sized chunk of `instances`.
+    pub(crate) instance_buffers: Vec<wgpu::Buffer>,
     pub(crate) bone_buffer: ResizableBuffer,
 
     pub(crate) instance_bind_group_layout: wgpu::BindGroupLayout,
@@ -147,12 +148,7 @@ impl Mesh {
     pub fn new(render_context: &RenderContext) -> Self {
         let device = render_context.device();
 
-        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("instance_buffer"),
-            size: (std::mem::size_of::<MeshUniforms>()) as u64,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
-            mapped_at_creation: false,
-        });
+        let instance_buffers = vec![Self::create_instance_buffer(device)];
 
         let instance_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -199,7 +195,7 @@ impl Mesh {
             bone_transforms: Default::default(),
             index_buffer: None,
             vertex_buffer: None,
-            instance_buffer,
+            instance_buffers,
             bone_buffer: ResizableBuffer::new(
                 wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
             ),
@@ -224,21 +220,7 @@ impl Asset for Mesh {
         game: &ReadOnlyAssetContext,
         path: &Path,
     ) -> Result<LoadedAsset<Self>, AssetError> {
-        let scene = Scene::from_file(
-            path.to_str().unwrap(),
-            vec![
-                PostProcess::Triangulate,
-                PostProcess::GenerateSmoothNormals,
-                PostProcess::FlipUVs,
-                PostProcess::FlipWindingOrder,
-                PostProcess::JoinIdenticalVertices,
-            ],
-        )
-        .map_err(|err| {
-            AssetError::from(err)
-                .with_path(path)
-                .with_type(Self::asset_name())
-        })?;
+        let scene = import::import(path).map_err(|err| err.with_type(Self::asset_name()))?;
 
         // Assuming you want to load the first mesh in the scene
         let mesh = scene.meshes.first().ok_or(
@@ -249,11 +231,11 @@ impl Asset for Mesh {
         log::info!(
             "Loaded mesh {} ({} vertices, {} faces, {} bones)",
             path.display(),
-            mesh.vertices.len(),
-            mesh.faces.len(),
+            mesh.positions.len(),
+            mesh.indices.len() / 3,
             mesh.bones.len()
         );
-        Ok(LoadedAsset::new(Mesh::from_russimp_mesh(
+        Ok(LoadedAsset::new(Mesh::from_imported(
             &game.render_context,
             mesh,
         )))
@@ -275,86 +257,74 @@ impl Mesh {
         {
             if bone_ids[index] != -1 {
                 bone_ids[index..].rotate_right(1);
-                bone_weights[index..].rotate_left(1);
+                bone_weights[index..].rotate_right(1);
             }
             bone_ids[index] = bone_index;
             bone_weights[index] = weight;
         }
     }
 
-    /// Builds a mesh asset from a Russimp mesh.
-    pub fn from_russimp_mesh(
-        render_context: &RenderContext,
-        mesh: &russimp_ng::mesh::Mesh,
-    ) -> Self {
-        let indices = mesh
-            .faces
-            .iter()
-            .flat_map(|face| face.0.iter().cloned())
-            .collect();
-        let mut vertices = vec![Vec3::zeros(); mesh.vertices.len()];
-        let mut normals = vec![Vec3::zeros(); mesh.vertices.len()];
-
-        let num_uvs: usize = min(mesh.uv_components.len(), CX_MESH_NUM_UV_CHANNELS);
-        let mut uvs = [
-            vec![Vec2::zeros(); mesh.vertices.len()],
-            vec![Vec2::zeros(); mesh.vertices.len()],
-            vec![Vec2::zeros(); mesh.vertices.len()],
-            vec![Vec2::zeros(); mesh.vertices.len()],
-        ];
-
-        for (i, vertex) in mesh.vertices.iter().enumerate() {
-            vertices[i] = vec3(vertex.x, vertex.y, vertex.z);
-            normals[i] = vec3(mesh.normals[i].x, mesh.normals[i].y, mesh.normals[i].z);
-            for (j, coord) in uvs.iter_mut().enumerate().take(num_uvs) {
-                if let Some(tex_coord) = mesh.texture_coords[j].as_ref() {
-                    coord[i] = vec2(tex_coord[i].x, tex_coord[i].y);
-                }
-            }
-        }
-
-        let mut bones = HashMap::new();
-        let mut bone_indices = vec![vec4::<i32>(-1, -1, -1, -1); mesh.vertices.len()];
-        let mut bone_weights = vec![vec4(0.0, 0.0, 0.0, 0.0); mesh.vertices.len()];
-
-        for (bone_index, bone) in mesh.bones.iter().enumerate() {
-            let inverse_bind_transform = math::mat4_from_russimp(&bone.offset_matrix);
-            bones.insert(
-                bone.name.clone(),
-                BoneInfo {
-                    index: bone_index,
-                    inverse_bind_transform,
-                },
-            );
-            for weight in &bone.weights {
-                let vertex_bone_ids = bone_indices[weight.vertex_id as usize].as_mut_slice();
-                let vertex_bone_weights = bone_weights[weight.vertex_id as usize].as_mut_slice();
+    /// Keeps the four heaviest bone influences of each vertex, normalised to sum to one.
+    /// `bones` yields each bone's `(vertex, weight)` influences, in bone index order.
+    fn bind_bone_weights(
+        vertex_count: usize,
+        bones: impl IntoIterator<Item = impl IntoIterator<Item = (u32, f32)>>,
+    ) -> (Vec<IVec4>, Vec<Vec4>) {
+        let mut bone_indices = vec![vec4::<i32>(-1, -1, -1, -1); vertex_count];
+        let mut bone_weights = vec![vec4(0.0, 0.0, 0.0, 0.0); vertex_count];
+        for (bone_index, weights) in bones.into_iter().enumerate() {
+            for (vertex, weight) in weights {
                 Self::insert_bone_weight(
                     bone_index as i32,
-                    weight.weight,
-                    vertex_bone_ids,
-                    vertex_bone_weights,
+                    weight,
+                    bone_indices[vertex as usize].as_mut_slice(),
+                    bone_weights[vertex as usize].as_mut_slice(),
                 );
-            }
-            for (index, weight) in bone_weights.iter_mut().enumerate() {
-                let vertex_bone_ids = bone_indices[index];
-                let sum = vertex_bone_ids.as_slice().iter().enumerate().fold(
-                    0.0,
-                    |sum, (idx, bone_index)| {
-                        sum + if *bone_index >= 0 {
-                            weight.as_slice()[idx]
-                        } else {
-                            0.0
-                        }
-                    },
-                );
-                if sum > 0.00001 {
-                    for w in weight.as_mut_slice() {
-                        *w /= sum;
-                    }
-                }
             }
         }
+        for (indices, weights) in bone_indices.iter().zip(bone_weights.iter_mut()) {
+            let sum: f32 = indices
+                .iter()
+                .zip(weights.iter())
+                .filter(|(index, _)| **index >= 0)
+                .map(|(_, weight)| *weight)
+                .sum();
+            if sum > 0.00001 {
+                *weights /= sum;
+            }
+        }
+        (bone_indices, bone_weights)
+    }
+
+    /// Builds a mesh asset from an imported mesh.
+    pub(crate) fn from_imported(render_context: &RenderContext, mesh: &ImportedMesh) -> Self {
+        let indices = mesh.indices.clone();
+        let vertices = mesh.positions.clone();
+        let normals = mesh.normals.clone();
+        let mut uvs: [Vec<Vec2>; CX_MESH_NUM_UV_CHANNELS] =
+            std::array::from_fn(|_| vec![Vec2::zeros(); mesh.positions.len()]);
+        for (channel, imported) in uvs.iter_mut().zip(&mesh.uvs) {
+            channel.clone_from(imported);
+        }
+
+        let bones = mesh
+            .bones
+            .iter()
+            .enumerate()
+            .map(|(bone_index, bone)| {
+                (
+                    bone.name.clone(),
+                    BoneInfo {
+                        index: bone_index,
+                        inverse_bind_transform: bone.inverse_bind_transform,
+                    },
+                )
+            })
+            .collect();
+        let (bone_indices, bone_weights) = Self::bind_bone_weights(
+            mesh.positions.len(),
+            mesh.bones.iter().map(|bone| bone.weights.iter().copied()),
+        );
 
         Self {
             indices,
@@ -410,21 +380,56 @@ impl Mesh {
         )));
     }
 
-    fn rebuild_instance_buffer(&self, queue: &wgpu::Queue) {
-        let mut instances: [Instance; Self::MAX_INSTANCES] = Default::default();
-        for (i, instance) in self.instances.iter().take(Self::MAX_INSTANCES).enumerate() {
-            instances[i] = *instance;
-        }
-        let uniforms = MeshUniforms {
-            num_bones: self.bones.len() as u32,
-            _padding: Default::default(),
-            instances,
-        };
-        queue.write_buffer(
-            &self.instance_buffer,
-            0 as wgpu::BufferAddress,
-            bytemuck::cast_slice([uniforms].as_slice()),
+    fn create_instance_buffer(device: &wgpu::Device) -> wgpu::Buffer {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("instance_buffer"),
+            size: (std::mem::size_of::<MeshUniforms>()) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
+            mapped_at_creation: false,
+        })
+    }
+
+    /// Maps a range of mesh instance indices that does not cross a chunk
+    /// boundary to its chunk index and the range local to that chunk.
+    pub(crate) fn instance_chunk(range: &Range<u32>) -> (usize, Range<u32>) {
+        let cap = Self::MAX_INSTANCES as u32;
+        let offset = range.start % cap;
+        debug_assert!(
+            range.is_empty() || (range.end - 1) / cap == range.start / cap,
+            "instance range {range:?} crosses an instance chunk boundary"
         );
+        (
+            (range.start / cap) as usize,
+            offset..(offset + range.end - range.start),
+        )
+    }
+
+    fn rebuild_instance_buffer(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        let chunk_count = self.instances.len().div_ceil(Self::MAX_INSTANCES).max(1);
+        self.instance_buffers.truncate(chunk_count);
+        while self.instance_buffers.len() < chunk_count {
+            self.instance_buffers
+                .push(Self::create_instance_buffer(device));
+        }
+        for (i, buffer) in self.instance_buffers.iter().enumerate() {
+            let mut instances: [Instance; Self::MAX_INSTANCES] = Default::default();
+            for (slot, instance) in instances
+                .iter_mut()
+                .zip(self.instances.iter().skip(i * Self::MAX_INSTANCES))
+            {
+                *slot = *instance;
+            }
+            let uniforms = MeshUniforms {
+                num_bones: self.bones.len() as u32,
+                _padding: Default::default(),
+                instances,
+            };
+            queue.write_buffer(
+                buffer,
+                0 as wgpu::BufferAddress,
+                bytemuck::cast_slice([uniforms].as_slice()),
+            );
+        }
     }
 
     fn rebuild_bone_buffer(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
@@ -457,29 +462,62 @@ impl Mesh {
     }
 
     pub(crate) fn rebuild_instance_data(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        self.rebuild_instance_buffer(queue);
+        self.rebuild_instance_buffer(device, queue);
         self.rebuild_bone_buffer(device, queue);
     }
 
-    pub(crate) fn instance_bind_group(&self, device: &wgpu::Device) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("instance_bind_group"),
-            layout: &self.instance_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.instance_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.bone_buffer.get_wgpu_buffer().as_entire_binding(),
-                },
-            ],
-        })
+    /// Creates one instance bind group per instance buffer chunk.
+    pub(crate) fn instance_bind_groups(&self, device: &wgpu::Device) -> Vec<wgpu::BindGroup> {
+        self.instance_buffers
+            .iter()
+            .map(|instance_buffer| {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("instance_bind_group"),
+                    layout: &self.instance_bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: instance_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: self.bone_buffer.get_wgpu_buffer().as_entire_binding(),
+                        },
+                    ],
+                })
+            })
+            .collect()
     }
 
     /// Marks the mesh so its GPU buffers are rebuilt on the next render pass.
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Mesh;
+    use nalgebra_glm::{IVec4, Vec4};
+
+    #[test]
+    fn heavier_bone_weight_shifts_lighter_ones_with_their_bones() {
+        let mut bone_ids = [-1; 4];
+        let mut bone_weights = [0.0; 4];
+
+        Mesh::insert_bone_weight(0, 0.3, &mut bone_ids, &mut bone_weights);
+        Mesh::insert_bone_weight(1, 0.7, &mut bone_ids, &mut bone_weights);
+
+        assert_eq!(bone_ids, [1, 0, -1, -1]);
+        assert_eq!(bone_weights, [0.7, 0.3, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn bone_weights_are_normalised_once_every_bone_is_bound() {
+        let (bone_indices, bone_weights) =
+            Mesh::bind_bone_weights(1, [vec![(0, 0.15)], vec![(0, 0.35)]]);
+
+        assert_eq!(bone_indices[0], IVec4::new(1, 0, -1, -1));
+        assert!((bone_weights[0] - Vec4::new(0.7, 0.3, 0.0, 0.0)).norm() < 1e-6);
     }
 }
