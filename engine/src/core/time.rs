@@ -12,6 +12,59 @@ pub type TimeType = f32;
 /// must stay accurate over long sessions.
 pub type AbsoluteTime = f64;
 
+/// Distance from a whole tick within which a tick count counts as reaching
+/// it, so the last-bit rounding of a step or conversion never leaves a tick
+/// behind. Tick counts this close to a boundary are indistinguishable in f64.
+const TICK_SNAP: AbsoluteTime = 1e-9;
+
+/// Rounds `ticks` down to a whole tick, snapping to the nearest tick when it
+/// is within rounding error of it.
+fn whole_ticks(ticks: AbsoluteTime) -> AbsoluteTime {
+    let nearest = ticks.round();
+    let tolerance = TICK_SNAP.max(ticks.abs() * 8.0 * AbsoluteTime::EPSILON);
+    if (ticks - nearest).abs() <= tolerance {
+        nearest
+    } else {
+        ticks.floor()
+    }
+}
+
+/// Elapsed time counted in whole ticks plus a fraction of a tick, so a step
+/// of one tick period adds exactly one tick however its seconds round.
+#[derive(Clone, Copy, Default)]
+struct TickClock {
+    ticks: u64,
+    fraction: AbsoluteTime,
+}
+
+impl TickClock {
+    fn from_ticks(ticks: AbsoluteTime) -> Self {
+        let ticks = ticks.max(0.0);
+        let whole = whole_ticks(ticks);
+        Self {
+            ticks: whole as u64,
+            fraction: (ticks - whole).max(0.0),
+        }
+    }
+
+    fn advance(&mut self, ticks: AbsoluteTime) {
+        let total = self.fraction + ticks.max(0.0);
+        let whole = whole_ticks(total);
+        self.ticks = self.ticks.saturating_add(whole as u64);
+        self.fraction = (total - whole).max(0.0);
+    }
+
+    fn total(&self) -> AbsoluteTime {
+        self.ticks as AbsoluteTime + self.fraction
+    }
+
+    /// Saturates at `u32::MAX`, like the float cast it replaces, so tick
+    /// indices never wrap back to zero.
+    fn index(&self) -> u32 {
+        u32::try_from(self.ticks).unwrap_or(u32::MAX)
+    }
+}
+
 /// Frame timer and fixed-tick conversion utility.
 #[derive(Resource, TypeUuid)]
 #[uuid = "b0a01abf-afee-4107-94e8-6e2fbab21f72"]
@@ -20,11 +73,10 @@ pub struct Time {
     timers: RefCell<HashMap<&'static str, Instant>>,
     last_time: Instant,
     tick_rate: TimeType,
-    /// Scaled elapsed runtime in whole nanoseconds, so long sessions and tick
-    /// indices never accumulate floating-point error.
-    time_nanos: u64,
-    /// Unscaled elapsed runtime in whole nanoseconds.
-    static_time_nanos: u64,
+    /// Scaled elapsed runtime in ticks.
+    time: TickClock,
+    /// Unscaled elapsed runtime in ticks.
+    static_time: TickClock,
     /// Scaled frame delta in seconds.
     pub delta_time: TimeType,
     /// Unscaled frame delta in seconds.
@@ -57,62 +109,47 @@ impl Time {
             timers: RefCell::new(HashMap::new()),
             last_time: Instant::now(),
             tick_rate,
-            time_nanos: 0,
-            static_time_nanos: 0,
+            time: TickClock::default(),
+            static_time: TickClock::default(),
             delta_time: 0.0,
             static_delta_time: 0.0,
             time_scale: 1.0,
         }
     }
 
-    const NANOS_PER_SECOND: u64 = 1_000_000_000;
-
-    /// Rounds `seconds` to whole nanoseconds; negative times clamp to zero.
-    fn nanos_from_seconds(seconds: AbsoluteTime) -> u64 {
-        (seconds * Self::NANOS_PER_SECOND as AbsoluteTime)
-            .round()
-            .max(0.0) as u64
-    }
-
-    fn seconds_from_nanos(nanos: u64) -> AbsoluteTime {
-        nanos as AbsoluteTime / Self::NANOS_PER_SECOND as AbsoluteTime
+    fn rate(&self) -> AbsoluteTime {
+        AbsoluteTime::from(self.tick_rate)
     }
 
     /// Advances the timer using wall-clock elapsed time since the last update.
     pub fn update_time(&mut self) {
-        let elapsed = self.last_time.elapsed();
+        let elapsed = self.last_time.elapsed().as_secs_f64();
         self.last_time = Instant::now();
-        self.advance_nanos(u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX));
+        self.advance_by(elapsed);
     }
 
-    /// Advances the timer by an explicit `delta` in seconds, rounded to whole
-    /// nanoseconds.
+    /// Advances the timer by an explicit `delta` in seconds.
     pub fn advance_by(&mut self, delta: AbsoluteTime) {
-        self.advance_nanos(Self::nanos_from_seconds(delta));
-    }
-
-    fn advance_nanos(&mut self, delta_nanos: u64) {
-        let scaled_nanos =
-            (delta_nanos as AbsoluteTime * AbsoluteTime::from(self.time_scale)).round() as u64;
-        self.static_delta_time = Self::seconds_from_nanos(delta_nanos) as TimeType;
-        self.delta_time = Self::seconds_from_nanos(scaled_nanos) as TimeType;
-        self.static_time_nanos = self.static_time_nanos.saturating_add(delta_nanos);
-        self.time_nanos = self.time_nanos.saturating_add(scaled_nanos);
+        let scaled = delta * AbsoluteTime::from(self.time_scale);
+        self.static_delta_time = delta as TimeType;
+        self.delta_time = scaled as TimeType;
+        self.static_time.advance(delta * self.rate());
+        self.time.advance(scaled * self.rate());
     }
 
     /// Sets the scaled elapsed runtime, for example to follow a server clock.
     pub fn set_time(&mut self, time: AbsoluteTime) {
-        self.time_nanos = Self::nanos_from_seconds(time);
+        self.time = TickClock::from_ticks(time * self.rate());
     }
 
     /// Returns the scaled elapsed runtime in seconds.
     pub fn time(&self) -> AbsoluteTime {
-        Self::seconds_from_nanos(self.time_nanos)
+        self.time.total() / self.rate()
     }
 
     /// Returns the unscaled elapsed runtime in seconds.
     pub fn static_time(&self) -> AbsoluteTime {
-        Self::seconds_from_nanos(self.static_time_nanos)
+        self.static_time.total() / self.rate()
     }
 
     /// Returns the elapsed time since the named timer was first observed or
@@ -140,22 +177,12 @@ impl Time {
 
     /// Returns the current fixed-tick index for scaled time.
     pub fn current_tick(&self) -> u32 {
-        self.nanos_to_tick(self.time_nanos)
+        self.time.index()
     }
 
     /// Converts `time` in seconds into a fixed-tick index.
     pub fn time_to_tick(&self, time: AbsoluteTime) -> u32 {
-        self.nanos_to_tick(Self::nanos_from_seconds(time))
-    }
-
-    /// Integer tick rates divide exactly; fractional rates fall back to f64.
-    fn nanos_to_tick(&self, nanos: u64) -> u32 {
-        let rate = self.tick_rate;
-        if rate.fract() == 0.0 {
-            (u128::from(nanos) * rate as u128 / u128::from(Self::NANOS_PER_SECOND)) as u32
-        } else {
-            (Self::seconds_from_nanos(nanos) * AbsoluteTime::from(rate)) as u32
-        }
+        TickClock::from_ticks(time * self.rate()).index()
     }
 
     time_member_getter!(delta_time: TimeType);
@@ -192,8 +219,8 @@ mod tests {
 
     #[test]
     fn tenth_second_steps_and_exact_seconds_reach_their_tick() {
-        // Ten 0.1 s steps sum to just under 1.0 in f64; in nanoseconds they
-        // reach tick 10 exactly, as does an exact second.
+        // Ten 0.1 s steps sum to just under 1.0 in f64; counted in ticks
+        // they reach tick 10 exactly, as does an exact second.
         let mut t = Time::new(10.0);
         t.advance_by(1.0);
         assert_eq!(t.current_tick(), 10);
@@ -207,7 +234,7 @@ mod tests {
 
     #[test]
     fn exact_times_do_not_drift_ahead_over_long_sessions() {
-        // Integer tick math has no period rounding to run ahead of.
+        // Converting seconds to ticks has no period rounding to run ahead of.
         let t = Time::new(100.0);
         assert_eq!(t.time_to_tick(864_000.0), 86_400_000);
         assert_eq!(t.time_to_tick(864_000.0 - 0.005), 86_399_999);
@@ -215,8 +242,7 @@ mod tests {
 
     #[test]
     fn full_fixed_steps_reach_their_tick_when_the_period_is_inexact() {
-        // 0.01 is inexact in f32 and f64 but exact in nanoseconds, so each
-        // step lands on its tick.
+        // 0.01 is inexact in f32 and f64, but each step adds one whole tick.
         let mut t = Time::new(100.0);
         t.advance_by(0.01);
         assert_eq!(t.current_tick(), 1);
@@ -236,6 +262,29 @@ mod tests {
         }
         assert_eq!(t.current_tick(), steps);
         assert_eq!(t.time_to_tick(t.time()), steps);
+    }
+
+    #[test]
+    fn periods_that_are_not_whole_nanoseconds_stay_on_their_tick() {
+        // One 120 Hz period is 8_333_333.33 ns, which whole nanoseconds or
+        // binary fractions cannot hold exactly.
+        let mut t = Time::new(120.0);
+        t.advance_by(1.0 / 120.0);
+        assert_eq!(t.current_tick(), 1);
+        for _ in 1..1_000_000 {
+            t.advance_by(1.0 / 120.0);
+        }
+        assert_eq!(t.current_tick(), 1_000_000);
+        assert_eq!(t.time_to_tick(t.time()), 1_000_000);
+    }
+
+    #[test]
+    fn tick_indices_saturate_instead_of_wrapping() {
+        let mut t = Time::new(120.0);
+        let beyond_u32 = (f64::from(u32::MAX) + 10.0) / 120.0;
+        t.set_time(beyond_u32);
+        assert_eq!(t.current_tick(), u32::MAX);
+        assert_eq!(t.time_to_tick(beyond_u32), u32::MAX);
     }
 
     #[test]
