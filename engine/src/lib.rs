@@ -2,6 +2,9 @@
 //! systems shared across the Calyx workspace.
 
 #![allow(clippy::module_inception)]
+// wgpu's nested handle types exceed the default trait-solver depth when
+// checking Send/Sync on assets and components that hold GPU resources.
+#![recursion_limit = "256"]
 extern crate self as engine;
 
 /// Asset types, asset handles, and asset registry infrastructure.

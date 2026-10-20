@@ -1,3 +1,7 @@
+// wgpu's nested handle types exceed the default trait-solver depth when
+// checking Send/Sync on assets and components that hold GPU resources.
+#![recursion_limit = "256"]
+
 pub mod game_state;
 pub mod spawn;
 pub mod tank;

@@ -1,3 +1,7 @@
+// wgpu's nested handle types exceed the default trait-solver depth when
+// checking Send/Sync on assets and components that hold GPU resources.
+#![recursion_limit = "256"]
+
 use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
