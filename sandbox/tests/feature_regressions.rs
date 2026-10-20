@@ -1,34 +1,30 @@
 use engine::context::GameContext;
 use engine::math::Transform;
 use engine::scene::Scene;
-use engine::test_support::{test_asset_context_with_assets, HeadlessSceneRunner};
+use engine::test_support::{HeadlessSceneRunner, TestAssets};
 use nalgebra_glm::Vec3;
-use std::path::PathBuf;
 
-fn sandbox_assets() -> engine::context::AssetContext {
-    let assets = test_asset_context_with_assets(vec![
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets"),
-    ]);
+/// Sandbox assets over a temporary copy of the asset roots, so loading them
+/// never rewrites tracked `.meta` files. Keep the `TestAssets` alive while the
+/// context is in use.
+fn sandbox_assets() -> (TestAssets, engine::context::AssetContext) {
+    let copy = TestAssets::game();
+    let assets = copy.asset_context();
     sandbox::plugin_main(&mut assets.registries.types.write());
     assets
         .registries
         .components
         .write()
         .refresh_class_lists(&assets.registries.types.read());
-    assets
+    (copy, assets)
 }
 
-fn load_sandbox_scene(assets: &engine::context::AssetContext) -> Scene {
+fn load_sandbox_scene(copy: &TestAssets, assets: &engine::context::AssetContext) -> Scene {
     assets
         .registries
         .assets
         .read()
-        .reload_by_path::<Scene>(
-            &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("assets")
-                .join("scene.cxscene"),
-        )
+        .reload_by_path::<Scene>(&copy.sandbox_root().join("scene.cxscene"))
         .expect("sandbox scene should load")
         .read()
         .clone()
@@ -49,8 +45,8 @@ fn assert_transform_eq(actual: Transform, expected: Transform) {
 
 #[test]
 fn simulation_changes_do_not_leak_into_the_authoring_scene() {
-    let assets = sandbox_assets();
-    let scene = load_sandbox_scene(&assets);
+    let (copy, assets) = sandbox_assets();
+    let scene = load_sandbox_scene(&copy, &assets);
     let mut game = GameContext::new(assets);
     game.scenes
         .load_scene(engine::core::Ref::new(scene).readonly());
@@ -80,8 +76,8 @@ fn simulation_changes_do_not_leak_into_the_authoring_scene() {
 
 #[test]
 fn tank_moves_without_changing_its_authored_scale() {
-    let assets = sandbox_assets();
-    let scene = load_sandbox_scene(&assets);
+    let (copy, assets) = sandbox_assets();
+    let scene = load_sandbox_scene(&copy, &assets);
     let tank = object_named(&scene, "Tank");
     let initial = scene.transform(tank);
     let mut runner = HeadlessSceneRunner::from_scene(scene);
@@ -98,8 +94,8 @@ fn tank_moves_without_changing_its_authored_scale() {
 
 #[test]
 fn firing_projectiles_does_not_move_static_targets() {
-    let assets = sandbox_assets();
-    let scene = load_sandbox_scene(&assets);
+    let (copy, assets) = sandbox_assets();
+    let scene = load_sandbox_scene(&copy, &assets);
     let target_transforms = ["Target A", "Target B"].map(|name| {
         let target = object_named(&scene, name);
         (name, scene.world_transform(target))
