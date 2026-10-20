@@ -44,6 +44,17 @@ mod tests {
     }
 
     #[test]
+    fn bone_saved_with_its_old_index_and_offset_still_loads() {
+        let bone: ComponentBone = serde_json::from_value(serde_json::json!({
+            "name": "spine_01",
+            "index": 5,
+            "offset_matrix": nalgebra_glm::Mat4::identity()
+        }))
+        .unwrap();
+        assert_eq!(bone.name, "spine_01");
+    }
+
+    #[test]
     fn rigid_body_dirty_on_creation() {
         let mut scene = test_scene();
         let go = scene.create(None, None);
@@ -124,7 +135,6 @@ mod tests {
             go,
             ComponentBone {
                 name: "spine_01".into(),
-                index: 5,
                 ..Default::default()
             },
         );

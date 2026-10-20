@@ -18,3 +18,11 @@ attribution and licence.
 the frame range set to frames 30 to 60, and the current frame moved by the same amount, so its
 static pose matches. It checks that a clip whose playback range starts after frame 0 plays from
 its first key.
+
+## TwoSkins
+
+`gltf/TwoSkins.gltf` is a hand-built model written by a script: two meshes skinned by one
+Hip, Spine and Arm joint tree, whose skins list the joints in different orders and counts (the
+body's `[Hip, Spine]`, the arm's `[Arm, Spine, Hip]`), and a one-second clip that moves the hip
+and turns the spine but has no channel for the arm. It checks that each skinned mesh follows its
+own bones.

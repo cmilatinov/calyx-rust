@@ -369,6 +369,9 @@ impl ComponentAnimator {
             return;
         };
         let animation_graph = animation_graph.read();
+        // Root-space transform of each posed bone by name, computed once per root bone and
+        // shared by the skinned meshes under it.
+        let mut skeletons: HashMap<GameObject, HashMap<String, Mat4>> = HashMap::new();
         for skinned_mesh_go in skinned_meshes {
             let Some(entry) = scene.entry(skinned_mesh_go) else {
                 continue;
@@ -382,24 +385,38 @@ impl ComponentAnimator {
             let Some(mesh_ref) = c_skinned_mesh.mesh.get_ref(assets) else {
                 continue;
             };
+            let bones = skeletons.entry(root).or_insert_with(|| {
+                let mut bones = HashMap::new();
+                let transform = scene.transform(root);
+                Self::traverse_bone_hierarchy_static(
+                    &snapshot,
+                    assets,
+                    scene,
+                    root,
+                    &animation_graph,
+                    &transform.inverse_matrix(),
+                    Mat4::identity(),
+                    &mut bones,
+                );
+                bones
+            });
+            // Bone indices and inverse bind matrices belong to the mesh: meshes sharing a
+            // skeleton can list its bones in different orders.
             let mesh = mesh_ref.read();
+            pose.bone_transforms.clear();
             pose.bone_transforms.resize(
                 mesh.bones.len(),
                 BoneTransform {
                     transform: Mat4::identity().into(),
                 },
             );
-            let transform = scene.transform(root);
-            Self::traverse_bone_hierarchy_static(
-                &snapshot,
-                assets,
-                scene,
-                root,
-                &animation_graph,
-                &transform.inverse_matrix(),
-                Mat4::identity(),
-                pose,
-            );
+            for (name, bone) in &mesh.bones {
+                if let (Some(transform), Some(slot)) =
+                    (bones.get(name), pose.bone_transforms.get_mut(bone.index))
+                {
+                    slot.transform = (transform * bone.inverse_bind_transform).into();
+                }
+            }
             let Some(mut entry) = scene.entry_mut(skinned_mesh_go) else {
                 continue;
             };
@@ -449,6 +466,8 @@ impl ComponentAnimator {
         }
     }
 
+    /// Poses the bones under `game_object`, writing their local transforms to the scene and
+    /// their root-space transforms to `bones` by bone name.
     #[allow(clippy::too_many_arguments)]
     fn traverse_bone_hierarchy_static(
         snapshot: &AnimatorSnapshot,
@@ -458,7 +477,7 @@ impl ComponentAnimator {
         animation_graph: &AnimationGraph,
         global_inverse_transform: &Mat4,
         mut parent_transform: Mat4,
-        pose: &mut AnimatorPose,
+        bones: &mut HashMap<String, Mat4>,
     ) {
         let mut local_transform = scene.transform(game_object).matrix();
         let mut captured_bind_pose = None;
@@ -490,13 +509,10 @@ impl ComponentAnimator {
                 &bind_pose,
             )
             .matrix();
-            pose.bone_transforms[c_bone.index] = BoneTransform {
-                transform: (global_inverse_transform
-                    * parent_transform
-                    * local_transform
-                    * c_bone.offset_matrix)
-                    .into(),
-            };
+            bones.insert(
+                c_bone.name.clone(),
+                global_inverse_transform * parent_transform * local_transform,
+            );
         }
         if let Some(bind_pose) = captured_bind_pose {
             if let Some(mut entry) = scene.entry_mut(game_object) {
@@ -517,7 +533,7 @@ impl ComponentAnimator {
                 animation_graph,
                 global_inverse_transform,
                 parent_transform,
-                pose,
+                bones,
             );
         }
     }
@@ -664,7 +680,10 @@ impl ComponentAnimator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assets::animation_graph::{AnimationMotion, BlendTree};
+    use crate::assets::animation::Animation;
+    use crate::assets::animation_graph::{
+        AnimationClip, AnimationMotion, AnimationNode, BlendTree,
+    };
     use crate::test_utils::test_registries;
 
     fn bind_pose() -> Transform {
@@ -756,18 +775,17 @@ mod tests {
             .read()
             .create(
                 "partial_clip".to_string(),
-                crate::assets::animation::Animation {
+                Animation {
                     node_keyframes: HashMap::from([("other".to_string(), other_bone)]),
                     duration: 1.0,
                     ticks_per_second: 1.0,
                 },
             )
             .unwrap();
-        let motion =
-            AnimationMotion::AnimationClip(crate::assets::animation_graph::AnimationClip {
-                speed: 1.0,
-                animation: AssetRef::from_id(animation.id()),
-            });
+        let motion = AnimationMotion::AnimationClip(AnimationClip {
+            speed: 1.0,
+            animation: AssetRef::from_id(animation.id()),
+        });
 
         let result = ComponentAnimator::motion_local_bone_transform_static(
             &HashMap::new(),
@@ -781,6 +799,96 @@ mod tests {
         assert_eq!(result.position, bind_pose().position);
         assert_eq!(result.rotation, bind_pose().rotation);
         assert_eq!(result.scale, bind_pose().scale);
+    }
+
+    #[test]
+    fn skinned_meshes_ordering_bones_differently_each_follow_their_own_bones() {
+        // Two meshes skinned by one joint tree: the body's skin lists [Hip, Spine], the arm's
+        // [Arm, Spine, Hip]. Halfway through the clip the hip has moved 1 along z and the spine
+        // has turned 45 degrees about z; the arm on the spine has no channel and turns with it.
+        let test_assets = crate::test_utils::TestAssets::models();
+        let assets = test_assets.registries();
+        let path = test_assets.fixtures_root().join("gltf/TwoSkins.gltf");
+        let registry = assets.assets.read();
+        let prefab = registry
+            .load_by_path::<crate::scene::Prefab>(&path)
+            .unwrap();
+        let animation = registry
+            .asset_meta_from_path(&path)
+            .unwrap()
+            .children
+            .into_iter()
+            .find(|id| registry.loaded_by_id::<Animation>(*id).is_some())
+            .unwrap();
+        let mut graph = AnimationGraph::default();
+        let start = Uuid::new_v4();
+        graph.add_node(AnimationNode {
+            id: start,
+            name: "Bend".to_string(),
+            motion: AnimationMotion::AnimationClip(AnimationClip {
+                speed: 1.0,
+                animation: AssetRef::from_id(animation),
+            }),
+            position: Default::default(),
+        });
+        graph.start_node = Some(start);
+        let graph = registry
+            .create("two_skins_graph".to_string(), graph)
+            .unwrap();
+        drop(registry);
+
+        let mut scene = assets.scene();
+        let root = scene.instantiate_prefab(&prefab.read(), None).unwrap();
+        scene.add_component(
+            root,
+            ComponentAnimator {
+                time: 0.5,
+                animation_graph: AssetRef::from_id(graph.id()),
+                ..Default::default()
+            },
+        );
+        scene.write_component::<ComponentAnimator, _>(root, |c| c.init(&assets));
+        ComponentAnimator::compute_animation_pose(
+            &assets,
+            &mut scene,
+            root,
+            &mut AnimatorPose::default(),
+        );
+
+        let hip = nalgebra_glm::translation(&Vec3::new(0.0, 0.0, 1.0));
+        let spine = nalgebra_glm::translation(&Vec3::new(0.0, 1.0, 1.0))
+            * nalgebra_glm::rotation(std::f32::consts::FRAC_PI_4, &Vec3::z())
+            * nalgebra_glm::translation(&Vec3::new(0.0, -1.0, 0.0));
+        let expected = HashMap::from([("Hip", hip), ("Spine", spine), ("Arm", spine)]);
+        let skinned_meshes = scene
+            .descendants_with::<ComponentSkinnedMesh>(root)
+            .collect::<Vec<_>>();
+        assert_eq!(skinned_meshes.len(), 2);
+        for skinned_mesh in skinned_meshes {
+            let (mesh, bone_transforms) = scene
+                .read_component::<ComponentSkinnedMesh, _, _>(skinned_mesh, |c| {
+                    (c.mesh.get_ref(&assets).unwrap(), c.bone_transforms.clone())
+                })
+                .unwrap();
+            let mesh = mesh.read();
+            assert_eq!(bone_transforms.len(), mesh.bones.len());
+            for (vertex, indices) in mesh.vertices.iter().zip(&mesh.bone_indices) {
+                // Every vertex follows a single bone with full weight.
+                let index = indices.x as usize;
+                let name = mesh
+                    .bones
+                    .iter()
+                    .find_map(|(name, bone)| (bone.index == index).then_some(name.as_str()))
+                    .unwrap();
+                let point = vertex.push(1.0);
+                let skinned = Mat4::from(bone_transforms[index].transform) * point;
+                let want = expected[name] * point;
+                assert!(
+                    (skinned - want).norm() < 1e-5,
+                    "vertex {vertex:?} of a mesh following {name}: got {skinned:?}, want {want:?}"
+                );
+            }
+        }
     }
 
     #[test]
