@@ -3,6 +3,7 @@ use engine::math::Transform;
 use engine::scene::Scene;
 use engine::test_support::{HeadlessSceneRunner, TestAssets};
 use nalgebra_glm::Vec3;
+use sandbox::tank::{ComponentProjectileTarget, ComponentTankController};
 
 /// Sandbox assets over a temporary copy of the asset roots, so loading them
 /// never rewrites tracked `.meta` files. Keep the `TestAssets` alive while the
@@ -92,10 +93,35 @@ fn tank_moves_without_changing_its_authored_scale() {
     assert_eq!(final_transform.scale, initial.scale);
 }
 
+fn hit_count(scene: &Scene, target: engine::scene::GameObject) -> u32 {
+    scene
+        .read_component::<ComponentProjectileTarget, _, _>(target, |target| target.hit_count)
+        .expect("sandbox targets should be projectile targets")
+}
+
+/// Moves `target` onto the tank barrel's firing line, `distance` metres ahead.
+fn place_on_firing_line(scene: &mut Scene, target: engine::scene::GameObject, distance: f32) {
+    let tank = object_named(scene, "Tank");
+    let barrel = scene
+        .read_component::<ComponentTankController, _, _>(tank, |controller| {
+            controller.barrel.game_object(scene)
+        })
+        .flatten()
+        .expect("sandbox tank should reference its barrel");
+    let barrel_transform = scene.world_transform(barrel);
+    let mut forward = barrel_transform.forward();
+    forward.y = 0.0;
+    let mut target_transform = scene.world_transform(target);
+    target_transform.position = barrel_transform.position + forward.normalize() * distance;
+    scene.set_world_transform(target, target_transform.matrix());
+}
+
 #[test]
-fn firing_projectiles_does_not_move_static_targets() {
+fn firing_projectiles_hits_targets_without_moving_them() {
     let (copy, assets) = sandbox_assets();
-    let scene = load_sandbox_scene(&copy, &assets);
+    let mut scene = load_sandbox_scene(&copy, &assets);
+    let aimed_target = object_named(&scene, "Target A");
+    place_on_firing_line(&mut scene, aimed_target, 8.0);
     let target_transforms = ["Target A", "Target B"].map(|name| {
         let target = object_named(&scene, name);
         (name, scene.world_transform(target))
@@ -105,6 +131,11 @@ fn firing_projectiles_does_not_move_static_targets() {
     runner.press_key(egui::Key::Space);
     runner.step_many(120);
 
+    let aimed_target = object_named(runner.scene(), "Target A");
+    assert!(
+        hit_count(runner.scene(), aimed_target) > 0,
+        "a projectile should hit the target on the firing line"
+    );
     for (name, expected_transform) in target_transforms {
         let target = object_named(runner.scene(), name);
         assert_transform_eq(runner.scene().world_transform(target), expected_transform);
