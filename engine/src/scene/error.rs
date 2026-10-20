@@ -9,16 +9,19 @@ pub enum SceneError {
     ComponentNotBound,
     /// Prefab creation could not be completed.
     UnableToCreatePrefab,
+    /// Prefab data was malformed and could not be instantiated.
+    InvalidPrefab(String),
     /// Reparenting would place an object under itself or one of its descendants.
     HierarchyCycle,
 }
 
 impl fmt::Display for SceneError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
+        match self {
             SceneError::InvalidNodeId => write!(f, "invalid node ID"),
             SceneError::ComponentNotBound => write!(f, "component not bound to entity specified"),
             SceneError::UnableToCreatePrefab => write!(f, "unable to create prefab"),
+            SceneError::InvalidPrefab(reason) => write!(f, "invalid prefab: {reason}"),
             SceneError::HierarchyCycle => {
                 write!(f, "cannot parent a game object under its own subtree")
             }
@@ -32,6 +35,7 @@ impl std::error::Error for SceneError {
             SceneError::InvalidNodeId
             | SceneError::ComponentNotBound
             | SceneError::UnableToCreatePrefab
+            | SceneError::InvalidPrefab(_)
             | SceneError::HierarchyCycle => None,
         }
     }

@@ -26,7 +26,6 @@ use nalgebra::Unit;
 use nalgebra_glm::{Mat4, Quat, Vec3, Vec4};
 use petgraph::prelude::{EdgeIndex, EdgeRef, NodeIndex};
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -523,6 +522,9 @@ impl ComponentAnimator {
         }
     }
 
+    /// The keys around `ticks`: the last key at or before it and the one after. Of keys sharing
+    /// a time, the last is taken from that time on, so a pair of keys at one time switches value
+    /// there, as an imported step does.
     fn find_keyframes<T, F: FnMut(&T) -> TimeType>(
         keyframes: &[T],
         ticks: TimeType,
@@ -531,9 +533,7 @@ impl ComponentAnimator {
         if keyframes.is_empty() {
             return None;
         }
-        let index = keyframes
-            .binary_search_by(|k| accessor(k).partial_cmp(&ticks).unwrap_or(Ordering::Less))
-            .unwrap_or_else(|index| index) as isize;
+        let index = keyframes.partition_point(|k| accessor(k) <= ticks) as isize;
         let max_index = (keyframes.len() - 1) as isize;
         let prev = (index - 1).clamp(0, max_index) as usize;
         let next = index.clamp(0, max_index) as usize;
@@ -636,7 +636,7 @@ impl ComponentAnimator {
         }
     }
 
-    fn animation_local_bone_transform(
+    pub(crate) fn animation_local_bone_transform(
         keyframes: &AnimationKeyFrames,
         ticks: f32,
         bind_pose: &Transform,
@@ -674,6 +674,55 @@ mod tests {
     fn find_keyframes_on_empty_channel_returns_none() {
         let keyframes: Vec<VectorKeyFrame> = vec![];
         assert!(ComponentAnimator::find_keyframes(&keyframes, 0.0, |k| k.time as f32).is_none());
+    }
+
+    #[test]
+    fn keys_sharing_a_time_switch_value_at_that_time() {
+        // A step from 1 to 2 at one tick, as the glTF importer writes it.
+        let key = |time: f64, x: f32| VectorKeyFrame {
+            value: Vec3::new(x, 0.0, 0.0),
+            time,
+        };
+        let keyframes = AnimationKeyFrames {
+            positions: vec![key(0.0, 1.0), key(1.0, 1.0), key(1.0, 2.0), key(2.0, 2.0)],
+            rotations: vec![],
+            scaling: vec![],
+        };
+        let x_at = |ticks: f32| {
+            ComponentAnimator::animation_local_bone_transform(&keyframes, ticks, &bind_pose())
+                .position
+                .x
+        };
+
+        assert_eq!(x_at(0.5), 1.0);
+        assert_eq!(x_at(0.999), 1.0);
+        assert_eq!(x_at(1.0), 2.0);
+        assert_eq!(x_at(1.5), 2.0);
+        assert_eq!(x_at(2.0), 2.0);
+    }
+
+    #[test]
+    fn linear_keys_interpolate_and_hold_past_the_ends() {
+        let key = |time: f64, x: f32| VectorKeyFrame {
+            value: Vec3::new(x, 0.0, 0.0),
+            time,
+        };
+        let keyframes = AnimationKeyFrames {
+            positions: vec![key(1.0, 0.0), key(2.0, 4.0), key(3.0, 2.0)],
+            rotations: vec![],
+            scaling: vec![],
+        };
+        let x_at = |ticks: f32| {
+            ComponentAnimator::animation_local_bone_transform(&keyframes, ticks, &bind_pose())
+                .position
+                .x
+        };
+
+        assert_eq!(x_at(0.0), 0.0);
+        assert_eq!(x_at(1.5), 2.0);
+        assert_eq!(x_at(2.0), 4.0);
+        assert_eq!(x_at(2.5), 3.0);
+        assert_eq!(x_at(4.0), 2.0);
     }
 
     #[test]

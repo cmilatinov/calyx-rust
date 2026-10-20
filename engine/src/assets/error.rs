@@ -1,4 +1,3 @@
-use russimp_ng::RussimpError;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
@@ -93,9 +92,3 @@ impl Display for AssetError {
 }
 
 impl Error for AssetError {}
-
-impl From<RussimpError> for AssetError {
-    fn from(error: RussimpError) -> Self {
-        AssetError::LoadError.with_source(error)
-    }
-}
