@@ -183,7 +183,7 @@ mod tests {
     #[test]
     fn protocol_id_is_schema_derived() {
         assert_ne!(GameMessage::PROTOCOL_ID, 42069);
-        assert_eq!(GameMessage::PROTOCOL_ID, 0xf2e2_c2bd_c6d8_de9e);
+        assert_eq!(GameMessage::PROTOCOL_ID, 0xb5f6_8f80_f311_3c28);
     }
 
     #[test]
