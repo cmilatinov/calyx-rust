@@ -19,6 +19,18 @@ the frame range set to frames 30 to 60, and the current frame moved by the same 
 static pose matches. It checks that a clip whose playback range starts after frame 0 plays from
 its first key.
 
+## TwoObjects
+
+`obj/TwoObjects.obj` is hand-written: a textured quad in object `Left`, and an untextured quad in
+object `Right` whose two triangles use different materials. It checks that a mesh asset keeps
+every object and material part of an OBJ file.
+
+## TwoMaterials
+
+`fbx/TwoMaterials.fbx` was made with Blender 4.0: the default cube, named `Cube`, with materials
+`Red` and `Blue`, its top face using `Blue`, exported with default settings. It checks that a
+prefab keeps every material part of one FBX node.
+
 ## TwoSkins
 
 `gltf/TwoSkins.gltf` is a hand-built model written by a script: two meshes skinned by one
