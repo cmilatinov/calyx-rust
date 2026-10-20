@@ -57,7 +57,8 @@ impl Time {
             timers: RefCell::new(HashMap::new()),
             last_time: Instant::now(),
             tick_rate,
-            tick_period: 1.0 / AbsoluteTime::from(tick_rate),
+            // Widen the f32 period so it rounds like the f32 frame deltas.
+            tick_period: AbsoluteTime::from(1.0 / tick_rate),
             time: 0.0,
             static_time: 0.0,
             delta_time: 0.0,
@@ -147,7 +148,21 @@ mod tests {
         let t = Time::new(10.0);
         assert_eq!(t.time_to_tick(0.0), 0);
         assert_eq!(t.time_to_tick(0.25), 2);
-        assert_eq!(t.time_to_tick(1.0), 10);
+        // Tick boundaries sit on the f32 period, like accumulated f32 deltas.
+        assert_eq!(t.time_to_tick(10.0 * f64::from(0.1_f32)), 10);
+    }
+
+    #[test]
+    fn full_fixed_steps_reach_their_tick_when_the_period_is_inexact() {
+        // 0.01 is not representable as f32, so the step and the tick period
+        // must round the same way or each step lands just short of its tick.
+        let mut t = Time::new(100.0);
+        t.advance_by(0.01);
+        assert_eq!(t.current_tick(), 1);
+        for _ in 1..1_000 {
+            t.advance_by(0.01);
+        }
+        assert_eq!(t.current_tick(), 1_000);
     }
 
     #[test]
