@@ -197,7 +197,7 @@ impl egui_tiles::Behavior<&'static str> for PanelManager<'_> {
 
     /// When drag-and-dropping a tile, the candidate area is drawn with this stroke.
     fn drag_preview_stroke(&self, _visuals: &egui::Visuals) -> egui::Stroke {
-        egui::Stroke::new(1.0, egui::Color32::WHITE.gamma_multiply(0.5))
+        egui::Stroke::new(1.0_f32, egui::Color32::WHITE.gamma_multiply(0.5))
     }
 
     /// When drag-and-dropping a tile, the candidate area is drawn with this background color.

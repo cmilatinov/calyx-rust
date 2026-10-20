@@ -170,6 +170,11 @@ impl TestAssets {
         Self::copy(false, true, false)
     }
 
+    /// Copies the engine and sandbox asset roots, which the sandbox game loads.
+    pub fn game() -> Self {
+        Self::copy(true, true, false)
+    }
+
     /// Copies the engine and sandbox asset roots and the model fixtures
     /// (`engine/tests/fixtures/models/`).
     pub fn models() -> Self {

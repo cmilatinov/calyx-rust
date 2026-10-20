@@ -530,7 +530,7 @@ impl PanelSceneHierarchy {
 
     fn dragged_game_object(&mut self, ui: &Ui, scene: &Scene) -> Option<GameObject> {
         let dragged_game_object_id =
-            egui::DragAndDrop::payload::<Uuid>(ui.ctx()).map(|payload| (*payload))?;
+            egui::DragAndDrop::payload::<Uuid>(ui.ctx()).map(|payload| *payload)?;
         if let Some(go) = scene.find(dragged_game_object_id) {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
             Some(go)
