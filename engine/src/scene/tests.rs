@@ -89,7 +89,7 @@ mod tests {
         let b = scene.create(None, None);
         let child = scene.create(None, Some(a));
 
-        scene.set_parent(child, Some(b));
+        scene.set_parent(child, Some(b)).unwrap();
         assert_eq!(scene.parent(child), Some(b));
         assert_eq!(scene.children(a).count(), 0);
         assert_eq!(scene.children(b).count(), 1);
@@ -103,7 +103,9 @@ mod tests {
         let c2 = scene.create(None, Some(parent));
         let new_child = scene.create(None, None);
 
-        scene.set_parent_with_sibling(new_child, Some(parent), Some((c2, SiblingDir::Before)));
+        scene
+            .set_parent_with_sibling(new_child, Some(parent), Some((c2, SiblingDir::Before)))
+            .unwrap();
 
         let ordered: Vec<GameObject> = scene.children_ordered(parent).collect();
         assert_eq!(ordered, vec![c1, new_child, c2]);
@@ -117,7 +119,9 @@ mod tests {
         let c2 = scene.create(None, Some(parent));
         let new_child = scene.create(None, None);
 
-        scene.set_parent_with_sibling(new_child, Some(parent), Some((c1, SiblingDir::After)));
+        scene
+            .set_parent_with_sibling(new_child, Some(parent), Some((c1, SiblingDir::After)))
+            .unwrap();
 
         let ordered: Vec<GameObject> = scene.children_ordered(parent).collect();
         assert_eq!(ordered, vec![c1, new_child, c2]);
@@ -454,7 +458,8 @@ mod tests {
         let a = scene.create(None, None);
         let b = scene.create(None, Some(a));
         let leaf = scene.create(None, Some(b));
-        scene.set_parent(a, Some(b));
+        // The scene refuses the edge that would close the cycle.
+        assert!(scene.set_parent(a, Some(b)).is_err());
 
         scene.delete(a);
         scene.delete(leaf);
@@ -468,7 +473,8 @@ mod tests {
         let mut scene = test_scene();
         let a = scene.create(None, None);
         let b = scene.create(None, Some(a));
-        scene.set_parent(a, Some(b));
+        // The scene refuses the edge that would close the cycle.
+        assert!(scene.set_parent(a, Some(b)).is_err());
 
         scene.delete(a);
         scene.delete(b);

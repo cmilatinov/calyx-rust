@@ -1,6 +1,7 @@
 //! Model import: turns a model file into an [`ImportedScene`], the library-independent form the
 //! mesh, prefab and animation assets are built from.
 
+mod gltf;
 mod ufbx;
 
 use std::collections::HashMap;
@@ -63,7 +64,15 @@ pub(crate) struct ImportedAnimation {
 
 /// Imports the model file at `path`.
 pub(crate) fn import(path: &Path) -> Result<ImportedScene, AssetError> {
-    ufbx::import(path).map_err(|error| error.with_path(path))
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase);
+    match extension.as_deref() {
+        Some("gltf" | "glb") => gltf::import(path),
+        _ => ufbx::import(path),
+    }
+    .map_err(|error| error.with_path(path))
 }
 
 /// Builds an [`ImportedMesh`] from triangle corners, merging corners whose attributes are
@@ -91,6 +100,7 @@ struct Corner {
     skin_weights: u32,
     position: Vec3,
     normal: Vec3,
+    /// UVs with the origin at the top left, as the renderer samples them.
     uvs: [Vec2; MAX_UV_CHANNELS],
 }
 
@@ -111,14 +121,14 @@ impl MeshBuilder {
     }
 
     /// Adds a triangle given in the source winding; it is stored reversed, as assimp's
-    /// `FlipWindingOrder` does, and its UVs flipped vertically, as `FlipUVs` does.
+    /// `FlipWindingOrder` does.
     fn push_triangle(&mut self, corners: [Corner; 3]) {
         let [a, b, c] = corners.map(|corner| self.vertex(corner));
         self.mesh.indices.extend([a, c, b]);
     }
 
     fn vertex(&mut self, corner: Corner) -> u32 {
-        let uvs = corner.uvs.map(|uv| Vec2::new(uv.x, 1.0 - uv.y));
+        let uvs = corner.uvs;
         let key = CornerKey {
             skin_weights: corner.skin_weights,
             position: corner.position.map(value_bits).into(),

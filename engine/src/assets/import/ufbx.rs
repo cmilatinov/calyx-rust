@@ -147,8 +147,10 @@ fn import_mesh(mesh: &ufbx::Mesh) -> Vec<ImportedMesh> {
                     let index = triangle[i];
                     let mut uvs = [Vec2::zeros(); MAX_UV_CHANNELS];
                     for (uv, set) in uvs.iter_mut().zip(&uv_sets) {
+                        // FBX puts the UV origin at the bottom left; flip it, as assimp's
+                        // `FlipUVs` does.
                         let value = &set[index as usize];
-                        *uv = Vec2::new(value.x as f32, value.y as f32);
+                        *uv = Vec2::new(value.x as f32, 1.0 - value.y as f32);
                     }
                     let control_point = mesh.vertex_indices[index as usize];
                     Corner {
