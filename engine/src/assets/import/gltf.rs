@@ -150,7 +150,7 @@ fn import_primitive(
             .windows(3)
             .enumerate()
             .map(|(i, t)| {
-                if i % 2 == 0 {
+                if i.is_multiple_of(2) {
                     [t[0], t[1], t[2]]
                 } else {
                     [t[1], t[0], t[2]]
