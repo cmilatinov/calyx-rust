@@ -57,14 +57,21 @@ impl Time {
             timers: RefCell::new(HashMap::new()),
             last_time: Instant::now(),
             tick_rate,
-            // Widen the f32 period so it rounds like the f32 frame deltas.
-            tick_period: AbsoluteTime::from(1.0 / tick_rate),
+            tick_period: Self::tick_period(tick_rate),
             time: 0.0,
             static_time: 0.0,
             delta_time: 0.0,
             static_delta_time: 0.0,
             time_scale: 1.0,
         }
+    }
+
+    /// Returns the smaller of the exact period and the widened f32 period, so
+    /// both exact boundaries and accumulated f32 fixed steps reach their tick.
+    fn tick_period(tick_rate: TimeType) -> AbsoluteTime {
+        let exact = 1.0 / AbsoluteTime::from(tick_rate);
+        let widened = AbsoluteTime::from(1.0 / tick_rate);
+        exact.min(widened)
     }
 
     /// Advances the timer using wall-clock elapsed time since the last update.
@@ -148,8 +155,22 @@ mod tests {
         let t = Time::new(10.0);
         assert_eq!(t.time_to_tick(0.0), 0);
         assert_eq!(t.time_to_tick(0.25), 2);
-        // Tick boundaries sit on the f32 period, like accumulated f32 deltas.
-        assert_eq!(t.time_to_tick(10.0 * f64::from(0.1_f32)), 10);
+        assert_eq!(t.time_to_tick(1.0), 10);
+    }
+
+    #[test]
+    fn exact_second_boundaries_hold_when_the_f32_period_rounds_up() {
+        // 0.1_f32 rounds above 0.1, so an exact second must not fall a tick
+        // short, and neither must ten accumulated 0.1_f32 steps.
+        let mut t = Time::new(10.0);
+        t.advance_by(1.0);
+        assert_eq!(t.current_tick(), 10);
+
+        let mut t = Time::new(10.0);
+        for _ in 0..10 {
+            t.advance_by(0.1);
+        }
+        assert_eq!(t.current_tick(), 10);
     }
 
     #[test]
