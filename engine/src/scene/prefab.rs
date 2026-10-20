@@ -183,6 +183,34 @@ fn default_material_id(registry: &AssetRegistry) -> Result<Uuid, AssetError> {
 }
 
 impl Prefab {
+    /// The component showing `mesh_ref` with the default material: a skinned mesh driven by the
+    /// bones under `root_id` when the mesh has bones, else a static mesh.
+    fn mesh_component(
+        registry: &AssetRegistry,
+        mesh_ref: &Ref<Mesh>,
+        root_id: Uuid,
+    ) -> Result<(Uuid, serde_json::Value), AssetError> {
+        let material_id = default_material_id(registry)?;
+        Ok(if mesh_ref.read().bones.is_empty() {
+            (
+                ComponentMesh::type_uuid(),
+                json!({
+                    "material": material_id.to_string(),
+                    "mesh": mesh_ref.id().to_string()
+                }),
+            )
+        } else {
+            (
+                ComponentSkinnedMesh::type_uuid(),
+                json!({
+                    "material": material_id.to_string(),
+                    "mesh": mesh_ref.id().to_string(),
+                    "root_bone": root_id
+                }),
+            )
+        })
+    }
+
     /// Builds the scene data of an imported node tree and returns it with the root's id. Each
     /// object's id is seeded from its node's path, so nodes that share a name or have none stay
     /// distinct, and the same file always produces the same ids.
@@ -231,29 +259,42 @@ impl Prefab {
                 "transform": Transform::from(matrix)
             }),
         );
-        if let Some(mesh_ref) = node.meshes.first().and_then(|&index| meshes.get(index)) {
-            let mesh_ref = mesh_ref.clone();
-            let material_id = default_material_id(registry)?;
-            let mesh = mesh_ref.read();
-            if !mesh.bones.is_empty() {
-                entry.insert(
-                    ComponentSkinnedMesh::type_uuid(),
-                    json!({
-                        "material": material_id.to_string(),
-                        "mesh": mesh_ref.id().to_string(),
-                        "root_bone": root_id
-                    }),
-                );
-            } else {
-                entry.insert(
-                    ComponentMesh::type_uuid(),
-                    json!({
-                        "material": material_id.to_string(),
-                        "mesh": mesh_ref.id().to_string()
-                    }),
-                );
-            }
+        // The node's first mesh goes on its own object; each further mesh, such as another
+        // material's part, goes on a child object at the node's origin.
+        let node_meshes = node
+            .meshes
+            .iter()
+            .filter_map(|&index| meshes.get(index))
+            .collect::<Vec<_>>();
+        if let Some(mesh_ref) = node_meshes.first() {
+            let (type_uuid, component) = Self::mesh_component(registry, mesh_ref, root_id)?;
+            entry.insert(type_uuid, component);
         }
+        for (part, mesh_ref) in node_meshes.iter().enumerate().skip(1) {
+            let part_id = utils::uuid_from_str(&format!("{path}#{part}"));
+            data.hierarchy.entry(id).or_default().push(part_id);
+            let (type_uuid, component) = Self::mesh_component(registry, mesh_ref, root_id)?;
+            data.components.insert(
+                part_id,
+                [
+                    (
+                        ComponentID::type_uuid(),
+                        json!({
+                            "id": part_id.to_string(),
+                            "name": format!("{}_{part}", node.name)
+                        }),
+                    ),
+                    (
+                        ComponentTransform::type_uuid(),
+                        json!({ "transform": Transform::default() }),
+                    ),
+                    (type_uuid, component),
+                ]
+                .into_iter()
+                .collect(),
+            );
+        }
+        let entry = data.components.entry(id).or_default();
         if let Some((index, offset_matrix)) = bones.get(&node.name) {
             entry.insert(
                 ComponentBone::type_uuid(),
@@ -425,5 +466,50 @@ mod tests {
         let again = import_tank();
         assert_eq!(again.root, tank.root);
         assert_eq!(again.data.hierarchy, tank.data.hierarchy);
+    }
+
+    /// Name of each object holding a mesh, and whether the mesh is skinned, sorted by name.
+    fn mesh_objects(prefab: &Prefab) -> Vec<(String, bool)> {
+        let mut objects = prefab
+            .data
+            .components
+            .values()
+            .filter_map(|components| {
+                let name = components[&ComponentID::type_uuid()]["name"]
+                    .as_str()?
+                    .to_string();
+                if components.contains_key(&ComponentSkinnedMesh::type_uuid()) {
+                    Some((name, true))
+                } else if components.contains_key(&ComponentMesh::type_uuid()) {
+                    Some((name, false))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        objects.sort();
+        objects
+    }
+
+    #[test]
+    fn every_part_of_a_shared_mesh_is_attached_with_its_node_skin() {
+        // One mesh of two primitives, used by a skinned node and by an unskinned node.
+        let assets = crate::test_utils::TestAssets::models();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let path = assets.fixtures_root().join("gltf/SharedMesh.gltf");
+        let prefab = Prefab::from_file(&context, &path)
+            .unwrap_or_else(|e| panic!("failed to import the shared mesh: {e}"))
+            .asset;
+
+        assert_eq!(
+            mesh_objects(&prefab),
+            [
+                ("Skinned".to_string(), true),
+                ("Skinned_1".to_string(), true),
+                ("Static".to_string(), false),
+                ("Static_1".to_string(), false),
+            ]
+        );
     }
 }
