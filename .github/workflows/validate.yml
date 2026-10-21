@@ -47,13 +47,12 @@ jobs:
             mkdir -p "$dir"
             cp -v "$RUNNER_TEMP"/mesa/*.dll "$dir"/
           done
-          # VK_ICD_FILENAMES is the older name for VK_DRIVER_FILES; the runner's Vulkan loader may predate the new one.
+          # The runner account is elevated, and the Vulkan loader ignores VK_DRIVER_FILES in elevated processes,
+          # so register lavapipe the way an installed driver would be.
           icd="$(cygpath --windows "$RUNNER_TEMP/mesa/lvp_icd.x86_64.json")"
-          echo "VK_DRIVER_FILES=$icd" >> "$GITHUB_ENV"
-          echo "VK_ICD_FILENAMES=$icd" >> "$GITHUB_ENV"
+          MSYS_NO_PATHCONV=1 reg.exe add 'HKLM\SOFTWARE\Khronos\Vulkan\Drivers' /v "$icd" /t REG_DWORD /d 0 /f
           echo "VK_LOADER_DEBUG=error" >> "$GITHUB_ENV"
           echo "GALLIUM_DRIVER=llvmpipe" >> "$GITHUB_ENV"
-          powershell.exe -NoProfile -Command "(Get-Item C:/Windows/System32/vulkan-1.dll).VersionInfo.FileVersion" || echo "::notice::no system Vulkan loader"
         env:
           MESA_VERSION: 24.2.3
 
