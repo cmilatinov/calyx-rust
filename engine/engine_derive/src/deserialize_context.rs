@@ -3,20 +3,29 @@ use proc_macro2::{Ident, Span};
 use quote::{format_ident, quote};
 use syn::{
     parse_macro_input, Data, DeriveInput, Fields, GenericParam, Generics, Lifetime, LifetimeParam,
-    Type, TypePath, Variant,
+    Path, Type, TypePath, Variant,
 };
 
 /// The main entry point for the proc macro
 pub fn derive_deserialize_with_context(input: TokenStream) -> TokenStream {
     // Parse the input tokens into a syntax tree
     let input = parse_macro_input!(input as DeriveInput);
+    expand(&input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
 
+fn expand(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     // Get the name of the struct
     let type_name = &input.ident;
 
     // Extract the context type from the struct attributes
-    let context_type =
-        extract_context_type(&input.attrs).expect("DeserializeWithContext requires a context type");
+    let context_type = extract_context_type(&input.attrs)?.ok_or_else(|| {
+        syn::Error::new_spanned(
+            type_name,
+            "DeserializeWithContext requires a context type, as in `#[context(MyContext)]`",
+        )
+    })?;
 
     // Add a lifetime parameter 'de for trait impl
     let (_, ty_generics, where_clause) = input.generics.split_for_impl();
@@ -36,16 +45,13 @@ pub fn derive_deserialize_with_context(input: TokenStream) -> TokenStream {
 
     // Generate implementation based on whether it's a struct or enum
     let implementation = match &input.data {
-        Data::Struct(data) => {
-            // panic!("{}", quote!(#ty_generics).to_string());
-            generate_struct_impl(
-                type_name,
-                &input.generics,
-                &trait_generics,
-                &context_type,
-                data,
-            )
-        }
+        Data::Struct(data) => generate_struct_impl(
+            type_name,
+            &input.generics,
+            &trait_generics,
+            &context_type,
+            data,
+        )?,
         Data::Enum(data) => generate_enum_impl(
             type_name,
             &input.generics,
@@ -53,7 +59,12 @@ pub fn derive_deserialize_with_context(input: TokenStream) -> TokenStream {
             &context_type,
             data.variants.iter().collect(),
         ),
-        Data::Union(_) => panic!("DeserializeWithContext does not support unions"),
+        Data::Union(data) => {
+            return Err(syn::Error::new_spanned(
+                data.union_token,
+                "DeserializeWithContext does not support unions",
+            ))
+        }
     };
 
     // Generate the final implementation
@@ -72,7 +83,7 @@ pub fn derive_deserialize_with_context(input: TokenStream) -> TokenStream {
         }
     };
 
-    TokenStream::from(expanded)
+    Ok(expanded)
 }
 
 // Generate implementation for structs
@@ -82,14 +93,22 @@ fn generate_struct_impl(
     trait_generics: &Generics,
     context_type: &Type,
     data: &syn::DataStruct,
-) -> proc_macro2::TokenStream {
+) -> syn::Result<proc_macro2::TokenStream> {
     // Extract the fields of the struct
     let fields = match &data.fields {
         Fields::Named(fields) => &fields.named,
-        Fields::Unnamed(_) => {
-            panic!("DeserializeWithContext only supports structs with named fields")
+        Fields::Unnamed(fields) => {
+            return Err(syn::Error::new_spanned(
+                fields,
+                "DeserializeWithContext only supports structs with named fields",
+            ))
         }
-        Fields::Unit => panic!("DeserializeWithContext only supports structs with fields"),
+        Fields::Unit => {
+            return Err(syn::Error::new_spanned(
+                struct_name,
+                "DeserializeWithContext only supports structs with fields",
+            ))
+        }
     };
     let (_, struct_ty_generics, _) = struct_generics.split_for_impl();
     let (trait_impl_generics, trait_ty_generics, trait_where_clause) =
@@ -115,7 +134,12 @@ fn generate_struct_impl(
     let mut field_defaults = quote! {};
     let mut field_initializers = quote! {};
     for field in fields {
-        let field_name = field.ident.as_ref().unwrap();
+        let Some(field_name) = field.ident.as_ref() else {
+            return Err(syn::Error::new_spanned(
+                field,
+                "DeserializeWithContext only supports named fields",
+            ));
+        };
         let field_type = &field.ty;
 
         if has_skip_attribute(&field.attrs) {
@@ -154,7 +178,7 @@ fn generate_struct_impl(
     }
 
     // Generate struct visitor implementation
-    quote! {
+    Ok(quote! {
         struct FieldVisitor #trait_ty_generics {
             context: &'de #context_type,
             #visitor_fields
@@ -194,7 +218,7 @@ fn generate_struct_impl(
             #visitor_initializers
         };
         deserializer.deserialize_map(visitor)
-    }
+    })
 }
 
 // Generate implementation for enums
@@ -316,15 +340,10 @@ fn has_skip_attribute(attrs: &[syn::Attribute]) -> bool {
 }
 
 // Extract context type from #[context(...)]
-fn extract_context_type(attrs: &[syn::Attribute]) -> Option<Type> {
-    let attr = attrs.iter().find(|attr| attr.path().is_ident("context"))?;
-    let mut type_path = None;
-    let _ = attr.parse_nested_meta(|meta| {
-        type_path = Some(Type::Path(TypePath {
-            qself: None,
-            path: meta.path.clone(),
-        }));
-        Ok(())
-    });
-    type_path
+fn extract_context_type(attrs: &[syn::Attribute]) -> syn::Result<Option<Type>> {
+    let Some(attr) = attrs.iter().find(|attr| attr.path().is_ident("context")) else {
+        return Ok(None);
+    };
+    let path = attr.parse_args::<Path>()?;
+    Ok(Some(Type::Path(TypePath { qself: None, path })))
 }

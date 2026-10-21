@@ -58,15 +58,20 @@ pub(crate) fn reflected_type_impl(
 pub(crate) fn register_trait_meta_impls(
     name: &impl ToTokens,
     traits: impl IntoIterator<Item = Path>,
-) -> TokenStream {
-    traits
-        .into_iter()
-        .fold(TokenStream::new(), |tokens, trait_path| {
-            let trait_ident = trait_path.segments.last().unwrap().ident.clone();
-            let reflect_trait_ident = format_ident!("Reflect{}", trait_ident);
-            quote! {
-                #tokens
-                registry.meta_impls::<#name, #reflect_trait_ident>();
-            }
-        })
+) -> syn::Result<TokenStream> {
+    let mut tokens = TokenStream::new();
+    for trait_path in traits {
+        let Some(segment) = trait_path.segments.last() else {
+            return Err(syn::Error::new_spanned(
+                &trait_path,
+                "expected a trait path, for example `Default`",
+            ));
+        };
+        let reflect_trait_ident = format_ident!("Reflect{}", segment.ident);
+        tokens = quote! {
+            #tokens
+            registry.meta_impls::<#name, #reflect_trait_ident>();
+        };
+    }
+    Ok(tokens)
 }
