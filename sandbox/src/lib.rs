@@ -10,12 +10,7 @@ use engine::reflect::type_registry::TypeRegistry;
 
 #[no_mangle]
 pub extern "C" fn plugin_main(registry: &mut TypeRegistry) {
-    for f in inventory::iter::<engine::ReflectRegistrationFn>() {
-        if f.crate_name != env!("CARGO_PKG_NAME") {
-            continue;
-        }
-        (f.function)(registry);
-    }
+    registry.register_crate(env!("CARGO_PKG_NAME"));
 }
 
 #[cfg(test)]

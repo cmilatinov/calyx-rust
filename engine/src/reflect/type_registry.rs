@@ -10,9 +10,21 @@ use std::any::TypeId;
 use std::collections::HashMap;
 use uuid::Uuid;
 
-/// Inventory entry that registers reflected types into a [`TypeRegistry`].
-pub struct TypeRegistrationFn(pub fn(&mut TypeRegistry));
-collect!(TypeRegistrationFn);
+/// Inventory entry that registers one reflected type into a [`TypeRegistry`].
+///
+/// `#[derive(Reflect)]` and `impl_reflect_value!` submit one per type, and
+/// [`TypeRegistry::new`] runs them all.
+pub struct ReflectRegistrationFn {
+    /// Crate that produced this registration.
+    pub crate_name: &'static str,
+    /// Module path that produced this registration.
+    pub module_path: &'static str,
+    /// Debug-friendly name for the registration source.
+    pub name: &'static str,
+    /// Callback that inserts one or more types into a [`TypeRegistry`].
+    pub function: fn(&mut TypeRegistry),
+}
+collect!(ReflectRegistrationFn);
 
 /// Stored metadata for one reflected type.
 #[repr(C)]
@@ -81,16 +93,39 @@ impl Default for TypeRegistry {
 }
 
 impl TypeRegistry {
-    /// Builds a registry and runs all inventory-based registration functions.
+    /// Builds a registry holding every reflected type linked into this binary.
     pub fn new() -> Self {
         let mut registry = Self {
             types: Default::default(),
             identities: Default::default(),
         };
-        for f in inventory::iter::<TypeRegistrationFn> {
-            f.0(&mut registry)
-        }
+        let count = registry.run_registrations(|_| true);
+        log::info!("Applied {count} reflection registration callbacks");
         registry
+    }
+
+    /// Registers every reflected type declared by the crate named `crate_name`.
+    ///
+    /// Plugin entry points call this with `env!("CARGO_PKG_NAME")` so they add
+    /// only their own types to the host registry.
+    pub fn register_crate(&mut self, crate_name: &str) {
+        self.run_registrations(|f| f.crate_name == crate_name);
+    }
+
+    /// Runs the inventory registrations accepted by `filter`, returning how many ran.
+    fn run_registrations(&mut self, filter: impl Fn(&ReflectRegistrationFn) -> bool) -> usize {
+        let mut count = 0;
+        for f in inventory::iter::<ReflectRegistrationFn>().filter(|f| filter(f)) {
+            log::trace!(
+                "Registering reflected types from {}::{} ({})",
+                f.crate_name,
+                f.module_path,
+                f.name
+            );
+            (f.function)(self);
+            count += 1;
+        }
+        count
     }
 }
 
@@ -636,5 +671,12 @@ mod tests {
         reg.meta_impls::<Bar, DupMetaB>();
         assert!(reg.trait_meta::<DupMetaB>(Foo::type_uuid()).is_none());
         assert!(reg.trait_meta::<DupMetaB>(Bar::type_uuid()).is_some());
+    }
+
+    #[test]
+    fn new_registers_derived_and_value_types() {
+        let reg = TypeRegistry::new();
+        assert!(reg.type_registration::<Foo>().is_some());
+        assert!(reg.type_registration::<f32>().is_some());
     }
 }
