@@ -75,7 +75,8 @@ impl GameObjectRef {
 }
 
 /// Rewrites every [`GameObjectRef`] reachable from `value` through `id_mapping`,
-/// walking reflected struct fields and container elements recursively.
+/// walking reflected struct fields, container elements and enum variant fields
+/// recursively.
 ///
 /// Nil references are left alone. A non-nil reference with no entry in
 /// `id_mapping` is left unchanged and passed to `on_unknown` with its field

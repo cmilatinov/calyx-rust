@@ -28,7 +28,7 @@ impl Parse for ReflectValueDef {
 pub(crate) fn impl_reflect_value(input: TokenStream) -> TokenStream {
     let def = parse_macro_input!(input as ReflectValueDef);
     let name = &def.type_name;
-    let reflect_impls = type_name_and_reflect_impls(name);
+    let reflect_impls = type_name_and_reflect_impls(name, quote! {});
     let register_traits_impl =
         register_trait_meta_impls(name, def.traits.into_iter().collect::<Vec<_>>());
     let reflected_type_impl = reflected_type_impl(

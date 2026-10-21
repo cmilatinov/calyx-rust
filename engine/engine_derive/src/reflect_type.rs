@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 
-use crate::fq::FQAttributeValue;
+use crate::fq::{FQAttributeValue, FQReflect};
 use crate::reflect_impl::{
     reflected_type_impl, register_trait_meta_impls, type_name_and_reflect_impls,
 };
@@ -90,7 +90,11 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
         }
     }
 
-    let reflect_impls = type_name_and_reflect_impls(name);
+    let extra_methods = match &ast.data {
+        Data::Enum(e) => enum_visit_elements(e.variants.iter()),
+        _ => quote! {},
+    };
+    let reflect_impls = type_name_and_reflect_impls(name, extra_methods);
     let register_traits_impl = register_trait_meta_impls(name, trait_paths.unwrap_or_default());
     let register_type_info = match &ast.data {
         Data::Struct(s) => {
@@ -259,6 +263,46 @@ fn enum_type_info<'a>(
     quote! {
         registry.meta_enum::<#name>(#reflect_attrs)
             #(#add_variant_calls)*;
+    }
+}
+
+/// Generates a `visit_elements_mut` override that visits each field of the
+/// enum's active variant, in declaration order.
+fn enum_visit_elements<'a>(
+    variants: impl Iterator<Item = &'a syn::Variant>,
+) -> proc_macro2::TokenStream {
+    let arms = variants
+        .map(|variant| {
+            let ident = &variant.ident;
+            let bindings: Vec<Ident> = (0..variant.fields.len())
+                .map(|index| Ident::new(&format!("__field{index}"), Span::call_site()))
+                .collect();
+            match &variant.fields {
+                Fields::Named(named) => {
+                    let names = named
+                        .named
+                        .iter()
+                        .map(|field| field.ident.as_ref().unwrap());
+                    quote! {
+                        Self::#ident { #(#names: #bindings),* } => { #(visit(#bindings);)* }
+                    }
+                }
+                Fields::Unnamed(_) => quote! {
+                    Self::#ident(#(#bindings),*) => { #(visit(#bindings);)* }
+                },
+                Fields::Unit => quote! { Self::#ident => {} },
+            }
+        })
+        .collect::<Vec<_>>();
+    if arms.is_empty() {
+        return quote! {};
+    }
+    quote! {
+        fn visit_elements_mut(&mut self, visit: &mut dyn FnMut(&mut dyn #FQReflect)) {
+            match self {
+                #(#arms)*
+            }
+        }
     }
 }
 

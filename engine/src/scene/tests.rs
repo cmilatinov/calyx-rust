@@ -943,6 +943,17 @@ mod tests {
         target: GameObjectRef,
     }
 
+    #[derive(Default, Clone, TypeUuid, Serialize, Deserialize, Reflect)]
+    #[uuid = "e2a64c17-9b3f-4d85-b0c6-5f1e8a7d2c93"]
+    enum RefChoice {
+        #[default]
+        Empty,
+        Named {
+            target: GameObjectRef,
+        },
+        Pair(f32, GameObjectRef),
+    }
+
     #[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
     #[uuid = "b7d2e915-6c3a-4f08-8a4e-1d9f5c27e6b3"]
     #[reflect(Default, TypeUuidDynamic, Component)]
@@ -950,6 +961,7 @@ mod tests {
     struct NestedRefComponent {
         slot: RefSlot,
         targets: Vec<GameObjectRef>,
+        choices: Vec<RefChoice>,
     }
 
     impl Component for NestedRefComponent {}
@@ -992,6 +1004,7 @@ mod tests {
                     target: GameObjectRef::new(child),
                 },
                 targets: Vec::new(),
+                ..Default::default()
             });
 
         let (slot_target, _) = nested_refs(&scene, instance);
@@ -1007,6 +1020,7 @@ mod tests {
             instantiate_with_refs(&mut scene, |root, child| NestedRefComponent {
                 slot: RefSlot::default(),
                 targets: vec![GameObjectRef::new(child), GameObjectRef::new(root)],
+                ..Default::default()
             });
 
         let (_, targets) = nested_refs(&scene, instance);
@@ -1014,6 +1028,37 @@ mod tests {
             targets,
             vec![scene.uuid(instance_child), scene.uuid(instance)]
         );
+    }
+
+    #[test]
+    fn instantiate_prefab_remaps_references_inside_enum_variants() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+
+        let (instance, instance_child) =
+            instantiate_with_refs(&mut scene, |root, child| NestedRefComponent {
+                choices: vec![
+                    RefChoice::Named {
+                        target: GameObjectRef::new(child),
+                    },
+                    RefChoice::Pair(1.0, GameObjectRef::new(root)),
+                    RefChoice::Empty,
+                ],
+                ..Default::default()
+            });
+
+        let entry = scene.entry(instance).unwrap();
+        let component = entry.get_component::<NestedRefComponent>().unwrap();
+        let ids: Vec<Uuid> = component
+            .choices
+            .iter()
+            .filter_map(|choice| match choice {
+                RefChoice::Named { target } => Some(target.id()),
+                RefChoice::Pair(_, target) => Some(target.id()),
+                RefChoice::Empty => None,
+            })
+            .collect();
+        assert_eq!(ids, vec![scene.uuid(instance_child), scene.uuid(instance)]);
     }
 
     #[test]
@@ -1028,6 +1073,7 @@ mod tests {
                 target: GameObjectRef::new(outside_id),
             },
             targets: vec![GameObjectRef::new(outside_id), GameObjectRef::default()],
+            ..Default::default()
         });
 
         let (slot_target, targets) = nested_refs(&scene, instance);
@@ -1057,6 +1103,7 @@ mod tests {
                 target: GameObjectRef::new(unknown),
             },
             targets: vec![GameObjectRef::new(known), GameObjectRef::new(unknown)],
+            ..Default::default()
         };
 
         let mut reported = Vec::new();

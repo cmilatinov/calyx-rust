@@ -3,7 +3,12 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 use syn::Path;
 
-pub(crate) fn type_name_and_reflect_impls(name: &impl ToTokens) -> TokenStream {
+/// Generates the `TypeName` and `Reflect` impls for `name`. `extra_methods`
+/// adds or overrides `Reflect` methods, such as `visit_elements_mut`.
+pub(crate) fn type_name_and_reflect_impls(
+    name: &impl ToTokens,
+    extra_methods: TokenStream,
+) -> TokenStream {
     quote! {
         #[automatically_derived]
         impl #FQTypeName for #name {
@@ -34,6 +39,7 @@ pub(crate) fn type_name_and_reflect_impls(name: &impl ToTokens) -> TokenStream {
                     false
                 }
             }
+            #extra_methods
         }
     }
 }
