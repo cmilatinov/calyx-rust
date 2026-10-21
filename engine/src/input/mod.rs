@@ -137,39 +137,12 @@ impl<'a> Input<'a> {
             },
         }
     }
-    /// Returns the underlying egui context.
-    pub fn ctx(&self) -> &egui::Context {
-        self.context
-    }
-
-    /// Returns the optional egui response bound to this input surface.
-    pub fn res(&self) -> Option<&egui::Response> {
-        self.res
-    }
-
-    /// Reads raw egui input when input is active.
-    pub fn input<R>(&self, reader: impl FnOnce(&egui::InputState) -> R) -> Option<R> {
-        self.context.input(|input| {
-            if self.is_active {
-                Some(reader(input))
-            } else {
-                None
-            }
-        })
-    }
-
-    /// Mutates raw egui input when input is active.
-    pub fn input_mut<R: Default>(
-        &self,
-        reader: impl FnOnce(&mut egui::InputState) -> R,
-    ) -> Option<R> {
-        self.context.input_mut(|input| {
-            if self.is_active {
-                Some(reader(input))
-            } else {
-                None
-            }
-        })
+    /// Reads egui input when input is active.
+    fn read<R: Default>(&self, reader: impl FnOnce(&egui::InputState) -> R) -> R {
+        if !self.is_active {
+            return R::default();
+        }
+        self.context.input(reader)
     }
 
     /// Resolves a named action into a frame-local [`ActionState`].
@@ -199,6 +172,36 @@ impl<'a> Input<'a> {
     /// Returns pointer movement since the previous frame.
     pub fn cursor_delta(&self) -> egui::Vec2 {
         self.cursor_delta
+    }
+
+    /// Returns the pointer position used for interaction this frame, while input is
+    /// active.
+    pub fn pointer_pos(&self) -> Option<egui::Pos2> {
+        self.read(|input| input.pointer.interact_pos())
+    }
+
+    /// Returns raw pointer motion reported by the device this frame, while input is
+    /// active. Unlike [`Self::cursor_delta`], it keeps reporting while the cursor is
+    /// confined.
+    pub fn pointer_motion(&self) -> egui::Vec2 {
+        self.read(|input| input.pointer.motion().unwrap_or_default())
+    }
+
+    /// Returns smoothed scroll movement this frame, while input is active.
+    pub fn scroll_delta(&self) -> egui::Vec2 {
+        self.read(|input| input.smooth_scroll_delta)
+    }
+
+    /// Returns how far the pointer dragged this input surface this frame, when
+    /// `button` is dragging it and input is active.
+    pub fn drag_delta(&self, button: PointerButton) -> Option<egui::Vec2> {
+        let res = self.res.filter(|_| self.is_active)?;
+        res.dragged_by(button).then(|| res.drag_delta())
+    }
+
+    /// Returns the screen rectangle of this input surface, when one is bound.
+    pub fn surface_rect(&self) -> Option<egui::Rect> {
+        self.res.map(|res| res.rect)
     }
 }
 
@@ -351,6 +354,10 @@ pub enum InputBinding {
         /// Modifier requirements.
         modifiers: ModifierBinding,
     },
+    /// Modifier keys held on their own; down while every given modifier is held.
+    /// Egui reports no edges for modifiers, so the action is never just pressed or
+    /// just released.
+    Modifier(Modifiers),
 }
 
 impl InputBinding {
@@ -393,6 +400,9 @@ impl InputBinding {
             Self::ModifiedPointerButton { button, modifiers } => {
                 modifiers.matches(input.modifiers) && input.pointer.button_down(*button)
             }
+            Self::Modifier(modifiers) => {
+                ModifierBinding::requiring(*modifiers).matches(input.modifiers)
+            }
         }
     }
 
@@ -430,6 +440,10 @@ impl InputBinding {
                     ActionState::default()
                 }
             }
+            Self::Modifier(_) => ActionState {
+                pressed: self.is_down(input),
+                ..ActionState::default()
+            },
         }
     }
 }
@@ -522,9 +536,9 @@ impl std::ops::BitOr for ActionState {
 
 #[cfg(test)]
 mod tests {
-    use super::{ActionMap, InputBinding, ModifierBinding};
+    use super::{ActionMap, Input, InputBinding, InputState, ModifierBinding};
     use crate::assets::{Asset, LoadedAsset};
-    use egui::{Key, Modifiers};
+    use egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput, Rect, Sense, Vec2};
     use uuid::Uuid;
 
     #[test]
@@ -607,5 +621,105 @@ mod tests {
         assert_eq!(ActionMap::file_extensions(), &["cxinput"]);
         assert_eq!(loaded.asset.actions["save"].len(), 1);
         std::fs::remove_file(asset_path).expect("failed to remove temp action map asset");
+    }
+
+    fn pass(events: Vec<Event>, modifiers: Modifiers) -> RawInput {
+        RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(100.0))),
+            modifiers,
+            events,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn pointer_state_is_read_only_while_input_is_active() {
+        let ctx = egui::Context::default();
+        let mut state = InputState::default();
+        ctx.begin_pass(pass(
+            vec![
+                Event::PointerMoved(Pos2::new(20.0, 30.0)),
+                Event::MouseMoved(Vec2::new(4.0, -2.0)),
+            ],
+            Modifiers::NONE,
+        ));
+        let active = Input::from_ctx(&ctx, None, &mut state, true);
+        let inactive = Input::from_ctx(&ctx, None, &mut state, false);
+
+        assert_eq!(active.pointer_pos(), Some(Pos2::new(20.0, 30.0)));
+        assert_eq!(active.pointer_motion(), Vec2::new(4.0, -2.0));
+        assert_eq!(active.surface_rect(), None);
+        assert_eq!(active.drag_delta(PointerButton::Primary), None);
+        assert_eq!(inactive.pointer_pos(), None);
+        assert_eq!(inactive.pointer_motion(), Vec2::ZERO);
+        assert_eq!(inactive.scroll_delta(), Vec2::ZERO);
+        let _ = ctx.end_pass();
+    }
+
+    #[test]
+    fn drag_delta_reports_surface_drags_by_the_given_button() {
+        let ctx = egui::Context::default();
+        let mut state = InputState::default();
+        let surface = Rect::from_min_size(Pos2::ZERO, Vec2::splat(100.0));
+        let mut frame = |events: Vec<Event>| {
+            ctx.begin_pass(pass(events, Modifiers::NONE));
+            let mut drags = None;
+            egui::CentralPanel::default().show(&ctx, |ui| {
+                let res = ui.interact(surface, ui.id().with("surface"), Sense::drag());
+                let input = Input::from_ctx(&ctx, Some(&res), &mut state, true);
+                assert_eq!(input.surface_rect(), Some(surface));
+                drags = Some((
+                    input.drag_delta(PointerButton::Secondary),
+                    input.drag_delta(PointerButton::Primary),
+                ));
+            });
+            let _ = ctx.end_pass();
+            drags.unwrap()
+        };
+        let button = |pos: Pos2, pressed: bool| Event::PointerButton {
+            pos,
+            button: PointerButton::Secondary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+
+        frame(vec![Event::PointerMoved(Pos2::new(50.0, 50.0))]);
+        frame(vec![button(Pos2::new(50.0, 50.0), true)]);
+        frame(vec![Event::PointerMoved(Pos2::new(70.0, 50.0))]);
+        let (secondary, primary) = frame(vec![Event::PointerMoved(Pos2::new(80.0, 55.0))]);
+
+        assert_eq!(secondary, Some(Vec2::new(10.0, 5.0)));
+        assert_eq!(primary, None);
+    }
+
+    #[test]
+    fn modifier_bindings_hold_while_their_modifiers_are_held() {
+        let mut map = ActionMap::new();
+        map.bind_action("boost", InputBinding::Modifier(Modifiers::CTRL));
+        map.bind_axis(
+            "vertical",
+            InputBinding::Key(Key::Space),
+            InputBinding::Modifier(Modifiers::SHIFT),
+        );
+        let ctx = egui::Context::default();
+        let mut state = InputState::new(map);
+        let ctrl_shift = Modifiers {
+            ctrl: true,
+            shift: true,
+            ..Default::default()
+        };
+
+        ctx.begin_pass(pass(Vec::new(), ctrl_shift));
+        let input = Input::from_ctx(&ctx, None, &mut state, true);
+        assert!(input.action("boost").pressed());
+        assert!(!input.action("boost").just_pressed());
+        assert_eq!(input.axis("vertical"), -1.0);
+        let _ = ctx.end_pass();
+
+        ctx.begin_pass(pass(Vec::new(), Modifiers::NONE));
+        let input = Input::from_ctx(&ctx, None, &mut state, true);
+        assert!(!input.action("boost").pressed());
+        assert_eq!(input.axis("vertical"), 0.0);
+        let _ = ctx.end_pass();
     }
 }
