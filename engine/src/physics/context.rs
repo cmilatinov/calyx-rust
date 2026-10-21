@@ -111,6 +111,7 @@ impl PhysicsContext {
     ) -> Collider {
         ColliderBuilder::new(Self::collider_shape(collider.shape))
             .position(Self::isometry(transform))
+            .enabled(collider.enabled)
             .friction(collider.friction)
             .density(collider.density)
             .active_events(ActiveEvents::COLLISION_EVENTS | ActiveEvents::CONTACT_FORCE_EVENTS)
@@ -336,6 +337,7 @@ impl PhysicsContext {
             if c_collider.dirty {
                 let c_handle = scene.physics.entity_collider[&go.entity];
                 let c = &mut scene.physics.colliders[c_handle];
+                c.set_enabled(c_collider.enabled);
                 c.set_shape(Self::collider_shape(c_collider.shape));
                 c.set_friction(c_collider.friction);
                 c.set_density(c_collider.density);
