@@ -121,18 +121,10 @@ pub fn test_render_state() -> egui_wgpu::RenderState {
     }
 }
 
-fn build_type_registry() -> Ref<TypeRegistry> {
-    let mut type_registry = TypeRegistry::new();
-    for f in inventory::iter::<crate::ReflectRegistrationFn> {
-        (f.function)(&mut type_registry);
-    }
-    Ref::new(type_registry)
-}
-
 /// Builds a registry context with the default engine registrations.
 pub fn test_registries() -> ReadOnlyRegistryContext {
     let render_context = test_render_context();
-    let type_registry = build_type_registry();
+    let type_registry = Ref::new(TypeRegistry::new());
     let component_registry = Ref::new(ComponentRegistry::new(&type_registry.read()));
     let asset_registry = AssetRegistry::new_test(
         PathBuf::from("."),
@@ -268,7 +260,7 @@ fn copy_dir_all(source: &Path, target: &Path) -> io::Result<()> {
 /// Builds a registry context backed by the provided asset roots.
 pub fn test_registries_with_assets(asset_paths: Vec<PathBuf>) -> ReadOnlyRegistryContext {
     let render_context = test_render_context();
-    let type_registry = build_type_registry();
+    let type_registry = Ref::new(TypeRegistry::new());
     let component_registry = Ref::new(ComponentRegistry::new(&type_registry.read()));
     let asset_registry = AssetRegistry::new_test_with_assets(
         asset_paths,
@@ -286,7 +278,7 @@ pub fn test_registries_with_assets(asset_paths: Vec<PathBuf>) -> ReadOnlyRegistr
 /// Builds an asset context backed by the provided asset roots.
 pub fn test_asset_context_with_assets(asset_paths: Vec<PathBuf>) -> AssetContext {
     let render_context = test_render_context();
-    let type_registry = build_type_registry();
+    let type_registry = Ref::new(TypeRegistry::new());
     let component_registry = Ref::new(ComponentRegistry::new(&type_registry.read()));
     let asset_registry = AssetRegistry::new_test_with_assets(
         asset_paths,
@@ -312,7 +304,7 @@ pub fn test_scene() -> Scene {
 /// Returns a test game context with default resources and registries.
 pub fn test_game_context() -> GameContext {
     let render_context = test_render_context();
-    let type_registry = build_type_registry();
+    let type_registry = Ref::new(TypeRegistry::new());
     let component_registry = Ref::new(ComponentRegistry::new(&type_registry.read()));
     let asset_registry = AssetRegistry::new_test(
         PathBuf::from("."),

@@ -38,7 +38,14 @@ pub(crate) fn impl_reflect_value(input: TokenStream) -> TokenStream {
             #register_traits_impl
         },
         quote! {
-            inventory::submit!(engine::reflect::type_registry::TypeRegistrationFn(<#name as engine::reflect::ReflectedType>::register));
+            inventory::submit!(
+                engine::ReflectRegistrationFn {
+                    crate_name: env!("CARGO_PKG_NAME"),
+                    module_path: module_path!(),
+                    name: stringify!(#name),
+                    function: <#name as engine::reflect::ReflectedType>::register
+                }
+            );
         },
     );
 
