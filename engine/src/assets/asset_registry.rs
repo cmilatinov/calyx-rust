@@ -118,34 +118,59 @@ enum LoadMode {
 /// Per-id loading slots: at most one thread loads a given asset id at a time.
 #[derive(Default)]
 struct LoadSlots {
-    owners: Mutex<HashMap<Uuid, ThreadId>>,
+    state: Mutex<LoadSlotState>,
     released: Condvar,
+}
+
+/// Which thread loads each id, and which id each blocked thread waits for.
+#[derive(Default)]
+struct LoadSlotState {
+    owners: HashMap<Uuid, ThreadId>,
+    waiting: HashMap<ThreadId, Uuid>,
+}
+
+impl LoadSlotState {
+    /// Whether `owner`, directly or through the threads it waits on, waits
+    /// for `thread`; `thread` waiting on `owner` would then never wake.
+    fn waits_for(&self, mut owner: ThreadId, thread: ThreadId) -> bool {
+        for _ in 0..=self.owners.len() {
+            if owner == thread {
+                return true;
+            }
+            match self.waiting.get(&owner).and_then(|id| self.owners.get(id)) {
+                Some(next) => owner = *next,
+                None => return false,
+            }
+        }
+        false
+    }
 }
 
 impl LoadSlots {
     /// Waits until no other thread is loading `id`, then claims it. Fails
-    /// instead of deadlocking when this thread already holds the slot, which
-    /// means a loader requested the asset it is loading.
+    /// instead of deadlocking when waiting would close a cycle: this thread
+    /// already holds the slot, or the owner waits, through any chain of
+    /// threads, on a slot this thread holds.
     fn acquire(&self, id: Uuid) -> Result<LoadSlotGuard<'_>, AssetError> {
         let current = std::thread::current().id();
-        let mut owners = self.owners.lock().unwrap_or_else(|err| err.into_inner());
+        let mut state = self.state.lock().unwrap_or_else(|err| err.into_inner());
         loop {
-            match owners.get(&id) {
-                None => {
-                    owners.insert(id, current);
-                    return Ok(LoadSlotGuard { slots: self, id });
-                }
-                Some(owner) if *owner == current => {
-                    return Err(AssetError::LoadError
-                        .with_source(format!("asset {id} requested while it is loading")));
-                }
-                Some(_) => {
-                    owners = self
-                        .released
-                        .wait(owners)
-                        .unwrap_or_else(|err| err.into_inner());
-                }
+            let Some(owner) = state.owners.get(&id).copied() else {
+                state.waiting.remove(&current);
+                state.owners.insert(id, current);
+                return Ok(LoadSlotGuard { slots: self, id });
+            };
+            if state.waits_for(owner, current) {
+                state.waiting.remove(&current);
+                return Err(AssetError::LoadError.with_source(format!(
+                    "asset {id} requested while a load it depends on is in progress"
+                )));
             }
+            state.waiting.insert(current, id);
+            state = self
+                .released
+                .wait(state)
+                .unwrap_or_else(|err| err.into_inner());
         }
     }
 }
@@ -158,9 +183,10 @@ struct LoadSlotGuard<'a> {
 impl Drop for LoadSlotGuard<'_> {
     fn drop(&mut self) {
         self.slots
-            .owners
+            .state
             .lock()
             .unwrap_or_else(|err| err.into_inner())
+            .owners
             .remove(&self.id);
         self.slots.released.notify_all();
     }
@@ -1823,6 +1849,72 @@ mod tests {
             SLOW_TEST_ASSET_LOADS.load(std::sync::atomic::Ordering::SeqCst),
             1
         );
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    /// Asset whose file names another asset of this type that it loads, slowly
+    /// enough for two threads to each hold one slot of a cycle.
+    struct CyclicTestAsset;
+
+    impl TypeUuid for CyclicTestAsset {
+        fn type_uuid() -> Uuid {
+            Uuid::from_u128(0x2c7a_94e1_5f30_4b8d_a1c6_0e9f_37b2_d815)
+        }
+    }
+
+    impl Asset for CyclicTestAsset {
+        fn file_extensions() -> &'static [&'static str] {
+            &["cxtestcycle"]
+        }
+
+        fn from_file(
+            assets: &ReadOnlyAssetContext,
+            path: &Path,
+        ) -> Result<LoadedAsset<Self>, AssetError> {
+            let other = std::fs::read_to_string(path)
+                .map_err(|err| AssetError::LoadError.with_path(path).with_source(err))?;
+            std::thread::sleep(Duration::from_millis(200));
+            assets
+                .registries
+                .assets
+                .read()
+                .load::<CyclicTestAsset>(other.trim())?;
+            Ok(LoadedAsset::new(Self))
+        }
+    }
+
+    #[test]
+    fn concurrent_mutually_dependent_loads_fail_instead_of_deadlocking() {
+        let root = temp_asset_root("calyx-concurrent-cycle");
+        std::fs::write(root.join("a.cxtestcycle"), "b").expect("failed to write test asset");
+        std::fs::write(root.join("b.cxtestcycle"), "a").expect("failed to write test asset");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        {
+            let registry = registries.assets.read();
+            registry.register_asset_type::<CyclicTestAsset>();
+            registry.build_meta().expect("failed to rebuild metadata");
+        }
+
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        for name in ["a", "b"] {
+            let assets = registries.assets.clone();
+            let barrier = barrier.clone();
+            let done_tx = done_tx.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                let result = assets.read().load::<CyclicTestAsset>(name).map(|_| ());
+                let _ = done_tx.send(result);
+            });
+        }
+        drop(done_tx);
+
+        for _ in 0..2 {
+            let result = done_rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("concurrent cyclic loads deadlocked");
+            assert!(result.is_err());
+        }
         std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
 
