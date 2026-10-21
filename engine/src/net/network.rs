@@ -403,9 +403,10 @@ impl MessageHandler<NetworkPrefabSyncContext<'_, '_>, GameMessage> for NetworkPr
                         return MessageHandlerResult::Consume;
                     }
                 };
+                // The spawning peer owns the replicated objects on every peer.
                 let mut index = 0;
                 Network::traverse_prefab(
-                    client_id,
+                    *from_client_id,
                     scene,
                     prefab_root,
                     &mut index,

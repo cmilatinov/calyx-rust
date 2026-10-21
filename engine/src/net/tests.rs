@@ -673,4 +673,99 @@ mod tests {
             .receive_messages(&mut received_time, &mut Capture);
         assert_eq!(received_time, Some(42.0));
     }
+
+    #[test]
+    fn remote_prefab_spawn_is_owned_by_sender() {
+        use crate::scene::Prefab;
+
+        let mut harness = TestHarness::new(2);
+        assert!(harness.wait_connected(), "not all clients connected");
+
+        // Every peer registers the same prefab under the same name, so the
+        // spawn's prefab id resolves on each of them.
+        let prefab_refs: Vec<_> = harness
+            .contexts
+            .iter_mut()
+            .map(|ctx| {
+                let scene = ctx.scenes.current_scene_mut();
+                let root = scene.create(None, None);
+                scene.add_component(root, ComponentNetworkObject::default());
+                let prefab: Prefab = scene.create_prefab(root);
+                scene.delete(root);
+                ctx.assets
+                    .registries
+                    .assets
+                    .read()
+                    .create("net_spawn_test_prefab".to_string(), prefab)
+                    .expect("failed to register prefab")
+            })
+            .collect();
+
+        // Wait until both clients know their own id.
+        for _ in 0..200 {
+            harness.pump();
+            if (0..harness.client_count())
+                .all(|i| harness.client(i).resources.network().local_id.is_some())
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let sender_id = harness
+            .client(0)
+            .resources
+            .network()
+            .local_id
+            .expect("sender has no local id");
+        let receiver_id = harness
+            .client(1)
+            .resources
+            .network()
+            .local_id
+            .expect("receiver has no local id");
+        assert_ne!(sender_id, receiver_id);
+
+        let sender = harness.client_mut(0);
+        let sender_scene = sender.scenes.current_scene_mut();
+        let spawned = sender
+            .resources
+            .network_mut()
+            .instantiate_prefab(sender_scene, prefab_refs[1].clone())
+            .expect("sender failed to spawn prefab");
+        let network_object_id = sender
+            .scenes
+            .current_scene()
+            .read_component::<ComponentNetworkObject, _, _>(spawned, |c| c.id)
+            .expect("spawned prefab has no network object");
+
+        let find_owner = |scene: &crate::scene::Scene| {
+            scene.objects().find_map(|go| {
+                scene
+                    .read_component::<ComponentNetworkObject, _, _>(go, |c| {
+                        (c.id == network_object_id).then_some(c.owner_id)
+                    })
+                    .flatten()
+            })
+        };
+
+        let mut receiver_owner = None;
+        for _ in 0..400 {
+            harness.pump();
+            receiver_owner = find_owner(harness.client(1).scenes.current_scene());
+            if receiver_owner.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        assert_eq!(
+            receiver_owner,
+            Some(sender_id),
+            "receiving peer must record the sending client as owner"
+        );
+        assert_eq!(
+            find_owner(harness.client(0).scenes.current_scene()),
+            Some(sender_id)
+        );
+    }
 }
