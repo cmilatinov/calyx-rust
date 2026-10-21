@@ -8,8 +8,7 @@ use darling::ast::NestedMeta;
 use proc_macro2::{Ident, Span};
 use quote::quote;
 use syn::{
-    Attribute, Data, DeriveInput, Expr, ExprLit, Fields, GenericArgument, Lit, LitStr, Meta,
-    MetaNameValue, Path, PathArguments, Type, TypePath,
+    Attribute, Data, DeriveInput, Expr, ExprLit, Fields, Lit, LitStr, Meta, MetaNameValue, Path,
 };
 
 #[derive(Debug)]
@@ -213,36 +212,21 @@ fn struct_type_info(
         }
     });
 
-    let register_list_types = field_info.iter().filter_map(|(_, ty, _, _)| {
-        let element = vec_element_type(ty)?;
-        Some(quote! {
-            registry.meta_list::<#ty, #element>();
-        })
+    let register_field_types = field_info.iter().map(|(_, ty, _, _)| {
+        quote! {
+            (&&engine::reflect::type_registry::FieldTypeRegistrar::<#ty>::new())
+                .register_field_type(registry);
+        }
     });
 
     quote! {
         registry.meta_struct::<#name>(#reflect_attrs)
             #(#add_field_calls)*;
-        #(#register_list_types)*
-    }
-}
-
-/// Returns `E` when `ty` is written as `Vec<E>`, so the field's list type can
-/// be registered alongside its struct.
-fn vec_element_type(ty: &Type) -> Option<&Type> {
-    let Type::Path(TypePath { qself: None, path }) = ty else {
-        return None;
-    };
-    let segment = path.segments.last()?;
-    if segment.ident != "Vec" {
-        return None;
-    }
-    let PathArguments::AngleBracketed(args) = &segment.arguments else {
-        return None;
-    };
-    match args.args.first()? {
-        GenericArgument::Type(element) if args.args.len() == 1 => Some(element),
-        _ => None,
+        {
+            #[allow(unused_imports)]
+            use engine::reflect::type_registry::{RegisterPlainFieldType, RegisterVecFieldType};
+            #(#register_field_types)*
+        }
     }
 }
 

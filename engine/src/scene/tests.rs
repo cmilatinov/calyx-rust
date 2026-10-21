@@ -962,7 +962,10 @@ mod tests {
         slot: RefSlot,
         targets: Vec<GameObjectRef>,
         choices: Vec<RefChoice>,
+        slots: SlotList,
     }
+
+    type SlotList = Vec<RefSlot>;
 
     impl Component for NestedRefComponent {}
 
@@ -1090,6 +1093,11 @@ mod tests {
             panic!("expected list info for Vec<GameObjectRef>");
         };
         assert_eq!(info.element.type_uuid, GameObjectRef::type_uuid());
+
+        let Some(TypeInfo::List(info)) = types.type_info::<SlotList>() else {
+            panic!("expected list info for a Vec field declared through an alias");
+        };
+        assert_eq!(info.element.type_uuid, RefSlot::type_uuid());
     }
 
     #[test]
