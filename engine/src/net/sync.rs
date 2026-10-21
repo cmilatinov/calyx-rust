@@ -1,7 +1,8 @@
 use crate::component::ComponentEventContext;
 use crate::core::Time;
 use crate::net::{
-    ComponentNetworkObject, GameMessage, MessageHandler, MessageHandlerResult, Network,
+    ComponentNetworkObject, GameMessage, MessageHandler, MessageHandlerResult, MessageSender,
+    Network,
 };
 use crate::resource::ResourceMap;
 use lerp::Lerp;
@@ -143,6 +144,7 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>>
             },
             time,
         ): &mut (&mut ComponentEventContext<'_>, &Time),
+        sender: MessageSender,
         message: &GameMessage,
     ) -> MessageHandlerResult {
         let Some(entry) = scene.entry(*game_object) else {
@@ -163,7 +165,7 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>>
                 component_uuid,
                 data,
             } if c_netobj_id == *network_object_id
-                && c_netobj_owner_id == *from_client_id
+                && c_netobj_owner_id == sender.acting_client(*from_client_id)
                 && *component_uuid == self.options.component_uuid =>
             {
                 if let Ok((value, _)) =

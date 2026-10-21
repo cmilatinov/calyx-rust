@@ -6,7 +6,7 @@ use crate::net::client::Client;
 use crate::net::server::Server;
 use crate::net::{
     ComponentNetworkObject, GameMessage, MessageHandler, MessageHandlerResult, MessageQueue,
-    NetworkObjectId, ServerEvent,
+    MessageSender, NetworkObjectId, ServerEvent,
 };
 use crate::scene::{GameObject, Prefab, Scene};
 use crate::try_all;
@@ -225,6 +225,7 @@ impl MessageHandler<(&mut Time, TimeType), GameMessage> for NetworkTimeSync {
     fn handle_message(
         &mut self,
         (time, tick_rate): &mut (&mut Time, TimeType),
+        _sender: MessageSender,
         message: &GameMessage,
     ) -> MessageHandlerResult {
         match message {
@@ -254,6 +255,7 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
     fn handle_message(
         &mut self,
         (client, server, scene, local_id): &mut NetworkSceneSyncContext,
+        sender: MessageSender,
         message: &GameMessage,
     ) -> MessageHandlerResult {
         match message {
@@ -312,6 +314,7 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                 from_client_id,
                 to_client_id,
             } => {
+                let acting_client_id = sender.acting_client(*from_client_id);
                 // TODO(Cristian): Optimize this, maybe cache network ids in scene
                 let Some(game_object) = scene.objects().find(|go| {
                     let Some(entry) = scene.entry(*go) else {
@@ -320,7 +323,7 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                     let Ok(c_netobj) = entry.get_component::<ComponentNetworkObject>() else {
                         return false;
                     };
-                    c_netobj.id == *network_object_id && c_netobj.owner_id == *from_client_id
+                    c_netobj.id == *network_object_id && c_netobj.owner_id == acting_client_id
                 }) else {
                     return MessageHandlerResult::Consume;
                 };
@@ -362,6 +365,7 @@ impl MessageHandler<NetworkPrefabSyncContext<'_, '_>, GameMessage> for NetworkPr
     fn handle_message(
         &mut self,
         (_client, server, scene, context, local_id): &mut NetworkPrefabSyncContext,
+        sender: MessageSender,
         message: &GameMessage,
     ) -> MessageHandlerResult {
         match message {
@@ -371,7 +375,8 @@ impl MessageHandler<NetworkPrefabSyncContext<'_, '_>, GameMessage> for NetworkPr
                 prefab_id,
             } => {
                 if let Some(server) = server {
-                    if let Err(e) = server.broadcast_message_except(*from_client_id, message) {
+                    let acting_client_id = sender.acting_client(*from_client_id);
+                    if let Err(e) = server.broadcast_message_except(acting_client_id, message) {
                         log::warn!("Failed to broadcast SpawnPrefab: {e}");
                     }
                     return MessageHandlerResult::Consume;

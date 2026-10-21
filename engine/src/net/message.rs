@@ -111,6 +111,38 @@ impl GameMessage {
     /// Both client and server use this to reject incompatible builds.
     pub const PROTOCOL_ID: u64 = fnv1a64(Self::PROTOCOL_SCHEMA.as_bytes());
 
+    /// Returns the client the message claims to come from, for the variants
+    /// that carry one.
+    pub fn claimed_sender(&self) -> Option<ClientId> {
+        match self {
+            Self::SyncComponent { from_client_id, .. }
+            | Self::TransferOwnership { from_client_id, .. }
+            | Self::SpawnPrefab { from_client_id, .. }
+            | Self::DestroyGameObject { from_client_id, .. } => Some(*from_client_id),
+            Self::ServerEvent(_)
+            | Self::SelfConnected { .. }
+            | Self::ClientConnected { .. }
+            | Self::ClientDisconnected { .. }
+            | Self::SyncTime { .. } => None,
+        }
+    }
+
+    /// Checks a message the server received from client `sender` over the
+    /// transport.
+    ///
+    /// A client may only send messages that carry a sender id, and that id
+    /// must be its own transport id. Anything else is spoofed or not meant
+    /// for the server.
+    pub fn check_client_origin(&self, sender: ClientId) -> Result<(), String> {
+        match self.claimed_sender() {
+            Some(claimed) if claimed == sender => Ok(()),
+            Some(claimed) => Err(format!(
+                "claims sender {claimed} but the transport reports {sender}"
+            )),
+            None => Err(String::from("is a server-only message")),
+        }
+    }
+
     /// Returns the transport channel to use for this message type.
     pub fn channel(&self) -> GameChannel {
         match self {
@@ -137,11 +169,40 @@ const fn fnv1a64(bytes: &[u8]) -> u64 {
     hash
 }
 
+/// Peer that delivered a queued message, as the transport reported it.
+///
+/// This is the authority for who sent a message: unlike a sender id inside
+/// the message, a client cannot choose it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageSender {
+    /// Produced by this process, such as a server lifecycle event.
+    Local,
+    /// Received by the local client from the server.
+    Server,
+    /// Received by the local server from the client with this transport id.
+    Client(ClientId),
+}
+
+impl MessageSender {
+    /// Returns the client a message acts for.
+    ///
+    /// A message the server received from a client acts for that client's
+    /// transport id, whatever id it claims. Messages relayed by the server
+    /// or produced locally act for `claimed`, which the server checked on
+    /// intake.
+    pub fn acting_client(self, claimed: ClientId) -> ClientId {
+        match self {
+            Self::Client(client_id) => client_id,
+            Self::Local | Self::Server => claimed,
+        }
+    }
+}
+
 /// FIFO queue of decoded network messages waiting to be handled by engine
-/// systems.
+/// systems, each stamped with the peer that delivered it.
 #[derive(Debug)]
 pub struct MessageQueue<T> {
-    messages: VecDeque<T>,
+    messages: VecDeque<(MessageSender, T)>,
 }
 
 impl Default for MessageQueue<GameMessage> {
@@ -154,7 +215,13 @@ impl Default for MessageQueue<GameMessage> {
 
 /// Callback interface used to consume queued network messages.
 pub trait MessageHandler<C, M> {
-    fn handle_message(&mut self, context: &mut C, message: &M) -> MessageHandlerResult;
+    /// Handles `message`, delivered by `sender`.
+    fn handle_message(
+        &mut self,
+        context: &mut C,
+        sender: MessageSender,
+        message: &M,
+    ) -> MessageHandlerResult;
 }
 
 /// Outcome of handling one queued message.
@@ -166,9 +233,9 @@ pub enum MessageHandlerResult {
 }
 
 impl<T> MessageQueue<T> {
-    /// Appends a decoded message to the queue.
-    pub fn queue_message(&mut self, message: T) {
-        self.messages.push_back(message);
+    /// Appends a decoded message delivered by `sender` to the queue.
+    pub fn queue_message(&mut self, sender: MessageSender, message: T) {
+        self.messages.push_back((sender, message));
     }
 
     /// Number of queued messages, used by tests to detect a drained network.
@@ -187,9 +254,9 @@ impl<T> MessageQueue<T> {
         context: &mut C,
         handler: &mut H,
     ) {
-        self.messages.retain(|msg| {
+        self.messages.retain(|(sender, msg)| {
             matches!(
-                handler.handle_message(context, msg),
+                handler.handle_message(context, *sender, msg),
                 MessageHandlerResult::Ignore
             )
         });
