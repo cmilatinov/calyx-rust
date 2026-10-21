@@ -34,6 +34,25 @@ jobs:
           # One cache per toolchain channel; rust-cache already keys on Cargo.lock and the rustc version.
           shared-key: validate-nightly
 
+      # Windows runners have no GPU, and wgpu here is built with only the Vulkan and GLES backends (no DX12, so
+      # no WARP). Mesa's software drivers provide both: lavapipe for Vulkan and llvmpipe behind opengl32.dll for
+      # GLES. opengl32.dll is not a known DLL, so a copy next to the test binaries wins over the system one.
+      - name: Install Mesa software rendering
+        shell: bash
+        run: |
+          set -e
+          curl.exe -L --retry 5 "https://github.com/pal1000/mesa-dist-win/releases/download/${MESA_VERSION}/mesa3d-${MESA_VERSION}-release-msvc.7z" -o "$RUNNER_TEMP/mesa.7z"
+          7z.exe e "$RUNNER_TEMP/mesa.7z" -o"$RUNNER_TEMP/mesa" 'x64/opengl32.dll' 'x64/libgallium_wgl.dll' 'x64/libglapi.dll' 'x64/vulkan_lvp.dll' 'x64/lvp_icd.x86_64.json'
+          for dir in target/debug target/debug/deps; do
+            mkdir -p "$dir"
+            cp -v "$RUNNER_TEMP"/mesa/*.dll "$dir"/
+          done
+          echo "VK_DRIVER_FILES=$(cygpath --windows "$RUNNER_TEMP/mesa/lvp_icd.x86_64.json")" >> "$GITHUB_ENV"
+          echo "GALLIUM_DRIVER=llvmpipe" >> "$GITHUB_ENV"
+          ls /c/Windows/System32/vulkan-1.dll || echo "::notice::no system Vulkan loader; wgpu will use GLES through llvmpipe"
+        env:
+          MESA_VERSION: 24.2.3
+
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.13"
