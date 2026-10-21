@@ -45,7 +45,7 @@ pub struct ProjectManager {
     // Keep the dynamic assembly after contexts/registries in field order so
     // plugin-backed trait objects and scene components drop before the library
     // is unloaded during editor shutdown.
-    assembly: Option<Lib>,
+    assembly: Option<LoadedAssembly>,
 }
 
 impl ProjectManager {
@@ -192,7 +192,7 @@ impl ProjectManager {
     /// Loads a shadow copy prepared by [`shadow_copy_assembly`].
     fn load_shadow_copy(&mut self, target: &Path) -> bool {
         unsafe {
-            let _preloaded_dependencies =
+            let preloaded_dependencies =
                 match PreloadedAssemblyDependencies::load(target.parent(), target.file_name()) {
                     Ok(dependencies) => Some(dependencies),
                     Err(err) => {
@@ -261,7 +261,13 @@ impl ProjectManager {
                             self.current_project().name()
                         );
                     }
-                    self.assembly = Some(lib);
+                    // Replacing the previous assembly unloads it, so its
+                    // shadow copy is no longer in use.
+                    self.assembly = Some(LoadedAssembly {
+                        _lib: lib,
+                        _dependencies: preloaded_dependencies,
+                    });
+                    remove_stale_shadow_copies_of(target);
                     let component_registry_ref = self.context.registries.components.clone();
                     component_registry_ref
                         .write()
@@ -430,6 +436,15 @@ fn scene_paths_match(current_scene: Option<&Path>, startup_scene: &Path) -> bool
             (dunce::canonicalize(current_scene), dunce::canonicalize(startup_scene)),
             (Ok(current_scene), Ok(startup_scene)) if current_scene == startup_scene
         )
+}
+
+/// A loaded project assembly and the dependencies preloaded for it.
+///
+/// Fields drop in declaration order, so the assembly unloads before the
+/// dependencies it links against.
+struct LoadedAssembly {
+    _lib: Lib,
+    _dependencies: Option<PreloadedAssemblyDependencies>,
 }
 
 struct PreloadedAssemblyDependencies {
@@ -649,7 +664,11 @@ fn shadow_copy_assembly(source: &Path, project_name: &str) -> std::io::Result<Pa
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    target_dir.push(format!("{project_name}_{timestamp}"));
+    target_dir.push(shadow_copy_folder_name(
+        project_name,
+        std::process::id(),
+        timestamp,
+    ));
     std::fs::create_dir_all(&target_dir)?;
 
     copy_runtime_dependencies(source, &target_dir)?;
@@ -661,6 +680,117 @@ fn shadow_copy_assembly(source: &Path, project_name: &str) -> std::io::Result<Pa
     );
     std::fs::copy(source, &target)?;
     Ok(target)
+}
+
+/// How long a shadow copy made by another editor process is kept.
+///
+/// Another editor may have queued a copy it has not loaded yet, which no file
+/// lock protects. It loads queued copies within frames, so a copy this old is
+/// no longer pending.
+const FOREIGN_SHADOW_COPY_GRACE_MS: u128 = 60 * 60 * 1000;
+
+/// The folder [`shadow_copy_assembly`] copies one load into.
+fn shadow_copy_folder_name(project_name: &str, process_id: u32, timestamp: u128) -> String {
+    format!("{project_name}_p{process_id}_{timestamp}")
+}
+
+/// The process and time a shadow-copy folder was made by, read from its name.
+#[derive(Debug, PartialEq)]
+struct ShadowCopyFolder {
+    /// The editor process that made the copy, absent for folders named before
+    /// the process id was recorded.
+    process_id: Option<u32>,
+    /// Milliseconds since the Unix epoch.
+    timestamp: u128,
+}
+
+impl ShadowCopyFolder {
+    fn parse(folder: &Path) -> Option<Self> {
+        let name = folder.file_name()?.to_str()?;
+        let (rest, timestamp) = name.rsplit_once('_')?;
+        if rest.is_empty() {
+            return None;
+        }
+        let timestamp = parse_digits(timestamp)?;
+        let process_id = rest.rsplit_once('_').and_then(|(project, process)| {
+            let process_id = parse_digits(process.strip_prefix('p')?)?;
+            if project.is_empty() {
+                return None;
+            }
+            u32::try_from(process_id).ok()
+        });
+        Some(Self {
+            process_id,
+            timestamp,
+        })
+    }
+
+    /// Whether this copy is unused once `current`, made by `process_id`, is
+    /// loaded.
+    ///
+    /// Only one assembly is loaded per process, so this process's own older
+    /// copies are unused. Another process's copy may still be queued for
+    /// loading there, so it goes only after [`FOREIGN_SHADOW_COPY_GRACE_MS`].
+    fn is_stale(&self, current: &Self, process_id: u32) -> bool {
+        if self.timestamp >= current.timestamp {
+            return false;
+        }
+        self.process_id == Some(process_id)
+            || current.timestamp - self.timestamp >= FOREIGN_SHADOW_COPY_GRACE_MS
+    }
+}
+
+fn parse_digits(value: &str) -> Option<u128> {
+    if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    value.parse().ok()
+}
+
+/// Removes the stale shadow copies next to the one `target` was loaded from.
+fn remove_stale_shadow_copies_of(target: &Path) {
+    if let Some(current) = target.parent() {
+        remove_stale_shadow_copies(current, std::process::id());
+    }
+}
+
+/// Removes every shadow-copy folder next to `current` that
+/// [`ShadowCopyFolder::is_stale`] finds unused.
+///
+/// Newer copies belong to builds not loaded yet and are kept, as is anything
+/// that is not a shadow-copy folder. A copy that cannot be removed, such as one
+/// another editor still has loaded, is left for a later load.
+fn remove_stale_shadow_copies(current: &Path, process_id: u32) {
+    let (Some(root), Some(current_copy)) = (current.parent(), ShadowCopyFolder::parse(current))
+    else {
+        return;
+    };
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(err) => {
+            log::warn!(
+                "Failed to list project assembly copies in {}: {err}",
+                root.display()
+            );
+            return;
+        }
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_stale = path.is_dir()
+            && ShadowCopyFolder::parse(&path)
+                .is_some_and(|copy| copy.is_stale(&current_copy, process_id));
+        if !is_stale {
+            continue;
+        }
+        match std::fs::remove_dir_all(&path) {
+            Ok(()) => log::trace!("Removed stale project assembly copy {}", path.display()),
+            Err(err) => log::debug!(
+                "Could not remove stale project assembly copy {}: {err}",
+                path.display()
+            ),
+        }
+    }
 }
 
 fn copy_runtime_dependencies(source: &Path, target_dir: &Path) -> std::io::Result<()> {
@@ -750,8 +880,10 @@ fn assembly_target_dir(profile: &str) -> &str {
 mod tests {
     use super::{
         assembly_artifact_path, assembly_build_target_dir_from_exe, assembly_target_dir,
-        cargo_build_args, copy_runtime_dependencies, is_rust_runtime_library, scene_paths_match,
+        cargo_build_args, copy_runtime_dependencies, is_rust_runtime_library,
+        remove_stale_shadow_copies, scene_paths_match, shadow_copy_folder_name,
         AssemblyBuildOutcome, AssemblyBuildQueue, AssemblyLoad, ProjectAssemblyStatus,
+        ShadowCopyFolder, FOREIGN_SHADOW_COPY_GRACE_MS,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -886,6 +1018,92 @@ mod tests {
         ));
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn stale_shadow_copies_are_removed_and_the_current_one_is_kept() {
+        let root = std::env::temp_dir().join(format!(
+            "calyx-shadow-cleanup-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let now: u128 = 10_000_000_000;
+        let ancient = now - FOREIGN_SHADOW_COPY_GRACE_MS - 1;
+        let folder = |project: &str, process_id: u32, timestamp: u128| {
+            root.join(shadow_copy_folder_name(project, process_id, timestamp))
+        };
+        let own_older = folder("sandbox", 7, now - 1_000);
+        let own_other_project = folder("other_game", 7, now - 500);
+        let current = folder("sandbox", 7, now);
+        let own_pending = folder("sandbox", 7, now + 1_000);
+        let foreign_recent = folder("sandbox", 8, now - 1_000);
+        let foreign_ancient = folder("sandbox", 8, ancient);
+        let legacy_recent = root.join(format!("sandbox_{}", now - 1_000));
+        let legacy_ancient = root.join(format!("sandbox_{ancient}"));
+        let unrelated = root.join("notes");
+        for dir in [
+            &own_older,
+            &own_other_project,
+            &current,
+            &own_pending,
+            &foreign_recent,
+            &foreign_ancient,
+            &legacy_recent,
+            &legacy_ancient,
+            &unrelated,
+        ] {
+            fs::create_dir_all(dir).unwrap();
+            fs::write(dir.join(engine::utils::lib_file_name("sandbox")), b"lib").unwrap();
+        }
+
+        remove_stale_shadow_copies(&current, 7);
+
+        assert!(!own_older.exists());
+        assert!(!own_other_project.exists());
+        assert!(current
+            .join(engine::utils::lib_file_name("sandbox"))
+            .exists());
+        assert!(own_pending.exists(), "a newer, not yet loaded copy is kept");
+        assert!(
+            foreign_recent.exists(),
+            "another editor's recent copy may still be queued there"
+        );
+        assert!(legacy_recent.exists());
+        assert!(!foreign_ancient.exists());
+        assert!(!legacy_ancient.exists());
+        assert!(
+            unrelated.exists(),
+            "folders that are not shadow copies are kept"
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn shadow_copy_folder_name_round_trips() {
+        assert_eq!(
+            ShadowCopyFolder::parse(Path::new(&shadow_copy_folder_name(
+                "my_game",
+                42,
+                1_700_000_000_000
+            ))),
+            Some(ShadowCopyFolder {
+                process_id: Some(42),
+                timestamp: 1_700_000_000_000
+            })
+        );
+        assert_eq!(
+            ShadowCopyFolder::parse(Path::new("my_game_1700000000000")),
+            Some(ShadowCopyFolder {
+                process_id: None,
+                timestamp: 1_700_000_000_000
+            })
+        );
+        assert_eq!(ShadowCopyFolder::parse(Path::new("my_game")), None);
+        assert_eq!(ShadowCopyFolder::parse(Path::new("notes")), None);
+        assert_eq!(ShadowCopyFolder::parse(Path::new("_123")), None);
     }
 
     #[test]
