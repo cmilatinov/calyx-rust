@@ -3,7 +3,7 @@ mod tests {
     use crate as engine;
     use crate::component::{Component, ComponentCamera, ComponentID, ReflectComponent};
     use crate::core::Ref;
-    use crate::reflect::{Reflect, ReflectDefault};
+    use crate::reflect::{Reflect, ReflectDefault, TypeInfo};
     use crate::scene::game_object_ref::remap_object_refs;
     use crate::scene::{GameObject, GameObjectRef, Scene, SceneData, SiblingDir};
     use crate::test_utils::test_scene;
@@ -1033,6 +1033,17 @@ mod tests {
         let (slot_target, targets) = nested_refs(&scene, instance);
         assert_eq!(slot_target, outside_id);
         assert_eq!(targets, vec![outside_id, Uuid::nil()]);
+    }
+
+    #[test]
+    fn reflected_vec_fields_register_list_type_info() {
+        let registries = crate::test_utils::test_registries();
+        let types = registries.types.read();
+
+        let Some(TypeInfo::List(info)) = types.type_info::<Vec<GameObjectRef>>() else {
+            panic!("expected list info for Vec<GameObjectRef>");
+        };
+        assert_eq!(info.element.type_uuid, GameObjectRef::type_uuid());
     }
 
     #[test]
