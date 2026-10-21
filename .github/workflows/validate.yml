@@ -1,0 +1,84 @@
+name: Validate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  AGENTIC_VERSION: v0.9.0
+  CARGO_TERM_COLOR: always
+
+jobs:
+  validate:
+    # Render tests need a graphics adapter; Windows runners provide one through WARP.
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # One cache per toolchain channel; rust-cache already keys on Cargo.lock and the rustc version.
+          shared-key: validate-nightly
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+
+      # The agentic CLI lives in a private repository, so installing it needs a token with read access to
+      # corebit-instruments/agentic in the AGENTIC_TOKEN secret. Pull requests from forks never receive secrets.
+      - name: Install the agentic CLI
+        id: agentic
+        shell: bash
+        env:
+          AGENTIC_TOKEN: ${{ secrets.AGENTIC_TOKEN }}
+        run: |
+          if [ -z "$AGENTIC_TOKEN" ]; then
+            echo "::warning title=agentic CLI not installed::AGENTIC_TOKEN is not set; running the checks declared in agentic.toml directly instead of through agentic local validate."
+            echo "installed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config --global url."https://x-access-token:${AGENTIC_TOKEN}@github.com/corebit-instruments/".insteadOf "https://github.com/corebit-instruments/"
+          uv tool install "agentic-tools @ git+https://github.com/corebit-instruments/agentic@${AGENTIC_VERSION}#subdirectory=tools"
+          git config --global --unset-all url."https://x-access-token:${AGENTIC_TOKEN}@github.com/corebit-instruments/".insteadOf
+          agentic --version
+          echo "installed=true" >> "$GITHUB_OUTPUT"
+
+      - name: agentic local validate
+        if: steps.agentic.outputs.installed == 'true'
+        shell: bash
+        run: agentic local validate
+
+      # Fallback without the agentic CLI: run every [[check]] that agentic.toml marks for validate, in order,
+      # so the checks stay the single source of truth.
+      - name: Run the validate checks from agentic.toml
+        if: steps.agentic.outputs.installed != 'true'
+        shell: bash
+        run: |
+          uv run --no-project --python 3.13 python - <<'EOF'
+          import subprocess, sys, tomllib
+
+          with open("agentic.toml", "rb") as f:
+              checks = [c for c in tomllib.load(f).get("check", []) if "validate" in c.get("on", [])]
+          if not checks:
+              sys.exit("no checks marked validate in agentic.toml")
+          for check in checks:
+              print(f"::group::{check['name']}: {' '.join(check['run'])}", flush=True)
+              code = subprocess.run(check["run"]).returncode
+              print("::endgroup::", flush=True)
+              if code != 0:
+                  sys.exit(f"check {check['name']} failed with exit code {code}")
+          EOF
