@@ -116,7 +116,7 @@ impl Network {
             self.client.update(&mut self.queue, duration);
         }
         self.queue
-            .receive_messages(&mut (time, self.tick_rate), &mut NetworkTimeSync);
+            .receive_messages(None, &mut (time, self.tick_rate), &mut NetworkTimeSync);
     }
 
     /// Applies queued scene-related replication messages.
@@ -129,6 +129,7 @@ impl Network {
         assets: &'a ReadOnlyAssetContext,
     ) {
         self.queue.receive_messages(
+            None,
             &mut (
                 &mut self.client,
                 &mut self.server,
@@ -138,6 +139,7 @@ impl Network {
             &mut NetworkSceneSync,
         );
         self.queue.receive_messages(
+            None,
             &mut (
                 &mut self.client,
                 &mut self.server,

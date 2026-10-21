@@ -83,7 +83,7 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>> Synchronized<T> {
             };
             network
                 .queue
-                .receive_routed(route, &mut (ctx, &*time), self);
+                .receive_messages(Some(route), &mut (ctx, &*time), self);
         }
         self.prune(time.current_tick());
         new_value

@@ -154,7 +154,7 @@ mod tests {
                 MessageHandlerResult::Consume
             }
         }
-        queue.receive_messages(&mut (), &mut ConsumeAll);
+        queue.receive_messages(None, &mut (), &mut ConsumeAll);
 
         // Verify empty
         let mut count = 0usize;
@@ -170,7 +170,7 @@ mod tests {
                 MessageHandlerResult::Consume
             }
         }
-        queue.receive_messages(&mut count, &mut Counter);
+        queue.receive_messages(None, &mut count, &mut Counter);
         assert_eq!(count, 0);
     }
 
@@ -193,7 +193,7 @@ mod tests {
                 MessageHandlerResult::Ignore
             }
         }
-        queue.receive_messages(&mut (), &mut IgnoreAll);
+        queue.receive_messages(None, &mut (), &mut IgnoreAll);
 
         let mut count = 0usize;
         struct Counter;
@@ -208,7 +208,7 @@ mod tests {
                 MessageHandlerResult::Consume
             }
         }
-        queue.receive_messages(&mut count, &mut Counter);
+        queue.receive_messages(None, &mut count, &mut Counter);
         assert_eq!(count, 1);
     }
 
@@ -251,15 +251,15 @@ mod tests {
         );
 
         let mut unrouted = 0;
-        queue.receive_messages(&mut unrouted, &mut ConsumeCounter);
-        assert_eq!(unrouted, 1, "only SyncTime reaches the shared queue");
+        queue.receive_messages(None, &mut unrouted, &mut ConsumeCounter);
+        assert_eq!(unrouted, 1, "only SyncTime is in the None bucket");
 
         let mut routed = 0;
-        queue.receive_routed(
-            MessageRoute {
+        queue.receive_messages(
+            Some(MessageRoute {
                 network_object_id: 7,
                 component_uuid: component_a,
-            },
+            }),
             &mut routed,
             &mut ConsumeCounter,
         );
@@ -510,7 +510,7 @@ mod tests {
         }
         net.clients[0]
             .queue
-            .receive_messages(&mut received_time, &mut TimeCapture);
+            .receive_messages(None, &mut received_time, &mut TimeCapture);
         assert_eq!(received_time, Some(99.0));
     }
 
@@ -557,7 +557,7 @@ mod tests {
             let mut received = None;
             client
                 .queue
-                .receive_messages(&mut received, &mut TimeCapture);
+                .receive_messages(None, &mut received, &mut TimeCapture);
             assert_eq!(received, Some(7.0), "client {i} missed the broadcast");
         }
     }
@@ -587,6 +587,7 @@ mod tests {
         } = &mut net.server;
         let mut scene = scene;
         queue.receive_messages(
+            None,
             &mut (client, server, &mut scene, local_id),
             &mut NetworkSceneSync,
         );
@@ -613,7 +614,7 @@ mod tests {
         let mut count = 0;
         network
             .queue
-            .receive_messages(&mut count, &mut TransferCounter);
+            .receive_messages(None, &mut count, &mut TransferCounter);
         count
     }
 
@@ -757,7 +758,7 @@ mod tests {
             .resources
             .network_mut()
             .queue
-            .receive_messages(&mut received_time, &mut Capture);
+            .receive_messages(None, &mut received_time, &mut Capture);
         assert_eq!(received_time, Some(42.0));
     }
 }

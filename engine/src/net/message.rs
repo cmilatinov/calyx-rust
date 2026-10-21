@@ -235,24 +235,22 @@ impl RoutedMessage for GameMessage {
 /// Queued message with the peer that delivered it.
 type QueuedMessage<T> = (MessageSender, T);
 
-/// FIFO queue of decoded network messages waiting to be handled by engine
-/// systems, each stamped with the peer that delivered it.
+/// FIFO queues of decoded network messages waiting to be handled by engine
+/// systems, each message stamped with the peer that delivered it.
 ///
-/// Messages with a [`MessageRoute`] wait in a separate queue per route, so a
-/// synchronized component reads only its own messages through
-/// [`MessageQueue::receive_routed`]. Every other message waits in one shared
-/// queue read by [`MessageQueue::receive_messages`].
+/// Messages wait in one bucket per [`RoutedMessage::route`]: the `None`
+/// bucket is shared by system-level handlers, and each `Some(route)` bucket
+/// holds one synchronized component's messages, so a component reads only
+/// its own through [`MessageQueue::receive_messages`].
 #[derive(Debug)]
 pub struct MessageQueue<T> {
-    messages: VecDeque<QueuedMessage<T>>,
-    routed: HashMap<MessageRoute, VecDeque<QueuedMessage<T>>>,
+    messages: HashMap<Option<MessageRoute>, VecDeque<QueuedMessage<T>>>,
 }
 
 impl Default for MessageQueue<GameMessage> {
     fn default() -> Self {
         Self {
             messages: Default::default(),
-            routed: Default::default(),
         }
     }
 }
@@ -278,24 +276,20 @@ pub enum MessageHandlerResult {
 }
 
 impl<T: RoutedMessage> MessageQueue<T> {
-    /// Appends a decoded message delivered by `sender` to the queue, or to
-    /// its route's queue when it has a [`MessageRoute`].
+    /// Appends a decoded message delivered by `sender` to the bucket of its
+    /// route.
     pub fn queue_message(&mut self, sender: MessageSender, message: T) {
-        match message.route() {
-            Some(route) => self
-                .routed
-                .entry(route)
-                .or_default()
-                .push_back((sender, message)),
-            None => self.messages.push_back((sender, message)),
-        }
+        self.messages
+            .entry(message.route())
+            .or_default()
+            .push_back((sender, message));
     }
 }
 
 impl<T> MessageQueue<T> {
-    /// Number of queued messages, routed ones included.
+    /// Number of queued messages across all buckets.
     pub fn len(&self) -> usize {
-        self.messages.len() + self.routed.values().map(VecDeque::len).sum::<usize>()
+        self.messages.values().map(VecDeque::len).sum()
     }
 
     /// Returns whether no message is queued.
@@ -303,35 +297,29 @@ impl<T> MessageQueue<T> {
         self.len() == 0
     }
 
-    /// Dispatches the queued messages that have no route to `handler`.
+    /// Dispatches the messages queued for `route` to `handler`; `None` is the
+    /// bucket of messages that have no route.
     ///
     /// Messages that return [`MessageHandlerResult::Consume`] are removed.
     /// Messages that return [`MessageHandlerResult::Ignore`] stay queued for a
     /// later pass until [`MessageQueue::expire`] drops them.
     pub fn receive_messages<C, H: MessageHandler<C, T>>(
         &mut self,
+        route: Option<MessageRoute>,
         context: &mut C,
         handler: &mut H,
     ) {
-        Self::dispatch(&mut self.messages, context, handler);
-    }
-
-    /// Dispatches the queued messages addressed to `route` to `handler`.
-    ///
-    /// Consumed and ignored messages are treated as in
-    /// [`MessageQueue::receive_messages`].
-    pub fn receive_routed<C, H: MessageHandler<C, T>>(
-        &mut self,
-        route: MessageRoute,
-        context: &mut C,
-        handler: &mut H,
-    ) {
-        let Some(messages) = self.routed.get_mut(&route) else {
+        let Some(messages) = self.messages.get_mut(&route) else {
             return;
         };
-        Self::dispatch(messages, context, handler);
+        messages.retain(|(sender, msg)| {
+            matches!(
+                handler.handle_message(context, *sender, msg),
+                MessageHandlerResult::Ignore
+            )
+        });
         if messages.is_empty() {
-            self.routed.remove(&route);
+            self.messages.remove(&route);
         }
     }
 
@@ -342,20 +330,6 @@ impl<T> MessageQueue<T> {
     pub fn expire(&mut self) -> usize {
         let expired = self.len();
         self.messages.clear();
-        self.routed.clear();
         expired
-    }
-
-    fn dispatch<C, H: MessageHandler<C, T>>(
-        messages: &mut VecDeque<QueuedMessage<T>>,
-        context: &mut C,
-        handler: &mut H,
-    ) {
-        messages.retain(|(sender, msg)| {
-            matches!(
-                handler.handle_message(context, *sender, msg),
-                MessageHandlerResult::Ignore
-            )
-        });
     }
 }
