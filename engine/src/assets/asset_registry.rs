@@ -11,8 +11,8 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use std::thread::JoinHandle;
+use std::sync::{Arc, Condvar, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::thread::{JoinHandle, ThreadId};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -39,16 +39,14 @@ use crate::utils::TypeUuid;
 use super::skybox::Skybox;
 use super::LoadedAsset;
 
-type AssetConstructor = Box<
-    dyn Fn(ReadOnlyAssetContext, Uuid, &Path) -> Result<LoadedAssetRef<dyn Asset>, AssetError>
-        + Send
-        + Sync,
->;
-type AssetReload = Box<
+/// Loads an asset file. Given the cached reference for the id, it writes the
+/// new value into that reference; otherwise it returns a new reference.
+type AssetLoader = Arc<
     dyn Fn(
             ReadOnlyAssetContext,
-            &Ref<dyn Asset>,
+            Uuid,
             &Path,
+            Option<&Ref<dyn Asset>>,
         ) -> Result<LoadedAssetRef<dyn Asset>, AssetError>
         + Send
         + Sync,
@@ -99,9 +97,73 @@ struct AssetData {
     reload_errors: Vec<AssetReloadError>,
 }
 
-struct AssetConstructors {
-    create: AssetConstructor,
-    reload: AssetReload,
+/// Loader registered for one asset type. Cloned out of the registry before it
+/// runs, so no registry lock is held while it loads other assets.
+#[derive(Clone)]
+struct AssetConstructor {
+    load: AssetLoader,
+    extensions: &'static [&'static str],
+    asset_name: &'static str,
+}
+
+/// How [`AssetRegistry::load_asset`] treats an asset that is already cached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoadMode {
+    /// Return the cached reference when there is one.
+    Load,
+    /// Read the file again and write it into the cached reference.
+    Reload,
+}
+
+/// Per-id loading slots: at most one thread loads a given asset id at a time.
+#[derive(Default)]
+struct LoadSlots {
+    owners: Mutex<HashMap<Uuid, ThreadId>>,
+    released: Condvar,
+}
+
+impl LoadSlots {
+    /// Waits until no other thread is loading `id`, then claims it. Fails
+    /// instead of deadlocking when this thread already holds the slot, which
+    /// means a loader requested the asset it is loading.
+    fn acquire(&self, id: Uuid) -> Result<LoadSlotGuard<'_>, AssetError> {
+        let current = std::thread::current().id();
+        let mut owners = self.owners.lock().unwrap_or_else(|err| err.into_inner());
+        loop {
+            match owners.get(&id) {
+                None => {
+                    owners.insert(id, current);
+                    return Ok(LoadSlotGuard { slots: self, id });
+                }
+                Some(owner) if *owner == current => {
+                    return Err(AssetError::LoadError
+                        .with_source(format!("asset {id} requested while it is loading")));
+                }
+                Some(_) => {
+                    owners = self
+                        .released
+                        .wait(owners)
+                        .unwrap_or_else(|err| err.into_inner());
+                }
+            }
+        }
+    }
+}
+
+struct LoadSlotGuard<'a> {
+    slots: &'a LoadSlots,
+    id: Uuid,
+}
+
+impl Drop for LoadSlotGuard<'_> {
+    fn drop(&mut self) {
+        self.slots
+            .owners
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .remove(&self.id);
+        self.slots.released.notify_all();
+    }
 }
 
 /// Error captured while hot-reloading an already loaded asset.
@@ -125,7 +187,8 @@ pub struct AssetRegistry {
     asset_cache: RwLock<AssetCache>,
     color_texture_cache: RwLock<ColorTextureCache>,
     asset_data: RwLock<AssetData>,
-    asset_constructors: RwLock<HashMap<Uuid, AssetConstructors>>,
+    asset_constructors: RwLock<HashMap<Uuid, AssetConstructor>>,
+    loading: LoadSlots,
     watcher_thread: Option<JoinHandle<()>>,
     #[allow(dead_code)]
     watcher: RecommendedWatcher,
@@ -163,6 +226,7 @@ impl AssetRegistry {
                 color_texture_cache: Default::default(),
                 asset_data: Default::default(),
                 asset_constructors: Default::default(),
+                loading: Default::default(),
                 watcher_thread: None,
                 watcher,
             };
@@ -204,6 +268,7 @@ impl AssetRegistry {
             color_texture_cache: Default::default(),
             asset_data: Default::default(),
             asset_constructors: Default::default(),
+            loading: Default::default(),
             watcher_thread: None,
             watcher,
         })
@@ -233,6 +298,7 @@ impl AssetRegistry {
                 color_texture_cache: Default::default(),
                 asset_data: Default::default(),
                 asset_constructors: Default::default(),
+                loading: Default::default(),
                 watcher_thread: None,
                 watcher,
             };
@@ -345,94 +411,123 @@ impl AssetRegistry {
 
     /// Loads an asset by UUID as a typed handle.
     pub fn load_by_id<A: Asset + TypeUuid>(&self, id: Uuid) -> Result<Ref<A>, AssetError> {
-        // Load parent asset if any
-        let meta = self
-            .asset_meta_from_id(id)
-            .ok_or_else(|| AssetError::NotFound.with_source(format!("asset id {id}")))?;
-        if let Some(parent_id) = meta.parent {
-            self.load_dyn_by_id(parent_id)?;
-        }
-
-        // Asset already loaded
-        if let Some(asset_ref) = self
-            .asset_cache()
-            .get(&id)
-            .and_then(|a| a.try_downcast::<A>())
-        {
-            return Ok(asset_ref);
-        }
-
-        // Load from file
-        let path = self
-            .asset_path(id, A::file_extensions())
-            .ok_or_else(|| AssetError::NotFound.with_type(A::asset_name()))?;
-        log::trace!(
-            "Loading asset {} ({}) from {}",
-            id,
-            A::asset_name(),
-            path.display()
-        );
-        let asset = self.load_asset_file(id, &path)?;
-
-        // Create ref
-        self.asset_cache_mut().insert(id, asset.as_asset());
-        log::trace!("Loaded asset {} from {}", id, path.display());
-        Ok(asset)
+        self.load_typed(id, LoadMode::Load)
     }
 
-    /// Reloads an asset by UUID as a typed handle, replacing the cached value.
+    /// Reloads an asset by UUID as a typed handle. A cached asset is updated
+    /// in place, so every holder of its reference sees the new value.
     pub fn reload_by_id<A: Asset + TypeUuid>(&self, id: Uuid) -> Result<Ref<A>, AssetError> {
-        log::trace!("Reloading asset {} ({})", id, A::asset_name());
-        let meta = self
-            .asset_meta_from_id(id)
-            .ok_or_else(|| AssetError::NotFound.with_source(format!("asset id {id}")))?;
-        if let Some(parent_id) = meta.parent {
-            self.load_dyn_by_id(parent_id)?;
-        }
-
-        let path = self
-            .asset_path(id, A::file_extensions())
-            .ok_or_else(|| AssetError::NotFound.with_type(A::asset_name()))?;
-        let asset = self.load_asset_file(id, &path)?;
-
-        self.asset_cache_mut().insert(id, asset.as_asset());
-        self.update_asset_dependencies(id, &path);
-        self.clear_reload_error(id);
-        log::info!("Reloaded asset {} from {}", id, path.display());
-        Ok(asset)
+        self.load_typed(id, LoadMode::Reload)
     }
 
     /// Loads an asset by UUID as a type-erased handle.
     pub fn load_dyn_by_id(&self, id: Uuid) -> Result<Ref<dyn Asset>, AssetError> {
-        // Load parent asset if any
+        self.load_asset(id, LoadMode::Load, None)
+    }
+
+    fn load_typed<A: Asset + TypeUuid>(
+        &self,
+        id: Uuid,
+        mode: LoadMode,
+    ) -> Result<Ref<A>, AssetError> {
+        self.load_asset(id, mode, Some(A::type_uuid()))?
+            .try_downcast::<A>()
+            .ok_or_else(|| {
+                AssetError::TypeMismatch
+                    .with_type(A::asset_name())
+                    .with_source(format!("asset id {id}"))
+            })
+    }
+
+    /// The one load routine behind every load and reload. Loads the parent
+    /// asset first, claims the id's loading slot so concurrent loads of one id
+    /// share a single reference, and runs the type's loader with no registry
+    /// lock held. `asset_type` selects the loader; `None` uses the type in the
+    /// asset's metadata.
+    fn load_asset(
+        &self,
+        id: Uuid,
+        mode: LoadMode,
+        asset_type: Option<Uuid>,
+    ) -> Result<Ref<dyn Asset>, AssetError> {
         let meta = self
             .asset_meta_from_id(id)
             .ok_or_else(|| AssetError::NotFound.with_source(format!("asset id {id}")))?;
         if let Some(parent_id) = meta.parent {
-            self.load_dyn_by_id(parent_id)?;
+            self.load_asset(parent_id, LoadMode::Load, None)?;
+        }
+        if mode == LoadMode::Load {
+            if let Some(asset) = self.cached_asset(id) {
+                return Ok(asset);
+            }
         }
 
-        // Asset already loaded
-        if let Some(asset_ref) = self.asset_cache().get(&id) {
-            return Ok((*asset_ref).clone());
+        let _slot = self.loading.acquire(id)?;
+        let existing = self.cached_asset(id);
+        if mode == LoadMode::Load {
+            if let Some(asset) = existing {
+                return Ok(asset);
+            }
         }
 
-        // Find constructor & file path
-        let path = meta.path.as_ref().ok_or_else(|| {
-            AssetError::NotFound.with_source(format!("path for asset `{}`", meta.name))
-        })?;
-        let ctors = self.asset_constructors();
-        let ctor = ctors.get(&meta.type_uuid).ok_or_else(|| {
-            AssetError::NotFound.with_source(format!("constructor for type {}", meta.type_uuid))
-        })?;
-        log::trace!("Loading dynamic asset {} from {}", id, path.display());
-        let LoadedAssetRef { asset, sub_assets } = (ctor.create)(self.asset_context(), id, path)?;
+        let type_uuid = asset_type.unwrap_or(meta.type_uuid);
+        let ctor = self
+            .asset_constructors()
+            .get(&type_uuid)
+            .cloned()
+            .ok_or_else(|| {
+                AssetError::NotFound.with_source(format!("constructor for type {type_uuid}"))
+            })?;
+        let path = meta
+            .path
+            .as_ref()
+            .filter(|path| {
+                let ext = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
+                ctor.extensions.contains(&ext)
+            })
+            .ok_or_else(|| {
+                AssetError::NotFound
+                    .with_type(ctor.asset_name)
+                    .with_source(format!("path for asset `{}`", meta.name))
+            })?;
 
-        // Load from file
+        log::trace!(
+            "{} asset {} ({}) from {}",
+            if mode == LoadMode::Load {
+                "Loading"
+            } else {
+                "Reloading"
+            },
+            id,
+            ctor.asset_name,
+            path.display()
+        );
+        let LoadedAssetRef { asset, sub_assets } =
+            (ctor.load)(self.asset_context(), id, path, existing.as_ref())?;
+        let sub_asset_count = sub_assets.len();
         self.load_sub_asset_meta(id, sub_assets);
-        self.asset_cache_mut().insert(id, asset.clone());
-        log::trace!("Loaded dynamic asset {} from {}", id, path.display());
+        if existing.is_none() {
+            self.asset_cache_mut().insert(id, asset.clone());
+        }
+        match mode {
+            LoadMode::Load => log::trace!("Loaded asset {} from {}", id, path.display()),
+            LoadMode::Reload => {
+                self.update_asset_dependencies(id, path);
+                self.clear_reload_error(id);
+                log::info!(
+                    "Reloaded asset {} ({}) from {} with {} sub-assets",
+                    meta.name,
+                    id,
+                    path.display(),
+                    sub_asset_count
+                );
+            }
+        }
         Ok(asset)
+    }
+
+    fn cached_asset(&self, id: Uuid) -> Option<Ref<dyn Asset>> {
+        self.asset_cache().get(&id).cloned()
     }
 
     /// Creates a new in-memory asset entry with the provided `name`.
@@ -668,36 +763,32 @@ impl AssetRegistry {
         }
         self.asset_constructors_mut().insert(
             type_uuid,
-            AssetConstructors {
-                create: Box::new(|game, id, path| {
-                    let loaded_asset = A::from_file(&game, path)?;
-                    let LoadedAssetRef { asset, sub_assets } =
-                        LoadedAssetRef::new(id, loaded_asset);
+            AssetConstructor {
+                load: Arc::new(|assets, id, path, existing| {
+                    let existing = existing
+                        .map(|asset_ref| {
+                            asset_ref.try_downcast::<A>().ok_or_else(|| {
+                                AssetError::TypeMismatch
+                                    .with_path(path)
+                                    .with_type(A::asset_name())
+                            })
+                        })
+                        .transpose()?;
+                    let LoadedAsset { asset, sub_assets } = A::from_file(&assets, path)?;
+                    let asset_ref = match existing {
+                        Some(asset_ref) => {
+                            *asset_ref.write() = asset;
+                            asset_ref
+                        }
+                        None => Ref::from_id_value(id, asset),
+                    };
                     Ok(LoadedAssetRef {
-                        asset: asset.as_asset(),
+                        asset: asset_ref.as_asset(),
                         sub_assets,
                     })
                 }),
-                reload: Box::new(|game, asset_ref, path| {
-                    if let Some(asset_ref) = asset_ref.try_downcast::<A>() {
-                        let LoadedAsset {
-                            asset: loaded_asset,
-                            sub_assets,
-                        } = A::from_file(&game, path)?;
-                        {
-                            let mut asset = asset_ref.write();
-                            *asset = loaded_asset;
-                        }
-                        Ok(LoadedAssetRef {
-                            asset: asset_ref.as_asset(),
-                            sub_assets,
-                        })
-                    } else {
-                        Err(AssetError::TypeMismatch
-                            .with_path(path)
-                            .with_type(A::asset_name()))
-                    }
-                }),
+                extensions: A::file_extensions(),
+                asset_name: A::asset_name(),
             },
         );
     }
@@ -731,13 +822,6 @@ impl AssetRegistry {
         if let Some(parent_meta) = data.meta.get_mut(&id) {
             parent_meta.children = sub_assets;
         }
-    }
-
-    fn load_asset_file<A: Asset>(&self, id: Uuid, path: &Path) -> Result<Ref<A>, AssetError> {
-        let loaded_asset = A::from_file(&self.asset_context(), path)?;
-        let LoadedAssetRef { asset, sub_assets } = LoadedAssetRef::new(id, loaded_asset);
-        self.load_sub_asset_meta(id, sub_assets);
-        Ok(asset)
     }
 
     fn mark_asset_dirty(&self, id: Uuid) {
@@ -789,11 +873,11 @@ impl AssetRegistry {
         self.asset_cache.write().unwrap()
     }
 
-    fn asset_constructors(&self) -> RwLockReadGuard<'_, HashMap<Uuid, AssetConstructors>> {
+    fn asset_constructors(&self) -> RwLockReadGuard<'_, HashMap<Uuid, AssetConstructor>> {
         self.asset_constructors.read().unwrap()
     }
 
-    fn asset_constructors_mut(&self) -> RwLockWriteGuard<'_, HashMap<Uuid, AssetConstructors>> {
+    fn asset_constructors_mut(&self) -> RwLockWriteGuard<'_, HashMap<Uuid, AssetConstructor>> {
         self.asset_constructors.write().unwrap()
     }
 
@@ -1189,50 +1273,31 @@ impl AssetRegistry {
         };
 
         for id in reload_ids {
-            let Some(path) = self.asset_meta_from_id(id).and_then(|meta| meta.path) else {
-                continue;
-            };
-            let Some(asset_ref) = self.asset_cache().get(&id).cloned() else {
-                continue;
-            };
             let Some(meta) = self.asset_meta_from_id(id) else {
                 continue;
             };
-
-            let ctors = self.asset_constructors();
-            if let Some(ctor) = ctors.get(&meta.type_uuid) {
-                log::trace!(
-                    "Hot-reloading asset {} ({}, type {}) from {}",
+            let Some(path) = meta.path else {
+                continue;
+            };
+            if self.cached_asset(id).is_none() {
+                continue;
+            }
+            log::trace!(
+                "Hot-reloading asset {} ({}, type {}) from {}",
+                meta.name,
+                id,
+                meta.type_uuid,
+                path.display()
+            );
+            if let Err(error) = self.load_asset(id, LoadMode::Reload, None) {
+                log::warn!(
+                    "Failed to hot-reload asset {} ({}) from {}: {}",
                     meta.name,
-                    meta.id,
-                    meta.type_uuid,
-                    path.display()
+                    id,
+                    path.display(),
+                    error
                 );
-                match (ctor.reload)(self.asset_context(), &asset_ref, &path) {
-                    Ok(loaded) => {
-                        let sub_asset_count = loaded.sub_assets.len();
-                        self.load_sub_asset_meta(id, loaded.sub_assets);
-                        self.update_asset_dependencies(id, &path);
-                        self.clear_reload_error(id);
-                        log::info!(
-                            "Hot-reloaded asset {} ({}) from {} with {} sub-assets",
-                            meta.name,
-                            meta.id,
-                            path.display(),
-                            sub_asset_count
-                        );
-                    }
-                    Err(error) => {
-                        log::warn!(
-                            "Failed to hot-reload asset {} ({}) from {}: {}",
-                            meta.name,
-                            meta.id,
-                            path.display(),
-                            error
-                        );
-                        self.set_reload_error(AssetReloadError { id, path, error });
-                    }
-                }
+                self.set_reload_error(AssetReloadError { id, path, error });
             }
         }
     }
@@ -1630,6 +1695,133 @@ mod tests {
                 .asset_meta_from_id(parent_id)
                 .map(|meta| meta.children),
             Some(vec![child_id])
+        );
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    /// Plain-text asset used to observe what the registry loaded.
+    struct TextTestAsset {
+        text: String,
+    }
+
+    impl TypeUuid for TextTestAsset {
+        fn type_uuid() -> Uuid {
+            Uuid::from_u128(0x5d1f_0c2a_7b44_4f0e_9a61_3c8e_2b17_d401)
+        }
+    }
+
+    impl Asset for TextTestAsset {
+        fn file_extensions() -> &'static [&'static str] {
+            &["cxtesttext"]
+        }
+
+        fn from_file(
+            _assets: &ReadOnlyAssetContext,
+            path: &Path,
+        ) -> Result<LoadedAsset<Self>, AssetError> {
+            let text = std::fs::read_to_string(path)
+                .map_err(|err| AssetError::LoadError.with_path(path).with_source(err))?;
+            Ok(LoadedAsset::new(Self { text }))
+        }
+    }
+
+    static SLOW_TEST_ASSET_LOADS: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(0);
+
+    /// Asset whose load is slow enough for two threads to race on it.
+    struct SlowTestAsset;
+
+    impl TypeUuid for SlowTestAsset {
+        fn type_uuid() -> Uuid {
+            Uuid::from_u128(0x9e3b_61d4_02a7_4c55_b8f2_71e0_4d6a_c902)
+        }
+    }
+
+    impl Asset for SlowTestAsset {
+        fn file_extensions() -> &'static [&'static str] {
+            &["cxtestslow"]
+        }
+
+        fn from_file(
+            _assets: &ReadOnlyAssetContext,
+            _path: &Path,
+        ) -> Result<LoadedAsset<Self>, AssetError> {
+            SLOW_TEST_ASSET_LOADS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(200));
+            Ok(LoadedAsset::new(Self))
+        }
+    }
+
+    #[test]
+    fn reload_by_id_updates_existing_reference_in_place() {
+        let root = temp_asset_root("calyx-reload-in-place");
+        let asset_path = root.join("note.cxtesttext");
+        std::fs::write(&asset_path, "first").expect("failed to write test asset");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        registry.register_asset_type::<TextTestAsset>();
+        registry.build_meta().expect("failed to rebuild metadata");
+        let id = registry
+            .asset_id("note")
+            .expect("test asset should have metadata");
+
+        let held = registry
+            .load_by_id::<TextTestAsset>(id)
+            .expect("test asset should load");
+        std::fs::write(&asset_path, "second").expect("failed to rewrite test asset");
+        let reloaded = registry
+            .reload_by_id::<TextTestAsset>(id)
+            .expect("test asset should reload");
+
+        assert_eq!(held.ptr_id(), reloaded.ptr_id());
+        assert_eq!(held.read().text, "second");
+        let cached = registry
+            .loaded_by_id::<TextTestAsset>(id)
+            .expect("reloaded asset should stay cached");
+        assert_eq!(cached.ptr_id(), held.ptr_id());
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn concurrent_loads_of_one_id_share_one_reference() {
+        let root = temp_asset_root("calyx-concurrent-load");
+        std::fs::write(root.join("slow.cxtestslow"), "").expect("failed to write test asset");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let id = {
+            let registry = registries.assets.read();
+            registry.register_asset_type::<SlowTestAsset>();
+            registry.build_meta().expect("failed to rebuild metadata");
+            registry
+                .asset_id("slow")
+                .expect("test asset should have metadata")
+        };
+        SLOW_TEST_ASSET_LOADS.store(0, std::sync::atomic::Ordering::SeqCst);
+
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let handles = (0..2)
+            .map(|_| {
+                let assets = registries.assets.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    assets
+                        .read()
+                        .load_by_id::<SlowTestAsset>(id)
+                        .expect("test asset should load")
+                        .ptr_id()
+                })
+            })
+            .collect::<Vec<_>>();
+        let ptrs = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("loader thread panicked"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(ptrs[0], ptrs[1]);
+        assert_eq!(
+            SLOW_TEST_ASSET_LOADS.load(std::sync::atomic::Ordering::SeqCst),
+            1
         );
         std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
