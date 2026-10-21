@@ -84,7 +84,16 @@ impl Network {
 
     /// Advances the networking tick loop and dispatches global protocol
     /// messages such as time sync.
+    ///
+    /// A tick runs from one call to the next: this call, then
+    /// [`Network::update_scene`], then the synchronized component updates.
+    /// Every handler has had its pass on a message by the next call, so this
+    /// call first drops whatever is still queued before polling new messages.
     pub fn update(&mut self, time: &mut Time) {
+        let expired = self.queue.expire();
+        if expired > 0 {
+            log::trace!("Expired {expired} network messages no handler consumed");
+        }
         self.accumulated_time += time.static_duration().as_secs_f32();
         self.tick_sync_timer += time.static_delta_time();
         while self.accumulated_time >= self.tick_period {

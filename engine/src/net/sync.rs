@@ -1,8 +1,8 @@
 use crate::component::ComponentEventContext;
 use crate::core::Time;
 use crate::net::{
-    ComponentNetworkObject, GameMessage, MessageHandler, MessageHandlerResult, MessageSender,
-    Network,
+    ComponentNetworkObject, GameMessage, MessageHandler, MessageHandlerResult, MessageRoute,
+    MessageSender, Network,
 };
 use crate::resource::ResourceMap;
 use lerp::Lerp;
@@ -71,7 +71,20 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>> Synchronized<T> {
         let Some((network, time)) = resources.resource_pair_mut::<Network, Time>() else {
             return new_value;
         };
-        network.queue.receive_messages(&mut (ctx, &*time), self);
+        if let Some(network_object_id) = ctx.scene.entry(ctx.game_object).and_then(|entry| {
+            entry
+                .get_component::<ComponentNetworkObject>()
+                .ok()
+                .map(|c_netobj| c_netobj.id)
+        }) {
+            let route = MessageRoute {
+                network_object_id,
+                component_uuid: self.options.component_uuid,
+            };
+            network
+                .queue
+                .receive_routed(route, &mut (ctx, &*time), self);
+        }
         self.prune(time.current_tick());
         new_value
     }
