@@ -47,9 +47,13 @@ jobs:
             mkdir -p "$dir"
             cp -v "$RUNNER_TEMP"/mesa/*.dll "$dir"/
           done
-          echo "VK_DRIVER_FILES=$(cygpath --windows "$RUNNER_TEMP/mesa/lvp_icd.x86_64.json")" >> "$GITHUB_ENV"
+          # VK_ICD_FILENAMES is the older name for VK_DRIVER_FILES; the runner's Vulkan loader may predate the new one.
+          icd="$(cygpath --windows "$RUNNER_TEMP/mesa/lvp_icd.x86_64.json")"
+          echo "VK_DRIVER_FILES=$icd" >> "$GITHUB_ENV"
+          echo "VK_ICD_FILENAMES=$icd" >> "$GITHUB_ENV"
+          echo "VK_LOADER_DEBUG=error" >> "$GITHUB_ENV"
           echo "GALLIUM_DRIVER=llvmpipe" >> "$GITHUB_ENV"
-          ls /c/Windows/System32/vulkan-1.dll || echo "::notice::no system Vulkan loader; wgpu will use GLES through llvmpipe"
+          powershell.exe -NoProfile -Command "(Get-Item C:/Windows/System32/vulkan-1.dll).VersionInfo.FileVersion" || echo "::notice::no system Vulkan loader"
         env:
           MESA_VERSION: 24.2.3
 
