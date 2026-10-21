@@ -1,10 +1,11 @@
+use bimap::BiHashMap;
 use legion::world::{Entry, EntryRef};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
 
 use crate as engine;
 use crate::{
-    reflect::{Reflect, ReflectDefault},
+    reflect::{type_registry::TypeRegistry, Reflect, ReflectDefault, TypeInfo},
     scene::Scene,
     utils::TypeUuid,
 };
@@ -71,4 +72,59 @@ impl GameObjectRef {
     pub fn id(&self) -> Uuid {
         self.id
     }
+}
+
+/// Rewrites every [`GameObjectRef`] reachable from `value` through `id_mapping`,
+/// walking reflected struct fields and container elements recursively.
+///
+/// Nil references are left alone. A non-nil reference with no entry in
+/// `id_mapping` is left unchanged and passed to `on_unknown` with its field
+/// path, which starts at `path`.
+pub(crate) fn remap_object_refs(
+    value: &mut dyn Reflect,
+    types: &TypeRegistry,
+    id_mapping: &BiHashMap<Uuid, Uuid>,
+    path: &str,
+    on_unknown: &mut dyn FnMut(&str, Uuid),
+) {
+    let mut path = path.to_string();
+    remap_value(value, types, id_mapping, &mut path, on_unknown);
+}
+
+fn remap_value(
+    value: &mut dyn Reflect,
+    types: &TypeRegistry,
+    id_mapping: &BiHashMap<Uuid, Uuid>,
+    path: &mut String,
+    on_unknown: &mut dyn FnMut(&str, Uuid),
+) {
+    if let Some(reference) = value.downcast_mut::<GameObjectRef>() {
+        if reference.id.is_nil() {
+            return;
+        }
+        match id_mapping.get_by_left(&reference.id) {
+            Some(new_id) => reference.id = *new_id,
+            None => on_unknown(path, reference.id),
+        }
+        return;
+    }
+    if let Some(TypeInfo::Struct(info)) = types.type_info_by_id(value.uuid()) {
+        for (name, field) in &info.fields {
+            if let Some(field_value) = field.get_reflect_mut(&mut *value) {
+                let len = path.len();
+                path.push('.');
+                path.push_str(name);
+                remap_value(field_value, types, id_mapping, path, on_unknown);
+                path.truncate(len);
+            }
+        }
+    }
+    let mut index = 0usize;
+    value.visit_elements_mut(&mut |element| {
+        let len = path.len();
+        path.push_str(&format!("[{index}]"));
+        index += 1;
+        remap_value(element, types, id_mapping, path, on_unknown);
+        path.truncate(len);
+    });
 }

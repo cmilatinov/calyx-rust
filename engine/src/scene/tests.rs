@@ -1,10 +1,16 @@
 #[cfg(test)]
 mod tests {
-    use crate::component::{ComponentCamera, ComponentID};
+    use crate as engine;
+    use crate::component::{Component, ComponentCamera, ComponentID, ReflectComponent};
     use crate::core::Ref;
-    use crate::scene::{GameObject, Scene, SceneData, SiblingDir};
+    use crate::reflect::{Reflect, ReflectDefault};
+    use crate::scene::game_object_ref::remap_object_refs;
+    use crate::scene::{GameObject, GameObjectRef, Scene, SceneData, SiblingDir};
     use crate::test_utils::test_scene;
+    use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
+    use bimap::BiHashMap;
     use nalgebra_glm::{self as glm, Vec3};
+    use serde::{Deserialize, Serialize};
     use uuid::Uuid;
 
     // --- Creation & Identity ---
@@ -929,6 +935,142 @@ mod tests {
         ));
         assert_eq!(scene.world.len(), entity_count);
     }
+    #[derive(Default, Clone, TypeUuid, Serialize, Deserialize, Reflect)]
+    #[uuid = "4f0c8a3e-2b71-4d6a-9e15-c7a3b9d20f84"]
+    #[reflect(Default)]
+    #[repr(C)]
+    struct RefSlot {
+        target: GameObjectRef,
+    }
+
+    #[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
+    #[uuid = "b7d2e915-6c3a-4f08-8a4e-1d9f5c27e6b3"]
+    #[reflect(Default, TypeUuidDynamic, Component)]
+    #[repr(C)]
+    struct NestedRefComponent {
+        slot: RefSlot,
+        targets: Vec<GameObjectRef>,
+    }
+
+    impl Component for NestedRefComponent {}
+
+    /// Builds a prefab whose root holds `component` and has one child, and
+    /// returns the instantiated root and child.
+    fn instantiate_with_refs(
+        scene: &mut Scene,
+        component: impl FnOnce(Uuid, Uuid) -> NestedRefComponent,
+    ) -> (GameObject, GameObject) {
+        let root = scene.create(None, None);
+        let child = scene.create(None, Some(root));
+        let refs = component(scene.uuid(root), scene.uuid(child));
+        scene.add_component(root, refs);
+        let prefab = scene.create_prefab(root);
+        let instance = scene
+            .instantiate_prefab(&prefab, None)
+            .expect("prefab should instantiate");
+        let instance_child = scene.children(instance).next().unwrap();
+        (instance, instance_child)
+    }
+
+    fn nested_refs(scene: &Scene, game_object: GameObject) -> (Uuid, Vec<Uuid>) {
+        let entry = scene.entry(game_object).unwrap();
+        let component = entry.get_component::<NestedRefComponent>().unwrap();
+        (
+            component.slot.target.id(),
+            component.targets.iter().map(GameObjectRef::id).collect(),
+        )
+    }
+
+    #[test]
+    fn instantiate_prefab_remaps_reference_inside_nested_struct() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+
+        let (instance, instance_child) =
+            instantiate_with_refs(&mut scene, |_, child| NestedRefComponent {
+                slot: RefSlot {
+                    target: GameObjectRef::new(child),
+                },
+                targets: Vec::new(),
+            });
+
+        let (slot_target, _) = nested_refs(&scene, instance);
+        assert_eq!(slot_target, scene.uuid(instance_child));
+    }
+
+    #[test]
+    fn instantiate_prefab_remaps_references_inside_list() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+
+        let (instance, instance_child) =
+            instantiate_with_refs(&mut scene, |root, child| NestedRefComponent {
+                slot: RefSlot::default(),
+                targets: vec![GameObjectRef::new(child), GameObjectRef::new(root)],
+            });
+
+        let (_, targets) = nested_refs(&scene, instance);
+        assert_eq!(
+            targets,
+            vec![scene.uuid(instance_child), scene.uuid(instance)]
+        );
+    }
+
+    #[test]
+    fn instantiate_prefab_leaves_unknown_references_unchanged() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+        let outside = scene.create(None, None);
+        let outside_id = scene.uuid(outside);
+
+        let (instance, _) = instantiate_with_refs(&mut scene, |_, _| NestedRefComponent {
+            slot: RefSlot {
+                target: GameObjectRef::new(outside_id),
+            },
+            targets: vec![GameObjectRef::new(outside_id), GameObjectRef::default()],
+        });
+
+        let (slot_target, targets) = nested_refs(&scene, instance);
+        assert_eq!(slot_target, outside_id);
+        assert_eq!(targets, vec![outside_id, Uuid::nil()]);
+    }
+
+    #[test]
+    fn remap_object_refs_reports_unknown_references_with_their_path() {
+        let registries = crate::test_utils::test_registries();
+        let known = Uuid::new_v4();
+        let unknown = Uuid::new_v4();
+        let mapping: BiHashMap<Uuid, Uuid> = [(known, Uuid::new_v4())].into_iter().collect();
+        let mut component = NestedRefComponent {
+            slot: RefSlot {
+                target: GameObjectRef::new(unknown),
+            },
+            targets: vec![GameObjectRef::new(known), GameObjectRef::new(unknown)],
+        };
+
+        let mut reported = Vec::new();
+        remap_object_refs(
+            &mut component,
+            &registries.types.read(),
+            &mapping,
+            "NestedRefComponent",
+            &mut |path, id| reported.push((path.to_string(), id)),
+        );
+        reported.sort();
+
+        assert_eq!(
+            reported,
+            vec![
+                ("NestedRefComponent.slot.target".to_string(), unknown),
+                ("NestedRefComponent.targets[1]".to_string(), unknown),
+            ]
+        );
+        assert_eq!(
+            component.targets[0].id(),
+            *mapping.get_by_left(&known).unwrap()
+        );
+    }
+
     // --- Serialization ---
 
     #[test]

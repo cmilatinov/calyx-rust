@@ -24,10 +24,11 @@ use crate::resource::ResourceMap;
 use crate::scene::game_object_store::GameObjectStore;
 use crate::scene::scene_graph::SceneGraph;
 use crate::scene::transform_cache::TransformCache;
-use crate::scene::{GameObjectRef, Prefab, SceneError};
+use crate::scene::{Prefab, SceneError};
 use crate::try_all;
 use crate::utils::{ContextSeed, TypeUuid};
 
+use super::game_object_ref::remap_object_refs;
 use super::scene_graph::{self, SiblingDir};
 
 /// Lightweight handle to a game object stored inside a [`Scene`].
@@ -35,7 +36,7 @@ use super::scene_graph::{self, SiblingDir};
 /// The handle contains both the Legion entity and the scene-graph node index so
 /// hierarchy and ECS lookups can stay cheap. Persist this handle only for the
 /// lifetime of the scene instance; for serialized references use
-/// [`GameObjectRef`].
+/// [`GameObjectRef`](crate::scene::GameObjectRef).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GameObject {
     /// Internal scene-graph node for hierarchy operations.
@@ -433,7 +434,9 @@ impl Scene {
         Ok(())
     }
     /// Instantiates `prefab` into the scene and remaps any embedded
-    /// [`GameObjectRef`] values to the newly created objects.
+    /// [`GameObjectRef`](crate::scene::GameObjectRef) values to the newly created objects,
+    /// including those inside nested structs and lists. A reference to an object
+    /// outside the prefab is left unchanged with a warning.
     ///
     /// Returns [`SceneError::InvalidPrefab`] when the prefab data is malformed.
     pub fn instantiate_prefab(
@@ -476,21 +479,17 @@ impl Scene {
                     let mut instance = component.deserialize(data);
                     let mut entry = self.entry_mut(game_object);
                 );
-                for (name, field) in &struct_info.fields {
-                    try_all!(
-                        None => continue;
-                        let id = field.get::<GameObjectRef>(&*instance).map(|r| r.id());
-                        let target_id = id_mapping.get_by_left(&id);
-                    );
-                    log::trace!("{} - {}", name, field.name);
-                    field
-                        .set(&mut *instance, GameObjectRef::new(*target_id))
-                        .ok_or_else(|| {
-                            SceneError::InvalidPrefab(format!(
-                                "failed to remap object reference field {name} on object {game_object_id}"
-                            ))
-                        })?;
-                }
+                remap_object_refs(
+                    &mut *instance,
+                    &type_registry,
+                    &id_mapping,
+                    struct_info.type_name,
+                    &mut |path, id| {
+                        log::warn!(
+                            "Prefab object {game_object_id}: reference to {id} in {path} is not part of the prefab; leaving it unchanged"
+                        )
+                    },
+                );
                 let _ = component.bind_instance(&mut entry, instance);
             }
             if let Some(mut entry) = self.entry_mut(game_object) {
