@@ -50,11 +50,6 @@ pub mod ui;
 /// Miscellaneous utility traits, macros, and helper functions.
 pub mod utils;
 
-#[cfg(test)]
-pub mod test_harness;
-#[cfg(test)]
-pub mod test_utils;
-
 pub use engine_derive::*;
 use inventory::collect;
 use reflect::type_registry::TypeRegistry;

@@ -684,7 +684,7 @@ mod tests {
     use crate::assets::animation_graph::{
         AnimationClip, AnimationMotion, AnimationNode, BlendTree,
     };
-    use crate::test_utils::test_registries;
+    use crate::test_support::test_registries;
 
     fn bind_pose() -> Transform {
         Transform::from_xyz(1.0, 2.0, 3.0)
@@ -806,7 +806,7 @@ mod tests {
         // Two meshes skinned by one joint tree: the body's skin lists [Hip, Spine], the arm's
         // [Arm, Spine, Hip]. Halfway through the clip the hip has moved 1 along z and the spine
         // has turned 45 degrees about z; the arm on the spine has no channel and turns with it.
-        let test_assets = crate::test_utils::TestAssets::models();
+        let test_assets = crate::test_support::TestAssets::models();
         let assets = test_assets.registries();
         let path = test_assets.fixtures_root().join("gltf/TwoSkins.gltf");
         let registry = assets.assets.read();

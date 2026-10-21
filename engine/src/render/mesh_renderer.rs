@@ -361,7 +361,7 @@ mod tests {
     use super::*;
     use crate::assets::material::Material;
     use crate::assets::Asset;
-    use crate::test_utils::TestAssets;
+    use crate::test_support::TestAssets;
     use uuid::Uuid;
 
     #[test]

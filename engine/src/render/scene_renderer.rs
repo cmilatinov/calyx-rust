@@ -1278,8 +1278,7 @@ mod tests {
     use crate::component::ComponentMesh;
     use crate::math::Transform;
     use crate::render::{Camera, Shader};
-    use crate::test_support::SceneBuilder;
-    use crate::test_utils::TestAssets;
+    use crate::test_support::{SceneBuilder, TestAssets};
     use nalgebra::UnitQuaternion;
     use nalgebra_glm::{vec3, vec4};
 

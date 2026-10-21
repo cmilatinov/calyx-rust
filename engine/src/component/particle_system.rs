@@ -474,7 +474,7 @@ impl ComponentParticleSystem {
 mod tests {
     use super::*;
     use crate::scene::Scene;
-    use crate::test_utils::test_registries;
+    use crate::test_support::test_registries;
     use nalgebra_glm::Vec3;
 
     fn add_particle_system(scene: &mut Scene, game_object: GameObject) {

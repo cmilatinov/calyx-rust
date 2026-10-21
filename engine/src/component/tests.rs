@@ -4,7 +4,7 @@ mod tests {
     use crate::component::*;
     use crate::net::ComponentNetworkObject;
     use crate::scene::SceneData;
-    use crate::test_utils::{test_registries, test_scene};
+    use crate::test_support::{test_registries, test_scene};
     use egui::Color32;
     use nalgebra_glm::Vec3;
     use rapier3d::dynamics::RigidBodyType;

@@ -499,7 +499,7 @@ impl Mesh {
 mod tests {
     use super::Mesh;
     use crate::assets::Asset;
-    use crate::test_utils::TestAssets;
+    use crate::test_support::TestAssets;
     use nalgebra_glm::{IVec4, Vec3, Vec4};
 
     #[test]

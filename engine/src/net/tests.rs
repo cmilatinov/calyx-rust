@@ -5,8 +5,8 @@ mod tests {
         MessageHandlerResult, MessageQueue, MessageSender, Network, NetworkSceneSync, Server,
     };
     use crate::scene::{GameObject, Scene};
-    use crate::test_harness::TestHarness;
-    use crate::test_utils::test_scene;
+    use crate::test_support::test_scene;
+    use crate::test_support::NetworkTestHarness as TestHarness;
     use std::collections::HashSet;
     use std::time::Duration;
 
