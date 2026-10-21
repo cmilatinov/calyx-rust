@@ -2,8 +2,9 @@
 mod tests {
     use crate::net::{
         Client, ComponentNetworkObject, GameChannel, GameMessage, MessageHandler,
-        MessageHandlerResult, MessageQueue, Network, NetworkSceneSync, Server,
+        MessageHandlerResult, MessageQueue, MessageSender, Network, NetworkSceneSync, Server,
     };
+    use crate::scene::{GameObject, Scene};
     use crate::test_harness::TestHarness;
     use crate::test_utils::test_scene;
     use std::collections::HashSet;
@@ -131,12 +132,23 @@ mod tests {
     #[test]
     fn message_queue_consume() {
         let mut queue = MessageQueue::default();
-        queue.queue_message(GameMessage::SyncTime { current_time: 1.0 });
-        queue.queue_message(GameMessage::SyncTime { current_time: 2.0 });
+        queue.queue_message(
+            MessageSender::Server,
+            GameMessage::SyncTime { current_time: 1.0 },
+        );
+        queue.queue_message(
+            MessageSender::Server,
+            GameMessage::SyncTime { current_time: 2.0 },
+        );
 
         struct ConsumeAll;
         impl MessageHandler<(), GameMessage> for ConsumeAll {
-            fn handle_message(&mut self, _: &mut (), _: &GameMessage) -> MessageHandlerResult {
+            fn handle_message(
+                &mut self,
+                _: &mut (),
+                _: MessageSender,
+                _: &GameMessage,
+            ) -> MessageHandlerResult {
                 MessageHandlerResult::Consume
             }
         }
@@ -146,7 +158,12 @@ mod tests {
         let mut count = 0usize;
         struct Counter;
         impl MessageHandler<usize, GameMessage> for Counter {
-            fn handle_message(&mut self, c: &mut usize, _: &GameMessage) -> MessageHandlerResult {
+            fn handle_message(
+                &mut self,
+                c: &mut usize,
+                _: MessageSender,
+                _: &GameMessage,
+            ) -> MessageHandlerResult {
                 *c += 1;
                 MessageHandlerResult::Consume
             }
@@ -158,11 +175,19 @@ mod tests {
     #[test]
     fn message_queue_ignore_retains() {
         let mut queue = MessageQueue::default();
-        queue.queue_message(GameMessage::SyncTime { current_time: 1.0 });
+        queue.queue_message(
+            MessageSender::Server,
+            GameMessage::SyncTime { current_time: 1.0 },
+        );
 
         struct IgnoreAll;
         impl MessageHandler<(), GameMessage> for IgnoreAll {
-            fn handle_message(&mut self, _: &mut (), _: &GameMessage) -> MessageHandlerResult {
+            fn handle_message(
+                &mut self,
+                _: &mut (),
+                _: MessageSender,
+                _: &GameMessage,
+            ) -> MessageHandlerResult {
                 MessageHandlerResult::Ignore
             }
         }
@@ -171,7 +196,12 @@ mod tests {
         let mut count = 0usize;
         struct Counter;
         impl MessageHandler<usize, GameMessage> for Counter {
-            fn handle_message(&mut self, c: &mut usize, _: &GameMessage) -> MessageHandlerResult {
+            fn handle_message(
+                &mut self,
+                c: &mut usize,
+                _: MessageSender,
+                _: &GameMessage,
+            ) -> MessageHandlerResult {
                 *c += 1;
                 MessageHandlerResult::Consume
             }
@@ -270,11 +300,55 @@ mod tests {
             to_client_id: client_b,
         };
         let mut ctx = (&mut client, &mut server, &mut &mut scene, &mut local_id);
-        NetworkSceneSync.handle_message(&mut ctx, &msg);
+        NetworkSceneSync.handle_message(&mut ctx, MessageSender::Server, &msg);
 
         assert_eq!(
             scene.read_component::<ComponentNetworkObject, _, _>(go, |c| c.owner_id),
             Some(client_b)
+        );
+    }
+
+    #[test]
+    fn client_origin_requires_own_sender_id() {
+        let transfer = |from_client_id| GameMessage::TransferOwnership {
+            network_object_id: 7,
+            from_client_id,
+            to_client_id: 3,
+        };
+        assert!(transfer(1).check_client_origin(1).is_ok());
+        assert!(transfer(2).check_client_origin(1).is_err());
+        assert!(GameMessage::SyncTime { current_time: 1.0 }
+            .check_client_origin(1)
+            .is_err());
+    }
+
+    #[test]
+    fn transfer_ownership_checks_stamped_sender() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        let (attacker, victim) = (1u64, 2u64);
+        scene.add_component(
+            go,
+            ComponentNetworkObject {
+                id: 42,
+                owner_id: victim,
+            },
+        );
+
+        let mut client = Client::default();
+        let mut server: Option<Server> = None;
+        let mut local_id: Option<renet::ClientId> = None;
+        let msg = GameMessage::TransferOwnership {
+            network_object_id: 42,
+            from_client_id: victim,
+            to_client_id: attacker,
+        };
+        let mut ctx = (&mut client, &mut server, &mut &mut scene, &mut local_id);
+        NetworkSceneSync.handle_message(&mut ctx, MessageSender::Client(attacker), &msg);
+
+        assert_eq!(
+            scene.read_component::<ComponentNetworkObject, _, _>(go, |c| c.owner_id),
+            Some(victim)
         );
     }
 
@@ -336,6 +410,7 @@ mod tests {
             fn handle_message(
                 &mut self,
                 out: &mut Option<f64>,
+                _sender: MessageSender,
                 msg: &GameMessage,
             ) -> MessageHandlerResult {
                 if let GameMessage::SyncTime { current_time } = msg {
@@ -380,6 +455,7 @@ mod tests {
             fn handle_message(
                 &mut self,
                 out: &mut Option<f64>,
+                _sender: MessageSender,
                 msg: &GameMessage,
             ) -> MessageHandlerResult {
                 if let GameMessage::SyncTime { current_time } = msg {
@@ -397,6 +473,125 @@ mod tests {
                 .receive_messages(&mut received, &mut TimeCapture);
             assert_eq!(received, Some(7.0), "client {i} missed the broadcast");
         }
+    }
+
+    /// Server-side scene holding one network object owned by `owner_id`.
+    fn scene_with_object(network_object_id: u64, owner_id: u64) -> (Scene, GameObject) {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        scene.add_component(
+            go,
+            ComponentNetworkObject {
+                id: network_object_id,
+                owner_id,
+            },
+        );
+        (scene, go)
+    }
+
+    /// Applies the server's queued messages to `scene`, as the host would.
+    fn apply_server_queue(net: &mut TestNetwork, scene: &mut Scene) {
+        let Network {
+            client,
+            server,
+            queue,
+            local_id,
+            ..
+        } = &mut net.server;
+        let mut scene = scene;
+        queue.receive_messages(
+            &mut (client, server, &mut scene, local_id),
+            &mut NetworkSceneSync,
+        );
+    }
+
+    /// Counts the `TransferOwnership` messages waiting in `network`'s queue.
+    fn count_transfers(network: &mut Network) -> usize {
+        struct TransferCounter;
+        impl MessageHandler<usize, GameMessage> for TransferCounter {
+            fn handle_message(
+                &mut self,
+                count: &mut usize,
+                _sender: MessageSender,
+                message: &GameMessage,
+            ) -> MessageHandlerResult {
+                if let GameMessage::TransferOwnership { .. } = message {
+                    *count += 1;
+                    MessageHandlerResult::Consume
+                } else {
+                    MessageHandlerResult::Ignore
+                }
+            }
+        }
+        let mut count = 0;
+        network
+            .queue
+            .receive_messages(&mut count, &mut TransferCounter);
+        count
+    }
+
+    #[test]
+    fn server_rejects_spoofed_sender() {
+        let mut net = TestNetwork::with_clients(2);
+        assert!(net.connect());
+        net.pump_until_drained();
+
+        let attacker_id = net.clients[0].client.client_id().unwrap();
+        let victim_id = net.clients[1].client.client_id().unwrap();
+        let (mut scene, go) = scene_with_object(42, victim_id);
+
+        // The attacker claims to be the victim to steal the victim's object.
+        net.clients[0]
+            .client
+            .send_message(&GameMessage::TransferOwnership {
+                network_object_id: 42,
+                from_client_id: victim_id,
+                to_client_id: attacker_id,
+            })
+            .unwrap();
+        net.pump_until_drained();
+        apply_server_queue(&mut net, &mut scene);
+        net.pump_until_drained();
+
+        assert_eq!(
+            scene.read_component::<ComponentNetworkObject, _, _>(go, |c| c.owner_id),
+            Some(victim_id),
+            "spoofed transfer changed ownership on the server"
+        );
+        assert_eq!(
+            count_transfers(&mut net.clients[1]),
+            0,
+            "server relayed the spoofed transfer to the victim"
+        );
+    }
+
+    #[test]
+    fn server_accepts_genuine_sender() {
+        let mut net = TestNetwork::with_clients(2);
+        assert!(net.connect());
+        net.pump_until_drained();
+
+        let owner_id = net.clients[0].client.client_id().unwrap();
+        let receiver_id = net.clients[1].client.client_id().unwrap();
+        let (mut scene, go) = scene_with_object(42, owner_id);
+
+        net.clients[0]
+            .client
+            .send_message(&GameMessage::TransferOwnership {
+                network_object_id: 42,
+                from_client_id: owner_id,
+                to_client_id: receiver_id,
+            })
+            .unwrap();
+        net.pump_until_drained();
+        apply_server_queue(&mut net, &mut scene);
+        net.pump_until_drained();
+
+        assert_eq!(
+            scene.read_component::<ComponentNetworkObject, _, _>(go, |c| c.owner_id),
+            Some(receiver_id)
+        );
+        assert_eq!(count_transfers(&mut net.clients[1]), 1);
     }
 
     // --- TestHarness integration tests ---
@@ -459,6 +654,7 @@ mod tests {
             fn handle_message(
                 &mut self,
                 out: &mut Option<f64>,
+                _sender: MessageSender,
                 msg: &GameMessage,
             ) -> MessageHandlerResult {
                 if let GameMessage::SyncTime { current_time } = msg {

@@ -1,6 +1,6 @@
 use crate::error::BoxedError;
 use crate::net::message::{GameChannel, GameMessage};
-use crate::net::{MessageQueue, ServerEvent};
+use crate::net::{MessageQueue, MessageSender, ServerEvent};
 use renet::{ClientId, ConnectionConfig, RenetServer};
 use renet_netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig};
 use std::net::{SocketAddr, UdpSocket};
@@ -72,14 +72,17 @@ impl Server {
                     log::info!("Client disconnected: {client_id}, reason: {reason}");
                 }
             }
-            queue.queue_message(GameMessage::ServerEvent(match event {
-                renet::ServerEvent::ClientConnected { client_id } => {
-                    ServerEvent::ClientConnected { client_id }
-                }
-                renet::ServerEvent::ClientDisconnected { client_id, .. } => {
-                    ServerEvent::ClientDisconnected { client_id }
-                }
-            }));
+            queue.queue_message(
+                MessageSender::Local,
+                GameMessage::ServerEvent(match event {
+                    renet::ServerEvent::ClientConnected { client_id } => {
+                        ServerEvent::ClientConnected { client_id }
+                    }
+                    renet::ServerEvent::ClientDisconnected { client_id, .. } => {
+                        ServerEvent::ClientDisconnected { client_id }
+                    }
+                }),
+            );
         }
 
         for client_id in server.clients_id() {
@@ -101,7 +104,11 @@ impl Server {
                             .ok()
                         })
                 {
-                    queue.queue_message(message);
+                    if let Err(reason) = message.check_client_origin(client_id) {
+                        log::warn!("Rejected message from client {client_id}: it {reason}");
+                        continue;
+                    }
+                    queue.queue_message(MessageSender::Client(client_id), message);
                 }
             }
         }
