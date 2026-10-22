@@ -1813,7 +1813,7 @@ impl AssetRegistry {
 mod tests {
     use super::*;
     use crate::assets::error::AssetErrorKind;
-    use crate::test_utils::test_registries_with_assets;
+    use crate::test_support::test_registries_with_assets;
     use serde_json::json;
 
     fn temp_asset_root(prefix: &str) -> PathBuf {

@@ -8,8 +8,8 @@ mod tests {
         Server,
     };
     use crate::scene::{GameObject, Prefab, Scene};
-    use crate::test_harness::TestHarness;
-    use crate::test_utils::{test_game_context, test_scene};
+    use crate::test_support::NetworkTestHarness as TestHarness;
+    use crate::test_support::{test_game_context, test_scene};
     use std::collections::HashSet;
     use std::time::Duration;
 

@@ -5,7 +5,7 @@ mod tests {
     use crate::assets::mesh::Mesh;
     use crate::assets::texture::Texture;
     use crate::assets::Asset;
-    use crate::test_utils::{test_game_context, test_registries_with_assets, TestAssets};
+    use crate::test_support::{test_game_context, test_registries_with_assets, TestAssets};
 
     use crate::utils::TypeUuid;
     use std::fs;

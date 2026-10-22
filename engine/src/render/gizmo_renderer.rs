@@ -625,7 +625,7 @@ impl GizmoRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::TestAssets;
+    use crate::test_support::TestAssets;
 
     #[test]
     fn gizmo_icon_shader_builds_pipeline() {

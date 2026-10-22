@@ -4,7 +4,7 @@ mod tests {
     use crate::core::Time;
     use crate::math::Transform;
     use crate::physics::{PhysicsConfiguration, PhysicsContext};
-    use crate::test_utils::test_scene;
+    use crate::test_support::test_scene;
     use nalgebra::UnitQuaternion;
     use nalgebra_glm::{vec3, Vec3};
     use rapier3d::dynamics::RigidBodyType;
