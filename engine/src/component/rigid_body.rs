@@ -25,10 +25,6 @@ pub struct ComponentRigidBody {
     pub gravity_scale: f32,
     /// Whether the body may enter Rapier's sleep state.
     pub can_sleep: bool,
-    /// Internal dirty flag that requests a physics rebuild.
-    #[serde(skip)]
-    #[reflect_skip]
-    pub dirty: bool,
 }
 
 impl Default for ComponentRigidBody {
@@ -39,7 +35,6 @@ impl Default for ComponentRigidBody {
             mass: 100.0,
             gravity_scale: 1.0,
             can_sleep: true,
-            dirty: true,
         }
     }
 }

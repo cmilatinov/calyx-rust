@@ -266,83 +266,93 @@ impl PhysicsContext {
         });
     }
 
-    /// Create or update rigid body properties when the component is dirty.
+    /// Creates a Rapier body for each new rigid body component, and reapplies
+    /// the properties of each rigid body written since the last sync, as the
+    /// scene's change set records.
     fn sync_rigid_bodies(scene: &mut Scene) {
+        let written = scene.changes.take::<ComponentRigidBody>();
         let mut query = <(Entity, &ComponentRigidBody)>::query();
-        let mut dirty_objects: Vec<GameObject> = Vec::new();
         for (entity, c_rb) in query.iter(&*scene.world) {
             let Some(go) = scene.game_object_from_entity(*entity) else {
                 continue;
             };
-            // Ensure a rapier body exists
-            if !scene.physics.entity_rigid_body.contains_key(&go.entity) {
-                let transform = scene.world_transform(go);
-                let rigid_body = Self::rigid_body_from_component(&transform, c_rb);
-                let handle = scene.physics.bodies.insert(rigid_body);
-                scene.physics.entity_rigid_body.insert(go.entity, handle);
-            }
-            // Sync properties only when dirty
-            if c_rb.dirty {
-                let handle = scene.physics.entity_rigid_body[&go.entity];
-                let rb = &mut scene.physics.bodies[handle];
-                rb.set_enabled(c_rb.enabled);
-                rb.set_body_type(c_rb.ty, true);
-                rb.set_additional_mass(c_rb.mass, true);
-                rb.set_gravity_scale(c_rb.gravity_scale, true);
-                if !c_rb.can_sleep {
-                    rb.activation_mut().normalized_linear_threshold = -1.0;
-                    rb.activation_mut().angular_threshold = -1.0;
+            match scene.physics.entity_rigid_body.get(&go.entity) {
+                None => {
+                    let transform = scene.world_transform(go);
+                    let rigid_body = Self::rigid_body_from_component(&transform, c_rb);
+                    let handle = scene.physics.bodies.insert(rigid_body);
+                    scene.physics.entity_rigid_body.insert(go.entity, handle);
                 }
-                dirty_objects.push(go);
+                Some(&handle) if written.contains(entity) => {
+                    Self::apply_rigid_body(&mut scene.physics.bodies[handle], c_rb);
+                }
+                Some(_) => {}
             }
-        }
-        for go in dirty_objects {
-            scene.write_component::<ComponentRigidBody, _>(go, |c_rb| c_rb.dirty = false);
         }
     }
 
-    /// Create or update collider properties when the component is dirty.
+    /// Applies `component`'s properties to an existing Rapier body.
+    fn apply_rigid_body(rb: &mut RigidBody, component: &ComponentRigidBody) {
+        rb.set_enabled(component.enabled);
+        rb.set_body_type(component.ty, true);
+        rb.set_additional_mass(component.mass, true);
+        rb.set_gravity_scale(component.gravity_scale, true);
+        let activation = rb.activation_mut();
+        if component.can_sleep {
+            activation.normalized_linear_threshold =
+                RigidBodyActivation::default_normalized_linear_threshold();
+            activation.angular_threshold = RigidBodyActivation::default_angular_threshold();
+        } else {
+            activation.normalized_linear_threshold = -1.0;
+            activation.angular_threshold = -1.0;
+            rb.wake_up(true);
+        }
+    }
+
+    /// Creates a Rapier collider for each new collider component, and
+    /// reapplies the properties of each collider written since the last sync,
+    /// as the scene's change set records.
     fn sync_colliders(scene: &mut Scene) {
+        let written = scene.changes.take::<ComponentCollider>();
         let mut query = <(Entity, &ComponentCollider)>::query();
-        let mut dirty_objects: Vec<GameObject> = Vec::new();
         for (entity, c_collider) in query.iter(&*scene.world) {
             let Some(go) = scene.game_object_from_entity(*entity) else {
                 continue;
             };
-            let parent = scene.ancestor_with::<ComponentRigidBody>(go);
-            let rb_handle =
-                parent.and_then(|p| scene.physics.entity_rigid_body.get(&p.entity).copied());
-            // Ensure a rapier collider exists
-            if !scene.physics.entity_collider.contains_key(&go.entity) {
-                let transform = parent
-                    .map(|p| scene.transform_relative_to(go, p))
-                    .unwrap_or_else(|| scene.world_transform(go));
-                let collider = Self::collider_from_component(&transform, c_collider);
-                let handle = match rb_handle {
-                    None => scene.physics.colliders.insert(collider),
-                    Some(rb_handle) => scene.physics.colliders.insert_with_parent(
-                        collider,
-                        rb_handle,
-                        &mut scene.physics.bodies,
-                    ),
-                };
-                scene.physics.entity_collider.insert(go.entity, handle);
-                scene.physics.collider_entity.insert(handle, go.entity);
-            }
-            // Sync properties only when dirty
-            if c_collider.dirty {
-                let c_handle = scene.physics.entity_collider[&go.entity];
-                let c = &mut scene.physics.colliders[c_handle];
-                c.set_enabled(c_collider.enabled);
-                c.set_shape(Self::collider_shape(c_collider.shape));
-                c.set_friction(c_collider.friction);
-                c.set_density(c_collider.density);
-                dirty_objects.push(go);
+            match scene.physics.entity_collider.get(&go.entity) {
+                None => {
+                    let parent = scene.ancestor_with::<ComponentRigidBody>(go);
+                    let rb_handle = parent
+                        .and_then(|p| scene.physics.entity_rigid_body.get(&p.entity).copied());
+                    let transform = parent
+                        .map(|p| scene.transform_relative_to(go, p))
+                        .unwrap_or_else(|| scene.world_transform(go));
+                    let collider = Self::collider_from_component(&transform, c_collider);
+                    let handle = match rb_handle {
+                        None => scene.physics.colliders.insert(collider),
+                        Some(rb_handle) => scene.physics.colliders.insert_with_parent(
+                            collider,
+                            rb_handle,
+                            &mut scene.physics.bodies,
+                        ),
+                    };
+                    scene.physics.entity_collider.insert(go.entity, handle);
+                    scene.physics.collider_entity.insert(handle, go.entity);
+                }
+                Some(&handle) if written.contains(entity) => {
+                    Self::apply_collider(&mut scene.physics.colliders[handle], c_collider);
+                }
+                Some(_) => {}
             }
         }
-        for go in dirty_objects {
-            scene.write_component::<ComponentCollider, _>(go, |c_c| c_c.dirty = false);
-        }
+    }
+
+    /// Applies `component`'s properties to an existing Rapier collider.
+    fn apply_collider(collider: &mut Collider, component: &ComponentCollider) {
+        collider.set_enabled(component.enabled);
+        collider.set_shape(Self::collider_shape(component.shape));
+        collider.set_friction(component.friction);
+        collider.set_density(component.density);
     }
 
     /// Sync explicit scene transform edits into Rapier before stepping.

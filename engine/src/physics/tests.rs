@@ -7,7 +7,7 @@ mod tests {
     use crate::test_support::test_scene;
     use nalgebra::UnitQuaternion;
     use nalgebra_glm::{vec3, Vec3};
-    use rapier3d::dynamics::RigidBodyType;
+    use rapier3d::dynamics::{RigidBodyActivation, RigidBodyType};
     use rapier3d::pipeline::QueryFilter;
 
     fn time_with_delta(dt: f32) -> Time {
@@ -669,7 +669,6 @@ mod tests {
 
         scene.write_component::<ComponentCollider, _>(floor_col, |collider| {
             collider.enabled = false;
-            collider.dirty = true;
         });
         scene.prepare();
         let handle = scene.physics.entity_collider[&floor_col.entity];
@@ -684,9 +683,207 @@ mod tests {
 
         scene.write_component::<ComponentCollider, _>(floor_col, |collider| {
             collider.enabled = true;
-            collider.dirty = true;
         });
         scene.prepare();
         assert!(scene.physics.colliders[handle].is_enabled());
+    }
+
+    /// Builds a dynamic body with a unit sphere collider on the same object and
+    /// syncs it into the physics world.
+    fn synced_body(scene: &mut crate::scene::Scene) -> crate::scene::GameObject {
+        let go = scene.create(None, None);
+        scene.add_component(
+            go,
+            ComponentRigidBody {
+                ty: RigidBodyType::Dynamic,
+                ..Default::default()
+            },
+        );
+        scene.add_component(
+            go,
+            ComponentCollider {
+                shape: ColliderShape::Sphere { radius: 1.0 },
+                ..Default::default()
+            },
+        );
+        scene.prepare();
+        go
+    }
+
+    fn collider_radius(scene: &crate::scene::Scene, go: crate::scene::GameObject) -> f32 {
+        let handle = scene.physics.entity_collider[&go.entity];
+        scene.physics.colliders[handle]
+            .shape()
+            .as_ball()
+            .expect("collider should be a ball")
+            .radius
+    }
+
+    fn body_type(scene: &crate::scene::Scene, go: crate::scene::GameObject) -> RigidBodyType {
+        let handle = scene.physics.entity_rigid_body[&go.entity];
+        scene.physics.bodies[handle].body_type()
+    }
+
+    /// Syncs physics and asserts the edits every write-path test makes, a
+    /// radius of 2.5 and a fixed body, reached the physics world.
+    fn assert_resized_and_fixed(scene: &mut crate::scene::Scene, go: crate::scene::GameObject) {
+        scene.prepare();
+        assert_eq!(collider_radius(scene, go), 2.5);
+        assert_eq!(body_type(scene, go), RigidBodyType::Fixed);
+    }
+
+    #[test]
+    fn write_component_edits_reach_physics() {
+        let mut scene = test_scene();
+        let go = synced_body(&mut scene);
+
+        scene.write_component::<ComponentCollider, _>(go, |c| {
+            c.shape = ColliderShape::Sphere { radius: 2.5 }
+        });
+        scene.write_component::<ComponentRigidBody, _>(go, |c| c.ty = RigidBodyType::Fixed);
+
+        assert_resized_and_fixed(&mut scene, go);
+    }
+
+    #[test]
+    fn inspector_edits_reach_physics() {
+        let mut scene = test_scene();
+        let go = synced_body(&mut scene);
+
+        // The inspector edits a component through `edit_component_dyn`, with a
+        // registry prototype as the type-erased handle.
+        unsafe {
+            scene.edit_component_dyn(go, &ComponentCollider::default(), |instance, _| {
+                let c = instance
+                    .as_reflect_mut()
+                    .downcast_mut::<ComponentCollider>()
+                    .expect("instance should be a collider");
+                c.shape = ColliderShape::Sphere { radius: 2.5 };
+            });
+            scene.edit_component_dyn(go, &ComponentRigidBody::default(), |instance, _| {
+                let c = instance
+                    .as_reflect_mut()
+                    .downcast_mut::<ComponentRigidBody>()
+                    .expect("instance should be a rigid body");
+                c.ty = RigidBodyType::Fixed;
+            });
+        }
+
+        assert_resized_and_fixed(&mut scene, go);
+    }
+
+    /// Writes `value` at `path` inside `prototype`'s component on `go` by
+    /// deserializing the component in place, as the editor's undo does.
+    fn restore_value(
+        scene: &mut crate::scene::Scene,
+        go: crate::scene::GameObject,
+        prototype: &dyn crate::component::Component,
+        path: &[&str],
+        value: serde_json::Value,
+    ) {
+        let restored = scene.write_component_dyn(go, prototype, |instance| {
+            let mut serialized = instance.serialize().expect("component serializes");
+            let mut target = &mut serialized;
+            for segment in path {
+                target = &mut target[*segment];
+            }
+            *target = value;
+            instance.deserialize_in_place(&serialized)
+        });
+        assert_eq!(restored, Some(true));
+    }
+
+    #[test]
+    fn undo_restores_reach_physics() {
+        let mut scene = test_scene();
+        let go = synced_body(&mut scene);
+        let fixed = serde_json::to_value(RigidBodyType::Fixed).expect("body type serializes");
+
+        restore_value(
+            &mut scene,
+            go,
+            &ComponentCollider::default(),
+            &["shape", "Sphere", "radius"],
+            serde_json::json!(2.5),
+        );
+        restore_value(
+            &mut scene,
+            go,
+            &ComponentRigidBody::default(),
+            &["ty"],
+            fixed,
+        );
+
+        assert_resized_and_fixed(&mut scene, go);
+    }
+
+    #[test]
+    fn write_after_sync_applies_on_next_sync() {
+        let mut scene = test_scene();
+        let go = synced_body(&mut scene);
+        step(&mut scene, 1);
+
+        scene.write_component::<ComponentCollider, _>(go, |c| {
+            c.shape = ColliderShape::Sphere { radius: 2.5 }
+        });
+        scene.write_component::<ComponentRigidBody, _>(go, |c| c.ty = RigidBodyType::Fixed);
+        step(&mut scene, 1);
+        assert_eq!(collider_radius(&scene, go), 1.0);
+
+        assert_resized_and_fixed(&mut scene, go);
+    }
+
+    #[test]
+    fn sync_does_not_record_its_own_writes() {
+        let mut scene = test_scene();
+        synced_body(&mut scene);
+
+        assert!(scene.changes.take::<ComponentRigidBody>().is_empty());
+        assert!(scene.changes.take::<ComponentCollider>().is_empty());
+    }
+
+    #[test]
+    fn can_sleep_toggle_restores_sleep_thresholds() {
+        let mut scene = test_scene();
+        let go = synced_body(&mut scene);
+        let handle = scene.physics.entity_rigid_body[&go.entity];
+
+        scene.write_component::<ComponentRigidBody, _>(go, |c| c.can_sleep = false);
+        scene.prepare();
+        let activation = *scene.physics.bodies[handle].activation();
+        assert!(activation.normalized_linear_threshold < 0.0);
+        assert!(activation.angular_threshold < 0.0);
+
+        scene.write_component::<ComponentRigidBody, _>(go, |c| c.can_sleep = true);
+        scene.prepare();
+        let activation = *scene.physics.bodies[handle].activation();
+        assert_eq!(
+            activation.normalized_linear_threshold,
+            RigidBodyActivation::default_normalized_linear_threshold()
+        );
+        assert_eq!(
+            activation.angular_threshold,
+            RigidBodyActivation::default_angular_threshold()
+        );
+    }
+
+    #[test]
+    fn rigid_body_enabled_applies_at_creation_and_on_change() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        scene.add_component(
+            go,
+            ComponentRigidBody {
+                enabled: false,
+                ..Default::default()
+            },
+        );
+        scene.prepare();
+        let handle = scene.physics.entity_rigid_body[&go.entity];
+        assert!(!scene.physics.bodies[handle].is_enabled());
+
+        scene.write_component::<ComponentRigidBody, _>(go, |c| c.enabled = true);
+        scene.prepare();
+        assert!(scene.physics.bodies[handle].is_enabled());
     }
 }
