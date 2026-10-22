@@ -1,13 +1,14 @@
-use eframe::egui_wgpu::{SurfaceErrorAction, WgpuSetup, WgpuSetupCreateNew};
-use eframe::wgpu::PowerPreference;
-use eframe::{egui_wgpu, wgpu, Frame, NativeOptions};
+use eframe::{Frame, NativeOptions};
 use egui::load::SizedTexture;
 use egui::{Context, Direction, Image, ImageSource, InnerResponse, Layout, Rect, Sense};
 use engine::context::{AssetContext, GameContext};
 use engine::error::DynError;
-use engine::input::{Input, InputState};
+use engine::input::Input;
 use engine::logging::{DefaultLogger, Log};
 use engine::render::{Camera, SceneRenderer, SceneRendererOptions};
+use engine::runtime::{
+    initial_render_size, wgpu_configuration, FrameCounter, ProjectRuntimeSettings, WindowSettings,
+};
 use engine::scene::Scene;
 use engine::ui::{
     render_commands, Border, CornerRadius, EdgeInsets, EguiUiBackend, JustifyContent,
@@ -18,14 +19,11 @@ use sandbox::plugin_main;
 use sandbox::spawn::ComponentRespawnState;
 use sandbox::tank::{ComponentHealth, ComponentTankController};
 use std::path::PathBuf;
-use std::sync::Arc;
-#[cfg(unix)]
-#[cfg(feature = "wayland")]
-use winit::platform::wayland::EventLoopBuilderExtWayland;
 #[cfg(windows)]
 use winit::platform::windows::EventLoopBuilderExtWindows;
-#[cfg(unix)]
-#[cfg(feature = "x11")]
+// winit's default features enable X11 on Linux. Dependency features are not
+// exposed as cfg(feature = "...") values in this crate.
+#[cfg(target_os = "linux")]
 use winit::platform::x11::EventLoopBuilderExtX11;
 
 struct GameApp {
@@ -34,16 +32,20 @@ struct GameApp {
     ui_runtime: UiRuntime,
     ui_arena: UiArena,
     ui_theme: Theme,
-    fps_counter: usize,
-    fps: usize,
+    frame_counter: FrameCounter,
     #[allow(unused)]
     log: Log<DefaultLogger>,
 }
 
 impl GameApp {
-    fn new(cc: &eframe::CreationContext) -> Result<Self, Box<DynError>> {
-        let assets =
-            AssetContext::new(cc, PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"))?;
+    fn new(
+        cc: &eframe::CreationContext,
+        settings: &ProjectRuntimeSettings,
+    ) -> Result<Self, Box<DynError>> {
+        let startup_scene = settings
+            .startup_scene_path()
+            .ok_or("the project does not configure a startup scene")?;
+        let assets = AssetContext::new(cc, settings.assets_directory())?;
         {
             let mut type_registry = assets.registries.types.write();
             plugin_main(&mut type_registry);
@@ -58,8 +60,13 @@ impl GameApp {
             .registries
             .assets
             .read()
-            .load::<Scene>("scene")
-            .unwrap();
+            .load_by_path::<Scene>(&startup_scene)
+            .map_err(|error| {
+                format!(
+                    "Failed to load startup scene '{}': {error}",
+                    startup_scene.display()
+                )
+            })?;
         game.scenes.load_scene(scene.readonly());
         game.scenes.current_scene_mut().start();
         Ok(Self {
@@ -71,13 +78,12 @@ impl GameApp {
                     grid: true,
                     ..Default::default()
                 },
-                Self::initial_render_size(&cc.egui_ctx),
+                initial_render_size(&cc.egui_ctx),
             ),
             ui_runtime: UiRuntime::default(),
             ui_arena: UiArena::default(),
             ui_theme: Theme::default(),
-            fps_counter: 0,
-            fps: 0,
+            frame_counter: FrameCounter::default(),
             log: Log::new(
                 DefaultLogger::builder()
                     .app_vendor("Calyx")
@@ -92,17 +98,6 @@ impl GameApp {
         (
             (pixels_per_point * rect.width()) as u32,
             (pixels_per_point * rect.height()) as u32,
-        )
-    }
-
-    fn initial_render_size(ctx: &Context) -> (u32, u32) {
-        let Some(window_size) = ctx.input(|i| i.viewport().inner_rect) else {
-            return (0, 0);
-        };
-        let pixels_per_point = ctx.pixels_per_point();
-        (
-            (pixels_per_point * window_size.width()) as u32,
-            (pixels_per_point * window_size.height()) as u32,
         )
     }
 
@@ -503,12 +498,12 @@ impl eframe::App for GameApp {
                 );
                 // The HUD is non-interactive, so update gameplay before taking the
                 // snapshot that will be painted this frame.
-                let state = InputState {
-                    is_active: true,
-                    last_cursor_pos: None,
-                    ..Default::default()
-                };
-                let input = Input::from_ctx(ui.ctx(), Some(&response), state);
+                let input = Input::from_ctx(
+                    ui.ctx(),
+                    Some(&response),
+                    self.game.resources.input_mut(),
+                    true,
+                );
                 let hud_state = {
                     let assets = self.game.assets.lock_read();
                     let GameContext {
@@ -562,76 +557,86 @@ impl eframe::App for GameApp {
             }
         }
 
-        self.fps_counter += 1;
-        if self.game.resources.time().timer("fps") >= 1.0 {
-            self.fps = self.fps_counter;
-            self.fps_counter = 0;
-            self.game.resources.time_mut().reset_timer("fps");
-        }
+        self.frame_counter.tick(self.game.resources.time());
 
         // ctx.grab_cursor(ctx.input(|input| input.focused));
         ctx.request_repaint();
     }
 }
 
-fn main() -> eframe::Result<()> {
-    let options = NativeOptions {
+/// Storage id the player's window and egui state persist under.
+const PLAYER_APP_ID: &str = "calyx-player";
+
+/// Root directory of the project this player runs.
+fn project_directory() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+fn native_options(window: &WindowSettings) -> NativeOptions {
+    NativeOptions {
         viewport: egui::ViewportBuilder {
-            inner_size: Some(egui::vec2(1280.0, 720.0)),
-            min_inner_size: Some(egui::vec2(1280.0, 720.0)),
+            // eframe restores a window saved under the app id before applying
+            // `inner_size`. The editor saves its window under the default id,
+            // the app name, so the player uses its own id and saves nothing.
+            app_id: Some(PLAYER_APP_ID.to_string()),
+            inner_size: Some(window.inner_size()),
             decorations: Some(true),
             ..Default::default()
         },
-        persist_window: true,
+        // The project's window size decides the opening size, so the player
+        // never saves a size that a later run would restore over it.
+        persist_window: false,
         renderer: eframe::Renderer::Wgpu,
-        wgpu_options: egui_wgpu::WgpuConfiguration {
-            present_mode: Default::default(),
-            desired_maximum_frame_latency: None,
-            on_surface_error: Arc::new(|_| SurfaceErrorAction::SkipFrame),
-            wgpu_setup: WgpuSetup::CreateNew(WgpuSetupCreateNew {
-                instance_descriptor: Default::default(),
-                power_preference: PowerPreference::HighPerformance,
-                native_adapter_selector: None,
-                device_descriptor: Arc::new(|_adapter| {
-                    wgpu::DeviceDescriptor {
-                        required_features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
-                            | wgpu::Features::POLYGON_MODE_LINE
-                            | wgpu::Features::CLEAR_TEXTURE
-                            | wgpu::Features::FLOAT32_FILTERABLE
-                            | wgpu::Features::DEPTH32FLOAT_STENCIL8
-                            | wgpu::Features::BUFFER_BINDING_ARRAY
-                            | wgpu::Features::TEXTURE_BINDING_ARRAY
-                            | wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY
-                            | wgpu::Features::UNIFORM_BUFFER_AND_STORAGE_TEXTURE_ARRAY_NON_UNIFORM_INDEXING,
-                        required_limits: wgpu::Limits {
-                            max_storage_textures_per_shader_stage: 5,
-                            max_uniform_buffers_per_shader_stage: 30,
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    }
-                }),
-                trace_path: None,
-            }),
-        },
+        wgpu_options: wgpu_configuration(),
         event_loop_builder: Some(Box::new(|builder| {
             builder.with_any_thread(true);
         })),
         ..Default::default()
-    };
+    }
+}
+
+fn main() -> eframe::Result<()> {
+    let settings =
+        ProjectRuntimeSettings::load(project_directory()).map_err(eframe::Error::AppCreation)?;
     eframe::run_native(
         "Calyx",
-        options,
-        Box::new(|cc| Ok(GameApp::new(cc).map(Box::new)?)),
+        native_options(settings.window()),
+        Box::new(move |cc| Ok(GameApp::new(cc, &settings).map(Box::new)?)),
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        tank_hud_state, weapon_status_label, ComponentHealth, ComponentRespawnState,
-        ComponentTankController, TankHudState,
+        native_options, project_directory, tank_hud_state, weapon_status_label, ComponentHealth,
+        ComponentRespawnState, ComponentTankController, ProjectRuntimeSettings, TankHudState,
     };
+
+    #[test]
+    fn player_reads_startup_scene_and_window_from_sandbox_project() {
+        let settings = ProjectRuntimeSettings::load(project_directory()).unwrap();
+
+        let startup_scene = settings.startup_scene_path().unwrap();
+        assert_eq!(
+            startup_scene,
+            project_directory().join("assets").join("scene.cxscene")
+        );
+        assert!(startup_scene.is_file(), "{}", startup_scene.display());
+
+        let options = native_options(settings.window());
+        assert_eq!(
+            options.viewport.inner_size,
+            Some(egui::vec2(
+                settings.window().width as f32,
+                settings.window().height as f32
+            ))
+        );
+        assert!(!options.persist_window);
+        assert_eq!(
+            options.viewport.app_id.as_deref(),
+            Some(super::PLAYER_APP_ID)
+        );
+    }
 
     #[test]
     fn tank_hud_state_reads_live_health_and_ammo() {

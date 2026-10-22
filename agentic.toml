@@ -1,0 +1,27 @@
+default_base = "main"
+
+[[format]]
+name = "rustfmt"
+run = ["cargo", "fmt", "--all"]
+
+[[check]]
+name = "format"
+run = ["cargo", "fmt", "--all", "--", "--check"]
+fix = ["cargo", "fmt", "--all"]
+on = ["commit", "validate"]
+
+[[check]]
+name = "lint"
+run = ["cargo", "clippy", "--workspace", "--all-targets"]
+on = ["commit", "validate"]
+
+[[check]]
+name = "tests"
+run = ["cargo", "test", "--workspace"]
+on = ["validate"]
+
+[tasks]
+project_number = 1
+project_owner = "cmilatinov"
+default_repo = "cmilatinov/calyx-rust"
+default_status = "Todo"

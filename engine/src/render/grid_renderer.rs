@@ -54,28 +54,13 @@ impl GridRenderer {
         let device = &render_state.device;
         let queue = &render_state.queue;
         let mut quad_mesh = screen_space_quad.write();
-        let mut shader = self.shader.write();
-        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Scene Grid"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &scene_texture_msaa.view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &scene_depth_texture.view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: None,
-            }),
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
+        let shader = self.shader.read();
+        let mut render_pass = RenderUtils::overlay_pass(
+            encoder,
+            &scene_texture_msaa.view,
+            Some(&scene_depth_texture.view),
+            "Scene Grid",
+        );
 
         let mut depth_stencil = RenderUtils::depth_default(wgpu::TextureFormat::Depth32Float);
         depth_stencil.depth_write_enabled = false;
@@ -86,36 +71,31 @@ impl GridRenderer {
                 scene_texture_msaa.descriptor.format,
             ))])
             .build();
-        shader.build_pipeline(&options);
-        if let Some(pipeline) = shader.get_pipeline(&options) {
-            render_pass.set_pipeline(pipeline);
-            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-            quad_mesh.instances.resize(
-                1,
-                Instance {
-                    bone_transform_index: -1,
-                    object_id: 0,
-                    _padding: Default::default(),
-                    transform: Mat4::identity().into(),
-                },
-            );
-            RenderUtils::render_mesh(device, queue, &mut render_pass, &mut quad_mesh);
-        }
+        render_pass.set_pipeline(&shader.pipeline(&options));
+        render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+        quad_mesh.instances.resize(
+            1,
+            Instance {
+                bone_transform_index: -1,
+                object_id: 0,
+                _padding: Default::default(),
+                transform: Mat4::identity().into(),
+            },
+        );
+        RenderUtils::render_mesh(device, queue, &mut render_pass, &mut quad_mesh);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::test_asset_context_with_assets;
+    use crate::test_support::TestAssets;
     use egui_wgpu::wgpu::util::DeviceExt;
-    use std::path::PathBuf;
 
     #[test]
     fn creates_camera_bind_group_from_grid_shader_layout() {
-        let assets_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets");
-        let assets_path = dunce::canonicalize(assets_path).expect("assets dir not found");
-        let context = test_asset_context_with_assets(vec![assets_path]);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
         let read_only_context = context.lock_read();
         let device = read_only_context.render_context.device();
         let camera_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

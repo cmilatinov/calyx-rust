@@ -13,7 +13,7 @@ use crate::render::{
     Camera, GizmoRenderer, GridRenderer, LightManager, MeshRenderDefaults, MeshRenderTargets,
     MeshRenderer, OutlineRenderer, ParticleRenderer, PipelineOptions, SkyboxRenderer,
 };
-use crate::scene::Scene;
+use crate::scene::{GameObject, Scene};
 use egui::Color32;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::{wgpu, RenderState};
@@ -63,8 +63,10 @@ pub struct SceneRendererOptions {
     pub clear_color: Color32,
     /// Mesh face-culling mode used for scene geometry.
     pub mesh_cull_mode: Option<wgpu::Face>,
-    // TODO: figure out why GTX 970 isn't supporting MSAA
     /// MSAA sample count used for offscreen scene rendering.
+    ///
+    /// Values above one must be supported by the adapter for `Rgba16Float`
+    /// color and `Depth32Float` depth; WebGPU guarantees four.
     pub samples: u32,
 }
 
@@ -142,6 +144,27 @@ pub struct SceneRenderer {
     sky_light_intensity: f32,
 }
 
+/// Instance index of the next skinned draw in a mesh's shared bone buffer, or `None` for a mesh without bones.
+fn skinning_instance_index(uploaded_bone_transforms: usize, num_bones: usize) -> Option<usize> {
+    uploaded_bone_transforms.checked_div(num_bones)
+}
+
+/// World transform that places a skinned mesh. The animator skins its vertices into the space of
+/// its root bone, so the root bone's world transform places them; the mesh object's own world
+/// transform would apply every node between the root bone and the mesh a second time. A mesh
+/// whose root bone is not in the scene keeps its own transform.
+fn skinned_mesh_world_transform(
+    scene: &Scene,
+    game_object: GameObject,
+    skinned_mesh: &ComponentSkinnedMesh,
+) -> Transform {
+    let placement = skinned_mesh
+        .root_bone
+        .game_object(scene)
+        .unwrap_or(game_object);
+    scene.world_transform(placement)
+}
+
 impl SceneRenderer {
     /// Creates a scene renderer for `context` with `options`.
     pub fn new(
@@ -149,9 +172,8 @@ impl SceneRenderer {
         mut options: SceneRendererOptions,
         initial_size: (u32, u32),
     ) -> Self {
-        let render_state = context.render_context.render_state();
         let asset_registry = context.registries.assets.read();
-        let device = &render_state.device;
+        let device = context.render_context.device();
         let (width, height) = if initial_size.0 == 0 || initial_size.1 == 0 {
             log::warn!("SceneRenderer created before a valid render size was available; using 1x1 initial textures");
             (1, 1)
@@ -289,7 +311,7 @@ impl SceneRenderer {
                 write_mask: Default::default(),
             })])
             .build();
-        self.build_asset_data(render_state, scene, &options);
+        self.build_asset_data(render_state, scene);
         if self.options.gizmos {
             let object_id_lookup = &mut self.object_id_lookup;
             let object_ids_build = &mut self.object_ids_build;
@@ -388,27 +410,12 @@ impl SceneRenderer {
             self.options.samples,
         );
         if self.options.gizmos {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Scene Gizmos"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.scene_texture_msaa.view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.scene_depth_texture.view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
+            let mut render_pass = RenderUtils::overlay_pass(
+                &mut encoder,
+                &self.scene_texture_msaa.view,
+                Some(&self.scene_depth_texture.view),
+                "Scene Gizmos",
+            );
             self.gizmo_renderer
                 .render_gizmos(self.scene_texture_msaa.descriptor.format, &mut render_pass);
         }
@@ -416,6 +423,9 @@ impl SceneRenderer {
     }
 
     /// Applies the current outline state and resolves the scene texture for presentation.
+    ///
+    /// Call it once after each [`Self::render_scene_base`]: above one sample the
+    /// resolve discards the multisampled surface.
     pub fn finalize_scene(&mut self, render_state: &RenderState) {
         let device = &render_state.device;
         let queue = &render_state.queue;
@@ -436,8 +446,7 @@ impl SceneRenderer {
         let mut insert_instance_list = |last: (AssetId, AssetId, AssetId), instance_count: u32| {
             if last != Default::default() {
                 let entry = mesh_instances.entry(last.2).or_default();
-                let start = *entry;
-                draw_list.push((last.0, last.1, last.2, start..(start + instance_count)));
+                push_capped_batches(&mut draw_list, last, *entry, instance_count);
                 *entry += instance_count;
             }
         };
@@ -545,13 +554,8 @@ impl SceneRenderer {
         );
     }
 
-    fn build_asset_data(
-        &mut self,
-        render_state: &RenderState,
-        scene: &Scene,
-        render_options: &PipelineOptions,
-    ) {
-        let world = &scene.world;
+    fn build_asset_data(&mut self, render_state: &RenderState, scene: &Scene) {
+        let world = scene.world();
         self.draw_list.clear();
         self.object_ids_build.clear();
         self.object_id_lookup.clear();
@@ -597,15 +601,23 @@ impl SceneRenderer {
                 continue;
             };
             let mesh_id = mesh_ref.id();
-            let transform = scene.world_transform(game_object);
+            let transform = skinned_mesh_world_transform(scene, game_object, c_skinned_mesh);
             let bone_transform_index;
             {
                 let mut mesh = mesh_ref.write();
                 if !skinned_meshes.contains(&mesh_id) {
                     mesh.bone_transforms.clear();
                 }
+                let Some(index) =
+                    skinning_instance_index(mesh.bone_transforms.len(), mesh.bones.len())
+                else {
+                    crate::logging::warn_once(format!("boneless-skinned-mesh:{mesh_id}"), || {
+                        format!("Skinned mesh {mesh_id} has no bones; skipping skinning upload")
+                    });
+                    continue;
+                };
                 skinned_meshes.insert(mesh_id);
-                bone_transform_index = mesh.bone_transforms.len() / mesh.bones.len();
+                bone_transform_index = index;
                 mesh.bone_transforms
                     .extend(c_skinned_mesh.bone_transforms.iter().copied());
             }
@@ -645,9 +657,6 @@ impl SceneRenderer {
         self.sky_light_intensity = sky_light_intensity;
         for (_, mut mesh) in self.assets.meshes.lock_write() {
             mesh.instances.clear();
-        }
-        for (_, mut shader) in self.assets.shaders.lock_write() {
-            shader.build_pipeline(render_options);
         }
         for (_, mut material) in self.assets.materials.lock_write() {
             material.load_buffers(render_state);
@@ -835,6 +844,72 @@ impl SceneRenderer {
         });
     }
 
+    /// Submits an asynchronous copy of the resolved scene color texture into a
+    /// CPU-readable buffer, or `None` when the texture has no size yet.
+    ///
+    /// Poll the returned [`TextureReadback`] with
+    /// [`TextureReadback::try_finish`] on subsequent frames.
+    pub fn submit_scene_texture_readback(&self) -> Option<TextureReadback> {
+        let (width, height) = self.scene_texture_size();
+        if width == 0 || height == 0 {
+            return None;
+        }
+
+        let unpadded_bytes_per_row = width * TextureReadback::BYTES_PER_PIXEL;
+        let padded_bytes_per_row = unpadded_bytes_per_row
+            .div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+            * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+
+        let device = self.asset_context.render_context.device();
+        let queue = self.asset_context.render_context.queue();
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("scene_texture_readback"),
+            size: padded_bytes_per_row as u64 * height as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("scene_texture_readback"),
+        });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.scene_texture.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit(Some(encoder.finish()));
+
+        let slice = buffer.slice(..);
+        let (tx, rx) = mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+
+        Some(TextureReadback {
+            buffer,
+            receiver: rx,
+            width,
+            height,
+            padded_bytes_per_row,
+        })
+    }
+
     fn create_textures(
         render_context: Arc<RenderContext>,
         width: u32,
@@ -856,6 +931,7 @@ impl SceneRenderer {
                 format: wgpu::TextureFormat::Rgba16Float,
                 usage: wgpu::TextureUsages::COPY_DST
                     | wgpu::TextureUsages::COPY_SRC
+                    | wgpu::TextureUsages::RENDER_ATTACHMENT
                     | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             },
@@ -997,11 +1073,35 @@ impl SceneRenderer {
         );
     }
 
+    /// Resolves the scene color into the single-sample `scene_texture`.
+    ///
+    /// A multisampled texture cannot be the source of a texture copy, so above
+    /// one sample the resolve runs as a render pass whose resolve target is the
+    /// scene texture. At one sample the two textures match and a copy suffices.
     fn resolve_scene_texture(
         scene_texture_msaa: &Texture,
         scene_texture: &Texture,
         encoder: &mut wgpu::CommandEncoder,
     ) {
+        if scene_texture_msaa.descriptor.sample_count > 1 {
+            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Scene Resolve"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &scene_texture_msaa.view,
+                    resolve_target: Some(&scene_texture.view),
+                    // This is the multisampled surface's last use: the next
+                    // `render_scene_base` clears it, so only the resolve is kept.
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Discard,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            return;
+        }
         encoder.copy_texture_to_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &scene_texture_msaa.texture,
@@ -1049,6 +1149,103 @@ impl SceneRenderer {
     }
 }
 
+/// Poll state of an asynchronous scene texture readback.
+pub enum ReadbackPoll {
+    /// The GPU copy or buffer mapping has not completed yet.
+    Pending,
+    /// The image is ready.
+    Ready(image::RgbaImage),
+    /// The readback failed and will never complete.
+    Failed(String),
+}
+
+/// An in-flight asynchronous copy of the resolved scene color texture
+/// (`Rgba16Float`) into CPU memory, created by
+/// [`SceneRenderer::submit_scene_texture_readback`].
+pub struct TextureReadback {
+    buffer: wgpu::Buffer,
+    receiver: mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
+    width: u32,
+    height: u32,
+    padded_bytes_per_row: u32,
+}
+
+impl TextureReadback {
+    const BYTES_PER_PIXEL: u32 = 8; // Rgba16Float
+
+    /// Polls the readback without blocking. Once this returns
+    /// [`ReadbackPoll::Ready`] or [`ReadbackPoll::Failed`] the readback is
+    /// finished and must not be polled again.
+    pub fn try_finish(&mut self, render_context: &RenderContext) -> ReadbackPoll {
+        let _ = render_context.device().poll(wgpu::Maintain::Poll);
+        match self.receiver.try_recv() {
+            Err(mpsc::TryRecvError::Empty) => return ReadbackPoll::Pending,
+            Ok(Err(error)) => return ReadbackPoll::Failed(error.to_string()),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                return ReadbackPoll::Failed("readback channel disconnected".into())
+            }
+            Ok(Ok(())) => {}
+        }
+
+        let data = self.buffer.slice(..).get_mapped_range();
+        let mut pixels = Vec::with_capacity(self.width as usize * self.height as usize * 4);
+        for row in 0..self.height {
+            let start = (row * self.padded_bytes_per_row) as usize;
+            let end = start + (self.width * Self::BYTES_PER_PIXEL) as usize;
+            for texel in data[start..end].chunks_exact(Self::BYTES_PER_PIXEL as usize) {
+                for (channel, bytes) in texel.chunks_exact(2).enumerate() {
+                    let value = half_to_f32(u16::from_le_bytes([bytes[0], bytes[1]]));
+                    // Alpha is coverage, not color; only color channels are
+                    // sRGB-encoded for display.
+                    pixels.push(if channel == 3 {
+                        (value.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
+                    } else {
+                        linear_to_srgb(value)
+                    });
+                }
+            }
+        }
+        drop(data);
+        self.buffer.unmap();
+
+        match image::RgbaImage::from_raw(self.width, self.height, pixels) {
+            Some(image) => ReadbackPoll::Ready(image),
+            None => ReadbackPoll::Failed("readback produced a malformed image".into()),
+        }
+    }
+}
+
+fn half_to_f32(half: u16) -> f32 {
+    let sign = (half >> 15) as u32;
+    let exponent = ((half >> 10) & 0x1f) as u32;
+    let fraction = (half & 0x3ff) as u32;
+    let bits = if exponent == 0 {
+        if fraction == 0 {
+            sign << 31
+        } else {
+            // Subnormal half: renormalize into an f32 exponent.
+            let shift = fraction.leading_zeros() - 21;
+            let fraction = (fraction << (shift + 1)) & 0x3ff;
+            (sign << 31) | ((113 - shift) << 23) | (fraction << 13)
+        }
+    } else if exponent == 0x1f {
+        (sign << 31) | (0xff << 23) | (fraction << 13)
+    } else {
+        (sign << 31) | ((exponent + 112) << 23) | (fraction << 13)
+    };
+    f32::from_bits(bits)
+}
+
+fn linear_to_srgb(value: f32) -> u8 {
+    let value = value.clamp(0.0, 1.0);
+    let encoded = if value <= 0.003_130_8 {
+        value * 12.92
+    } else {
+        1.055 * value.powf(1.0 / 2.4) - 0.055
+    };
+    (encoded * 255.0 + 0.5) as u8
+}
+
 fn register_object_id(
     object_id_lookup: &mut HashMap<Uuid, u32>,
     object_ids_build: &mut Vec<Uuid>,
@@ -1061,4 +1258,358 @@ fn register_object_id(
     let object_id = object_ids_build.len() as u32;
     object_id_lookup.insert(game_object_id, object_id);
     object_id
+}
+
+/// Appends draw batches for `count` mesh instances starting at `start`,
+/// splitting at multiples of `Mesh::MAX_INSTANCES` so no batch reads past a
+/// single instance uniform chunk.
+fn push_capped_batches(
+    draw_list: &mut Vec<(AssetId, AssetId, AssetId, Range<u32>)>,
+    (shader_id, mat_id, mesh_id): (AssetId, AssetId, AssetId),
+    mut start: u32,
+    count: u32,
+) {
+    let cap = Mesh::MAX_INSTANCES as u32;
+    let end = start + count;
+    while start < end {
+        let batch_end = end.min((start / cap + 1) * cap);
+        draw_list.push((shader_id, mat_id, mesh_id, start..batch_end));
+        start = batch_end;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::assets::AssetRef;
+    use crate::component::ComponentMesh;
+    use crate::math::Transform;
+    use crate::render::{Camera, Shader};
+    use crate::test_support::{SceneBuilder, TestAssets};
+    use nalgebra::UnitQuaternion;
+    use nalgebra_glm::{vec3, vec4};
+
+    const VIEWPORT: u32 = 512;
+
+    fn batch(start: u32, count: u32) -> Vec<Range<u32>> {
+        let mut draw_list = Vec::new();
+        let ids = (AssetId::default(), AssetId::default(), AssetId::default());
+        push_capped_batches(&mut draw_list, ids, start, count);
+        draw_list
+            .into_iter()
+            .map(|(_, _, _, range)| range)
+            .collect()
+    }
+
+    #[test]
+    fn capped_batches_never_cross_the_instance_cap() {
+        let cap = Mesh::MAX_INSTANCES as u32;
+        assert_eq!(batch(0, 0), Vec::<Range<u32>>::new());
+        assert_eq!(batch(0, cap), vec![0..cap]);
+        assert_eq!(batch(0, cap + 1), vec![0..cap, cap..(cap + 1)]);
+        assert_eq!(
+            batch(cap - 2, cap + 4),
+            vec![(cap - 2)..cap, cap..(2 * cap), (2 * cap)..(2 * cap + 2)]
+        );
+        for range in batch(7, 100) {
+            let (chunk, local) = Mesh::instance_chunk(&range);
+            assert_eq!(chunk as u32, range.start / cap);
+            assert!(local.end <= cap);
+            assert_eq!(local.end - local.start, range.end - range.start);
+        }
+    }
+
+    #[test]
+    fn renders_more_instances_of_one_mesh_than_the_instance_cap() {
+        const COLUMNS: u32 = 9;
+        const ROWS: u32 = 5;
+        const SPACING: f32 = 3.0;
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let (cube, material) = {
+            let registry = read_only_context.registries.assets.read();
+            let cube = registry.cube().expect("missing cube mesh");
+            let shader = registry
+                .load::<Shader>("shaders/pbr")
+                .expect("missing pbr shader");
+            let material = registry
+                .create_or_update(
+                    "test/instance_cap_material".into(),
+                    Material::from_shader(&read_only_context, shader),
+                )
+                .expect("material should be created");
+            (cube, material)
+        };
+
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        let mut expected = Vec::new();
+        for row in 0..ROWS {
+            for column in 0..COLUMNS {
+                let position = vec3(
+                    (column as f32 - (COLUMNS - 1) as f32 / 2.0) * SPACING,
+                    (row as f32 - (ROWS - 1) as f32 / 2.0) * SPACING,
+                    0.0,
+                );
+                let game_object = builder.spawn(format!("cube_{row}_{column}"));
+                builder.add_component(
+                    game_object,
+                    ComponentMesh {
+                        mesh: AssetRef::from_id(cube.id()),
+                        material: AssetRef::from_id(material.id()),
+                    },
+                );
+                builder.set_transform(game_object, glm::translation(&position));
+                expected.push((position, builder.scene().uuid(game_object)));
+            }
+        }
+        assert!(expected.len() > Mesh::MAX_INSTANCES);
+        let scene = builder.finish();
+
+        let camera = Camera::new(1.0, 60f32.to_radians(), 0.1, 200.0);
+        let camera_transform = Transform::from_components(
+            vec3(0.0, 0.0, -30.0),
+            UnitQuaternion::face_towards(&vec3(0.0, 0.0, 1.0), &vec3(0.0, 1.0, 0.0)),
+            vec3(1.0, 1.0, 1.0),
+        );
+        let mut renderer = SceneRenderer::new(
+            &read_only_context,
+            SceneRendererOptions {
+                samples: 1,
+                ..Default::default()
+            },
+            (VIEWPORT, VIEWPORT),
+        );
+        let render_state = crate::test_support::test_render_state();
+        renderer.render_scene_base(&render_state, &camera, &camera_transform, &scene, None);
+
+        let view_projection = camera.projection * camera_transform.inverse_matrix();
+        for (index, (position, uuid)) in expected.iter().enumerate() {
+            let clip = view_projection * vec4(position.x, position.y, position.z, 1.0);
+            let ndc = clip.xyz() / clip.w;
+            let x = ((ndc.x * 0.5 + 0.5) * VIEWPORT as f32) as u32;
+            let y = ((0.5 - ndc.y * 0.5) * VIEWPORT as f32) as u32;
+            assert_eq!(
+                renderer.pick_game_object(x, y),
+                Some(*uuid),
+                "instance {index} was not drawn at its transform"
+            );
+        }
+    }
+
+    /// Whether the test device can render to and resolve `format` at `samples`.
+    fn supports_samples(
+        render_state: &RenderState,
+        format: wgpu::TextureFormat,
+        samples: u32,
+        resolve: bool,
+    ) -> bool {
+        let features = render_state.device.features();
+        let format_features =
+            if features.contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES) {
+                render_state.adapter.get_texture_format_features(format)
+            } else {
+                format.guaranteed_format_features(features)
+            };
+        format_features.flags.sample_count_supported(samples)
+            && (!resolve
+                || format_features
+                    .flags
+                    .contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE))
+    }
+
+    #[test]
+    fn renders_and_resolves_a_frame_at_four_samples() {
+        const SAMPLES: u32 = 4;
+        const SIZE: u32 = 64;
+        let render_state = crate::test_support::test_render_state();
+        if !supports_samples(
+            &render_state,
+            wgpu::TextureFormat::Rgba16Float,
+            SAMPLES,
+            true,
+        ) || !supports_samples(
+            &render_state,
+            wgpu::TextureFormat::Depth32Float,
+            SAMPLES,
+            false,
+        ) {
+            eprintln!(
+                "skipping: test adapter {:?} cannot render Rgba16Float and Depth32Float at \
+                 {SAMPLES}x MSAA",
+                render_state.adapter.get_info().name
+            );
+            return;
+        }
+
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let (cube, material) = {
+            let registry = read_only_context.registries.assets.read();
+            let cube = registry.cube().expect("missing cube mesh");
+            let shader = registry
+                .load::<Shader>("shaders/pbr")
+                .expect("missing pbr shader");
+            let material = registry
+                .create_or_update(
+                    "test/msaa_material".into(),
+                    Material::from_shader(&read_only_context, shader),
+                )
+                .expect("material should be created");
+            (cube, material)
+        };
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        let game_object = builder.spawn("cube");
+        builder.add_component(
+            game_object,
+            ComponentMesh {
+                mesh: AssetRef::from_id(cube.id()),
+                material: AssetRef::from_id(material.id()),
+            },
+        );
+        // Rotated so its silhouette has diagonal edges that only partially
+        // cover the pixels they cross.
+        builder.set_transform(
+            game_object,
+            glm::rotation(30f32.to_radians(), &vec3(0.0, 0.0, 1.0)),
+        );
+        let uuid = builder.scene().uuid(game_object);
+        let scene = builder.finish();
+
+        let camera = Camera::new(1.0, 60f32.to_radians(), 0.1, 100.0);
+        let camera_transform = Transform::from_components(
+            vec3(0.0, 0.0, -5.0),
+            UnitQuaternion::face_towards(&vec3(0.0, 0.0, 1.0), &vec3(0.0, 1.0, 0.0)),
+            vec3(1.0, 1.0, 1.0),
+        );
+        let mut renderer = SceneRenderer::new(
+            &read_only_context,
+            SceneRendererOptions {
+                samples: SAMPLES,
+                clear_color: Color32::WHITE,
+                ..Default::default()
+            },
+            (SIZE, SIZE),
+        );
+        renderer.render_scene_base(&render_state, &camera, &camera_transform, &scene, None);
+        renderer.finalize_scene(&render_state);
+
+        let render_context = &read_only_context.render_context;
+        let mut readback = renderer
+            .submit_scene_texture_readback()
+            .expect("scene texture has a size");
+        let image = loop {
+            let _ = render_context.device().poll(wgpu::Maintain::Wait);
+            match readback.try_finish(render_context) {
+                ReadbackPoll::Pending => continue,
+                ReadbackPoll::Ready(image) => break image,
+                ReadbackPoll::Failed(error) => panic!("scene readback failed: {error}"),
+            }
+        };
+        // The unlit cube is black on the white clear color, so only a resolve,
+        // which averages an edge pixel's covered and uncovered samples, gives
+        // a grey; a copy keeps a single sample's black or white.
+        let background = image.get_pixel(0, 0)[0];
+        let cube = image.get_pixel(SIZE / 2, SIZE / 2)[0];
+        assert_eq!(background, 255, "the corner should keep the clear color");
+        assert!(cube < 128, "the cube should cover the center, got {cube}");
+        let edge_pixels = image
+            .pixels()
+            .filter(|pixel| pixel[0] > cube + 8 && pixel[0] < background - 8)
+            .count();
+        assert!(
+            edge_pixels > 0,
+            "no pixel along the cube's edges blends it with the background, so the \
+             {SAMPLES} samples were not resolved"
+        );
+        assert_eq!(renderer.pick_game_object(SIZE / 2, SIZE / 2), Some(uuid));
+    }
+}
+
+#[cfg(test)]
+mod skinning_tests {
+    use super::{skinned_mesh_world_transform, skinning_instance_index};
+    use crate::component::ComponentSkinnedMesh;
+    use crate::scene::GameObjectRef;
+    use crate::test_support::test_scene;
+    use nalgebra_glm as glm;
+
+    #[test]
+    fn skinned_mesh_is_placed_by_its_root_bone_not_its_own_node() {
+        // A model root, a node converting axes and units, and the skinned mesh below it, as
+        // imported FBX and glTF models are laid out.
+        let mut scene = test_scene();
+        let root = scene.create(None, None);
+        scene.set_transform(root, &glm::translation(&glm::vec3(5.0, 0.0, 0.0)));
+        let converter = scene.create(None, Some(root));
+        scene.set_transform(
+            converter,
+            &(glm::rotation(-90f32.to_radians(), &glm::Vec3::x())
+                * glm::scaling(&glm::Vec3::repeat(100.0))),
+        );
+        let mesh_object = scene.create(None, Some(converter));
+        let skinned_mesh = ComponentSkinnedMesh {
+            root_bone: GameObjectRef::new(scene.uuid(root)),
+            ..Default::default()
+        };
+
+        let placed = skinned_mesh_world_transform(&scene, mesh_object, &skinned_mesh).matrix();
+
+        assert_eq!(placed, scene.world_transform(root).matrix());
+        assert_ne!(placed, scene.world_transform(mesh_object).matrix());
+    }
+
+    #[test]
+    fn skinned_mesh_without_a_root_bone_keeps_its_own_transform() {
+        let mut scene = test_scene();
+        let parent = scene.create(None, None);
+        scene.set_transform(parent, &glm::scaling(&glm::Vec3::repeat(2.0)));
+        let mesh_object = scene.create(None, Some(parent));
+
+        let placed =
+            skinned_mesh_world_transform(&scene, mesh_object, &ComponentSkinnedMesh::default());
+
+        assert_eq!(placed.matrix(), scene.world_transform(mesh_object).matrix());
+    }
+
+    #[test]
+    fn mesh_without_bones_has_no_instance_index() {
+        assert_eq!(skinning_instance_index(0, 0), None);
+        assert_eq!(skinning_instance_index(8, 0), None);
+    }
+
+    #[test]
+    fn instance_index_counts_uploaded_bone_sets() {
+        assert_eq!(skinning_instance_index(0, 4), Some(0));
+        assert_eq!(skinning_instance_index(8, 4), Some(2));
+    }
+}
+
+#[cfg(test)]
+mod readback_tests {
+    use super::{half_to_f32, linear_to_srgb};
+
+    #[test]
+    fn half_floats_decode() {
+        assert_eq!(half_to_f32(0x0000), 0.0);
+        assert_eq!(half_to_f32(0x3c00), 1.0);
+        assert_eq!(half_to_f32(0xbc00), -1.0);
+        assert_eq!(half_to_f32(0x3800), 0.5);
+        assert_eq!(half_to_f32(0x4248), 3.140625);
+        // Smallest positive subnormal half.
+        assert_eq!(half_to_f32(0x0001), 5.960_464_5e-8);
+        assert!(half_to_f32(0x7c00).is_infinite());
+        assert!(half_to_f32(0x7e00).is_nan());
+    }
+
+    #[test]
+    fn linear_values_encode_to_srgb_bytes() {
+        assert_eq!(linear_to_srgb(0.0), 0);
+        assert_eq!(linear_to_srgb(1.0), 255);
+        assert_eq!(linear_to_srgb(2.5), 255);
+        assert_eq!(linear_to_srgb(-1.0), 0);
+        // Mid grey: linear 0.2158 is approximately sRGB 128.
+        assert_eq!(linear_to_srgb(0.2158), 128);
+    }
 }

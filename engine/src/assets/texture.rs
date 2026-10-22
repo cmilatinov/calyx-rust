@@ -47,6 +47,15 @@ impl Asset for Texture {
         game: &ReadOnlyAssetContext,
         path: &Path,
     ) -> Result<LoadedAsset<Self>, AssetError> {
+        let texture_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| {
+                AssetError::LoadError
+                    .with_path(path)
+                    .with_type(Self::asset_name())
+                    .with_source("file name is missing or not valid UTF-8")
+            })?;
         let reader = ImageReader::open(path)
             .map_err(|err| AssetError::LoadError.with_path(path).with_source(err))?;
         let texture_data = Self::transform_texture(
@@ -56,7 +65,6 @@ impl Asset for Texture {
         );
         let texture_depth = texture_data.color().bytes_per_pixel() as u32;
         let texture_format = Self::texture_format(texture_data.color());
-        let texture_name = path.file_name().unwrap().to_str().unwrap();
         let texture_size = wgpu::Extent3d {
             width: texture_data.width(),
             height: texture_data.height(),
@@ -299,7 +307,7 @@ impl Texture {
         };
         let device = context.render_context.device();
         let queue = context.render_context.queue();
-        let mut mip_shader = mip_shader_ref.write();
+        let mip_shader = mip_shader_ref.read();
         let mut screen_space_quad = screen_space_quad_ref.write();
         let options = PipelineOptions::builder()
             .fragment_targets(vec![Some(wgpu::ColorTargetState {
@@ -309,10 +317,7 @@ impl Texture {
             })])
             .depth_stencil(None)
             .build();
-        mip_shader.build_pipeline(&options);
-        let Some(pipeline) = mip_shader.get_pipeline(&options) else {
-            return Ok(());
-        };
+        let pipeline = mip_shader.pipeline(&options);
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("texture_mip_encoder"),
         });
@@ -354,7 +359,7 @@ impl Texture {
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
-                render_pass.set_pipeline(pipeline);
+                render_pass.set_pipeline(&pipeline);
                 render_pass.set_bind_group(0, &bind_group, &[]);
                 RenderUtils::render_mesh(device, queue, &mut render_pass, &mut screen_space_quad);
             }

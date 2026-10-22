@@ -4,7 +4,9 @@ use engine::type_uuids;
 use engine::utils::TypeUuid;
 use uuid::Uuid;
 
-use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
+use crate::inspector::type_inspector::{
+    InspectorContext, InspectorResponse, ReflectTypeInspector, TypeInspector,
+};
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, TypeInspector)]
@@ -16,11 +18,19 @@ impl TypeInspector for UuidInspector {
         type_uuids!(Uuid)
     }
 
-    fn show_inspector(&self, ui: &mut Ui, _ctx: &InspectorContext, instance: &mut dyn Reflect) {
+    fn show_inspector(
+        &self,
+        ui: &mut Ui,
+        _ctx: &InspectorContext,
+        instance: &mut dyn Reflect,
+    ) -> InspectorResponse {
+        // The UUID is shown read-only, so it never changes and focusing the
+        // field is not an edit.
         if let Some(uuid) = instance.downcast_mut::<Uuid>() {
             let value = uuid.to_string();
             let mut str = value.as_str();
             TextEdit::singleline(&mut str).desired_width(130.0).show(ui);
         }
+        InspectorResponse::NONE
     }
 }

@@ -1,5 +1,4 @@
 use crate::spawn::ComponentRespawnState;
-use egui::Rect;
 use engine::component::{
     ColliderShape, Component, ComponentCamera, ComponentCollider, ComponentEventContext,
     ComponentID, ComponentMesh, ComponentRigidBody, ComponentTransform, ComponentUpdate,
@@ -10,12 +9,12 @@ use engine::input::Input;
 use engine::math::Transform;
 use engine::physics::PhysicsContext;
 use engine::reflect::{Reflect, ReflectDefault};
-use engine::render::Camera;
+use engine::render::{Camera, Ray};
 use engine::resource::ResourceMap;
 use engine::scene::GameObjectRef;
 use engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use nalgebra::UnitQuaternion;
-use nalgebra_glm::{vec3, vec4, Mat4, Vec3, Vec4};
+use nalgebra_glm::{vec2, vec3, Vec3};
 use rapier3d::prelude::QueryFilter;
 use serde::{Deserialize, Serialize};
 
@@ -654,10 +653,8 @@ fn cursor_ground_intersection(
     controller: &ComponentTankController,
     ground_y: f32,
 ) -> Option<Vec3> {
-    let rect = input.res().map(|response| response.rect)?;
-    let cursor = input
-        .input(|state| state.pointer.interact_pos())
-        .flatten()?;
+    let rect = input.surface_rect()?;
+    let cursor = input.pointer_pos()?;
     let camera_object = controller.camera.game_object(scene)?;
     let camera_transform = scene.world_transform(camera_object);
     let aspect = rect.width() / rect.height().max(f32::EPSILON);
@@ -671,49 +668,21 @@ fn cursor_ground_intersection(
             )
         })
         .unwrap_or_else(|| Camera::new(aspect, 70.0f32.to_radians(), 0.1, 1000.0));
-    screen_to_ground(&camera_transform, &camera, rect, cursor, ground_y)
+    let ray = camera.screen_ray(
+        &camera_transform,
+        vec2(cursor.x - rect.left(), cursor.y - rect.top()),
+        vec2(rect.width(), rect.height()),
+    )?;
+    ground_intersection(&ray, ground_y)
 }
 
-fn screen_to_ground(
-    camera_transform: &Transform,
-    camera: &Camera,
-    rect: Rect,
-    cursor: egui::Pos2,
-    ground_y: f32,
-) -> Option<Vec3> {
-    let clip = clip_from_screen(rect, cursor);
-    let inv_view_projection = inverse_view_projection(camera_transform, camera)?;
-
-    let near = world_from_clip(&inv_view_projection, vec4(clip.x, clip.y, 0.0, 1.0))?;
-    let far = world_from_clip(&inv_view_projection, vec4(clip.x, clip.y, 1.0, 1.0))?;
-    let direction = far - near;
-    if direction.y.abs() <= f32::EPSILON {
+fn ground_intersection(ray: &Ray, ground_y: f32) -> Option<Vec3> {
+    if ray.direction.y.abs() <= f32::EPSILON {
         return None;
     }
 
-    let t = (ground_y - near.y) / direction.y;
-    (t >= 0.0).then_some(near + direction * t)
-}
-
-fn clip_from_screen(rect: Rect, cursor: egui::Pos2) -> egui::Vec2 {
-    egui::vec2(
-        ((cursor.x - rect.left()) / rect.width()) * 2.0 - 1.0,
-        1.0 - ((cursor.y - rect.top()) / rect.height()) * 2.0,
-    )
-}
-
-fn inverse_view_projection(camera_transform: &Transform, camera: &Camera) -> Option<Mat4> {
-    let view_projection = camera.projection * camera_transform.inverse_matrix();
-    view_projection.try_inverse()
-}
-
-fn world_from_clip(inverse_view_projection: &Mat4, clip: Vec4) -> Option<Vec3> {
-    let world = inverse_view_projection * clip;
-    (world.w.abs() > f32::EPSILON).then_some(vec3(
-        world.x / world.w,
-        world.y / world.w,
-        world.z / world.w,
-    ))
+    let t = (ground_y - ray.origin.y) / ray.direction.y;
+    (t >= 0.0).then_some(ray.origin + ray.direction * t)
 }
 
 fn flatten_xz(vector: Vec3) -> Vec3 {
@@ -732,8 +701,8 @@ fn yaw_rotation(direction: &Vec3) -> UnitQuaternion<f32> {
 #[cfg(test)]
 mod tests {
     use super::{
-        advance_fire_cooldown, advance_reload, apply_projectile_damage, can_fire, clip_from_screen,
-        flatten_xz, follow_camera_xz, is_reloading, resolve_hull_movement, screen_to_ground,
+        advance_fire_cooldown, advance_reload, apply_projectile_damage, can_fire, flatten_xz,
+        follow_camera_xz, ground_intersection, is_reloading, resolve_hull_movement,
         segment_intersects_sphere, spawn_projectile, update_projectile, yaw_rotation,
         ComponentHealth, ComponentProjectile, ComponentProjectileTarget, ComponentTankController,
     };
@@ -745,7 +714,7 @@ mod tests {
     use engine::render::Camera;
     use engine::scene::GameObjectRef;
     use nalgebra::UnitQuaternion;
-    use nalgebra_glm::vec3;
+    use nalgebra_glm::{vec2, vec3};
     use rapier3d::dynamics::RigidBodyType;
     use serde_json::Value;
 
@@ -758,14 +727,6 @@ mod tests {
         let forward = rotation * vec3(0.0, 0.0, 1.0);
         assert!((forward.x - 1.0).abs() < 1e-4);
         assert!(forward.z.abs() < 1e-4);
-    }
-
-    #[test]
-    fn clip_space_maps_view_center_to_origin() {
-        let rect = egui::Rect::from_min_max(egui::pos2(100.0, 50.0), egui::pos2(500.0, 250.0));
-        let clip = clip_from_screen(rect, rect.center());
-        assert!(clip.x.abs() < 1e-6);
-        assert!(clip.y.abs() < 1e-6);
     }
 
     #[test]
@@ -789,16 +750,13 @@ mod tests {
         assert!(camera_forward.y < 0.0);
         assert!(camera_forward.z > 0.0);
 
-        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1280.0, 720.0));
-        let camera = Camera::new(rect.aspect_ratio(), 70.0f32.to_radians(), 0.1, 1000.0);
-        let hit = screen_to_ground(
-            &camera_transform,
-            &camera,
-            rect,
-            rect.center(),
-            tank_transform.position.y,
-        )
-        .expect("center ray should intersect the tank ground plane");
+        let viewport = vec2(1280.0, 720.0);
+        let camera = Camera::new(viewport.x / viewport.y, 70.0f32.to_radians(), 0.1, 1000.0);
+        let ray = camera
+            .screen_ray(&camera_transform, viewport * 0.5, viewport)
+            .expect("center ray should exist");
+        let hit = ground_intersection(&ray, tank_transform.position.y)
+            .expect("center ray should intersect the tank ground plane");
 
         assert!((hit.x - tank_transform.position.x).abs() < 1e-3);
         assert!((hit.y - tank_transform.position.y).abs() < 1e-3);
@@ -833,18 +791,14 @@ mod tests {
 
     #[test]
     fn sandbox_scene_deserializes_objects() {
-        let assets = engine::test_support::test_asset_context_with_assets(vec![
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),
-            std::env::current_dir().unwrap().join("assets"),
-        ]);
+        let test_assets = engine::test_support::TestAssets::sandbox();
+        let assets = test_assets.asset_context();
         let scene_ref = assets
             .registries
             .assets
             .read()
             .reload_by_path::<engine::scene::Scene>(
-                &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("assets")
-                    .join("scene.cxscene"),
+                &test_assets.sandbox_root().join("scene.cxscene"),
             )
             .expect("sandbox scene should load");
 
@@ -874,18 +828,14 @@ mod tests {
 
     #[test]
     fn editor_simulation_start_preserves_sandbox_camera_transform() {
-        let assets = engine::test_support::test_asset_context_with_assets(vec![
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),
-            std::env::current_dir().unwrap().join("assets"),
-        ]);
+        let test_assets = engine::test_support::TestAssets::sandbox();
+        let assets = test_assets.asset_context();
         let scene_ref = assets
             .registries
             .assets
             .read()
             .reload_by_path::<engine::scene::Scene>(
-                &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("assets")
-                    .join("scene.cxscene"),
+                &test_assets.sandbox_root().join("scene.cxscene"),
             )
             .expect("sandbox scene should load");
 
@@ -938,18 +888,14 @@ mod tests {
 
     #[test]
     fn editor_simulation_first_update_preserves_camera_without_input() {
-        let assets = engine::test_support::test_asset_context_with_assets(vec![
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),
-            std::env::current_dir().unwrap().join("assets"),
-        ]);
+        let test_assets = engine::test_support::TestAssets::sandbox();
+        let assets = test_assets.asset_context();
         let scene_ref = assets
             .registries
             .assets
             .read()
             .reload_by_path::<engine::scene::Scene>(
-                &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("assets")
-                    .join("scene.cxscene"),
+                &test_assets.sandbox_root().join("scene.cxscene"),
             )
             .expect("sandbox scene should load");
 
@@ -978,15 +924,7 @@ mod tests {
         };
 
         let ctx = egui::Context::default();
-        let input = engine::input::Input::from_ctx(
-            &ctx,
-            None,
-            engine::input::InputState {
-                is_active: false,
-                last_cursor_pos: None,
-                ..Default::default()
-            },
-        );
+        let input = engine::input::Input::from_ctx(&ctx, None, game.resources.input_mut(), false);
         let registries = game.assets.lock_read().registries;
         game.scenes.update(&registries, &mut game.resources, &input);
 
@@ -1017,18 +955,14 @@ mod tests {
 
     #[test]
     fn sandbox_shooting_does_not_move_targets() {
-        let assets = engine::test_support::test_asset_context_with_assets(vec![
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),
-            std::env::current_dir().unwrap().join("assets"),
-        ]);
+        let test_assets = engine::test_support::TestAssets::sandbox();
+        let assets = test_assets.asset_context();
         let scene_ref = assets
             .registries
             .assets
             .read()
             .reload_by_path::<engine::scene::Scene>(
-                &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("assets")
-                    .join("scene.cxscene"),
+                &test_assets.sandbox_root().join("scene.cxscene"),
             )
             .expect("sandbox scene should load");
         let scene = scene_ref.read().clone();

@@ -7,7 +7,6 @@ use crate::reflect::type_registry::TypeRegistry;
 use crate::render::RenderContext;
 use crate::resource::ResourceMap;
 use crate::scene::{Scene, SceneManager};
-use crate::ReflectRegistrationFn;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -70,20 +69,7 @@ impl AssetContext {
         let project_path = project_path.into();
         log::info!("Creating asset context for {}", project_path.display());
         let render_context = Arc::new(RenderContext::from_eframe(cc));
-        let mut type_registry = TypeRegistry::new();
-        let mut registration_count = 0usize;
-        for f in inventory::iter::<ReflectRegistrationFn>() {
-            log::trace!(
-                "Registering reflected types from {}::{} ({})",
-                f.crate_name,
-                f.module_path,
-                f.name
-            );
-            (f.function)(&mut type_registry);
-            registration_count += 1;
-        }
-        log::info!("Applied {registration_count} reflection registration callbacks");
-        let type_registry = Ref::new(type_registry);
+        let type_registry = Ref::new(TypeRegistry::new());
         let component_registry = Ref::new(ComponentRegistry::new(&type_registry.read()));
         let asset_registry = AssetRegistry::new(
             project_path,
@@ -139,10 +125,17 @@ pub struct GameContext {
 impl GameContext {
     /// Creates a new game context with default runtime resources.
     pub fn new(assets: AssetContext) -> Self {
+        let mut resources = ResourceMap::new();
+        if let Err(error) = resources
+            .input_mut()
+            .load_project_action_map(&assets.registries.assets.read())
+        {
+            log::error!("Failed to load the project action map, using the default map: {error}");
+        }
         Self {
             scenes: SceneManager::new(assets.registries.assets.readonly()),
             assets,
-            resources: ResourceMap::new(),
+            resources,
         }
     }
 

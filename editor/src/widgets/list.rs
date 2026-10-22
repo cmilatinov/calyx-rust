@@ -1,5 +1,5 @@
 use eframe::egui::collapsing_header::CollapsingState;
-use eframe::egui::{Color32, CursorIcon, DragAndDrop, Id, Response, Ui};
+use eframe::egui::{pos2, vec2, Color32, CursorIcon, DragAndDrop, Id, Rect, Response, Ui, Vec2};
 use re_ui::drag_and_drop::{find_drop_target, ItemContext, ItemKind};
 use re_ui::list_item::{
     ItemButton, LabelContent, ListItem, PropertyContent, ShowCollapsingResponse,
@@ -7,23 +7,28 @@ use re_ui::list_item::{
 use re_ui::{DesignTokens, UiExt};
 use std::fmt::Debug;
 
-pub trait ListContainerKey<K> {}
-
-pub trait ListContainer<K>: ListContainerKey<K> {
-    type Key;
-    type Item;
+/// A list the [`List`] widget can show and edit.
+///
+/// Items may be unsized, such as `dyn Reflect`, so the widget never moves an
+/// item by value: it adds, removes and reorders through the container.
+pub trait ListContainer {
+    type Item: ?Sized;
     fn len(&self) -> usize;
     fn nth(&self, index: usize) -> &Self::Item;
     fn nth_mut(&mut self, index: usize) -> &mut Self::Item;
-    fn remove(&mut self, index: usize) -> Self::Item;
-    fn insert(&mut self, key: Self::Key, item: Self::Item);
-    fn insert_at_index(&mut self, index: usize, key: Self::Key, item: Self::Item);
+    /// Whether [`Self::push_default`] can add an item.
+    fn can_add(&self) -> bool {
+        true
+    }
+    /// Appends a default item.
+    fn push_default(&mut self);
+    /// Removes the item at `index`.
+    fn remove(&mut self, index: usize);
+    /// Moves the item at `from` so it ends up at index `to`.
+    fn move_item(&mut self, from: usize, to: usize);
 }
 
-impl<K: Copy, T> ListContainerKey<K> for Vec<T> {}
-
-impl<K: Copy, T> ListContainer<K> for Vec<T> {
-    type Key = K;
+impl<T: Default> ListContainer for Vec<T> {
     type Item = T;
 
     fn len(&self) -> usize {
@@ -38,16 +43,17 @@ impl<K: Copy, T> ListContainer<K> for Vec<T> {
         self.get_mut(index).unwrap()
     }
 
-    fn remove(&mut self, index: usize) -> Self::Item {
-        self.remove(index)
+    fn push_default(&mut self) {
+        self.push(T::default());
     }
 
-    fn insert(&mut self, _key: Self::Key, item: Self::Item) {
-        self.push(item);
+    fn remove(&mut self, index: usize) {
+        Vec::remove(self, index);
     }
 
-    fn insert_at_index(&mut self, index: usize, _key: Self::Key, item: Self::Item) {
-        Vec::insert(self, index, item)
+    fn move_item(&mut self, from: usize, to: usize) {
+        let item = Vec::remove(self, from);
+        Vec::insert(self, to, item);
     }
 }
 
@@ -59,6 +65,7 @@ pub struct ListState {
 pub struct ListButtons<'a> {
     pub on_click_add: Option<Box<dyn FnOnce() + 'a>>,
     pub on_click_remove: Option<Box<dyn FnOnce() + 'a>>,
+    pub add_enabled: bool,
     pub remove_enabled: bool,
 }
 
@@ -67,6 +74,7 @@ impl<'a> ListButtons<'a> {
         Self {
             on_click_add: None,
             on_click_remove: None,
+            add_enabled: true,
             remove_enabled: true,
         }
     }
@@ -81,22 +89,65 @@ impl<'a> ListButtons<'a> {
         self
     }
 
+    pub fn add_enabled(mut self, enabled: bool) -> Self {
+        self.add_enabled = enabled;
+        self
+    }
+
     pub fn remove_enabled(mut self, enabled: bool) -> Self {
         self.remove_enabled = enabled;
         self
     }
 }
 
+impl ListButtons<'_> {
+    /// Number of buttons shown: add and remove.
+    const BUTTON_COUNT: f32 = 2.0;
+
+    /// Size of one small icon button, padding included.
+    fn button_size(ui: &Ui) -> Vec2 {
+        DesignTokens::small_icon_size() + 2.0 * ui.spacing().button_padding
+    }
+
+    /// Width the buttons take, so a row's value can stop short of them.
+    pub fn width(ui: &Ui) -> f32 {
+        Self::BUTTON_COUNT * Self::button_size(ui).x
+            + (Self::BUTTON_COUNT - 1.0) * ui.spacing().item_spacing.x
+    }
+
+    /// Rects of the add and remove buttons, right-aligned to `right` and
+    /// vertically centred on `center_y`.
+    fn button_rects(ui: &Ui, right: f32, center_y: f32) -> (Rect, Rect) {
+        let size = Self::button_size(ui);
+        let add = Rect::from_center_size(pos2(right - size.x / 2.0, center_y), size);
+        let remove = add.translate(vec2(-(size.x + ui.spacing().item_spacing.x), 0.0));
+        (add, remove)
+    }
+}
+
 impl<'a> ItemButton for ListButtons<'a> {
     fn ui(self: Box<Self>, ui: &mut Ui) -> Response {
-        let add = ui.small_icon_button(&re_ui::icons::ADD);
+        // A list item gives its button one icon-wide slot at its right edge,
+        // and that edge can sit past the visible area when the panel's content
+        // is wider than the panel. Place both buttons explicitly, leftwards
+        // from the slot's right edge or the clip edge, whichever is nearer, so
+        // both stay visible.
+        let slot = ui.max_rect();
+        let right = slot.right().min(ui.clip_rect().right());
+        let (add_rect, remove_rect) = Self::button_rects(ui, right, slot.center().y);
+        let add_button = ui.small_icon_button_widget(&re_ui::icons::ADD);
+        let add = ui
+            .add_enabled_ui(self.add_enabled, |ui| ui.put(add_rect, add_button))
+            .inner;
         if let Some(on_click_add) = self.on_click_add {
             if add.clicked() {
                 on_click_add();
             }
         }
         let remove_button = ui.small_icon_button_widget(&re_ui::icons::REMOVE);
-        let remove = ui.add_enabled(self.remove_enabled, remove_button);
+        let remove = ui
+            .add_enabled_ui(self.remove_enabled, |ui| ui.put(remove_rect, remove_button))
+            .inner;
         if let Some(on_click_remove) = self.on_click_remove {
             if remove.clicked() {
                 on_click_remove();
@@ -106,23 +157,17 @@ impl<'a> ItemButton for ListButtons<'a> {
     }
 }
 
-impl ListButtons<'static> {
-    pub fn width(ui: &Ui) -> f32 {
-        2.0 * DesignTokens::small_icon_size().x + ui.style().spacing.item_spacing.x
-    }
-}
-
-pub struct ListItemContext<'a, T> {
+pub struct ListItemContext<'a, T: ?Sized> {
     pub value: &'a mut T,
     pub index: usize,
     pub selected: bool,
 }
 
-pub struct List<'a, K, T> {
+pub struct List<'a, K, T: ?Sized> {
     id: Id,
     label: String,
     create_key: Box<dyn FnMut(&T) -> K + 'a>,
-    list: &'a mut dyn ListContainer<K, Key = K, Item = T>,
+    list: &'a mut dyn ListContainer<Item = T>,
     default_open: bool,
     show_count: bool,
     header: bool,
@@ -132,10 +177,10 @@ pub struct List<'a, K, T> {
 }
 
 #[allow(dead_code)]
-impl<'a, K: Default + Debug + Copy + Send + Sync + 'static, T: Default> List<'a, K, T> {
+impl<'a, K: Default + Debug + Copy + Send + Sync + 'static, T: ?Sized> List<'a, K, T> {
     pub fn new<F: FnMut(&T) -> K + 'a>(
         label: impl Into<String>,
-        list: &'a mut impl ListContainer<K, Key = K, Item = T>,
+        list: &'a mut impl ListContainer<Item = T>,
         create_key: F,
     ) -> Self {
         let string = label.into();
@@ -151,6 +196,13 @@ impl<'a, K: Default + Debug + Copy + Send + Sync + 'static, T: Default> List<'a,
             drag_and_drop: true,
             indented: true,
         }
+    }
+
+    /// Replaces the id that keeps the list's collapsed and selection state,
+    /// which defaults to one derived from the label.
+    pub fn id(mut self, id: impl Into<Id>) -> Self {
+        self.id = id.into();
+        self
     }
 
     pub fn indented(mut self, indented: bool) -> Self {
@@ -270,6 +322,7 @@ impl<'a, K: Default + Debug + Copy + Send + Sync + 'static, T: Default> List<'a,
         }
         let list_item_content = PropertyContent::new(text).button(
             ListButtons::new()
+                .add_enabled(list.can_add())
                 .remove_enabled(state.selected.is_some())
                 .on_click_add(|| {
                     add = true;
@@ -302,10 +355,13 @@ impl<'a, K: Default + Debug + Copy + Send + Sync + 'static, T: Default> List<'a,
                     continue;
                 }
                 if response.item_response.drag_started() {
-                    DragAndDrop::set_payload(ui.ctx(), (index, key));
+                    DragAndDrop::set_payload(ui.ctx(), (id, index, key));
                 }
-                let Some((dragged_idx, dragged_key)) =
-                    DragAndDrop::payload::<(usize, K)>(ui.ctx()).map(|key| *key)
+                // The payload names its list, so a drag from another list
+                // with the same key type never reorders this one.
+                let Some(dragged_idx) = DragAndDrop::payload::<(Id, usize, K)>(ui.ctx())
+                    .filter(|payload| payload.0 == id)
+                    .map(|payload| payload.1)
                 else {
                     continue;
                 };
@@ -349,17 +405,13 @@ impl<'a, K: Default + Debug + Copy + Send + Sync + 'static, T: Default> List<'a,
                 );
 
                 if ui.input(|i| i.pointer.primary_released()) {
-                    if dragged_idx != drop_index {
-                        let dragged_value = list.remove(dragged_idx);
-                        list.insert_at_index(
-                            if dragged_idx < drop_index {
-                                drop_index - 1
-                            } else {
-                                drop_index
-                            },
-                            dragged_key,
-                            dragged_value,
-                        );
+                    let target = if dragged_idx < drop_index {
+                        drop_index - 1
+                    } else {
+                        drop_index
+                    };
+                    if dragged_idx != target {
+                        list.move_item(dragged_idx, target);
                     }
                     DragAndDrop::clear_payload(ui.ctx());
                 }
@@ -389,9 +441,7 @@ impl<'a, K: Default + Debug + Copy + Send + Sync + 'static, T: Default> List<'a,
             }
         }
         if add {
-            let item = Default::default();
-            let key = create_key(&item);
-            list.insert(key, item);
+            list.push_default();
         }
         if remove {
             if let Some(index) = state.selected {
@@ -401,5 +451,72 @@ impl<'a, K: Default + Debug + Copy + Send + Sync + 'static, T: Default> List<'a,
         }
         ui.memory_mut(|mem| mem.data.insert_temp(id, state));
         (res, state)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Lays out [`ListButtons`] in the one-button slot a list item gives its
+    /// button, and returns the slot, the buttons' combined rect and
+    /// [`ListButtons::width`].
+    fn layout_in_slot() -> (Rect, Rect, f32) {
+        let context = egui::Context::default();
+        let mut result = None;
+        let _ = context.run(Default::default(), |context| {
+            egui::CentralPanel::default().show(context, |ui| {
+                let side = ListButtons::button_size(ui).x;
+                let slot =
+                    Rect::from_center_size(pos2(200.0 - side / 2.0, 50.0), Vec2::splat(side));
+                let mut child = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(slot)
+                        .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                );
+                let response = Box::new(ListButtons::new()).ui(&mut child);
+                result = Some((slot, response.rect, ListButtons::width(ui)));
+            });
+        });
+        result.unwrap()
+    }
+
+    #[test]
+    fn list_buttons_end_at_their_slot() {
+        let (slot, buttons, _) = layout_in_slot();
+        assert_eq!(buttons.right(), slot.right());
+        // egui rounds widget rects to whole points.
+        assert!((buttons.center().y - slot.center().y).abs() <= 1.0);
+    }
+
+    #[test]
+    fn list_buttons_stay_inside_the_clip_rect() {
+        let context = egui::Context::default();
+        let mut result = None;
+        let _ = context.run(Default::default(), |context| {
+            egui::CentralPanel::default().show(context, |ui| {
+                let side = ListButtons::button_size(ui).x;
+                // A slot that ends past the visible area, as in a panel whose
+                // content is wider than the panel.
+                let clip = Rect::from_min_max(pos2(0.0, 0.0), pos2(200.0, 100.0));
+                let slot = Rect::from_center_size(pos2(210.0, 50.0), Vec2::splat(side));
+                let mut child = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(slot)
+                        .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                );
+                child.set_clip_rect(clip);
+                let response = Box::new(ListButtons::new()).ui(&mut child);
+                result = Some((clip, response.rect));
+            });
+        });
+        let (clip, buttons) = result.unwrap();
+        assert_eq!(buttons.right(), clip.right());
+    }
+
+    #[test]
+    fn list_buttons_width_matches_their_layout() {
+        let (_, buttons, width) = layout_in_slot();
+        assert_eq!(buttons.width(), width);
     }
 }

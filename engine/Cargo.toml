@@ -14,7 +14,6 @@ engine_derive = { path = "./engine_derive" }
 bimap.workspace = true
 bytemuck.workspace = true
 chrono.workspace = true
-common-path.workspace = true
 dunce.workspace = true
 eframe.workspace = true
 egui.workspace = true
@@ -53,7 +52,9 @@ typed-builder.workspace = true
 rand.workspace = true
 log.workspace = true
 env_filter.workspace = true
-russimp-ng.workspace = true
+ufbx.workspace = true
+gltf.workspace = true
 pollster.workspace = true
+toml.workspace = true
 
 [dev-dependencies]

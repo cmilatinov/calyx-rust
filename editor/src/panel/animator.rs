@@ -96,18 +96,22 @@ impl Panel for PanelAnimator {
                     .show(ui, |ui| {
                         re_ui::list_item::list_item_scope(ui, "animator_tree_scope", |ui| {
                             let scene = state.game.scenes.simulation_scene_mut();
-                            let mut entry = game_object.and_then(|go| scene.entry_mut(go));
-                            let parameter_values = entry
-                                .as_mut()
-                                .and_then(|entry| {
-                                    entry.get_component_mut::<ComponentAnimator>().ok()
+                            let shown = game_object.and_then(|go| {
+                                scene.write_component::<ComponentAnimator, _>(go, |animator| {
+                                    AnimationGraphInspector::parameters(
+                                        ui,
+                                        &mut graph.parameters,
+                                        Some(animator.parameters_mut()),
+                                    );
                                 })
-                                .map(|animator| animator.parameters_mut());
-                            AnimationGraphInspector::parameters(
-                                ui,
-                                &mut graph.parameters,
-                                parameter_values,
-                            );
+                            });
+                            if shown.is_none() {
+                                AnimationGraphInspector::parameters(
+                                    ui,
+                                    &mut graph.parameters,
+                                    None,
+                                );
+                            }
                         });
                         ui.allocate_space(ui.available_size());
                     });
@@ -178,15 +182,15 @@ impl Panel for PanelAnimator {
 
 impl PanelAnimator {
     fn stroke() -> Stroke {
-        Stroke::new(1.5, Color32::GRAY)
+        Stroke::new(1.5_f32, Color32::GRAY)
     }
 
     fn hovered_stroke() -> Stroke {
-        Stroke::new(3.0, Color32::WHITE)
+        Stroke::new(3.0_f32, Color32::WHITE)
     }
 
     fn selected_stroke(ui: &mut Ui) -> Stroke {
-        Stroke::new(3.0, ui.visuals().selection.bg_fill)
+        Stroke::new(3.0_f32, ui.visuals().selection.bg_fill)
     }
 
     fn draw_graph(
@@ -281,9 +285,9 @@ impl PanelAnimator {
         let padding = 15.0;
         let corner_radius = 5.0;
         let stroke = if selected {
-            Stroke::new(1.0, visuals.strong_text_color())
+            Stroke::new(1.0_f32, visuals.strong_text_color())
         } else {
-            Stroke::new(1.0, visuals.weak_text_color())
+            Stroke::new(1.0_f32, visuals.weak_text_color())
         };
         let bg = if selected {
             visuals.selection.bg_fill

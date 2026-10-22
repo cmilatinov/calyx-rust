@@ -2,6 +2,9 @@
 //! systems shared across the Calyx workspace.
 
 #![allow(clippy::module_inception)]
+// wgpu's nested handle types exceed the default trait-solver depth when
+// checking Send/Sync on assets and components that hold GPU resources.
+#![recursion_limit = "256"]
 extern crate self as engine;
 
 /// Asset types, asset handles, and asset registry infrastructure.
@@ -24,8 +27,6 @@ pub mod ext;
 pub mod input;
 /// Logging setup and logger implementations.
 pub mod logging;
-/// Public macros re-exported by the engine crate.
-pub mod macros;
 /// Transform math and other math helpers.
 pub mod math;
 /// Multiplayer networking types and synchronization systems.
@@ -38,6 +39,8 @@ pub mod reflect;
 pub mod render;
 /// Runtime resource storage and access.
 pub mod resource;
+/// Game runtime setup shared by the standalone player and the editor.
+pub mod runtime;
 /// Scene graphs, game objects, prefabs, and scene management APIs.
 pub mod scene;
 /// Headless and integration-style test helpers.
@@ -47,25 +50,5 @@ pub mod ui;
 /// Miscellaneous utility traits, macros, and helper functions.
 pub mod utils;
 
-#[cfg(test)]
-pub mod test_harness;
-#[cfg(test)]
-pub mod test_utils;
-
 pub use engine_derive::*;
-use inventory::collect;
-use reflect::type_registry::TypeRegistry;
-
-/// Inventory entry used by plugins and engine modules to register reflected
-/// types at startup.
-pub struct ReflectRegistrationFn {
-    /// Crate that produced this registration.
-    pub crate_name: &'static str,
-    /// Module path that produced this registration.
-    pub module_path: &'static str,
-    /// Debug-friendly name for the registration source.
-    pub name: &'static str,
-    /// Callback that inserts one or more types into a [`TypeRegistry`].
-    pub function: fn(&mut TypeRegistry),
-}
-collect!(ReflectRegistrationFn);
+pub use reflect::type_registry::ReflectRegistrationFn;

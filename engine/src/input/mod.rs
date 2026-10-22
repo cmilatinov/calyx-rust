@@ -1,122 +1,207 @@
 use std::collections::HashMap;
 use std::io::Error;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate as engine;
+use crate::assets::error::{AssetError, AssetErrorKind};
 use crate::assets::{Asset, AssetRegistry, LoadedAsset};
 use crate::context::ReadOnlyAssetContext;
+use crate::core::Ref;
+use crate::resource::Resource;
 use crate::utils::TypeUuid;
 use egui::{Key, Modifiers, PointerButton};
 use serde::{Deserialize, Serialize};
 
-/// Mutable input state cached between UI frames.
-#[derive(Default)]
+/// Name of the project asset (`input.cxinput`) holding the project's action map.
+pub const PROJECT_ACTION_MAP_NAME: &str = "input";
+
+/// Persistent input state that carries the action map and pointer history across frames.
+#[derive(Clone, Resource, TypeUuid)]
+#[uuid = "5b0a8e0f-3c1d-4a59-9d52-7f6b2a1c8e47"]
+#[repr(C)]
 pub struct InputState {
-    /// Whether input sampling is currently enabled.
-    pub is_active: bool,
-    /// Last known cursor position used for delta fallbacks.
-    pub last_cursor_pos: Option<egui::Pos2>,
+    /// Pass and pointer position of the last cursor sample, used for cursor deltas.
+    last_cursor_sample: Option<CursorSample>,
     /// Action map used to interpret raw egui input.
-    pub action_map: ActionMap,
+    action_map: ActionMapSource,
+}
+
+/// Cursor movement sampled during one egui pass, shared by every input surface in it.
+#[derive(Clone, Copy)]
+struct CursorSample {
+    pass: u64,
+    pos: Option<egui::Pos2>,
+    delta: egui::Vec2,
+}
+
+/// Where the active action map lives.
+#[derive(Clone)]
+enum ActionMapSource {
+    /// A map owned by the input state.
+    Owned(Arc<ActionMap>),
+    /// A project asset handle, so hot reloads reach the running input.
+    Asset(Ref<ActionMap>),
+}
+
+impl ActionMapSource {
+    fn with<R>(&self, reader: impl FnOnce(&ActionMap) -> R) -> R {
+        match self {
+            Self::Owned(map) => reader(map),
+            Self::Asset(map) => reader(&map.read()),
+        }
+    }
+}
+
+impl Default for InputState {
+    fn default() -> Self {
+        Self::new(ActionMap::default())
+    }
+}
+
+impl InputState {
+    /// Creates input state that interprets input through `action_map`.
+    pub fn new(action_map: ActionMap) -> Self {
+        Self {
+            last_cursor_sample: None,
+            action_map: ActionMapSource::Owned(Arc::new(action_map)),
+        }
+    }
+
+    /// Replaces the active action map, no longer following the project asset.
+    pub fn set_action_map(&mut self, action_map: ActionMap) {
+        self.action_map = ActionMapSource::Owned(Arc::new(action_map));
+    }
+
+    /// Follows the project's action map asset when one exists. A project without
+    /// one keeps the current map; a map that fails to load is reported as an error
+    /// and also leaves the current map in place. Hot reloads of the asset apply to
+    /// later frames.
+    pub fn load_project_action_map(&mut self, assets: &AssetRegistry) -> Result<(), AssetError> {
+        match assets.load::<ActionMap>(PROJECT_ACTION_MAP_NAME) {
+            Ok(action_map) => {
+                self.action_map = ActionMapSource::Asset(action_map);
+                Ok(())
+            }
+            Err(error) if error.kind == AssetErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Returns cursor movement for the current egui pass, sampling the pointer once
+    /// per pass so several input surfaces in one frame see the same delta.
+    fn cursor_sample(&mut self, context: &egui::Context) -> CursorSample {
+        let pass = context.cumulative_pass_nr();
+        if let Some(sample) = self.last_cursor_sample.filter(|sample| sample.pass == pass) {
+            return sample;
+        }
+        let pos = context.input(|input| input.pointer.latest_pos());
+        let delta = match (self.last_cursor_sample.and_then(|s| s.pos), pos) {
+            (Some(last), Some(pos)) => pos - last,
+            _ => egui::Vec2::ZERO,
+        };
+        let sample = CursorSample { pass, pos, delta };
+        self.last_cursor_sample = Some(sample);
+        sample
+    }
 }
 
 /// Read-only input view for the current frame.
 pub struct Input<'a> {
     context: &'a egui::Context,
     res: Option<&'a egui::Response>,
-    state: InputState,
+    is_active: bool,
+    action_map: ActionMapSource,
+    cursor_delta: egui::Vec2,
 }
 
 impl<'a> Input<'a> {
-    /// Creates a frame input wrapper from egui state.
+    /// Creates a frame input wrapper from egui state, advancing the pointer history
+    /// kept in `state`.
     pub fn from_ctx(
         context: &'a egui::Context,
         res: Option<&'a egui::Response>,
-        state: InputState,
+        state: &mut InputState,
+        is_active: bool,
     ) -> Self {
+        let cursor_delta = state.cursor_sample(context).delta;
         Self {
             context,
             res,
-            state,
+            is_active,
+            action_map: state.action_map.clone(),
+            cursor_delta: if is_active {
+                cursor_delta
+            } else {
+                egui::Vec2::ZERO
+            },
         }
     }
-
-    /// Returns the underlying egui context.
-    pub fn ctx(&self) -> &egui::Context {
-        self.context
-    }
-
-    /// Returns the optional egui response bound to this input surface.
-    pub fn res(&self) -> Option<&egui::Response> {
-        self.res
-    }
-
-    /// Reads raw egui input when input is active.
-    pub fn input<R>(&self, reader: impl FnOnce(&egui::InputState) -> R) -> Option<R> {
-        self.context.input(|input| {
-            if self.state.is_active {
-                Some(reader(input))
-            } else {
-                None
-            }
-        })
-    }
-
-    /// Mutates raw egui input when input is active.
-    pub fn input_mut<R: Default>(
-        &self,
-        reader: impl FnOnce(&mut egui::InputState) -> R,
-    ) -> Option<R> {
-        self.context.input_mut(|input| {
-            if self.state.is_active {
-                Some(reader(input))
-            } else {
-                None
-            }
-        })
+    /// Reads egui input when input is active.
+    fn read<R: Default>(&self, reader: impl FnOnce(&egui::InputState) -> R) -> R {
+        if !self.is_active {
+            return R::default();
+        }
+        self.context.input(reader)
     }
 
     /// Resolves a named action into a frame-local [`ActionState`].
     pub fn action(&self, name: &str) -> ActionState {
-        if !self.state.is_active {
+        if !self.is_active {
             return ActionState::default();
         }
 
         self.context.input(|input| {
-            self.state
-                .action_map
-                .action(name, input)
-                .unwrap_or_default()
+            self.action_map
+                .with(|map| map.action(name, input).unwrap_or_default())
         })
     }
 
     /// Resolves a named axis into a scalar value.
     pub fn axis(&self, name: &str) -> f32 {
-        if !self.state.is_active {
+        if !self.is_active {
             return 0.0;
         }
 
-        self.context
-            .input(|input| self.state.action_map.axis(name, input).unwrap_or_default())
+        self.context.input(|input| {
+            self.action_map
+                .with(|map| map.axis(name, input).unwrap_or_default())
+        })
     }
 
-    /// Returns pointer motion for the frame.
+    /// Returns pointer movement since the previous frame.
     pub fn cursor_delta(&self) -> egui::Vec2 {
-        if !self.state.is_active {
-            return egui::Vec2::ZERO;
-        }
-        if let Some(last_pos) = self.state.last_cursor_pos {
-            if let Some(pos) = self.context.input(|input| input.pointer.interact_pos()) {
-                let diff = pos - last_pos;
-                let diff_abs = diff.abs();
-                return if diff_abs.x < 0.5 || diff_abs.y < 0.5 {
-                    egui::Vec2::ZERO
-                } else {
-                    diff
-                };
-            }
-        }
-        self.context.input(|input| input.pointer.delta())
+        self.cursor_delta
+    }
+
+    /// Returns the pointer position used for interaction this frame, while input is
+    /// active.
+    pub fn pointer_pos(&self) -> Option<egui::Pos2> {
+        self.read(|input| input.pointer.interact_pos())
+    }
+
+    /// Returns raw pointer motion reported by the device this frame, while input is
+    /// active. Unlike [`Self::cursor_delta`], it keeps reporting while the cursor is
+    /// confined.
+    pub fn pointer_motion(&self) -> egui::Vec2 {
+        self.read(|input| input.pointer.motion().unwrap_or_default())
+    }
+
+    /// Returns smoothed scroll movement this frame, while input is active.
+    pub fn scroll_delta(&self) -> egui::Vec2 {
+        self.read(|input| input.smooth_scroll_delta)
+    }
+
+    /// Returns how far the pointer dragged this input surface this frame, when
+    /// `button` is dragging it and input is active.
+    pub fn drag_delta(&self, button: PointerButton) -> Option<egui::Vec2> {
+        let res = self.res.filter(|_| self.is_active)?;
+        res.dragged_by(button).then(|| res.drag_delta())
+    }
+
+    /// Returns the screen rectangle of this input surface, when one is bound.
+    pub fn surface_rect(&self) -> Option<egui::Rect> {
+        self.res.map(|res| res.rect)
     }
 }
 
@@ -269,6 +354,10 @@ pub enum InputBinding {
         /// Modifier requirements.
         modifiers: ModifierBinding,
     },
+    /// Modifier keys held on their own; down while every given modifier is held.
+    /// Egui reports no edges for modifiers, so the action is never just pressed or
+    /// just released.
+    Modifier(Modifiers),
 }
 
 impl InputBinding {
@@ -311,6 +400,9 @@ impl InputBinding {
             Self::ModifiedPointerButton { button, modifiers } => {
                 modifiers.matches(input.modifiers) && input.pointer.button_down(*button)
             }
+            Self::Modifier(modifiers) => {
+                ModifierBinding::requiring(*modifiers).matches(input.modifiers)
+            }
         }
     }
 
@@ -348,6 +440,10 @@ impl InputBinding {
                     ActionState::default()
                 }
             }
+            Self::Modifier(_) => ActionState {
+                pressed: self.is_down(input),
+                ..ActionState::default()
+            },
         }
     }
 }
@@ -440,9 +536,9 @@ impl std::ops::BitOr for ActionState {
 
 #[cfg(test)]
 mod tests {
-    use super::{ActionMap, InputBinding, ModifierBinding};
+    use super::{ActionMap, Input, InputBinding, InputState, ModifierBinding};
     use crate::assets::{Asset, LoadedAsset};
-    use egui::{Key, Modifiers};
+    use egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput, Rect, Sense, Vec2};
     use uuid::Uuid;
 
     #[test]
@@ -525,5 +621,105 @@ mod tests {
         assert_eq!(ActionMap::file_extensions(), &["cxinput"]);
         assert_eq!(loaded.asset.actions["save"].len(), 1);
         std::fs::remove_file(asset_path).expect("failed to remove temp action map asset");
+    }
+
+    fn pass(events: Vec<Event>, modifiers: Modifiers) -> RawInput {
+        RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(100.0))),
+            modifiers,
+            events,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn pointer_state_is_read_only_while_input_is_active() {
+        let ctx = egui::Context::default();
+        let mut state = InputState::default();
+        ctx.begin_pass(pass(
+            vec![
+                Event::PointerMoved(Pos2::new(20.0, 30.0)),
+                Event::MouseMoved(Vec2::new(4.0, -2.0)),
+            ],
+            Modifiers::NONE,
+        ));
+        let active = Input::from_ctx(&ctx, None, &mut state, true);
+        let inactive = Input::from_ctx(&ctx, None, &mut state, false);
+
+        assert_eq!(active.pointer_pos(), Some(Pos2::new(20.0, 30.0)));
+        assert_eq!(active.pointer_motion(), Vec2::new(4.0, -2.0));
+        assert_eq!(active.surface_rect(), None);
+        assert_eq!(active.drag_delta(PointerButton::Primary), None);
+        assert_eq!(inactive.pointer_pos(), None);
+        assert_eq!(inactive.pointer_motion(), Vec2::ZERO);
+        assert_eq!(inactive.scroll_delta(), Vec2::ZERO);
+        let _ = ctx.end_pass();
+    }
+
+    #[test]
+    fn drag_delta_reports_surface_drags_by_the_given_button() {
+        let ctx = egui::Context::default();
+        let mut state = InputState::default();
+        let surface = Rect::from_min_size(Pos2::ZERO, Vec2::splat(100.0));
+        let mut frame = |events: Vec<Event>| {
+            ctx.begin_pass(pass(events, Modifiers::NONE));
+            let mut drags = None;
+            egui::CentralPanel::default().show(&ctx, |ui| {
+                let res = ui.interact(surface, ui.id().with("surface"), Sense::drag());
+                let input = Input::from_ctx(&ctx, Some(&res), &mut state, true);
+                assert_eq!(input.surface_rect(), Some(surface));
+                drags = Some((
+                    input.drag_delta(PointerButton::Secondary),
+                    input.drag_delta(PointerButton::Primary),
+                ));
+            });
+            let _ = ctx.end_pass();
+            drags.unwrap()
+        };
+        let button = |pos: Pos2, pressed: bool| Event::PointerButton {
+            pos,
+            button: PointerButton::Secondary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+
+        frame(vec![Event::PointerMoved(Pos2::new(50.0, 50.0))]);
+        frame(vec![button(Pos2::new(50.0, 50.0), true)]);
+        frame(vec![Event::PointerMoved(Pos2::new(70.0, 50.0))]);
+        let (secondary, primary) = frame(vec![Event::PointerMoved(Pos2::new(80.0, 55.0))]);
+
+        assert_eq!(secondary, Some(Vec2::new(10.0, 5.0)));
+        assert_eq!(primary, None);
+    }
+
+    #[test]
+    fn modifier_bindings_hold_while_their_modifiers_are_held() {
+        let mut map = ActionMap::new();
+        map.bind_action("boost", InputBinding::Modifier(Modifiers::CTRL));
+        map.bind_axis(
+            "vertical",
+            InputBinding::Key(Key::Space),
+            InputBinding::Modifier(Modifiers::SHIFT),
+        );
+        let ctx = egui::Context::default();
+        let mut state = InputState::new(map);
+        let ctrl_shift = Modifiers {
+            ctrl: true,
+            shift: true,
+            ..Default::default()
+        };
+
+        ctx.begin_pass(pass(Vec::new(), ctrl_shift));
+        let input = Input::from_ctx(&ctx, None, &mut state, true);
+        assert!(input.action("boost").pressed());
+        assert!(!input.action("boost").just_pressed());
+        assert_eq!(input.axis("vertical"), -1.0);
+        let _ = ctx.end_pass();
+
+        ctx.begin_pass(pass(Vec::new(), Modifiers::NONE));
+        let input = Input::from_ctx(&ctx, None, &mut state, true);
+        assert!(!input.action("boost").pressed());
+        assert_eq!(input.axis("vertical"), 0.0);
+        let _ = ctx.end_pass();
     }
 }

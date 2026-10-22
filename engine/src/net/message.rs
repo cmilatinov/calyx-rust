@@ -1,4 +1,4 @@
-use crate::core::TimeType;
+use crate::core::AbsoluteTime;
 use crate::net::NetworkObjectId;
 use renet::{ClientId, DefaultChannel};
 use serde::{Deserialize, Serialize};
@@ -60,10 +60,10 @@ pub enum GameMessage {
     ClientDisconnected { client_id: ClientId },
     // SYNCHRONIZATION EVENTS
     /// Periodic host-to-client clock synchronization message.
-    SyncTime { current_time: TimeType },
+    SyncTime { current_time: AbsoluteTime },
     /// Replicated component state for one network object.
     SyncComponent {
-        time: TimeType,
+        time: AbsoluteTime,
         network_object_id: NetworkObjectId,
         from_client_id: ClientId,
         component_uuid: Uuid,
@@ -96,8 +96,8 @@ impl GameMessage {
         "SelfConnected(client_ids:Vec<ClientId>),",
         "ClientConnected(client_id:ClientId),",
         "ClientDisconnected(client_id:ClientId),",
-        "SyncTime(current_time:TimeType),",
-        "SyncComponent(time:TimeType,network_object_id:NetworkObjectId,",
+        "SyncTime(current_time:AbsoluteTime),",
+        "SyncComponent(time:AbsoluteTime,network_object_id:NetworkObjectId,",
         "from_client_id:ClientId,component_uuid:Uuid,data:Vec<u8>),",
         "TransferOwnership(network_object_id:NetworkObjectId,",
         "from_client_id:ClientId,to_client_id:ClientId),",
@@ -110,6 +110,38 @@ impl GameMessage {
     ///
     /// Both client and server use this to reject incompatible builds.
     pub const PROTOCOL_ID: u64 = fnv1a64(Self::PROTOCOL_SCHEMA.as_bytes());
+
+    /// Returns the client the message claims to come from, for the variants
+    /// that carry one.
+    pub fn claimed_sender(&self) -> Option<ClientId> {
+        match self {
+            Self::SyncComponent { from_client_id, .. }
+            | Self::TransferOwnership { from_client_id, .. }
+            | Self::SpawnPrefab { from_client_id, .. }
+            | Self::DestroyGameObject { from_client_id, .. } => Some(*from_client_id),
+            Self::ServerEvent(_)
+            | Self::SelfConnected { .. }
+            | Self::ClientConnected { .. }
+            | Self::ClientDisconnected { .. }
+            | Self::SyncTime { .. } => None,
+        }
+    }
+
+    /// Checks a message the server received from client `sender` over the
+    /// transport.
+    ///
+    /// A client may only send messages that carry a sender id, and that id
+    /// must be its own transport id. Anything else is spoofed or not meant
+    /// for the server.
+    pub fn check_client_origin(&self, sender: ClientId) -> Result<(), String> {
+        match self.claimed_sender() {
+            Some(claimed) if claimed == sender => Ok(()),
+            Some(claimed) => Err(format!(
+                "claims sender {claimed} but the transport reports {sender}"
+            )),
+            None => Err(String::from("is a server-only message")),
+        }
+    }
 
     /// Returns the transport channel to use for this message type.
     pub fn channel(&self) -> GameChannel {
@@ -137,11 +169,82 @@ const fn fnv1a64(bytes: &[u8]) -> u64 {
     hash
 }
 
-/// FIFO queue of decoded network messages waiting to be handled by engine
-/// systems.
+/// Peer that delivered a queued message, as the transport reported it.
+///
+/// This is the authority for who sent a message: unlike a sender id inside
+/// the message, a client cannot choose it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageSender {
+    /// Produced by this process, such as a server lifecycle event.
+    Local,
+    /// Received by the local client from the server.
+    Server,
+    /// Received by the local server from the client with this transport id.
+    Client(ClientId),
+}
+
+impl MessageSender {
+    /// Returns the client a message acts for.
+    ///
+    /// A message the server received from a client acts for that client's
+    /// transport id, whatever id it claims. Messages relayed by the server
+    /// or produced locally act for `claimed`, which the server checked on
+    /// intake.
+    pub fn acting_client(self, claimed: ClientId) -> ClientId {
+        match self {
+            Self::Client(client_id) => client_id,
+            Self::Local | Self::Server => claimed,
+        }
+    }
+}
+
+/// Destination of a message meant for one synchronized component of one
+/// network object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MessageRoute {
+    /// Network object the message targets.
+    pub network_object_id: NetworkObjectId,
+    /// Synchronized component of that object the message targets.
+    pub component_uuid: Uuid,
+}
+
+/// Messages that may be addressed to one [`MessageRoute`] instead of to
+/// every handler.
+pub trait RoutedMessage {
+    /// Returns the route of a message meant for one synchronized component,
+    /// or `None` for a message any handler may consume.
+    fn route(&self) -> Option<MessageRoute>;
+}
+
+impl RoutedMessage for GameMessage {
+    fn route(&self) -> Option<MessageRoute> {
+        match self {
+            Self::SyncComponent {
+                network_object_id,
+                component_uuid,
+                ..
+            } => Some(MessageRoute {
+                network_object_id: *network_object_id,
+                component_uuid: *component_uuid,
+            }),
+            _ => None,
+        }
+    }
+}
+
+/// Queued message with the peer that delivered it.
+type QueuedMessage<T> = (MessageSender, T);
+
+/// FIFO queues of decoded network messages waiting to be handled by engine
+/// systems, each message stamped with the peer that delivered it.
+///
+/// Messages wait in one bucket per [`RoutedMessage::route`]: the `None`
+/// bucket is shared by system-level handlers, and each `Some(route)` bucket
+/// holds one synchronized component's messages, so a component reads only
+/// its own through [`MessageQueue::receive_messages`].
 #[derive(Debug)]
 pub struct MessageQueue<T> {
-    messages: VecDeque<T>,
+    messages: HashMap<Option<MessageRoute>, VecDeque<QueuedMessage<T>>>,
 }
 
 impl Default for MessageQueue<GameMessage> {
@@ -154,38 +257,79 @@ impl Default for MessageQueue<GameMessage> {
 
 /// Callback interface used to consume queued network messages.
 pub trait MessageHandler<C, M> {
-    fn handle_message(&mut self, context: &mut C, message: &M) -> MessageHandlerResult;
+    /// Handles `message`, delivered by `sender`.
+    fn handle_message(
+        &mut self,
+        context: &mut C,
+        sender: MessageSender,
+        message: &M,
+    ) -> MessageHandlerResult;
 }
 
 /// Outcome of handling one queued message.
 pub enum MessageHandlerResult {
     /// Message was handled and should be removed from the queue.
     Consume,
-    /// Message was not handled and should remain queued for another handler.
+    /// Message was not handled and should remain queued for another handler
+    /// until the end of the tick.
     Ignore,
 }
 
+impl<T: RoutedMessage> MessageQueue<T> {
+    /// Appends a decoded message delivered by `sender` to the bucket of its
+    /// route.
+    pub fn queue_message(&mut self, sender: MessageSender, message: T) {
+        self.messages
+            .entry(message.route())
+            .or_default()
+            .push_back((sender, message));
+    }
+}
+
 impl<T> MessageQueue<T> {
-    /// Appends a decoded message to the queue.
-    pub fn queue_message(&mut self, message: T) {
-        self.messages.push_back(message);
+    /// Number of queued messages across all buckets.
+    pub fn len(&self) -> usize {
+        self.messages.values().map(VecDeque::len).sum()
     }
 
-    /// Dispatches queued messages to `handler`.
+    /// Returns whether no message is queued.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Dispatches the messages queued for `route` to `handler`; `None` is the
+    /// bucket of messages that have no route.
     ///
     /// Messages that return [`MessageHandlerResult::Consume`] are removed.
     /// Messages that return [`MessageHandlerResult::Ignore`] stay queued for a
-    /// later pass.
+    /// later pass until [`MessageQueue::expire`] drops them.
     pub fn receive_messages<C, H: MessageHandler<C, T>>(
         &mut self,
+        route: Option<MessageRoute>,
         context: &mut C,
         handler: &mut H,
     ) {
-        self.messages.retain(|msg| {
+        let Some(messages) = self.messages.get_mut(&route) else {
+            return;
+        };
+        messages.retain(|(sender, msg)| {
             matches!(
-                handler.handle_message(context, msg),
+                handler.handle_message(context, *sender, msg),
                 MessageHandlerResult::Ignore
             )
         });
+        if messages.is_empty() {
+            self.messages.remove(&route);
+        }
+    }
+
+    /// Drops every queued message and returns how many were dropped.
+    ///
+    /// Call this once every handler has had its pass, so messages no handler
+    /// consumes do not pile up.
+    pub fn expire(&mut self) -> usize {
+        let expired = self.len();
+        self.messages.clear();
+        expired
     }
 }

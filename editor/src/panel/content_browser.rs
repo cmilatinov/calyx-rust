@@ -1,5 +1,6 @@
 use crate::inspector::asset_inspector::AssetInspectorAction;
 use crate::panel::Panel;
+use crate::scene_document::SceneDocument;
 use crate::selection::{Selection, SelectionType};
 use crate::widgets::{
     FileButton, ThumbnailPriority, ThumbnailRequest, ThumbnailStatus, THUMBNAIL_MAX_SIZE,
@@ -14,7 +15,6 @@ use egui::{
 };
 use engine::assets::animation_graph::AnimationGraph;
 use re_ui::list_item::ShowCollapsingResponse;
-use relative_path::PathExt;
 use std::any::Any;
 use std::fs::{DirEntry, OpenOptions, ReadDir};
 use std::io::BufWriter;
@@ -77,6 +77,10 @@ impl Panel for PanelContentBrowser {
                 {
                     continue;
                 }
+                if file_name_str(&curr_path).is_none() {
+                    warn_skipped_entry(&curr_path);
+                    continue;
+                }
                 nodes.push(curr_path);
             }
         }
@@ -92,23 +96,31 @@ impl Panel for PanelContentBrowser {
                         Layout::left_to_right(Align::Center),
                         |ui| {
                             let mut root = root_path;
-                            let path = self.selected_folder.relative_to(root.clone()).unwrap();
+                            let Some(names) = breadcrumb_names(&root, &self.selected_folder) else {
+                                engine::logging::warn_once(
+                                    format!(
+                                        "content_browser:breadcrumbs:{}",
+                                        self.selected_folder.display()
+                                    ),
+                                    || {
+                                        format!(
+                                            "Cannot show breadcrumbs for folder: folder={} root={}",
+                                            self.selected_folder.display(),
+                                            root.display()
+                                        )
+                                    },
+                                );
+                                return;
+                            };
                             if ui.button(">").clicked() {
                                 self.set_selected_folder(&mut state.selection, root.clone());
                             }
-                            let mut iterator = path.components();
-                            let mut component = iterator.next();
-                            loop {
-                                if component.is_none() {
-                                    break;
-                                }
-                                let name = component.unwrap();
-                                root.push(name.as_str());
-                                if ui.button(name.as_str()).clicked() {
+                            for (idx, name) in names.iter().enumerate() {
+                                root.push(name);
+                                if ui.button(name).clicked() {
                                     self.set_selected_folder(&mut state.selection, root.clone());
                                 }
-                                component = iterator.next();
-                                if component.is_some() {
+                                if idx + 1 < names.len() {
                                     ui.label(">");
                                 }
                             }
@@ -171,7 +183,7 @@ impl Panel for PanelContentBrowser {
                                 };
                                 let res = PanelContentBrowser::render_file_button(
                                     ui,
-                                    node.file_name().unwrap().to_str().unwrap(),
+                                    file_name_str(node).unwrap_or_default(),
                                     image_src,
                                     image_size,
                                     icon_spacing,
@@ -322,11 +334,7 @@ impl PanelContentBrowser {
                 return;
             };
             if inspector.has_context_menu() {
-                edit_before = if game.scenes.has_simulation_scene() {
-                    None
-                } else {
-                    Some(SceneEditSnapshot::capture(game.scenes.current_scene()))
-                };
+                edit_before = SceneDocument::begin_edit(game);
                 action = inspector.show_context_menu(ui, game, asset_id);
             } else {
                 ui.label("No actions available");
@@ -362,10 +370,12 @@ impl PanelContentBrowser {
         }
 
         let curr_path = entry.path();
-        let path = curr_path.to_str().unwrap().to_string();
-        let collapsing_id = ui.make_persistent_id(path);
+        let collapsing_id = ui.make_persistent_id(&curr_path);
         let is_selected = self.selected_folder == curr_path;
-        let text = curr_path.file_name().unwrap().to_str().unwrap();
+        let Some(text) = file_name_str(&curr_path) else {
+            warn_skipped_entry(&curr_path);
+            return;
+        };
 
         let item = re_ui::list_item::ListItem::new()
             .draggable(true)
@@ -483,5 +493,95 @@ impl PanelContentBrowser {
                 .map(|id| state.selection.contains(SelectionType::Asset, id))
                 .unwrap_or(false)
         }
+    }
+}
+
+/// Returns the last component of `path` as text, or `None` when the path has
+/// no file name or the name is not valid UTF-8.
+fn file_name_str(path: &Path) -> Option<&str> {
+    path.file_name()?.to_str()
+}
+
+/// Warns once per path that an entry was skipped because its name is not valid
+/// UTF-8. The content browser rescans every frame, so the warning is deduplicated.
+fn warn_skipped_entry(path: &Path) {
+    engine::logging::warn_once(format!("content_browser:skipped:{path:?}"), || {
+        format!(
+            "Skipping entry whose file name is not valid UTF-8: path={}",
+            path.display()
+        )
+    });
+}
+
+/// Returns the names of the folders between `root` and `folder`, outermost
+/// first, for the breadcrumb bar. Returns `None` when `folder` is not under
+/// `root` or one of the names is not valid UTF-8.
+fn breadcrumb_names(root: &Path, folder: &Path) -> Option<Vec<String>> {
+    let relative = folder.strip_prefix(root).ok()?;
+    relative
+        .components()
+        .map(|component| component.as_os_str().to_str().map(str::to_owned))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{breadcrumb_names, file_name_str};
+    use std::path::Path;
+
+    #[test]
+    fn file_name_str_returns_last_component() {
+        assert_eq!(
+            file_name_str(Path::new("assets/props/crate.cxprefab")),
+            Some("crate.cxprefab")
+        );
+        assert_eq!(file_name_str(Path::new("assets/props")), Some("props"));
+    }
+
+    #[test]
+    fn file_name_str_is_none_without_a_file_name() {
+        assert_eq!(file_name_str(Path::new("")), None);
+        assert_eq!(file_name_str(Path::new("assets/..")), None);
+    }
+
+    #[test]
+    fn file_name_str_is_none_for_non_utf8_names() {
+        #[cfg(unix)]
+        let name = {
+            use std::ffi::OsStr;
+            use std::os::unix::ffi::OsStrExt;
+            OsStr::from_bytes(b"\xff.png").to_owned()
+        };
+        #[cfg(windows)]
+        let name = {
+            use std::ffi::OsString;
+            use std::os::windows::ffi::OsStringExt;
+            OsString::from_wide(&[0xD800, 0x0061])
+        };
+        assert_eq!(file_name_str(Path::new(&name)), None);
+    }
+
+    #[test]
+    fn breadcrumb_names_lists_folders_below_root() {
+        assert_eq!(
+            breadcrumb_names(Path::new("assets"), Path::new("assets/models/props")),
+            Some(vec!["models".to_string(), "props".to_string()])
+        );
+    }
+
+    #[test]
+    fn breadcrumb_names_is_empty_at_root() {
+        assert_eq!(
+            breadcrumb_names(Path::new("assets"), Path::new("assets")),
+            Some(Vec::new())
+        );
+    }
+
+    #[test]
+    fn breadcrumb_names_rejects_folders_outside_root() {
+        assert_eq!(
+            breadcrumb_names(Path::new("assets"), Path::new("sandbox/scenes")),
+            None
+        );
     }
 }

@@ -22,6 +22,7 @@ mod scene_manager;
 // (graph, store, transforms) can be accessed by sibling modules within
 // the engine crate (e.g. physics, networking) while remaining hidden
 // from external consumers. The public API is re-exported above.
+pub(crate) mod change_set;
 pub(crate) mod game_object_store;
 pub(crate) mod scene;
 pub(crate) mod scene_graph;

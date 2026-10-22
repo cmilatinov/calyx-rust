@@ -89,7 +89,7 @@ impl SkyboxRenderer {
             );
 
             let device = &render_state.device;
-            let mut shader = self.skybox_shader.write();
+            let shader = self.skybox_shader.read();
             let cube_mesh = cube_mesh.read();
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
@@ -105,27 +105,12 @@ impl SkyboxRenderer {
                     },
                 ],
             });
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Skybox"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &scene_texture_msaa.view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &scene_depth_texture.view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
+            let mut render_pass = RenderUtils::overlay_pass(
+                encoder,
+                &scene_texture_msaa.view,
+                Some(&scene_depth_texture.view),
+                "Skybox",
+            );
             let options = PipelineOptions::builder()
                 .fragment_targets(vec![Some(wgpu::ColorTargetState {
                     format: scene_texture_msaa.descriptor.format,
@@ -135,14 +120,11 @@ impl SkyboxRenderer {
                 .samples(samples)
                 .cull_mode(Some(wgpu::Face::Front))
                 .build();
-            shader.build_pipeline(&options);
-            if let Some(pipeline) = shader.get_pipeline(&options) {
-                render_pass.set_pipeline(pipeline);
-                render_pass.set_bind_group(0, camera_bind_group, &[]);
-                render_pass.set_bind_group(1, &bind_group, &[]);
-                RenderUtils::bind_mesh_buffers(&mut render_pass, &cube_mesh);
-                RenderUtils::draw_mesh_instanced(&mut render_pass, &cube_mesh, 0..1);
-            }
+            render_pass.set_pipeline(&shader.pipeline(&options));
+            render_pass.set_bind_group(0, camera_bind_group, &[]);
+            render_pass.set_bind_group(1, &bind_group, &[]);
+            RenderUtils::bind_mesh_buffers(&mut render_pass, &cube_mesh);
+            RenderUtils::draw_mesh_instanced(&mut render_pass, &cube_mesh, 0..1);
         }
     }
 }

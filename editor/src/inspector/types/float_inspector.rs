@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::ops::RangeInclusive;
 
-use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
+use crate::inspector::type_inspector::{
+    InspectorContext, InspectorResponse, ReflectTypeInspector, TypeInspector,
+};
 use egui::Ui;
 use engine::reflect::{AttributeValue, Reflect, ReflectDefault, ReflectGenericFloat};
 use engine::type_uuids;
@@ -18,7 +20,12 @@ impl TypeInspector for FloatInspector {
         type_uuids!(f32, f64)
     }
 
-    fn show_inspector(&self, ui: &mut Ui, ctx: &InspectorContext, instance: &mut dyn Reflect) {
+    fn show_inspector(
+        &self,
+        ui: &mut Ui,
+        ctx: &InspectorContext,
+        instance: &mut dyn Reflect,
+    ) -> InspectorResponse {
         let empty_attrs = HashMap::new();
         let attrs = match ctx.field_name {
             Some(field) => ctx
@@ -35,10 +42,10 @@ impl TypeInspector for FloatInspector {
         let speed_attr = attrs.get("speed").copied();
         let type_registry = ctx.assets.types.read();
         let Some(meta) = type_registry.trait_meta::<ReflectGenericFloat>(instance.uuid()) else {
-            return;
+            return InspectorResponse::NONE;
         };
         let Some(num) = meta.get_mut(instance) else {
-            return;
+            return InspectorResponse::NONE;
         };
         let mut value = num.as_f64();
         if angle_attr.is_some() {
@@ -67,5 +74,6 @@ impl TypeInspector for FloatInspector {
             }
             num.set_from_f64(value);
         }
+        InspectorResponse::from_response(&res)
     }
 }

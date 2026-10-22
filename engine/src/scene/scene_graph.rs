@@ -4,6 +4,7 @@ use petgraph::stable_graph::{DefaultIx, NodeIndex, WalkNeighbors};
 use petgraph::visit::{Bfs, Walker};
 use petgraph::Direction;
 
+use super::error::SceneError;
 use super::scene::Scene;
 use super::GameObject;
 
@@ -36,9 +37,34 @@ impl WalkChildren {
 }
 
 impl SceneGraph {
-    /// Inserts a new node for `entity` and returns its graph index.
-    pub fn add_node(&mut self, entity: Entity) -> NodeIndex {
-        self.arena.add_node(entity)
+    /// Inserts a node for `entity` and appends it after `parent`'s existing
+    /// children. Without a parent the node is left parentless, as the scene
+    /// root is.
+    pub fn attach(&mut self, entity: Entity, parent: Option<GameObject>) -> GameObject {
+        let node = self.arena.add_node(entity);
+        let game_object = GameObject { node, entity };
+        if let Some(parent) = parent {
+            let index = self.next_edge_index(parent);
+            self.arena.add_edge(parent.node, node, index);
+        }
+        game_object
+    }
+
+    /// Removes `game_object` and every descendant from the graph, closing the
+    /// gap it leaves among its siblings.
+    ///
+    /// Returns the removed objects, descendants before their ancestors. A
+    /// handle whose node is gone or now holds another entity removes nothing.
+    pub fn detach_subtree(&mut self, game_object: GameObject) -> Vec<GameObject> {
+        if self.game_object_from_node(game_object.node) != Some(game_object) {
+            return Vec::new();
+        }
+        self.unlink(game_object);
+        let removed: Vec<GameObject> = self.descendants(game_object).collect();
+        for go in removed.iter().rev() {
+            self.arena.remove_node(go.node);
+        }
+        removed.into_iter().rev().collect()
     }
 
     /// Resolves a graph node into a [`GameObject`] handle.
@@ -53,15 +79,6 @@ impl SceneGraph {
         walker
             .next_node(&self.arena)
             .and_then(|node| self.game_object_from_node(node))
-    }
-
-    /// BFS traversal starting from a node, returning all reachable GameObjects
-    /// (including the start node).
-    pub fn bfs_from(&self, start: NodeIndex) -> Vec<GameObject> {
-        Bfs::new(&self.arena, start)
-            .iter(&self.arena)
-            .filter_map(|node| self.game_object_from_node(node))
-            .collect()
     }
 
     /// Returns the direct parent of `game_object`, if any.
@@ -145,18 +162,22 @@ impl SceneGraph {
     }
 
     /// Returns the append position for a new child under `parent`.
-    pub fn next_edge_index(&self, parent: GameObject) -> i32 {
+    fn next_edge_index(&self, parent: GameObject) -> i32 {
         self.children(parent).count() as i32
     }
 
-    /// Adds a parent-child edge with an explicit sibling index.
-    pub fn add_edge(&mut self, parent: NodeIndex, child: NodeIndex, weight: i32) {
-        self.arena.add_edge(parent, child, weight);
-    }
-
-    /// Removes a node and any incident edges from the graph.
-    pub fn remove_node(&mut self, node: NodeIndex) {
-        self.arena.remove_node(node);
+    /// Removes the edge from `game_object`'s parent and shifts the later
+    /// siblings down so the parent's indices stay contiguous.
+    fn unlink(&mut self, game_object: GameObject) {
+        if let Some((old_parent, edge)) = self.parent(game_object).and_then(|old_parent| {
+            self.arena
+                .find_edge(old_parent.node, game_object.node)
+                .map(|edge| (old_parent, edge))
+        }) {
+            let index = self.arena[edge];
+            self.arena.remove_edge(edge);
+            self.shift_edge_weights(old_parent, index, -1);
+        }
     }
 
     /// Returns the insertion index relative to `sibling` inside `parent`.
@@ -181,7 +202,7 @@ impl SceneGraph {
     }
 
     /// Shifts sibling indices at or after `start` by `offset`.
-    pub fn shift_edge_weights(&mut self, parent: GameObject, start: i32, offset: i32) {
+    fn shift_edge_weights(&mut self, parent: GameObject, start: i32, offset: i32) {
         let mut walker = self.arena.neighbors(parent.node).detach();
         while let Some((edge, _)) = walker.next(&self.arena) {
             if let Some(edge_weight) = self.arena.edge_weight_mut(edge) {
@@ -192,61 +213,46 @@ impl SceneGraph {
         }
     }
 
-    /// Swaps two sibling slots under `parent`.
-    pub fn swap_edge_weights(&mut self, parent: GameObject, first: i32, second: i32) {
-        let find_edge = |weight: i32| {
-            self.arena
-                .edges_directed(parent.node, Direction::Outgoing)
-                .find_map(|edge| {
-                    if *edge.weight() == weight {
-                        Some(edge.id())
-                    } else {
-                        None
-                    }
-                })
-        };
-        let Some(first_edge) = find_edge(first) else {
-            return;
-        };
-        let Some(second_edge) = find_edge(second) else {
-            return;
-        };
-        self.arena[first_edge] = second;
-        self.arena[second_edge] = first;
-    }
-
     /// Reparents `game_object`, optionally inserting it relative to a sibling.
+    ///
+    /// Returns [`SceneError::HierarchyCycle`] without modifying the graph when
+    /// `parent` is `game_object` or one of its descendants. The object is
+    /// removed from its current slot before the target slot is resolved, so
+    /// moves under the same parent shift siblings instead of swapping them.
+    /// Without a resolvable sibling the object is appended.
     pub fn set_parent(
         &mut self,
         game_object: GameObject,
         parent: GameObject,
         sibling: Option<(GameObject, SiblingDir)>,
-    ) {
-        let mut insert_index = None;
-        if let Some((sibling, dir)) = sibling {
-            if let Some(index) = self.index_in_parent(parent, sibling, dir) {
-                if let Some(current) = self.index_in_parent(parent, game_object, SiblingDir::Before)
-                {
-                    self.swap_edge_weights(parent, current, index);
-                    return;
-                } else {
-                    self.shift_edge_weights(parent, index, 1);
+    ) -> Result<(), SceneError> {
+        if self.is_descendant(game_object, parent) {
+            return Err(SceneError::HierarchyCycle);
+        }
+        // Dropping an object next to itself is a no-op under its own parent and
+        // an unresolvable sibling (append) under any other parent.
+        let sibling = match sibling {
+            Some((sibling, _)) if sibling == game_object => {
+                if self.parent(game_object) == Some(parent) {
+                    return Ok(());
                 }
-                insert_index = Some(index);
+                None
             }
-        }
+            sibling => sibling,
+        };
 
-        if let Some((parent, edge)) = self.parent(game_object).and_then(|parent| {
-            self.arena
-                .find_edge(parent.node, game_object.node)
-                .map(|edge| (parent, edge))
-        }) {
-            let index = self.arena[edge];
-            self.arena.remove_edge(edge);
-            self.shift_edge_weights(parent, index, -1);
-        }
-        let insert_index = insert_index.unwrap_or_else(|| self.next_edge_index(parent));
+        self.unlink(game_object);
+
+        let insert_index =
+            match sibling.and_then(|(sibling, dir)| self.index_in_parent(parent, sibling, dir)) {
+                Some(index) => {
+                    self.shift_edge_weights(parent, index, 1);
+                    index
+                }
+                None => self.next_edge_index(parent),
+            };
         self.arena
             .add_edge(parent.node, game_object.node, insert_index);
+        Ok(())
     }
 }

@@ -11,6 +11,7 @@ use nalgebra_glm::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
 use super::error::AssetError;
+use super::import::ImportedAnimation;
 use super::{Asset, LoadedAsset};
 
 /// Position or scale keyframe sampled from an animation channel.
@@ -93,51 +94,12 @@ impl Asset for Animation {
 }
 
 impl Animation {
-    /// Converts a Russimp animation into the engine's standalone clip format.
-    pub fn from_russimp_animation(animation: &russimp_ng::animation::Animation) -> Self {
-        let ticks_per_second = animation.ticks_per_second;
-        let duration = animation.duration;
-        let node_keyframes = animation
-            .channels
-            .iter()
-            .map(|channel| {
-                (
-                    channel.name.clone(),
-                    AnimationKeyFrames {
-                        positions: channel
-                            .position_keys
-                            .iter()
-                            .map(|p| VectorKeyFrame {
-                                value: Vec3::new(p.value.x, p.value.y, p.value.z),
-                                time: p.time,
-                            })
-                            .collect(),
-                        rotations: channel
-                            .rotation_keys
-                            .iter()
-                            .map(|r| QuatKeyFrame {
-                                value: Unit::<Quat>::from_quaternion(Quat::new(
-                                    r.value.w, r.value.x, r.value.y, r.value.z,
-                                )),
-                                time: r.time,
-                            })
-                            .collect(),
-                        scaling: channel
-                            .scaling_keys
-                            .iter()
-                            .map(|s| VectorKeyFrame {
-                                value: Vec3::new(s.value.x, s.value.y, s.value.z),
-                                time: s.time,
-                            })
-                            .collect(),
-                    },
-                )
-            })
-            .collect::<HashMap<_, _>>();
+    /// Builds a clip from an imported animation, whose key times are in seconds.
+    pub(crate) fn from_imported(animation: ImportedAnimation) -> Self {
         Self {
-            node_keyframes,
-            duration,
-            ticks_per_second,
+            node_keyframes: animation.channels,
+            duration: animation.duration_seconds,
+            ticks_per_second: 1.0,
         }
     }
 }
@@ -263,7 +225,7 @@ mod tests {
     use super::{Animation, AnimationKeyFrames, QuatKeyFrame, VectorKeyFrame};
     use crate::assets::error::AssetError;
     use crate::assets::Asset;
-    use crate::test_utils::test_game_context;
+    use crate::test_support::test_game_context;
     use nalgebra::Unit;
     use nalgebra_glm::{Quat, Vec3};
     use std::collections::HashMap;

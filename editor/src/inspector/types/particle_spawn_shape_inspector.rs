@@ -1,4 +1,6 @@
-use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
+use crate::inspector::type_inspector::{
+    InspectorContext, InspectorResponse, ReflectTypeInspector, TypeInspector,
+};
 use crate::inspector::widgets::{PropChildrenPhase, Widgets};
 use convert_case::{Case, Casing};
 use egui::{Id, Ui};
@@ -15,7 +17,12 @@ use uuid::Uuid;
 pub struct ParticleSpawnShapeInspector;
 
 impl ParticleSpawnShapeInspector {
-    fn spawn_shape(ui: &mut Ui, ctx: &InspectorContext, value: &mut ParticleSpawnShape) {
+    fn spawn_shape(
+        ui: &mut Ui,
+        ctx: &InspectorContext,
+        value: &mut ParticleSpawnShape,
+    ) -> InspectorResponse {
+        let mut response = InspectorResponse::NONE;
         let label = ctx
             .field_name
             .map(|name| name.from_case(Case::Snake).to_case(Case::Title))
@@ -29,12 +36,12 @@ impl ParticleSpawnShapeInspector {
                         ParticleSpawnShape::Box { .. } => "Box",
                     })
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(
+                        response |= ui.selectable_value(
                             value,
                             ParticleSpawnShape::Sphere { radius: 0.5 },
                             "Sphere",
                         );
-                        ui.selectable_value(
+                        response |= ui.selectable_value(
                             value,
                             ParticleSpawnShape::Box {
                                 extents: Vec3::from_element(0.5),
@@ -46,7 +53,7 @@ impl ParticleSpawnShapeInspector {
             PropChildrenPhase::Children { ui } => match value {
                 ParticleSpawnShape::Sphere { radius } => {
                     Widgets::inspector_prop_value(ui, "Radius", |ui, _| {
-                        ui.add(
+                        response |= ui.add(
                             egui::DragValue::new(radius)
                                 .speed(0.1)
                                 .range(0.0..=f32::MAX),
@@ -55,11 +62,12 @@ impl ParticleSpawnShapeInspector {
                 }
                 ParticleSpawnShape::Box { extents } => {
                     Widgets::inspector_prop_value(ui, "Extents", |ui, _| {
-                        Widgets::drag_float3(ui, 0.1, extents);
+                        response |= Widgets::drag_float3(ui, 0.1, extents);
                     });
                 }
             },
         });
+        response
     }
 }
 
@@ -68,10 +76,15 @@ impl TypeInspector for ParticleSpawnShapeInspector {
         vec![ParticleSpawnShape::type_uuid()]
     }
 
-    fn show_inspector(&self, ui: &mut Ui, ctx: &InspectorContext, instance: &mut dyn Reflect) {
+    fn show_inspector(
+        &self,
+        ui: &mut Ui,
+        ctx: &InspectorContext,
+        instance: &mut dyn Reflect,
+    ) -> InspectorResponse {
         let Some(shape) = instance.downcast_mut::<ParticleSpawnShape>() else {
-            return;
+            return InspectorResponse::NONE;
         };
-        Self::spawn_shape(ui, ctx, shape);
+        Self::spawn_shape(ui, ctx, shape)
     }
 }

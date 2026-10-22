@@ -76,7 +76,7 @@ impl OutlineRenderer {
 
         let device = &render_state.device;
         let mut quad_mesh = screen_space_quad.write();
-        let mut shader = self.shader.write();
+        let shader = self.shader.read();
         let options = PipelineOptions::builder()
             .samples(samples)
             .fragment_targets(vec![Some(RenderUtils::color_alpha_blending(
@@ -84,11 +84,7 @@ impl OutlineRenderer {
             ))])
             .depth_stencil(None)
             .build();
-        shader.build_pipeline(&options);
-        let Some(pipeline) = shader.get_pipeline(&options) else {
-            return;
-        };
-        let pipeline = pipeline.clone();
+        let pipeline = shader.pipeline(&options);
         let bind_group_layout = shader.bind_group_layouts[0].clone();
         drop(shader);
 
@@ -177,20 +173,8 @@ impl OutlineRenderer {
             ],
         });
 
-        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Scene Outline"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: scene_texture_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
+        let mut render_pass =
+            RenderUtils::overlay_pass(encoder, scene_texture_view, None, "Scene Outline");
         render_pass.set_pipeline(pipeline);
         render_pass.set_bind_group(0, &bind_group, &[]);
         RenderUtils::bind_mesh_buffers(&mut render_pass, quad_mesh);
@@ -220,22 +204,17 @@ fn srgb_channel_to_linear(channel: u8) -> f32 {
 mod tests {
     use super::OutlineRenderer;
     use crate::render::RenderUtils;
-    use crate::test_utils::test_asset_context_with_assets;
+    use crate::test_support::TestAssets;
     use egui_wgpu::wgpu::TextureFormat;
-    use std::path::PathBuf;
-
-    fn assets_path() -> PathBuf {
-        let assets_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets");
-        dunce::canonicalize(assets_path).expect("assets dir not found")
-    }
 
     #[test]
     fn outline_renderer_loads_shader_and_builds_pipeline() {
-        let context = test_asset_context_with_assets(vec![assets_path()]);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
         let read_only_context = context.lock_read();
         let device = read_only_context.render_context.device();
         let renderer = OutlineRenderer::new(&read_only_context, device);
-        let mut shader = renderer.shader.write();
+        let shader = renderer.shader.read();
         let options = crate::render::PipelineOptions::builder()
             .samples(1)
             .fragment_targets(vec![Some(RenderUtils::color_alpha_blending(
@@ -243,7 +222,7 @@ mod tests {
             ))])
             .depth_stencil(None)
             .build();
-        shader.build_pipeline(&options);
-        assert!(shader.get_pipeline(&options).is_some());
+        let pipeline = shader.pipeline(&options);
+        assert_eq!(shader.pipeline(&options), pipeline);
     }
 }

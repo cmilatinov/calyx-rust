@@ -35,17 +35,20 @@ pub struct TransformCache {
 }
 
 impl TransformCache {
-    /// Marks every cached entry dirty.
-    pub fn clear(&self) {
-        for entry in self.entries.lock().unwrap().iter_mut().flatten() {
-            entry.dirty = true;
-        }
-    }
-
     /// Marks one node's cached world transform dirty.
     pub fn mark_dirty(&self, node: NodeIndex) {
         let mut entries = self.entries.lock().unwrap();
         Self::entry_mut(&mut entries, node).dirty = true;
+    }
+
+    /// Drops `node`'s cache entry.
+    ///
+    /// Node indices are reused after deletion, so a created or removed node must
+    /// not keep an entry another object could later be served from.
+    pub fn remove(&self, node: NodeIndex) {
+        if let Some(entry) = self.entries.lock().unwrap().get_mut(node.index()) {
+            *entry = None;
+        }
     }
 
     /// Marks `game_object` and all descendants dirty.

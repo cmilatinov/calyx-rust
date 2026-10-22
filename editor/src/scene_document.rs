@@ -1,536 +1,771 @@
-use std::fs;
-use std::io::{BufWriter, Write};
-use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime};
+//! The editor's scene document: the authoring scene's undo history, the
+//! inspector's undo baselines, recovery autosave, dirty state and file
+//! identity, behind edit, undo, redo, open and save.
+//!
+//! Edits are refused while a simulation copy of the scene exists. That rule
+//! lives in [`authoring`], which every edit, undo and redo goes through.
 
-use engine::scene::{Scene, SceneSnapshot};
-use serde::Serialize;
-use sha1::{Digest, Sha1};
+use std::ops::Deref;
+use std::path::{Path, PathBuf};
+
+use eframe::egui;
+use engine::component::Component;
+use engine::context::GameContext;
+use engine::scene::{GameObject, Scene};
+use serde_json::Value;
 use uuid::Uuid;
 
-const AUTOSAVE_DELAY: Duration = Duration::from_secs(2);
-const AUTOSAVE_INTERVAL: Duration = Duration::from_secs(30);
+use crate::inspector::edit_tracker::{self, CommittedEdit, InspectorEditTracker};
+use crate::panel::PanelInspector;
+use crate::scene_autosave::EditorSceneAutosave;
+use crate::scene_file::{scene_fingerprint, write_scene_file};
+use crate::scene_history::{
+    InspectorValueChange, InspectorValueEdit, SceneEditSnapshot, SceneHistory, SceneHistoryRestore,
+};
 
-#[derive(Debug, Clone)]
-pub struct SceneRecovery {
-    pub source_file: PathBuf,
-    pub autosave_file: PathBuf,
+pub struct SceneDocument {
+    history: SceneHistory,
+    /// The inspector's undo baselines for the selected object's components.
+    inspector_edits: InspectorEditTracker,
+    autosave: EditorSceneAutosave,
 }
 
-#[derive(Debug, Default)]
-pub struct SceneDocumentState {
-    dirty: bool,
-    saved_scene_fingerprint: Option<String>,
-    generation: u64,
-    revision: u64,
-    last_autosaved_revision: u64,
-    last_edit_at: Option<Instant>,
-    last_autosave_at: Option<Instant>,
+/// The simulation guard: `game` while its authoring scene may be edited, that
+/// is while no simulation copy of it exists.
+fn authoring<G: Deref<Target = GameContext>>(game: G) -> Option<G> {
+    (!game.scenes.has_simulation_scene()).then_some(game)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SceneDocumentRevision {
-    generation: u64,
-    revision: u64,
+#[derive(Clone, Copy)]
+enum HistoryStep {
+    Undo,
+    Redo,
 }
 
-impl SceneDocumentState {
-    pub fn is_dirty(&self) -> bool {
-        self.dirty
-    }
-
-    pub fn mark_dirty(&mut self, now: Instant) {
-        self.dirty = true;
-        self.revision = self.revision.saturating_add(1);
-        self.last_edit_at = Some(now);
-    }
-
-    pub fn mark_clean(&mut self, scene_fingerprint: Option<String>) {
-        self.saved_scene_fingerprint = scene_fingerprint;
-        self.clear_dirty();
-    }
-
-    pub fn sync_dirty_to_fingerprint(
-        &mut self,
-        current_scene_fingerprint: Option<String>,
-        now: Instant,
-    ) {
-        let dirty = match (
-            self.saved_scene_fingerprint.as_ref(),
-            current_scene_fingerprint.as_ref(),
-        ) {
-            (Some(saved), Some(current)) => saved != current,
-            _ => true,
-        };
-
-        if dirty {
-            self.mark_dirty(now);
-        } else if self.dirty {
-            self.clear_dirty();
-        }
-    }
-
-    pub fn current_revision(&self) -> SceneDocumentRevision {
-        SceneDocumentRevision {
-            generation: self.generation,
-            revision: self.revision,
-        }
-    }
-
-    pub fn should_commit_autosave(&self, revision: SceneDocumentRevision) -> bool {
-        self.dirty
-            && revision.generation == self.generation
-            && revision.revision > self.last_autosaved_revision
-    }
-
-    pub fn should_autosave(&self, now: Instant) -> bool {
-        if !self.dirty || self.revision == self.last_autosaved_revision {
-            return false;
-        }
-        if self
-            .last_edit_at
-            .is_some_and(|last_edit| now.duration_since(last_edit) < AUTOSAVE_DELAY)
-        {
-            return false;
-        }
-        self.last_autosave_at
-            .map(|last_autosave| now.duration_since(last_autosave) >= AUTOSAVE_INTERVAL)
-            .unwrap_or(true)
-    }
-
-    pub fn mark_autosave_started(&mut self, now: Instant) {
-        self.last_autosave_at = Some(now);
-    }
-
-    pub fn mark_autosave_finished(&mut self, revision: SceneDocumentRevision, success: bool) {
-        if success && revision.generation == self.generation {
-            self.last_autosaved_revision = self.last_autosaved_revision.max(revision.revision);
-        }
-    }
-
-    fn clear_dirty(&mut self) {
-        self.dirty = false;
-        self.generation = self.generation.saturating_add(1);
-        self.last_autosaved_revision = self.revision;
-        self.last_edit_at = None;
-        self.last_autosave_at = None;
-    }
-}
-
-#[derive(Clone)]
-pub struct SceneAutosave {
-    root: PathBuf,
-}
-
-pub struct PreparedSceneAutosave {
-    file: PreparedFile,
-}
-
-impl PreparedSceneAutosave {
-    pub fn autosave_file(&self) -> &Path {
-        &self.file.target_file
-    }
-
-    pub fn commit(self) -> Result<PathBuf, String> {
-        self.file.commit()
-    }
-}
-
-impl SceneAutosave {
+impl SceneDocument {
     pub fn new(project_path: &Path) -> Self {
         Self {
-            root: autosave_root(project_path),
+            history: SceneHistory::default(),
+            inspector_edits: InspectorEditTracker::default(),
+            autosave: EditorSceneAutosave::new(project_path),
         }
     }
 
-    pub fn prepare(
-        &self,
-        source_file: &Path,
-        snapshot: &SceneSnapshot,
-    ) -> Result<PreparedSceneAutosave, String> {
-        let path = self.path_for_scene(source_file);
-        prepare_json_file(&path, snapshot, "scene autosave")
-            .map(|file| PreparedSceneAutosave { file })
+    /// Whether the authoring scene differs from its saved file.
+    pub fn is_dirty(&self) -> bool {
+        self.autosave.is_dirty()
     }
 
-    pub fn write(&self, source_file: &Path, snapshot: &SceneSnapshot) -> Result<PathBuf, String> {
-        self.prepare(source_file, snapshot)?.commit()
+    /// Captures the authoring scene before an edit, for [`Self::commit_edit`].
+    /// `None` while the scene cannot be edited.
+    pub fn begin_edit(game: &GameContext) -> Option<SceneEditSnapshot> {
+        authoring(game).map(|game| SceneEditSnapshot::capture(game.scenes.current_scene()))
     }
 
-    pub fn discard(&self, source_file: &Path) -> Result<(), String> {
-        let path = self.path_for_scene(source_file);
-        if !path.exists() {
-            return Ok(());
-        }
-        fs::remove_file(&path)
-            .map_err(|err| format!("failed to remove scene autosave {}: {err}", path.display()))
-    }
+    /// Records the edit made since `before` as one undo step. Without a
+    /// `before` snapshot the scene is only marked dirty.
+    pub fn commit_edit(
+        &mut self,
+        game: &GameContext,
+        label: impl Into<String>,
+        before: Option<SceneEditSnapshot>,
+    ) {
+        let Some(game) = authoring(game) else {
+            return;
+        };
+        // The edit wrote the scene outside the inspector, so its baselines
+        // are taken again.
+        self.refresh_baselines(game);
 
-    pub fn recovery_for_scene(&self, source_file: &Path) -> Option<SceneRecovery> {
-        let autosave_file = self.path_for_scene(source_file);
-        let autosave_modified = fs::metadata(&autosave_file).ok()?.modified().ok()?;
-        let source_modified = fs::metadata(source_file)
-            .ok()
-            .and_then(|metadata| metadata.modified().ok());
-        is_newer_recovery(autosave_modified, source_modified).then_some(SceneRecovery {
-            source_file: source_file.to_path_buf(),
-            autosave_file,
-        })
-    }
+        let Some(before) = before else {
+            self.autosave.mark_dirty();
+            return;
+        };
 
-    pub fn path_for_scene(&self, source_file: &Path) -> PathBuf {
-        let label = source_file
-            .file_stem()
-            .and_then(|name| name.to_str())
-            .filter(|name| !name.is_empty())
-            .unwrap_or("scene");
-        self.root.join(format!(
-            "{}-{}.cxscene.autosave",
-            label,
-            path_hash(source_file)
-        ))
-    }
-}
-
-pub fn write_scene_file(path: &Path, scene: &Scene) -> Result<(), String> {
-    prepare_json_file(path, scene, "scene file")?
-        .commit()
-        .map(|_| ())
-}
-
-struct PreparedFile {
-    target_file: PathBuf,
-    temp_file: PathBuf,
-    committed: bool,
-}
-
-impl PreparedFile {
-    fn commit(mut self) -> Result<PathBuf, String> {
-        replace_file(&self.temp_file, &self.target_file)?;
-        self.committed = true;
-        Ok(self.target_file.clone())
-    }
-}
-
-impl Drop for PreparedFile {
-    fn drop(&mut self) {
-        if !self.committed {
-            let _ = fs::remove_file(&self.temp_file);
+        let after = SceneEditSnapshot::capture(game.scenes.current_scene());
+        let fingerprint = after.fingerprint().map(str::to_owned);
+        if self.history.push(label, before, after) {
+            self.autosave.sync_dirty_to_fingerprint(fingerprint);
         }
     }
-}
 
-fn prepare_json_file<T: Serialize + ?Sized>(
-    target_file: &Path,
-    value: &T,
-    description: &str,
-) -> Result<PreparedFile, String> {
-    if let Some(parent) = target_file
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        fs::create_dir_all(parent).map_err(|err| {
-            format!(
-                "failed to create {description} directory {}: {err}",
-                parent.display()
-            )
-        })?;
+    /// The tracker the inspector shows components through.
+    pub fn inspector_edits_mut(&mut self) -> &mut InspectorEditTracker {
+        &mut self.inspector_edits
     }
 
-    let temp_file = temporary_path(target_file);
-    let write_result = (|| {
-        let file = fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temp_file)
-            .map_err(|err| {
-                format!(
-                    "failed to open {description} temp file {}: {err}",
-                    temp_file.display()
-                )
-            })?;
-        let mut writer = BufWriter::new(file);
-        serde_json::to_writer_pretty(&mut writer, value).map_err(|err| {
-            format!(
-                "failed to serialize {description} temp file {}: {err}",
-                temp_file.display()
-            )
-        })?;
-        writer.flush().map_err(|err| {
-            format!(
-                "failed to flush {description} temp file {}: {err}",
-                temp_file.display()
-            )
-        })
-    })();
-
-    if let Err(error) = write_result {
-        let _ = fs::remove_file(&temp_file);
-        return Err(error);
+    /// Whether the inspector records its edits this frame. While the scene
+    /// cannot be edited it records none and keeps no baselines.
+    pub fn track_inspector_edits(&mut self, game: &GameContext) -> bool {
+        let track = authoring(game).is_some();
+        if !track {
+            self.inspector_edits.clear();
+        }
+        track
     }
 
-    Ok(PreparedFile {
-        target_file: target_file.to_path_buf(),
-        temp_file,
-        committed: false,
-    })
-}
+    /// Makes `object` the object the inspector tracks, committing the edits
+    /// pending on the previous one first.
+    pub fn select_inspector_object(&mut self, game: &GameContext, object: Option<Uuid>) {
+        if self.inspector_edits.object() != object {
+            self.flush_pending_values(game);
+            self.inspector_edits.reset(object);
+        }
+    }
 
-fn temporary_path(path: &Path) -> PathBuf {
-    let extension = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .filter(|extension| !extension.is_empty());
-    let suffix = Uuid::new_v4();
-    let extension = extension
-        .map(|extension| format!("{extension}.{suffix}.tmp"))
-        .unwrap_or_else(|| format!("{suffix}.tmp"));
-    path.with_extension(extension)
-}
+    /// Takes what one frame of the inspector did to a component: whether it
+    /// `changed` the scene, whether an edit `completed`, and the undo step it
+    /// `committed`, if any.
+    pub fn inspector_shown(
+        &mut self,
+        game: &GameContext,
+        changed: bool,
+        completed: bool,
+        committed: Option<CommittedEdit>,
+    ) {
+        let Some(game) = authoring(game) else {
+            return;
+        };
+        // The undo step may wait for the drag or text session to end, but
+        // the scene has changed now: autosave and scene switches must see it
+        // as dirty.
+        if changed {
+            self.autosave.mark_dirty();
+        }
+        match committed {
+            Some(committed) => self.record_inspector_edit(game, committed),
+            // An edit that left the component as it was: undo the dirty mark
+            // it set.
+            None if completed => self.sync_dirty(game),
+            None => {}
+        }
+    }
 
-fn autosave_root(project_path: &Path) -> PathBuf {
-    dirs::data_local_dir()
-        .or_else(dirs::cache_dir)
-        .unwrap_or_else(std::env::temp_dir)
-        .join("Calyx")
-        .join("Editor")
-        .join("autosaves")
-        .join(path_hash(project_path))
-}
+    /// Commits every inspector edit still pending, such as a drag in
+    /// progress, so it is recorded before another edit or an undo.
+    pub fn flush_pending_values(&mut self, game: &GameContext) {
+        match authoring(game) {
+            Some(game) => self.commit_pending_values(game),
+            None => self.inspector_edits.clear(),
+        }
+    }
 
-fn replace_file(tmp_path: &Path, path: &Path) -> Result<(), String> {
-    match fs::rename(tmp_path, path) {
-        Ok(()) => Ok(()),
-        Err(rename_error) if path.exists() => {
-            let backup_path = temporary_path(path);
-            fs::rename(path, &backup_path).map_err(|err| {
-                format!(
-                    "failed to stage existing file {} for replacement after rename error {rename_error}: {err}",
-                    path.display(),
-                )
-            })?;
-            match fs::rename(tmp_path, path) {
-                Ok(()) => {
-                    let _ = fs::remove_file(backup_path);
-                    Ok(())
-                }
-                Err(err) => {
-                    let restore_result = fs::rename(&backup_path, path);
-                    Err(match restore_result {
-                        Ok(()) => format!(
-                            "failed to move replacement file {} to {}: {err}",
-                            tmp_path.display(),
-                            path.display()
-                        ),
-                        Err(restore_error) => format!(
-                            "failed to move replacement file {} to {}: {err}; also failed to restore backup {}: {restore_error}",
-                            tmp_path.display(),
-                            path.display(),
-                            backup_path.display()
-                        ),
-                    })
+    /// Commits pending inspector edits and drops the inspector's baselines,
+    /// so each is taken again from the scene, after a write the inspector
+    /// did not make.
+    pub fn refresh_baselines(&mut self, game: &GameContext) {
+        self.flush_pending_values(game);
+        self.inspector_edits.clear();
+    }
+
+    pub fn can_undo(&self, game: &GameContext) -> bool {
+        authoring(game).is_some() && (self.history.can_undo() || self.inspector_edits.has_pending())
+    }
+
+    pub fn can_redo(&self, game: &GameContext) -> bool {
+        authoring(game).is_some() && !self.inspector_edits.has_pending() && self.history.can_redo()
+    }
+
+    pub fn undo(&mut self, game: &mut GameContext) {
+        self.step(game, HistoryStep::Undo);
+    }
+
+    pub fn redo(&mut self, game: &mut GameContext) {
+        self.step(game, HistoryStep::Redo);
+    }
+
+    /// Opens the scene file at `file`, which must be a registered asset. Keeps
+    /// the current scene when its recovery autosave or the load fails.
+    pub fn open_file(&mut self, game: &mut GameContext, file: PathBuf) -> bool {
+        self.flush_pending_values(game);
+        if !self.autosave.prepare_scene_change(game) {
+            return false;
+        }
+        let scene = match game
+            .assets
+            .registries
+            .assets
+            .read()
+            .reload_by_path(file.as_path())
+        {
+            Ok(scene) => scene,
+            Err(error) => {
+                log::error!("Failed to open scene {}: {}", file.display(), error);
+                return false;
+            }
+        };
+        game.scenes.load_scene(scene.readonly());
+        if game.scenes.current_scene_meta().file.is_none() {
+            game.scenes.set_current_scene_file(Some(file.clone()));
+        }
+        self.autosave.scene_loaded(game);
+        self.clear_history();
+        let object_count = game.scenes.current_scene().objects().count();
+        log::info!("Opened scene {} ({} objects)", file.display(), object_count);
+        true
+    }
+
+    /// Opens the scene asset `asset_id`. Keeps the current scene when its
+    /// recovery autosave or the load fails.
+    pub fn open_asset(&mut self, game: &mut GameContext, asset_id: Uuid) -> bool {
+        self.flush_pending_values(game);
+        if !self.autosave.prepare_scene_change(game) {
+            return false;
+        }
+        let (scene, label) = {
+            let registry = game.assets.registries.assets.read();
+            let label = registry
+                .asset_meta_from_id(asset_id)
+                .and_then(|meta| meta.path.map(|path| path.display().to_string()))
+                .unwrap_or_else(|| asset_id.to_string());
+            (registry.reload_by_id::<Scene>(asset_id), label)
+        };
+
+        match scene {
+            Ok(scene) => {
+                game.scenes.load_scene(scene.readonly());
+                self.autosave.scene_loaded(game);
+                self.clear_history();
+                let object_count = game.scenes.current_scene().objects().count();
+                log::info!("Opened scene {label} ({object_count} objects)");
+                true
+            }
+            Err(error) => {
+                log::error!("Failed to open scene {label}: {error}");
+                false
+            }
+        }
+    }
+
+    /// Replaces the authoring scene with a copy of the default scene, with no
+    /// file.
+    pub fn open_default(&mut self, game: &mut GameContext) {
+        self.flush_pending_values(game);
+        if !self.autosave.prepare_scene_change(game) {
+            return;
+        }
+        game.scenes.load_default_scene();
+        self.autosave.new_scene_loaded(game.scenes.current_scene());
+        self.clear_history();
+        log::info!("Created new scene from default scene");
+    }
+
+    /// Writes the authoring scene to `file`, which becomes its file.
+    pub fn save(&mut self, game: &mut GameContext, file: PathBuf) -> bool {
+        let scene = game.scenes.current_scene();
+        let object_count = scene.objects().count();
+        if let Err(error) = write_scene_file(&file, scene) {
+            log::error!("Failed to save scene {}: {error}", file.display());
+            return false;
+        }
+        log::info!("Saved scene {} ({object_count} objects)", file.display());
+
+        let previous_file = game.scenes.current_scene_meta().file.clone();
+        game.scenes.set_current_scene_file(Some(file.clone()));
+        self.autosave
+            .scene_saved(previous_file.as_deref(), &file, game.scenes.current_scene());
+        true
+    }
+
+    /// Runs once per frame: starts or finishes a background recovery
+    /// autosave when one is due.
+    pub fn update(&mut self, game: &GameContext) {
+        self.autosave.update(game);
+    }
+
+    /// Shows the prompt offering a newer recovery autosave of the open scene.
+    pub fn show_recovery_prompt(&mut self, ctx: &egui::Context, game: &mut GameContext) {
+        if self.autosave.show_recovery_prompt(ctx, game) {
+            self.clear_history();
+        }
+    }
+
+    /// Commits pending edits and writes a final recovery autosave.
+    pub fn shutdown(&mut self, game: &GameContext) {
+        self.flush_pending_values(game);
+        self.autosave.shutdown(game);
+    }
+
+    fn step(&mut self, game: &mut GameContext, step: HistoryStep) {
+        let Some(game) = authoring(game) else {
+            return;
+        };
+        self.commit_pending_values(game);
+        let (restore, verb) = match step {
+            HistoryStep::Undo => (self.history.undo(), "Undid"),
+            HistoryStep::Redo => (self.history.redo(), "Redid"),
+        };
+        match restore {
+            None => return,
+            Some(SceneHistoryRestore::Scene {
+                label,
+                snapshot,
+                fingerprint,
+            }) => {
+                game.scenes.restore_current_scene_snapshot(snapshot);
+                self.autosave.sync_dirty_to_fingerprint(fingerprint);
+                log::info!("{verb} scene edit: {label}");
+            }
+            Some(SceneHistoryRestore::InspectorValue {
+                label,
+                game_object,
+                component,
+                values,
+            }) => {
+                if restore_inspector_values(game, game_object, component, &values) {
+                    self.sync_dirty(game);
+                    log::info!("{verb} scene edit: {label}");
                 }
             }
         }
-        Err(err) => Err(format!(
-            "failed to move replacement file {} to {}: {err}",
-            tmp_path.display(),
-            path.display()
-        )),
+        self.inspector_edits.clear();
+    }
+
+    /// Records an edit the inspector committed as one undo step. Callers
+    /// have passed the simulation guard.
+    fn record_inspector_edit(&mut self, game: &GameContext, edit: CommittedEdit) {
+        let component_name = PanelInspector::type_display_name(
+            &game.assets.registries.types.read(),
+            edit.key.component,
+        )
+        .unwrap_or_else(|| edit.key.component.to_string());
+        let label = match common_value_path(&edit.changes) {
+            path if path.is_empty() => format!("Edit {component_name}"),
+            path => format!("Edit {component_name} {}", path.join(".")),
+        };
+        if self.history.push_inspector_value(InspectorValueEdit {
+            label,
+            game_object: edit.key.game_object,
+            component: edit.key.component,
+            changes: edit.changes,
+        }) {
+            self.sync_dirty(game);
+        }
+    }
+
+    /// Commits every pending inspector edit. Callers have passed the
+    /// simulation guard.
+    fn commit_pending_values(&mut self, game: &GameContext) {
+        let pending = self.inspector_edits.pending();
+        if pending.is_empty() {
+            return;
+        }
+        // Reconcile the dirty mark the pending edits set even when they turn
+        // out to change nothing.
+        self.sync_dirty(game);
+        let edits = {
+            let components = game.assets.registries.components.read();
+            let scene = game.scenes.current_scene();
+            pending
+                .into_iter()
+                .filter_map(|key| {
+                    let current = edit_tracker::serialize_component(scene, &components, key);
+                    self.inspector_edits.commit(key, current)
+                })
+                .collect::<Vec<_>>()
+        };
+        for edit in edits {
+            self.record_inspector_edit(game, edit);
+        }
+    }
+
+    fn sync_dirty(&mut self, game: &GameContext) {
+        self.autosave
+            .sync_dirty_to_fingerprint(scene_fingerprint(game.scenes.current_scene()));
+    }
+
+    fn clear_history(&mut self) {
+        self.history.clear();
+        self.inspector_edits.reset(None);
     }
 }
 
-fn path_hash(path: &Path) -> String {
-    let canonical = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let normalized = canonical.to_string_lossy().replace('\\', "/");
-    let mut hasher = Sha1::new();
-    hasher.update(normalized.as_bytes());
-    format!("{:x}", hasher.finalize())
+fn restore_inspector_values(
+    game: &mut GameContext,
+    game_object_id: Uuid,
+    component_id: Uuid,
+    values: &[(Vec<String>, Value)],
+) -> bool {
+    let component_registry_ref = game.assets.registries.components.clone();
+    let component_registry = component_registry_ref.read();
+    let Some(component) = component_registry.component(component_id) else {
+        log::warn!(
+            "Skipped inspector history restore because component {component_id} is no longer registered"
+        );
+        return false;
+    };
+    let scene = game.scenes.current_scene_mut();
+    let Some(game_object) = scene.find(game_object_id) else {
+        log::warn!(
+            "Skipped inspector history restore because game object {game_object_id} no longer exists"
+        );
+        return false;
+    };
+    match restore_component_values(scene, game_object, component, values) {
+        Ok(()) => true,
+        Err(err) => {
+            log::warn!(
+                "Skipped inspector history restore of component {component_id} on game object {game_object_id}: {err}"
+            );
+            false
+        }
+    }
 }
 
-pub fn scene_fingerprint(scene: &Scene) -> Option<String> {
-    let value = serde_json::to_value(scene).ok()?;
-    let bytes = serde_json::to_vec(&value).ok()?;
-    let mut hasher = Sha1::new();
-    hasher.update(bytes);
-    Some(format!("{:x}", hasher.finalize()))
+/// Why a recorded inspector value could not be written back to its component.
+#[derive(Debug, PartialEq, Eq)]
+enum ValueRestoreError {
+    MissingComponent,
+    NotSerializable,
+    MissingValuePath,
+    NotDeserializable,
 }
 
-fn is_newer_recovery(autosave_modified: SystemTime, source_modified: Option<SystemTime>) -> bool {
-    source_modified
-        .map(|source_modified| autosave_modified > source_modified)
-        .unwrap_or(true)
+impl std::fmt::Display for ValueRestoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::MissingComponent => "the component is missing from the game object",
+            Self::NotSerializable => "the component cannot be serialized",
+            Self::MissingValuePath => "the value path no longer exists",
+            Self::NotDeserializable => "the component cannot be deserialized",
+        })
+    }
+}
+
+/// Writes each value at its path inside `game_object`'s `component`, leaving
+/// the component's other values as they are.
+fn restore_component_values(
+    scene: &mut Scene,
+    game_object: GameObject,
+    component: &dyn Component,
+    values: &[(Vec<String>, Value)],
+) -> Result<(), ValueRestoreError> {
+    scene
+        .write_component_dyn(game_object, component, |instance| {
+            let mut serialized = instance
+                .serialize()
+                .ok_or(ValueRestoreError::NotSerializable)?;
+            for (value_path, value) in values {
+                if !set_json_value(&mut serialized, value_path, value.clone()) {
+                    return Err(ValueRestoreError::MissingValuePath);
+                }
+            }
+            if !instance.deserialize_in_place(&serialized) {
+                return Err(ValueRestoreError::NotDeserializable);
+            }
+            Ok(())
+        })
+        .unwrap_or(Err(ValueRestoreError::MissingComponent))
+}
+
+/// The path prefix every change shares, which names an edit that changed
+/// several values of one field, such as a rotation.
+fn common_value_path(changes: &[InspectorValueChange]) -> Vec<String> {
+    let Some((first, rest)) = changes.split_first() else {
+        return Vec::new();
+    };
+    let mut prefix = first.value_path.clone();
+    for change in rest {
+        let shared = prefix
+            .iter()
+            .zip(&change.value_path)
+            .take_while(|(left, right)| left == right)
+            .count();
+        prefix.truncate(shared);
+    }
+    prefix
+}
+
+pub(crate) fn set_json_value(target: &mut Value, path: &[String], value: Value) -> bool {
+    let Some((segment, remaining)) = path.split_first() else {
+        *target = value;
+        return true;
+    };
+
+    match target {
+        Value::Object(values) => values
+            .get_mut(segment)
+            .is_some_and(|target| set_json_value(target, remaining, value)),
+        Value::Array(values) => segment
+            .parse::<usize>()
+            .ok()
+            .and_then(|index| values.get_mut(index))
+            .is_some_and(|target| set_json_value(target, remaining, value)),
+        _ => false,
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{common_value_path, restore_component_values, set_json_value, SceneDocument};
+    use crate::inspector::edit_tracker::{self, ComponentKey};
+    use crate::inspector::type_inspector::InspectorResponse;
+    use crate::scene_history::InspectorValueChange;
+    use engine::component::ComponentTransform;
+    use engine::context::GameContext;
+    use engine::test_support::{test_asset_context_with_assets, test_game_context};
+    use engine::utils::TypeUuid;
+    use nalgebra_glm::{self as glm, Vec3};
+    use serde_json::json;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use uuid::Uuid;
 
-    #[test]
-    fn clean_document_does_not_autosave() {
-        let state = SceneDocumentState::default();
+    /// A scratch asset root, removed on drop.
+    struct AssetRoot(PathBuf);
 
-        assert!(!state.should_autosave(Instant::now() + AUTOSAVE_DELAY));
+    impl AssetRoot {
+        fn new() -> Self {
+            let root =
+                std::env::temp_dir().join(format!("calyx-scene-document-test-{}", Uuid::new_v4()));
+            fs::create_dir_all(&root).expect("asset root should be created");
+            Self(dunce::canonicalize(&root).expect("asset root should canonicalize"))
+        }
+
+        fn scene_file(&self) -> PathBuf {
+            self.0.join("scene.cxscene")
+        }
+    }
+
+    impl Drop for AssetRoot {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn document() -> SceneDocument {
+        SceneDocument::new(Path::new("scene-document-test-project"))
+    }
+
+    fn object_count(game: &GameContext) -> usize {
+        game.scenes.current_scene().objects().count()
+    }
+
+    fn add_object(document: &mut SceneDocument, game: &mut GameContext) {
+        let before = SceneDocument::begin_edit(game);
+        game.scenes.current_scene_mut().create(None, None);
+        document.commit_edit(game, "Add object", before);
+    }
+
+    /// Saves a scene with `objects` objects into `root`, then opens it in a
+    /// fresh game whose assets come from `root`.
+    fn open_saved_scene(root: &AssetRoot, objects: usize) -> (SceneDocument, GameContext) {
+        let mut writer = test_game_context();
+        let mut writer_document = document();
+        for _ in 0..objects {
+            add_object(&mut writer_document, &mut writer);
+        }
+        assert!(writer_document.save(&mut writer, root.scene_file()));
+
+        let mut game = GameContext::new(test_asset_context_with_assets(vec![root.0.clone()]));
+        let mut document = document();
+        assert!(document.open_file(&mut game, root.scene_file()));
+        (document, game)
     }
 
     #[test]
-    fn dirty_document_autosaves_after_debounce() {
-        let mut state = SceneDocumentState::default();
-        let now = Instant::now();
+    fn open_loads_the_saved_scene_clean() {
+        let root = AssetRoot::new();
 
-        state.mark_dirty(now);
+        let (document, game) = open_saved_scene(&root, 2);
 
-        assert!(!state.should_autosave(now + AUTOSAVE_DELAY - Duration::from_millis(1)));
-        assert!(state.should_autosave(now + AUTOSAVE_DELAY));
-    }
-
-    #[test]
-    fn successful_autosave_suppresses_same_revision() {
-        let mut state = SceneDocumentState::default();
-        let now = Instant::now();
-
-        state.mark_dirty(now);
-        let revision = state.current_revision();
-        state.mark_autosave_started(now + AUTOSAVE_DELAY);
-        state.mark_autosave_finished(revision, true);
-
-        assert!(!state
-            .should_autosave(now + AUTOSAVE_DELAY + AUTOSAVE_INTERVAL + Duration::from_secs(1)));
-    }
-
-    #[test]
-    fn dirty_sync_marks_matching_saved_fingerprint_clean() {
-        let mut state = SceneDocumentState::default();
-        let now = Instant::now();
-
-        state.mark_clean(Some("saved".into()));
-        state.mark_dirty(now);
-        state.sync_dirty_to_fingerprint(Some("saved".into()), now + Duration::from_secs(1));
-
-        assert!(!state.is_dirty());
-        assert!(!state.should_autosave(now + AUTOSAVE_DELAY + AUTOSAVE_INTERVAL));
-    }
-
-    #[test]
-    fn dirty_sync_keeps_different_fingerprint_dirty() {
-        let mut state = SceneDocumentState::default();
-        let now = Instant::now();
-
-        state.mark_clean(Some("saved".into()));
-        state.sync_dirty_to_fingerprint(Some("changed".into()), now);
-
-        assert!(state.is_dirty());
-        assert!(state.should_autosave(now + AUTOSAVE_DELAY));
-    }
-
-    #[test]
-    fn recovery_baseline_keeps_recovered_scene_dirty() {
-        let mut state = SceneDocumentState::default();
-        let now = Instant::now();
-
-        state.mark_clean(Some("source".into()));
-        state.sync_dirty_to_fingerprint(Some("recovery".into()), now);
-
-        assert!(state.is_dirty());
-        assert!(state.should_autosave(now + AUTOSAVE_DELAY));
-    }
-
-    #[test]
-    fn newer_edit_remains_pending_after_older_autosave_finishes() {
-        let mut state = SceneDocumentState::default();
-        let now = Instant::now();
-
-        state.mark_dirty(now);
-        let autosaved_revision = state.current_revision();
-        state.mark_autosave_started(now + AUTOSAVE_DELAY);
-        state.mark_dirty(now + AUTOSAVE_DELAY + Duration::from_millis(1));
-        assert!(state.should_commit_autosave(autosaved_revision));
-        state.mark_autosave_finished(autosaved_revision, true);
-
-        assert!(state
-            .should_autosave(now + AUTOSAVE_DELAY + AUTOSAVE_INTERVAL + Duration::from_secs(1)));
-    }
-
-    #[test]
-    fn clean_generation_rejects_stale_autosave_result() {
-        let mut state = SceneDocumentState::default();
-        let now = Instant::now();
-
-        state.mark_dirty(now);
-        let stale_revision = state.current_revision();
-        state.mark_clean(Some("saved".into()));
-
-        assert!(!state.should_commit_autosave(stale_revision));
-    }
-
-    #[test]
-    fn recovery_requires_autosave_newer_than_source() {
-        let source = SystemTime::UNIX_EPOCH + Duration::from_secs(10);
-        let older_autosave = SystemTime::UNIX_EPOCH + Duration::from_secs(9);
-        let newer_autosave = SystemTime::UNIX_EPOCH + Duration::from_secs(11);
-
-        assert!(!is_newer_recovery(older_autosave, Some(source)));
-        assert!(is_newer_recovery(newer_autosave, Some(source)));
-        assert!(is_newer_recovery(newer_autosave, None));
-    }
-
-    #[test]
-    fn autosave_path_is_stable_for_source_scene() {
-        let autosave = SceneAutosave::new(Path::new("sandbox"));
-        let source = Path::new("assets/scene.cxscene");
-
+        assert_eq!(object_count(&game), 2);
         assert_eq!(
-            autosave.path_for_scene(source),
-            autosave.path_for_scene(source)
+            game.scenes.current_scene_meta().file.as_deref(),
+            Some(root.scene_file().as_path())
         );
-        assert_eq!(
-            autosave
-                .path_for_scene(source)
-                .extension()
-                .and_then(|ext| ext.to_str()),
-            Some("autosave")
-        );
+        assert!(!document.is_dirty());
+        assert!(!document.can_undo(&game));
     }
 
     #[test]
-    fn prepared_json_file_replaces_existing_file() {
-        let root =
-            std::env::temp_dir().join(format!("calyx-scene-document-test-{}", Uuid::new_v4()));
-        let target = root.join("scene.cxscene");
-        fs::create_dir_all(&root).expect("test directory should be created");
-        fs::write(&target, b"old contents").expect("existing file should be written");
+    fn open_of_an_unregistered_file_keeps_the_current_scene() {
+        let mut game = test_game_context();
+        let mut document = document();
+        add_object(&mut document, &mut game);
 
-        let prepared = prepare_json_file(
-            &target,
-            &serde_json::json!({ "updated": true }),
-            "test scene",
+        assert!(!document.open_file(&mut game, PathBuf::from("missing.cxscene")));
+
+        assert_eq!(object_count(&game), 1);
+        assert!(document.can_undo(&game));
+    }
+
+    #[test]
+    fn edit_marks_the_document_dirty_and_undo_restores_it_clean() {
+        let root = AssetRoot::new();
+        let (mut document, mut game) = open_saved_scene(&root, 1);
+
+        add_object(&mut document, &mut game);
+        assert_eq!(object_count(&game), 2);
+        assert!(document.is_dirty());
+        assert!(document.can_undo(&game));
+
+        document.undo(&mut game);
+        assert_eq!(object_count(&game), 1);
+        assert!(!document.is_dirty(), "the scene matches its file again");
+        assert!(document.can_redo(&game));
+
+        document.redo(&mut game);
+        assert_eq!(object_count(&game), 2);
+        assert!(document.is_dirty());
+        assert!(!document.can_redo(&game));
+    }
+
+    #[test]
+    fn save_writes_the_edited_scene_and_marks_it_clean() {
+        let root = AssetRoot::new();
+        let (mut document, mut game) = open_saved_scene(&root, 1);
+        add_object(&mut document, &mut game);
+
+        assert!(document.save(&mut game, root.scene_file()));
+
+        assert!(!document.is_dirty());
+        let mut reopened = GameContext::new(test_asset_context_with_assets(vec![root.0.clone()]));
+        assert!(SceneDocument::new(Path::new("other-project"))
+            .open_file(&mut reopened, root.scene_file()));
+        assert_eq!(object_count(&reopened), 2);
+
+        // Undoing past the save leaves the scene different from its file.
+        document.undo(&mut game);
+        assert!(document.is_dirty());
+    }
+
+    #[test]
+    fn a_pending_inspector_drag_is_one_undo_step() {
+        let mut game = test_game_context();
+        let mut document = document();
+        let scene = game.scenes.current_scene_mut();
+        let object = scene.create(None, None);
+        let key = ComponentKey {
+            game_object: scene.uuid(object),
+            component: ComponentTransform::type_uuid(),
+        };
+        let set_position = |game: &mut GameContext, x: f32| {
+            let scene = game.scenes.current_scene_mut();
+            scene.set_transform(object, &glm::translation(&Vec3::new(x, 0.0, 0.0)));
+        };
+        let serialize = |game: &GameContext| {
+            let components = game.assets.registries.components.read();
+            edit_tracker::serialize_component(game.scenes.current_scene(), &components, key)
+        };
+        document.select_inspector_object(&game, Some(key.game_object));
+        assert!(document.track_inspector_edits(&game));
+        let baseline = serialize(&game);
+        document.inspector_edits_mut().set_baseline(key, baseline);
+
+        // A drag over two frames that has not stopped yet.
+        for (x, drag_started) in [(1.0, true), (2.0, false)] {
+            set_position(&mut game, x);
+            let response = InspectorResponse {
+                changed: true,
+                drag_started,
+                drag_stopped: false,
+            };
+            assert!(!document.inspector_edits_mut().report(key, response, true));
+            document.inspector_shown(&game, true, false, None);
+        }
+        assert!(document.is_dirty());
+        assert!(document.can_undo(&game), "the pending drag can be undone");
+        assert!(!document.can_redo(&game), "pending edits block redo");
+
+        document.undo(&mut game);
+        let position = game.scenes.current_scene().world_transform(object).position;
+        assert!(position.norm() < 1e-5, "position {position:?}");
+        assert!(!document.can_undo(&game), "the drag was one step");
+
+        document.redo(&mut game);
+        let position = game.scenes.current_scene().world_transform(object).position;
+        assert!((position - Vec3::new(2.0, 0.0, 0.0)).norm() < 1e-5);
+        assert!(!document.can_redo(&game));
+    }
+
+    #[test]
+    fn simulation_blocks_edit_undo_and_redo() {
+        let mut game = test_game_context();
+        let mut document = document();
+        add_object(&mut document, &mut game);
+        game.scenes.start_simulation();
+
+        assert!(SceneDocument::begin_edit(&game).is_none());
+        assert!(!document.track_inspector_edits(&game));
+        assert!(!document.can_undo(&game));
+        document.undo(&mut game);
+        assert_eq!(object_count(&game), 1, "undo leaves the scene alone");
+        assert!(
+            game.scenes.has_simulation_scene(),
+            "undo keeps the simulation"
+        );
+
+        game.scenes.stop_simulation();
+        assert!(document.can_undo(&game));
+        document.undo(&mut game);
+        assert_eq!(object_count(&game), 0);
+    }
+
+    #[test]
+    fn restoring_a_parent_position_moves_the_child() {
+        let registries = engine::test_support::test_registries();
+        let mut scene = registries.scene();
+        let parent = scene.create(None, None);
+        let child = scene.create(None, Some(parent));
+        scene.set_transform(parent, &glm::translation(&Vec3::new(1.0, 0.0, 0.0)));
+        scene.set_transform(child, &glm::translation(&Vec3::new(0.0, 1.0, 0.0)));
+        assert!((scene.world_transform(child).position - Vec3::new(1.0, 1.0, 0.0)).norm() < 1e-5);
+
+        let component_registry = registries.components.read();
+        let component = component_registry
+            .component(ComponentTransform::type_uuid())
+            .expect("transform should be registered");
+        restore_component_values(
+            &mut scene,
+            parent,
+            component,
+            &[(
+                vec!["transform".into(), "position".into()],
+                json!([5.0, 0.0, 0.0]),
+            )],
         )
-        .expect("replacement should be prepared");
-        prepared.commit().expect("replacement should be committed");
+        .expect("the position should restore");
 
-        let value: serde_json::Value =
-            serde_json::from_slice(&fs::read(&target).expect("replacement should be readable"))
-                .expect("replacement should contain JSON");
-        assert_eq!(value, serde_json::json!({ "updated": true }));
-
-        fs::remove_dir_all(root).expect("test directory should be removed");
+        let child_world = scene.world_transform(child).position;
+        assert!(
+            (child_world - Vec3::new(5.0, 1.0, 0.0)).norm() < 1e-5,
+            "child world position {child_world:?}"
+        );
     }
 
     #[test]
-    fn dropping_prepared_json_file_removes_staged_file() {
-        let root =
-            std::env::temp_dir().join(format!("calyx-scene-document-test-{}", Uuid::new_v4()));
-        let target = root.join("scene.cxscene");
+    fn edit_labels_name_the_field_every_change_shares() {
+        let change = |path: &[&str]| InspectorValueChange {
+            value_path: path.iter().map(|segment| segment.to_string()).collect(),
+            before: json!(0.0),
+            after: json!(1.0),
+        };
+        assert_eq!(
+            common_value_path(&[
+                change(&["transform", "rotation", "0"]),
+                change(&["transform", "rotation", "3"]),
+            ]),
+            vec!["transform", "rotation"]
+        );
+        assert_eq!(common_value_path(&[change(&["enabled"])]), vec!["enabled"]);
+        assert!(common_value_path(&[change(&["mass"]), change(&["enabled"])]).is_empty());
+    }
 
-        let prepared =
-            prepare_json_file(&target, &serde_json::json!({ "stale": true }), "test scene")
-                .expect("staged file should be written");
-        let staged_file = prepared.temp_file.clone();
-        assert!(staged_file.exists());
+    #[test]
+    fn json_value_patch_preserves_other_component_values() {
+        let mut component = json!({
+            "position": [1.0, 2.0, 3.0],
+            "enabled": true
+        });
 
-        drop(prepared);
+        assert!(set_json_value(
+            &mut component,
+            &["position".into(), "1".into()],
+            json!(9.0)
+        ));
 
-        assert!(!staged_file.exists());
-        fs::remove_dir_all(root).expect("test directory should be removed");
+        assert_eq!(component["position"], json!([1.0, 9.0, 3.0]));
+        assert_eq!(component["enabled"], json!(true));
     }
 }

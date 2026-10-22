@@ -13,7 +13,8 @@ const READ_ONLY_REF_WRAPPER_UUID: [u8; 16] = [
     0x17, 0xEF, 0x5A, 0xE1, 0x2C, 0xD0, 0x42, 0x9F, 0x84, 0x52, 0xA0, 0x21, 0x65, 0x55, 0xB0, 0x6A,
 ];
 
-fn wrapper_type_uuid(wrapper_uuid: &[u8; 16], inner_uuid: Uuid) -> Uuid {
+/// Derives a stable UUID for a generic wrapper type from its own UUID and the wrapped type's.
+pub(crate) fn wrapper_type_uuid(wrapper_uuid: &[u8; 16], inner_uuid: Uuid) -> Uuid {
     let mut hasher = sha1::Sha1::new();
     hasher.update(wrapper_uuid);
     hasher.update(inner_uuid.as_bytes());
@@ -132,8 +133,6 @@ impl<T: TypeName> TypeName for Ref<T> {
 }
 
 impl<T: TypeUuid> TypeUuid for Ref<T> {
-    const UUID: &'static [u8; 16] = &[0; 16];
-
     fn type_uuid() -> Uuid {
         wrapper_type_uuid(&REF_WRAPPER_UUID, T::type_uuid())
     }
@@ -194,8 +193,6 @@ impl<T: ?Sized> Clone for ReadOnlyRef<T> {
 }
 
 impl<T: TypeUuid> TypeUuid for ReadOnlyRef<T> {
-    const UUID: &'static [u8; 16] = &[0; 16];
-
     fn type_uuid() -> Uuid {
         wrapper_type_uuid(&READ_ONLY_REF_WRAPPER_UUID, T::type_uuid())
     }
@@ -293,5 +290,25 @@ mod tests {
             Ref::<DummyResource>::type_uuid(),
             Ref::<DummyResource>::type_uuid()
         );
+    }
+
+    #[derive(Default, Resource, TypeUuid)]
+    #[uuid = "0b4c0c1e-6a52-4a53-9d2b-3d5fd6f8c7a1"]
+    #[repr(C)]
+    struct OtherResource(u32);
+
+    #[test]
+    fn wrapper_uuids_derive_from_pointee() {
+        use crate::utils::TypeUuidDynamic;
+        let a = Ref::new(DummyResource(1));
+        let b = Ref::new(OtherResource(1));
+        assert_eq!(TypeUuidDynamic::uuid(&a), Ref::<DummyResource>::type_uuid());
+        assert_ne!(TypeUuidDynamic::uuid(&a), TypeUuidDynamic::uuid(&b));
+        let (ra, rb) = (a.readonly(), b.readonly());
+        assert_eq!(
+            TypeUuidDynamic::uuid(&ra),
+            ReadOnlyRef::<DummyResource>::type_uuid()
+        );
+        assert_ne!(TypeUuidDynamic::uuid(&ra), TypeUuidDynamic::uuid(&rb));
     }
 }

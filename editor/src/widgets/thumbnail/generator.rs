@@ -200,9 +200,9 @@ impl ThumbnailGenerator {
         let mut scene = context.scene();
         let root = {
             let prefab = prefab_ref.read();
-            scene
-                .instantiate_prefab(&prefab, None)
-                .ok_or_else(|| "prefab thumbnail source could not be instantiated".to_string())?
+            scene.instantiate_prefab(&prefab, None).map_err(|err| {
+                format!("prefab thumbnail source could not be instantiated: {err}")
+            })?
         };
         let camera_fit = scene_mesh_camera_fit(context, &scene, root).unwrap_or_default();
         add_preview_lighting(&mut scene);

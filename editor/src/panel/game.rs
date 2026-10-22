@@ -108,13 +108,15 @@ impl PanelGame {
         let primary_pressed =
             ui.input(|input| input.pointer.button_pressed(PointerButton::Primary));
         let primary_pressed_on_viewport = res.hovered() && primary_pressed;
+        let escape_pressed = ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape));
+        self.is_cursor_grabbed = cursor_grabbed_after_input(
+            self.is_cursor_grabbed,
+            primary_pressed_on_viewport,
+            primary_pressed,
+            escape_pressed,
+        );
         if primary_pressed_on_viewport {
             res.request_focus();
-            self.is_cursor_grabbed = true;
-        } else if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape))
-            || primary_pressed
-        {
-            self.is_cursor_grabbed = false;
         }
         if self.is_cursor_grabbed && !res.has_focus() {
             res.request_focus();
@@ -122,5 +124,40 @@ impl PanelGame {
         let screen_rect = ui.ctx().screen_rect();
         app_state.game_size = (size.x / screen_rect.width(), size.y / screen_rect.height());
         app_state.game_response = Some(res);
+    }
+}
+
+fn cursor_grabbed_after_input(
+    was_grabbed: bool,
+    primary_pressed_on_viewport: bool,
+    primary_pressed: bool,
+    escape_pressed: bool,
+) -> bool {
+    if primary_pressed_on_viewport {
+        return true;
+    }
+    if primary_pressed || escape_pressed {
+        return false;
+    }
+    was_grabbed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cursor_grabbed_after_input;
+
+    #[test]
+    fn clicking_the_game_viewport_grabs_input() {
+        assert!(cursor_grabbed_after_input(false, true, true, false));
+    }
+
+    #[test]
+    fn clicking_outside_the_game_viewport_releases_input() {
+        assert!(!cursor_grabbed_after_input(true, false, true, false));
+    }
+
+    #[test]
+    fn escape_releases_game_viewport_input() {
+        assert!(!cursor_grabbed_after_input(true, false, false, true));
     }
 }

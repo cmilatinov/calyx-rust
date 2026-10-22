@@ -1,6 +1,9 @@
+// wgpu's nested handle types exceed the default trait-solver depth when
+// checking Send/Sync on assets and components that hold GPU resources.
+#![recursion_limit = "256"]
+
 use std::env;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use eframe::egui;
 use inspector::inspector_registry::InspectorRegistry;
@@ -9,12 +12,11 @@ use transform_gizmo_egui::{GizmoMode, GizmoOrientation};
 
 use self::panel::*;
 pub use self::project_manager::*;
-use self::scene_autosave::EditorSceneAutosave;
-use self::scene_document::{scene_fingerprint, write_scene_file};
-use self::scene_history::{
-    InspectorValueDebouncer, InspectorValueEdit, InspectorValueKey, SceneEditSnapshot,
-    SceneHistory, SceneHistoryRestore,
-};
+use self::scene_document::SceneDocument;
+// The inspector's list-edit tests patch values the way undo does.
+#[cfg(test)]
+use self::scene_document::set_json_value;
+use self::scene_history::SceneEditSnapshot;
 use crate::camera::EditorCamera;
 use crate::task_id::TaskId;
 use crate::widgets::ThumbnailService;
@@ -23,18 +25,13 @@ use egui::{include_image, Button, CornerRadius, ImageSource, Response, Sense, Ui
 use egui::{Align, Layout};
 use egui::{Color32, Frame, Margin, Shadow};
 use egui_tiles::{Container, Linear, LinearDir, Tiles, Tree};
-use egui_wgpu::wgpu::PowerPreference;
-use egui_wgpu::{SurfaceErrorAction, WgpuSetup, WgpuSetupCreateNew};
-use engine::component::ComponentTransform;
 use engine::context::{AssetContext, GameContext};
 use engine::core::Ref;
 use engine::error::BoxedError;
-use engine::input::{Input, InputState};
+use engine::input::Input;
 use engine::logging::{DefaultLogger, Log};
 use engine::render::{Camera, SceneRenderer, SceneRendererOptions};
-use engine::scene::Scene;
-use engine::utils::TypeUuid;
-use engine::*;
+use engine::runtime::{initial_render_size, wgpu_configuration, FrameCounter};
 use rapier3d::prelude::DebugRenderPipeline;
 use selection::{Selection, SelectionType};
 use transform_gizmo_egui::EnumSet;
@@ -52,8 +49,10 @@ mod icons;
 mod inspector;
 mod panel;
 mod project_manager;
+mod remote;
 mod scene_autosave;
 mod scene_document;
+mod scene_file;
 mod scene_history;
 mod selection;
 mod task_id;
@@ -62,11 +61,11 @@ mod widgets;
 pub const BASE_FONT_SIZE: f32 = 16.0;
 
 pub struct EditorApp {
-    fps_counter: i32,
-    fps: i32,
+    frame_counter: FrameCounter,
     tree: Tree<&'static str>,
     panels: Panels,
     physics_debug_pipeline: DebugRenderPipeline,
+    remote: Option<remote::RemoteRuntime>,
     // Drop runtime/editor state before the project manager so assembly-backed
     // scene components and registry trait objects are destroyed while the
     // project assembly is still loaded.
@@ -85,14 +84,15 @@ pub struct EditorAppState {
     pub selection: Selection,
     pub hovered_game_object: Option<uuid::Uuid>,
     pub viewport_size: (f32, f32),
+    pub viewport_response: Option<egui::Response>,
     pub game_response: Option<egui::Response>,
     pub game_size: (f32, f32),
     pub gizmo_modes: EnumSet<GizmoMode>,
     pub gizmo_orientation: GizmoOrientation,
     pub thumbnails: ThumbnailService,
-    scene_history: SceneHistory,
-    pending_inspector_value_edits: InspectorValueDebouncer,
-    scene_autosave: EditorSceneAutosave,
+    /// Where the inspector panel was drawn last frame, if it was.
+    pub(crate) inspector_rect: Option<egui::Rect>,
+    pub(crate) scene_document: SceneDocument,
     active_scene: ActiveSceneState,
     window_title: String,
 }
@@ -139,14 +139,14 @@ impl EditorAppState {
             selection: Default::default(),
             hovered_game_object: None,
             viewport_size: Default::default(),
+            viewport_response: Default::default(),
             game_size: Default::default(),
             game_response: Default::default(),
             gizmo_modes: GizmoMode::all_translate(),
             gizmo_orientation: GizmoOrientation::Global,
             thumbnails: ThumbnailService::default(),
-            scene_history: SceneHistory::default(),
-            pending_inspector_value_edits: InspectorValueDebouncer::default(),
-            scene_autosave: EditorSceneAutosave::new(&project_path),
+            inspector_rect: None,
+            scene_document: SceneDocument::new(&project_path),
             active_scene: Default::default(),
             window_title: String::new(),
             scene_renderer: SceneRenderer::new(
@@ -172,18 +172,8 @@ impl EditorAppState {
         }
     }
 
-    pub fn mark_scene_dirty(&mut self) {
-        if self.game.scenes.has_simulation_scene() {
-            return;
-        }
-        self.scene_autosave.mark_dirty();
-    }
-
     pub fn scene_edit_snapshot(&self) -> Option<SceneEditSnapshot> {
-        if self.game.scenes.has_simulation_scene() {
-            return None;
-        }
-        Some(SceneEditSnapshot::capture(self.game.scenes.current_scene()))
+        SceneDocument::begin_edit(&self.game)
     }
 
     pub fn commit_scene_edit(
@@ -191,370 +181,86 @@ impl EditorAppState {
         label: impl Into<String>,
         before: Option<SceneEditSnapshot>,
     ) {
-        if self.game.scenes.has_simulation_scene() {
-            return;
-        }
-        self.flush_pending_inspector_value_edits();
-
-        let Some(before) = before else {
-            self.mark_scene_dirty();
-            return;
-        };
-
-        let after = SceneEditSnapshot::capture(self.game.scenes.current_scene());
-        let fingerprint = after.fingerprint().map(str::to_owned);
-        if self.scene_history.push(label, before, after) {
-            self.scene_autosave.sync_dirty_to_fingerprint(fingerprint);
-        }
+        self.scene_document.commit_edit(&self.game, label, before);
     }
 
-    pub fn record_inspector_value_edits(
-        &mut self,
-        game_object: uuid::Uuid,
-        component: uuid::Uuid,
-        component_name: &str,
-        changes: Vec<(Vec<String>, serde_json::Value, serde_json::Value)>,
-    ) {
-        if self.game.scenes.has_simulation_scene() || changes.is_empty() {
-            return;
-        }
-
-        for (value_path, before, after) in changes {
-            let value_name = if value_path.is_empty() {
-                "value".to_owned()
-            } else {
-                value_path.join(".")
-            };
-            self.pending_inspector_value_edits.record(
-                InspectorValueEdit {
-                    label: format!("Edit {component_name} {value_name}"),
-                    key: InspectorValueKey {
-                        game_object,
-                        component,
-                        value_path,
-                    },
-                    before,
-                    after,
-                },
-                std::time::Instant::now(),
-            );
-        }
-        self.sync_scene_dirty_to_current_fingerprint();
+    /// Makes `object` the object the inspector tracks, committing the edits
+    /// pending on the previous one first.
+    pub(crate) fn select_inspector_object(&mut self, object: Option<uuid::Uuid>) {
+        self.scene_document
+            .select_inspector_object(&self.game, object);
     }
 
-    fn flush_due_inspector_value_edits(&mut self) {
-        if self.game.scenes.has_simulation_scene() {
-            self.pending_inspector_value_edits.clear();
-            return;
-        }
-        let edits = self
-            .pending_inspector_value_edits
-            .drain_due(std::time::Instant::now());
-        self.commit_inspector_value_edits(edits);
-    }
-
+    /// Commits every inspector edit still pending, such as a drag in
+    /// progress, so it is recorded before another edit or an undo.
     fn flush_pending_inspector_value_edits(&mut self) {
-        if self.game.scenes.has_simulation_scene() {
-            self.pending_inspector_value_edits.clear();
-            return;
-        }
-        let edits = self.pending_inspector_value_edits.drain_all();
-        self.commit_inspector_value_edits(edits);
+        self.scene_document.flush_pending_values(&self.game);
     }
 
-    fn commit_inspector_value_edits(&mut self, edits: Vec<InspectorValueEdit>) {
-        if edits.is_empty() {
-            return;
-        }
-
-        let mut committed = false;
-        for edit in edits {
-            committed |= self.scene_history.push_inspector_value(edit);
-        }
-        if committed {
-            self.sync_scene_dirty_to_current_fingerprint();
-        }
-    }
-
-    fn sync_scene_dirty_to_current_fingerprint(&mut self) {
-        self.scene_autosave
-            .sync_dirty_to_fingerprint(scene_fingerprint(self.game.scenes.current_scene()));
+    fn refresh_inspector_baselines(&mut self) {
+        self.scene_document.refresh_baselines(&self.game);
     }
 
     pub fn can_undo_scene_edit(&self) -> bool {
-        !self.game.scenes.has_simulation_scene()
-            && (self.scene_history.can_undo() || self.pending_inspector_value_edits.has_pending())
+        self.scene_document.can_undo(&self.game)
     }
 
     pub fn can_redo_scene_edit(&self) -> bool {
-        !self.game.scenes.has_simulation_scene()
-            && !self.pending_inspector_value_edits.has_pending()
-            && self.scene_history.can_redo()
+        self.scene_document.can_redo(&self.game)
     }
 
     pub fn undo_scene_edit(&mut self) {
-        if self.game.scenes.has_simulation_scene() {
-            return;
-        }
-        self.flush_pending_inspector_value_edits();
-        let Some(restore) = self.scene_history.undo() else {
-            return;
-        };
-        match restore {
-            SceneHistoryRestore::Scene {
-                label,
-                snapshot,
-                fingerprint,
-            } => {
-                self.game.scenes.restore_current_scene_snapshot(snapshot);
-                self.scene_autosave.sync_dirty_to_fingerprint(fingerprint);
-                log::info!("Undid scene edit: {label}");
-            }
-            SceneHistoryRestore::InspectorValue { label, key, value } => {
-                if self.restore_inspector_value(&key, value) {
-                    self.sync_scene_dirty_to_current_fingerprint();
-                    log::info!("Undid scene edit: {label}");
-                }
-            }
-        }
+        self.scene_document.undo(&mut self.game);
     }
 
     pub fn redo_scene_edit(&mut self) {
-        if self.game.scenes.has_simulation_scene() {
-            return;
-        }
-        self.flush_pending_inspector_value_edits();
-        let Some(restore) = self.scene_history.redo() else {
-            return;
-        };
-        match restore {
-            SceneHistoryRestore::Scene {
-                label,
-                snapshot,
-                fingerprint,
-            } => {
-                self.game.scenes.restore_current_scene_snapshot(snapshot);
-                self.scene_autosave.sync_dirty_to_fingerprint(fingerprint);
-                log::info!("Redid scene edit: {label}");
-            }
-            SceneHistoryRestore::InspectorValue { label, key, value } => {
-                if self.restore_inspector_value(&key, value) {
-                    self.sync_scene_dirty_to_current_fingerprint();
-                    log::info!("Redid scene edit: {label}");
-                }
-            }
-        }
+        self.scene_document.redo(&mut self.game);
     }
 
     pub fn is_scene_dirty(&self) -> bool {
-        self.scene_autosave.is_dirty()
+        self.scene_document.is_dirty()
     }
 
-    fn clear_scene_history(&mut self) {
-        self.scene_history.clear();
-        self.pending_inspector_value_edits.clear();
-    }
-
-    fn restore_inspector_value(
-        &mut self,
-        key: &InspectorValueKey,
-        value: serde_json::Value,
-    ) -> bool {
-        let component_registry_ref = self.game.assets.registries.components.clone();
-        let component_registry = component_registry_ref.read();
-        let Some(component) = component_registry.component(key.component) else {
-            log::warn!(
-                "Skipped inspector history restore because component {} is no longer registered",
-                key.component
-            );
-            return false;
-        };
-        let scene = self.game.scenes.current_scene_mut();
-        let Some(game_object) = scene.find(key.game_object) else {
-            log::warn!(
-                "Skipped inspector history restore because game object {} no longer exists",
-                key.game_object
-            );
-            return false;
-        };
-        let Some(instance) = (unsafe {
-            scene
-                .get_component_ptr(game_object, component)
-                .map(|ptr| &mut *ptr)
-        }) else {
-            log::warn!(
-                "Skipped inspector history restore because component {} is missing from game object {}",
-                key.component,
-                key.game_object
-            );
-            return false;
-        };
-        let Some(mut serialized) = instance.serialize() else {
-            log::warn!(
-                "Skipped inspector history restore because component {} cannot be serialized",
-                key.component
-            );
-            return false;
-        };
-        if !set_json_value(&mut serialized, &key.value_path, value) {
-            log::warn!(
-                "Skipped inspector history restore because value path {:?} no longer exists",
-                key.value_path
-            );
-            return false;
-        }
-        if !instance.deserialize_in_place(&serialized) {
-            log::warn!(
-                "Skipped inspector history restore because component {} cannot be deserialized",
-                key.component
-            );
-            return false;
-        }
-        if key.component == ComponentTransform::type_uuid() {
-            scene.clear_transform_cache();
-        }
-        true
-    }
-
-    pub fn open_scene_file(&mut self, file: PathBuf) {
-        if !self.scene_autosave.prepare_scene_change(&self.game) {
-            return;
-        }
-        let scene = match self
-            .game
-            .assets
-            .registries
-            .assets
-            .read()
-            .reload_by_path(file.as_path())
-        {
-            Ok(scene) => scene,
-            Err(error) => {
-                let message = format!("Failed to open scene {}: {}", file.display(), error);
-                log::error!("{message}");
-                return;
-            }
-        };
-        self.game.scenes.load_scene(scene.readonly());
-        if self.game.scenes.current_scene_meta().file.is_none() {
-            self.game.scenes.set_current_scene_file(Some(file.clone()));
-        }
-        self.scene_autosave.scene_loaded(&self.game);
-        self.clear_scene_history();
-        let object_count = self.game.scenes.current_scene().objects().count();
-        let message = format!("Opened scene {} ({} objects)", file.display(), object_count);
-        log::info!("{message}");
+    pub fn open_scene_file(&mut self, file: PathBuf) -> bool {
+        self.scene_document.open_file(&mut self.game, file)
     }
 
     pub fn open_scene_asset(&mut self, asset_id: uuid::Uuid) {
-        if !self.scene_autosave.prepare_scene_change(&self.game) {
-            return;
-        }
-        let (scene, label) = {
-            let registry = self.game.assets.registries.assets.read();
-            let label = registry
-                .asset_meta_from_id(asset_id)
-                .and_then(|meta| meta.path.map(|path| path.display().to_string()))
-                .unwrap_or_else(|| asset_id.to_string());
-            (registry.reload_by_id::<Scene>(asset_id), label)
-        };
-
-        match scene {
-            Ok(scene) => {
-                self.game.scenes.load_scene(scene.readonly());
-                self.scene_autosave.scene_loaded(&self.game);
-                self.clear_scene_history();
-                let object_count = self.game.scenes.current_scene().objects().count();
-                let message = format!("Opened scene {label} ({object_count} objects)");
-                log::info!("{message}");
-            }
-            Err(error) => {
-                let message = format!("Failed to open scene {label}: {error}");
-                log::error!("{message}");
-            }
-        }
+        self.scene_document.open_asset(&mut self.game, asset_id);
     }
 
     fn new_scene_from_default(&mut self) {
-        if !self.scene_autosave.prepare_scene_change(&self.game) {
-            return;
-        }
-        self.game.scenes.load_default_scene();
-        self.scene_autosave
-            .new_scene_loaded(self.game.scenes.current_scene());
-        self.clear_scene_history();
-        log::info!("Created new scene from default scene");
+        self.scene_document.open_default(&mut self.game);
     }
 
     fn save_current_scene(&mut self, file: PathBuf) -> bool {
-        let previous_file = self.game.scenes.current_scene_meta().file.clone();
-        if !Self::save_scene_to_file(file.clone(), self.game.scenes.current_scene()) {
-            return false;
-        }
-
-        self.game.scenes.set_current_scene_file(Some(file.clone()));
-        self.scene_autosave.scene_saved(
-            previous_file.as_deref(),
-            &file,
-            self.game.scenes.current_scene(),
-        );
-        true
+        self.scene_document.save(&mut self.game, file)
     }
 
-    fn update_scene_autosave(&mut self) {
-        self.scene_autosave.update(&self.game);
+    fn update_scene_document(&mut self) {
+        self.scene_document.update(&self.game);
     }
 
     fn show_scene_recovery_prompt(&mut self, ctx: &egui::Context) {
-        if self
-            .scene_autosave
-            .show_recovery_prompt(ctx, &mut self.game)
-        {
-            self.clear_scene_history();
-        }
+        self.scene_document
+            .show_recovery_prompt(ctx, &mut self.game);
     }
 
-    fn shutdown_scene_autosave(&mut self) {
-        self.flush_pending_inspector_value_edits();
-        self.scene_autosave.shutdown(&self.game);
-    }
-
-    fn save_scene_to_file(file: PathBuf, scene: &Scene) -> bool {
-        let object_count = scene.objects().count();
-        let display_path = file.display().to_string();
-        match write_scene_file(&file, scene) {
-            Ok(()) => {
-                log::info!("Saved scene {display_path} ({object_count} objects)");
-                true
-            }
-            Err(error) => {
-                log::error!("Failed to save scene {display_path}: {error}");
-                false
-            }
-        }
+    fn shutdown_scene_document(&mut self) {
+        self.scene_document.shutdown(&self.game);
     }
 }
 
-fn set_json_value(
-    target: &mut serde_json::Value,
-    path: &[String],
-    value: serde_json::Value,
+/// Whether a pointer press at `press` may start an edit outside the inspector
+/// drawn at `inspector_rect`, so pending inspector edits must be committed
+/// first.
+fn press_ends_inspector_edits(
+    press: Option<egui::Pos2>,
+    inspector_rect: Option<egui::Rect>,
 ) -> bool {
-    let Some((segment, remaining)) = path.split_first() else {
-        *target = value;
-        return true;
-    };
-
-    match target {
-        serde_json::Value::Object(values) => values
-            .get_mut(segment)
-            .is_some_and(|target| set_json_value(target, remaining, value)),
-        serde_json::Value::Array(values) => segment
-            .parse::<usize>()
-            .ok()
-            .and_then(|index| values.get_mut(index))
-            .is_some_and(|target| set_json_value(target, remaining, value)),
-        _ => false,
+    match (press, inspector_rect) {
+        (Some(press), Some(rect)) => !rect.contains(press),
+        _ => true,
     }
 }
 
@@ -590,11 +296,20 @@ impl EditorApp {
         }
         let panels = Panels::new(content_browser_root);
         Self::apply_style(cc);
+        let remote = remote::remote_config_from_env(&project_path).and_then(|config| {
+            match remote::RemoteServer::start(config) {
+                Ok(server) => Some(remote::RemoteRuntime::new(server, project_path.clone())),
+                Err(error) => {
+                    log::error!("Failed to start remote control server: {error}");
+                    None
+                }
+            }
+        });
         Ok(Self {
-            fps: 0,
-            fps_counter: 0,
+            frame_counter: FrameCounter::default(),
             tree,
             panels,
+            remote,
             physics_debug_pipeline: DebugRenderPipeline::new(
                 Default::default(),
                 Default::default(),
@@ -602,7 +317,7 @@ impl EditorApp {
             project_manager,
             state: EditorAppState::new(
                 game,
-                Self::initial_render_size(&cc.egui_ctx),
+                initial_render_size(&cc.egui_ctx),
                 project_path.clone(),
             ),
             _log: log,
@@ -649,8 +364,28 @@ impl EditorApp {
 
 impl eframe::App for EditorApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.project_manager.write().load_completed_build();
         self.state.game.resources.time_mut().update_time();
         self.state.game_response = None;
+        self.state.viewport_response = None;
+        self.remote_update_begin(ctx);
+        // A press outside the inspector starts any edit another panel makes
+        // (hierarchy, gizmo, menus) and ends a pending text-field session, so
+        // the session's undo step is committed before that panel writes the
+        // scene. Presses inside the inspector, such as moving the caret, are
+        // left to the inspector's own drag and focus tracking.
+        let press = ctx.input(|input| {
+            input
+                .pointer
+                .any_pressed()
+                .then(|| input.pointer.interact_pos())
+        });
+        let inspector_rect = self.state.inspector_rect.take();
+        if let Some(press) = press {
+            if press_ends_inspector_edits(press, inspector_rect) {
+                self.state.flush_pending_inspector_value_edits();
+            }
+        }
         self.render_views(ctx, frame);
         self.process_thumbnail_jobs(frame);
 
@@ -671,24 +406,19 @@ impl eframe::App for EditorApp {
                 self.tree.ui(&mut panel_manager, ui);
             });
         self.edit_shortcuts(ctx);
-        self.state.flush_due_inspector_value_edits();
 
         self.status_bar(ctx);
 
+        let simulated = self.state.game.scenes.is_simulating();
         self.update_game(ctx);
         self.render_view_outline(frame);
         self.update_window_title(ctx);
         self.state.show_scene_recovery_prompt(ctx);
 
-        self.fps_counter += 1;
-        if self.state.game.resources.time().timer("fps") >= 1.0 {
-            self.fps = self.fps_counter;
-            self.fps_counter = 0;
-            self.state.game.resources.time_mut().reset_timer("fps");
-        }
+        self.frame_counter.tick(self.state.game.resources.time());
 
         self.state.game.scenes.current_scene_mut().flush_deletes();
-        self.state.update_scene_autosave();
+        self.state.update_scene_document();
         self.state
             .game
             .assets
@@ -697,11 +427,16 @@ impl eframe::App for EditorApp {
             .read()
             .reload_assets();
 
+        self.remote_update_end(simulated);
         ctx.request_repaint();
     }
 
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        self.remote_raw_input_hook(raw_input);
+    }
+
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        self.state.shutdown_scene_autosave();
+        self.state.shutdown_scene_document();
     }
 }
 
@@ -716,14 +451,12 @@ impl EditorApp {
 
     fn update_game(&mut self, ctx: &egui::Context) {
         self.state.game.scenes.prepare();
+        let is_active = self.is_game_focused() && self.state.game_response.is_some();
         let input = Input::from_ctx(
             ctx,
             self.state.game_response.as_ref(),
-            InputState {
-                is_active: self.is_game_focused() && self.state.game_response.is_some(),
-                last_cursor_pos: None,
-                ..Default::default()
-            },
+            self.state.game.resources.input_mut(),
+            is_active,
         );
         let assets = self.state.game.assets.lock_read();
         let GameContext {
@@ -804,7 +537,7 @@ impl EditorApp {
         if let Some((node, c)) = scene.main_camera() {
             game_renderer.options_mut().clear_color = c.clear_color;
             let (width, height) = Self::get_physical_size(ctx, *game_size);
-            if width == 0 || height == 0 {
+            if !Self::has_renderable_size(width, height) {
                 let mut encoder =
                     render_state
                         .device
@@ -836,17 +569,6 @@ impl EditorApp {
         }
     }
 
-    fn initial_render_size(ctx: &egui::Context) -> (u32, u32) {
-        let Some(window_size) = ctx.input(|i| i.viewport().inner_rect) else {
-            return (0, 0);
-        };
-        let pixels_per_point = ctx.pixels_per_point();
-        (
-            (window_size.width() * pixels_per_point) as u32,
-            (window_size.height() * pixels_per_point) as u32,
-        )
-    }
-
     fn get_physical_size(ctx: &egui::Context, viewport_size: (f32, f32)) -> (u32, u32) {
         let window_size = ctx
             .input(|i| i.viewport().inner_rect)
@@ -855,6 +577,10 @@ impl EditorApp {
         let width = window_size.width() * viewport_size.0 * pixels_per_point;
         let height = window_size.height() * viewport_size.1 * pixels_per_point;
         (width as u32, height as u32)
+    }
+
+    fn has_renderable_size(width: u32, height: u32) -> bool {
+        width != 0 && height != 0
     }
 }
 
@@ -927,10 +653,9 @@ impl EditorApp {
     }
 
     fn save_interaction(&mut self, save_as: bool) {
-        try_all!(
-            None => return;
-            let file = self.scene_save_file(save_as);
-        );
+        let Some(file) = self.scene_save_file(save_as) else {
+            return;
+        };
         self.state.save_current_scene(file);
     }
 
@@ -999,13 +724,13 @@ impl EditorApp {
                             self.state.game.scenes.simulation_scene().objects().count()
                         );
                         self.state.game.scenes.pause_simulation();
+                    } else if let Err(error) = self.start_simulation() {
+                        log::error!("{error}");
                     } else {
-                        self.state.flush_pending_inspector_value_edits();
                         log::info!(
                             "User started scene simulation; objects={}",
                             self.state.game.scenes.current_scene().objects().count()
                         );
-                        self.state.game.scenes.start_simulation();
                     }
                 }
 
@@ -1028,8 +753,9 @@ impl EditorApp {
             .show(ctx, |ui| {
                 egui::menu::bar(ui, |ui| {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if self.fps > 0 {
-                            ui.label(format!("{}", self.fps));
+                        let fps = self.frame_counter.fps();
+                        if fps > 0 {
+                            ui.label(format!("{fps}"));
                         }
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             let background_ref = self.state.game.resources.background().clone();
@@ -1037,10 +763,10 @@ impl EditorApp {
                             if !background.task_list().is_empty() {
                                 ui.add(egui::Spinner::new().size(15.0));
                             }
-                            match background.task_list().len() {
+                            match background.task_count() {
                                 0 => {}
                                 1 => {
-                                    let id = background.task_list().iter().next().unwrap();
+                                    let id = background.task_list().keys().next().unwrap();
                                     if let Some(task_id) = TaskId::from_isize(*id) {
                                         ui.label(task_id.message());
                                     }
@@ -1079,6 +805,36 @@ impl EditorApp {
             .unwrap_or_default()
     }
 
+    /// Starts or resumes simulation as the toolbar's play button does: the
+    /// project's runtime window sets the game aspect, and a fresh simulation
+    /// runs the configured startup scene when the project has one.
+    pub(crate) fn start_simulation(&mut self) -> Result<(), String> {
+        self.state.refresh_inspector_baselines();
+        let window_size = self
+            .project_manager
+            .read()
+            .runtime_settings()
+            .window
+            .non_zero_size();
+        if let Some(size) = window_size {
+            self.state.game_aspect = Some(size);
+        }
+        match self
+            .project_manager
+            .read()
+            .start_simulation(&mut self.state.game.scenes)
+        {
+            Ok(Some(path)) => log::info!(
+                "Loaded configured startup scene for simulation: {}",
+                path.display()
+            ),
+            Ok(None) => {}
+            Err(error) => return Err(format!("Failed to load configured startup scene: {error}")),
+        }
+        self.state.game.scenes.start_simulation();
+        Ok(())
+    }
+
     fn is_simulating(&self) -> bool {
         self.state.game.scenes.is_simulating()
     }
@@ -1108,36 +864,7 @@ impl EditorApp {
             },
             persist_window: true,
             renderer: eframe::Renderer::Wgpu,
-            wgpu_options: egui_wgpu::WgpuConfiguration {
-                present_mode: Default::default(),
-                desired_maximum_frame_latency: None,
-                on_surface_error: Arc::new(|_| SurfaceErrorAction::SkipFrame),
-                wgpu_setup: WgpuSetup::CreateNew(WgpuSetupCreateNew {
-                    instance_descriptor: Default::default(),
-                    power_preference: PowerPreference::HighPerformance,
-                    native_adapter_selector: None,
-                    device_descriptor: Arc::new(|_adapter| {
-                        wgpu::DeviceDescriptor {
-                            required_features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
-                                | wgpu::Features::POLYGON_MODE_LINE
-                                | wgpu::Features::CLEAR_TEXTURE
-                                | wgpu::Features::FLOAT32_FILTERABLE
-                                | wgpu::Features::DEPTH32FLOAT_STENCIL8
-                                | wgpu::Features::BUFFER_BINDING_ARRAY
-                                | wgpu::Features::TEXTURE_BINDING_ARRAY
-                                | wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY
-                                | wgpu::Features::UNIFORM_BUFFER_AND_STORAGE_TEXTURE_ARRAY_NON_UNIFORM_INDEXING,
-                            required_limits: wgpu::Limits {
-                                max_storage_textures_per_shader_stage: 5,
-                                max_uniform_buffers_per_shader_stage: 30,
-                                ..Default::default()
-                            },
-                            ..Default::default()
-                        }
-                    }),
-                    trace_path: None,
-                }),
-            },
+            wgpu_options: wgpu_configuration(),
             event_loop_builder: Some(Box::new(|builder| {
                 builder.with_any_thread(true);
             })),
@@ -1154,8 +881,7 @@ impl EditorApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{set_json_value, ActiveSceneState};
-    use serde_json::json;
+    use super::{press_ends_inspector_edits, ActiveSceneState, EditorApp};
     use std::path::PathBuf;
 
     #[test]
@@ -1199,19 +925,28 @@ mod tests {
     }
 
     #[test]
-    fn json_value_patch_preserves_other_component_values() {
-        let mut component = json!({
-            "position": [1.0, 2.0, 3.0],
-            "enabled": true
-        });
-
-        assert!(set_json_value(
-            &mut component,
-            &["position".into(), "1".into()],
-            json!(9.0)
+    fn only_presses_outside_the_inspector_end_its_edits() {
+        let inspector =
+            egui::Rect::from_min_max(egui::pos2(1000.0, 0.0), egui::pos2(1300.0, 800.0));
+        assert!(!press_ends_inspector_edits(
+            Some(egui::pos2(1100.0, 200.0)),
+            Some(inspector)
         ));
+        assert!(press_ends_inspector_edits(
+            Some(egui::pos2(100.0, 200.0)),
+            Some(inspector)
+        ));
+        assert!(press_ends_inspector_edits(
+            Some(egui::pos2(1100.0, 200.0)),
+            None
+        ));
+        assert!(press_ends_inspector_edits(None, Some(inspector)));
+    }
 
-        assert_eq!(component["position"], json!([1.0, 9.0, 3.0]));
-        assert_eq!(component["enabled"], json!(true));
+    #[test]
+    fn zero_sized_game_viewport_is_not_renderable() {
+        assert!(!EditorApp::has_renderable_size(0, 720));
+        assert!(!EditorApp::has_renderable_size(1280, 0));
+        assert!(EditorApp::has_renderable_size(1280, 720));
     }
 }

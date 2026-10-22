@@ -1,6 +1,6 @@
 use crate::error::BoxedError;
 use crate::net::message::{GameChannel, GameMessage};
-use crate::net::MessageQueue;
+use crate::net::{MessageQueue, MessageSender};
 use renet::{ClientId, RenetClient};
 use renet_netcode::{ClientAuthentication, NetcodeClientTransport};
 use std::net::{SocketAddr, UdpSocket};
@@ -108,7 +108,7 @@ impl Client {
                 })
                 .ok()
             }) {
-                queue.queue_message(message);
+                queue.queue_message(MessageSender::Server, message);
             }
         }
     }

@@ -2,16 +2,20 @@ use sharedlib::{Lib, Symbol};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::task_id::TaskId;
 use engine::background::Background;
 use engine::context::AssetContext;
-use engine::core::{Ref, WeakRef};
+use engine::core::Ref;
 use engine::error::BoxedError;
 use engine::reflect::type_registry::TypeRegistry;
 use engine::reflect::TypeInfo;
 use engine::resource::Resource;
+use engine::runtime::{ProjectRuntimeSettings, RuntimeSettings};
+use engine::scene::{Scene, SceneManager};
 use engine::utils::TypeUuid;
 use project::Project;
 use rusty_pool::JoinHandle;
@@ -35,14 +39,15 @@ impl ProjectAssemblyStatus {
 
 pub struct ProjectManager {
     current_project: Project,
+    runtime_settings: ProjectRuntimeSettings,
     context: AssetContext,
     background: Ref<Background>,
     assembly_status: Ref<ProjectAssemblyStatus>,
-    project_manager: WeakRef<ProjectManager>,
+    builds: AssemblyBuildQueue,
     // Keep the dynamic assembly after contexts/registries in field order so
     // plugin-backed trait objects and scene components drop before the library
     // is unloaded during editor shutdown.
-    assembly: Option<Lib>,
+    assembly: Option<LoadedAssembly>,
 }
 
 impl ProjectManager {
@@ -54,13 +59,15 @@ impl ProjectManager {
     ) -> Result<Ref<Self>, BoxedError> {
         let project_directory = dunce::canonicalize(project_directory.into()).map_err(Box::new)?;
         log::info!("Loading project from {}", project_directory.display());
+        let runtime_settings = ProjectRuntimeSettings::load(&project_directory)?;
         let current_project = Project::load(project_directory)?;
-        Ok(Ref::new_cyclic(move |weak| Self {
+        Ok(Ref::new(Self {
             current_project,
+            runtime_settings,
             context,
             background,
             assembly_status,
-            project_manager: weak,
+            builds: AssemblyBuildQueue::new(),
             assembly: None,
         }))
     }
@@ -68,7 +75,9 @@ impl ProjectManager {
     pub fn load(&mut self, path: impl Into<PathBuf>) -> Result<(), BoxedError> {
         let path = path.into();
         log::info!("Switching project to {}", path.display());
+        let runtime_settings = ProjectRuntimeSettings::load(&path)?;
         self.current_project = Project::load(path)?;
+        self.runtime_settings = runtime_settings;
         Ok(())
     }
 
@@ -76,80 +85,79 @@ impl ProjectManager {
         &self.current_project
     }
 
+    /// Returns the runtime defaults declared by the current project.
+    pub fn runtime_settings(&self) -> &RuntimeSettings {
+        self.runtime_settings.runtime()
+    }
+
+    /// Starts the shared runtime from the project's configured startup scene.
+    ///
+    /// A project without a startup scene leaves the current editor scene alone.
+    pub fn start_simulation(
+        &self,
+        scenes: &mut SceneManager,
+    ) -> Result<Option<PathBuf>, BoxedError> {
+        if scenes.has_simulation_scene() {
+            scenes.start_simulation();
+            return Ok(None);
+        }
+        let Some(path) = self.runtime_settings.startup_scene_path() else {
+            scenes.start_simulation();
+            return Ok(None);
+        };
+        if configured_scene_is_current(scenes, &path) {
+            scenes.start_simulation();
+            return Ok(Some(path));
+        }
+        let scene = self
+            .context
+            .registries
+            .assets
+            .read()
+            .reload_by_path::<Scene>(&path)
+            .map_err(Box::new)?;
+        scenes.start_simulation_from_scene(scene.readonly());
+        Ok(Some(path))
+    }
+
     fn root_project_dir(&self) -> PathBuf {
         self.current_project.root_directory().clone()
     }
 
+    /// Builds the project assembly on the background pool.
+    ///
+    /// The task only runs cargo and reports the library path; the UI thread
+    /// loads it from [`Self::load_completed_build`].
     pub fn build_assemblies(&self) -> JoinHandle<()> {
         let root = self.root_project_dir();
         let project_name = self.current_project().name().to_string();
         let target_dir = assembly_build_target_dir();
-        let project_manager_ref = self.project_manager.upgrade().unwrap();
+        let reporter = self.builds.reporter();
         self.background.write().execute(TaskId::Build, move || {
             let profile = assembly_profile();
             let args = cargo_build_args(profile, &target_dir);
             let source = assembly_artifact_path(&target_dir, profile, &project_name);
-            let loaded_existing = source.exists();
-            if loaded_existing {
-                log::info!(
-                    "Loading existing project assembly before background build: {}",
-                    source.display()
-                );
-                project_manager_ref.write().load_assemblies();
-            }
-            log::info!(
-                "Building project assemblies in {} with profile {}",
-                root.display(),
-                profile
-            );
-            let output = Command::new("cargo").current_dir(root).args(&args).output();
-            let command = format!("cargo {}", args.join(" "));
-            match output {
-                Ok(output) if output.status.success() => {
-                    log_command_output(
-                        command.as_str(),
-                        &output.stdout,
-                        &output.stderr,
-                        CommandOutputStatus::Success,
-                    );
-                    log::info!("Project assemblies built successfully");
-                    if !source.exists() {
-                        log::error!("Project assembly was not produced at {}", source.display());
-                        return;
-                    }
-                    project_manager_ref.write().load_assemblies();
+            let outcome = match build_assembly(&root, profile, &args, source) {
+                AssemblyBuildOutcome::Built(source) => {
+                    snapshot_built_assembly(source, &project_name)
                 }
-                Ok(output) => {
-                    log_command_output(
-                        command.as_str(),
-                        &output.stdout,
-                        &output.stderr,
-                        CommandOutputStatus::Failure,
-                    );
-                    log::error!(
-                        "Project assembly build failed with status {}",
-                        output.status
-                    );
-                    if source.exists() && !loaded_existing {
-                        log::warn!(
-                            "Loading existing project assembly after failed build: {}",
-                            source.display()
-                        );
-                        project_manager_ref.write().load_assemblies();
-                    }
-                }
-                Err(err) => {
-                    log::error!("Failed to start project assembly build: {err}");
-                    if source.exists() && !loaded_existing {
-                        log::warn!(
-                            "Loading existing project assembly after build command failed: {}",
-                            source.display()
-                        );
-                        project_manager_ref.write().load_assemblies();
-                    }
-                }
-            }
+                failed => failed,
+            };
+            // The receiver only goes away with the project manager.
+            let _ = reporter.send(outcome);
         })
+    }
+
+    /// Loads the next assembly reported by a finished background build.
+    ///
+    /// Call once per frame on the UI thread so the library swap and type
+    /// re-registration never race with code using the plugin's types.
+    pub fn load_completed_build(&mut self) -> bool {
+        match self.builds.next_load(self.assemblies_loaded()) {
+            Some(AssemblyLoad::Snapshot(target)) => self.load_shadow_copy(&target),
+            Some(AssemblyLoad::Source(source)) => self.load_assembly(&source),
+            None => false,
+        }
     }
 
     pub fn load_existing_assemblies(&mut self) -> bool {
@@ -160,7 +168,7 @@ impl ProjectManager {
             return false;
         }
         log::info!("Loading existing project assembly: {}", source.display());
-        self.load_assemblies()
+        self.load_assembly(&source)
     }
 
     fn assembly_source_path(&self) -> PathBuf {
@@ -171,11 +179,9 @@ impl ProjectManager {
         )
     }
 
-    pub fn load_assemblies(&mut self) -> bool {
-        let root = self.root_project_dir();
-        log::trace!("Loading project assemblies from {}", root.display());
-        let source = self.assembly_source_path();
-        let target = match shadow_copy_assembly(&source, self.current_project().name().as_str()) {
+    fn load_assembly(&mut self, source: &Path) -> bool {
+        log::trace!("Loading project assembly from {}", source.display());
+        let target = match shadow_copy_assembly(source, self.current_project().name().as_str()) {
             Ok(target) => target,
             Err(err) => {
                 log::error!(
@@ -186,8 +192,13 @@ impl ProjectManager {
                 return false;
             }
         };
+        self.load_shadow_copy(&target)
+    }
+
+    /// Loads a shadow copy prepared by [`shadow_copy_assembly`].
+    fn load_shadow_copy(&mut self, target: &Path) -> bool {
         unsafe {
-            let _preloaded_dependencies =
+            let preloaded_dependencies =
                 match PreloadedAssemblyDependencies::load(target.parent(), target.file_name()) {
                     Ok(dependencies) => Some(dependencies),
                     Err(err) => {
@@ -208,7 +219,7 @@ impl ProjectManager {
                     None
                 }
             };
-            match Lib::new(&target) {
+            match Lib::new(target) {
                 Ok(lib) => {
                     {
                         let load_fn = match lib
@@ -230,6 +241,7 @@ impl ProjectManager {
                             target.display()
                         );
                         let mut registry = self.context.registries.types.write();
+                        registry.begin_plugin_load();
                         let before = registry.types.keys().copied().collect::<HashSet<_>>();
                         load_fn.get()(&mut registry);
                         let mut registered_count = 0usize;
@@ -255,7 +267,13 @@ impl ProjectManager {
                             self.current_project().name()
                         );
                     }
-                    self.assembly = Some(lib);
+                    // Replacing the previous assembly unloads it, so its
+                    // shadow copy is no longer in use.
+                    self.assembly = Some(LoadedAssembly {
+                        _lib: lib,
+                        _dependencies: preloaded_dependencies,
+                    });
+                    remove_stale_shadow_copies_of(target);
                     let component_registry_ref = self.context.registries.components.clone();
                     component_registry_ref
                         .write()
@@ -282,6 +300,157 @@ impl ProjectManager {
             .write()
             .set_loaded(self.assemblies_loaded());
     }
+}
+
+/// Result of one background assembly build, reported to the UI thread.
+#[derive(Debug, PartialEq)]
+enum AssemblyBuildOutcome {
+    /// The build succeeded; the path is a shadow copy of its library, taken
+    /// before the worker is released so later builds cannot change it.
+    Built(PathBuf),
+    /// The build failed; the path is the previously built library, if any.
+    Failed(PathBuf),
+}
+
+/// What the UI thread loads for a finished build.
+#[derive(Debug, PartialEq)]
+enum AssemblyLoad {
+    /// A shadow copy taken by the build task, loaded as is.
+    Snapshot(PathBuf),
+    /// A previously built library, shadow-copied before loading.
+    Source(PathBuf),
+}
+
+/// Hands finished background builds to the UI thread, one load per build.
+struct AssemblyBuildQueue {
+    sender: Sender<AssemblyBuildOutcome>,
+    receiver: Mutex<Receiver<AssemblyBuildOutcome>>,
+}
+
+impl AssemblyBuildQueue {
+    fn new() -> Self {
+        let (sender, receiver) = mpsc::channel();
+        Self {
+            sender,
+            receiver: Mutex::new(receiver),
+        }
+    }
+
+    fn reporter(&self) -> Sender<AssemblyBuildOutcome> {
+        self.sender.clone()
+    }
+
+    /// Returns the library to load for the next finished build, if any.
+    ///
+    /// A failed build keeps the loaded assembly, and only falls back to the
+    /// previous library when nothing is loaded yet.
+    fn next_load(&self, assembly_loaded: bool) -> Option<AssemblyLoad> {
+        let outcome = self
+            .receiver
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .try_recv()
+            .ok()?;
+        match outcome {
+            AssemblyBuildOutcome::Built(target) => Some(AssemblyLoad::Snapshot(target)),
+            AssemblyBuildOutcome::Failed(source) if !assembly_loaded && source.exists() => {
+                log::warn!(
+                    "Loading existing project assembly after failed build: {}",
+                    source.display()
+                );
+                Some(AssemblyLoad::Source(source))
+            }
+            AssemblyBuildOutcome::Failed(_) => None,
+        }
+    }
+}
+
+/// Shadow-copies a freshly built library so the UI thread loads exactly this
+/// build, even if another build replaces the artifact before it is loaded.
+fn snapshot_built_assembly(source: PathBuf, project_name: &str) -> AssemblyBuildOutcome {
+    match shadow_copy_assembly(&source, project_name) {
+        Ok(target) => AssemblyBuildOutcome::Built(target),
+        Err(err) => {
+            log::error!(
+                "Failed to prepare project assembly {}: {err}",
+                source.display()
+            );
+            AssemblyBuildOutcome::Failed(source)
+        }
+    }
+}
+
+/// Runs cargo for the project assembly and reports where the library is.
+fn build_assembly(
+    root: &Path,
+    profile: &str,
+    args: &[String],
+    source: PathBuf,
+) -> AssemblyBuildOutcome {
+    log::info!(
+        "Building project assemblies in {} with profile {}",
+        root.display(),
+        profile
+    );
+    let output = Command::new("cargo").current_dir(root).args(args).output();
+    let command = format!("cargo {}", args.join(" "));
+    match output {
+        Ok(output) if output.status.success() => {
+            log_command_output(
+                command.as_str(),
+                &output.stdout,
+                &output.stderr,
+                CommandOutputStatus::Success,
+            );
+            log::info!("Project assemblies built successfully");
+            if !source.exists() {
+                log::error!("Project assembly was not produced at {}", source.display());
+                return AssemblyBuildOutcome::Failed(source);
+            }
+            AssemblyBuildOutcome::Built(source)
+        }
+        Ok(output) => {
+            log_command_output(
+                command.as_str(),
+                &output.stdout,
+                &output.stderr,
+                CommandOutputStatus::Failure,
+            );
+            log::error!(
+                "Project assembly build failed with status {}",
+                output.status
+            );
+            AssemblyBuildOutcome::Failed(source)
+        }
+        Err(err) => {
+            log::error!("Failed to start project assembly build: {err}");
+            AssemblyBuildOutcome::Failed(source)
+        }
+    }
+}
+
+fn configured_scene_is_current(scenes: &SceneManager, startup_scene: &Path) -> bool {
+    scene_paths_match(scenes.current_scene_meta().file.as_deref(), startup_scene)
+}
+
+fn scene_paths_match(current_scene: Option<&Path>, startup_scene: &Path) -> bool {
+    let Some(current_scene) = current_scene else {
+        return false;
+    };
+    current_scene == startup_scene
+        || matches!(
+            (dunce::canonicalize(current_scene), dunce::canonicalize(startup_scene)),
+            (Ok(current_scene), Ok(startup_scene)) if current_scene == startup_scene
+        )
+}
+
+/// A loaded project assembly and the dependencies preloaded for it.
+///
+/// Fields drop in declaration order, so the assembly unloads before the
+/// dependencies it links against.
+struct LoadedAssembly {
+    _lib: Lib,
+    _dependencies: Option<PreloadedAssemblyDependencies>,
 }
 
 struct PreloadedAssemblyDependencies {
@@ -459,14 +628,27 @@ fn cargo_build_args(profile: &str, target_dir: &Path) -> Vec<String> {
 }
 
 fn assembly_build_target_dir() -> PathBuf {
-    let Some(mut profile_dir) = std::env::current_exe()
+    std::env::current_exe()
         .ok()
-        .and_then(|path| path.parent().map(Path::to_path_buf))
-    else {
+        .map(|path| assembly_build_target_dir_from_exe(&path))
+        .unwrap_or_else(|| PathBuf::from("target"))
+}
+
+fn assembly_build_target_dir_from_exe(executable: &Path) -> PathBuf {
+    let Some(mut profile_dir) = executable.parent() else {
         return PathBuf::from("target");
     };
     if profile_dir.file_name().is_some_and(|name| name == "deps") {
-        profile_dir.pop();
+        profile_dir = profile_dir.parent().unwrap_or(profile_dir);
+    } else if profile_dir.file_name().is_some_and(|name| name == "out") {
+        // Cargo's newer layout is <profile>/build/<package>/<hash>/out.
+        if let Some(build_dir) = profile_dir
+            .ancestors()
+            .nth(3)
+            .filter(|path| path.file_name().is_some_and(|name| name == "build"))
+        {
+            profile_dir = build_dir.parent().unwrap_or(profile_dir);
+        }
     }
     profile_dir
         .parent()
@@ -488,7 +670,11 @@ fn shadow_copy_assembly(source: &Path, project_name: &str) -> std::io::Result<Pa
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    target_dir.push(format!("{project_name}_{timestamp}"));
+    target_dir.push(shadow_copy_folder_name(
+        project_name,
+        std::process::id(),
+        timestamp,
+    ));
     std::fs::create_dir_all(&target_dir)?;
 
     copy_runtime_dependencies(source, &target_dir)?;
@@ -500,6 +686,117 @@ fn shadow_copy_assembly(source: &Path, project_name: &str) -> std::io::Result<Pa
     );
     std::fs::copy(source, &target)?;
     Ok(target)
+}
+
+/// How long a shadow copy made by another editor process is kept.
+///
+/// Another editor may have queued a copy it has not loaded yet, which no file
+/// lock protects. It loads queued copies within frames, so a copy this old is
+/// no longer pending.
+const FOREIGN_SHADOW_COPY_GRACE_MS: u128 = 60 * 60 * 1000;
+
+/// The folder [`shadow_copy_assembly`] copies one load into.
+fn shadow_copy_folder_name(project_name: &str, process_id: u32, timestamp: u128) -> String {
+    format!("{project_name}_p{process_id}_{timestamp}")
+}
+
+/// The process and time a shadow-copy folder was made by, read from its name.
+#[derive(Debug, PartialEq)]
+struct ShadowCopyFolder {
+    /// The editor process that made the copy, absent for folders named before
+    /// the process id was recorded.
+    process_id: Option<u32>,
+    /// Milliseconds since the Unix epoch.
+    timestamp: u128,
+}
+
+impl ShadowCopyFolder {
+    fn parse(folder: &Path) -> Option<Self> {
+        let name = folder.file_name()?.to_str()?;
+        let (rest, timestamp) = name.rsplit_once('_')?;
+        if rest.is_empty() {
+            return None;
+        }
+        let timestamp = parse_digits(timestamp)?;
+        let process_id = rest.rsplit_once('_').and_then(|(project, process)| {
+            let process_id = parse_digits(process.strip_prefix('p')?)?;
+            if project.is_empty() {
+                return None;
+            }
+            u32::try_from(process_id).ok()
+        });
+        Some(Self {
+            process_id,
+            timestamp,
+        })
+    }
+
+    /// Whether this copy is unused once `current`, made by `process_id`, is
+    /// loaded.
+    ///
+    /// Only one assembly is loaded per process, so this process's own older
+    /// copies are unused. Another process's copy may still be queued for
+    /// loading there, so it goes only after [`FOREIGN_SHADOW_COPY_GRACE_MS`].
+    fn is_stale(&self, current: &Self, process_id: u32) -> bool {
+        if self.timestamp >= current.timestamp {
+            return false;
+        }
+        self.process_id == Some(process_id)
+            || current.timestamp - self.timestamp >= FOREIGN_SHADOW_COPY_GRACE_MS
+    }
+}
+
+fn parse_digits(value: &str) -> Option<u128> {
+    if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    value.parse().ok()
+}
+
+/// Removes the stale shadow copies next to the one `target` was loaded from.
+fn remove_stale_shadow_copies_of(target: &Path) {
+    if let Some(current) = target.parent() {
+        remove_stale_shadow_copies(current, std::process::id());
+    }
+}
+
+/// Removes every shadow-copy folder next to `current` that
+/// [`ShadowCopyFolder::is_stale`] finds unused.
+///
+/// Newer copies belong to builds not loaded yet and are kept, as is anything
+/// that is not a shadow-copy folder. A copy that cannot be removed, such as one
+/// another editor still has loaded, is left for a later load.
+fn remove_stale_shadow_copies(current: &Path, process_id: u32) {
+    let (Some(root), Some(current_copy)) = (current.parent(), ShadowCopyFolder::parse(current))
+    else {
+        return;
+    };
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(err) => {
+            log::warn!(
+                "Failed to list project assembly copies in {}: {err}",
+                root.display()
+            );
+            return;
+        }
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_stale = path.is_dir()
+            && ShadowCopyFolder::parse(&path)
+                .is_some_and(|copy| copy.is_stale(&current_copy, process_id));
+        if !is_stale {
+            continue;
+        }
+        match std::fs::remove_dir_all(&path) {
+            Ok(()) => log::trace!("Removed stale project assembly copy {}", path.display()),
+            Err(err) => log::debug!(
+                "Could not remove stale project assembly copy {}: {err}",
+                path.display()
+            ),
+        }
+    }
 }
 
 fn copy_runtime_dependencies(source: &Path, target_dir: &Path) -> std::io::Result<()> {
@@ -588,11 +885,14 @@ fn assembly_target_dir(profile: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::{
-        assembly_artifact_path, assembly_build_target_dir, assembly_target_dir, cargo_build_args,
-        copy_runtime_dependencies, is_rust_runtime_library, ProjectAssemblyStatus,
+        assembly_artifact_path, assembly_build_target_dir_from_exe, assembly_target_dir,
+        cargo_build_args, copy_runtime_dependencies, is_rust_runtime_library,
+        remove_stale_shadow_copies, scene_paths_match, shadow_copy_folder_name,
+        AssemblyBuildOutcome, AssemblyBuildQueue, AssemblyLoad, ProjectAssemblyStatus,
+        ShadowCopyFolder, FOREIGN_SHADOW_COPY_GRACE_MS,
     };
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -630,8 +930,20 @@ mod tests {
 
     #[test]
     fn assembly_paths_use_isolated_target_dir() {
-        let target = assembly_build_target_dir();
-        assert!(target.ends_with("target"));
+        let target = PathBuf::from("custom-output");
+        for executable in [
+            "custom-output/debug/editor",
+            "custom-output/debug/deps/editor-hash",
+            "custom-output/debug/build/editor/hash/out/editor-hash",
+            "custom-output/release-with-debug/editor",
+            "custom-output/release-with-debug/build/editor/hash/out/editor-hash",
+        ] {
+            assert_eq!(
+                assembly_build_target_dir_from_exe(Path::new(executable)),
+                target,
+                "incorrect target directory for {executable}"
+            );
+        }
         assert_eq!(
             assembly_artifact_path(&target, "dev", "sandbox"),
             target
@@ -687,5 +999,200 @@ mod tests {
         assert!(!is_rust_runtime_library(Path::new(
             "librustc_driver-1815a83be396bd1c.so"
         )));
+    }
+
+    #[test]
+    fn configured_scene_path_matches_the_open_scene_after_canonicalization() {
+        let root = std::env::temp_dir().join(format!(
+            "calyx-project-manager-path-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let scene = root.join("scene.cxscene");
+        fs::write(&scene, "{}").unwrap();
+
+        assert!(scene_paths_match(
+            Some(&scene),
+            &root.join(".").join("scene.cxscene")
+        ));
+        assert!(!scene_paths_match(
+            Some(&scene),
+            &root.join("other.cxscene")
+        ));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn stale_shadow_copies_are_removed_and_the_current_one_is_kept() {
+        let root = std::env::temp_dir().join(format!(
+            "calyx-shadow-cleanup-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let now: u128 = 10_000_000_000;
+        let ancient = now - FOREIGN_SHADOW_COPY_GRACE_MS - 1;
+        let folder = |project: &str, process_id: u32, timestamp: u128| {
+            root.join(shadow_copy_folder_name(project, process_id, timestamp))
+        };
+        let own_older = folder("sandbox", 7, now - 1_000);
+        let own_other_project = folder("other_game", 7, now - 500);
+        let current = folder("sandbox", 7, now);
+        let own_pending = folder("sandbox", 7, now + 1_000);
+        let foreign_recent = folder("sandbox", 8, now - 1_000);
+        let foreign_ancient = folder("sandbox", 8, ancient);
+        let legacy_recent = root.join(format!("sandbox_{}", now - 1_000));
+        let legacy_ancient = root.join(format!("sandbox_{ancient}"));
+        let unrelated = root.join("notes");
+        for dir in [
+            &own_older,
+            &own_other_project,
+            &current,
+            &own_pending,
+            &foreign_recent,
+            &foreign_ancient,
+            &legacy_recent,
+            &legacy_ancient,
+            &unrelated,
+        ] {
+            fs::create_dir_all(dir).unwrap();
+            fs::write(dir.join(engine::utils::lib_file_name("sandbox")), b"lib").unwrap();
+        }
+
+        remove_stale_shadow_copies(&current, 7);
+
+        assert!(!own_older.exists());
+        assert!(!own_other_project.exists());
+        assert!(current
+            .join(engine::utils::lib_file_name("sandbox"))
+            .exists());
+        assert!(own_pending.exists(), "a newer, not yet loaded copy is kept");
+        assert!(
+            foreign_recent.exists(),
+            "another editor's recent copy may still be queued there"
+        );
+        assert!(legacy_recent.exists());
+        assert!(!foreign_ancient.exists());
+        assert!(!legacy_ancient.exists());
+        assert!(
+            unrelated.exists(),
+            "folders that are not shadow copies are kept"
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn shadow_copy_folder_name_round_trips() {
+        assert_eq!(
+            ShadowCopyFolder::parse(Path::new(&shadow_copy_folder_name(
+                "my_game",
+                42,
+                1_700_000_000_000
+            ))),
+            Some(ShadowCopyFolder {
+                process_id: Some(42),
+                timestamp: 1_700_000_000_000
+            })
+        );
+        assert_eq!(
+            ShadowCopyFolder::parse(Path::new("my_game_1700000000000")),
+            Some(ShadowCopyFolder {
+                process_id: None,
+                timestamp: 1_700_000_000_000
+            })
+        );
+        assert_eq!(ShadowCopyFolder::parse(Path::new("my_game")), None);
+        assert_eq!(ShadowCopyFolder::parse(Path::new("notes")), None);
+        assert_eq!(ShadowCopyFolder::parse(Path::new("_123")), None);
+    }
+
+    #[test]
+    fn completed_build_is_loaded_once_on_the_polling_thread() {
+        let queue = AssemblyBuildQueue::new();
+        assert_eq!(queue.next_load(false), None);
+
+        let built = Path::new("built.dll").to_path_buf();
+        let reporter = queue.reporter();
+        std::thread::spawn(move || reporter.send(AssemblyBuildOutcome::Built(built)).unwrap())
+            .join()
+            .unwrap();
+
+        assert_eq!(
+            queue.next_load(true),
+            Some(AssemblyLoad::Snapshot(Path::new("built.dll").to_path_buf()))
+        );
+        assert_eq!(queue.next_load(true), None);
+    }
+
+    #[test]
+    fn each_completed_build_is_loaded_once_in_order() {
+        let queue = AssemblyBuildQueue::new();
+        let reporter = queue.reporter();
+        reporter
+            .send(AssemblyBuildOutcome::Built(
+                Path::new("first.dll").to_path_buf(),
+            ))
+            .unwrap();
+        reporter
+            .send(AssemblyBuildOutcome::Built(
+                Path::new("second.dll").to_path_buf(),
+            ))
+            .unwrap();
+
+        assert_eq!(
+            queue.next_load(true),
+            Some(AssemblyLoad::Snapshot(Path::new("first.dll").to_path_buf()))
+        );
+        assert_eq!(
+            queue.next_load(true),
+            Some(AssemblyLoad::Snapshot(
+                Path::new("second.dll").to_path_buf()
+            ))
+        );
+        assert_eq!(queue.next_load(true), None);
+    }
+
+    #[test]
+    fn failed_build_keeps_the_loaded_assembly() {
+        let root = std::env::temp_dir().join(format!(
+            "calyx-assembly-failed-build-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let existing = root.join(engine::utils::lib_file_name("sandbox"));
+        fs::write(&existing, b"sandbox").unwrap();
+        let queue = AssemblyBuildQueue::new();
+
+        queue
+            .reporter()
+            .send(AssemblyBuildOutcome::Failed(existing.clone()))
+            .unwrap();
+        assert_eq!(queue.next_load(true), None);
+
+        queue
+            .reporter()
+            .send(AssemblyBuildOutcome::Failed(existing.clone()))
+            .unwrap();
+        assert_eq!(
+            queue.next_load(false),
+            Some(AssemblyLoad::Source(existing.clone()))
+        );
+
+        queue
+            .reporter()
+            .send(AssemblyBuildOutcome::Failed(root.join("missing.dll")))
+            .unwrap();
+        assert_eq!(queue.next_load(false), None);
+
+        fs::remove_dir_all(root).unwrap();
     }
 }

@@ -1,7 +1,8 @@
 use crate::component::ComponentEventContext;
 use crate::core::Time;
 use crate::net::{
-    ComponentNetworkObject, GameMessage, MessageHandler, MessageHandlerResult, Network,
+    ComponentNetworkObject, GameMessage, MessageHandler, MessageHandlerResult, MessageRoute,
+    MessageSender, Network,
 };
 use crate::resource::ResourceMap;
 use lerp::Lerp;
@@ -40,7 +41,7 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>> Synchronized<T> {
     }
 
     pub fn value(&self, time: &Time, network_tick_period: f32) -> Option<T> {
-        let target_time = (time.time - 3.0 * network_tick_period).max(0.0);
+        let target_time = (time.time() - 3.0 * f64::from(network_tick_period)).max(0.0);
         let render_tick = time.time_to_tick(target_time);
         let before = self.history.range(..=render_tick).next_back();
         let after = self.history.range(render_tick..).next();
@@ -70,7 +71,20 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>> Synchronized<T> {
         let Some((network, time)) = resources.resource_pair_mut::<Network, Time>() else {
             return new_value;
         };
-        network.queue.receive_messages(&mut (ctx, &*time), self);
+        if let Some(network_object_id) = ctx.scene.entry(ctx.game_object).and_then(|entry| {
+            entry
+                .get_component::<ComponentNetworkObject>()
+                .ok()
+                .map(|c_netobj| c_netobj.id)
+        }) {
+            let route = MessageRoute {
+                network_object_id,
+                component_uuid: self.options.component_uuid,
+            };
+            network
+                .queue
+                .receive_messages(Some(route), &mut (ctx, &*time), self);
+        }
         self.prune(time.current_tick());
         new_value
     }
@@ -104,7 +118,7 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>> Synchronized<T> {
             return;
         };
         let message = GameMessage::SyncComponent {
-            time: time.time,
+            time: time.time(),
             from_client_id: self_client_id,
             network_object_id: c_netobj_id,
             component_uuid: self.options.component_uuid,
@@ -143,6 +157,7 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>>
             },
             time,
         ): &mut (&mut ComponentEventContext<'_>, &Time),
+        sender: MessageSender,
         message: &GameMessage,
     ) -> MessageHandlerResult {
         let Some(entry) = scene.entry(*game_object) else {
@@ -163,7 +178,7 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>>
                 component_uuid,
                 data,
             } if c_netobj_id == *network_object_id
-                && c_netobj_owner_id == *from_client_id
+                && c_netobj_owner_id == sender.acting_client(*from_client_id)
                 && *component_uuid == self.options.component_uuid =>
             {
                 if let Ok((value, _)) =

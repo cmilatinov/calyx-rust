@@ -1,3 +1,7 @@
+// wgpu's nested handle types exceed the default trait-solver depth when
+// checking Send/Sync on assets and components that hold GPU resources.
+#![recursion_limit = "256"]
+
 pub mod arena;
 pub mod game_state;
 pub mod spawn;
@@ -7,12 +11,7 @@ use engine::reflect::type_registry::TypeRegistry;
 
 #[no_mangle]
 pub extern "C" fn plugin_main(registry: &mut TypeRegistry) {
-    for f in inventory::iter::<engine::ReflectRegistrationFn>() {
-        if f.crate_name != env!("CARGO_PKG_NAME") {
-            continue;
-        }
-        (f.function)(registry);
-    }
+    registry.register_crate(env!("CARGO_PKG_NAME"));
 }
 
 #[cfg(test)]
@@ -28,6 +27,7 @@ mod tests {
     fn plugin_main_exports_only_sandbox_reflection_types() {
         let mut registry = TypeRegistry {
             types: Default::default(),
+            identities: Default::default(),
         };
 
         plugin_main(&mut registry);

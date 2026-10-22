@@ -1,4 +1,6 @@
-use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
+use crate::inspector::type_inspector::{
+    InspectorContext, InspectorResponse, ReflectTypeInspector, TypeInspector,
+};
 use crate::inspector::widgets::Widgets;
 use egui::Ui;
 use engine::reflect::{Reflect, ReflectDefault};
@@ -17,9 +19,15 @@ impl TypeInspector for GameObjectRefInspector {
         type_uuids!(GameObjectRef)
     }
 
-    fn show_inspector(&self, ui: &mut Ui, ctx: &InspectorContext, instance: &mut dyn Reflect) {
-        if let Some(value) = instance.downcast_mut::<GameObjectRef>() {
-            Widgets::game_object_select(ui, ctx.field_name, ctx.scene, value);
+    fn show_inspector(
+        &self,
+        ui: &mut Ui,
+        ctx: &InspectorContext,
+        instance: &mut dyn Reflect,
+    ) -> InspectorResponse {
+        match instance.downcast_mut::<GameObjectRef>() {
+            Some(value) => Widgets::game_object_select(ui, ctx.field_name, ctx.scene, value).into(),
+            None => InspectorResponse::NONE,
         }
     }
 }

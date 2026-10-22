@@ -1,5 +1,13 @@
 [workspace]
-members = ["engine", "editor", "project", "sandbox", "tools/icon_atlas"]
+members = [
+    "engine",
+    "editor",
+    "project",
+    "sandbox",
+    "tools/icon_atlas",
+    "tools/remote_protocol",
+    "tools/calyx_ctl",
+]
 resolver = "2"
 
 [profile.release-with-debug]
@@ -12,14 +20,12 @@ approx = "0.5"
 bytemuck = "1.14.0"
 bimap = "0.6.3"
 chrono = "0.4.31"
-common-path = "1.0.0"
 clap = { version = "4.6.1", features = ["derive"] }
 dirs = "6.0.0"
 dunce = "1.0.4"
 eframe = { version = "0.31.1", features = ["wgpu", "persistence"] }
 egui = { version = "0.31.1", features = ["mint", "persistence"] }
 egui_extras = { version = "0.31.1", features = ["all_loaders"] }
-egui-modal = "0.6.0"
 egui_tiles = "0.12.0"
 egui-wgpu = "0.31.1"
 enum_dispatch = "0.3.13"
@@ -30,7 +36,8 @@ serde = { version = "1.0.189", features = ["derive"] }
 uuid = { version = "1.5.0", features = ["v4", "serde"] }
 nalgebra-glm = { version = "0.19.0", features = ["serde-serialize", "convert-mint"] }
 rapier3d = { version = "0.25.1", features = ["serde-serialize", "debug-render"] }
-russimp-ng = { version = "3.2.7", features = ["static-link", "prebuilt"] }
+ufbx = "0.11"
+gltf = { version = "1.4.1", default-features = false, features = ["import", "utils", "names"] }
 notify = "8.0.0"
 inventory = "0.3.12"
 sha-1 = "0.10.1"

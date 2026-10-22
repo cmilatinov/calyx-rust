@@ -4,3 +4,6 @@
 /.kiro
 /.vscode
 /.codex
+/.scratch
+/.worktrees
+.calyx/

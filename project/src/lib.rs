@@ -5,6 +5,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
+use engine::runtime::RuntimeSettings;
 use serde::{Deserialize, Serialize};
 use tinytemplate::TinyTemplate;
 
@@ -12,6 +13,10 @@ use tinytemplate::TinyTemplate;
 pub struct Project {
     name: String,
     creation_date: String,
+    /// Written with its defaults so new projects show the runtime settings
+    /// [`engine::runtime::ProjectRuntimeSettings`] reads back.
+    #[serde(default)]
+    runtime: RuntimeSettings,
     #[serde(skip)]
     root_directory: PathBuf,
 }
@@ -41,6 +46,7 @@ impl Project {
         let project = Project {
             name,
             creation_date: Utc::now().to_rfc3339(),
+            runtime: RuntimeSettings::default(),
             root_directory: project_directory,
         };
 
@@ -130,6 +136,8 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
+    use engine::runtime::ProjectRuntimeSettings;
+
     use super::Project;
 
     #[test]
@@ -152,10 +160,7 @@ mod tests {
         let toml_path = expected_path.join("project.toml");
         let toml_content = fs::read_to_string(toml_path).expect("Unable to load toml content");
         assert!(toml_content.contains(&format!("name = \"{name}\"")));
-        assert!(toml_content.contains(&format!(
-            "root_directory = \"{}\"",
-            expected_path.clone().display()
-        )));
+        assert!(toml_content.contains("[runtime.window]"));
 
         // Load the project
         let loaded_project = Project::load(expected_path.clone()).unwrap();
@@ -163,6 +168,9 @@ mod tests {
         // Validate loaded project
         assert_eq!(loaded_project.name, name);
         assert_eq!(loaded_project.root_directory, expected_path);
+        let runtime = ProjectRuntimeSettings::load(&expected_path).unwrap();
+        assert_eq!(runtime.startup_scene_path(), None);
+        assert_eq!(runtime.window().non_zero_size(), Some((1280, 720)));
 
         // Clean up
         fs::remove_dir_all(Path::new("temp")).unwrap();

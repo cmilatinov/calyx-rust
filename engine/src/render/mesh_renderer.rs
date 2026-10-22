@@ -1,4 +1,5 @@
 use crate::assets::material::MaterialBindGroupCacheKey;
+use crate::assets::mesh::Mesh;
 use crate::assets::texture::Texture;
 use crate::assets::AssetId;
 use crate::context::ReadOnlyAssetContext;
@@ -147,6 +148,7 @@ impl MeshRenderer {
         });
 
         let mut last: (AssetId, AssetId, AssetId) = Default::default();
+        let mut last_chunk = usize::MAX;
         for &(shader_id, mat_id, mesh_id, ref instances) in draw_list {
             let Some(shader) = assets.shader(shader_id) else {
                 continue;
@@ -155,11 +157,9 @@ impl MeshRenderer {
                 continue;
             };
             if shader_id != last.0 {
-                if let Some(pipeline) = shader.get_pipeline(pipeline_options) {
-                    render_pass.set_pipeline(pipeline);
-                    render_pass.set_bind_group(0, &scene_bind_group, &[]);
-                    render_pass.set_bind_group(2, &light_storage_bind_group, &[]);
-                }
+                render_pass.set_pipeline(&shader.pipeline(pipeline_options));
+                render_pass.set_bind_group(0, &scene_bind_group, &[]);
+                render_pass.set_bind_group(2, &light_storage_bind_group, &[]);
             }
             if mat_id != last.1 {
                 if let Some(groups) = material_bind_groups.get(&mat_id) {
@@ -168,14 +168,16 @@ impl MeshRenderer {
                     }
                 }
             }
-            if mesh_id != last.2 {
-                let Some(mesh_instance_group) = assets.mesh_instance_group(mesh_id) else {
+            let (chunk, local_instances) = Mesh::instance_chunk(instances);
+            if mesh_id != last.2 || chunk != last_chunk {
+                let Some(mesh_instance_group) = assets.mesh_instance_group(mesh_id, chunk) else {
                     continue;
                 };
                 render_pass.set_bind_group(1, mesh_instance_group, &[]);
+                last_chunk = chunk;
             }
             RenderUtils::bind_mesh_buffers(&mut render_pass, mesh);
-            RenderUtils::draw_mesh_instanced(&mut render_pass, mesh, instances.clone());
+            RenderUtils::draw_mesh_instanced(&mut render_pass, mesh, local_instances);
             last = (shader_id, mat_id, mesh_id);
         }
 
@@ -251,11 +253,8 @@ impl MeshRenderer {
                 write_mask: wgpu::ColorWrites::RED,
             })])
             .build();
-        let mut shader = self.object_id_shader.write();
-        shader.build_pipeline(&options);
-        let Some(pipeline) = shader.get_pipeline(&options) else {
-            return;
-        };
+        let shader = self.object_id_shader.read();
+        let pipeline = shader.pipeline(&options);
         let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("object_id_camera_bind_group"),
             layout: &shader.bind_group_layouts[0],
@@ -283,23 +282,26 @@ impl MeshRenderer {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
-        render_pass.set_pipeline(pipeline);
+        render_pass.set_pipeline(&pipeline);
         render_pass.set_bind_group(0, &camera_bind_group, &[]);
 
         let mut last_mesh_id = AssetId::default();
+        let mut last_chunk = usize::MAX;
         for &(_, _, mesh_id, ref instances) in draw_list {
             let Some(mesh) = assets.mesh(mesh_id) else {
                 continue;
             };
-            if mesh_id != last_mesh_id {
-                let Some(mesh_instance_group) = assets.mesh_instance_group(mesh_id) else {
+            let (chunk, local_instances) = Mesh::instance_chunk(instances);
+            if mesh_id != last_mesh_id || chunk != last_chunk {
+                let Some(mesh_instance_group) = assets.mesh_instance_group(mesh_id, chunk) else {
                     continue;
                 };
                 render_pass.set_bind_group(1, mesh_instance_group, &[]);
                 RenderUtils::bind_mesh_buffers(&mut render_pass, mesh);
                 last_mesh_id = mesh_id;
+                last_chunk = chunk;
             }
-            RenderUtils::draw_mesh_instanced(&mut render_pass, mesh, instances.clone());
+            RenderUtils::draw_mesh_instanced(&mut render_pass, mesh, local_instances);
         }
 
         if let Some(gizmo_renderer) = gizmo_renderer {
@@ -354,18 +356,13 @@ mod tests {
     use super::*;
     use crate::assets::material::Material;
     use crate::assets::Asset;
-    use crate::test_utils::test_asset_context_with_assets;
-    use std::path::PathBuf;
+    use crate::test_support::TestAssets;
     use uuid::Uuid;
-
-    fn assets_path() -> PathBuf {
-        let assets_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets");
-        dunce::canonicalize(assets_path).expect("assets dir not found")
-    }
 
     #[test]
     fn prunes_material_bind_group_cache_to_live_materials() {
-        let context = test_asset_context_with_assets(vec![assets_path()]);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
         let read_only_context = context.lock_read();
         let asset_registry = read_only_context.registries.assets.read();
         let shader = asset_registry
@@ -404,11 +401,12 @@ mod tests {
 
     #[test]
     fn object_id_shader_builds_pipeline_with_skinning_path() {
-        let context = test_asset_context_with_assets(vec![assets_path()]);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
         let read_only_context = context.lock_read();
-        let mut shader = Shader::from_file(
+        let shader = Shader::from_file(
             &read_only_context,
-            &assets_path().join("shaders/object_id.wgsl"),
+            &assets.engine_root().join("shaders/object_id.wgsl"),
         )
         .expect("object id shader should load")
         .asset;
@@ -421,8 +419,9 @@ mod tests {
             })])
             .build();
 
-        shader.build_pipeline(&options);
+        let pipeline = shader.pipeline(&options);
 
-        assert!(shader.get_pipeline(&options).is_some());
+        assert_eq!(shader.pipeline(&options), pipeline);
+        assert_eq!(shader.pipeline_count(), 1);
     }
 }

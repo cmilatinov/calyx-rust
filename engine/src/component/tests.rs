@@ -4,7 +4,7 @@ mod tests {
     use crate::component::*;
     use crate::net::ComponentNetworkObject;
     use crate::scene::SceneData;
-    use crate::test_utils::{test_registries, test_scene};
+    use crate::test_support::{test_registries, test_scene};
     use egui::Color32;
     use nalgebra_glm::Vec3;
     use rapier3d::dynamics::RigidBodyType;
@@ -44,14 +44,71 @@ mod tests {
     }
 
     #[test]
-    fn rigid_body_dirty_on_creation() {
+    fn bone_saved_with_its_old_index_and_offset_still_loads() {
+        let bone: ComponentBone = serde_json::from_value(serde_json::json!({
+            "name": "spine_01",
+            "index": 5,
+            "offset_matrix": nalgebra_glm::Mat4::identity()
+        }))
+        .unwrap();
+        assert_eq!(bone.name, "spine_01");
+    }
+
+    #[test]
+    fn malformed_component_data_reports_the_serde_error() {
+        use crate::utils::TypeUuid;
+        let registries = test_registries();
+        let registry = registries.components.read();
+        let component = registry
+            .component(ComponentCamera::type_uuid())
+            .expect("camera component is registered");
+        let Err(err) = component.deserialize(&serde_json::json!({ "fov": "wide" })) else {
+            panic!("malformed camera data must not deserialize");
+        };
+        assert!(
+            err.to_string()
+                .contains("invalid type: string \"wide\", expected f32"),
+            "unexpected error message: {err}"
+        );
+    }
+
+    #[test]
+    fn scene_load_skips_only_the_malformed_component() {
+        use crate::utils::TypeUuid;
+        let registries = test_registries();
+        let mut scene = registries.scene();
+        let go = scene.create(
+            Some(ComponentID {
+                name: "Kept".into(),
+                ..Default::default()
+            }),
+            None,
+        );
+        scene.add_component(go, ComponentCamera::default());
+        let mut data: SceneData = (&scene).into();
+        let object = data.components.values_mut().next().expect("one object");
+        object.insert(
+            ComponentCamera::type_uuid(),
+            serde_json::json!({ "fov": "wide" }),
+        );
+
+        let restored = crate::scene::Scene::from((&registries, data));
+        let rgo = restored.objects().next().expect("object survives");
+        assert_eq!(restored.name(rgo), "Kept");
+        assert!(restored
+            .read_component::<ComponentCamera, _, _>(rgo, |c| c.fov)
+            .is_none());
+    }
+
+    #[test]
+    fn adding_a_rigid_body_records_it_in_the_change_set() {
         let mut scene = test_scene();
         let go = scene.create(None, None);
         scene.add_component(go, ComponentRigidBody::default());
-        assert_eq!(
-            scene.read_component::<ComponentRigidBody, _, _>(go, |c| c.dirty),
-            Some(true)
-        );
+        assert!(scene
+            .changes
+            .take::<ComponentRigidBody>()
+            .contains(&go.entity));
     }
 
     #[test]
@@ -124,7 +181,6 @@ mod tests {
             go,
             ComponentBone {
                 name: "spine_01".into(),
-                index: 5,
                 ..Default::default()
             },
         );

@@ -26,7 +26,6 @@ use nalgebra::Unit;
 use nalgebra_glm::{Mat4, Quat, Vec3, Vec4};
 use petgraph::prelude::{EdgeIndex, EdgeRef, NodeIndex};
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -370,6 +369,9 @@ impl ComponentAnimator {
             return;
         };
         let animation_graph = animation_graph.read();
+        // Root-space transform of each posed bone by name, computed once per root bone and
+        // shared by the skinned meshes under it.
+        let mut skeletons: HashMap<GameObject, HashMap<String, Mat4>> = HashMap::new();
         for skinned_mesh_go in skinned_meshes {
             let Some(entry) = scene.entry(skinned_mesh_go) else {
                 continue;
@@ -383,34 +385,44 @@ impl ComponentAnimator {
             let Some(mesh_ref) = c_skinned_mesh.mesh.get_ref(assets) else {
                 continue;
             };
+            let bones = skeletons.entry(root).or_insert_with(|| {
+                let mut bones = HashMap::new();
+                let transform = scene.transform(root);
+                Self::traverse_bone_hierarchy_static(
+                    &snapshot,
+                    assets,
+                    scene,
+                    root,
+                    &animation_graph,
+                    &transform.inverse_matrix(),
+                    Mat4::identity(),
+                    &mut bones,
+                );
+                bones
+            });
+            // Bone indices and inverse bind matrices belong to the mesh: meshes sharing a
+            // skeleton can list its bones in different orders.
             let mesh = mesh_ref.read();
+            pose.bone_transforms.clear();
             pose.bone_transforms.resize(
                 mesh.bones.len(),
                 BoneTransform {
                     transform: Mat4::identity().into(),
                 },
             );
-            let transform = scene.transform(root);
-            Self::traverse_bone_hierarchy_static(
-                &snapshot,
-                assets,
-                scene,
-                root,
-                &animation_graph,
-                &transform.inverse_matrix(),
-                Mat4::identity(),
-                pose,
-            );
-            let Some(mut entry) = scene.entry_mut(skinned_mesh_go) else {
-                continue;
-            };
-            let Ok(c_skinned_mesh) = entry.get_component_mut::<ComponentSkinnedMesh>() else {
-                continue;
-            };
-            c_skinned_mesh.bone_transforms.clear();
-            c_skinned_mesh
-                .bone_transforms
-                .extend(pose.bone_transforms.drain(0..));
+            for (name, bone) in &mesh.bones {
+                if let (Some(transform), Some(slot)) =
+                    (bones.get(name), pose.bone_transforms.get_mut(bone.index))
+                {
+                    slot.transform = (transform * bone.inverse_bind_transform).into();
+                }
+            }
+            scene.write_component::<ComponentSkinnedMesh, _>(skinned_mesh_go, |c_skinned_mesh| {
+                c_skinned_mesh.bone_transforms.clear();
+                c_skinned_mesh
+                    .bone_transforms
+                    .extend(pose.bone_transforms.drain(0..));
+            });
         }
     }
 
@@ -450,6 +462,8 @@ impl ComponentAnimator {
         }
     }
 
+    /// Poses the bones under `game_object`, writing their local transforms to the scene and
+    /// their root-space transforms to `bones` by bone name.
     #[allow(clippy::too_many_arguments)]
     fn traverse_bone_hierarchy_static(
         snapshot: &AnimatorSnapshot,
@@ -459,9 +473,10 @@ impl ComponentAnimator {
         animation_graph: &AnimationGraph,
         global_inverse_transform: &Mat4,
         mut parent_transform: Mat4,
-        pose: &mut AnimatorPose,
+        bones: &mut HashMap<String, Mat4>,
     ) {
         let mut local_transform = scene.transform(game_object).matrix();
+        let mut captured_bind_pose = None;
         'calc_bone_transform: {
             let Some(entry) = scene.entry(game_object) else {
                 break 'calc_bone_transform;
@@ -469,6 +484,12 @@ impl ComponentAnimator {
             let Ok(c_bone) = entry.get_component::<ComponentBone>() else {
                 break 'calc_bone_transform;
             };
+            let bind_pose = c_bone
+                .bind_pose
+                .unwrap_or_else(|| scene.transform(game_object));
+            if c_bone.bind_pose.is_none() {
+                captured_bind_pose = Some(bind_pose);
+            }
             let Some(node) = snapshot
                 .current_state
                 .and_then(|nid| animation_graph.graph.node_weight(nid))
@@ -481,15 +502,18 @@ impl ComponentAnimator {
                 &node.motion,
                 &c_bone.name,
                 snapshot.time,
+                &bind_pose,
             )
             .matrix();
-            pose.bone_transforms[c_bone.index] = BoneTransform {
-                transform: (global_inverse_transform
-                    * parent_transform
-                    * local_transform
-                    * c_bone.offset_matrix)
-                    .into(),
-            };
+            bones.insert(
+                c_bone.name.clone(),
+                global_inverse_transform * parent_transform * local_transform,
+            );
+        }
+        if let Some(bind_pose) = captured_bind_pose {
+            scene.write_component::<ComponentBone, _>(game_object, |c_bone| {
+                c_bone.bind_pose = Some(bind_pose);
+            });
         }
         parent_transform *= local_transform;
         scene.set_transform(game_object, &local_transform);
@@ -503,23 +527,27 @@ impl ComponentAnimator {
                 animation_graph,
                 global_inverse_transform,
                 parent_transform,
-                pose,
+                bones,
             );
         }
     }
 
+    /// The keys around `ticks`: the last key at or before it and the one after. Of keys sharing
+    /// a time, the last is taken from that time on, so a pair of keys at one time switches value
+    /// there, as an imported step does.
     fn find_keyframes<T, F: FnMut(&T) -> TimeType>(
         keyframes: &[T],
         ticks: TimeType,
         mut accessor: F,
-    ) -> (&T, &T) {
-        let index = keyframes
-            .binary_search_by(|k| accessor(k).partial_cmp(&ticks).unwrap_or(Ordering::Less))
-            .unwrap_or_else(|index| index) as isize;
+    ) -> Option<(&T, &T)> {
+        if keyframes.is_empty() {
+            return None;
+        }
+        let index = keyframes.partition_point(|k| accessor(k) <= ticks) as isize;
         let max_index = (keyframes.len() - 1) as isize;
         let prev = (index - 1).clamp(0, max_index) as usize;
         let next = index.clamp(0, max_index) as usize;
-        (&keyframes[prev], &keyframes[next])
+        Some((&keyframes[prev], &keyframes[next]))
     }
 
     fn progression(prev_time: f32, next_time: f32, time: f32) -> f32 {
@@ -547,71 +575,329 @@ impl ComponentAnimator {
         motion: &AnimationMotion,
         bone_name: &str,
         time: f32,
+        bind_pose: &Transform,
     ) -> Transform {
         match motion {
             AnimationMotion::AnimationClip(clip) => {
+                // A bone the clip does not animate keeps its bind pose.
                 let Some(animation) = clip.animation.get_ref(assets) else {
-                    return Default::default();
+                    return *bind_pose;
                 };
                 let animation = animation.read();
                 let Some(keyframes) = animation.node_keyframes.get(bone_name) else {
-                    return Default::default();
+                    return *bind_pose;
                 };
                 Self::animation_local_bone_transform(
                     keyframes,
                     (clip.speed * time * animation.ticks_per_second as f32)
                         % animation.duration as f32,
+                    bind_pose,
                 )
             }
             AnimationMotion::BlendTree1D(tree) => {
-                Transform::nlerp(tree.nearest_neighbors(2, parameters).into_iter().map(
-                    |(weight, neighbor)| {
-                        (
-                            weight,
-                            Self::motion_local_bone_transform_static(
-                                parameters,
-                                assets,
-                                &neighbor.motion,
-                                bone_name,
-                                time,
-                            ),
-                        )
-                    },
-                ))
+                if tree.motions.is_empty() {
+                    crate::logging::warn_once(format!("empty-blend-tree:{tree:p}"), || {
+                        "Blend tree has no motions; using bind pose".to_string()
+                    });
+                    return *bind_pose;
+                }
+                let neighbors = tree.nearest_neighbors(2, parameters);
+                if neighbors.is_empty() {
+                    return *bind_pose;
+                }
+                Transform::nlerp(neighbors.into_iter().map(|(weight, neighbor)| {
+                    (
+                        weight,
+                        Self::motion_local_bone_transform_static(
+                            parameters,
+                            assets,
+                            &neighbor.motion,
+                            bone_name,
+                            time,
+                            bind_pose,
+                        ),
+                    )
+                }))
             }
             AnimationMotion::BlendTree2D(tree) => {
-                Transform::nlerp(tree.nearest_neighbors(4, parameters).into_iter().map(
-                    |(weight, neighbor)| {
-                        (
-                            weight,
-                            Self::motion_local_bone_transform_static(
-                                parameters,
-                                assets,
-                                &neighbor.motion,
-                                bone_name,
-                                time,
-                            ),
-                        )
-                    },
-                ))
+                if tree.motions.is_empty() {
+                    crate::logging::warn_once(format!("empty-blend-tree:{tree:p}"), || {
+                        "Blend tree has no motions; using bind pose".to_string()
+                    });
+                    return *bind_pose;
+                }
+                let neighbors = tree.nearest_neighbors(4, parameters);
+                if neighbors.is_empty() {
+                    return *bind_pose;
+                }
+                Transform::nlerp(neighbors.into_iter().map(|(weight, neighbor)| {
+                    (
+                        weight,
+                        Self::motion_local_bone_transform_static(
+                            parameters,
+                            assets,
+                            &neighbor.motion,
+                            bone_name,
+                            time,
+                            bind_pose,
+                        ),
+                    )
+                }))
             }
         }
     }
 
-    fn animation_local_bone_transform(keyframes: &AnimationKeyFrames, ticks: f32) -> Transform {
-        let (prev, next) = Self::find_keyframes(&keyframes.positions, ticks, |k| k.time as f32);
-        let position = Self::interpolate_vector(prev, next, ticks);
-
-        let (prev, next) = Self::find_keyframes(&keyframes.rotations, ticks, |k| k.time as f32);
-        let rotation = Self::interpolate_quat(prev, next, ticks);
-
-        let (prev, next) = Self::find_keyframes(&keyframes.scaling, ticks, |k| k.time as f32);
-        let scale = Self::interpolate_vector(prev, next, ticks);
+    pub(crate) fn animation_local_bone_transform(
+        keyframes: &AnimationKeyFrames,
+        ticks: f32,
+        bind_pose: &Transform,
+    ) -> Transform {
+        // Channels without keyframes keep the bind pose value.
+        let position = Self::find_keyframes(&keyframes.positions, ticks, |k| k.time as f32)
+            .map(|(prev, next)| Self::interpolate_vector(prev, next, ticks))
+            .unwrap_or(bind_pose.position);
+        let rotation = Self::find_keyframes(&keyframes.rotations, ticks, |k| k.time as f32)
+            .map(|(prev, next)| Self::interpolate_quat(prev, next, ticks))
+            .unwrap_or(bind_pose.rotation);
+        let scale = Self::find_keyframes(&keyframes.scaling, ticks, |k| k.time as f32)
+            .map(|(prev, next)| Self::interpolate_vector(prev, next, ticks))
+            .unwrap_or(bind_pose.scale);
 
         Transform {
             position,
             rotation,
             scale,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::assets::animation::Animation;
+    use crate::assets::animation_graph::{
+        AnimationClip, AnimationMotion, AnimationNode, BlendTree,
+    };
+    use crate::test_support::test_registries;
+
+    fn bind_pose() -> Transform {
+        Transform::from_xyz(1.0, 2.0, 3.0)
+    }
+
+    #[test]
+    fn find_keyframes_on_empty_channel_returns_none() {
+        let keyframes: Vec<VectorKeyFrame> = vec![];
+        assert!(ComponentAnimator::find_keyframes(&keyframes, 0.0, |k| k.time as f32).is_none());
+    }
+
+    #[test]
+    fn keys_sharing_a_time_switch_value_at_that_time() {
+        // A step from 1 to 2 at one tick, as the glTF importer writes it.
+        let key = |time: f64, x: f32| VectorKeyFrame {
+            value: Vec3::new(x, 0.0, 0.0),
+            time,
+        };
+        let keyframes = AnimationKeyFrames {
+            positions: vec![key(0.0, 1.0), key(1.0, 1.0), key(1.0, 2.0), key(2.0, 2.0)],
+            rotations: vec![],
+            scaling: vec![],
+        };
+        let x_at = |ticks: f32| {
+            ComponentAnimator::animation_local_bone_transform(&keyframes, ticks, &bind_pose())
+                .position
+                .x
+        };
+
+        assert_eq!(x_at(0.5), 1.0);
+        assert_eq!(x_at(0.999), 1.0);
+        assert_eq!(x_at(1.0), 2.0);
+        assert_eq!(x_at(1.5), 2.0);
+        assert_eq!(x_at(2.0), 2.0);
+    }
+
+    #[test]
+    fn linear_keys_interpolate_and_hold_past_the_ends() {
+        let key = |time: f64, x: f32| VectorKeyFrame {
+            value: Vec3::new(x, 0.0, 0.0),
+            time,
+        };
+        let keyframes = AnimationKeyFrames {
+            positions: vec![key(1.0, 0.0), key(2.0, 4.0), key(3.0, 2.0)],
+            rotations: vec![],
+            scaling: vec![],
+        };
+        let x_at = |ticks: f32| {
+            ComponentAnimator::animation_local_bone_transform(&keyframes, ticks, &bind_pose())
+                .position
+                .x
+        };
+
+        assert_eq!(x_at(0.0), 0.0);
+        assert_eq!(x_at(1.5), 2.0);
+        assert_eq!(x_at(2.0), 4.0);
+        assert_eq!(x_at(2.5), 3.0);
+        assert_eq!(x_at(4.0), 2.0);
+    }
+
+    #[test]
+    fn empty_channels_keep_bind_pose() {
+        let keyframes = AnimationKeyFrames {
+            positions: vec![],
+            rotations: vec![],
+            scaling: vec![],
+        };
+        let result =
+            ComponentAnimator::animation_local_bone_transform(&keyframes, 0.5, &bind_pose());
+        assert_eq!(result.position, bind_pose().position);
+        assert_eq!(result.rotation, bind_pose().rotation);
+        assert_eq!(result.scale, bind_pose().scale);
+    }
+
+    #[test]
+    fn bone_without_a_channel_keeps_bind_pose() {
+        let assets = test_registries();
+        let other_bone = AnimationKeyFrames {
+            positions: vec![VectorKeyFrame {
+                value: Vec3::new(9.0, 9.0, 9.0),
+                time: 0.0,
+            }],
+            rotations: vec![],
+            scaling: vec![],
+        };
+        let animation = assets
+            .assets
+            .read()
+            .create(
+                "partial_clip".to_string(),
+                Animation {
+                    node_keyframes: HashMap::from([("other".to_string(), other_bone)]),
+                    duration: 1.0,
+                    ticks_per_second: 1.0,
+                },
+            )
+            .unwrap();
+        let motion = AnimationMotion::AnimationClip(AnimationClip {
+            speed: 1.0,
+            animation: AssetRef::from_id(animation.id()),
+        });
+
+        let result = ComponentAnimator::motion_local_bone_transform_static(
+            &HashMap::new(),
+            &assets,
+            &motion,
+            "bone",
+            0.5,
+            &bind_pose(),
+        );
+
+        assert_eq!(result.position, bind_pose().position);
+        assert_eq!(result.rotation, bind_pose().rotation);
+        assert_eq!(result.scale, bind_pose().scale);
+    }
+
+    #[test]
+    fn skinned_meshes_ordering_bones_differently_each_follow_their_own_bones() {
+        // Two meshes skinned by one joint tree: the body's skin lists [Hip, Spine], the arm's
+        // [Arm, Spine, Hip]. Halfway through the clip the hip has moved 1 along z and the spine
+        // has turned 45 degrees about z; the arm on the spine has no channel and turns with it.
+        let test_assets = crate::test_support::TestAssets::models();
+        let assets = test_assets.registries();
+        let path = test_assets.fixtures_root().join("gltf/TwoSkins.gltf");
+        let registry = assets.assets.read();
+        let prefab = registry
+            .load_by_path::<crate::scene::Prefab>(&path)
+            .unwrap();
+        let animation = registry
+            .asset_meta_from_path(&path)
+            .unwrap()
+            .children
+            .into_iter()
+            .find(|id| registry.loaded_by_id::<Animation>(*id).is_some())
+            .unwrap();
+        let mut graph = AnimationGraph::default();
+        let start = Uuid::new_v4();
+        graph.add_node(AnimationNode {
+            id: start,
+            name: "Bend".to_string(),
+            motion: AnimationMotion::AnimationClip(AnimationClip {
+                speed: 1.0,
+                animation: AssetRef::from_id(animation),
+            }),
+            position: Default::default(),
+        });
+        graph.start_node = Some(start);
+        let graph = registry
+            .create("two_skins_graph".to_string(), graph)
+            .unwrap();
+        drop(registry);
+
+        let mut scene = assets.scene();
+        let root = scene.instantiate_prefab(&prefab.read(), None).unwrap();
+        scene.add_component(
+            root,
+            ComponentAnimator {
+                time: 0.5,
+                animation_graph: AssetRef::from_id(graph.id()),
+                ..Default::default()
+            },
+        );
+        scene.write_component::<ComponentAnimator, _>(root, |c| c.init(&assets));
+        ComponentAnimator::compute_animation_pose(
+            &assets,
+            &mut scene,
+            root,
+            &mut AnimatorPose::default(),
+        );
+
+        let hip = nalgebra_glm::translation(&Vec3::new(0.0, 0.0, 1.0));
+        let spine = nalgebra_glm::translation(&Vec3::new(0.0, 1.0, 1.0))
+            * nalgebra_glm::rotation(std::f32::consts::FRAC_PI_4, &Vec3::z())
+            * nalgebra_glm::translation(&Vec3::new(0.0, -1.0, 0.0));
+        let expected = HashMap::from([("Hip", hip), ("Spine", spine), ("Arm", spine)]);
+        let skinned_meshes = scene
+            .descendants_with::<ComponentSkinnedMesh>(root)
+            .collect::<Vec<_>>();
+        assert_eq!(skinned_meshes.len(), 2);
+        for skinned_mesh in skinned_meshes {
+            let (mesh, bone_transforms) = scene
+                .read_component::<ComponentSkinnedMesh, _, _>(skinned_mesh, |c| {
+                    (c.mesh.get_ref(&assets).unwrap(), c.bone_transforms.clone())
+                })
+                .unwrap();
+            let mesh = mesh.read();
+            assert_eq!(bone_transforms.len(), mesh.bones.len());
+            for (vertex, indices) in mesh.vertices.iter().zip(&mesh.bone_indices) {
+                // Every vertex follows a single bone with full weight.
+                let index = indices.x as usize;
+                let name = mesh
+                    .bones
+                    .iter()
+                    .find_map(|(name, bone)| (bone.index == index).then_some(name.as_str()))
+                    .unwrap();
+                let point = vertex.push(1.0);
+                let skinned = Mat4::from(bone_transforms[index].transform) * point;
+                let want = expected[name] * point;
+                assert!(
+                    (skinned - want).norm() < 1e-5,
+                    "vertex {vertex:?} of a mesh following {name}: got {skinned:?}, want {want:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn empty_blend_tree_evaluates_to_bind_pose() {
+        let assets = test_registries();
+        let motion = AnimationMotion::BlendTree1D(BlendTree::<1>::default());
+        let result = ComponentAnimator::motion_local_bone_transform_static(
+            &HashMap::new(),
+            &assets,
+            &motion,
+            "bone",
+            0.0,
+            &bind_pose(),
+        );
+        assert_eq!(result.position, bind_pose().position);
+        assert!(!result.rotation.coords.iter().any(|c| c.is_nan()));
     }
 }
