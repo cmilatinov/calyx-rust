@@ -95,6 +95,10 @@ struct AssetData {
     dirty: HashMap<Uuid, Instant>,
     dependencies: HashMap<PathBuf, HashSet<Uuid>>,
     reload_errors: Vec<AssetReloadError>,
+    /// Registration generation of each on-disk asset id. A file deleted and
+    /// recreated at the same path keeps its id but gets a new generation.
+    generations: HashMap<Uuid, u64>,
+    next_generation: u64,
 }
 
 /// Loader registered for one asset type. Cloned out of the registry before it
@@ -476,9 +480,15 @@ impl AssetRegistry {
         mode: LoadMode,
         asset_type: Option<Uuid>,
     ) -> Result<Ref<dyn Asset>, AssetError> {
-        let meta = self
-            .asset_meta_from_id(id)
-            .ok_or_else(|| AssetError::NotFound.with_source(format!("asset id {id}")))?;
+        let (meta, generation) = {
+            let data = self.asset_data();
+            (
+                data.meta.get(&id).cloned(),
+                data.generations.get(&id).copied(),
+            )
+        };
+        let meta =
+            meta.ok_or_else(|| AssetError::NotFound.with_source(format!("asset id {id}")))?;
         if let Some(parent_id) = meta.parent {
             self.load_asset(parent_id, LoadMode::Load, None)?;
         }
@@ -536,12 +546,14 @@ impl AssetRegistry {
         {
             // Check and cache under the metadata lock, so a deletion that
             // forgot this source while it loaded cannot be undone here; the
-            // forgetting side drops metadata before it evicts the cache.
+            // forgetting side drops metadata before it evicts the cache. The
+            // generation catches a delete and recreate at the same path.
             let data = self.asset_data();
             let registered = data
                 .meta
                 .get(&id)
-                .is_some_and(|current| current.path == meta.path);
+                .is_some_and(|current| current.path == meta.path)
+                && data.generations.get(&id).copied() == generation;
             let mut cache = self.asset_cache_mut();
             if !registered {
                 cache.remove(&id);
@@ -1081,6 +1093,7 @@ impl AssetRegistry {
         data.names.retain(|_, id| !ids.contains(id));
         data.dirty.retain(|id, _| !ids.contains(id));
         data.reload_errors.retain(|error| !ids.contains(&error.id));
+        data.generations.retain(|id, _| !ids.contains(id));
         for dependents in data.dependencies.values_mut() {
             dependents.retain(|dependent| !ids.contains(dependent));
         }
@@ -1278,6 +1291,9 @@ impl AssetRegistry {
         let mut data = self.asset_data_mut();
         data.meta.insert(id, meta);
         data.names.insert(name_path, id);
+        data.next_generation += 1;
+        let generation = data.next_generation;
+        data.generations.insert(id, generation);
         drop(data);
         self.update_asset_dependencies(id, path);
         log::trace!("Built asset metadata for {}", path.display());
@@ -2223,13 +2239,21 @@ mod tests {
         }
     }
 
-    /// Start and release barriers for [`GatedTestAsset`] loads.
-    static GATED_TEST_ASSET_GATE: std::sync::OnceLock<(std::sync::Barrier, std::sync::Barrier)> =
+    type TestGate = Arc<(std::sync::Barrier, std::sync::Barrier)>;
+
+    /// Start and release barriers for [`GatedTestAsset`] loads, per source
+    /// path so tests running in parallel do not share a gate.
+    static GATED_TEST_ASSET_GATES: std::sync::OnceLock<Mutex<HashMap<PathBuf, TestGate>>> =
         std::sync::OnceLock::new();
 
-    fn gated_test_asset_gate() -> &'static (std::sync::Barrier, std::sync::Barrier) {
-        GATED_TEST_ASSET_GATE
-            .get_or_init(|| (std::sync::Barrier::new(2), std::sync::Barrier::new(2)))
+    fn gated_test_asset_gate(path: &Path) -> TestGate {
+        GATED_TEST_ASSET_GATES
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap()
+            .entry(path.to_path_buf())
+            .or_insert_with(|| Arc::new((std::sync::Barrier::new(2), std::sync::Barrier::new(2))))
+            .clone()
     }
 
     /// Asset whose load signals that it started, then waits to be released,
@@ -2249,11 +2273,11 @@ mod tests {
 
         fn from_file(
             _assets: &ReadOnlyAssetContext,
-            _path: &Path,
+            path: &Path,
         ) -> Result<LoadedAsset<Self>, AssetError> {
-            let (started, release) = gated_test_asset_gate();
-            started.wait();
-            release.wait();
+            let gate = gated_test_asset_gate(path);
+            gate.0.wait();
+            gate.1.wait();
             Ok(LoadedAsset::new(Self))
         }
     }
@@ -2272,7 +2296,7 @@ mod tests {
                 .asset_id("gated")
                 .expect("test asset should have metadata")
         };
-        let (started, release) = gated_test_asset_gate();
+        let gate = gated_test_asset_gate(&asset_path);
         let assets = registries.assets.clone();
         let loader = std::thread::spawn(move || {
             assets
@@ -2282,12 +2306,59 @@ mod tests {
                 .map_err(|err| err.to_string())
         });
 
-        started.wait();
+        gate.0.wait();
         std::fs::remove_file(&asset_path).expect("failed to delete test asset");
         registries.assets.read().recv_notify_event(
             Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(asset_path),
         );
-        release.wait();
+        gate.1.wait();
+        let _ = loader.join().expect("loader thread panicked");
+
+        assert!(registries
+            .assets
+            .read()
+            .loaded_by_id::<GatedTestAsset>(id)
+            .is_none());
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn load_spanning_delete_and_recreate_does_not_cache_the_old_file() {
+        let root = temp_asset_root("calyx-recreate-during-load");
+        let asset_path = root.join("gated.cxtestgated");
+        std::fs::write(&asset_path, "").expect("failed to write test asset");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let id = {
+            let registry = registries.assets.read();
+            registry.register_asset_type::<GatedTestAsset>();
+            registry.build_meta().expect("failed to rebuild metadata");
+            registry
+                .asset_id("gated")
+                .expect("test asset should have metadata")
+        };
+        let gate = gated_test_asset_gate(&asset_path);
+        let assets = registries.assets.clone();
+        let loader = std::thread::spawn(move || {
+            assets
+                .read()
+                .load_by_id::<GatedTestAsset>(id)
+                .map(|_| ())
+                .map_err(|err| err.to_string())
+        });
+
+        gate.0.wait();
+        std::fs::remove_file(&asset_path).expect("failed to delete test asset");
+        registries.assets.read().recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File))
+                .add_path(asset_path.clone()),
+        );
+        std::fs::write(&asset_path, "").expect("failed to recreate test asset");
+        registries.assets.read().recv_notify_event(
+            Event::new(EventKind::Create(notify::event::CreateKind::File))
+                .add_path(asset_path.clone()),
+        );
+        assert_eq!(registries.assets.read().asset_id("gated"), Some(id));
+        gate.1.wait();
         let _ = loader.join().expect("loader thread panicked");
 
         assert!(registries
