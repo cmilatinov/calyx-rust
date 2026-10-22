@@ -670,7 +670,8 @@ impl EditorApp {
 }
 
 /// Replaces `game_object`'s `prototype` component with `value`. A
-/// [`ComponentID`] value must keep the object's indexed id.
+/// [`ComponentID`] value must keep the object's id, which the scene keeps
+/// read-only.
 fn set_component_value(
     scene: &mut Scene,
     game_object: GameObject,
@@ -678,10 +679,9 @@ fn set_component_value(
     prototype: &dyn Component,
     value: &serde_json::Value,
 ) -> CommandResult {
-    // `GameObjectStore` indexes objects by `ComponentID::id` and offers no
-    // reindex, so letting the value carry a different id - or omit it and
-    // fall back to a freshly generated serde default - would leave the
-    // object reachable under neither the old nor the new UUID.
+    // The scene puts the object's id back after any write, so a value that
+    // omits the id still keeps it; a value naming another id is a mistake
+    // the client hears about.
     let indexed_id = (type_uuid == ComponentID::type_uuid()).then(|| scene.uuid(game_object));
     if let Some(indexed_id) = indexed_id {
         let requested = value.get("id").and_then(serde_json::Value::as_str);
@@ -708,10 +708,6 @@ fn set_component_value(
             ErrorKind::BadRequest,
             "value does not deserialize into the component type".into(),
         ));
-    }
-    if let Some(indexed_id) = indexed_id {
-        // Restores the id when the value omitted it and serde defaulted it.
-        let _ = scene.write_component::<ComponentID, _>(game_object, |id| id.id = indexed_id);
     }
     Ok(Some(serde_json::Value::Null))
 }
