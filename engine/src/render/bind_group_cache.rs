@@ -34,6 +34,12 @@ impl<K: PartialEq> CachedBindGroup<K> {
         &self.cached.as_ref().expect("the cache was just filled").1
     }
 
+    /// Whether a group is cached.
+    #[cfg(test)]
+    pub fn is_cached(&self) -> bool {
+        self.cached.is_some()
+    }
+
     /// Drops the cached group and the resources its key holds.
     pub fn clear(&mut self) {
         self.cached = None;

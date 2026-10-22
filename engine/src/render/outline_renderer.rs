@@ -20,12 +20,17 @@ struct OutlineUniform {
 /// One outline pass's uniforms and bind group. Each pass has its own uniform
 /// buffer: both passes are recorded before one submit, so a shared buffer
 /// would hold only the last pass's values.
-struct OutlinePass {
+pub(crate) struct OutlinePass {
     uniform_buffer: wgpu::Buffer,
     bind_group: CachedBindGroup<(wgpu::BindGroupLayout, wgpu::TextureView)>,
 }
 
 impl OutlinePass {
+    #[cfg(test)]
+    pub(crate) fn is_cached(&self) -> bool {
+        self.bind_group.is_cached()
+    }
+
     fn new(device: &wgpu::Device) -> Self {
         Self {
             uniform_buffer: device.create_buffer(&wgpu::BufferDescriptor {
@@ -41,8 +46,8 @@ impl OutlinePass {
 
 pub struct OutlineRenderer {
     shader: Ref<Shader>,
-    hovered_pass: OutlinePass,
-    selected_pass: OutlinePass,
+    pub(crate) hovered_pass: OutlinePass,
+    pub(crate) selected_pass: OutlinePass,
     selected_object_id: u32,
     hovered_object_id: u32,
     selected_color: Color32,
@@ -84,6 +89,14 @@ impl OutlineRenderer {
         scene_object_id_texture: &Texture,
         samples: u32,
     ) {
+        // An inactive pass releases the object-id view it bound, which a
+        // resize may have replaced since.
+        if self.hovered_object_id == 0 {
+            self.hovered_pass.bind_group.clear();
+        }
+        if self.selected_object_id == 0 {
+            self.selected_pass.bind_group.clear();
+        }
         if self.selected_object_id == 0 && self.hovered_object_id == 0 {
             return;
         }

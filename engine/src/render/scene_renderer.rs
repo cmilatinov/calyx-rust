@@ -1754,6 +1754,44 @@ mod tests {
     }
 
     #[test]
+    fn an_inactive_outline_pass_releases_its_bind_group() {
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let material = pbr_material(&read_only_context, "test/outline");
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        let uuid = spawn_mesh(&mut builder, "cube", &cube, &material, Vec3::zeros());
+        let scene = builder.finish();
+        let (camera, transform) = front_camera(1.0, 5.0);
+        let mut renderer = renderer(&read_only_context, 1, (32, 32));
+        let frame = |renderer: &mut SceneRenderer| {
+            renderer.render_scene_base(&camera, &transform, &scene, None);
+            renderer.finalize_scene();
+        };
+
+        renderer.set_hovered_game_object(Some(uuid));
+        renderer.set_selected_game_object(Some(uuid));
+        frame(&mut renderer);
+        assert!(renderer.outline_renderer.hovered_pass.is_cached());
+        assert!(renderer.outline_renderer.selected_pass.is_cached());
+
+        renderer.set_hovered_game_object(None);
+        frame(&mut renderer);
+        assert!(!renderer.outline_renderer.hovered_pass.is_cached());
+        assert!(renderer.outline_renderer.selected_pass.is_cached());
+
+        renderer.set_selected_game_object(None);
+        frame(&mut renderer);
+        assert!(!renderer.outline_renderer.selected_pass.is_cached());
+    }
+
+    #[test]
     fn deleting_a_drawn_mesh_releases_it_from_the_renderer() {
         let assets = TestAssets::engine();
         let context = assets.asset_context();
