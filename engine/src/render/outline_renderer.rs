@@ -177,20 +177,8 @@ impl OutlineRenderer {
             ],
         });
 
-        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Scene Outline"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: scene_texture_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
+        let mut render_pass =
+            RenderUtils::overlay_pass(encoder, scene_texture_view, None, "Scene Outline");
         render_pass.set_pipeline(pipeline);
         render_pass.set_bind_group(0, &bind_group, &[]);
         RenderUtils::bind_mesh_buffers(&mut render_pass, quad_mesh);

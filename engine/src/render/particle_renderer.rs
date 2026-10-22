@@ -190,27 +190,12 @@ impl ParticleRenderer {
                 ParticleBlendMode::Additive => &pipelines.additive,
             };
 
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Particle Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &color_target.view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &depth_target.view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
+            let mut render_pass = RenderUtils::overlay_pass(
+                encoder,
+                &color_target.view,
+                Some(&depth_target.view),
+                "Particle Pass",
+            );
             render_pass.set_pipeline(pipeline);
             render_pass.set_bind_group(0, &camera_bind_group, &[]);
             render_pass.set_bind_group(1, &texture_bind_group, &[]);
