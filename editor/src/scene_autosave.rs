@@ -8,14 +8,14 @@ use engine::context::GameContext;
 use engine::core::Ref;
 use engine::scene::{Scene, SceneSnapshot};
 
-use crate::scene_document::{
-    scene_fingerprint, PreparedSceneAutosave, SceneAutosave, SceneDocumentRevision,
-    SceneDocumentState, SceneRecovery,
+use crate::scene_file::{
+    scene_fingerprint, PreparedSceneAutosave, SceneAutosave, SceneRecovery, SceneSaveRevision,
+    SceneSaveState,
 };
 use crate::task_id::TaskId;
 
 pub struct EditorSceneAutosave {
-    document: SceneDocumentState,
+    save_state: SceneSaveState,
     storage: SceneAutosave,
     pending: Option<PendingSceneAutosave>,
     recovery: Option<SceneRecovery>,
@@ -23,14 +23,14 @@ pub struct EditorSceneAutosave {
 
 struct PendingSceneAutosave {
     source_file: PathBuf,
-    revision: SceneDocumentRevision,
+    revision: SceneSaveRevision,
     receiver: mpsc::Receiver<Result<PreparedSceneAutosave, String>>,
 }
 
 impl EditorSceneAutosave {
     pub fn new(project_path: &Path) -> Self {
         Self {
-            document: SceneDocumentState::default(),
+            save_state: SceneSaveState::default(),
             storage: SceneAutosave::new(project_path),
             pending: None,
             recovery: None,
@@ -38,15 +38,15 @@ impl EditorSceneAutosave {
     }
 
     pub fn mark_dirty(&mut self) {
-        self.document.mark_dirty(Instant::now());
+        self.save_state.mark_dirty(Instant::now());
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.document.is_dirty()
+        self.save_state.is_dirty()
     }
 
     pub fn sync_dirty_to_fingerprint(&mut self, fingerprint: Option<String>) {
-        self.document
+        self.save_state
             .sync_dirty_to_fingerprint(fingerprint, Instant::now());
     }
 
@@ -96,13 +96,13 @@ impl EditorSceneAutosave {
         }
 
         let now = Instant::now();
-        if !self.document.should_autosave(now) {
+        if !self.save_state.should_autosave(now) {
             return;
         }
         let Some(file) = game.scenes.current_scene_meta().file.clone() else {
             return;
         };
-        let revision = self.document.current_revision();
+        let revision = self.save_state.current_revision();
         let snapshot = game.scenes.current_scene().snapshot();
         let storage = self.storage.clone();
         let worker_file = file.clone();
@@ -113,7 +113,7 @@ impl EditorSceneAutosave {
             let _ = sender.send(result);
         });
 
-        self.document.mark_autosave_started(now);
+        self.save_state.mark_autosave_started(now);
         self.pending = Some(PendingSceneAutosave {
             source_file: file,
             revision,
@@ -172,7 +172,7 @@ impl EditorSceneAutosave {
 
     fn mark_clean_with_fingerprint(&mut self, fingerprint: Option<String>) {
         self.pending = None;
-        self.document.mark_clean(fingerprint);
+        self.save_state.mark_clean(fingerprint);
     }
 
     fn write_now(&mut self, game: &GameContext) -> bool {
@@ -180,19 +180,19 @@ impl EditorSceneAutosave {
         let Some(file) = game.scenes.current_scene_meta().file.clone() else {
             return true;
         };
-        if !self.document.is_dirty() {
+        if !self.save_state.is_dirty() {
             return true;
         }
 
-        let revision = self.document.current_revision();
-        if !self.document.should_commit_autosave(revision) {
+        let revision = self.save_state.current_revision();
+        if !self.save_state.should_commit_autosave(revision) {
             self.pending = None;
             return true;
         }
         let snapshot = game.scenes.current_scene().snapshot();
-        self.document.mark_autosave_started(Instant::now());
+        self.save_state.mark_autosave_started(Instant::now());
         let success = self.write_file(&file, &snapshot);
-        self.document.mark_autosave_finished(revision, success);
+        self.save_state.mark_autosave_finished(revision, success);
         if success {
             self.pending = None;
         }
@@ -218,7 +218,7 @@ impl EditorSceneAutosave {
         let prepared = match result {
             Ok(prepared) => prepared,
             Err(error) => {
-                self.document.mark_autosave_finished(task.revision, false);
+                self.save_state.mark_autosave_finished(task.revision, false);
                 log::warn!(
                     "Failed to autosave scene {}: {}",
                     task.source_file.display(),
@@ -230,7 +230,7 @@ impl EditorSceneAutosave {
 
         let source_is_current =
             game.scenes.current_scene_meta().file.as_deref() == Some(task.source_file.as_path());
-        if !source_is_current || !self.document.should_commit_autosave(task.revision) {
+        if !source_is_current || !self.save_state.should_commit_autosave(task.revision) {
             log::trace!(
                 "Discarded stale scene autosave result: source={} autosave={}",
                 task.source_file.display(),
@@ -246,7 +246,7 @@ impl EditorSceneAutosave {
                     task.source_file.display(),
                     autosave_file.display()
                 );
-                self.document.mark_autosave_finished(task.revision, true);
+                self.save_state.mark_autosave_finished(task.revision, true);
             }
             Err(error) => {
                 log::warn!(
@@ -254,7 +254,7 @@ impl EditorSceneAutosave {
                     task.source_file.display(),
                     error
                 );
-                self.document.mark_autosave_finished(task.revision, false);
+                self.save_state.mark_autosave_finished(task.revision, false);
             }
         }
     }
