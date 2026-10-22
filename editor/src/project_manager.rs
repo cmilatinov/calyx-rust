@@ -11,7 +11,7 @@ use engine::background::Background;
 use engine::context::AssetContext;
 use engine::core::Ref;
 use engine::error::BoxedError;
-use engine::reflect::type_registry::TypeRegistry;
+use engine::reflect::type_registry::{PluginEngineBuild, TypeRegistry};
 use engine::reflect::TypeInfo;
 use engine::resource::Resource;
 use engine::runtime::{ProjectRuntimeSettings, RuntimeSettings};
@@ -244,15 +244,23 @@ impl ProjectManager {
                         registry.begin_plugin_load();
                         let before = registry.types.keys().copied().collect::<HashSet<_>>();
                         load_fn.get()(&mut registry);
-                        if registry.plugin_links_other_engine() {
-                            log::error!(
+                        match registry.plugin_engine_build() {
+                            PluginEngineBuild::Same => {}
+                            PluginEngineBuild::Other => log::error!(
                                 "Project assembly {} links another engine build than the editor, \
                                  so the engine components its code reads, writes or adds are not \
                                  the editor's. Cargo resolved engine's dependencies differently \
                                  for the project than for the editor; pin the editor's features \
                                  in engine/engine_feature_pins/Cargo.toml.",
                                 target.display()
-                            );
+                            ),
+                            PluginEngineBuild::Unknown => log::warn!(
+                                "Project assembly {} did not report which engine build it links: \
+                                 it predates that check or does not call register_crate. If it \
+                                 links another engine build, the engine components its code reads, \
+                                 writes or adds are not the editor's; rebuild it.",
+                                target.display()
+                            ),
                         }
                         let mut registered_count = 0usize;
                         for (id, registration) in
