@@ -100,36 +100,37 @@ impl Panel for PanelInspector {
                                 else {
                                     continue;
                                 };
-                                let Some(instance) = (unsafe {
-                                    state
-                                        .game
-                                        .scenes
-                                        .simulation_scene_mut()
-                                        .get_component_ptr(game_object, &**component)
+                                let assets = state.game.assets.lock_read();
+                                let inspector_registry = &state.inspector_registry;
+                                // SAFETY: inspectors read other objects and
+                                // components through the scene, never the
+                                // component they are editing.
+                                let Some(edit) = (unsafe {
+                                    state.game.scenes.simulation_scene_mut().edit_component_dyn(
+                                        game_object,
+                                        &**component,
+                                        |instance, scene| {
+                                            let ctx = InspectorContext {
+                                                assets: &assets.registries,
+                                                scene,
+                                                game_object,
+                                                parent: scene.parent(game_object),
+                                                type_info,
+                                                field_name: None,
+                                            };
+                                            self.show_inspector(
+                                                ui,
+                                                inspector_registry,
+                                                &ctx,
+                                                instance.as_reflect_mut(),
+                                            )
+                                        },
+                                    )
                                 }) else {
                                     continue;
                                 };
-                                let simulation_scene = state.game.scenes.simulation_scene();
-                                let ctx = InspectorContext {
-                                    assets: &state.game.assets.lock_read().registries,
-                                    scene: simulation_scene,
-                                    game_object,
-                                    parent: simulation_scene.parent(game_object),
-                                    type_info,
-                                    field_name: None,
-                                };
-                                let (before, after, remove) = {
-                                    let instance = unsafe { &mut *instance };
-                                    let before = instance.serialize();
-                                    let remove = self.show_inspector(
-                                        ui,
-                                        &state.inspector_registry,
-                                        &ctx,
-                                        instance.as_reflect_mut(),
-                                    );
-                                    let after = instance.serialize();
-                                    (before, after, remove)
-                                };
+                                drop(assets);
+                                let (before, after, remove) = (edit.before, edit.after, edit.value);
                                 if remove {
                                     components_to_remove.insert(*type_id);
                                 }
@@ -159,18 +160,15 @@ impl Panel for PanelInspector {
                                     &mut structural_edit_before,
                                     state,
                                 );
-                                if let Some(mut entry) = state
+                                state
                                     .game
                                     .scenes
                                     .simulation_scene_mut()
-                                    .entry_mut(game_object)
-                                {
-                                    component.remove_instance(&mut entry);
-                                    structural_changed = true;
-                                    log::info!(
-                                        "Removed component from game object: component={component_name} type_uuid={type_id} object={object_label}"
-                                    );
-                                }
+                                    .remove_component_dyn(game_object, &**component);
+                                structural_changed = true;
+                                log::info!(
+                                    "Removed component from game object: component={component_name} type_uuid={type_id} object={object_label}"
+                                );
                             }
                             if structural_changed {
                                 state.commit_scene_edit(

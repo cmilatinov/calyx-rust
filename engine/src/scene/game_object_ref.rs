@@ -1,4 +1,4 @@
-use legion::world::{Entry, EntryRef};
+use legion::world::EntryRef;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
 
@@ -59,12 +59,6 @@ impl GameObjectRef {
     /// exists in `scene`.
     pub fn entry<'a>(&self, scene: &'a Scene) -> Option<EntryRef<'a>> {
         self.game_object(scene).and_then(|go| scene.entry(go))
-    }
-
-    /// Returns a mutable Legion entry for the referenced object when it exists
-    /// in `scene`.
-    pub fn entry_mut<'a>(&self, scene: &'a mut Scene) -> Option<Entry<'a>> {
-        self.game_object(scene).and_then(|go| scene.entry_mut(go))
     }
 
     /// Returns the persistent UUID stored by this reference.

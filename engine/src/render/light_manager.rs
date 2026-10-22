@@ -125,7 +125,7 @@ impl LightManager {
         let mut point_lights = Vec::new();
         let mut query = <(Entity, &ComponentPointLight)>::query();
         for (game_object, light) in query
-            .iter(&scene.world)
+            .iter(scene.world())
             .filter(|(_, light)| light.active)
             .filter_map(|(entity, light)| {
                 scene.game_object_from_entity(*entity).map(|go| (go, light))
@@ -146,7 +146,7 @@ impl LightManager {
         let mut directional_lights = Vec::new();
         let mut query = <(Entity, &ComponentDirectionalLight)>::query();
         for (game_object, light) in query
-            .iter(&scene.world)
+            .iter(scene.world())
             .filter(|(_, light)| light.active)
             .filter_map(|(entity, light)| {
                 scene.game_object_from_entity(*entity).map(|go| (go, light))
@@ -169,7 +169,7 @@ impl LightManager {
     fn collect_ambient_light(scene: &Scene) -> [f32; 4] {
         let mut ambient = [0.0, 0.0, 0.0, 1.0];
         let mut query = <&ComponentAmbientLight>::query();
-        for light in query.iter(&scene.world).filter(|light| light.active) {
+        for light in query.iter(scene.world()).filter(|light| light.active) {
             let color = light.color.to_normalized_gamma_f32();
             let intensity = light.intensity.max(0.0);
             ambient[0] += color[0] * intensity;

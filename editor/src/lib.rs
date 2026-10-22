@@ -29,7 +29,6 @@ use egui::{Color32, Frame, Margin, Shadow};
 use egui_tiles::{Container, Linear, LinearDir, Tiles, Tree};
 use egui_wgpu::wgpu::PowerPreference;
 use egui_wgpu::{SurfaceErrorAction, WgpuSetup, WgpuSetupCreateNew};
-use engine::component::ComponentTransform;
 use engine::context::{AssetContext, GameContext};
 use engine::core::Ref;
 use engine::error::BoxedError;
@@ -37,7 +36,6 @@ use engine::input::Input;
 use engine::logging::{DefaultLogger, Log};
 use engine::render::{Camera, SceneRenderer, SceneRendererOptions};
 use engine::scene::Scene;
-use engine::utils::TypeUuid;
 use engine::*;
 use rapier3d::prelude::DebugRenderPipeline;
 use selection::{Selection, SelectionType};
@@ -548,26 +546,20 @@ fn restore_component_value(
     value_path: &[String],
     value: serde_json::Value,
 ) -> Result<(), ValueRestoreError> {
-    let Some(instance) = (unsafe {
-        scene
-            .get_component_ptr(game_object, component)
-            .map(|ptr| &mut *ptr)
-    }) else {
-        return Err(ValueRestoreError::MissingComponent);
-    };
-    let mut serialized = instance
-        .serialize()
-        .ok_or(ValueRestoreError::NotSerializable)?;
-    if !set_json_value(&mut serialized, value_path, value) {
-        return Err(ValueRestoreError::MissingValuePath);
-    }
-    if !instance.deserialize_in_place(&serialized) {
-        return Err(ValueRestoreError::NotDeserializable);
-    }
-    if engine::utils::TypeUuidDynamic::uuid(component) == ComponentTransform::type_uuid() {
-        scene.clear_transform_cache();
-    }
-    Ok(())
+    scene
+        .write_component_dyn(game_object, component, |instance| {
+            let mut serialized = instance
+                .serialize()
+                .ok_or(ValueRestoreError::NotSerializable)?;
+            if !set_json_value(&mut serialized, value_path, value) {
+                return Err(ValueRestoreError::MissingValuePath);
+            }
+            if !instance.deserialize_in_place(&serialized) {
+                return Err(ValueRestoreError::NotDeserializable);
+            }
+            Ok(())
+        })
+        .unwrap_or(Err(ValueRestoreError::MissingComponent))
 }
 
 fn set_json_value(

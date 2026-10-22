@@ -156,7 +156,7 @@ impl ParticleRenderer {
         };
 
         let mut query = <(Entity, &ComponentParticleSystem)>::query();
-        for (entity, system) in query.iter(&scene.world) {
+        for (entity, system) in query.iter(scene.world()) {
             let Some(game_object) = scene.game_object_from_entity(*entity) else {
                 continue;
             };

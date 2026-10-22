@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use engine::component::{Component, ComponentID, ComponentTransform};
+use engine::component::{Component, ComponentID};
 use engine::scene::{GameObject, Scene};
 use engine::utils::TypeUuid;
 use nalgebra::UnitQuaternion;
@@ -714,17 +714,15 @@ fn set_component_value(
         }
     }
 
-    let Some(instance) = (unsafe {
-        scene
-            .get_component_ptr(game_object, prototype)
-            .map(|ptr| &mut *ptr)
+    let Some(deserialized) = scene.write_component_dyn(game_object, prototype, |instance| {
+        instance.deserialize_in_place(value)
     }) else {
         return Err((
             ErrorKind::NotFound,
             format!("object has no {} component", prototype.type_name()),
         ));
     };
-    if !instance.deserialize_in_place(value) {
+    if !deserialized {
         return Err((
             ErrorKind::BadRequest,
             "value does not deserialize into the component type".into(),
@@ -733,9 +731,6 @@ fn set_component_value(
     if let Some(indexed_id) = indexed_id {
         // Restores the id when the value omitted it and serde defaulted it.
         let _ = scene.write_component::<ComponentID, _>(game_object, |id| id.id = indexed_id);
-    }
-    if type_uuid == ComponentTransform::type_uuid() {
-        scene.clear_transform_cache();
     }
     Ok(Some(serde_json::Value::Null))
 }
@@ -1050,6 +1045,7 @@ fn pointer_button_event(pos: egui::Pos2, button: PointerButtonSpec, pressed: boo
 mod tests {
     use super::*;
     use crate::remote::runtime::tests::test_runtime;
+    use engine::component::ComponentTransform;
 
     #[test]
     fn setting_a_parent_transform_moves_the_child() {

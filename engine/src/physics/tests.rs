@@ -550,11 +550,7 @@ mod tests {
         scene.prepare();
         assert_eq!(scene.physics.bodies.len(), 1);
 
-        scene
-            .world
-            .entry(go.entity)
-            .unwrap()
-            .remove_component::<ComponentRigidBody>();
+        scene.remove_component::<ComponentRigidBody>(go);
         scene.prepare();
 
         assert_eq!(scene.physics.bodies.len(), 0);
@@ -574,11 +570,7 @@ mod tests {
         scene.prepare();
         assert_eq!(scene.physics.colliders.len(), 1);
 
-        scene
-            .world
-            .entry(go.entity)
-            .unwrap()
-            .remove_component::<ComponentCollider>();
+        scene.remove_component::<ComponentCollider>(go);
         scene.prepare();
 
         assert_eq!(scene.physics.colliders.len(), 0);
@@ -675,12 +667,10 @@ mod tests {
         step(&mut scene, 120);
         assert!(scene.world_transform(ball).position.y > 0.0);
 
-        {
-            let mut entry = scene.world.entry(floor_col.entity).unwrap();
-            let collider = entry.get_component_mut::<ComponentCollider>().unwrap();
+        scene.write_component::<ComponentCollider, _>(floor_col, |collider| {
             collider.enabled = false;
             collider.dirty = true;
-        }
+        });
         scene.prepare();
         let handle = scene.physics.entity_collider[&floor_col.entity];
         assert!(!scene.physics.colliders[handle].is_enabled());
@@ -692,12 +682,10 @@ mod tests {
             "ball should fall once the floor is disabled, y={y}"
         );
 
-        {
-            let mut entry = scene.world.entry(floor_col.entity).unwrap();
-            let collider = entry.get_component_mut::<ComponentCollider>().unwrap();
+        scene.write_component::<ComponentCollider, _>(floor_col, |collider| {
             collider.enabled = true;
             collider.dirty = true;
-        }
+        });
         scene.prepare();
         assert!(scene.physics.colliders[handle].is_enabled());
     }

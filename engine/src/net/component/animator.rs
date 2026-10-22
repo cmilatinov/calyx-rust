@@ -60,13 +60,10 @@ impl ComponentUpdate for ComponentNetworkAnimator {
                 AnimationParameters(c_animator.parameters.clone())
             },
         ) {
-            let Some(mut entry) = ctx.scene.entry_mut(ctx.game_object) else {
-                return Default::default();
-            };
-            let Ok(c_animator) = entry.get_component_mut::<ComponentAnimator>() else {
-                return Default::default();
-            };
-            c_animator.parameters = value;
+            ctx.scene
+                .write_component::<ComponentAnimator, _>(ctx.game_object, |c_animator| {
+                    c_animator.parameters = value;
+                });
         }
         ctx.scene
             .write_component::<ComponentNetworkAnimator, _>(ctx.game_object, |c| {

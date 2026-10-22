@@ -301,7 +301,7 @@ impl GizmoRenderer {
                 let registry = registry_ref.read();
                 gizmos = self.gizmos(camera, camera_transform, viewport_size);
                 let mut query = <Entity>::query();
-                let world = &scene.world;
+                let world = scene.world();
                 for entity in query.iter(world) {
                     if let Some(game_object) = scene.game_object_from_entity(*entity) {
                         gizmos.set_object_id(object_id_for_game_object(scene.uuid(game_object)));
