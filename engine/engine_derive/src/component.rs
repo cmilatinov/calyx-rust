@@ -1,4 +1,4 @@
-use crate::fq::{FQBox, FQOption, FQReflect};
+use crate::fq::{FQBox, FQOption, FQReflect, FQResult};
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, DeriveInput};
@@ -16,13 +16,13 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
                 &self, entry: &'a legion::world::EntryRef
             ) -> #FQOption<&'a dyn engine::component::Component> {
                 let instance = entry.get_component::<#name>().ok()?;
-                Some(instance)
+                #FQOption::Some(instance)
             }
             fn get_instance_mut<'a>(
                 &self, entry: &'a mut legion::world::Entry
             ) -> #FQOption<&'a mut dyn engine::component::Component> {
                 let instance = entry.get_component_mut::<#name>().ok()?;
-                Some(instance)
+                #FQOption::Some(instance)
             }
             fn bind_instance(
                 &self,
@@ -44,11 +44,12 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
             fn serialize(&self) -> #FQOption<serde_json::Value> {
                 serde_json::to_value(self).ok()
             }
-            fn deserialize(&self, value: &serde_json::Value) -> #FQOption<#FQBox<dyn #FQReflect>> {
-                serde::Deserialize::deserialize(value).ok().map(|v: #name| {
-                    let value: Box<dyn Reflect> = Box::new(v);
-                    value
-                })
+            fn deserialize(
+                &self, value: &serde_json::Value
+            ) -> #FQResult<#FQBox<dyn #FQReflect>, serde_json::Error> {
+                let value: #name = serde::Deserialize::deserialize(value)?;
+                let value: #FQBox<dyn #FQReflect> = #FQBox::new(value);
+                #FQResult::Ok(value)
             }
         }
     };

@@ -181,7 +181,19 @@ impl From<(&ReadOnlyRegistryContext, SceneData)> for Scene {
                 try_all!(
                     None => continue;
                     let component = registry.component(component_id);
-                    let instance = component.deserialize(&data);
+                );
+                let instance = match component.deserialize(&data) {
+                    Ok(instance) => instance,
+                    Err(err) => {
+                        log::warn!(
+                            "Skipping component {} that failed to deserialize: {err}",
+                            component.type_name()
+                        );
+                        continue;
+                    }
+                };
+                try_all!(
+                    None => continue;
                     let mut entry = scene.entry_mut(game_object);
                 );
                 let _ = component.bind_instance(&mut entry, instance);
@@ -392,7 +404,7 @@ impl Scene {
             let has_id = id_component.as_ref().is_some_and(|component| {
                 object_components
                     .get(&ComponentID::type_uuid())
-                    .is_some_and(|data| component.deserialize(data).is_some())
+                    .is_some_and(|data| component.deserialize(data).is_ok())
             });
             if !has_id {
                 return invalid(format!("object {object_id} has no valid ID component"));
@@ -472,7 +484,19 @@ impl Scene {
                     None => continue;
                     let TypeInfo::Struct(struct_info) = type_registry.type_info_by_id(*component_id);
                     let component = component_registry.component(*component_id);
-                    let mut instance = component.deserialize(data);
+                );
+                let mut instance = match component.deserialize(data) {
+                    Ok(instance) => instance,
+                    Err(err) => {
+                        log::warn!(
+                            "Skipping prefab component {} that failed to deserialize: {err}",
+                            component.type_name()
+                        );
+                        continue;
+                    }
+                };
+                try_all!(
+                    None => continue;
                     let mut entry = self.entry_mut(game_object);
                 );
                 for (name, field) in &struct_info.fields {
