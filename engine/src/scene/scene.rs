@@ -85,8 +85,7 @@ impl Scene {
         let mut world: World = Default::default();
         let mut graph = SceneGraph::default();
         let entity = world.push(());
-        let node = graph.add_node(entity);
-        let root = GameObject { node, entity };
+        let root = graph.attach(entity, None);
         let id = Uuid::new_v4();
         world.entry(entity).unwrap().add_component(ComponentID {
             id,
@@ -240,7 +239,7 @@ impl From<&Scene> for SceneData {
 impl From<(&Scene, GameObject)> for SceneData {
     fn from((scene, game_object): (&Scene, GameObject)) -> Self {
         let mut data = Default::default();
-        let game_objects = scene.graph.bfs_from(game_object.node);
+        let game_objects: Vec<GameObject> = scene.graph.descendants(game_object).collect();
         let subtree = game_objects.iter().copied().collect::<HashSet<_>>();
         game_objects.into_iter().for_each(|game_object| {
             let Some(entry) = scene.entry(game_object) else {
@@ -589,13 +588,9 @@ impl Scene {
 
     pub(crate) fn new_game_object(&mut self, parent: Option<GameObject>) -> GameObject {
         let entity = self.world.push(());
-        let node = self.graph.add_node(entity);
-        self.transforms.remove(node);
-        let game_object = GameObject { node, entity };
-        self.store.register_entity(entity, node);
-        let parent_node = parent.unwrap_or(self.root);
-        let edge_index = self.graph.next_edge_index(parent_node);
-        self.graph.add_edge(parent_node.node, node, edge_index);
+        let game_object = self.graph.attach(entity, Some(parent.unwrap_or(self.root)));
+        self.transforms.remove(game_object.node);
+        self.store.register_entity(entity, game_object.node);
         game_object
     }
 
@@ -811,27 +806,10 @@ impl Scene {
             })
             .collect();
         for game_object in roots {
-            let Some(parent) = self.parent(game_object) else {
-                continue;
-            };
-            let Some(index) = self
-                .graph
-                .index_in_parent(parent, game_object, SiblingDir::Before)
-            else {
-                continue;
-            };
-            self.graph.shift_edge_weights(parent, index, -1);
-            let to_delete: Vec<_> = self
-                .graph
-                .bfs_from(game_object.node)
-                .into_iter()
-                .rev()
-                .collect();
-            for go in to_delete {
+            for go in self.graph.detach_subtree(game_object) {
                 let uuid = self.uuid(go);
                 self.world.remove(go.entity);
                 self.store.remove(uuid, go.entity);
-                self.graph.remove_node(go.node);
                 self.transforms.remove(go.node);
             }
         }
