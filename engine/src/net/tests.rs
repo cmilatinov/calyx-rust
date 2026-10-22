@@ -1175,4 +1175,47 @@ mod tests {
         assert_eq!(scene.indexed_network_object(42), None);
         assert_eq!(scene.indexed_network_object(43), Some(go));
     }
+
+    #[test]
+    fn network_object_added_by_type_uuid_is_indexed() {
+        use crate::utils::TypeUuid;
+
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        scene.bind_component_dyn(go, ComponentNetworkObject::type_uuid());
+        assert_eq!(
+            scene.indexed_network_object(ComponentNetworkObject::default().id),
+            Some(go),
+            "bind_component_dyn did not index the default instance"
+        );
+        scene
+            .write_component::<ComponentNetworkObject, _>(go, |c| c.id = 42)
+            .expect("bind_component_dyn did not add the component");
+
+        assert_eq!(scene.indexed_network_object(42), Some(go));
+        assert_eq!(
+            scene.indexed_network_object(0),
+            None,
+            "old id still indexed"
+        );
+
+        assert!(scene.remove_component_dyn(go, ComponentNetworkObject::type_uuid()));
+        assert_eq!(scene.indexed_network_object(42), None);
+    }
+
+    #[test]
+    fn loaded_scene_indexes_network_objects() {
+        let (scene, _) = scene_with_object(42, 1);
+        let loaded = scene.clone();
+        let go = loaded
+            .objects()
+            .find(|go| {
+                loaded
+                    .read_component::<ComponentNetworkObject, _, _>(*go, |_| ())
+                    .is_some()
+            })
+            .expect("network object was not loaded");
+
+        assert_eq!(loaded.indexed_network_object(42), Some(go));
+    }
 }
