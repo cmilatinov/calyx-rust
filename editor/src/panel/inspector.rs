@@ -114,7 +114,7 @@ impl Panel for PanelInspector {
                                 // SAFETY: inspectors read other objects and
                                 // components through the scene, never the
                                 // component they are editing.
-                                let Some((remove, committed)) = (unsafe {
+                                let Some(shown) = (unsafe {
                                     state.inspector_edits.show_component(
                                         state.game.scenes.simulation_scene_mut(),
                                         game_object,
@@ -142,10 +142,17 @@ impl Panel for PanelInspector {
                                     continue;
                                 };
                                 drop(assets);
-                                if remove {
+                                if shown.value {
                                     components_to_remove.insert(*type_id);
                                 }
-                                if let Some(committed) = committed {
+                                // The undo step may wait for the drag or
+                                // text session to end, but the scene has
+                                // changed now: autosave and scene switches
+                                // must see it as dirty.
+                                if shown.changed {
+                                    state.mark_scene_dirty();
+                                }
+                                if let Some(committed) = shown.committed {
                                     state.record_inspector_edit(committed);
                                 }
                             }

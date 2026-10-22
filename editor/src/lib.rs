@@ -409,6 +409,7 @@ impl EditorAppState {
     }
 
     pub fn open_scene_file(&mut self, file: PathBuf) -> bool {
+        self.flush_pending_inspector_value_edits();
         if !self.scene_autosave.prepare_scene_change(&self.game) {
             return false;
         }
@@ -440,6 +441,7 @@ impl EditorAppState {
     }
 
     pub fn open_scene_asset(&mut self, asset_id: uuid::Uuid) {
+        self.flush_pending_inspector_value_edits();
         if !self.scene_autosave.prepare_scene_change(&self.game) {
             return;
         }
@@ -469,6 +471,7 @@ impl EditorAppState {
     }
 
     fn new_scene_from_default(&mut self) {
+        self.flush_pending_inspector_value_edits();
         if !self.scene_autosave.prepare_scene_change(&self.game) {
             return;
         }

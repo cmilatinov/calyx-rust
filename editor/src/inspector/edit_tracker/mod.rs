@@ -41,6 +41,19 @@ struct Baseline {
     dragging: bool,
 }
 
+/// One frame of a component shown through
+/// [`InspectorEditTracker::show_component`].
+pub struct ShownComponent<R> {
+    /// What the draw closure returned.
+    pub value: R,
+    /// Whether the widgets changed the component this frame. The change may
+    /// still be pending, its undo step waiting for a drag or text-field
+    /// session to end, but the scene already holds it.
+    pub changed: bool,
+    /// The undo step this frame completed, if any.
+    pub committed: Option<CommittedEdit>,
+}
+
 /// The selected object's component baselines and the edits pending on them.
 #[derive(Default)]
 pub struct InspectorEditTracker {
@@ -152,8 +165,9 @@ impl InspectorEditTracker {
     /// In debug builds and tests, a change `draw` made without reporting it
     /// panics; see [`assert_edit_reported`].
     ///
-    /// Returns what `draw` returned and the committed edit, or `None` when
-    /// the object or component is missing.
+    /// Returns what `draw` returned, whether it changed the component and
+    /// the committed edit, or `None` when the object or component is
+    /// missing.
     ///
     /// # Safety
     ///
@@ -167,7 +181,7 @@ impl InspectorEditTracker {
         track: bool,
         pointer_down: bool,
         draw: impl FnOnce(&mut dyn Component, &Scene) -> (InspectorResponse, R),
-    ) -> Option<(R, Option<CommittedEdit>)> {
+    ) -> Option<ShownComponent<R>> {
         let key = ComponentKey {
             game_object: scene.uuid(game_object),
             component: component.uuid(),
@@ -176,7 +190,7 @@ impl InspectorEditTracker {
         #[cfg(any(debug_assertions, test))]
         let check_reported = self.checks_reported();
         // SAFETY: forwarded to the caller.
-        let (value, current) = unsafe {
+        let (value, changed, current) = unsafe {
             scene.edit_component_dyn(game_object, component, |instance, scene| {
                 if needs_baseline {
                     self.set_baseline(key, instance.serialize());
@@ -195,13 +209,21 @@ impl InspectorEditTracker {
                 }
                 let commit = track && self.report(key, response, pointer_down);
                 ComponentEdit {
-                    value: (value, commit.then(|| instance.serialize())),
+                    value: (
+                        value,
+                        response.changed,
+                        commit.then(|| instance.serialize()),
+                    ),
                     written: response.changed,
                 }
             })
         }?;
         let committed = current.and_then(|current| self.commit(key, current));
-        Some((value, committed))
+        Some(ShownComponent {
+            value,
+            changed,
+            committed,
+        })
     }
 }
 

@@ -52,6 +52,8 @@ struct Session {
     game_object: GameObject,
     child: GameObject,
     commits: Vec<CommittedEdit>,
+    /// Frames on which the tracker reported a change, committed or not.
+    changed_frames: usize,
     track: bool,
 }
 
@@ -66,6 +68,7 @@ impl Session {
             game_object,
             child,
             commits: Vec::new(),
+            changed_frames: 0,
             track: true,
         }
     }
@@ -83,7 +86,7 @@ impl Session {
             let game_object = self.game_object;
             // SAFETY: the inspectors under test read nothing through the
             // scene.
-            let (response, committed) = unsafe {
+            let shown = unsafe {
                 self.tracker.show_component(
                     &mut self.scene,
                     game_object,
@@ -102,8 +105,11 @@ impl Session {
                 )
             }
             .expect("the component should exist");
-            self.commits.extend(committed);
-            response
+            if shown.changed {
+                self.changed_frames += 1;
+            }
+            self.commits.extend(shown.committed);
+            shown.value
         }
     }
 }
@@ -223,6 +229,14 @@ fn typing_in_a_text_field_records_one_undo_step() {
         h.click(field, &mut draw);
         h.type_text("x", &mut draw);
         h.type_text("y", &mut draw);
+    }
+    // While the field keeps focus the step is pending, but the tracker has
+    // already reported each change, so the editor can mark the scene dirty.
+    assert!(session.commits.is_empty());
+    assert_eq!(session.changed_frames, 2);
+    assert!(session.tracker.has_pending());
+    {
+        let mut draw = session.draw(&component, inspector, name);
         h.click(AWAY, &mut draw);
         h.idle(2, &mut draw);
     }
