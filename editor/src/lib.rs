@@ -95,6 +95,8 @@ pub struct EditorAppState {
     pub gizmo_modes: EnumSet<GizmoMode>,
     pub gizmo_orientation: GizmoOrientation,
     pub thumbnails: ThumbnailService,
+    /// Where the inspector panel was drawn last frame, if it was.
+    pub(crate) inspector_rect: Option<egui::Rect>,
     scene_history: SceneHistory,
     /// The inspector's undo baselines for the selected object's components.
     pub(crate) inspector_edits: InspectorEditTracker,
@@ -151,6 +153,7 @@ impl EditorAppState {
             gizmo_modes: GizmoMode::all_translate(),
             gizmo_orientation: GizmoOrientation::Global,
             thumbnails: ThumbnailService::default(),
+            inspector_rect: None,
             scene_history: SceneHistory::default(),
             inspector_edits: InspectorEditTracker::default(),
             scene_autosave: EditorSceneAutosave::new(&project_path),
@@ -580,6 +583,19 @@ fn restore_component_values(
         .unwrap_or(Err(ValueRestoreError::MissingComponent))
 }
 
+/// Whether a pointer press at `press` may start an edit outside the inspector
+/// drawn at `inspector_rect`, so pending inspector edits must be committed
+/// first.
+fn press_ends_inspector_edits(
+    press: Option<egui::Pos2>,
+    inspector_rect: Option<egui::Rect>,
+) -> bool {
+    match (press, inspector_rect) {
+        (Some(press), Some(rect)) => !rect.contains(press),
+        _ => true,
+    }
+}
+
 /// The path prefix every change shares, which names an edit that changed
 /// several values of one field, such as a rotation.
 fn common_value_path(changes: &[scene_history::InspectorValueChange]) -> Vec<String> {
@@ -727,11 +743,22 @@ impl eframe::App for EditorApp {
         self.state.game_response = None;
         self.state.viewport_response = None;
         self.remote_update_begin(ctx);
-        // A press starts any edit outside the inspector (hierarchy, gizmo,
-        // menus) and ends a pending text-field session, so the session's undo
-        // step is committed before another panel writes the scene.
-        if ctx.input(|input| input.pointer.any_pressed()) {
-            self.state.flush_pending_inspector_value_edits();
+        // A press outside the inspector starts any edit another panel makes
+        // (hierarchy, gizmo, menus) and ends a pending text-field session, so
+        // the session's undo step is committed before that panel writes the
+        // scene. Presses inside the inspector, such as moving the caret, are
+        // left to the inspector's own drag and focus tracking.
+        let press = ctx.input(|input| {
+            input
+                .pointer
+                .any_pressed()
+                .then(|| input.pointer.interact_pos())
+        });
+        let inspector_rect = self.state.inspector_rect.take();
+        if let Some(press) = press {
+            if press_ends_inspector_edits(press, inspector_rect) {
+                self.state.flush_pending_inspector_value_edits();
+            }
         }
         self.render_views(ctx, frame);
         self.process_thumbnail_jobs(frame);
@@ -1269,7 +1296,8 @@ impl EditorApp {
 #[cfg(test)]
 mod tests {
     use super::{
-        common_value_path, restore_component_values, set_json_value, ActiveSceneState, EditorApp,
+        common_value_path, press_ends_inspector_edits, restore_component_values, set_json_value,
+        ActiveSceneState, EditorApp,
     };
     use crate::scene_history::InspectorValueChange;
     use engine::component::ComponentTransform;
@@ -1348,6 +1376,25 @@ mod tests {
 
         state.set_scene(Some("scene".into()), None);
         assert_eq!(state.title("Sandbox", true), "Calyx - Sandbox - scene *");
+    }
+
+    #[test]
+    fn only_presses_outside_the_inspector_end_its_edits() {
+        let inspector =
+            egui::Rect::from_min_max(egui::pos2(1000.0, 0.0), egui::pos2(1300.0, 800.0));
+        assert!(!press_ends_inspector_edits(
+            Some(egui::pos2(1100.0, 200.0)),
+            Some(inspector)
+        ));
+        assert!(press_ends_inspector_edits(
+            Some(egui::pos2(100.0, 200.0)),
+            Some(inspector)
+        ));
+        assert!(press_ends_inspector_edits(
+            Some(egui::pos2(1100.0, 200.0)),
+            None
+        ));
+        assert!(press_ends_inspector_edits(None, Some(inspector)));
     }
 
     #[test]

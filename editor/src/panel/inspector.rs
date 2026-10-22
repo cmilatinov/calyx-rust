@@ -33,6 +33,7 @@ impl Panel for PanelInspector {
     }
 
     fn ui(&mut self, ui: &mut Ui, state: &mut EditorAppState) {
+        state.inspector_rect = Some(ui.clip_rect());
         let type_registry_ref = state.game.assets.registries.types.clone();
         let type_registry = type_registry_ref.read();
 
