@@ -1320,12 +1320,18 @@ impl AssetRegistry {
         let file = File::open(meta_path).map_err(Box::new)?;
         let reader = BufReader::new(file);
         let mut meta: AssetMetaData = serde_json::from_reader(reader).map_err(Box::new)?;
+        // Child names may carry the stored main name as a legacy prefix, so
+        // strip it before the main name is rebased onto the file's location
+        // under its owning root (an older scan may have used an outer root).
+        for child in meta.inner.iter_mut() {
+            child.name = Self::local_sub_asset_name(&meta.main.name, &child.name);
+        }
+        meta.main.name = name_path.to_string();
         let mut data = self.asset_data_mut();
         meta.main.children = meta.inner.iter().map(|m| m.id).collect();
         data.meta.insert(meta.main.id, meta.main.clone());
         data.names.insert(name_path, meta.main.id);
         for child in meta.inner.iter_mut() {
-            child.name = Self::local_sub_asset_name(&meta.main.name, &child.name);
             child.parent = Some(meta.main.id);
             let name = Self::sub_asset_name(&meta.main.name, &child.name);
             data.meta.insert(child.id, child.clone());
@@ -1901,6 +1907,46 @@ mod tests {
         assert!(registry.asset_meta_from_id(asset_id).is_none());
         drop(registry);
         std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn legacy_outer_relative_meta_is_rebased_to_owning_root() {
+        let outer_root = temp_asset_root("calyx-legacy-nested-meta");
+        let inner_root = outer_root.join("inner");
+        std::fs::create_dir_all(&inner_root).expect("failed to create inner asset root");
+        let parent_id = Uuid::new_v4();
+        let child_id = Uuid::new_v4();
+        std::fs::write(inner_root.join("parent.fbx"), b"").expect("failed to write parent asset");
+        std::fs::write(
+            inner_root.join("parent.meta"),
+            serde_json::to_vec_pretty(&json!({
+                "main": {
+                    "id": parent_id,
+                    "name": "inner/parent",
+                    "display_name": "parent",
+                    "type_uuid": Prefab::type_uuid(),
+                },
+                "inner": [
+                    {
+                        "id": child_id,
+                        "name": "inner/parent/Body",
+                        "display_name": "Body",
+                        "type_uuid": Mesh::type_uuid(),
+                    }
+                ]
+            }))
+            .expect("failed to encode test meta"),
+        )
+        .expect("failed to write parent meta");
+        let registries = test_registries_with_assets(vec![outer_root.clone(), inner_root.clone()]);
+        let registry = registries.assets.read();
+
+        assert_eq!(registry.asset_id("parent"), Some(parent_id));
+        assert_eq!(registry.asset_id("parent/Body"), Some(child_id));
+        assert_eq!(registry.asset_name(parent_id), "parent");
+        assert_eq!(registry.asset_name(child_id), "Body");
+        drop(registry);
+        std::fs::remove_dir_all(outer_root).expect("failed to remove temp asset root");
     }
 
     #[test]
