@@ -1473,7 +1473,14 @@ impl AssetRegistry {
         };
 
         for id in reload_ids {
-            let Some(meta) = self.asset_meta_from_id(id) else {
+            let (meta, generation) = {
+                let data = self.asset_data();
+                (
+                    data.meta.get(&id).cloned(),
+                    data.generations.get(&id).copied(),
+                )
+            };
+            let Some(meta) = meta else {
                 continue;
             };
             let Some(path) = meta.path else {
@@ -1497,9 +1504,28 @@ impl AssetRegistry {
                     path.display(),
                     error
                 );
-                self.set_reload_error(AssetReloadError { id, path, error });
+                self.set_current_reload_error(generation, AssetReloadError { id, path, error });
             }
         }
+    }
+
+    /// Records a reload error only while the source it was read from is
+    /// still registered under the same generation, so a failure of a file
+    /// deleted, or deleted and recreated, during the reload is dropped.
+    fn set_current_reload_error(&self, generation: Option<u64>, reload_error: AssetReloadError) {
+        let mut data = self.asset_data_mut();
+        let id = reload_error.id;
+        let current = data
+            .meta
+            .get(&id)
+            .is_some_and(|meta| meta.path.as_ref() == Some(&reload_error.path))
+            && data.generations.get(&id).copied() == generation;
+        if !current {
+            log::info!("Dropping reload error for asset {id}: its source was removed");
+            return;
+        }
+        data.reload_errors.retain(|error| error.id != id);
+        data.reload_errors.push(reload_error);
     }
 
     /// Returns the current list of asset hot-reload failures.
@@ -1511,13 +1537,6 @@ impl AssetRegistry {
         self.asset_data_mut()
             .reload_errors
             .retain(|error| error.id != id);
-    }
-
-    fn set_reload_error(&self, reload_error: AssetReloadError) {
-        let mut data = self.asset_data_mut();
-        data.reload_errors
-            .retain(|error| error.id != reload_error.id);
-        data.reload_errors.push(reload_error);
     }
 }
 
@@ -2011,11 +2030,15 @@ mod tests {
         let (asset_path, _, asset_id) = write_scene_with_meta(&root);
         let registries = test_registries_with_assets(vec![root.clone()]);
         let registry = registries.assets.read();
-        registry.set_reload_error(AssetReloadError {
-            id: asset_id,
-            path: asset_path.clone(),
-            error: AssetError::LoadError.with_source("test reload failure"),
-        });
+        let generation = registry.asset_data().generations.get(&asset_id).copied();
+        registry.set_current_reload_error(
+            generation,
+            AssetReloadError {
+                id: asset_id,
+                path: asset_path.clone(),
+                error: AssetError::LoadError.with_source("test reload failure"),
+            },
+        );
         assert_eq!(registry.reload_errors().len(), 1);
 
         std::fs::remove_file(&asset_path).expect("failed to delete scene asset");
@@ -2285,10 +2308,11 @@ mod tests {
             .clone()
     }
 
-    /// Asset whose load signals that it started, then waits to be released,
-    /// so a test can act while the load is in flight. Like an imported
-    /// prefab, it reads its metadata first and creates a `Child` sub-asset
-    /// once released.
+    /// Asset whose load, when its file contains `gate`, signals that it
+    /// started and then waits to be released, so a test can act while the
+    /// load is in flight. A file containing `fail` makes the load fail once
+    /// released. Like an imported prefab, it reads its metadata first and
+    /// creates a `Child` sub-asset once released.
     struct GatedTestAsset;
 
     impl TypeUuid for GatedTestAsset {
@@ -2310,9 +2334,18 @@ mod tests {
             let meta = registry
                 .asset_meta_from_path(path)
                 .ok_or_else(|| AssetError::NotFound.with_path(path))?;
-            let gate = gated_test_asset_gate(path);
-            gate.0.wait();
-            gate.1.wait();
+            let content = std::fs::read_to_string(path)
+                .map_err(|err| AssetError::LoadError.with_path(path).with_source(err))?;
+            if content.contains("gate") {
+                let gate = gated_test_asset_gate(path);
+                gate.0.wait();
+                gate.1.wait();
+            }
+            if content.contains("fail") {
+                return Err(AssetError::LoadError
+                    .with_path(path)
+                    .with_source("test load failure"));
+            }
             let child = registry.create_or_update_sub_asset(
                 meta.id,
                 &meta.name,
@@ -2332,7 +2365,7 @@ mod tests {
     fn load_in_flight_during_deletion_does_not_cache_the_deleted_asset() {
         let root = temp_asset_root("calyx-delete-during-load");
         let asset_path = root.join("gated.cxtestgated");
-        std::fs::write(&asset_path, "").expect("failed to write test asset");
+        std::fs::write(&asset_path, "gate").expect("failed to write test asset");
         let registries = test_registries_with_assets(vec![root.clone()]);
         let id = {
             let registry = registries.assets.read();
@@ -2372,7 +2405,7 @@ mod tests {
     fn discarded_load_rolls_back_the_sub_assets_it_created() {
         let root = temp_asset_root("calyx-discarded-load-sub-assets");
         let asset_path = root.join("gated.cxtestgated");
-        std::fs::write(&asset_path, "").expect("failed to write test asset");
+        std::fs::write(&asset_path, "gate").expect("failed to write test asset");
         let registries = test_registries_with_assets(vec![root.clone()]);
         let id = {
             let registry = registries.assets.read();
@@ -2434,10 +2467,51 @@ mod tests {
     }
 
     #[test]
+    fn reload_failing_after_deletion_records_no_reload_error() {
+        let root = temp_asset_root("calyx-failed-reload-after-delete");
+        let asset_path = root.join("gated.cxtestgated");
+        std::fs::write(&asset_path, "plain").expect("failed to write test asset");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let id = {
+            let registry = registries.assets.read();
+            registry.register_asset_type::<GatedTestAsset>();
+            registry.build_meta().expect("failed to rebuild metadata");
+            let id = registry
+                .asset_id("gated")
+                .expect("test asset should have metadata");
+            registry
+                .load_by_id::<GatedTestAsset>(id)
+                .expect("test asset should load");
+            id
+        };
+        std::fs::write(&asset_path, "gate fail").expect("failed to rewrite test asset");
+        registries
+            .assets
+            .read()
+            .asset_data_mut()
+            .dirty
+            .insert(id, Instant::now() - Duration::from_secs(1));
+        let gate = gated_test_asset_gate(&asset_path);
+        let assets = registries.assets.clone();
+        let reloader = std::thread::spawn(move || assets.read().reload_assets());
+
+        gate.0.wait();
+        std::fs::remove_file(&asset_path).expect("failed to delete test asset");
+        registries.assets.read().recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(asset_path),
+        );
+        gate.1.wait();
+        reloader.join().expect("reloader thread panicked");
+
+        assert!(registries.assets.read().reload_errors().is_empty());
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
     fn load_spanning_delete_and_recreate_does_not_cache_the_old_file() {
         let root = temp_asset_root("calyx-recreate-during-load");
         let asset_path = root.join("gated.cxtestgated");
-        std::fs::write(&asset_path, "").expect("failed to write test asset");
+        std::fs::write(&asset_path, "gate").expect("failed to write test asset");
         let registries = test_registries_with_assets(vec![root.clone()]);
         let id = {
             let registry = registries.assets.read();
@@ -2463,7 +2537,7 @@ mod tests {
             Event::new(EventKind::Remove(notify::event::RemoveKind::File))
                 .add_path(asset_path.clone()),
         );
-        std::fs::write(&asset_path, "").expect("failed to recreate test asset");
+        std::fs::write(&asset_path, "gate").expect("failed to recreate test asset");
         registries.assets.read().recv_notify_event(
             Event::new(EventKind::Create(notify::event::CreateKind::File))
                 .add_path(asset_path.clone()),
