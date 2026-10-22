@@ -535,6 +535,9 @@ impl SceneRenderer {
         } in self.draw_list.drain(0..)
         {
             if (shader_id, mat_id, mesh_id) != last {
+                // Release the previous batch's mesh before locking the next:
+                // batches that differ only in material share their mesh.
+                drop(mesh.take());
                 mesh = self.assets.mesh(mesh_id).map(|mesh| mesh.write());
                 insert_instance_list(last, instance_count);
                 instance_count = 0;
