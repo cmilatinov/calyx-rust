@@ -1,12 +1,13 @@
 #[cfg(test)]
 mod tests {
     use crate::context::GameContext;
+    use crate::core::Ref;
     use crate::net::{
-        Client, ComponentNetworkObject, GameChannel, GameMessage, MessageHandler,
+        handle_destroy, Client, ComponentNetworkObject, GameChannel, GameMessage, MessageHandler,
         MessageHandlerResult, MessageQueue, MessageRoute, MessageSender, Network, NetworkSceneSync,
         Server,
     };
-    use crate::scene::{GameObject, Scene};
+    use crate::scene::{GameObject, Prefab, Scene};
     use crate::test_harness::TestHarness;
     use crate::test_utils::{test_game_context, test_scene};
     use std::collections::HashSet;
@@ -442,15 +443,12 @@ mod tests {
     #[test]
     fn destroy_from_owner_removes_object() {
         let (mut scene, go) = scene_with_object(42, 1);
-        let mut client = Client::default();
         let mut server: Option<Server> = None;
-        let mut local_id: Option<renet::ClientId> = Some(2);
         let msg = GameMessage::DestroyGameObject {
             network_object_id: 42,
             from_client_id: 1,
         };
-        let mut ctx = (&mut client, &mut server, &mut &mut scene, &mut local_id);
-        NetworkSceneSync.handle_message(&mut ctx, MessageSender::Server, &msg);
+        handle_destroy(&mut server, &mut scene, MessageSender::Server, 42, 1, &msg);
         scene.flush_deletes();
 
         assert!(scene.entry(go).is_none(), "owner's destroy was not applied");
@@ -460,15 +458,19 @@ mod tests {
     fn destroy_from_non_owner_is_rejected() {
         let (owner, attacker) = (1u64, 2u64);
         let (mut scene, go) = scene_with_object(42, owner);
-        let mut client = Client::default();
         let mut server: Option<Server> = None;
-        let mut local_id: Option<renet::ClientId> = Some(3);
         let msg = GameMessage::DestroyGameObject {
             network_object_id: 42,
             from_client_id: attacker,
         };
-        let mut ctx = (&mut client, &mut server, &mut &mut scene, &mut local_id);
-        NetworkSceneSync.handle_message(&mut ctx, MessageSender::Server, &msg);
+        handle_destroy(
+            &mut server,
+            &mut scene,
+            MessageSender::Server,
+            42,
+            attacker,
+            &msg,
+        );
         scene.flush_deletes();
 
         assert!(scene.entry(go).is_some(), "non-owner destroyed the object");
@@ -903,14 +905,14 @@ mod tests {
         );
     }
 
-    #[test]
-    fn destroyed_object_is_removed_on_all_peers() {
-        use crate::scene::Prefab;
-
+    /// Registers the same one-object network prefab on every peer under
+    /// `name`, so a spawn's prefab id resolves on each of them, and waits
+    /// until every client knows its own id.
+    fn setup_spawn_harness(name: &str) -> (TestHarness, Vec<Ref<Prefab>>) {
         let mut harness = TestHarness::new(2);
         assert!(harness.wait_connected(), "not all clients connected");
 
-        let prefab_refs: Vec<_> = harness
+        let prefab_refs = harness
             .contexts
             .iter_mut()
             .map(|ctx| {
@@ -924,7 +926,7 @@ mod tests {
                     .registries
                     .assets
                     .read()
-                    .create("net_destroy_test_prefab".to_string(), prefab)
+                    .create(name.to_string(), prefab)
                     .expect("failed to register prefab")
             })
             .collect();
@@ -938,40 +940,69 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(5));
         }
+        (harness, prefab_refs)
+    }
 
-        let owner = harness.client_mut(0);
-        let owner_scene = owner.scenes.current_scene_mut();
-        let spawned = owner
+    /// Spawns `prefab_ref` from client `index` and returns the root with its
+    /// network object id.
+    fn spawn_from_client(
+        harness: &mut TestHarness,
+        index: usize,
+        prefab_ref: Ref<Prefab>,
+    ) -> (GameObject, u64) {
+        let ctx = harness.client_mut(index);
+        let scene = ctx.scenes.current_scene_mut();
+        let spawned = ctx
             .resources
             .network_mut()
-            .instantiate_prefab(owner_scene, prefab_refs[1].clone())
-            .expect("owner failed to spawn prefab");
-        let network_object_id = owner
+            .instantiate_prefab(scene, prefab_ref)
+            .expect("failed to spawn prefab");
+        let network_object_id = ctx
             .scenes
             .current_scene()
             .read_component::<ComponentNetworkObject, _, _>(spawned, |c| c.id)
             .expect("spawned prefab has no network object");
+        (spawned, network_object_id)
+    }
 
-        let exists = |scene: &Scene| {
-            scene.objects().any(|go| {
-                scene
-                    .read_component::<ComponentNetworkObject, _, _>(go, |c| {
-                        c.id == network_object_id
-                    })
-                    .unwrap_or(false)
-            })
-        };
+    /// Returns whether `scene` holds network object `network_object_id`.
+    fn has_network_object(scene: &Scene, network_object_id: u64) -> bool {
+        scene.objects().any(|go| {
+            scene
+                .read_component::<ComponentNetworkObject, _, _>(go, |c| c.id == network_object_id)
+                .unwrap_or(false)
+        })
+    }
 
-        let mut replicated = false;
+    /// Pumps the harness, flushing deletions on every peer as the game loop
+    /// does, until `done` holds or the attempts run out.
+    fn pump_until(harness: &mut TestHarness, mut done: impl FnMut(&TestHarness) -> bool) -> bool {
         for _ in 0..400 {
             harness.pump();
-            replicated = exists(harness.client(1).scenes.current_scene());
-            if replicated {
-                break;
+            for ctx in &mut harness.contexts {
+                ctx.scenes.current_scene_mut().flush_deletes();
+            }
+            if done(harness) {
+                return true;
             }
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert!(replicated, "spawn never reached the other client");
+        false
+    }
+
+    #[test]
+    fn destroyed_object_is_removed_on_all_peers() {
+        let (mut harness, prefab_refs) = setup_spawn_harness("net_destroy_test_prefab");
+        let (spawned, network_object_id) =
+            spawn_from_client(&mut harness, 0, prefab_refs[1].clone());
+
+        assert!(
+            pump_until(&mut harness, |h| has_network_object(
+                h.client(1).scenes.current_scene(),
+                network_object_id
+            )),
+            "spawn never reached the other client"
+        );
 
         // The owner destroys its object locally and tells the other peers,
         // as `Network::destroy_game_object` does.
@@ -987,22 +1018,44 @@ mod tests {
             })
             .expect("failed to send DestroyGameObject");
 
-        let gone_everywhere = |harness: &mut TestHarness| {
-            harness.contexts.iter_mut().all(|ctx| {
-                let scene = ctx.scenes.current_scene_mut();
-                scene.flush_deletes();
-                !exists(scene)
-            })
-        };
-        let mut gone = false;
-        for _ in 0..400 {
-            harness.pump();
-            gone = gone_everywhere(&mut harness);
-            if gone {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(5));
+        assert!(
+            pump_until(&mut harness, |h| h.contexts.iter().all(|ctx| {
+                !has_network_object(ctx.scenes.current_scene(), network_object_id)
+            })),
+            "destroyed object lingers on a peer"
+        );
+    }
+
+    #[test]
+    fn destroy_right_after_spawn_leaves_no_ghost() {
+        let (mut harness, prefab_refs) = setup_spawn_harness("net_spawn_destroy_test_prefab");
+
+        // Spawn and destroy before any peer pumps, so the server receives
+        // both in the same tick.
+        let (spawned, destroyed_id) = spawn_from_client(&mut harness, 0, prefab_refs[1].clone());
+        let owner = harness.client_mut(0);
+        let scene = owner.scenes.current_scene_mut();
+        assert!(owner
+            .resources
+            .network_mut()
+            .destroy_game_object(scene, spawned));
+
+        // A later spawn travels behind the destroy on the ordered channel, so
+        // once it lands the destroy has been handled everywhere.
+        let (_, marker_id) = spawn_from_client(&mut harness, 0, prefab_refs[1].clone());
+        assert!(
+            pump_until(&mut harness, |h| has_network_object(
+                h.client(1).scenes.current_scene(),
+                marker_id
+            )),
+            "marker spawn never reached the other client"
+        );
+
+        for (i, ctx) in harness.contexts.iter().enumerate() {
+            assert!(
+                !has_network_object(ctx.scenes.current_scene(), destroyed_id),
+                "peer {i} kept a ghost of the destroyed object"
+            );
         }
-        assert!(gone, "destroyed object lingers on a peer");
     }
 }

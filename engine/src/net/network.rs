@@ -285,8 +285,8 @@ impl MessageHandler<(&mut Time, TimeType), GameMessage> for NetworkTimeSync {
     }
 }
 
-/// Message handler that applies connection lifecycle, ownership-transfer and
-/// destroy messages to scene and client state.
+/// Message handler that applies connection lifecycle and ownership-transfer
+/// messages to scene and client state.
 ///
 /// Most callers should use [`Network::update_scene`] instead of invoking this
 /// handler directly.
@@ -395,34 +395,43 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                 }
                 MessageHandlerResult::Consume
             }
-            GameMessage::DestroyGameObject {
-                network_object_id,
-                from_client_id,
-            } => {
-                let acting_client_id = sender.acting_client(*from_client_id);
-                let target = find_network_object(scene, *network_object_id);
-                if let Some((_, owner_id)) = target {
-                    if owner_id != acting_client_id {
-                        log::warn!(
-                            "Rejected destroy of network object {network_object_id}                              owned by {owner_id} from {acting_client_id}"
-                        );
-                        return MessageHandlerResult::Consume;
-                    }
-                }
-                // The server may not hold a copy of every object, so it relays
-                // the request and each receiving peer checks ownership itself.
-                if let Some(server) = server {
-                    if let Err(e) = server.broadcast_message_except(acting_client_id, message) {
-                        log::warn!("Failed to broadcast DestroyGameObject: {e}");
-                    }
-                }
-                if let Some((game_object, _)) = target {
-                    scene.delete(game_object);
-                }
-                MessageHandlerResult::Consume
-            }
             _ => MessageHandlerResult::Ignore,
         }
+    }
+}
+
+/// Applies a `DestroyGameObject` request delivered by `sender`.
+///
+/// A request from a client that does not own the object is dropped. On the
+/// server, an accepted request is relayed to every other client; the server
+/// may not hold a copy of every object, so it relays requests for objects it
+/// does not know and each receiving peer checks ownership itself.
+pub(crate) fn handle_destroy(
+    server: &mut Option<Server>,
+    scene: &mut Scene,
+    sender: MessageSender,
+    network_object_id: NetworkObjectId,
+    from_client_id: ClientId,
+    message: &GameMessage,
+) {
+    let acting_client_id = sender.acting_client(from_client_id);
+    let target = find_network_object(scene, network_object_id);
+    if let Some((_, owner_id)) = target {
+        if owner_id != acting_client_id {
+            log::warn!(
+                "Rejected destroy of network object {network_object_id} owned by {owner_id} \
+                 from {acting_client_id}"
+            );
+            return;
+        }
+    }
+    if let Some(server) = server {
+        if let Err(e) = server.broadcast_message_except(acting_client_id, message) {
+            log::warn!("Failed to broadcast DestroyGameObject: {e}");
+        }
+    }
+    if let Some((game_object, _)) = target {
+        scene.delete(game_object);
     }
 }
 
@@ -502,6 +511,22 @@ impl MessageHandler<NetworkPrefabSyncContext<'_, '_>, GameMessage> for NetworkPr
                     &mut index,
                     Some(network_object_ids),
                     &mut None,
+                );
+                MessageHandlerResult::Consume
+            }
+            // Handled in the same pass as `SpawnPrefab`, so a destroy that
+            // follows a spawn is applied and relayed after it.
+            GameMessage::DestroyGameObject {
+                network_object_id,
+                from_client_id,
+            } => {
+                handle_destroy(
+                    server,
+                    scene,
+                    sender,
+                    *network_object_id,
+                    *from_client_id,
+                    message,
                 );
                 MessageHandlerResult::Consume
             }
