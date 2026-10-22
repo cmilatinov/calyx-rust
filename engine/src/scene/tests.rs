@@ -822,7 +822,7 @@ mod tests {
     /// world transform, so a write that forgets to invalidate the subtree
     /// leaves the child at its stale position.
     fn parent_with_cached_child() -> (Scene, GameObject, GameObject) {
-        let mut scene = crate::test_utils::test_registries().scene();
+        let mut scene = crate::test_support::test_registries().scene();
         let parent = scene.create(None, None);
         let child = scene.create(None, Some(parent));
         scene.set_transform(parent, &glm::translation(&Vec3::new(1.0, 0.0, 0.0)));
