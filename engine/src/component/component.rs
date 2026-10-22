@@ -60,14 +60,25 @@ pub trait ComponentInstance: Reflect {
     fn serialize(&self) -> Option<serde_json::Value>;
 
     /// Deserialize a component from JSON, returning an owned `Box<dyn Reflect>`.
-    fn deserialize(&self, value: &serde_json::Value) -> Option<Box<dyn Reflect>>;
+    ///
+    /// # Errors
+    ///
+    /// Returns the serde error when `value` does not match the component's
+    /// serialized shape.
+    fn deserialize(&self, value: &serde_json::Value)
+        -> Result<Box<dyn Reflect>, serde_json::Error>;
 
     /// Convenience: deserialize JSON and assign the result to `self` in place.
     fn deserialize_in_place(&mut self, value: &serde_json::Value) -> bool {
-        if let Some(value) = self.deserialize(value) {
-            self.assign(value)
-        } else {
-            false
+        match self.deserialize(value) {
+            Ok(value) => self.assign(value),
+            Err(err) => {
+                log::warn!(
+                    "Failed to deserialize component {}: {err}",
+                    self.type_name()
+                );
+                false
+            }
         }
     }
 }

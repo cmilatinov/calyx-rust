@@ -514,6 +514,155 @@ mod tests {
         assert_eq!(scene.child_at(parent, 2), Some(c4));
     }
 
+    // --- Sibling order characterization ---
+
+    /// Asserts that `parent`'s children are exactly `expected`, in order, and
+    /// that their sibling indices are contiguous from zero.
+    fn assert_siblings(scene: &Scene, parent: GameObject, expected: &[GameObject]) {
+        let ordered: Vec<GameObject> = scene.children_ordered(parent).collect();
+        assert_eq!(ordered, expected);
+        for (index, child) in expected.iter().enumerate() {
+            assert_eq!(scene.child_at(parent, index as i32), Some(*child));
+            assert_eq!(
+                scene.index_in_parent(parent, *child, SiblingDir::Before),
+                Some(index as i32)
+            );
+            assert_eq!(
+                scene.index_in_parent(parent, *child, SiblingDir::After),
+                Some(index as i32 + 1)
+            );
+        }
+        assert_eq!(scene.child_at(parent, expected.len() as i32), None);
+    }
+
+    #[test]
+    fn sibling_order_follows_creation_under_root_and_parent() {
+        let mut scene = test_scene();
+        let root = scene.root();
+        let a = scene.create(None, None);
+        let b = scene.create(None, None);
+        let a0 = scene.create(None, Some(a));
+        let a1 = scene.create(None, Some(a));
+
+        assert_siblings(&scene, root, &[a, b]);
+        assert_siblings(&scene, a, &[a0, a1]);
+        assert_siblings(&scene, b, &[]);
+    }
+
+    #[test]
+    fn deleting_a_subtree_closes_the_gap_among_its_siblings() {
+        let mut scene = test_scene();
+        let parent = scene.create(None, None);
+        let c0 = scene.create(None, Some(parent));
+        let c1 = scene.create(None, Some(parent));
+        let g0 = scene.create(None, Some(c1));
+        let g1 = scene.create(None, Some(c1));
+        let c2 = scene.create(None, Some(parent));
+        let (g0_uuid, g1_uuid) = (scene.uuid(g0), scene.uuid(g1));
+
+        scene.delete(c1);
+        scene.flush_deletes();
+
+        assert!(scene.find(g0_uuid).is_none());
+        assert!(scene.find(g1_uuid).is_none());
+        assert_siblings(&scene, parent, &[c0, c2]);
+
+        let c3 = scene.create(None, Some(parent));
+        assert_siblings(&scene, parent, &[c0, c2, c3]);
+    }
+
+    #[test]
+    fn deleting_the_first_and_last_child_keeps_the_rest_in_order() {
+        let mut scene = test_scene();
+        let parent = scene.create(None, None);
+        let c0 = scene.create(None, Some(parent));
+        let c1 = scene.create(None, Some(parent));
+        let c2 = scene.create(None, Some(parent));
+        let c3 = scene.create(None, Some(parent));
+
+        scene.delete(c0);
+        scene.delete(c3);
+        scene.flush_deletes();
+
+        assert_siblings(&scene, parent, &[c1, c2]);
+    }
+
+    #[test]
+    fn reparenting_closes_the_gap_in_the_old_parent() {
+        let mut scene = test_scene();
+        let old_parent = scene.create(None, None);
+        let new_parent = scene.create(None, None);
+        let c0 = scene.create(None, Some(old_parent));
+        let c1 = scene.create(None, Some(old_parent));
+        let c2 = scene.create(None, Some(old_parent));
+        let n0 = scene.create(None, Some(new_parent));
+
+        scene.set_parent(c1, Some(new_parent)).unwrap();
+
+        assert_siblings(&scene, old_parent, &[c0, c2]);
+        assert_siblings(&scene, new_parent, &[n0, c1]);
+
+        let c3 = scene.create(None, Some(old_parent));
+        assert_siblings(&scene, old_parent, &[c0, c2, c3]);
+    }
+
+    #[test]
+    fn reparenting_a_subtree_keeps_its_children_in_order() {
+        let mut scene = test_scene();
+        let old_parent = scene.create(None, None);
+        let new_parent = scene.create(None, None);
+        let moved = scene.create(None, Some(old_parent));
+        let g0 = scene.create(None, Some(moved));
+        let g1 = scene.create(None, Some(moved));
+        let g2 = scene.create(None, Some(moved));
+
+        scene.set_parent(moved, Some(new_parent)).unwrap();
+
+        assert_siblings(&scene, moved, &[g0, g1, g2]);
+        assert_siblings(&scene, new_parent, &[moved]);
+        assert_siblings(&scene, old_parent, &[]);
+    }
+
+    #[test]
+    fn inserting_relative_to_a_sibling_shifts_the_later_siblings() {
+        let mut scene = test_scene();
+        let parent = scene.create(None, None);
+        let c0 = scene.create(None, Some(parent));
+        let c1 = scene.create(None, Some(parent));
+        let c2 = scene.create(None, Some(parent));
+        let before = scene.create(None, None);
+        let after = scene.create(None, None);
+
+        scene
+            .set_parent_with_sibling(before, Some(parent), Some((c1, SiblingDir::Before)))
+            .unwrap();
+        assert_siblings(&scene, parent, &[c0, before, c1, c2]);
+
+        scene
+            .set_parent_with_sibling(after, Some(parent), Some((c2, SiblingDir::After)))
+            .unwrap();
+        assert_siblings(&scene, parent, &[c0, before, c1, c2, after]);
+
+        scene
+            .set_parent_with_sibling(c2, Some(parent), Some((c0, SiblingDir::Before)))
+            .unwrap();
+        assert_siblings(&scene, parent, &[c2, c0, before, c1, after]);
+    }
+
+    #[test]
+    fn rejected_reparent_leaves_sibling_order_unchanged() {
+        let mut scene = test_scene();
+        let parent = scene.create(None, None);
+        let c0 = scene.create(None, Some(parent));
+        let c1 = scene.create(None, Some(parent));
+        let g0 = scene.create(None, Some(c1));
+
+        assert!(scene.set_parent_with_sibling(c1, Some(g0), None).is_err());
+
+        assert_siblings(&scene, parent, &[c0, c1]);
+        assert_siblings(&scene, c1, &[g0]);
+    }
+
     // --- Descendants & Ancestors ---
 
     #[test]
