@@ -95,9 +95,10 @@ struct AssetData {
     dirty: HashMap<Uuid, Instant>,
     dependencies: HashMap<PathBuf, HashSet<Uuid>>,
     reload_errors: Vec<AssetReloadError>,
-    /// Registration generation of each on-disk asset id. A file deleted and
-    /// recreated at the same path keeps its id but gets a new generation.
-    generations: HashMap<Uuid, u64>,
+    /// Registration generation and source path of each on-disk asset id. A
+    /// file deleted and recreated at the same path, or an id moving to
+    /// another source, keeps its id but gets a new generation.
+    generations: HashMap<Uuid, (u64, PathBuf)>,
     next_generation: u64,
 }
 
@@ -484,7 +485,7 @@ impl AssetRegistry {
             let data = self.asset_data();
             (
                 data.meta.get(&id).cloned(),
-                data.generations.get(&id).copied(),
+                data.generations.get(&id).map(|(generation, _)| *generation),
             )
         };
         let meta =
@@ -552,7 +553,7 @@ impl AssetRegistry {
                 .meta
                 .get(&id)
                 .is_some_and(|current| current.path == meta.path)
-                && data.generations.get(&id).copied() == generation;
+                && data.generations.get(&id).map(|(generation, _)| *generation) == generation;
             let mut cache = self.asset_cache_mut();
             if !registered {
                 Self::discard_stale_load_locked(&mut data, &mut cache, id, &sub_assets);
@@ -1311,17 +1312,31 @@ impl AssetRegistry {
             Cow::Owned(p) => p,
         });
         let id = meta.id;
+        let source = meta.path.clone().unwrap_or_default();
         let mut data = self.asset_data_mut();
+        let children = meta.children.clone();
         data.meta.insert(id, meta);
         data.names.insert(name_path, id);
         // Only a new registration gets a new generation: forgetting an asset
-        // drops its generation, so a delete and recreate counts as new, while
-        // a create event for a still-registered file must not make in-flight
-        // loads of it stale.
-        if !data.generations.contains_key(&id) {
+        // drops its generation, so a delete and recreate counts as new, and
+        // so does the id moving to another source, while a create event for
+        // a still-registered file must not make in-flight loads of it stale.
+        let moved = data
+            .generations
+            .get(&id)
+            .is_some_and(|(_, previous)| *previous != source);
+        if moved || !data.generations.contains_key(&id) {
             data.next_generation += 1;
             let generation = data.next_generation;
-            data.generations.insert(id, generation);
+            data.generations.insert(id, (generation, source));
+        }
+        if moved {
+            // The cached value was read from the previous source.
+            let mut cache = self.asset_cache_mut();
+            cache.remove(&id);
+            for child in &children {
+                cache.remove(child);
+            }
         }
         drop(data);
         self.update_asset_dependencies(id, path);
@@ -1477,7 +1492,7 @@ impl AssetRegistry {
                 let data = self.asset_data();
                 (
                     data.meta.get(&id).cloned(),
-                    data.generations.get(&id).copied(),
+                    data.generations.get(&id).map(|(generation, _)| *generation),
                 )
             };
             let Some(meta) = meta else {
@@ -1519,7 +1534,7 @@ impl AssetRegistry {
             .meta
             .get(&id)
             .is_some_and(|meta| meta.path.as_ref() == Some(&reload_error.path))
-            && data.generations.get(&id).copied() == generation;
+            && data.generations.get(&id).map(|(generation, _)| *generation) == generation;
         if !current {
             log::info!("Dropping reload error for asset {id}: its source was removed");
             return;
@@ -2030,7 +2045,11 @@ mod tests {
         let (asset_path, _, asset_id) = write_scene_with_meta(&root);
         let registries = test_registries_with_assets(vec![root.clone()]);
         let registry = registries.assets.read();
-        let generation = registry.asset_data().generations.get(&asset_id).copied();
+        let generation = registry
+            .asset_data()
+            .generations
+            .get(&asset_id)
+            .map(|(generation, _)| *generation);
         registry.set_current_reload_error(
             generation,
             AssetReloadError {
@@ -2451,7 +2470,11 @@ mod tests {
         let (asset_path, _, asset_id) = write_scene_with_meta(&root);
         let registries = test_registries_with_assets(vec![root.clone()]);
         let registry = registries.assets.read();
-        let before = registry.asset_data().generations.get(&asset_id).copied();
+        let before = registry
+            .asset_data()
+            .generations
+            .get(&asset_id)
+            .map(|(generation, _)| *generation);
         assert!(before.is_some());
 
         registry.recv_notify_event(
@@ -2459,7 +2482,11 @@ mod tests {
         );
 
         assert_eq!(
-            registry.asset_data().generations.get(&asset_id).copied(),
+            registry
+                .asset_data()
+                .generations
+                .get(&asset_id)
+                .map(|(generation, _)| *generation),
             before
         );
         drop(registry);
@@ -2583,6 +2610,40 @@ mod tests {
         assert_eq!(cached.ptr_id(), held.ptr_id());
         drop(registry);
         std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn id_moving_to_another_source_loads_the_new_source() {
+        let first_root = temp_asset_root("calyx-id-moves-first-root");
+        let second_root = temp_asset_root("calyx-id-moves-second-root");
+        std::fs::write(first_root.join("note.cxtesttext"), "first")
+            .expect("failed to write first asset");
+        let registries = test_registries_with_assets(vec![first_root.clone(), second_root.clone()]);
+        let registry = registries.assets.read();
+        registry.register_asset_type::<TextTestAsset>();
+        registry.build_meta().expect("failed to rebuild metadata");
+        let id = registry
+            .asset_id("note")
+            .expect("first asset is registered");
+        let held = registry
+            .load_by_id::<TextTestAsset>(id)
+            .expect("first asset should load");
+        assert_eq!(held.read().text, "first");
+
+        let second_path = second_root.join("note.cxtesttext");
+        std::fs::write(&second_path, "second").expect("failed to write second asset");
+        registry.recv_notify_event(
+            Event::new(EventKind::Create(notify::event::CreateKind::File)).add_path(second_path),
+        );
+
+        assert_eq!(registry.asset_id("note"), Some(id));
+        let loaded = registry
+            .load_by_id::<TextTestAsset>(id)
+            .expect("second asset should load");
+        assert_eq!(loaded.read().text, "second");
+        drop(registry);
+        std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
+        std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
     }
 
     #[test]
