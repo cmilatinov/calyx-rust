@@ -215,9 +215,23 @@ fn struct_type_info(
         }
     });
 
+    // Dispatches on each field's resolved type, so a `Vec` reached through a
+    // type alias registers its list metadata too.
+    let register_field_types = field_info.iter().map(|(_, ty, _, _)| {
+        quote! {
+            (&&engine::reflect::type_registry::FieldTypeRegistrar::<#ty>::new())
+                .register_field_type(registry);
+        }
+    });
+
     Ok(quote! {
         registry.meta_struct::<#name>(#reflect_attrs)
             #(#add_field_calls)*;
+        {
+            #[allow(unused_imports)]
+            use engine::reflect::type_registry::{RegisterPlainFieldType, RegisterVecFieldType};
+            #(#register_field_types)*
+        }
     })
 }
 
