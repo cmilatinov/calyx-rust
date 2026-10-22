@@ -10,9 +10,9 @@ use crate::assets::texture::Texture;
 use crate::assets::{Asset, AssetId};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
-use crate::render::{AssetMap, LockedAssetRenderState, Shader};
+use crate::render::{AssetMap, LockedAssetRenderState, RenderContext, Shader};
 use crate::utils::TypeUuid;
-use egui_wgpu::{wgpu, RenderState};
+use egui_wgpu::wgpu;
 use naga::{ImageDimension, Scalar, ScalarKind, TypeInner, VectorSize};
 use serde::{Deserialize, Serialize};
 
@@ -645,8 +645,8 @@ impl Material {
         }
     }
 
-    pub(crate) fn load_buffers(&mut self, render_state: &RenderState) {
-        let queue = &render_state.queue;
+    pub(crate) fn load_buffers(&mut self, render_context: &RenderContext) {
+        let queue = render_context.queue();
         for var in self.variables.iter() {
             if let Some(buffer) = self.buffers.get(&(var.group, var.binding)) {
                 queue.write_buffer(

@@ -3,11 +3,12 @@ use crate::component::{ComponentParticleSystem, ParticleBlendMode, ParticleRende
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::buffer::{wgpu_buffer_init_desc, BufferLayout, ResizableBuffer};
-use crate::render::{PipelineOptions, RenderUtils, Shader, VertexLayout};
+use crate::render::{
+    PipelineOptions, RenderContext, RenderUtils, SceneRendererError, Shader, VertexLayout,
+};
 use crate::scene::{GameObject, Scene};
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
-use egui_wgpu::RenderState;
 use legion::{Entity, IntoQuery};
 use nalgebra_glm::Vec3;
 use std::collections::HashMap;
@@ -52,20 +53,10 @@ pub struct ParticleRenderer {
 }
 
 impl ParticleRenderer {
-    pub fn new(context: &ReadOnlyAssetContext) -> Self {
+    pub fn new(context: &ReadOnlyAssetContext) -> Result<Self, SceneRendererError> {
         let device = context.render_context.device();
-        let shader = context
-            .registries
-            .assets
-            .read()
-            .load::<Shader>("shaders/particles")
-            .expect("missing particle shader");
-        let default_texture = context
-            .registries
-            .assets
-            .read()
-            .load::<Texture>("textures/white")
-            .expect("missing white texture");
+        let shader = SceneRendererError::load::<Shader>(context, "shaders/particles")?;
+        let default_texture = SceneRendererError::load::<Texture>(context, "textures/white")?;
         let vertices = [
             ParticleVertex {
                 position: [-0.5, -0.5],
@@ -86,7 +77,7 @@ impl ParticleRenderer {
         ];
         let indices = [0u16, 1, 2, 2, 3, 0];
 
-        Self {
+        Ok(Self {
             shader,
             default_texture,
             vertex_buffer: device.create_buffer_init(&wgpu_buffer_init_desc(
@@ -99,13 +90,13 @@ impl ParticleRenderer {
                 wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::VERTEX,
             ),
             particle_systems: HashMap::new(),
-        }
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
-        render_state: &RenderState,
+        render_context: &RenderContext,
         encoder: &mut wgpu::CommandEncoder,
         asset_context: &ReadOnlyAssetContext,
         scene: &Scene,
@@ -115,8 +106,8 @@ impl ParticleRenderer {
         depth_target: &Texture,
         samples: u32,
     ) {
-        let device = &render_state.device;
-        let queue = &render_state.queue;
+        let device = render_context.device();
+        let queue = render_context.queue();
         let color_format = color_target.descriptor.format;
         let depth_format = depth_target.descriptor.format;
 
@@ -254,7 +245,8 @@ mod tests {
         let assets = TestAssets::engine();
         let context = assets.asset_context();
         let read_only_context = context.lock_read();
-        let renderer = ParticleRenderer::new(&read_only_context);
+        let renderer =
+            ParticleRenderer::new(&read_only_context).expect("particle renderer should load");
 
         let alpha = renderer.pipeline(
             ParticleBlendMode::Alpha,
@@ -294,7 +286,8 @@ mod tests {
         let assets = TestAssets::engine();
         let context = assets.asset_context();
         let read_only_context = context.lock_read();
-        let renderer = ParticleRenderer::new(&read_only_context);
+        let renderer =
+            ParticleRenderer::new(&read_only_context).expect("particle renderer should load");
         let before = renderer.pipeline(
             ParticleBlendMode::Alpha,
             1,

@@ -438,11 +438,11 @@ impl Texture {
     /// Generates cubemap mip levels using `mip_shader_ref`.
     pub fn generate_cubemap_mips(
         &self,
-        render_state: &egui_wgpu::RenderState,
+        render_context: &RenderContext,
         encoder: &mut wgpu::CommandEncoder,
         mip_shader_ref: &Ref<Shader>,
     ) {
-        let device = &render_state.device;
+        let device = render_context.device();
         let Some(wgpu::TextureViewDimension::Cube) = self.view_descriptor.dimension else {
             return;
         };
