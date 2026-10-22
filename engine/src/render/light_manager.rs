@@ -184,7 +184,7 @@ impl LightManager {
 mod tests {
     use super::*;
     use crate::component::{ComponentAmbientLight, ComponentDirectionalLight, ComponentPointLight};
-    use crate::test_utils::test_scene;
+    use crate::test_support::test_scene;
     use egui::Color32;
     use nalgebra_glm::{translation, vec3};
 

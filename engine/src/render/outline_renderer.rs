@@ -220,7 +220,7 @@ fn srgb_channel_to_linear(channel: u8) -> f32 {
 mod tests {
     use super::OutlineRenderer;
     use crate::render::RenderUtils;
-    use crate::test_utils::TestAssets;
+    use crate::test_support::TestAssets;
     use egui_wgpu::wgpu::TextureFormat;
 
     #[test]

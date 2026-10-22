@@ -150,7 +150,7 @@ impl ShaderPreprocessor {
 #[cfg(test)]
 mod tests {
     use super::ShaderPreprocessor;
-    use crate::test_utils::test_registries_with_assets;
+    use crate::test_support::test_registries_with_assets;
     use std::fs;
     use uuid::Uuid;
 

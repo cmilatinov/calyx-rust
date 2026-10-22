@@ -247,7 +247,7 @@ fn icon_uv_rect(icon: GizmoIcon) -> [glm::Vec2; 2] {
 mod tests {
     use super::*;
     use crate::assets::mesh::Mesh;
-    use crate::test_utils::TestAssets;
+    use crate::test_support::TestAssets;
     use nalgebra_glm::vec3;
 
     #[test]

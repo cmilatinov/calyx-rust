@@ -6,7 +6,7 @@ mod tests {
     use crate::reflect::{Reflect, ReflectDefault};
     use crate::scene::game_object_ref::RemapScope;
     use crate::scene::{GameObject, GameObjectRef, Scene, SceneData, SiblingDir};
-    use crate::test_utils::test_scene;
+    use crate::test_support::test_scene;
     use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
     use nalgebra_glm::{self as glm, Vec3};
     use serde::{Deserialize, Serialize};
@@ -949,7 +949,7 @@ mod tests {
 
     #[test]
     fn transform_cache_is_not_reused_after_node_is_recycled() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
 
         let template = scene.create(None, None);
@@ -979,7 +979,7 @@ mod tests {
 
     #[test]
     fn parentless_prefab_root_starts_with_fresh_world_transform() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
 
         let template = scene.create(None, None);
@@ -1034,7 +1034,7 @@ mod tests {
 
     #[test]
     fn bind_component_dyn() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
         let go = scene.create(None, None);
 
@@ -1079,7 +1079,7 @@ mod tests {
 
     #[test]
     fn create_and_instantiate_prefab() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
 
         let parent = scene.create(
@@ -1114,7 +1114,7 @@ mod tests {
 
     #[test]
     fn instantiate_prefab_returns_error_for_missing_root() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
         let root = scene.create(None, None);
         let mut prefab = scene.create_prefab(root);
@@ -1132,7 +1132,7 @@ mod tests {
 
     #[test]
     fn instantiate_prefab_returns_error_for_hierarchy_cycle() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
         let root = scene.create(None, None);
         let a = scene.create(None, None);
@@ -1168,7 +1168,7 @@ mod tests {
 
     #[test]
     fn instantiate_prefab_returns_error_for_hierarchy_entry_outside_prefab() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
         let root = scene.create(None, None);
         let mut prefab = scene.create_prefab(root);
@@ -1189,7 +1189,7 @@ mod tests {
 
     #[test]
     fn instantiate_prefab_returns_error_for_disconnected_or_duplicate_parent_objects() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
         let root = scene.create(None, None);
         let other = scene.create(None, None);
@@ -1221,7 +1221,7 @@ mod tests {
 
     #[test]
     fn instantiate_prefab_returns_error_for_missing_id_component() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
         let root = scene.create(None, None);
         let mut prefab = scene.create_prefab(root);
@@ -1324,7 +1324,7 @@ mod tests {
 
     #[test]
     fn instantiate_prefab_remaps_reference_inside_nested_struct() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
 
         let (instance, instance_child) =
@@ -1341,7 +1341,7 @@ mod tests {
 
     #[test]
     fn instantiate_prefab_remaps_references_inside_list() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
 
         let (instance, instance_child) =
@@ -1361,7 +1361,7 @@ mod tests {
 
     #[test]
     fn instantiate_prefab_remaps_references_inside_enum_variant_and_tuple_struct() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
 
         let (instance, instance_child) =
@@ -1388,7 +1388,7 @@ mod tests {
 
     #[test]
     fn instantiate_prefab_leaves_nil_and_outside_references_unchanged() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
         let outside = scene.create(None, None);
         let outside_id = scene.uuid(outside);
@@ -1415,7 +1415,7 @@ mod tests {
 
     #[test]
     fn instantiate_prefab_does_not_remap_serde_skipped_references() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
 
         let (instance, _) = instantiate_with_refs(&mut scene, |_, child| NestedRefComponent {
@@ -1429,7 +1429,7 @@ mod tests {
 
     #[test]
     fn remap_scope_ends_after_instantiate_prefab() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
         let root = scene.create(None, None);
         let root_id = scene.uuid(root);
@@ -1459,7 +1459,7 @@ mod tests {
 
     #[test]
     fn serialization_round_trip_preserves_game_objects() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
 
         scene.create(
@@ -1487,7 +1487,7 @@ mod tests {
 
     #[test]
     fn serialization_round_trip_preserves_hierarchy() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
 
         let parent = scene.create(
@@ -1520,7 +1520,7 @@ mod tests {
 
     #[test]
     fn serialization_round_trip_preserves_components() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
 
         let go = scene.create(None, None);
@@ -1550,7 +1550,7 @@ mod tests {
 
     #[test]
     fn scene_clone_is_equivalent() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
 
         let parent = scene.create(
@@ -1580,7 +1580,7 @@ mod tests {
 
     #[test]
     fn scene_snapshot_restores_equivalent_scene() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
 
         let parent = scene.create(
@@ -1614,7 +1614,7 @@ mod tests {
 
     #[test]
     fn scene_manager_restores_authoring_scene_snapshot() {
-        let mut game = crate::test_utils::test_game_context();
+        let mut game = crate::test_support::test_game_context();
         game.scenes.current_scene_mut().create(
             Some(ComponentID {
                 name: "Kept".into(),
@@ -1648,7 +1648,7 @@ mod tests {
 
     #[test]
     fn scene_manager_starts_configured_scene_without_replacing_authoring_scene() {
-        let mut game = crate::test_utils::test_game_context();
+        let mut game = crate::test_support::test_game_context();
         game.scenes.current_scene_mut().create(
             Some(ComponentID {
                 name: "Authoring".into(),
@@ -1687,7 +1687,7 @@ mod tests {
 
     #[test]
     fn scene_manager_resumes_configured_simulation_without_reloading() {
-        let mut game = crate::test_utils::test_game_context();
+        let mut game = crate::test_support::test_game_context();
         let mut configured = test_scene();
         configured.create(
             Some(ComponentID {
@@ -1720,7 +1720,7 @@ mod tests {
 
     #[test]
     fn scene_snapshot_serializes_like_scene() {
-        let mut scene = crate::test_utils::test_scene();
+        let mut scene = crate::test_support::test_scene();
         scene.create(
             Some(ComponentID {
                 name: "Snapshot Object".into(),

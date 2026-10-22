@@ -309,7 +309,7 @@ impl ParticleRenderer {
 #[cfg(test)]
 mod tests {
     use super::ParticleRenderer;
-    use crate::test_utils::TestAssets;
+    use crate::test_support::TestAssets;
     use egui_wgpu::wgpu::TextureFormat;
 
     #[test]
