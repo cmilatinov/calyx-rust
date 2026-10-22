@@ -43,9 +43,15 @@ impl Default for WindowSettings {
 }
 
 impl WindowSettings {
-    /// Returns the window size as an egui size in logical points.
+    /// Returns the window size as an egui size in logical points. A size with
+    /// a zero dimension falls back to the default size, since a window cannot
+    /// open collapsed.
     pub fn inner_size(&self) -> egui::Vec2 {
-        egui::vec2(self.width as f32, self.height as f32)
+        let (width, height) = self.non_zero_size().unwrap_or_else(|| {
+            let default = Self::default();
+            (default.width, default.height)
+        });
+        egui::vec2(width as f32, height as f32)
     }
 
     /// Returns `(width, height)` when neither dimension is zero.
@@ -310,6 +316,17 @@ mod tests {
         };
 
         assert_eq!(window.non_zero_size(), None);
+    }
+
+    #[test]
+    fn zero_window_dimension_opens_at_default_size() {
+        let window = WindowSettings {
+            width: 1024,
+            height: 0,
+        };
+
+        assert_eq!(window.inner_size(), WindowSettings::default().inner_size());
+        assert_eq!(window.inner_size(), egui::vec2(1280.0, 720.0));
     }
 
     #[test]
