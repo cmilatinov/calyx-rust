@@ -1036,8 +1036,8 @@ impl AssetRegistry {
             .map(PathBuf::as_path)
     }
 
-    /// Drops the in-memory metadata, names, dirty marks and dependency
-    /// entries of every asset whose source file is `path` or lies below it,
+    /// Drops the in-memory metadata, names, dirty marks, reload errors and
+    /// dependency entries of every asset whose source file is `path` or lies below it,
     /// and of their sub-assets. Assets are matched by their stored source
     /// path, not by name, so a same-name asset in another root survives and
     /// is registered again under any name the forgotten asset held.
@@ -1062,6 +1062,7 @@ impl AssetRegistry {
         data.meta.retain(|id, _| !ids.contains(id));
         data.names.retain(|_, id| !ids.contains(id));
         data.dirty.retain(|id, _| !ids.contains(id));
+        data.reload_errors.retain(|error| !ids.contains(&error.id));
         for dependents in data.dependencies.values_mut() {
             dependents.retain(|dependent| !ids.contains(dependent));
         }
@@ -1931,6 +1932,29 @@ mod tests {
         drop(registry);
         std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
         std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
+    }
+
+    #[test]
+    fn remove_event_clears_reload_errors_of_deleted_asset() {
+        let root = temp_asset_root("calyx-remove-clears-reload-error");
+        let (asset_path, _, asset_id) = write_scene_with_meta(&root);
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        registry.set_reload_error(AssetReloadError {
+            id: asset_id,
+            path: asset_path.clone(),
+            error: AssetError::LoadError.with_source("test reload failure"),
+        });
+        assert_eq!(registry.reload_errors().len(), 1);
+
+        std::fs::remove_file(&asset_path).expect("failed to delete scene asset");
+        registry.recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(asset_path),
+        );
+
+        assert!(registry.reload_errors().is_empty());
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
 
     #[test]
