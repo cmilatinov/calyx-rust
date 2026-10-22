@@ -433,7 +433,7 @@ mod tests {
             assert_eq!(err.kind, AssetError::LoadError.kind, "{name}");
             assert_eq!(err.asset_type, Some(Prefab::asset_name()), "{name}");
             assert_eq!(err.path.as_deref(), Some(path.as_path()), "{name}");
-            assert!(err.source.is_some(), "{name}");
+            assert!(err.source_message.is_some(), "{name}");
         }
     }
 

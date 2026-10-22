@@ -1,5 +1,4 @@
-use std::error::Error;
-use std::fmt::{self, Display, Formatter};
+use std::fmt::{Display, Write};
 use std::path::{Path, PathBuf};
 
 /// Broad asset error categories surfaced by loading and registry operations.
@@ -16,7 +15,10 @@ pub enum AssetErrorKind {
 }
 
 /// Structured asset error with optional path, type, and source context.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// The message reads `<kind>[ for <asset_type>][ at <path>][: <source_message>]`.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{}", describe(self))]
 pub struct AssetError {
     /// Broad error category.
     pub kind: AssetErrorKind,
@@ -25,7 +27,11 @@ pub struct AssetError {
     /// Asset type involved in the failure, when known.
     pub asset_type: Option<&'static str>,
     /// Displayable source error string, when available.
-    pub source: Option<String>,
+    ///
+    /// It is part of the message rather than an error chain, so `source()`
+    /// returns `None`. The field is not named `source` because `thiserror`
+    /// treats a field of that name as the wrapped error type.
+    pub source_message: Option<String>,
 }
 
 #[allow(non_upper_case_globals)]
@@ -45,7 +51,7 @@ impl AssetError {
             kind,
             path: None,
             asset_type: None,
-            source: None,
+            source_message: None,
         }
     }
 
@@ -63,32 +69,84 @@ impl AssetError {
 
     /// Attaches a source error string.
     pub fn with_source(mut self, source: impl Display) -> Self {
-        self.source = Some(source.to_string());
+        self.source_message = Some(source.to_string());
         self
     }
 }
 
-impl Display for AssetError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let kind = match self.kind {
-            AssetErrorKind::NotFound => "asset not found",
-            AssetErrorKind::LoadError => "asset load failed",
-            AssetErrorKind::AlreadyExists => "asset already exists",
-            AssetErrorKind::TypeMismatch => "asset type mismatch",
-        };
-
-        write!(f, "{kind}")?;
-        if let Some(asset_type) = self.asset_type {
-            write!(f, " for {asset_type}")?;
-        }
-        if let Some(path) = &self.path {
-            write!(f, " at {}", path.display())?;
-        }
-        if let Some(source) = &self.source {
-            write!(f, ": {source}")?;
-        }
-        Ok(())
+/// Builds an [`AssetError`] message from its kind and whichever context it has.
+fn describe(error: &AssetError) -> String {
+    let mut message = String::from(match error.kind {
+        AssetErrorKind::NotFound => "asset not found",
+        AssetErrorKind::LoadError => "asset load failed",
+        AssetErrorKind::AlreadyExists => "asset already exists",
+        AssetErrorKind::TypeMismatch => "asset type mismatch",
+    });
+    if let Some(asset_type) = error.asset_type {
+        let _ = write!(message, " for {asset_type}");
     }
+    if let Some(path) = &error.path {
+        let _ = write!(message, " at {}", path.display());
+    }
+    if let Some(source) = &error.source_message {
+        let _ = write!(message, ": {source}");
+    }
+    message
 }
 
-impl Error for AssetError {}
+#[cfg(test)]
+mod tests {
+    use super::{AssetError, AssetErrorKind};
+    use std::error::Error;
+
+    const KINDS: [(AssetErrorKind, &str); 4] = [
+        (AssetErrorKind::NotFound, "asset not found"),
+        (AssetErrorKind::LoadError, "asset load failed"),
+        (AssetErrorKind::AlreadyExists, "asset already exists"),
+        (AssetErrorKind::TypeMismatch, "asset type mismatch"),
+    ];
+
+    #[test]
+    fn formats_every_kind_with_every_combination_of_context() {
+        for (kind, label) in KINDS {
+            for with_type in [false, true] {
+                for with_path in [false, true] {
+                    for with_source in [false, true] {
+                        let mut error = AssetError::new(kind);
+                        let mut expected = label.to_string();
+                        if with_type {
+                            error = error.with_type("Texture");
+                            expected.push_str(" for Texture");
+                        }
+                        if with_path {
+                            error = error.with_path("textures/brick.png");
+                            expected.push_str(" at textures/brick.png");
+                        }
+                        if with_source {
+                            error = error.with_source("unexpected end of file");
+                            expected.push_str(": unexpected end of file");
+                        }
+                        assert_eq!(error.to_string(), expected);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn prebuilt_constants_format_as_their_kind() {
+        assert_eq!(AssetError::NotFound.to_string(), "asset not found");
+        assert_eq!(AssetError::LoadError.to_string(), "asset load failed");
+        assert_eq!(
+            AssetError::AlreadyExists.to_string(),
+            "asset already exists"
+        );
+        assert_eq!(AssetError::TypeMismatch.to_string(), "asset type mismatch");
+    }
+
+    #[test]
+    fn string_source_is_part_of_the_message_not_an_error_chain() {
+        let error = AssetError::LoadError.with_source("bad header");
+        assert!(error.source().is_none());
+    }
+}
