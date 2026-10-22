@@ -1136,6 +1136,10 @@ impl AssetRegistry {
                 if ext.is_empty() || ext == "meta" || ext == "rs" {
                     continue;
                 }
+                if self.owning_asset_root(&path) != Some(asset_path.as_path()) {
+                    // A deeper root owns this file; its own pass registers it.
+                    continue;
+                }
                 let meta_path = path.with_extension("meta");
                 if let Err(err) = self.build_asset_meta(asset_path, &path, &meta_path) {
                     log::warn!(
@@ -1763,6 +1767,29 @@ mod tests {
             .asset_id("created")
             .expect("created asset is registered under the inner root");
         assert_eq!(registry.asset_id_from_path(&asset_path), Some(id));
+        drop(registry);
+        std::fs::remove_dir_all(outer_root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn startup_scan_names_nested_assets_relative_to_deepest_root() {
+        let outer_root = temp_asset_root("calyx-nested-startup");
+        let inner_root = outer_root.join("inner");
+        std::fs::create_dir_all(&inner_root).expect("failed to create inner asset root");
+        let asset_path = inner_root.join("existing.cxscene");
+        std::fs::write(&asset_path, b"{}").expect("failed to write existing asset");
+        let registries = test_registries_with_assets(vec![outer_root.clone(), inner_root.clone()]);
+        let registry = registries.assets.read();
+
+        let id = registry
+            .asset_id("existing")
+            .expect("existing asset is registered under the inner root");
+        assert_eq!(
+            registry.asset_meta_from_id(id).map(|meta| meta.name),
+            Some("existing".into())
+        );
+        assert_eq!(registry.asset_id_from_path(&asset_path), Some(id));
+        assert_eq!(registry.asset_id("inner/existing"), None);
         drop(registry);
         std::fs::remove_dir_all(outer_root).expect("failed to remove temp asset root");
     }
