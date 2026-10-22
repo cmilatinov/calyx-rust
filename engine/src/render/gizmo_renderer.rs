@@ -593,19 +593,19 @@ impl GizmoRenderer {
         game: &ReadOnlyAssetContext,
         relative_path: &Path,
     ) -> Result<Shader, SceneRendererError> {
-        let missing = |error| SceneRendererError::MissingAsset {
-            name: relative_path.display().to_string(),
-            error,
-        };
+        let name = || relative_path.display().to_string();
         let asset_paths = game.registries.assets.read().asset_paths().clone();
         let path = asset_paths
             .iter()
             .map(|asset_path| asset_path.join(relative_path))
             .find(|path| path.exists())
-            .ok_or_else(|| missing(None))?;
+            .ok_or_else(|| SceneRendererError::MissingAsset { name: name() })?;
         Shader::from_file(game, &path)
             .map(|loaded| loaded.asset)
-            .map_err(|error| missing(Some(error)))
+            .map_err(|error| SceneRendererError::AssetLoad {
+                name: name(),
+                error,
+            })
     }
 }
 

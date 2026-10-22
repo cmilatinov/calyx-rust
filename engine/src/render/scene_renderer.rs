@@ -25,7 +25,6 @@ use nalgebra_glm::Mat4;
 use rapier3d::pipeline::DebugRenderPipeline;
 use std::collections::{HashMap, HashSet};
 use std::default::Default;
-use std::fmt;
 use std::ops::Range;
 use std::sync::{mpsc, Arc};
 use uuid::Uuid;
@@ -87,20 +86,27 @@ impl Default for SceneRendererOptions {
 
 /// Error returned when a [`SceneRenderer`] or one of its sub-renderers cannot
 /// be created.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SceneRendererError {
-    /// A shader, mesh or texture the renderer draws with is missing or failed
-    /// to load.
+    /// A shader, mesh or texture the renderer draws with failed to load.
+    #[error("scene renderer asset `{name}` failed to load")]
+    AssetLoad {
+        /// Registry name or relative path of the asset.
+        name: String,
+        /// The registry's load error.
+        #[source]
+        error: AssetError,
+    },
+    /// A shader or built-in asset the renderer draws with does not exist.
+    #[error("scene renderer asset `{name}` is missing")]
     MissingAsset {
         /// Registry name or relative path of the asset.
         name: String,
-        /// The registry's load error, when it reported one.
-        error: Option<AssetError>,
     },
 }
 
 impl SceneRendererError {
-    /// Loads the asset `name` from the registry, or reports it missing.
+    /// Loads the asset `name` from the registry, or reports why it did not load.
     pub(crate) fn load<A: Asset + TypeUuid>(
         context: &ReadOnlyAssetContext,
         name: &str,
@@ -110,9 +116,9 @@ impl SceneRendererError {
             .assets
             .read()
             .load::<A>(name)
-            .map_err(|error| Self::MissingAsset {
+            .map_err(|error| Self::AssetLoad {
                 name: name.to_string(),
-                error: Some(error),
+                error,
             })
     }
 
@@ -120,26 +126,9 @@ impl SceneRendererError {
     fn require<T>(asset: Option<T>, name: &str) -> Result<T, Self> {
         asset.ok_or_else(|| Self::MissingAsset {
             name: name.to_string(),
-            error: None,
         })
     }
 }
-
-impl fmt::Display for SceneRendererError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::MissingAsset {
-                name,
-                error: Some(error),
-            } => write!(f, "scene renderer asset `{name}` failed to load: {error}"),
-            Self::MissingAsset { name, error: None } => {
-                write!(f, "scene renderer asset `{name}` is missing")
-            }
-        }
-    }
-}
-
-impl std::error::Error for SceneRendererError {}
 
 /// One draw-list entry emitted while collecting scene meshes.
 pub struct DrawListElement {
@@ -1483,13 +1472,41 @@ mod tests {
         let result = SceneRenderer::new(&context.lock_read(), Default::default(), (16, 16));
 
         match result {
-            Err(SceneRendererError::MissingAsset { name, error }) => {
+            Err(SceneRendererError::AssetLoad { name, .. }) => {
                 assert_eq!(name, "shaders/pbr");
-                assert!(error.is_some(), "the registry's load error should be kept");
             }
+            Err(error) => panic!("expected the pbr shader to fail to load, got {error:?}"),
             Ok(_) => panic!("a registry without shaders cannot build a scene renderer"),
         }
         std::fs::remove_dir_all(empty).unwrap();
+    }
+
+    #[test]
+    fn construction_errors_describe_the_asset_and_chain_the_load_error() {
+        use std::error::Error;
+
+        let load_error = AssetError::NotFound.with_source("asset name `shaders/pbr`");
+        let failed = SceneRendererError::AssetLoad {
+            name: "shaders/pbr".into(),
+            error: load_error.clone(),
+        };
+        assert_eq!(
+            failed.to_string(),
+            "scene renderer asset `shaders/pbr` failed to load"
+        );
+        let source = failed
+            .source()
+            .and_then(|source| source.downcast_ref::<AssetError>());
+        assert_eq!(source, Some(&load_error));
+
+        let missing = SceneRendererError::MissingAsset {
+            name: "meshes/cube".into(),
+        };
+        assert_eq!(
+            missing.to_string(),
+            "scene renderer asset `meshes/cube` is missing"
+        );
+        assert!(missing.source().is_none());
     }
 
     #[test]
