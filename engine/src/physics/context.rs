@@ -6,7 +6,6 @@ use crate::math::Transform;
 use crate::physics::events::{CollisionEvents, ContactKind};
 use crate::physics::PhysicsConfiguration;
 use crate::scene::{GameObject, Scene};
-use crate::utils::AppliedState;
 use legion::{Entity, IntoQuery};
 use nalgebra::{Point3, Translation3, UnitQuaternion, Vector3};
 use nalgebra_glm::Mat4;
@@ -63,9 +62,9 @@ pub struct PhysicsContext {
     pub(crate) entity_collider: HashMap<Entity, ColliderHandle>,
     pub(crate) collider_entity: HashMap<ColliderHandle, Entity>,
     /// Rigid body component values last applied to each Rapier body.
-    applied_rigid_bodies: AppliedState<ComponentRigidBody>,
+    applied_rigid_bodies: HashMap<Entity, ComponentRigidBody>,
     /// Collider component values last applied to each Rapier collider.
-    applied_colliders: AppliedState<ComponentCollider>,
+    applied_colliders: HashMap<Entity, ComponentCollider>,
     accumulated_time: TimeType,
     /// Collision and contact-force events from the most recent physics step.
     pub events: CollisionEvents,
@@ -256,7 +255,7 @@ impl PhysicsContext {
 
         for (entity, handle) in stale_bodies {
             scene.physics.entity_rigid_body.remove(&entity);
-            scene.physics.applied_rigid_bodies.forget(entity);
+            scene.physics.applied_rigid_bodies.remove(&entity);
             scene.physics.bodies.remove(
                 handle,
                 &mut scene.physics.islands,
@@ -279,7 +278,7 @@ impl PhysicsContext {
 
         for (entity, handle) in stale_colliders {
             scene.physics.entity_collider.remove(&entity);
-            scene.physics.applied_colliders.forget(entity);
+            scene.physics.applied_colliders.remove(&entity);
             if scene.physics.colliders.get(handle).is_some() {
                 scene.physics.colliders.remove(
                     handle,
@@ -310,21 +309,18 @@ impl PhysicsContext {
                     let rigid_body = Self::rigid_body_from_component(&transform, c_rb);
                     let handle = scene.physics.bodies.insert(rigid_body);
                     scene.physics.entity_rigid_body.insert(go.entity, handle);
-                    scene
-                        .physics
-                        .applied_rigid_bodies
-                        .take_if_changed(go.entity, c_rb);
                 }
                 Some(&handle) => {
-                    if scene
-                        .physics
-                        .applied_rigid_bodies
-                        .take_if_changed(go.entity, c_rb)
-                    {
-                        Self::apply_rigid_body(&mut scene.physics.bodies[handle], c_rb);
+                    if scene.physics.applied_rigid_bodies.get(&go.entity) == Some(c_rb) {
+                        continue;
                     }
+                    Self::apply_rigid_body(&mut scene.physics.bodies[handle], c_rb);
                 }
             }
+            scene
+                .physics
+                .applied_rigid_bodies
+                .insert(go.entity, c_rb.clone());
         }
     }
 
@@ -355,21 +351,18 @@ impl PhysicsContext {
                     };
                     scene.physics.entity_collider.insert(go.entity, handle);
                     scene.physics.collider_entity.insert(handle, go.entity);
-                    scene
-                        .physics
-                        .applied_colliders
-                        .take_if_changed(go.entity, c_collider);
                 }
                 Some(&c_handle) => {
-                    if scene
-                        .physics
-                        .applied_colliders
-                        .take_if_changed(go.entity, c_collider)
-                    {
-                        Self::apply_collider(&mut scene.physics.colliders[c_handle], c_collider);
+                    if scene.physics.applied_colliders.get(&go.entity) == Some(c_collider) {
+                        continue;
                     }
+                    Self::apply_collider(&mut scene.physics.colliders[c_handle], c_collider);
                 }
             }
+            scene
+                .physics
+                .applied_colliders
+                .insert(go.entity, c_collider.clone());
         }
     }
 
