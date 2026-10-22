@@ -7,16 +7,18 @@ use engine::component::{
 use engine::core::TimeType;
 use engine::input::Input;
 use engine::math::Transform;
-use engine::physics::PhysicsContext;
 use engine::reflect::{Reflect, ReflectDefault};
 use engine::render::{Camera, Ray};
 use engine::resource::ResourceMap;
 use engine::scene::GameObjectRef;
+use engine::scene::Scene;
 use engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
+use legion::Entity;
 use nalgebra::UnitQuaternion;
 use nalgebra_glm::{vec2, vec3, Vec3};
-use rapier3d::prelude::QueryFilter;
+use rapier3d::prelude::{Collider, ColliderHandle, QueryFilter, RigidBodyType};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 const TANK_COLLIDER_HALF_EXTENTS: Vec3 = Vec3::new(0.75, 0.5, 1.0);
 const TANK_COLLIDER_OFFSET: Vec3 = Vec3::new(0.0, 0.75, 0.0);
@@ -264,7 +266,7 @@ fn update_hull(
         };
         let forward = flatten_xz(transform.forward());
         let movement = forward * (throttle * speed * dt);
-        transform.translate(&resolve_hull_movement(&scene.physics, &transform, movement));
+        transform.translate(&resolve_hull_movement(scene, &transform, movement));
         changed = true;
     }
 
@@ -278,7 +280,43 @@ fn update_hull(
     scene.world_transform(game_object)
 }
 
-fn resolve_hull_movement(physics: &PhysicsContext, transform: &Transform, movement: Vec3) -> Vec3 {
+/// Entities whose colliders block the hull: colliders on a fixed rigid body
+/// (on the object itself or an ancestor) or on no rigid body at all. Colliders
+/// of dynamic or kinematic bodies, such as projectiles, never stop the hull.
+fn static_obstacles(scene: &Scene) -> HashSet<Entity> {
+    scene
+        .objects()
+        .filter(|&object| {
+            scene
+                .read_component::<ComponentCollider, _, _>(object, |_| ())
+                .is_some()
+        })
+        .filter(|&object| {
+            let body_type = scene
+                .read_component::<ComponentRigidBody, _, _>(object, |body| body.ty)
+                .or_else(|| {
+                    scene
+                        .ancestor_with::<ComponentRigidBody>(object)
+                        .and_then(|ancestor| {
+                            scene.read_component::<ComponentRigidBody, _, _>(ancestor, |body| {
+                                body.ty
+                            })
+                        })
+                });
+            matches!(body_type, None | Some(RigidBodyType::Fixed))
+        })
+        .map(|object| object.entity)
+        .collect()
+}
+
+fn resolve_hull_movement(scene: &Scene, transform: &Transform, movement: Vec3) -> Vec3 {
+    let physics = &scene.physics;
+    let obstacles = static_obstacles(scene);
+    let is_obstacle = |collider: ColliderHandle, _: &Collider| {
+        physics
+            .collider_entity(collider)
+            .is_some_and(|entity| obstacles.contains(&entity))
+    };
     let mut resolved = Vec3::zeros();
     let mut remaining = movement;
 
@@ -295,7 +333,7 @@ fn resolve_hull_movement(physics: &PhysicsContext, transform: &Transform, moveme
             transform.rotation,
             remaining,
             1.0,
-            QueryFilter::exclude_dynamic(),
+            QueryFilter::default().predicate(&is_obstacle),
         ) else {
             resolved += remaining;
             break;
@@ -1019,7 +1057,7 @@ mod tests {
         scene.prepare();
 
         let movement = resolve_hull_movement(
-            &scene.physics,
+            &scene,
             &Transform::from_xyz(0.0, 0.0, 0.0),
             vec3(0.0, 0.0, 4.0),
         );
@@ -1035,7 +1073,7 @@ mod tests {
         scene.prepare();
 
         let movement = resolve_hull_movement(
-            &scene.physics,
+            &scene,
             &Transform::from_xyz(0.0, 0.0, 0.0),
             vec3(3.0, 0.0, 2.0),
         );
@@ -1054,11 +1092,41 @@ mod tests {
         transform.rotation =
             UnitQuaternion::from_euler_angles(0.0, std::f32::consts::FRAC_PI_2, 0.0);
 
-        let movement = resolve_hull_movement(&scene.physics, &transform, vec3(3.0, 0.0, 2.0));
+        let movement = resolve_hull_movement(&scene, &transform, vec3(3.0, 0.0, 2.0));
 
         assert!(movement.x > 0.45, "movement: {movement:?}");
         assert!(movement.x < 0.5, "movement: {movement:?}");
         assert!(movement.z > 1.9, "movement: {movement:?}");
+    }
+
+    #[test]
+    fn hull_movement_ignores_projectile_colliders() {
+        let mut scene = engine::test_support::test_scene();
+        let projectile = scene.create(None, None);
+        scene.set_transform(projectile, &Transform::from_xyz(0.0, 0.75, 2.0).matrix());
+        scene.add_component(
+            projectile,
+            ComponentRigidBody {
+                gravity_scale: 0.0,
+                ..Default::default()
+            },
+        );
+        scene.add_component(
+            projectile,
+            ComponentCollider {
+                shape: ColliderShape::Sphere { radius: 0.18 },
+                ..Default::default()
+            },
+        );
+        scene.prepare();
+
+        let movement = resolve_hull_movement(
+            &scene,
+            &Transform::from_xyz(0.0, 0.0, 0.0),
+            vec3(0.0, 0.0, 4.0),
+        );
+
+        assert!((movement.z - 4.0).abs() < 1e-4, "movement: {movement:?}");
     }
 
     fn add_fixed_cube(

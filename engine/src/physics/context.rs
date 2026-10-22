@@ -129,6 +129,11 @@ impl PhysicsContext {
             .update(&scene.physics.colliders);
     }
 
+    /// Returns the scene entity that owns `collider`, if it is still live.
+    pub fn collider_entity(&self, collider: ColliderHandle) -> Option<Entity> {
+        self.collider_entity.get(&collider).copied()
+    }
+
     /// Casts a normalized ray through the current physics world.
     ///
     /// `max_distance` is measured in world units. A zero-length direction
