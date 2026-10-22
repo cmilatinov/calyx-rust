@@ -10,9 +10,14 @@ use crate::component::Component;
 /// The scene records every component write here from its one observation
 /// point, so components carry no change flag and writers keep no books.
 /// Taking a type's entries removes them, so each type supports one consumer.
+///
+/// Each write also moves the component's write version, which any number of
+/// readers can compare against one they saw before, without taking anything.
 #[derive(Default)]
 pub(crate) struct ChangeSet {
     written: HashMap<ComponentTypeId, HashSet<Entity>>,
+    versions: HashMap<(ComponentTypeId, Entity), u64>,
+    last_version: u64,
 }
 
 impl ChangeSet {
@@ -20,6 +25,19 @@ impl ChangeSet {
     /// written or removed.
     pub(crate) fn record(&mut self, entity: Entity, component: ComponentTypeId) {
         self.written.entry(component).or_default().insert(entity);
+        self.last_version += 1;
+        self.versions.insert((component, entity), self.last_version);
+    }
+
+    /// The write version of `entity`'s component of type `component`: it
+    /// changes on every write and is 0 when none was recorded. Versions are
+    /// unique across the scene, so a forgotten and reused entity never
+    /// repeats one.
+    pub(crate) fn version(&self, entity: Entity, component: ComponentTypeId) -> u64 {
+        self.versions
+            .get(&(component, entity))
+            .copied()
+            .unwrap_or_default()
     }
 
     /// Removes and returns the entities whose `T` was written since the last
@@ -36,6 +54,7 @@ impl ChangeSet {
             entities.remove(&entity);
             !entities.is_empty()
         });
+        self.versions.retain(|(_, written), _| *written != entity);
     }
 }
 
@@ -60,6 +79,28 @@ mod tests {
         assert!(bodies.contains(&a));
         assert!(changes.take::<ComponentRigidBody>().is_empty());
         assert!(changes.take::<ComponentCollider>().contains(&b));
+    }
+
+    #[test]
+    fn versions_move_on_every_write_and_survive_take() {
+        let mut world = World::default();
+        let a = world.push(());
+        let b = world.push(());
+        let body = ComponentTypeId::of::<ComponentRigidBody>();
+        let mut changes = ChangeSet::default();
+        assert_eq!(changes.version(a, body), 0);
+
+        changes.record(a, body);
+        let first = changes.version(a, body);
+        assert_ne!(first, 0);
+        changes.take::<ComponentRigidBody>();
+        assert_eq!(changes.version(a, body), first);
+        changes.record(a, body);
+        assert_ne!(changes.version(a, body), first);
+        assert_eq!(changes.version(b, body), 0);
+
+        changes.forget(a);
+        assert_eq!(changes.version(a, body), 0);
     }
 
     #[test]

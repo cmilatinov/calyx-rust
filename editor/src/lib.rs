@@ -15,10 +15,10 @@ pub use self::project_manager::*;
 use self::scene_autosave::EditorSceneAutosave;
 use self::scene_document::{scene_fingerprint, write_scene_file};
 use self::scene_history::{
-    InspectorValueDebouncer, InspectorValueEdit, InspectorValueKey, SceneEditSnapshot,
-    SceneHistory, SceneHistoryRestore,
+    InspectorValueEdit, SceneEditSnapshot, SceneHistory, SceneHistoryRestore,
 };
 use crate::camera::EditorCamera;
+use crate::inspector::edit_tracker::{self, CommittedEdit, InspectorEditTracker};
 use crate::task_id::TaskId;
 use crate::widgets::ThumbnailService;
 use eframe::{wgpu, NativeOptions};
@@ -91,8 +91,11 @@ pub struct EditorAppState {
     pub gizmo_modes: EnumSet<GizmoMode>,
     pub gizmo_orientation: GizmoOrientation,
     pub thumbnails: ThumbnailService,
+    /// Where the inspector panel was drawn last frame, if it was.
+    pub(crate) inspector_rect: Option<egui::Rect>,
     scene_history: SceneHistory,
-    pending_inspector_value_edits: InspectorValueDebouncer,
+    /// The inspector's undo baselines for the selected object's components.
+    pub(crate) inspector_edits: InspectorEditTracker,
     scene_autosave: EditorSceneAutosave,
     active_scene: ActiveSceneState,
     window_title: String,
@@ -146,8 +149,9 @@ impl EditorAppState {
             gizmo_modes: GizmoMode::all_translate(),
             gizmo_orientation: GizmoOrientation::Global,
             thumbnails: ThumbnailService::default(),
+            inspector_rect: None,
             scene_history: SceneHistory::default(),
-            pending_inspector_value_edits: InspectorValueDebouncer::default(),
+            inspector_edits: InspectorEditTracker::default(),
             scene_autosave: EditorSceneAutosave::new(&project_path),
             active_scene: Default::default(),
             window_title: String::new(),
@@ -196,7 +200,9 @@ impl EditorAppState {
         if self.game.scenes.has_simulation_scene() {
             return;
         }
-        self.flush_pending_inspector_value_edits();
+        // The edit wrote the scene outside the inspector, so its baselines
+        // are taken again.
+        self.refresh_inspector_baselines();
 
         let Some(before) = before else {
             self.mark_scene_dirty();
@@ -210,94 +216,90 @@ impl EditorAppState {
         }
     }
 
-    pub fn record_inspector_value_edits(
-        &mut self,
-        game_object: uuid::Uuid,
-        component: uuid::Uuid,
-        component_name: &str,
-        changes: Vec<(Vec<String>, serde_json::Value, serde_json::Value)>,
-        structural: &[Vec<String>],
-    ) {
-        if self.game.scenes.has_simulation_scene() || changes.is_empty() {
-            return;
-        }
-
-        for (value_path, before, after) in changes {
-            let value_name = if value_path.is_empty() {
-                "value".to_owned()
-            } else {
-                value_path.join(".")
-            };
-            let edit = InspectorValueEdit {
-                label: format!("Edit {component_name} {value_name}"),
-                key: InspectorValueKey {
-                    game_object,
-                    component,
-                    value_path,
-                },
-                before,
-                after,
-            };
-            if structural.contains(&edit.key.value_path) || edit.resizes_list() {
-                // Adding, removing or moving an element is one undo step. Pending
-                // element edits commit first so their indices still match on undo.
-                self.flush_pending_inspector_value_edits();
-                self.scene_history.push_inspector_value(edit);
-            } else {
-                self.pending_inspector_value_edits
-                    .record(edit, std::time::Instant::now());
-            }
-        }
-        self.sync_scene_dirty_to_current_fingerprint();
-    }
-
-    fn flush_due_inspector_value_edits(&mut self) {
+    /// Records an edit the inspector committed as one undo step.
+    pub(crate) fn record_inspector_edit(&mut self, edit: CommittedEdit) {
         if self.game.scenes.has_simulation_scene() {
-            self.pending_inspector_value_edits.clear();
             return;
         }
-        let edits = self
-            .pending_inspector_value_edits
-            .drain_due(std::time::Instant::now());
-        self.commit_inspector_value_edits(edits);
-    }
-
-    fn flush_pending_inspector_value_edits(&mut self) {
-        if self.game.scenes.has_simulation_scene() {
-            self.pending_inspector_value_edits.clear();
-            return;
-        }
-        let edits = self.pending_inspector_value_edits.drain_all();
-        self.commit_inspector_value_edits(edits);
-    }
-
-    fn commit_inspector_value_edits(&mut self, edits: Vec<InspectorValueEdit>) {
-        if edits.is_empty() {
-            return;
-        }
-
-        let mut committed = false;
-        for edit in edits {
-            committed |= self.scene_history.push_inspector_value(edit);
-        }
-        if committed {
+        let component_name = PanelInspector::type_display_name(
+            &self.game.assets.registries.types.read(),
+            edit.key.component,
+        )
+        .unwrap_or_else(|| edit.key.component.to_string());
+        let label = match common_value_path(&edit.changes) {
+            path if path.is_empty() => format!("Edit {component_name}"),
+            path => format!("Edit {component_name} {}", path.join(".")),
+        };
+        if self.scene_history.push_inspector_value(InspectorValueEdit {
+            label,
+            game_object: edit.key.game_object,
+            component: edit.key.component,
+            changes: edit.changes,
+        }) {
             self.sync_scene_dirty_to_current_fingerprint();
         }
     }
 
-    fn sync_scene_dirty_to_current_fingerprint(&mut self) {
+    /// Makes `object` the object the inspector tracks, committing the edits
+    /// pending on the previous one first.
+    pub(crate) fn select_inspector_object(&mut self, object: Option<uuid::Uuid>) {
+        if self.inspector_edits.object() != object {
+            self.flush_pending_inspector_value_edits();
+            self.inspector_edits.reset(object);
+        }
+    }
+
+    /// Commits every inspector edit still pending, such as a drag in
+    /// progress, so it is recorded before another edit or an undo.
+    fn flush_pending_inspector_value_edits(&mut self) {
+        if self.game.scenes.has_simulation_scene() {
+            self.inspector_edits.clear();
+            return;
+        }
+        let pending = self.inspector_edits.pending();
+        if pending.is_empty() {
+            return;
+        }
+        // Reconcile the dirty mark the pending edits set even when they
+        // turn out to change nothing.
+        self.sync_scene_dirty_to_current_fingerprint();
+        let edits = {
+            let components = self.game.assets.registries.components.read();
+            let scene = self.game.scenes.current_scene();
+            pending
+                .into_iter()
+                .filter_map(|key| {
+                    let current = edit_tracker::serialize_component(scene, &components, key);
+                    self.inspector_edits.commit(key, current)
+                })
+                .collect::<Vec<_>>()
+        };
+        for edit in edits {
+            self.record_inspector_edit(edit);
+        }
+    }
+
+    /// Commits pending inspector edits and drops the inspector's baselines,
+    /// so each is taken again from the scene, after a write the inspector
+    /// did not make.
+    fn refresh_inspector_baselines(&mut self) {
+        self.flush_pending_inspector_value_edits();
+        self.inspector_edits.clear();
+    }
+
+    pub(crate) fn sync_scene_dirty_to_current_fingerprint(&mut self) {
         self.scene_autosave
             .sync_dirty_to_fingerprint(scene_fingerprint(self.game.scenes.current_scene()));
     }
 
     pub fn can_undo_scene_edit(&self) -> bool {
         !self.game.scenes.has_simulation_scene()
-            && (self.scene_history.can_undo() || self.pending_inspector_value_edits.has_pending())
+            && (self.scene_history.can_undo() || self.inspector_edits.has_pending())
     }
 
     pub fn can_redo_scene_edit(&self) -> bool {
         !self.game.scenes.has_simulation_scene()
-            && !self.pending_inspector_value_edits.has_pending()
+            && !self.inspector_edits.has_pending()
             && self.scene_history.can_redo()
     }
 
@@ -319,13 +321,19 @@ impl EditorAppState {
                 self.scene_autosave.sync_dirty_to_fingerprint(fingerprint);
                 log::info!("Undid scene edit: {label}");
             }
-            SceneHistoryRestore::InspectorValue { label, key, value } => {
-                if self.restore_inspector_value(&key, value) {
+            SceneHistoryRestore::InspectorValue {
+                label,
+                game_object,
+                component,
+                values,
+            } => {
+                if self.restore_inspector_value(game_object, component, &values) {
                     self.sync_scene_dirty_to_current_fingerprint();
                     log::info!("Undid scene edit: {label}");
                 }
             }
         }
+        self.inspector_edits.clear();
     }
 
     pub fn redo_scene_edit(&mut self) {
@@ -346,13 +354,19 @@ impl EditorAppState {
                 self.scene_autosave.sync_dirty_to_fingerprint(fingerprint);
                 log::info!("Redid scene edit: {label}");
             }
-            SceneHistoryRestore::InspectorValue { label, key, value } => {
-                if self.restore_inspector_value(&key, value) {
+            SceneHistoryRestore::InspectorValue {
+                label,
+                game_object,
+                component,
+                values,
+            } => {
+                if self.restore_inspector_value(game_object, component, &values) {
                     self.sync_scene_dirty_to_current_fingerprint();
                     log::info!("Redid scene edit: {label}");
                 }
             }
         }
+        self.inspector_edits.clear();
     }
 
     pub fn is_scene_dirty(&self) -> bool {
@@ -361,39 +375,35 @@ impl EditorAppState {
 
     fn clear_scene_history(&mut self) {
         self.scene_history.clear();
-        self.pending_inspector_value_edits.clear();
+        self.inspector_edits.reset(None);
     }
 
     fn restore_inspector_value(
         &mut self,
-        key: &InspectorValueKey,
-        value: serde_json::Value,
+        game_object_id: uuid::Uuid,
+        component_id: uuid::Uuid,
+        values: &[(Vec<String>, serde_json::Value)],
     ) -> bool {
         let component_registry_ref = self.game.assets.registries.components.clone();
         let component_registry = component_registry_ref.read();
-        let Some(component) = component_registry.component(key.component) else {
+        let Some(component) = component_registry.component(component_id) else {
             log::warn!(
-                "Skipped inspector history restore because component {} is no longer registered",
-                key.component
+                "Skipped inspector history restore because component {component_id} is no longer registered"
             );
             return false;
         };
         let scene = self.game.scenes.current_scene_mut();
-        let Some(game_object) = scene.find(key.game_object) else {
+        let Some(game_object) = scene.find(game_object_id) else {
             log::warn!(
-                "Skipped inspector history restore because game object {} no longer exists",
-                key.game_object
+                "Skipped inspector history restore because game object {game_object_id} no longer exists"
             );
             return false;
         };
-        match restore_component_value(scene, game_object, component, &key.value_path, value) {
+        match restore_component_values(scene, game_object, component, values) {
             Ok(()) => true,
             Err(err) => {
                 log::warn!(
-                    "Skipped inspector history restore of component {} on game object {} at {:?}: {err}",
-                    key.component,
-                    key.game_object,
-                    key.value_path
+                    "Skipped inspector history restore of component {component_id} on game object {game_object_id}: {err}"
                 );
                 false
             }
@@ -401,6 +411,7 @@ impl EditorAppState {
     }
 
     pub fn open_scene_file(&mut self, file: PathBuf) -> bool {
+        self.flush_pending_inspector_value_edits();
         if !self.scene_autosave.prepare_scene_change(&self.game) {
             return false;
         }
@@ -432,6 +443,7 @@ impl EditorAppState {
     }
 
     pub fn open_scene_asset(&mut self, asset_id: uuid::Uuid) {
+        self.flush_pending_inspector_value_edits();
         if !self.scene_autosave.prepare_scene_change(&self.game) {
             return;
         }
@@ -461,6 +473,7 @@ impl EditorAppState {
     }
 
     fn new_scene_from_default(&mut self) {
+        self.flush_pending_inspector_value_edits();
         if !self.scene_autosave.prepare_scene_change(&self.game) {
             return;
         }
@@ -540,22 +553,23 @@ impl std::fmt::Display for ValueRestoreError {
     }
 }
 
-/// Writes `value` at `value_path` inside `game_object`'s `component`, leaving
+/// Writes each value at its path inside `game_object`'s `component`, leaving
 /// the component's other values as they are.
-fn restore_component_value(
+fn restore_component_values(
     scene: &mut Scene,
     game_object: engine::scene::GameObject,
     component: &dyn engine::component::Component,
-    value_path: &[String],
-    value: serde_json::Value,
+    values: &[(Vec<String>, serde_json::Value)],
 ) -> Result<(), ValueRestoreError> {
     scene
         .write_component_dyn(game_object, component, |instance| {
             let mut serialized = instance
                 .serialize()
                 .ok_or(ValueRestoreError::NotSerializable)?;
-            if !set_json_value(&mut serialized, value_path, value) {
-                return Err(ValueRestoreError::MissingValuePath);
+            for (value_path, value) in values {
+                if !set_json_value(&mut serialized, value_path, value.clone()) {
+                    return Err(ValueRestoreError::MissingValuePath);
+                }
             }
             if !instance.deserialize_in_place(&serialized) {
                 return Err(ValueRestoreError::NotDeserializable);
@@ -563,6 +577,37 @@ fn restore_component_value(
             Ok(())
         })
         .unwrap_or(Err(ValueRestoreError::MissingComponent))
+}
+
+/// Whether a pointer press at `press` may start an edit outside the inspector
+/// drawn at `inspector_rect`, so pending inspector edits must be committed
+/// first.
+fn press_ends_inspector_edits(
+    press: Option<egui::Pos2>,
+    inspector_rect: Option<egui::Rect>,
+) -> bool {
+    match (press, inspector_rect) {
+        (Some(press), Some(rect)) => !rect.contains(press),
+        _ => true,
+    }
+}
+
+/// The path prefix every change shares, which names an edit that changed
+/// several values of one field, such as a rotation.
+fn common_value_path(changes: &[scene_history::InspectorValueChange]) -> Vec<String> {
+    let Some((first, rest)) = changes.split_first() else {
+        return Vec::new();
+    };
+    let mut prefix = first.value_path.clone();
+    for change in rest {
+        let shared = prefix
+            .iter()
+            .zip(&change.value_path)
+            .take_while(|(left, right)| left == right)
+            .count();
+        prefix.truncate(shared);
+    }
+    prefix
 }
 
 fn set_json_value(
@@ -693,6 +738,23 @@ impl eframe::App for EditorApp {
         self.state.game_response = None;
         self.state.viewport_response = None;
         self.remote_update_begin(ctx);
+        // A press outside the inspector starts any edit another panel makes
+        // (hierarchy, gizmo, menus) and ends a pending text-field session, so
+        // the session's undo step is committed before that panel writes the
+        // scene. Presses inside the inspector, such as moving the caret, are
+        // left to the inspector's own drag and focus tracking.
+        let press = ctx.input(|input| {
+            input
+                .pointer
+                .any_pressed()
+                .then(|| input.pointer.interact_pos())
+        });
+        let inspector_rect = self.state.inspector_rect.take();
+        if let Some(press) = press {
+            if press_ends_inspector_edits(press, inspector_rect) {
+                self.state.flush_pending_inspector_value_edits();
+            }
+        }
         self.render_views(ctx, frame);
         self.process_thumbnail_jobs(frame);
 
@@ -713,7 +775,6 @@ impl eframe::App for EditorApp {
                 self.tree.ui(&mut panel_manager, ui);
             });
         self.edit_shortcuts(ctx);
-        self.state.flush_due_inspector_value_edits();
 
         self.status_bar(ctx);
 
@@ -1117,7 +1178,7 @@ impl EditorApp {
     /// project's runtime window sets the game aspect, and a fresh simulation
     /// runs the configured startup scene when the project has one.
     pub(crate) fn start_simulation(&mut self) -> Result<(), String> {
-        self.state.flush_pending_inspector_value_edits();
+        self.state.refresh_inspector_baselines();
         let window_size = self
             .project_manager
             .read()
@@ -1189,7 +1250,11 @@ impl EditorApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{restore_component_value, set_json_value, ActiveSceneState, EditorApp};
+    use super::{
+        common_value_path, press_ends_inspector_edits, restore_component_values, set_json_value,
+        ActiveSceneState, EditorApp,
+    };
+    use crate::scene_history::InspectorValueChange;
     use engine::component::ComponentTransform;
     use engine::utils::TypeUuid;
     use nalgebra_glm::{self as glm, Vec3};
@@ -1210,12 +1275,14 @@ mod tests {
         let component = component_registry
             .component(ComponentTransform::type_uuid())
             .expect("transform should be registered");
-        restore_component_value(
+        restore_component_values(
             &mut scene,
             parent,
             component,
-            &["transform".into(), "position".into()],
-            json!([5.0, 0.0, 0.0]),
+            &[(
+                vec!["transform".into(), "position".into()],
+                json!([5.0, 0.0, 0.0]),
+            )],
         )
         .expect("the position should restore");
 
@@ -1264,6 +1331,43 @@ mod tests {
 
         state.set_scene(Some("scene".into()), None);
         assert_eq!(state.title("Sandbox", true), "Calyx - Sandbox - scene *");
+    }
+
+    #[test]
+    fn only_presses_outside_the_inspector_end_its_edits() {
+        let inspector =
+            egui::Rect::from_min_max(egui::pos2(1000.0, 0.0), egui::pos2(1300.0, 800.0));
+        assert!(!press_ends_inspector_edits(
+            Some(egui::pos2(1100.0, 200.0)),
+            Some(inspector)
+        ));
+        assert!(press_ends_inspector_edits(
+            Some(egui::pos2(100.0, 200.0)),
+            Some(inspector)
+        ));
+        assert!(press_ends_inspector_edits(
+            Some(egui::pos2(1100.0, 200.0)),
+            None
+        ));
+        assert!(press_ends_inspector_edits(None, Some(inspector)));
+    }
+
+    #[test]
+    fn edit_labels_name_the_field_every_change_shares() {
+        let change = |path: &[&str]| InspectorValueChange {
+            value_path: path.iter().map(|segment| segment.to_string()).collect(),
+            before: json!(0.0),
+            after: json!(1.0),
+        };
+        assert_eq!(
+            common_value_path(&[
+                change(&["transform", "rotation", "0"]),
+                change(&["transform", "rotation", "3"]),
+            ]),
+            vec!["transform", "rotation"]
+        );
+        assert_eq!(common_value_path(&[change(&["enabled"])]), vec!["enabled"]);
+        assert!(common_value_path(&[change(&["mass"]), change(&["enabled"])]).is_empty());
     }
 
     #[test]

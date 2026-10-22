@@ -1,10 +1,9 @@
 use std::any::Any;
-use std::cell::RefCell;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::HashSet;
 
 use crate::inspector::assets::animation_graph_inspector::AnimationGraphInspector;
 use crate::inspector::inspector_registry::InspectorRegistry;
-use crate::inspector::type_inspector::InspectorContext;
+use crate::inspector::type_inspector::{InspectorContext, InspectorResponse};
 use crate::inspector::widgets::{SearchSelectState, Widgets};
 use crate::panel::Panel;
 use crate::selection::SelectionType;
@@ -25,11 +24,7 @@ use engine::scene::GameObject;
 use engine::utils::TypeUuid;
 use re_ui::list_item::{LabelContent, ListItem, PropertyContent, ShowCollapsingResponse};
 use re_ui::{DesignTokens, UiExt};
-use serde_json::Value;
 use uuid::Uuid;
-
-/// A value change in a component's serialized JSON: path, before, after.
-type ValueChange = (Vec<String>, Value, Value);
 
 /// A structural change the inspector made to a reflected list.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -45,8 +40,8 @@ enum ListEdit {
 /// Adapts a reflected list to the [`List`] widget.
 ///
 /// Adding appends the element type's registered default, and each
-/// structural change is logged in `edits`, so the inspector can commit it as
-/// its own undo step.
+/// structural change is logged in `edits`, so the inspector reports it as a
+/// discrete edit: one undo step per add, remove or move.
 struct ReflectListContainer<'a> {
     list: &'a mut dyn ReflectList,
     default: Option<&'a ReflectDefault>,
@@ -119,23 +114,20 @@ impl ListContainer for ReflectListContainer<'_> {
     }
 }
 
-/// Where a value sits in its component's serialized JSON, and the lists the
-/// inspector changed structurally this frame.
-struct FieldTrail<'a> {
+/// Where a value sits in its component's serialized JSON.
+struct FieldTrail {
     /// Identifies the component being inspected.
     base: Id,
     path: Vec<String>,
-    structural: &'a RefCell<Vec<Vec<String>>>,
 }
 
-impl<'a> FieldTrail<'a> {
+impl FieldTrail {
     /// The trail of a component's root value. `base` identifies the
     /// component, such as its game object and type.
-    fn root(base: Id, structural: &'a RefCell<Vec<Vec<String>>>) -> Self {
+    fn root(base: Id) -> Self {
         Self {
             base,
             path: Vec::new(),
-            structural,
         }
     }
 
@@ -145,7 +137,6 @@ impl<'a> FieldTrail<'a> {
         Self {
             base: self.base,
             path,
-            structural: self.structural,
         }
     }
 
@@ -155,50 +146,6 @@ impl<'a> FieldTrail<'a> {
     fn id(&self) -> Id {
         self.base.with(&self.path)
     }
-
-    /// Records that the list at this path was added to, removed from or reordered.
-    fn mark_structural(&self) {
-        self.structural.borrow_mut().push(self.path.clone());
-    }
-}
-
-/// The JSON value at `path`, or `None` when the path does not resolve.
-fn json_at<'a>(value: &'a Value, path: &[String]) -> Option<&'a Value> {
-    path.iter().try_fold(value, |value, segment| match value {
-        Value::Object(values) => values.get(segment),
-        Value::Array(values) => values.get(segment.parse::<usize>().ok()?),
-        _ => None,
-    })
-}
-
-/// Folds the value changes inside each structurally edited list into one
-/// change of the whole list, so an add, remove or move is a single undo step
-/// rather than one per shifted element. A list path that does not resolve in
-/// the JSON, such as a field serde renames, keeps its per-element changes.
-fn collapse_structural_changes(
-    before: &Value,
-    after: &Value,
-    mut changes: Vec<ValueChange>,
-    structural: &[Vec<String>],
-) -> Vec<ValueChange> {
-    let mut lists = structural.to_vec();
-    lists.sort_by_key(Vec::len);
-    let mut collapsed: Vec<Vec<String>> = Vec::new();
-    for list in lists {
-        if collapsed.iter().any(|outer| list.starts_with(outer)) {
-            continue;
-        }
-        let (Some(list_before), Some(list_after)) = (json_at(before, &list), json_at(after, &list))
-        else {
-            continue;
-        };
-        changes.retain(|(path, _, _)| !path.starts_with(&list));
-        if list_before != list_after {
-            changes.push((list.clone(), list_before.clone(), list_after.clone()));
-        }
-        collapsed.push(list);
-    }
-    changes
 }
 
 /// How the inspector draws one list element.
@@ -239,6 +186,7 @@ impl Panel for PanelInspector {
     }
 
     fn ui(&mut self, ui: &mut Ui, state: &mut EditorAppState) {
+        state.inspector_rect = Some(ui.clip_rect());
         let type_registry_ref = state.game.assets.registries.types.clone();
         let type_registry = type_registry_ref.read();
 
@@ -253,12 +201,22 @@ impl Panel for PanelInspector {
                 }
                 .show(ui, |ui| {
                     re_ui::list_item::list_item_scope(ui, "inspector_scope", |ui| {
-                        if let Some(game_object) = state
+                        let selected_game_object = state
                             .selection
                             .first(SelectionType::GameObject)
-                            .and_then(|id| state.game.scenes.simulation_scene().find(id))
-                        {
-                            let game_object_id = state.game.scenes.simulation_scene().uuid(game_object);
+                            .and_then(|id| state.game.scenes.simulation_scene().find(id));
+                        state.select_inspector_object(
+                            selected_game_object
+                                .map(|go| state.game.scenes.simulation_scene().uuid(go)),
+                        );
+                        if let Some(game_object) = selected_game_object {
+                            // Play mode records no undo history, so the
+                            // inspector keeps no baselines there.
+                            let track_edits = !state.game.scenes.has_simulation_scene();
+                            if !track_edits {
+                                state.inspector_edits.clear();
+                            }
+                            let pointer_down = ui.input(|input| input.pointer.any_down());
                             let mut structural_changed = false;
                             let mut structural_edit_before = None;
                             let mut entity_components = HashSet::new();
@@ -305,14 +263,16 @@ impl Panel for PanelInspector {
                                 };
                                 let assets = state.game.assets.lock_read();
                                 let inspector_registry = &state.inspector_registry;
-                                let structural = RefCell::new(Vec::new());
                                 // SAFETY: inspectors read other objects and
                                 // components through the scene, never the
                                 // component they are editing.
-                                let Some(edit) = (unsafe {
-                                    state.game.scenes.simulation_scene_mut().edit_component_dyn(
+                                let Some(shown) = (unsafe {
+                                    state.inspector_edits.show_component(
+                                        state.game.scenes.simulation_scene_mut(),
                                         game_object,
                                         &**component,
+                                        track_edits,
+                                        pointer_down,
                                         |instance, scene| {
                                             let ctx = InspectorContext {
                                                 assets: &assets.registries,
@@ -327,7 +287,6 @@ impl Panel for PanelInspector {
                                                 inspector_registry,
                                                 &ctx,
                                                 instance.as_reflect_mut(),
-                                                &structural,
                                             )
                                         },
                                     )
@@ -335,26 +294,24 @@ impl Panel for PanelInspector {
                                     continue;
                                 };
                                 drop(assets);
-                                let (before, after, remove) = (edit.before, edit.after, edit.value);
-                                if remove {
+                                if shown.value {
                                     components_to_remove.insert(*type_id);
                                 }
-                                if let (Some(before), Some(after)) = (before, after) {
-                                    let structural = structural.into_inner();
-                                    let changes = collapse_structural_changes(
-                                        &before,
-                                        &after,
-                                        Self::changed_json_values(&before, &after),
-                                        &structural,
-                                    );
-                                    state.record_inspector_value_edits(
-                                        game_object_id,
-                                        *type_id,
-                                        &Self::type_display_name(&type_registry, *type_id)
-                                            .unwrap_or_else(|| type_id.to_string()),
-                                        changes,
-                                        &structural,
-                                    );
+                                // The undo step may wait for the drag or
+                                // text session to end, but the scene has
+                                // changed now: autosave and scene switches
+                                // must see it as dirty.
+                                if shown.changed {
+                                    state.mark_scene_dirty();
+                                }
+                                match shown.committed {
+                                    Some(committed) => state.record_inspector_edit(committed),
+                                    // An edit that left the component as it
+                                    // was: undo the dirty mark it set.
+                                    None if shown.completed => {
+                                        state.sync_scene_dirty_to_current_fingerprint()
+                                    }
+                                    None => {}
                                 }
                             }
                             for (type_id, _) in component_registry.components() {
@@ -537,11 +494,11 @@ impl PanelInspector {
         registry: &InspectorRegistry,
         ctx: &InspectorContext,
         instance: &mut dyn Reflect,
-        structural: &RefCell<Vec<Vec<String>>>,
-    ) -> bool {
+    ) -> (InspectorResponse, bool) {
         let name = Self::display_name(&ctx.assets.types.read(), instance);
         let id = ui.make_persistent_id(name);
         let type_uuid = instance.uuid();
+        let mut response = InspectorResponse::NONE;
         let res = ListItem::new()
             .interactive(true)
             .force_background(re_ui::design_tokens().section_collapsing_header_color())
@@ -551,20 +508,16 @@ impl PanelInspector {
                 true,
                 LabelContent::new(name).truncate(true),
                 |ui| {
-                    if let Some(inspector) = registry.type_inspector_lookup(type_uuid) {
-                        inspector.show_inspector(ui, ctx, instance);
-                    } else {
-                        self.show_default_inspector(
+                    response |= match registry.type_inspector_lookup(type_uuid) {
+                        Some(inspector) => inspector.show_inspector(ui, ctx, instance),
+                        None => self.show_default_inspector(
                             ui,
                             registry,
                             ctx,
                             instance,
-                            &FieldTrail::root(
-                                Id::new((ctx.game_object.node, type_uuid)),
-                                structural,
-                            ),
-                        );
-                    }
+                            &FieldTrail::root(Id::new((ctx.game_object.node, type_uuid))),
+                        ),
+                    };
                 },
             )
             .item_response;
@@ -582,11 +535,11 @@ impl PanelInspector {
                     ui.close_menu();
                 }
                 if let Some(inspector) = registry.type_inspector_lookup(type_uuid) {
-                    inspector.show_inspector_context(ui, ctx, instance);
+                    response |= inspector.show_inspector_context(ui, ctx, instance);
                 }
             });
         }
-        remove
+        (response, remove)
     }
 
     fn show_default_inspector(
@@ -596,10 +549,13 @@ impl PanelInspector {
         ctx: &InspectorContext,
         instance: &mut dyn Reflect,
         trail: &FieldTrail,
-    ) {
+    ) -> InspectorResponse {
         let type_registry = ctx.assets.types.read();
-        if let Some(TypeInfo::Struct(info)) = type_registry.type_info_by_id(instance.uuid()) {
-            self.show_default_struct_inspector(ui, registry, ctx, instance, info, trail);
+        match type_registry.type_info_by_id(instance.uuid()) {
+            Some(TypeInfo::Struct(info)) => {
+                self.show_default_struct_inspector(ui, registry, ctx, instance, info, trail)
+            }
+            _ => InspectorResponse::NONE,
         }
     }
 
@@ -611,12 +567,13 @@ impl PanelInspector {
         instance: &mut dyn Reflect,
         info: &StructInfo,
         trail: &FieldTrail,
-    ) {
+    ) -> InspectorResponse {
+        let mut response = InspectorResponse::NONE;
         for (_, field) in info.fields.iter() {
             let mut field_ctx = *ctx;
             field_ctx.field_name = Some(field.name);
             if let Some(value) = field.get_reflect_mut(instance.as_reflect_mut()) {
-                self.show_default_inspector_field(
+                response |= self.show_default_inspector_field(
                     ui,
                     registry,
                     &field_ctx,
@@ -626,6 +583,7 @@ impl PanelInspector {
                 );
             }
         }
+        response
     }
 
     fn show_default_inspector_field(
@@ -636,7 +594,7 @@ impl PanelInspector {
         field: &NamedField,
         instance: &mut dyn Reflect,
         trail: &FieldTrail,
-    ) {
+    ) -> InspectorResponse {
         let mut name = Self::field_display_name(field);
         name.push(' ');
         let type_registry = ctx.assets.types.read();
@@ -645,13 +603,13 @@ impl PanelInspector {
                 type_registry.type_info_by_id(instance.uuid()),
                 Some(TypeInfo::Enum(_))
             ) {
-                inspector.show_inspector(ui, ctx, instance);
-                return;
+                return inspector.show_inspector(ui, ctx, instance);
             }
+            let mut response = InspectorResponse::NONE;
             Widgets::inspector_prop_value(ui, name, |ui, _| {
-                inspector.show_inspector(ui, ctx, instance);
+                response = inspector.show_inspector(ui, ctx, instance);
             });
-            return;
+            return response;
         }
         let id = trail.id();
         match type_registry.type_info_by_id(instance.uuid()) {
@@ -659,6 +617,7 @@ impl PanelInspector {
                 let mut nested_ctx = *ctx;
                 nested_ctx.field_name = None;
                 nested_ctx.type_info = info;
+                let mut response = InspectorResponse::NONE;
                 ListItem::new()
                     .interactive(false)
                     .show_hierarchical_with_children(
@@ -667,7 +626,7 @@ impl PanelInspector {
                         true,
                         PropertyContent::new(name).show_only_when_collapsed(false),
                         |ui| {
-                            self.show_default_struct_inspector(
+                            response = self.show_default_struct_inspector(
                                 ui,
                                 registry,
                                 &nested_ctx,
@@ -677,32 +636,34 @@ impl PanelInspector {
                             );
                         },
                     );
+                response
             }
-            Some(TypeInfo::List(info)) => {
-                self.show_list_inspector(
-                    ui,
-                    registry,
-                    ctx,
-                    &type_registry,
-                    name.trim_end(),
-                    id,
-                    instance,
-                    Some(info),
-                    trail,
-                );
-            }
+            Some(TypeInfo::List(info)) => self.show_list_inspector(
+                ui,
+                registry,
+                ctx,
+                &type_registry,
+                name.trim_end(),
+                id,
+                instance,
+                Some(info),
+                trail,
+            ),
             Some(_) => {
                 Widgets::inspector_prop_value(ui, name, |ui, _| {
                     ui.label(instance.type_name_short());
                 });
+                InspectorResponse::NONE
             }
-            None => {}
+            None => InspectorResponse::NONE,
         }
     }
 
     /// Shows a list with the editor's [`List`] widget: a collapsing header
     /// with the element count and add/remove buttons, selectable elements and
-    /// drag-and-drop reordering.
+    /// drag-and-drop reordering. An add, remove or move is reported as a
+    /// discrete change, so it is one undo step; element edits report as their
+    /// inspectors do.
     #[allow(clippy::too_many_arguments)]
     fn show_list_inspector(
         &self,
@@ -715,11 +676,12 @@ impl PanelInspector {
         instance: &mut dyn Reflect,
         info: Option<&ListInfo>,
         trail: &FieldTrail,
-    ) {
+    ) -> InspectorResponse {
         let Some(list) = instance.as_list_mut() else {
-            return;
+            return InspectorResponse::NONE;
         };
         let mut container = ReflectListContainer::new(list, type_registry, info);
+        let mut response = InspectorResponse::NONE;
         List::new(name, &mut container, |_| ()).id(id).show(
             ui,
             |ui,
@@ -728,25 +690,29 @@ impl PanelInspector {
                  index,
                  selected,
              }| {
-                ui.push_id(index, |ui| {
-                    self.show_list_element(
-                        ui,
-                        registry,
-                        ctx,
-                        type_registry,
-                        id.with(index),
-                        index,
-                        selected,
-                        value,
-                        &trail.child(index),
-                    )
-                })
-                .inner
+                let (element, shown) = ui
+                    .push_id(index, |ui| {
+                        self.show_list_element(
+                            ui,
+                            registry,
+                            ctx,
+                            type_registry,
+                            id.with(index),
+                            index,
+                            selected,
+                            value,
+                            &trail.child(index),
+                        )
+                    })
+                    .inner;
+                response |= element;
+                shown
             },
         );
         if !container.edits.is_empty() {
-            trail.mark_structural();
+            response |= InspectorResponse::CHANGED;
         }
+        response
     }
 
     /// Shows one list element as a selectable, draggable row.
@@ -762,7 +728,7 @@ impl PanelInspector {
         selected: bool,
         element: &mut dyn Reflect,
         trail: &FieldTrail,
-    ) -> ShowCollapsingResponse<()> {
+    ) -> (InspectorResponse, ShowCollapsingResponse<()>) {
         let label = format!("Element {index}");
         let element_info = type_registry.type_info_by_id(element.uuid());
         let inspector = registry.type_inspector_lookup(element.uuid());
@@ -775,32 +741,34 @@ impl PanelInspector {
             .selected(selected)
             .interactive(true)
             .draggable(true);
+        let mut response = InspectorResponse::NONE;
         if let (ElementView::Inline, Some(inspector)) = (view, inspector) {
             let item_response = item.show_flat(
                 ui,
                 PropertyContent::new(label)
-                    .value_fn(|ui, _| inspector.show_inspector(ui, ctx, element)),
+                    .value_fn(|ui, _| response = inspector.show_inspector(ui, ctx, element)),
             );
-            return ShowCollapsingResponse {
+            let shown = ShowCollapsingResponse {
                 item_response,
                 body_response: None,
                 openness: 0.0,
             };
+            return (response, shown);
         }
-        item.show_hierarchical_with_children(
+        let shown = item.show_hierarchical_with_children(
             ui,
             id,
             true,
             PropertyContent::new(label).show_only_when_collapsed(false),
             |ui| match (view, inspector, element_info) {
                 (ElementView::Enum, Some(inspector), _) => {
-                    inspector.show_inspector(ui, ctx, element)
+                    response = inspector.show_inspector(ui, ctx, element);
                 }
                 (ElementView::Struct, _, Some(TypeInfo::Struct(info))) => {
                     let mut nested_ctx = *ctx;
                     nested_ctx.field_name = None;
                     nested_ctx.type_info = info;
-                    self.show_default_struct_inspector(
+                    response = self.show_default_struct_inspector(
                         ui,
                         registry,
                         &nested_ctx,
@@ -814,7 +782,7 @@ impl PanelInspector {
                         Some(TypeInfo::List(info)) => Some(info),
                         _ => None,
                     };
-                    self.show_list_inspector(
+                    response = self.show_list_inspector(
                         ui,
                         registry,
                         ctx,
@@ -832,7 +800,8 @@ impl PanelInspector {
                     });
                 }
             },
-        )
+        );
+        (response, shown)
     }
 
     fn add_component_button_ui(
@@ -908,43 +877,10 @@ impl PanelInspector {
         search.is_empty() || name.to_lowercase().contains(&search.to_lowercase())
     }
 
-    fn changed_json_values(before: &Value, after: &Value) -> Vec<(Vec<String>, Value, Value)> {
-        let mut changes = Vec::new();
-        Self::collect_json_value_changes(before, after, &mut Vec::new(), &mut changes);
-        changes
-    }
-
-    fn collect_json_value_changes(
-        before: &Value,
-        after: &Value,
-        path: &mut Vec<String>,
-        changes: &mut Vec<(Vec<String>, Value, Value)>,
-    ) {
-        match (before, after) {
-            (Value::Object(before), Value::Object(after))
-                if before.len() == after.len()
-                    && before.keys().all(|key| after.contains_key(key)) =>
-            {
-                let keys = before.keys().cloned().collect::<BTreeSet<_>>();
-                for key in keys {
-                    path.push(key.clone());
-                    Self::collect_json_value_changes(&before[&key], &after[&key], path, changes);
-                    path.pop();
-                }
-            }
-            (Value::Array(before), Value::Array(after)) if before.len() == after.len() => {
-                for (index, (before, after)) in before.iter().zip(after).enumerate() {
-                    path.push(index.to_string());
-                    Self::collect_json_value_changes(before, after, path, changes);
-                    path.pop();
-                }
-            }
-            _ if before != after => changes.push((path.clone(), before.clone(), after.clone())),
-            _ => {}
-        }
-    }
-
-    fn type_display_name(type_registry: &TypeRegistry, type_uuid: Uuid) -> Option<String> {
+    pub(crate) fn type_display_name(
+        type_registry: &TypeRegistry,
+        type_uuid: Uuid,
+    ) -> Option<String> {
         type_registry
             .type_info_by_id(type_uuid)
             .map(|info| match info {
@@ -981,20 +917,20 @@ impl PanelInspector {
 #[cfg(test)]
 mod tests {
     use super::{
-        collapse_structural_changes, element_view, ElementView, FieldTrail, ListEdit,
-        PanelInspector, ReflectListContainer,
+        element_view, ElementView, FieldTrail, ListEdit, PanelInspector, ReflectListContainer,
     };
-    use crate::scene_history::{
-        InspectorValueEdit, InspectorValueKey, SceneHistory, SceneHistoryRestore,
-    };
+    use crate::inspector::edit_tracker::{ComponentKey, InspectorEditTracker};
+    use crate::inspector::test_harness::{any_changed, combined, InspectorHarness};
+    use crate::inspector::type_inspector::{InspectorContext, InspectorResponse};
+    use crate::scene_history::{InspectorValueEdit, SceneHistory, SceneHistoryRestore};
     use crate::widgets::ListContainer;
-    use egui::Id;
+    use egui::accesskit::Role;
+    use egui::{Id, Ui, Vec2};
+    use engine::component::ComponentCamera;
     use engine::reflect::type_registry::TypeRegistry;
     use engine::reflect::{ListInfo, Reflect, TypeInfo};
     use engine::utils::TypeUuid;
     use serde::{Deserialize, Serialize};
-    use serde_json::{json, Value};
-    use std::cell::RefCell;
     use uuid::Uuid;
 
     #[derive(Default, Debug, PartialEq, TypeUuid, Reflect, Serialize, Deserialize)]
@@ -1011,22 +947,22 @@ mod tests {
         info
     }
 
-    /// Runs `edit` on `holder`'s `values` list the way the inspector panel
-    /// does: through the list widget's container, then collapsing structural
-    /// changes and recording what is left in `history`. Returns how many
-    /// history entries the edit added.
+    /// Runs `edit` on `holder`'s `values` list the way the inspector does:
+    /// through the list widget's container, reported as one discrete change
+    /// to the edit tracker, whose commit becomes the undo step. Returns how
+    /// many history entries the edit added.
     fn inspector_edit(
         registry: &TypeRegistry,
         history: &mut SceneHistory,
         holder: &mut ListHolder,
         edit: impl FnOnce(&mut ReflectListContainer),
     ) -> usize {
-        let key = |value_path| InspectorValueKey {
+        let key = ComponentKey {
             game_object: Uuid::nil(),
             component: ListHolder::type_uuid(),
-            value_path,
         };
-        let before = serde_json::to_value(&*holder).unwrap();
+        let mut tracker = InspectorEditTracker::default();
+        tracker.set_baseline(key, serde_json::to_value(&*holder).ok());
         let TypeInfo::Struct(info) = registry.type_info::<ListHolder>().unwrap() else {
             panic!("expected struct info");
         };
@@ -1038,41 +974,28 @@ mod tests {
             Some(values_info(registry)),
         );
         edit(&mut container);
-        let structural = if container.edits.is_empty() {
-            Vec::new()
-        } else {
-            vec![vec![String::from("values")]]
+        // Element edits report as changes too; structural ones always do.
+        assert!(tracker.report(key, InspectorResponse::CHANGED, false));
+        let Some(commit) = tracker.commit(key, serde_json::to_value(&*holder).ok()) else {
+            return 0;
         };
-        let after = serde_json::to_value(&*holder).unwrap();
-        let changes = collapse_structural_changes(
-            &before,
-            &after,
-            PanelInspector::changed_json_values(&before, &after),
-            &structural,
-        );
-        let count = changes.len();
-        for (path, before, after) in changes {
-            let edit = InspectorValueEdit {
-                label: "Edit List Holder".into(),
-                key: key(path),
-                before,
-                after,
-            };
-            assert!(history.push_inspector_value(edit));
-        }
-        count
+        assert!(history.push_inspector_value(InspectorValueEdit {
+            label: "Edit List Holder".into(),
+            game_object: commit.key.game_object,
+            component: commit.key.component,
+            changes: commit.changes,
+        }));
+        1
     }
 
     fn restore(holder: &mut ListHolder, restore: Option<SceneHistoryRestore>) {
-        let Some(SceneHistoryRestore::InspectorValue { key, value, .. }) = restore else {
+        let Some(SceneHistoryRestore::InspectorValue { values, .. }) = restore else {
             panic!("expected an inspector value restore");
         };
         let mut serialized = serde_json::to_value(&*holder).unwrap();
-        assert!(crate::set_json_value(
-            &mut serialized,
-            &key.value_path,
-            value
-        ));
+        for (path, value) in values {
+            assert!(crate::set_json_value(&mut serialized, &path, value));
+        }
         *holder = serde_json::from_value(serialized).unwrap();
     }
 
@@ -1124,7 +1047,7 @@ mod tests {
             values: vec![1.0, 2.0, 3.0],
         };
 
-        // Without collapsing, a move would record every shifted element.
+        // A move shifts every element between its ends, all in one step.
         let moved = inspector_edit(&registry, &mut history, &mut holder, |list| {
             list.move_item(0, 2);
         });
@@ -1136,6 +1059,38 @@ mod tests {
         assert!(!history.can_undo());
         restore(&mut holder, history.redo());
         assert_eq!(holder.values, vec![2.0, 3.0, 1.0]);
+    }
+
+    #[test]
+    fn list_inspector_reports_element_edits_and_structural_changes() {
+        let mut h = InspectorHarness::new();
+        h.type_info = ListHolder::type_uuid();
+        let registry = h.inspector_registry();
+        let panel = PanelInspector::default();
+        let mut holder = ListHolder {
+            values: vec![1.0, 2.0],
+        };
+        let mut draw = |ui: &mut Ui, ctx: &InspectorContext| {
+            panel.show_default_inspector(
+                ui,
+                &registry,
+                ctx,
+                holder.as_reflect_mut(),
+                &FieldTrail::root(Id::new("list_holder")),
+            )
+        };
+
+        let idle = h.idle(3, &mut draw);
+        assert!(idle.iter().all(InspectorResponse::is_none), "{idle:?}");
+        let element = h.widget(Role::SpinButton, 0);
+        let drag = combined(&h.drag(element, Vec2::new(40.0, 0.0), &mut draw));
+        assert!(
+            drag.changed && drag.drag_started && drag.drag_stopped,
+            "{drag:?}"
+        );
+        assert!(!any_changed(&h.idle(2, &mut draw)));
+        assert_ne!(holder.values[0], 1.0);
+        assert_eq!(holder.values.len(), 2);
     }
 
     #[test]
@@ -1182,34 +1137,15 @@ mod tests {
 
     #[test]
     fn field_ids_differ_per_list_element() {
-        let structural = RefCell::new(Vec::new());
-        let component = FieldTrail::root(Id::new("component"), &structural);
+        let component = FieldTrail::root(Id::new("component"));
         let rows = component.child("rows");
         let first = rows.child(0).child("slots");
         let second = rows.child(1).child("slots");
 
         assert_ne!(first.id(), second.id());
         assert_eq!(first.id(), rows.child(0).child("slots").id());
-        let other = FieldTrail::root(Id::new("other"), &structural);
+        let other = FieldTrail::root(Id::new("other"));
         assert_ne!(first.id(), other.child("rows").child(0).child("slots").id());
-    }
-
-    #[test]
-    fn structural_changes_keep_unresolved_paths_per_element() {
-        let before = json!({ "values": [1.0, 2.0] });
-        let after = json!({ "values": [2.0, 1.0] });
-        let changes = PanelInspector::changed_json_values(&before, &after);
-
-        let renamed = vec![vec![String::from("renamed")]];
-        assert_eq!(
-            collapse_structural_changes(&before, &after, changes.clone(), &renamed).len(),
-            2
-        );
-        let values = vec![vec![String::from("values")]];
-        let collapsed = collapse_structural_changes(&before, &after, changes, &values);
-        assert_eq!(collapsed.len(), 1);
-        assert_eq!(collapsed[0].0, vec!["values"]);
-        assert_eq!(collapsed[0].2, json!([2.0, 1.0]));
     }
 
     #[test]
@@ -1234,22 +1170,40 @@ mod tests {
     }
 
     #[test]
-    fn list_resizes_are_told_apart_from_element_edits() {
-        let edit = |before: Value, after: Value| InspectorValueEdit {
-            label: String::new(),
-            key: InspectorValueKey {
-                game_object: Uuid::nil(),
-                component: Uuid::nil(),
-                value_path: vec!["values".into()],
-            },
-            before,
-            after,
+    fn default_inspector_reports_its_fields_edits() {
+        let mut h = InspectorHarness::new();
+        h.type_info = ComponentCamera::type_uuid();
+        let registry = h.inspector_registry();
+        let panel = PanelInspector::default();
+        let mut camera = ComponentCamera::default();
+        let before = serde_json::to_value(&camera).unwrap();
+        let mut draw = |ui: &mut Ui, ctx: &InspectorContext| {
+            let (response, remove) =
+                panel.show_inspector(ui, &registry, ctx, camera.as_reflect_mut());
+            assert!(!remove);
+            response
         };
 
-        assert!(edit(json!([1.0]), json!([1.0, 0.0])).resizes_list());
-        assert!(edit(json!([1.0, 2.0]), json!([2.0])).resizes_list());
-        assert!(!edit(json!([1.0, 2.0]), json!([2.0, 1.0])).resizes_list());
-        assert!(!edit(json!(1.0), json!(2.0)).resizes_list());
+        let idle = h.idle(3, &mut draw);
+        assert!(idle.iter().all(|r| r.is_none()), "{idle:?}");
+        let field = h.widget(Role::SpinButton, 0);
+        let drag = combined(&h.drag(field, Vec2::new(40.0, 0.0), &mut draw));
+        assert!(
+            drag.changed && drag.drag_started && drag.drag_stopped,
+            "{drag:?}"
+        );
+        let checkbox = h.widget(Role::CheckBox, 0);
+        let click = h.click(checkbox, &mut draw);
+        assert_eq!(click.iter().filter(|r| r.changed).count(), 1, "{click:?}");
+        assert!(!any_changed(&h.idle(2, &mut draw)));
+
+        let after = serde_json::to_value(&camera).unwrap();
+        assert_ne!(before["enabled"], after["enabled"]);
+        let numbers_changed = ["fov", "near_plane", "far_plane"]
+            .iter()
+            .filter(|field| before[**field] != after[**field])
+            .count();
+        assert_eq!(numbers_changed, 1, "{before} -> {after}");
     }
 
     #[test]
@@ -1272,29 +1226,5 @@ mod tests {
     fn component_search_treats_blank_query_as_match() {
         assert!(PanelInspector::component_matches_search("Camera", ""));
         assert!(PanelInspector::component_matches_search("Camera", "   "));
-    }
-
-    #[test]
-    fn json_value_changes_use_stable_nested_paths() {
-        let before = json!({
-            "transform": {
-                "position": [0.0, 0.0, 0.0],
-                "scale": [1.0, 1.0, 1.0]
-            }
-        });
-        let after = json!({
-            "transform": {
-                "position": [2.0, 0.0, 0.0],
-                "scale": [1.0, 3.0, 1.0]
-            }
-        });
-
-        let changes = PanelInspector::changed_json_values(&before, &after);
-
-        assert_eq!(changes.len(), 2);
-        assert_eq!(changes[0].0, vec!["transform", "position", "0"]);
-        assert_eq!(changes[0].1, json!(0.0));
-        assert_eq!(changes[0].2, json!(2.0));
-        assert_eq!(changes[1].0, vec!["transform", "scale", "1"]);
     }
 }

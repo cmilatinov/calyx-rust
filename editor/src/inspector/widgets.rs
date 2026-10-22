@@ -12,6 +12,8 @@ use std::cell::RefCell;
 use std::sync::RwLock;
 use uuid::Uuid;
 
+use super::type_inspector::InspectorResponse;
+
 pub struct Widgets;
 
 pub enum PropChildrenPhase<'a> {
@@ -257,6 +259,7 @@ impl Widgets {
             ));
         }
         if let Some(dropped_payload) = dropped_payload {
+            changed |= game_object_id != *dropped_payload;
             game_object_id = *dropped_payload;
         }
         if res.inner.clicked() {
@@ -266,48 +269,47 @@ impl Widgets {
         if changed {
             res.inner.mark_changed();
         }
-        *value = GameObjectRef::new(game_object_id);
+        if game_object_id != value.id() {
+            *value = GameObjectRef::new(game_object_id);
+        }
         res.inner
     }
 
-    pub fn drag_float4(ui: &mut Ui, speed: f32, value: &mut Vec4) -> bool {
+    pub fn drag_float4(ui: &mut Ui, speed: f32, value: &mut Vec4) -> InspectorResponse {
         Self::drag_floatn(ui, speed, &mut value.data.as_mut_slice()[0..4])
     }
 
-    pub fn drag_float3(ui: &mut Ui, speed: f32, value: &mut Vec3) -> bool {
+    pub fn drag_float3(ui: &mut Ui, speed: f32, value: &mut Vec3) -> InspectorResponse {
         Self::drag_floatn(ui, speed, &mut value.data.as_mut_slice()[0..3])
     }
 
-    pub fn drag_float2(ui: &mut Ui, speed: f32, value: &mut Vec2) -> bool {
+    pub fn drag_float2(ui: &mut Ui, speed: f32, value: &mut Vec2) -> InspectorResponse {
         Self::drag_floatn(ui, speed, &mut value.data.as_mut_slice()[0..2])
     }
 
-    pub fn drag_floatn(ui: &mut Ui, speed: f32, value: &mut [f32]) -> bool {
-        let mut changed = false;
+    pub fn drag_floatn(ui: &mut Ui, speed: f32, value: &mut [f32]) -> InspectorResponse {
+        let mut response = InspectorResponse::NONE;
         ui.horizontal_centered(|ui| {
             for value in value.iter_mut() {
-                changed |= ui.add(DragValue::new(value).speed(speed)).changed();
+                response |= ui.add(DragValue::new(value).speed(speed));
             }
         });
-        changed
+        response
     }
 
-    pub fn drag_angle(ui: &mut Ui, value: &mut f32) -> bool {
+    pub fn drag_angle(ui: &mut Ui, value: &mut f32) -> InspectorResponse {
         let mut degrees = value.to_degrees();
         let res = ui.add(DragValue::new(&mut degrees).speed(1.0).suffix("°"));
-        let changed = res.changed();
-        if changed {
+        if res.changed() {
             *value = degrees.to_radians();
         }
-        changed
+        InspectorResponse::from_response(&res)
     }
 
-    pub fn drag_angle3(ui: &mut Ui, value: &mut Vec3) -> bool {
-        let mut changed = false;
-        changed |= Self::drag_angle(ui, &mut value.x);
-        changed |= Self::drag_angle(ui, &mut value.y);
-        changed |= Self::drag_angle(ui, &mut value.z);
-        changed
+    pub fn drag_angle3(ui: &mut Ui, value: &mut Vec3) -> InspectorResponse {
+        Self::drag_angle(ui, &mut value.x)
+            | Self::drag_angle(ui, &mut value.y)
+            | Self::drag_angle(ui, &mut value.z)
     }
 
     pub fn inspector_prop_value<F: FnOnce(&mut Ui, ListVisuals)>(
