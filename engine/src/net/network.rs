@@ -121,8 +121,8 @@ impl Network {
 
     /// Applies queued scene-related replication messages.
     ///
-    /// This consumes ownership, connection, and prefab-spawn messages against
-    /// `scene`. Call this after [`Network::update`] in the main simulation loop.
+    /// This consumes ownership, connection, prefab-spawn and destroy messages
+    /// against `scene`. Call this after [`Network::update`] in the main simulation loop.
     pub fn update_scene<'a>(
         &'a mut self,
         mut scene: &'a mut Scene,
@@ -149,6 +149,42 @@ impl Network {
             ),
             &mut NetworkPrefabSync,
         );
+    }
+
+    /// Destroys `game_object` locally and tells the other peers to destroy
+    /// their copy.
+    ///
+    /// Only the owner of a network object may destroy it. Returns `false`,
+    /// leaving the object in place, when the local peer has no id yet, the
+    /// object has no [`ComponentNetworkObject`], or another peer owns it.
+    pub fn destroy_game_object(&mut self, scene: &mut Scene, game_object: GameObject) -> bool {
+        let Some(client_id) = self.local_id else {
+            return false;
+        };
+        let Some((network_object_id, owner_id)) = scene
+            .read_component::<ComponentNetworkObject, _, _>(game_object, |c| (c.id, c.owner_id))
+        else {
+            return false;
+        };
+        if owner_id != client_id {
+            log::warn!(
+                "Refusing to destroy network object {network_object_id} owned by {owner_id}"
+            );
+            return false;
+        }
+        scene.delete(game_object);
+        let message = GameMessage::DestroyGameObject {
+            network_object_id,
+            from_client_id: client_id,
+        };
+        let result = match &mut self.server {
+            Some(server) => server.broadcast_message(&message),
+            None => self.client.send_message(&message),
+        };
+        if let Err(e) = result {
+            log::warn!("Failed to send DestroyGameObject: {e}");
+        }
+        true
     }
 
     /// Returns whether this network resource is hosting a local server.
@@ -249,8 +285,8 @@ impl MessageHandler<(&mut Time, TimeType), GameMessage> for NetworkTimeSync {
     }
 }
 
-/// Message handler that applies connection lifecycle and ownership-transfer
-/// messages to scene and client state.
+/// Message handler that applies connection lifecycle, ownership-transfer and
+/// destroy messages to scene and client state.
 ///
 /// Most callers should use [`Network::update_scene`] instead of invoking this
 /// handler directly.
@@ -359,9 +395,52 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                 }
                 MessageHandlerResult::Consume
             }
+            GameMessage::DestroyGameObject {
+                network_object_id,
+                from_client_id,
+            } => {
+                let acting_client_id = sender.acting_client(*from_client_id);
+                let target = find_network_object(scene, *network_object_id);
+                if let Some((_, owner_id)) = target {
+                    if owner_id != acting_client_id {
+                        log::warn!(
+                            "Rejected destroy of network object {network_object_id}                              owned by {owner_id} from {acting_client_id}"
+                        );
+                        return MessageHandlerResult::Consume;
+                    }
+                }
+                // The server may not hold a copy of every object, so it relays
+                // the request and each receiving peer checks ownership itself.
+                if let Some(server) = server {
+                    if let Err(e) = server.broadcast_message_except(acting_client_id, message) {
+                        log::warn!("Failed to broadcast DestroyGameObject: {e}");
+                    }
+                }
+                if let Some((game_object, _)) = target {
+                    scene.delete(game_object);
+                }
+                MessageHandlerResult::Consume
+            }
             _ => MessageHandlerResult::Ignore,
         }
     }
+}
+
+/// Finds the game object carrying network object `network_object_id` and
+/// returns it with its owner.
+fn find_network_object(
+    scene: &Scene,
+    network_object_id: NetworkObjectId,
+) -> Option<(GameObject, ClientId)> {
+    // TODO(Cristian): Optimize this, maybe cache network ids in scene
+    scene.objects().find_map(|go| {
+        scene
+            .read_component::<ComponentNetworkObject, _, _>(go, |c| {
+                (c.id == network_object_id).then_some(c.owner_id)
+            })
+            .flatten()
+            .map(|owner_id| (go, owner_id))
+    })
 }
 
 struct NetworkPrefabSync;
@@ -426,7 +505,6 @@ impl MessageHandler<NetworkPrefabSyncContext<'_, '_>, GameMessage> for NetworkPr
                 );
                 MessageHandlerResult::Consume
             }
-            GameMessage::DestroyGameObject { .. } => MessageHandlerResult::Consume,
             _ => MessageHandlerResult::Ignore,
         }
     }
