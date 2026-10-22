@@ -998,6 +998,12 @@ mod tests {
             target: GameObjectRef,
         },
         Pair(f32, GameObjectRef),
+        Skipped {
+            #[reflect_skip]
+            hidden: GameObjectRef,
+            target: GameObjectRef,
+        },
+        SkippedTuple(#[reflect_skip] GameObjectRef, GameObjectRef),
     }
 
     #[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
@@ -1111,7 +1117,7 @@ mod tests {
             .filter_map(|choice| match choice {
                 RefChoice::Named { target } => Some(target.id()),
                 RefChoice::Pair(_, target) => Some(target.id()),
-                RefChoice::Empty => None,
+                _ => None,
             })
             .collect();
         assert_eq!(ids, vec![scene.uuid(instance_child), scene.uuid(instance)]);
@@ -1131,6 +1137,44 @@ mod tests {
         let entry = scene.entry(instance).unwrap();
         let component = entry.get_component::<NestedRefComponent>().unwrap();
         assert_eq!(component.pair.1.id(), scene.uuid(instance_child));
+    }
+
+    #[test]
+    fn instantiate_prefab_skips_reflect_skip_fields_in_enum_variants() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+        let mut source_child = Uuid::nil();
+
+        let (instance, instance_child) = instantiate_with_refs(&mut scene, |_, child| {
+            source_child = child;
+            NestedRefComponent {
+                choices: vec![
+                    RefChoice::Skipped {
+                        hidden: GameObjectRef::new(child),
+                        target: GameObjectRef::new(child),
+                    },
+                    RefChoice::SkippedTuple(GameObjectRef::new(child), GameObjectRef::new(child)),
+                ],
+                ..Default::default()
+            }
+        });
+
+        let new_child = scene.uuid(instance_child);
+        let entry = scene.entry(instance).unwrap();
+        let component = entry.get_component::<NestedRefComponent>().unwrap();
+        let ids: Vec<(Uuid, Uuid)> = component
+            .choices
+            .iter()
+            .filter_map(|choice| match choice {
+                RefChoice::Skipped { hidden, target } => Some((hidden.id(), target.id())),
+                RefChoice::SkippedTuple(hidden, target) => Some((hidden.id(), target.id())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            ids,
+            vec![(source_child, new_child), (source_child, new_child)]
+        );
     }
 
     #[test]

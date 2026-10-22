@@ -258,6 +258,14 @@ fn enum_type_info<'a>(
     }
 }
 
+/// Whether `field` is marked `#[reflect_skip]`.
+fn is_reflect_skipped(field: &syn::Field) -> bool {
+    field
+        .attrs
+        .iter()
+        .any(|attr| attr.path().is_ident("reflect_skip"))
+}
+
 /// Generates a `visit_elements_mut` override that visits each unnamed field of
 /// a tuple struct, skipping `#[reflect_skip]` fields. Named fields are reached
 /// through `StructInfo` instead, so other structs get no override.
@@ -269,12 +277,7 @@ fn tuple_struct_visit_elements(fields: &Fields) -> proc_macro2::TokenStream {
         .unnamed
         .iter()
         .enumerate()
-        .filter(|(_, field)| {
-            field
-                .attrs
-                .iter()
-                .all(|attr| !attr.path().is_ident("reflect_skip"))
-        })
+        .filter(|(_, field)| !is_reflect_skipped(field))
         .map(|(index, _)| syn::Index::from(index))
         .collect::<Vec<_>>();
     if indices.is_empty() {
@@ -288,16 +291,31 @@ fn tuple_struct_visit_elements(fields: &Fields) -> proc_macro2::TokenStream {
 }
 
 /// Generates a `visit_elements_mut` override that visits each field of the
-/// enum's active variant, in declaration order.
+/// enum's active variant, in declaration order, skipping `#[reflect_skip]`
+/// fields.
 fn enum_visit_elements<'a>(
     variants: impl Iterator<Item = &'a syn::Variant>,
 ) -> proc_macro2::TokenStream {
     let arms = variants
         .map(|variant| {
             let ident = &variant.ident;
-            let bindings: Vec<Ident> = (0..variant.fields.len())
-                .map(|index| Ident::new(&format!("__field{index}"), Span::call_site()))
-                .collect();
+            // Skipped fields bind to `_` so the pattern stays complete but the
+            // visitor never sees them.
+            let mut visited = Vec::new();
+            let patterns = variant
+                .fields
+                .iter()
+                .enumerate()
+                .map(|(index, field)| {
+                    if is_reflect_skipped(field) {
+                        quote! { _ }
+                    } else {
+                        let binding = Ident::new(&format!("__field{index}"), Span::call_site());
+                        visited.push(binding.clone());
+                        quote! { #binding }
+                    }
+                })
+                .collect::<Vec<_>>();
             match &variant.fields {
                 Fields::Named(named) => {
                     let names = named
@@ -305,11 +323,11 @@ fn enum_visit_elements<'a>(
                         .iter()
                         .map(|field| field.ident.as_ref().unwrap());
                     quote! {
-                        Self::#ident { #(#names: #bindings),* } => { #(visit(#bindings);)* }
+                        Self::#ident { #(#names: #patterns),* } => { #(visit(#visited);)* }
                     }
                 }
                 Fields::Unnamed(_) => quote! {
-                    Self::#ident(#(#bindings),*) => { #(visit(#bindings);)* }
+                    Self::#ident(#(#patterns),*) => { #(visit(#visited);)* }
                 },
                 Fields::Unit => quote! { Self::#ident => {} },
             }
