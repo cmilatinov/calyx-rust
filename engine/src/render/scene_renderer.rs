@@ -311,7 +311,7 @@ impl SceneRenderer {
                 write_mask: Default::default(),
             })])
             .build();
-        self.build_asset_data(render_state, scene, &options);
+        self.build_asset_data(render_state, scene);
         if self.options.gizmos {
             let object_id_lookup = &mut self.object_id_lookup;
             let object_ids_build = &mut self.object_ids_build;
@@ -554,12 +554,7 @@ impl SceneRenderer {
         );
     }
 
-    fn build_asset_data(
-        &mut self,
-        render_state: &RenderState,
-        scene: &Scene,
-        render_options: &PipelineOptions,
-    ) {
+    fn build_asset_data(&mut self, render_state: &RenderState, scene: &Scene) {
         let world = scene.world();
         self.draw_list.clear();
         self.object_ids_build.clear();
@@ -662,9 +657,6 @@ impl SceneRenderer {
         self.sky_light_intensity = sky_light_intensity;
         for (_, mut mesh) in self.assets.meshes.lock_write() {
             mesh.instances.clear();
-        }
-        for (_, mut shader) in self.assets.shaders.lock_write() {
-            shader.build_pipeline(render_options);
         }
         for (_, mut material) in self.assets.materials.lock_write() {
             material.load_buffers(render_state);

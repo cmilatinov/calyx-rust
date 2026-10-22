@@ -1,9 +1,8 @@
 use super::shader_preprocessor::ShaderPreprocessor;
 use crate as engine;
 use crate::assets::error::AssetError;
-use crate::assets::{mesh, Asset, LoadedAsset};
+use crate::assets::{Asset, LoadedAsset};
 use crate::context::ReadOnlyAssetContext;
-use crate::render::buffer::BufferLayout;
 use crate::render::render_utils::RenderUtils;
 use crate::render::{PipelineOptions, RenderContext};
 use crate::utils::TypeUuid;
@@ -13,7 +12,7 @@ use egui_wgpu::wgpu::PipelineCompilationOptions;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// Bind-group layout entries grouped by bind-group index.
 pub type BindGroupEntries = BTreeMap<u32, Vec<wgpu::BindGroupLayoutEntry>>;
@@ -50,8 +49,9 @@ pub struct Shader {
     pub pipeline_layout: wgpu::PipelineLayout,
     /// Cached compute pipeline when `ty` is [`ShaderType::Compute`].
     pub compute_pipeline: Option<wgpu::ComputePipeline>,
-    /// Cached render pipelines keyed by pipeline options.
-    pub pipelines: HashMap<PipelineOptions, wgpu::RenderPipeline>,
+    /// Render pipelines built so far, keyed by pipeline options. Behind a
+    /// mutex so [`Shader::pipeline`] can build through a read lock.
+    pipelines: Mutex<HashMap<PipelineOptions, wgpu::RenderPipeline>>,
     /// Parsed Naga module used for reflection.
     pub module: naga::Module,
 }
@@ -145,7 +145,7 @@ impl Asset for Shader {
             bind_group_entries,
             pipeline_layout,
             compute_pipeline,
-            pipelines: HashMap::new(),
+            pipelines: Mutex::new(HashMap::new()),
             module,
         }))
     }
@@ -392,28 +392,50 @@ impl Shader {
                 .as_slice(),
             push_constant_ranges: &[],
         });
-        self.pipelines.clear();
+        self.pipelines
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
     }
 
-    /// Builds and caches a render pipeline for `options`.
-    pub fn build_pipeline(&mut self, options: &PipelineOptions) {
-        if self.pipelines.contains_key(options) {
-            return;
+    /// Returns the render pipeline for `options`, building and caching it on
+    /// first use. The cache keys on every option, so a change of sample
+    /// count, target format, depth state or vertex layout builds a new
+    /// pipeline. A hot reload replaces the shader, which starts with an empty
+    /// cache, so callers that ask every frame pick up the reloaded pipeline.
+    pub fn pipeline(&self, options: &PipelineOptions) -> wgpu::RenderPipeline {
+        let mut pipelines = self
+            .pipelines
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(pipeline) = pipelines.get(options) {
+            return pipeline.clone();
         }
+        let pipeline = self.build_pipeline(options);
+        pipelines.insert(options.clone(), pipeline.clone());
+        pipeline
+    }
+
+    fn build_pipeline(&self, options: &PipelineOptions) -> wgpu::RenderPipeline {
         log::trace!(
             "Building render pipeline for shader {}: samples={}, targets={}",
             self.name,
             options.samples,
             options.fragment_targets.len()
         );
+        let vertex_buffers = options
+            .vertex_layouts
+            .iter()
+            .map(|layout| layout.as_wgpu())
+            .collect::<Vec<_>>();
         let device = self.render_context.device();
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(self.name.as_str()),
             layout: Some(&self.pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &self.shader,
                 entry_point: Some("vs_main"),
-                buffers: &[mesh::Vertex::layout(wgpu::VertexStepMode::Vertex)],
+                buffers: vertex_buffers.as_slice(),
                 compilation_options: PipelineCompilationOptions {
                     constants: &Default::default(),
                     zero_initialize_workgroup_memory: false,
@@ -439,13 +461,15 @@ impl Shader {
             multisample: RenderUtils::multisample_default(options.samples),
             multiview: None,
             cache: None,
-        });
-        self.pipelines.insert(options.clone(), pipeline);
+        })
     }
 
-    /// Returns the cached render pipeline for `options`.
-    pub fn get_pipeline(&self, options: &PipelineOptions) -> Option<&wgpu::RenderPipeline> {
-        self.pipelines.get(options)
+    /// Returns how many render pipelines this shader has built.
+    pub fn pipeline_count(&self) -> usize {
+        self.pipelines
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
     }
 
     /// Returns the cached compute pipeline, if any.

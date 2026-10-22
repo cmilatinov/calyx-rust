@@ -157,11 +157,9 @@ impl MeshRenderer {
                 continue;
             };
             if shader_id != last.0 {
-                if let Some(pipeline) = shader.get_pipeline(pipeline_options) {
-                    render_pass.set_pipeline(pipeline);
-                    render_pass.set_bind_group(0, &scene_bind_group, &[]);
-                    render_pass.set_bind_group(2, &light_storage_bind_group, &[]);
-                }
+                render_pass.set_pipeline(&shader.pipeline(pipeline_options));
+                render_pass.set_bind_group(0, &scene_bind_group, &[]);
+                render_pass.set_bind_group(2, &light_storage_bind_group, &[]);
             }
             if mat_id != last.1 {
                 if let Some(groups) = material_bind_groups.get(&mat_id) {
@@ -255,11 +253,8 @@ impl MeshRenderer {
                 write_mask: wgpu::ColorWrites::RED,
             })])
             .build();
-        let mut shader = self.object_id_shader.write();
-        shader.build_pipeline(&options);
-        let Some(pipeline) = shader.get_pipeline(&options) else {
-            return;
-        };
+        let shader = self.object_id_shader.read();
+        let pipeline = shader.pipeline(&options);
         let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("object_id_camera_bind_group"),
             layout: &shader.bind_group_layouts[0],
@@ -287,7 +282,7 @@ impl MeshRenderer {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
-        render_pass.set_pipeline(pipeline);
+        render_pass.set_pipeline(&pipeline);
         render_pass.set_bind_group(0, &camera_bind_group, &[]);
 
         let mut last_mesh_id = AssetId::default();
@@ -409,7 +404,7 @@ mod tests {
         let assets = TestAssets::engine();
         let context = assets.asset_context();
         let read_only_context = context.lock_read();
-        let mut shader = Shader::from_file(
+        let shader = Shader::from_file(
             &read_only_context,
             &assets.engine_root().join("shaders/object_id.wgsl"),
         )
@@ -424,8 +419,9 @@ mod tests {
             })])
             .build();
 
-        shader.build_pipeline(&options);
+        let pipeline = shader.pipeline(&options);
 
-        assert!(shader.get_pipeline(&options).is_some());
+        assert_eq!(shader.pipeline(&options), pipeline);
+        assert_eq!(shader.pipeline_count(), 1);
     }
 }
