@@ -57,6 +57,16 @@ pub struct InspectorValueEdit {
     pub after: Value,
 }
 
+impl InspectorValueEdit {
+    /// Whether this edit adds or removes list elements rather than changing a value.
+    pub fn resizes_list(&self) -> bool {
+        matches!(
+            (&self.before, &self.after),
+            (Value::Array(before), Value::Array(after)) if before.len() != after.len()
+        )
+    }
+}
+
 #[derive(Default)]
 pub struct InspectorValueDebouncer {
     pending: HashMap<InspectorValueKey, PendingInspectorValueEdit>,

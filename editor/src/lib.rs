@@ -233,19 +233,25 @@ impl EditorAppState {
             } else {
                 value_path.join(".")
             };
-            self.pending_inspector_value_edits.record(
-                InspectorValueEdit {
-                    label: format!("Edit {component_name} {value_name}"),
-                    key: InspectorValueKey {
-                        game_object,
-                        component,
-                        value_path,
-                    },
-                    before,
-                    after,
+            let edit = InspectorValueEdit {
+                label: format!("Edit {component_name} {value_name}"),
+                key: InspectorValueKey {
+                    game_object,
+                    component,
+                    value_path,
                 },
-                std::time::Instant::now(),
-            );
+                before,
+                after,
+            };
+            if edit.resizes_list() {
+                // Adding or removing an element is one undo step. Pending element
+                // edits commit first so their indices still match on undo.
+                self.flush_pending_inspector_value_edits();
+                self.scene_history.push_inspector_value(edit);
+            } else {
+                self.pending_inspector_value_edits
+                    .record(edit, std::time::Instant::now());
+            }
         }
         self.sync_scene_dirty_to_current_fingerprint();
     }

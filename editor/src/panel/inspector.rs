@@ -1,4 +1,5 @@
 use std::any::Any;
+use std::cell::Cell;
 use std::collections::{BTreeSet, HashSet};
 
 use crate::inspector::assets::animation_graph_inspector::AnimationGraphInspector;
@@ -15,13 +16,47 @@ use engine::assets::animation_graph::AnimationGraph;
 use engine::component::{ComponentID, ComponentTransform};
 use engine::context::ReadOnlyRegistryContext;
 use engine::reflect::type_registry::TypeRegistry;
-use engine::reflect::{AttributeValue, NamedField, Reflect, StructInfo, TypeInfo};
+use engine::reflect::{
+    AttributeValue, ListInfo, NamedField, Reflect, ReflectDefault, ReflectList, StructInfo,
+    TypeInfo,
+};
 use engine::scene::GameObject;
 use engine::utils::TypeUuid;
 use re_ui::list_item::{LabelContent, ListItem, PropertyContent};
 use re_ui::{DesignTokens, UiExt};
 use serde_json::Value;
 use uuid::Uuid;
+
+/// A structural change to a reflected list made from the inspector.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum ListEdit {
+    /// Appends a default element.
+    Add,
+    /// Removes the element at this index.
+    Remove(usize),
+}
+
+/// The element type's [`ReflectDefault`], which the inspector needs to add elements.
+fn list_element_default<'a>(
+    type_registry: &'a TypeRegistry,
+    info: &ListInfo,
+) -> Option<&'a ReflectDefault> {
+    type_registry.trait_meta::<ReflectDefault>(info.element.type_uuid)
+}
+
+/// Applies `edit` to `list`, returning whether the list changed.
+fn apply_list_edit(
+    type_registry: &TypeRegistry,
+    info: &ListInfo,
+    list: &mut dyn ReflectList,
+    edit: ListEdit,
+) -> bool {
+    match edit {
+        ListEdit::Add => list_element_default(type_registry, info)
+            .is_some_and(|default| list.push(default.default()).is_ok()),
+        ListEdit::Remove(index) => list.remove(index).is_some(),
+    }
+}
 
 #[derive(Default)]
 pub struct PanelInspector {
@@ -421,35 +456,171 @@ impl PanelInspector {
             });
             return;
         }
-        if let Some(TypeInfo::Struct(info)) = type_registry.type_info_by_id(instance.uuid()) {
-            let mut nested_ctx = *ctx;
-            nested_ctx.field_name = None;
-            nested_ctx.type_info = info;
-            ListItem::new()
-                .interactive(false)
-                .show_hierarchical_with_children(
+        let id = Id::new((ctx.type_info.type_name, field.name, field.type_uuid));
+        match type_registry.type_info_by_id(instance.uuid()) {
+            Some(TypeInfo::Struct(info)) => {
+                let mut nested_ctx = *ctx;
+                nested_ctx.field_name = None;
+                nested_ctx.type_info = info;
+                ListItem::new()
+                    .interactive(false)
+                    .show_hierarchical_with_children(
+                        ui,
+                        id,
+                        true,
+                        PropertyContent::new(name).show_only_when_collapsed(false),
+                        |ui| {
+                            self.show_default_struct_inspector(
+                                ui,
+                                registry,
+                                &nested_ctx,
+                                instance,
+                                info,
+                            );
+                        },
+                    );
+            }
+            Some(TypeInfo::List(info)) => {
+                self.show_list_inspector(
                     ui,
-                    Id::new((ctx.type_info.type_name, field.name, field.type_uuid)),
-                    true,
-                    PropertyContent::new(name).show_only_when_collapsed(false),
-                    |ui| {
-                        self.show_default_struct_inspector(
-                            ui,
-                            registry,
-                            &nested_ctx,
-                            instance,
-                            info,
-                        );
-                    },
+                    registry,
+                    ctx,
+                    &type_registry,
+                    name,
+                    id,
+                    instance,
+                    info,
                 );
-            return;
+            }
+            Some(_) => {
+                Widgets::inspector_prop_value(ui, name, |ui, _| {
+                    ui.label(instance.type_name_short());
+                });
+            }
+            None => {}
         }
+    }
 
-        if type_registry.type_info_by_id(instance.uuid()).is_some() {
-            Widgets::inspector_prop_value(ui, name, |ui, _| {
-                ui.label(instance.type_name_short());
-            });
+    /// Shows a list field's elements, each removable, with a button that
+    /// appends a default element when the element type has one.
+    #[allow(clippy::too_many_arguments)]
+    fn show_list_inspector(
+        &self,
+        ui: &mut Ui,
+        registry: &InspectorRegistry,
+        ctx: &InspectorContext,
+        type_registry: &TypeRegistry,
+        name: String,
+        id: Id,
+        instance: &mut dyn Reflect,
+        info: &ListInfo,
+    ) {
+        let Some(list) = instance.as_list_mut() else {
+            return;
+        };
+        let can_add = list_element_default(type_registry, info).is_some();
+        let edit = Cell::new(None);
+        let len = list.len();
+        let summary = match len {
+            1 => String::from("1 element"),
+            len => format!("{len} elements"),
+        };
+        ListItem::new()
+            .interactive(false)
+            .show_hierarchical_with_children(
+                ui,
+                id,
+                true,
+                PropertyContent::new(name)
+                    .value_text(summary)
+                    .action_button_with_enabled(&re_ui::icons::ADD, can_add, || {
+                        edit.set(Some(ListEdit::Add));
+                    }),
+                |ui| {
+                    for index in 0..len {
+                        let Some(element) = list.element_mut(index) else {
+                            continue;
+                        };
+                        ui.push_id(index, |ui| {
+                            if self.show_list_element(
+                                ui,
+                                registry,
+                                ctx,
+                                type_registry,
+                                id.with(index),
+                                index,
+                                element,
+                            ) {
+                                edit.set(Some(ListEdit::Remove(index)));
+                            }
+                        });
+                    }
+                },
+            );
+        if let Some(edit) = edit.get() {
+            apply_list_edit(type_registry, info, list, edit);
         }
+    }
+
+    /// Shows one list element, returning `true` when its remove button was clicked.
+    #[allow(clippy::too_many_arguments)]
+    fn show_list_element(
+        &self,
+        ui: &mut Ui,
+        registry: &InspectorRegistry,
+        ctx: &InspectorContext,
+        type_registry: &TypeRegistry,
+        id: Id,
+        index: usize,
+        element: &mut dyn Reflect,
+    ) -> bool {
+        let mut remove = false;
+        let label = format!("Element {index} ");
+        let element_info = type_registry.type_info_by_id(element.uuid());
+        let inspector = registry.type_inspector_lookup(element.uuid());
+        let is_enum = matches!(element_info, Some(TypeInfo::Enum(_)));
+        match (inspector, element_info) {
+            (Some(inspector), _) if !is_enum => {
+                ui.list_item_flat_noninteractive(
+                    PropertyContent::new(label)
+                        .value_fn(|ui, _| inspector.show_inspector(ui, ctx, element))
+                        .action_button(&re_ui::icons::REMOVE, || remove = true),
+                );
+            }
+            (inspector, element_info) => {
+                ListItem::new()
+                    .interactive(false)
+                    .show_hierarchical_with_children(
+                        ui,
+                        id,
+                        true,
+                        PropertyContent::new(label)
+                            .show_only_when_collapsed(false)
+                            .action_button(&re_ui::icons::REMOVE, || remove = true),
+                        |ui| match (inspector, element_info) {
+                            (Some(inspector), _) => inspector.show_inspector(ui, ctx, element),
+                            (None, Some(TypeInfo::Struct(info))) => {
+                                let mut nested_ctx = *ctx;
+                                nested_ctx.field_name = None;
+                                nested_ctx.type_info = info;
+                                self.show_default_struct_inspector(
+                                    ui,
+                                    registry,
+                                    &nested_ctx,
+                                    element,
+                                    info,
+                                );
+                            }
+                            _ => {
+                                Widgets::inspector_prop_value(ui, "Value ", |ui, _| {
+                                    ui.label(element.type_name_short());
+                                });
+                            }
+                        },
+                    );
+            }
+        }
+        remove
     }
 
     fn add_component_button_ui(
@@ -597,8 +768,146 @@ impl PanelInspector {
 
 #[cfg(test)]
 mod tests {
-    use super::PanelInspector;
-    use serde_json::json;
+    use super::{apply_list_edit, list_element_default, ListEdit, PanelInspector};
+    use crate::scene_history::{
+        InspectorValueEdit, InspectorValueKey, SceneHistory, SceneHistoryRestore,
+    };
+    use engine::reflect::type_registry::TypeRegistry;
+    use engine::reflect::{ListInfo, Reflect, TypeInfo};
+    use engine::utils::TypeUuid;
+    use serde::{Deserialize, Serialize};
+    use serde_json::{json, Value};
+    use uuid::Uuid;
+
+    #[derive(Default, Debug, PartialEq, TypeUuid, Reflect, Serialize, Deserialize)]
+    #[uuid = "0d6f3b2a-9c4e-4a71-b58d-3e2f7a1c9d64"]
+    #[repr(C)]
+    struct ListHolder {
+        values: Vec<f32>,
+    }
+
+    fn values_info(registry: &TypeRegistry) -> &ListInfo {
+        let Some(TypeInfo::List(info)) = registry.type_info::<Vec<f32>>() else {
+            panic!("expected list info for Vec<f32>");
+        };
+        info
+    }
+
+    /// Runs `edit` on `holder` the way the inspector panel does, then records
+    /// the resulting value changes in `history`.
+    fn inspector_edit(
+        registry: &TypeRegistry,
+        history: &mut SceneHistory,
+        holder: &mut ListHolder,
+        edit: impl FnOnce(&mut dyn Reflect),
+    ) {
+        let key = |value_path| InspectorValueKey {
+            game_object: Uuid::nil(),
+            component: ListHolder::type_uuid(),
+            value_path,
+        };
+        let before = serde_json::to_value(&*holder).unwrap();
+        let TypeInfo::Struct(info) = registry.type_info::<ListHolder>().unwrap() else {
+            panic!("expected struct info");
+        };
+        let field = info.field("values").unwrap();
+        edit(field.get_reflect_mut(holder.as_reflect_mut()).unwrap());
+        let after = serde_json::to_value(&*holder).unwrap();
+        for (path, before, after) in PanelInspector::changed_json_values(&before, &after) {
+            let edit = InspectorValueEdit {
+                label: "Edit List Holder".into(),
+                key: key(path),
+                before,
+                after,
+            };
+            assert!(history.push_inspector_value(edit));
+        }
+    }
+
+    fn restore(holder: &mut ListHolder, restore: Option<SceneHistoryRestore>) {
+        let Some(SceneHistoryRestore::InspectorValue { key, value, .. }) = restore else {
+            panic!("expected an inspector value restore");
+        };
+        let mut serialized = serde_json::to_value(&*holder).unwrap();
+        assert!(crate::set_json_value(
+            &mut serialized,
+            &key.value_path,
+            value
+        ));
+        *holder = serde_json::from_value(serialized).unwrap();
+    }
+
+    #[test]
+    fn list_edits_round_trip_through_inspector_history() {
+        let registry = TypeRegistry::new();
+        let info = values_info(&registry);
+        assert!(list_element_default(&registry, info).is_some());
+        let mut history = SceneHistory::default();
+        let mut holder = ListHolder {
+            values: vec![1.0, 2.0],
+        };
+
+        inspector_edit(&registry, &mut history, &mut holder, |values| {
+            let list = values.as_list_mut().unwrap();
+            assert!(apply_list_edit(&registry, info, list, ListEdit::Add));
+        });
+        assert_eq!(holder.values, vec![1.0, 2.0, 0.0]);
+
+        inspector_edit(&registry, &mut history, &mut holder, |values| {
+            let list = values.as_list_mut().unwrap();
+            *list.element_mut(2).unwrap().downcast_mut::<f32>().unwrap() = 7.0;
+        });
+        assert_eq!(holder.values, vec![1.0, 2.0, 7.0]);
+
+        inspector_edit(&registry, &mut history, &mut holder, |values| {
+            let list = values.as_list_mut().unwrap();
+            assert!(apply_list_edit(&registry, info, list, ListEdit::Remove(0)));
+        });
+        assert_eq!(holder.values, vec![2.0, 7.0]);
+
+        restore(&mut holder, history.undo());
+        assert_eq!(holder.values, vec![1.0, 2.0, 7.0]);
+        restore(&mut holder, history.undo());
+        assert_eq!(holder.values, vec![1.0, 2.0, 0.0]);
+        restore(&mut holder, history.undo());
+        assert_eq!(holder.values, vec![1.0, 2.0]);
+        assert!(!history.can_undo());
+
+        restore(&mut holder, history.redo());
+        restore(&mut holder, history.redo());
+        restore(&mut holder, history.redo());
+        assert_eq!(holder.values, vec![2.0, 7.0]);
+    }
+
+    #[test]
+    fn list_edits_reject_out_of_range_removal() {
+        let registry = TypeRegistry::new();
+        let info = values_info(&registry);
+        let mut values = vec![1.0f32];
+
+        let list = values.as_reflect_mut().as_list_mut().unwrap();
+        assert!(!apply_list_edit(&registry, info, list, ListEdit::Remove(3)));
+        assert_eq!(values, vec![1.0]);
+    }
+
+    #[test]
+    fn list_resizes_are_told_apart_from_element_edits() {
+        let edit = |before: Value, after: Value| InspectorValueEdit {
+            label: String::new(),
+            key: InspectorValueKey {
+                game_object: Uuid::nil(),
+                component: Uuid::nil(),
+                value_path: vec!["values".into()],
+            },
+            before,
+            after,
+        };
+
+        assert!(edit(json!([1.0]), json!([1.0, 0.0])).resizes_list());
+        assert!(edit(json!([1.0, 2.0]), json!([2.0])).resizes_list());
+        assert!(!edit(json!([1.0, 2.0]), json!([2.0, 1.0])).resizes_list());
+        assert!(!edit(json!(1.0), json!(2.0)).resizes_list());
+    }
 
     #[test]
     fn component_search_matches_case_insensitive_substrings() {
