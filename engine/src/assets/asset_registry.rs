@@ -1057,18 +1057,9 @@ impl AssetRegistry {
 
     /// Resolves an asset UUID from a filesystem path.
     pub fn asset_id_from_path(&self, path: &Path) -> Option<Uuid> {
-        for root_path in &self.asset_paths {
-            if common_path::common_path(root_path, path)
-                .map(|prefix| prefix == *root_path)
-                .unwrap_or(false)
-            {
-                return path.relative_to(root_path).ok().and_then(|p| {
-                    let p = p.with_extension("");
-                    self.asset_data().names.get(&p).copied()
-                });
-            }
-        }
-        None
+        let root_path = self.owning_asset_root(path)?;
+        let name = Self::relative_asset_path(root_path, path).ok()?;
+        self.asset_data().names.get(&name).copied()
     }
 
     /// Returns metadata for the asset named `name`.
@@ -1752,6 +1743,28 @@ mod tests {
         drop(registry);
         std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
         std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
+    }
+
+    #[test]
+    fn path_lookup_uses_deepest_root_when_roots_nest() {
+        let outer_root = temp_asset_root("calyx-nested-roots");
+        let inner_root = outer_root.join("inner");
+        std::fs::create_dir_all(&inner_root).expect("failed to create inner asset root");
+        let registries = test_registries_with_assets(vec![outer_root.clone(), inner_root.clone()]);
+        let registry = registries.assets.read();
+        let asset_path = inner_root.join("created.cxscene");
+        std::fs::write(&asset_path, b"{}").expect("failed to write created asset");
+        let event = Event::new(EventKind::Create(notify::event::CreateKind::File))
+            .add_path(asset_path.clone());
+
+        registry.recv_notify_event(event);
+
+        let id = registry
+            .asset_id("created")
+            .expect("created asset is registered under the inner root");
+        assert_eq!(registry.asset_id_from_path(&asset_path), Some(id));
+        drop(registry);
+        std::fs::remove_dir_all(outer_root).expect("failed to remove temp asset root");
     }
 
     #[test]
