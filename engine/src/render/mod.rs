@@ -1,4 +1,3 @@
-pub(crate) use asset_map::*;
 pub(crate) use asset_render_state::*;
 pub use camera::*;
 pub use gizmo_renderer::*;
@@ -16,7 +15,6 @@ pub use shader::*;
 pub use shader_preprocessor::*;
 pub(crate) use skybox_renderer::*;
 
-mod asset_map;
 mod asset_render_state;
 /// Buffer-layout helpers and resizable GPU buffers.
 pub mod buffer;

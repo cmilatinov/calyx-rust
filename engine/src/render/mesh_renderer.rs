@@ -160,7 +160,7 @@ impl MeshRenderer {
             }
             let (chunk, local_instances) = Mesh::instance_chunk(instances);
             if mesh_id != last.2 || chunk != last_chunk {
-                let Some(mesh_instance_group) = assets.mesh_instance_group(mesh_id, chunk) else {
+                let Some(mesh_instance_group) = mesh.instance_bind_group(chunk) else {
                     continue;
                 };
                 render_pass.set_bind_group(1, mesh_instance_group, &[]);
@@ -283,7 +283,7 @@ impl MeshRenderer {
             };
             let (chunk, local_instances) = Mesh::instance_chunk(instances);
             if mesh_id != last_mesh_id || chunk != last_chunk {
-                let Some(mesh_instance_group) = assets.mesh_instance_group(mesh_id, chunk) else {
+                let Some(mesh_instance_group) = mesh.instance_bind_group(chunk) else {
                     continue;
                 };
                 render_pass.set_bind_group(1, mesh_instance_group, &[]);

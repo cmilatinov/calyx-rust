@@ -34,6 +34,7 @@ pub struct ResizableBuffer {
     usage: wgpu::BufferUsages,
     size: u64,
     buffer: Option<wgpu::Buffer>,
+    generation: u64,
 }
 
 impl ResizableBuffer {
@@ -43,6 +44,7 @@ impl ResizableBuffer {
             usage,
             size: 0,
             buffer: None,
+            generation: 0,
         }
     }
 
@@ -67,6 +69,13 @@ impl ResizableBuffer {
             mapped_at_creation: false,
         }));
         self.size = new_size;
+        self.generation += 1;
+    }
+
+    /// Counts the reallocations of the backing buffer. A bind group built
+    /// over the buffer stays valid while this value is unchanged.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// Writes typed POD data into the buffer, growing it when needed.

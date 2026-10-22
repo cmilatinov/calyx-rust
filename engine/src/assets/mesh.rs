@@ -121,6 +121,10 @@ pub struct Mesh {
     pub(crate) bone_buffer: ResizableBuffer,
 
     pub(crate) instance_bind_group_layout: wgpu::BindGroupLayout,
+    /// One bind group per entry of `instance_buffers`, reused across frames.
+    pub(crate) instance_bind_groups: Vec<wgpu::BindGroup>,
+    /// `bone_buffer` generation the cached bind groups were built over.
+    pub(crate) instance_bind_groups_bone_generation: u64,
 }
 
 impl Mesh {
@@ -200,6 +204,8 @@ impl Mesh {
                 wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
             ),
             instance_bind_group_layout,
+            instance_bind_groups: Vec::new(),
+            instance_bind_groups_bone_generation: 0,
         }
     }
 }
@@ -464,14 +470,23 @@ impl Mesh {
     pub(crate) fn rebuild_instance_data(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         self.rebuild_instance_buffer(device, queue);
         self.rebuild_bone_buffer(device, queue);
+        self.refresh_instance_bind_groups(device);
     }
 
-    /// Creates one instance bind group per instance buffer chunk.
-    pub(crate) fn instance_bind_groups(&self, device: &wgpu::Device) -> Vec<wgpu::BindGroup> {
-        self.instance_buffers
-            .iter()
-            .map(|instance_buffer| {
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
+    /// Keeps one instance bind group per instance buffer chunk. A cached group
+    /// is rebuilt only when the buffers it binds change: its instance buffer
+    /// was dropped or created, or the bone buffer was reallocated.
+    fn refresh_instance_bind_groups(&mut self, device: &wgpu::Device) {
+        let bone_generation = self.bone_buffer.generation();
+        if bone_generation != self.instance_bind_groups_bone_generation {
+            self.instance_bind_groups.clear();
+            self.instance_bind_groups_bone_generation = bone_generation;
+        }
+        self.instance_bind_groups
+            .truncate(self.instance_buffers.len());
+        for instance_buffer in &self.instance_buffers[self.instance_bind_groups.len()..] {
+            self.instance_bind_groups
+                .push(device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("instance_bind_group"),
                     layout: &self.instance_bind_group_layout,
                     entries: &[
@@ -484,9 +499,14 @@ impl Mesh {
                             resource: self.bone_buffer.get_wgpu_buffer().as_entire_binding(),
                         },
                     ],
-                })
-            })
-            .collect()
+                }));
+        }
+    }
+
+    /// The instance bind group of instance buffer chunk `chunk`, built by the
+    /// last [`Self::rebuild_instance_data`].
+    pub(crate) fn instance_bind_group(&self, chunk: usize) -> Option<&wgpu::BindGroup> {
+        self.instance_bind_groups.get(chunk)
     }
 
     /// Marks the mesh so its GPU buffers are rebuilt on the next render pass.
@@ -497,9 +517,9 @@ impl Mesh {
 
 #[cfg(test)]
 mod tests {
-    use super::Mesh;
+    use super::{BoneTransform, Instance, Mesh};
     use crate::assets::Asset;
-    use crate::test_support::TestAssets;
+    use crate::test_support::{test_render_context, TestAssets};
     use nalgebra_glm::{IVec4, Vec3, Vec4};
 
     #[test]
@@ -550,5 +570,63 @@ mod tests {
             .uvs
             .iter()
             .all(|channel| channel.len() == mesh.vertices.len()));
+    }
+
+    #[test]
+    fn instance_bind_groups_are_reused_until_their_buffers_change() {
+        let render_context = test_render_context();
+        let (device, queue) = (render_context.device(), render_context.queue());
+        let mut mesh = Mesh::new(&render_context);
+        mesh.rebuild_instance_data(device, queue);
+        let first = mesh
+            .instance_bind_group(0)
+            .cloned()
+            .expect("the first chunk has a bind group");
+
+        mesh.rebuild_instance_data(device, queue);
+        assert_eq!(
+            mesh.instance_bind_group(0),
+            Some(&first),
+            "unchanged buffers"
+        );
+
+        mesh.instances = vec![Instance::default(); Mesh::MAX_INSTANCES + 1];
+        mesh.rebuild_instance_data(device, queue);
+        assert_eq!(
+            mesh.instance_bind_group(0),
+            Some(&first),
+            "a chunk was added"
+        );
+        let second = mesh
+            .instance_bind_group(1)
+            .cloned()
+            .expect("the second chunk has a bind group");
+        assert!(mesh.instance_bind_group(2).is_none());
+
+        mesh.instances.truncate(1);
+        mesh.rebuild_instance_data(device, queue);
+        assert_eq!(
+            mesh.instance_bind_group(0),
+            Some(&first),
+            "a chunk was dropped"
+        );
+        assert!(mesh.instance_bind_group(1).is_none());
+
+        mesh.instances = vec![Instance::default(); Mesh::MAX_INSTANCES + 1];
+        mesh.rebuild_instance_data(device, queue);
+        assert_ne!(
+            mesh.instance_bind_group(1),
+            Some(&second),
+            "a recreated chunk buffer gets a new bind group"
+        );
+
+        mesh.bone_transforms = vec![BoneTransform::default(); Mesh::MAX_BONES];
+        mesh.rebuild_instance_data(device, queue);
+        assert_ne!(
+            mesh.instance_bind_group(0),
+            Some(&first),
+            "a reallocated bone buffer rebuilds every group"
+        );
+        assert!(mesh.instance_bind_group(1).is_some());
     }
 }
