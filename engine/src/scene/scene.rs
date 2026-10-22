@@ -24,10 +24,11 @@ use crate::resource::ResourceMap;
 use crate::scene::game_object_store::GameObjectStore;
 use crate::scene::scene_graph::SceneGraph;
 use crate::scene::transform_cache::TransformCache;
-use crate::scene::{GameObjectRef, Prefab, SceneError};
+use crate::scene::{Prefab, SceneError};
 use crate::try_all;
 use crate::utils::{ContextSeed, TypeUuid};
 
+use super::game_object_ref::RemapScope;
 use super::scene_graph::{self, SiblingDir};
 
 /// Lightweight handle to a game object stored inside a [`Scene`].
@@ -35,7 +36,7 @@ use super::scene_graph::{self, SiblingDir};
 /// The handle contains both the Legion entity and the scene-graph node index so
 /// hierarchy and ECS lookups can stay cheap. Persist this handle only for the
 /// lifetime of the scene instance; for serialized references use
-/// [`GameObjectRef`].
+/// [`GameObjectRef`](crate::scene::GameObjectRef).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GameObject {
     /// Internal scene-graph node for hierarchy operations.
@@ -444,7 +445,10 @@ impl Scene {
         Ok(())
     }
     /// Instantiates `prefab` into the scene and remaps any embedded
-    /// [`GameObjectRef`] values to the newly created objects.
+    /// [`GameObjectRef`](crate::scene::GameObjectRef) values to the newly created objects. Remapping happens
+    /// while each component is deserialized, so references inside nested
+    /// structs, lists and enum variants are remapped too. A reference to an
+    /// object outside the prefab is left unchanged with a warning.
     ///
     /// Returns [`SceneError::InvalidPrefab`] when the prefab data is malformed.
     pub fn instantiate_prefab(
@@ -472,6 +476,9 @@ impl Scene {
             self.store.register_uuid(new_game_object_id, game_object);
         }
 
+        // Every `GameObjectRef` deserialized while this scope is held is
+        // remapped to the instance's objects, wherever serde reaches it.
+        let remap_scope = RemapScope::enter(id_mapping.clone());
         for (game_object_id, components) in prefab.data.components.iter() {
             let new_game_object_id = *id_mapping.get_by_left(game_object_id).ok_or_else(|| {
                 SceneError::InvalidPrefab(format!("object {game_object_id} has no mapped id"))
@@ -482,10 +489,10 @@ impl Scene {
             for (component_id, data) in components {
                 try_all!(
                     None => continue;
-                    let TypeInfo::Struct(struct_info) = type_registry.type_info_by_id(*component_id);
+                    let TypeInfo::Struct(_) = type_registry.type_info_by_id(*component_id);
                     let component = component_registry.component(*component_id);
                 );
-                let mut instance = match component.deserialize(data) {
+                let instance = match component.deserialize(data) {
                     Ok(instance) => instance,
                     Err(err) => {
                         log::warn!(
@@ -499,21 +506,6 @@ impl Scene {
                     None => continue;
                     let mut entry = self.entry_mut(game_object);
                 );
-                for (name, field) in &struct_info.fields {
-                    try_all!(
-                        None => continue;
-                        let id = field.get::<GameObjectRef>(&*instance).map(|r| r.id());
-                        let target_id = id_mapping.get_by_left(&id);
-                    );
-                    log::trace!("{} - {}", name, field.name);
-                    field
-                        .set(&mut *instance, GameObjectRef::new(*target_id))
-                        .ok_or_else(|| {
-                            SceneError::InvalidPrefab(format!(
-                                "failed to remap object reference field {name} on object {game_object_id}"
-                            ))
-                        })?;
-                }
                 let _ = component.bind_instance(&mut entry, instance);
             }
             if let Some(mut entry) = self.entry_mut(game_object) {
@@ -522,6 +514,8 @@ impl Scene {
                 }
             }
         }
+
+        drop(remap_scope);
 
         for (parent_id, children) in prefab.data.hierarchy.iter() {
             try_all!(
