@@ -61,6 +61,11 @@ Example game project. Compiles as dynamic library (plugin) with `plugin_main` en
 - Windows: uses `rust-lld.exe` linker, `-Cprefer-dynamic` for fast iteration.
 - Linux: `-Clink-arg=-Wl,--undefined-version` for shared lib compat.
 - The project DLL statically links its own copy of `engine`, and engine types cross the DLL boundary keyed by `TypeId`. The DLL is built in a separate `cargo build --lib`, so engine's dependencies must resolve to the same features there as in the editor build, or the DLL gets another engine build with other `TypeId`s. `engine/engine_feature_pins` pins the editor's features; `editor/tests/project_assembly_features.rs` fails when they drift, and the editor logs an error when it loads an assembly built against another engine.
+- The DLL's own copy of `engine` and its dependencies also means its own copy of every `static` and `thread_local!` in them. Code that reaches one from the DLL sees the DLL's copy, not the editor's. The ones that matter:
+  - Legion's entity counter (`NEXT_ENTITY`): the DLL's starts over and would hand out entities the editor already did, so a `Scene` keeps a pointer to the allocator of the engine build that created it and spawns every object, from either side, with it.
+  - The prefab id remap (`RemapScope`, a thread-local read by `GameObjectRef` deserialization): each component type enters it in its own code through `ComponentInstance::deserialize_remapped`, so a project component sees the remap the editor's prefab instantiation asked for.
+  - The `log` logger: `TypeRegistry::register_crate` installs the logger the editor recorded in `begin_plugin_load`, so DLL log records reach the editor's log.
+  - Safe as they are: Legion's `ID_CLONE_MAPPINGS` (only `World::clone_from`, which the engine never calls), `COMPONENT_VERSION` (only Legion's `maybe_changed` filter, unused; the scene's change set tracks writes) and `WORLD_ID_COUNTER` (keys Legion query caches, and the engine builds a fresh query per use); network object ids (`NETWORK_ID_PREFIX` is random per copy, made to stay unique across peers); `warn_once` keys (a warning can show once per copy); `inventory` registrations (each copy collects its own, which is how `register_crate` finds only the DLL's types).
 - `release-with-debug` profile for profiling.
 
 ## Asset File Types

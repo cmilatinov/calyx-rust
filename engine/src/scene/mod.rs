@@ -14,7 +14,7 @@ pub use self::scene_manager::*;
 pub use self::transform_cache::*;
 
 mod error;
-mod game_object_ref;
+pub(crate) mod game_object_ref;
 mod prefab;
 mod scene_manager;
 
