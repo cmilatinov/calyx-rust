@@ -216,6 +216,7 @@ impl EditorAppState {
         component: uuid::Uuid,
         component_name: &str,
         changes: Vec<(Vec<String>, serde_json::Value, serde_json::Value)>,
+        structural: &[Vec<String>],
     ) {
         if self.game.scenes.has_simulation_scene() || changes.is_empty() {
             return;
@@ -227,19 +228,25 @@ impl EditorAppState {
             } else {
                 value_path.join(".")
             };
-            self.pending_inspector_value_edits.record(
-                InspectorValueEdit {
-                    label: format!("Edit {component_name} {value_name}"),
-                    key: InspectorValueKey {
-                        game_object,
-                        component,
-                        value_path,
-                    },
-                    before,
-                    after,
+            let edit = InspectorValueEdit {
+                label: format!("Edit {component_name} {value_name}"),
+                key: InspectorValueKey {
+                    game_object,
+                    component,
+                    value_path,
                 },
-                std::time::Instant::now(),
-            );
+                before,
+                after,
+            };
+            if structural.contains(&edit.key.value_path) || edit.resizes_list() {
+                // Adding, removing or moving an element is one undo step. Pending
+                // element edits commit first so their indices still match on undo.
+                self.flush_pending_inspector_value_edits();
+                self.scene_history.push_inspector_value(edit);
+            } else {
+                self.pending_inspector_value_edits
+                    .record(edit, std::time::Instant::now());
+            }
         }
         self.sync_scene_dirty_to_current_fingerprint();
     }

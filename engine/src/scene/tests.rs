@@ -1545,9 +1545,7 @@ mod tests {
         },
     }
 
-    /// Component holding references in every shape serde can reach. The `Vec`
-    /// field is `#[reflect_skip]` because reflection does not support `Vec`
-    /// yet; serde still serializes it, which is all remapping needs.
+    /// Component holding references in every shape serde can reach.
     #[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
     #[uuid = "b7d2e915-6c3a-4f08-8a4e-1d9f5c27e6b3"]
     #[reflect(Default, TypeUuidDynamic, Component)]
@@ -1557,7 +1555,6 @@ mod tests {
         slot: RefSlot,
         pair: RefPair,
         choice: RefChoice,
-        #[reflect_skip]
         targets: Vec<GameObjectRef>,
         #[serde(skip)]
         #[reflect_skip]

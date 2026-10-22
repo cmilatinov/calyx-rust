@@ -3,7 +3,9 @@ use crate::reflect::type_info::{
     EnumInfo, EnumVariantFieldInfo, EnumVariantInfo, FieldGetter, FieldSetter, ListInfo, MapInfo,
     NamedField, OptionInfo, StructInfo, TypeDescriptor, TypeInfo,
 };
-use crate::reflect::{AttributeMap, FieldGetterMut, Reflect, ReflectedType, TraitMetaFrom};
+use crate::reflect::{
+    AttributeMap, FieldGetterMut, Reflect, ReflectDefault, ReflectedType, TraitMetaFrom,
+};
 use crate::utils::TypeUuid;
 use inventory::collect;
 use std::any::TypeId;
@@ -345,6 +347,28 @@ impl TypeDescriptor {
     }
 }
 
+impl TypeRegistry {
+    /// Registers list metadata and [`ReflectDefault`] for the list type `Vec<E>`
+    /// that a reflected field holds.
+    ///
+    /// Many structs share a list type such as `Vec<f32>`, so the first
+    /// registration in the host pass owns it. A plugin pass leaves a host-owned
+    /// list alone: replacing it would leave its type name pointing into the
+    /// plugin's assembly after that assembly unloads.
+    pub fn meta_field_list<E: Reflect + TypeUuid + 'static>(&mut self) {
+        let host_owned = self
+            .identities
+            .types
+            .get(&Vec::<E>::type_uuid())
+            .is_some_and(|(_, generation)| *generation == 0);
+        if host_owned && self.identities.generation > 0 {
+            return;
+        }
+        self.meta_list::<Vec<E>, E>();
+        self.meta_impls::<Vec<E>, ReflectDefault>();
+    }
+}
+
 /// Builder used to populate [`StructInfo`] field metadata.
 pub struct StructInfoBuilder<'a> {
     type_info: &'a mut StructInfo,
@@ -402,7 +426,7 @@ impl<'a> EnumInfoBuilder<'a> {
 mod tests {
     use super::*;
     use crate as engine;
-    use crate::reflect::impls::ReflectDefault;
+    use crate::reflect::impls::{ReflectDefault, ReflectGenericFloat};
     use crate::type_uuids;
     use crate::utils::TypeUuid;
     use ReflectedType;
@@ -524,6 +548,127 @@ mod tests {
         };
         assert_eq!(info.key.type_uuid, String::type_uuid());
         assert_eq!(info.value.type_uuid, f32::type_uuid());
+    }
+
+    type AliasedList = Vec<u32>;
+
+    #[derive(Default, TypeUuid, Reflect)]
+    #[uuid = "c41d7a2e-58b3-4f19-9e06-2d8a6b3f7c15"]
+    #[allow(unused)]
+    #[repr(C)]
+    struct WithLists {
+        direct: Vec<f32>,
+        aliased: AliasedList,
+        nested: Vec<Vec<i64>>,
+        plain: f32,
+    }
+
+    fn list_element(reg: &TypeRegistry, type_uuid: Uuid) -> Uuid {
+        let Some(TypeInfo::List(info)) = reg.type_info_by_id(type_uuid) else {
+            panic!("expected list info for {type_uuid}");
+        };
+        info.element.type_uuid
+    }
+
+    #[test]
+    fn derive_registers_list_info_for_direct_vec_fields() {
+        let mut reg = empty_registry();
+        WithLists::register(&mut reg);
+
+        assert_eq!(
+            list_element(&reg, Vec::<f32>::type_uuid()),
+            f32::type_uuid()
+        );
+        let TypeInfo::Struct(info) = reg.type_info::<WithLists>().unwrap() else {
+            panic!("expected struct info");
+        };
+        assert_eq!(
+            info.field("direct").unwrap().type_uuid,
+            Vec::<f32>::type_uuid()
+        );
+    }
+
+    #[test]
+    fn derive_registers_list_info_for_aliased_vec_fields() {
+        let mut reg = empty_registry();
+        WithLists::register(&mut reg);
+
+        assert_eq!(
+            list_element(&reg, AliasedList::type_uuid()),
+            u32::type_uuid()
+        );
+    }
+
+    #[test]
+    fn derive_registers_list_info_for_nested_vec_fields() {
+        let mut reg = empty_registry();
+        WithLists::register(&mut reg);
+
+        assert_eq!(
+            list_element(&reg, Vec::<Vec<i64>>::type_uuid()),
+            Vec::<i64>::type_uuid()
+        );
+        assert_eq!(
+            list_element(&reg, Vec::<i64>::type_uuid()),
+            i64::type_uuid()
+        );
+    }
+
+    #[test]
+    fn derive_registers_defaults_for_list_types() {
+        let mut reg = empty_registry();
+        WithLists::register(&mut reg);
+
+        // The inspector appends a list's element type's default, so a list of
+        // lists can grow only when the inner list type has one.
+        for list in [
+            Vec::<f32>::type_uuid(),
+            Vec::<Vec<i64>>::type_uuid(),
+            Vec::<i64>::type_uuid(),
+        ] {
+            let default = reg.trait_meta::<ReflectDefault>(list).unwrap().default();
+            assert_eq!(default.uuid(), list);
+            assert!(default.as_list().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn derive_registers_no_list_info_for_plain_fields() {
+        let mut reg = empty_registry();
+        WithLists::register(&mut reg);
+
+        assert!(reg.type_info::<f32>().is_none());
+    }
+
+    #[test]
+    fn plugin_pass_keeps_host_owned_list_info() {
+        let mut reg = empty_registry();
+        reg.meta_field_list::<f32>();
+        // Mark the host registration so a replacement would show: a fresh
+        // registration has only the trait metadata it registers itself.
+        reg.types
+            .get_mut(&Vec::<f32>::type_uuid())
+            .unwrap()
+            .trait_meta
+            .insert(
+                ReflectGenericFloat::type_uuid(),
+                Box::new(<ReflectGenericFloat as TraitMetaFrom<f32>>::trait_meta()),
+            );
+
+        reg.begin_plugin_load();
+        reg.meta_field_list::<f32>();
+        reg.meta_field_list::<u32>();
+
+        let host = reg.type_registration::<Vec<f32>>().unwrap();
+        assert!(host
+            .trait_meta
+            .contains_key(&ReflectGenericFloat::type_uuid()));
+        assert_eq!(reg.identities.types[&Vec::<f32>::type_uuid()].1, 0);
+        assert_eq!(
+            list_element(&reg, Vec::<u32>::type_uuid()),
+            u32::type_uuid()
+        );
+        assert_eq!(reg.identities.types[&Vec::<u32>::type_uuid()].1, 1);
     }
 
     #[derive(TypeUuid)]
