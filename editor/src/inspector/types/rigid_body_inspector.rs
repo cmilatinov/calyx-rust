@@ -31,57 +31,37 @@ impl TypeInspector for RigidBodyInspector {
 
     fn show_inspector(&self, ui: &mut Ui, ctx: &InspectorContext, instance: &mut dyn Reflect) {
         if let Some(value) = instance.downcast_mut::<ComponentRigidBody>() {
-            let mut changed = false;
             Widgets::inspector_prop_value(ui, "Enabled", |ui, _| {
-                changed |= ui
-                    .add(egui::Checkbox::without_text(&mut value.enabled))
-                    .changed();
+                ui.add(egui::Checkbox::without_text(&mut value.enabled));
             });
             Widgets::inspector_prop_value(ui, "Type", |ui, _| {
                 let id = Id::new(ctx.game_object.node).with(ComponentRigidBody::type_uuid());
                 egui::ComboBox::from_id_salt(id)
                     .selected_text(Self::rigid_body_type_label(value.ty))
                     .show_ui(ui, |ui| {
-                        changed |= ui
-                            .selectable_value(&mut value.ty, RigidBodyType::Dynamic, "Dynamic")
-                            .changed();
-                        changed |= ui
-                            .selectable_value(&mut value.ty, RigidBodyType::Fixed, "Fixed")
-                            .changed();
-                        changed |= ui
-                            .selectable_value(
-                                &mut value.ty,
-                                RigidBodyType::KinematicPositionBased,
-                                "KinematicPositionBased",
-                            )
-                            .changed();
-                        changed |= ui
-                            .selectable_value(
-                                &mut value.ty,
-                                RigidBodyType::KinematicVelocityBased,
-                                "KinematicVelocityBased",
-                            )
-                            .changed();
+                        ui.selectable_value(&mut value.ty, RigidBodyType::Dynamic, "Dynamic");
+                        ui.selectable_value(&mut value.ty, RigidBodyType::Fixed, "Fixed");
+                        ui.selectable_value(
+                            &mut value.ty,
+                            RigidBodyType::KinematicPositionBased,
+                            "KinematicPositionBased",
+                        );
+                        ui.selectable_value(
+                            &mut value.ty,
+                            RigidBodyType::KinematicVelocityBased,
+                            "KinematicVelocityBased",
+                        );
                     });
             });
             Widgets::inspector_prop_value(ui, "Mass", |ui, _| {
-                changed |= ui
-                    .add(egui::DragValue::new(&mut value.mass).speed(0.1))
-                    .changed();
+                ui.add(egui::DragValue::new(&mut value.mass).speed(0.1));
             });
             Widgets::inspector_prop_value(ui, "Gravity Scale", |ui, _| {
-                changed |= ui
-                    .add(egui::DragValue::new(&mut value.gravity_scale).speed(0.01))
-                    .changed();
+                ui.add(egui::DragValue::new(&mut value.gravity_scale).speed(0.01));
             });
             Widgets::inspector_prop_value(ui, "Can Sleep", |ui, _| {
-                changed |= ui
-                    .add(egui::Checkbox::without_text(&mut value.can_sleep))
-                    .changed();
+                ui.add(egui::Checkbox::without_text(&mut value.can_sleep));
             });
-            if changed {
-                value.dirty = true;
-            }
         }
     }
 }

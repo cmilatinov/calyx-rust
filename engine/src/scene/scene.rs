@@ -21,6 +21,7 @@ use crate::net::{ComponentNetworkObject, Network, NetworkObjectId};
 use crate::physics::PhysicsContext;
 use crate::reflect::{ReflectDefault, TypeInfo};
 use crate::resource::ResourceMap;
+use crate::scene::change_set::ChangeSet;
 use crate::scene::game_object_store::GameObjectStore;
 use crate::scene::scene_graph::SceneGraph;
 use crate::scene::transform_cache::TransformCache;
@@ -106,6 +107,9 @@ pub struct Scene {
     pub(crate) graph: SceneGraph,
     pub(crate) store: GameObjectStore,
     pub(crate) transforms: TransformCache,
+    /// Entities written per component type since each type's consumer last
+    /// took them; see [`Scene::component_written`].
+    pub(crate) changes: ChangeSet,
     /// Index of network objects by id, one entry per id and per object.
     /// Entries are hints that lookups check and repair; see
     /// [`Scene::find_network_object`].
@@ -136,6 +140,7 @@ impl Scene {
             graph,
             store,
             transforms: TransformCache::default(),
+            changes: ChangeSet::default(),
             network_objects: BiHashMap::new(),
             root,
             camera: Default::default(),
@@ -726,8 +731,10 @@ impl Scene {
     }
 
     /// Observes that `game_object`'s `component` was added, written or
-    /// removed. Every component write in the scene ends here.
+    /// removed. Every component write in the scene ends here, and each one is
+    /// recorded in the scene's change set for consumers such as physics.
     fn component_written(&mut self, game_object: GameObject, component: ComponentTypeId) {
+        self.changes.record(game_object.entity, component);
         if component == ComponentTypeId::of::<ComponentTransform>() {
             self.transforms.mark_dirty_subtree(game_object, &self.graph);
         } else if component == ComponentTypeId::of::<ComponentNetworkObject>() {
@@ -933,6 +940,7 @@ impl Scene {
                 self.network_objects.remove_by_right(&go);
                 let uuid = self.uuid(go);
                 self.world.0.remove(go.entity);
+                self.changes.forget(go.entity);
                 self.store.remove(uuid, go.entity);
                 self.transforms.remove(go.node);
             }
