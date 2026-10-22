@@ -8,6 +8,7 @@ mod tests {
     use crate::scene::{GameObject, GameObjectRef, Scene, SceneData, SiblingDir};
     use crate::test_support::test_scene;
     use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
+    use legion::storage::ComponentTypeId;
     use nalgebra_glm::{self as glm, Vec3};
     use serde::{Deserialize, Serialize};
     use uuid::Uuid;
@@ -1053,6 +1054,63 @@ mod tests {
         let entry = scene.entry(go);
         assert!(entry.is_some());
         assert!(entry.unwrap().get_component::<ComponentID>().is_ok());
+    }
+
+    #[test]
+    fn component_types_lists_the_object_components() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        let camera = ComponentTypeId::of::<ComponentCamera>();
+
+        let types = scene.component_types(go);
+        assert!(types.contains(&ComponentTypeId::of::<ComponentID>()));
+        assert!(!types.contains(&camera));
+
+        scene.add_component(go, ComponentCamera::default());
+        assert!(scene.component_types(go).contains(&camera));
+    }
+
+    #[test]
+    fn component_types_is_empty_for_a_deleted_object() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        scene.delete(go);
+        scene.flush_deletes();
+        assert!(scene.component_types(go).is_empty());
+    }
+
+    #[test]
+    fn read_component_dyn_reads_through_a_prototype() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        scene.add_component(
+            go,
+            ComponentCamera {
+                fov: 42.0,
+                ..Default::default()
+            },
+        );
+        let prototype = ComponentCamera::default();
+
+        let fov = scene.read_component_dyn(go, &prototype, |component| {
+            component
+                .as_any()
+                .downcast_ref::<ComponentCamera>()
+                .map(|camera| camera.fov)
+        });
+        assert_eq!(fov, Some(Some(42.0)));
+    }
+
+    #[test]
+    fn read_component_dyn_returns_none_when_missing() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        let prototype = ComponentCamera::default();
+
+        assert_eq!(scene.read_component_dyn(go, &prototype, |_| ()), None);
+        scene.delete(go);
+        scene.flush_deletes();
+        assert_eq!(scene.read_component_dyn(go, &prototype, |_| ()), None);
     }
 
     // --- Camera ---

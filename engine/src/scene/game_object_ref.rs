@@ -1,7 +1,6 @@
 use std::cell::RefCell;
 
 use bimap::BiHashMap;
-use legion::world::EntryRef;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
 
@@ -111,12 +110,6 @@ impl GameObjectRef {
     /// Resolves the referenced game object inside `scene`.
     pub fn game_object(&self, scene: &Scene) -> Option<GameObject> {
         scene.find(self.id)
-    }
-
-    /// Returns an immutable Legion entry for the referenced object when it
-    /// exists in `scene`.
-    pub fn entry<'a>(&self, scene: &'a Scene) -> Option<EntryRef<'a>> {
-        self.game_object(scene).and_then(|go| scene.entry(go))
     }
 
     /// Returns the persistent UUID stored by this reference.

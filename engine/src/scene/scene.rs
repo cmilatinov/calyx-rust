@@ -694,7 +694,7 @@ impl Scene {
     }
 
     /// Returns the immutable Legion entry for `game_object`.
-    pub fn entry(&self, game_object: GameObject) -> Option<EntryRef<'_>> {
+    pub(crate) fn entry(&self, game_object: GameObject) -> Option<EntryRef<'_>> {
         self.world.entry_ref(game_object.entity).ok()
     }
 
@@ -974,6 +974,30 @@ impl Scene {
         self.entry(game_object)
             .and_then(|e| e.get_component::<ComponentID>().ok().map(|id| id.id))
             .unwrap_or_default()
+    }
+
+    /// Returns the type ids of every component on `game_object`, or an empty
+    /// list when the object does not exist. Compare them with
+    /// [`ComponentInstance::component_type_id`](crate::component::ComponentInstance::component_type_id)
+    /// to find which registered components the object carries.
+    pub fn component_types(&self, game_object: GameObject) -> Vec<ComponentTypeId> {
+        self.entry(game_object)
+            .map(|entry| entry.archetype().layout().component_types().to_vec())
+            .unwrap_or_default()
+    }
+
+    /// Reads the component of `component`'s type on `game_object` and maps it
+    /// through `reader`, for callers that only know the type at runtime, such
+    /// as through the component registry's prototypes. Returns `None` when the
+    /// object or component is missing.
+    pub fn read_component_dyn<R>(
+        &self,
+        game_object: GameObject,
+        component: &dyn Component,
+        reader: impl FnOnce(&dyn Component) -> R,
+    ) -> Option<R> {
+        let entry = self.entry(game_object)?;
+        component.get_instance(&entry).map(reader)
     }
 
     /// Resolves a game object by persistent UUID.

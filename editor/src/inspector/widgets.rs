@@ -2,7 +2,6 @@ use egui;
 use egui::{Color32, DragValue, Frame, Id, Response, Shape, Stroke, StrokeKind, Ui, WidgetText};
 use engine::assets::texture::Texture;
 use engine::assets::{Asset, AssetAccess, AssetMeta, AssetRef, AssetRegistry};
-use engine::component::ComponentID;
 use engine::scene::{GameObjectRef, Scene};
 use engine::utils::TypeUuid;
 use lazy_static::lazy_static;
@@ -236,14 +235,8 @@ impl Widgets {
                                     .changed();
                             }
                             for go in scene.objects() {
-                                let Some(entry) = scene.entry(go) else {
-                                    return;
-                                };
                                 let id = scene.uuid(go);
-                                let name = entry
-                                    .get_component::<ComponentID>()
-                                    .map(|c| c.name.as_str())
-                                    .unwrap_or("");
+                                let name = scene.name(go);
                                 changed |=
                                     ui.selectable_value(&mut game_object_id, id, name).changed();
                             }
