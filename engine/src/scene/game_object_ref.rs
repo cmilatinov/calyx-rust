@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use bimap::BiHashMap;
 use legion::world::{Entry, EntryRef};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -5,7 +7,7 @@ use uuid::Uuid;
 
 use crate as engine;
 use crate::{
-    reflect::{type_registry::TypeRegistry, Reflect, ReflectDefault, TypeInfo},
+    reflect::{Reflect, ReflectDefault},
     scene::Scene,
     utils::TypeUuid,
 };
@@ -39,7 +41,62 @@ impl<'de> Deserialize<'de> for GameObjectRef {
     where
         D: Deserializer<'de>,
     {
-        Uuid::deserialize(deserializer).map(|id| Self { id })
+        Uuid::deserialize(deserializer).map(|id| Self { id: remap_id(id) })
+    }
+}
+
+thread_local! {
+    /// Id map applied to every [`GameObjectRef`] deserialized on this thread
+    /// while a [`RemapScope`] is held.
+    static ID_REMAP: RefCell<Option<BiHashMap<Uuid, Uuid>>> = const { RefCell::new(None) };
+}
+
+/// Remaps `id` through the active [`RemapScope`], if any. Nil ids are left
+/// alone; an id the map does not know is left unchanged with a warning.
+fn remap_id(id: Uuid) -> Uuid {
+    if id.is_nil() {
+        return id;
+    }
+    ID_REMAP.with_borrow(|map| {
+        let Some(map) = map else {
+            return id;
+        };
+        match map.get_by_left(&id) {
+            Some(new_id) => *new_id,
+            None => {
+                log::warn!(
+                    "Object reference to {id} is not part of the prefab being instantiated; leaving it unchanged"
+                );
+                id
+            }
+        }
+    })
+}
+
+/// Guard that remaps every [`GameObjectRef`] deserialized on this thread
+/// through an id map while it is alive.
+///
+/// Prefab instantiation holds one while it deserializes component data, so
+/// references are remapped wherever serde reaches them: nested structs, lists,
+/// enum variants and tuple structs alike. Dropping the guard restores whatever
+/// map was active before it, so scopes nest.
+#[must_use = "remapping stops as soon as the scope is dropped"]
+pub(crate) struct RemapScope {
+    previous: Option<BiHashMap<Uuid, Uuid>>,
+}
+
+impl RemapScope {
+    /// Activates `map` until the returned guard is dropped.
+    pub(crate) fn enter(map: BiHashMap<Uuid, Uuid>) -> Self {
+        let previous = ID_REMAP.with_borrow_mut(|active| active.replace(map));
+        Self { previous }
+    }
+}
+
+impl Drop for RemapScope {
+    fn drop(&mut self) {
+        let previous = self.previous.take();
+        ID_REMAP.with_borrow_mut(|active| *active = previous);
     }
 }
 
@@ -72,60 +129,4 @@ impl GameObjectRef {
     pub fn id(&self) -> Uuid {
         self.id
     }
-}
-
-/// Rewrites every [`GameObjectRef`] reachable from `value` through `id_mapping`,
-/// walking reflected struct fields (named and tuple), container elements and
-/// enum variant fields recursively.
-///
-/// Nil references are left alone. A non-nil reference with no entry in
-/// `id_mapping` is left unchanged and passed to `on_unknown` with its field
-/// path, which starts at `path`.
-pub(crate) fn remap_object_refs(
-    value: &mut dyn Reflect,
-    types: &TypeRegistry,
-    id_mapping: &BiHashMap<Uuid, Uuid>,
-    path: &str,
-    on_unknown: &mut dyn FnMut(&str, Uuid),
-) {
-    let mut path = path.to_string();
-    remap_value(value, types, id_mapping, &mut path, on_unknown);
-}
-
-fn remap_value(
-    value: &mut dyn Reflect,
-    types: &TypeRegistry,
-    id_mapping: &BiHashMap<Uuid, Uuid>,
-    path: &mut String,
-    on_unknown: &mut dyn FnMut(&str, Uuid),
-) {
-    if let Some(reference) = value.downcast_mut::<GameObjectRef>() {
-        if reference.id.is_nil() {
-            return;
-        }
-        match id_mapping.get_by_left(&reference.id) {
-            Some(new_id) => reference.id = *new_id,
-            None => on_unknown(path, reference.id),
-        }
-        return;
-    }
-    if let Some(TypeInfo::Struct(info)) = types.type_info_by_id(value.uuid()) {
-        for (name, field) in &info.fields {
-            if let Some(field_value) = field.get_reflect_mut(&mut *value) {
-                let len = path.len();
-                path.push('.');
-                path.push_str(name);
-                remap_value(field_value, types, id_mapping, path, on_unknown);
-                path.truncate(len);
-            }
-        }
-    }
-    let mut index = 0usize;
-    value.visit_elements_mut(&mut |element| {
-        let len = path.len();
-        path.push_str(&format!("[{index}]"));
-        index += 1;
-        remap_value(element, types, id_mapping, path, on_unknown);
-        path.truncate(len);
-    });
 }

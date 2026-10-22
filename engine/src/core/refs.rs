@@ -13,8 +13,7 @@ const READ_ONLY_REF_WRAPPER_UUID: [u8; 16] = [
     0x17, 0xEF, 0x5A, 0xE1, 0x2C, 0xD0, 0x42, 0x9F, 0x84, 0x52, 0xA0, 0x21, 0x65, 0x55, 0xB0, 0x6A,
 ];
 
-/// Derives a stable UUID for a generic wrapper type from its own UUID and the wrapped type's.
-pub(crate) fn wrapper_type_uuid(wrapper_uuid: &[u8; 16], inner_uuid: Uuid) -> Uuid {
+fn wrapper_type_uuid(wrapper_uuid: &[u8; 16], inner_uuid: Uuid) -> Uuid {
     let mut hasher = sha1::Sha1::new();
     hasher.update(wrapper_uuid);
     hasher.update(inner_uuid.as_bytes());

@@ -345,51 +345,6 @@ impl TypeDescriptor {
     }
 }
 
-/// Registers the container metadata a reflected field's type needs, chosen by
-/// the field's actual type rather than its source spelling, so aliases resolve.
-///
-/// Used by the `Reflect` derive through autoref specialization:
-/// `(&&FieldTypeRegistrar::<T>::new()).register_field_type(registry)` picks
-/// [`RegisterVecFieldType`] for `Vec<E>` and the no-op
-/// [`RegisterPlainFieldType`] for every other `T`.
-#[doc(hidden)]
-pub struct FieldTypeRegistrar<T>(std::marker::PhantomData<T>);
-
-impl<T> FieldTypeRegistrar<T> {
-    /// Creates a registrar for field type `T`.
-    pub fn new() -> Self {
-        Self(std::marker::PhantomData)
-    }
-}
-
-impl<T> Default for FieldTypeRegistrar<T> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Registers `TypeInfo::List` for a `Vec<E>` field type.
-#[doc(hidden)]
-pub trait RegisterVecFieldType {
-    /// Registers the field type's list metadata.
-    fn register_field_type(&self, registry: &mut TypeRegistry);
-}
-
-impl<E: TypeUuid + 'static> RegisterVecFieldType for &FieldTypeRegistrar<Vec<E>> {
-    fn register_field_type(&self, registry: &mut TypeRegistry) {
-        registry.meta_list::<Vec<E>, E>();
-    }
-}
-
-/// Fallback for field types that need no container metadata.
-#[doc(hidden)]
-pub trait RegisterPlainFieldType {
-    /// Does nothing.
-    fn register_field_type(&self, _registry: &mut TypeRegistry) {}
-}
-
-impl<T> RegisterPlainFieldType for FieldTypeRegistrar<T> {}
-
 /// Builder used to populate [`StructInfo`] field metadata.
 pub struct StructInfoBuilder<'a> {
     type_info: &'a mut StructInfo,

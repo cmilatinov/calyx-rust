@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 
-use crate::fq::{FQAttributeValue, FQReflect};
+use crate::fq::FQAttributeValue;
 use crate::reflect_impl::{
     reflected_type_impl, register_trait_meta_impls, type_name_and_reflect_impls,
 };
@@ -97,12 +97,7 @@ fn expand(ast: &DeriveInput) -> darling::Result<proc_macro2::TokenStream> {
         }
     }
 
-    let extra_methods = match &ast.data {
-        Data::Enum(e) => enum_visit_elements(e.variants.iter()),
-        Data::Struct(s) => tuple_struct_visit_elements(&s.fields),
-        Data::Union(_) => quote! {},
-    };
-    let reflect_impls = type_name_and_reflect_impls(name, extra_methods);
+    let reflect_impls = type_name_and_reflect_impls(name);
     let register_traits_impl = register_trait_meta_impls(name, trait_paths)?;
     let register_type_info = match &ast.data {
         Data::Struct(s) => {
@@ -220,21 +215,9 @@ fn struct_type_info(
         }
     });
 
-    let register_field_types = field_info.iter().map(|(_, ty, _, _)| {
-        quote! {
-            (&&engine::reflect::type_registry::FieldTypeRegistrar::<#ty>::new())
-                .register_field_type(registry);
-        }
-    });
-
     Ok(quote! {
         registry.meta_struct::<#name>(#reflect_attrs)
             #(#add_field_calls)*;
-        {
-            #[allow(unused_imports)]
-            use engine::reflect::type_registry::{RegisterPlainFieldType, RegisterVecFieldType};
-            #(#register_field_types)*
-        }
     })
 }
 
@@ -255,93 +238,6 @@ fn enum_type_info<'a>(
     quote! {
         registry.meta_enum::<#name>(#reflect_attrs)
             #(#add_variant_calls)*;
-    }
-}
-
-/// Whether `field` is marked `#[reflect_skip]`.
-fn is_reflect_skipped(field: &syn::Field) -> bool {
-    field
-        .attrs
-        .iter()
-        .any(|attr| attr.path().is_ident("reflect_skip"))
-}
-
-/// Generates a `visit_elements_mut` override that visits each unnamed field of
-/// a tuple struct, skipping `#[reflect_skip]` fields. Named fields are reached
-/// through `StructInfo` instead, so other structs get no override.
-fn tuple_struct_visit_elements(fields: &Fields) -> proc_macro2::TokenStream {
-    let Fields::Unnamed(unnamed) = fields else {
-        return quote! {};
-    };
-    let indices = unnamed
-        .unnamed
-        .iter()
-        .enumerate()
-        .filter(|(_, field)| !is_reflect_skipped(field))
-        .map(|(index, _)| syn::Index::from(index))
-        .collect::<Vec<_>>();
-    if indices.is_empty() {
-        return quote! {};
-    }
-    quote! {
-        fn visit_elements_mut(&mut self, visit: &mut dyn FnMut(&mut dyn #FQReflect)) {
-            #(visit(&mut self.#indices);)*
-        }
-    }
-}
-
-/// Generates a `visit_elements_mut` override that visits each field of the
-/// enum's active variant, in declaration order, skipping `#[reflect_skip]`
-/// fields.
-fn enum_visit_elements<'a>(
-    variants: impl Iterator<Item = &'a syn::Variant>,
-) -> proc_macro2::TokenStream {
-    let arms = variants
-        .map(|variant| {
-            let ident = &variant.ident;
-            // Skipped fields bind to `_` so the pattern stays complete but the
-            // visitor never sees them.
-            let mut visited = Vec::new();
-            let patterns = variant
-                .fields
-                .iter()
-                .enumerate()
-                .map(|(index, field)| {
-                    if is_reflect_skipped(field) {
-                        quote! { _ }
-                    } else {
-                        let binding = Ident::new(&format!("__field{index}"), Span::call_site());
-                        visited.push(binding.clone());
-                        quote! { #binding }
-                    }
-                })
-                .collect::<Vec<_>>();
-            match &variant.fields {
-                Fields::Named(named) => {
-                    let names = named
-                        .named
-                        .iter()
-                        .map(|field| field.ident.as_ref().unwrap());
-                    quote! {
-                        Self::#ident { #(#names: #patterns),* } => { #(visit(#visited);)* }
-                    }
-                }
-                Fields::Unnamed(_) => quote! {
-                    Self::#ident(#(#patterns),*) => { #(visit(#visited);)* }
-                },
-                Fields::Unit => quote! { Self::#ident => {} },
-            }
-        })
-        .collect::<Vec<_>>();
-    if arms.is_empty() {
-        return quote! {};
-    }
-    quote! {
-        fn visit_elements_mut(&mut self, visit: &mut dyn FnMut(&mut dyn #FQReflect)) {
-            match self {
-                #(#arms)*
-            }
-        }
     }
 }
 
