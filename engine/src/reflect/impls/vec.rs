@@ -3,6 +3,7 @@ use std::any::Any;
 use uuid::Uuid;
 
 use crate::core::wrapper_type_uuid;
+use crate::reflect::type_registry::TypeRegistry;
 use crate::reflect::{Reflect, ReflectList, TypeName};
 use crate::utils::TypeUuid;
 
@@ -62,6 +63,11 @@ impl<T: Reflect + TypeUuid> Reflect for Vec<T> {
 
     fn as_list_mut(&mut self) -> Option<&mut dyn ReflectList> {
         Some(self)
+    }
+
+    fn register_field_type(registry: &mut TypeRegistry) {
+        registry.meta_field_list::<T>();
+        T::register_field_type(registry);
     }
 }
 

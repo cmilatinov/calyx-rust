@@ -53,6 +53,19 @@ pub trait Reflect: TypeUuidDynamic + TypeNameDynamic + Any + Send + Sync {
     fn as_list_mut(&mut self) -> Option<&mut dyn ReflectList> {
         None
     }
+    /// Registers the container metadata this type needs when a reflected
+    /// struct holds it in a field. `Vec<E>` registers its list info and
+    /// default, then recurses into `E`; other types need nothing.
+    ///
+    /// The `Reflect` derive calls this for every reflected field. Dispatching
+    /// on the resolved type means a field declared through a type alias of
+    /// `Vec<E>` registers too.
+    #[doc(hidden)]
+    fn register_field_type(_registry: &mut TypeRegistry)
+    where
+        Self: Sized,
+    {
+    }
 }
 
 /// Type-erased access to a reflected list's elements.
