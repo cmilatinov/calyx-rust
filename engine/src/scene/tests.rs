@@ -825,6 +825,69 @@ mod tests {
         assert!((world.position - Vec3::new(5.0, 1.0, 0.0)).norm() < 1e-5);
     }
 
+    // --- Transform writes keep descendants' world transforms current ---
+
+    /// Builds a parent at x=1 with a child at local y=1 and caches the child's
+    /// world transform, so a write that forgets to invalidate the subtree
+    /// leaves the child at its stale position.
+    fn parent_with_cached_child() -> (Scene, GameObject, GameObject) {
+        let mut scene = crate::test_utils::test_registries().scene();
+        let parent = scene.create(None, None);
+        let child = scene.create(None, Some(parent));
+        scene.set_transform(parent, &glm::translation(&Vec3::new(1.0, 0.0, 0.0)));
+        scene.set_transform(child, &glm::translation(&Vec3::new(0.0, 1.0, 0.0)));
+        assert_child_at(&scene, child, Vec3::new(1.0, 1.0, 0.0));
+        (scene, parent, child)
+    }
+
+    fn assert_child_at(scene: &Scene, child: GameObject, expected: Vec3) {
+        let world = scene.world_transform(child).position;
+        assert!(
+            (world - expected).norm() < 1e-5,
+            "child world position {world:?}, expected {expected:?}"
+        );
+    }
+
+    #[test]
+    fn set_transform_on_parent_moves_child() {
+        let (mut scene, parent, child) = parent_with_cached_child();
+        scene.set_transform(parent, &glm::translation(&Vec3::new(5.0, 0.0, 0.0)));
+        assert_child_at(&scene, child, Vec3::new(5.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn set_world_transform_on_parent_moves_child() {
+        let (mut scene, parent, child) = parent_with_cached_child();
+        scene.set_world_transform(parent, glm::translation(&Vec3::new(5.0, 0.0, 0.0)));
+        assert_child_at(&scene, child, Vec3::new(5.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn write_component_on_parent_transform_moves_child() {
+        let (mut scene, parent, child) = parent_with_cached_child();
+        scene.write_component::<crate::component::ComponentTransform, _>(parent, |c| {
+            c.transform.position = Vec3::new(5.0, 0.0, 0.0);
+        });
+        assert_child_at(&scene, child, Vec3::new(5.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn add_component_replacing_parent_transform_moves_child() {
+        let (mut scene, parent, child) = parent_with_cached_child();
+        let mut transform = crate::component::ComponentTransform::default();
+        transform.transform.position = Vec3::new(5.0, 0.0, 0.0);
+        scene.add_component(parent, transform);
+        assert_child_at(&scene, child, Vec3::new(5.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn bind_component_dyn_resetting_parent_transform_moves_child() {
+        use crate::utils::TypeUuid;
+        let (mut scene, parent, child) = parent_with_cached_child();
+        scene.bind_component_dyn(parent, crate::component::ComponentTransform::type_uuid());
+        assert_child_at(&scene, child, Vec3::new(0.0, 1.0, 0.0));
+    }
+
     #[test]
     fn transform_cache_is_not_reused_after_node_is_recycled() {
         let registries = crate::test_utils::test_registries();

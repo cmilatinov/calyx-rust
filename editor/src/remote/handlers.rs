@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use engine::component::{ComponentID, ComponentTransform};
+use engine::component::{Component, ComponentID, ComponentTransform};
 use engine::scene::{GameObject, Scene};
 use engine::utils::TypeUuid;
 use nalgebra::UnitQuaternion;
@@ -537,47 +537,7 @@ impl EditorApp {
         let scene = self.state.game.scenes.simulation_scene_mut();
         let game_object = resolve_object(scene, object)?;
 
-        // `GameObjectStore` indexes objects by `ComponentID::id` and offers no
-        // reindex, so letting the value carry a different id - or omit it and
-        // fall back to a freshly generated serde default - would leave the
-        // object reachable under neither the old nor the new UUID.
-        let indexed_id = (type_uuid == ComponentID::type_uuid()).then(|| scene.uuid(game_object));
-        if let Some(indexed_id) = indexed_id {
-            let requested = value.get("id").and_then(serde_json::Value::as_str);
-            if let Some(requested) = requested {
-                if requested.parse::<Uuid>() != Ok(indexed_id) {
-                    return Err((
-                        ErrorKind::BadRequest,
-                        format!("game object ids are immutable; expected {indexed_id}"),
-                    ));
-                }
-            }
-        }
-
-        let Some(instance) = (unsafe {
-            scene
-                .get_component_ptr(game_object, prototype)
-                .map(|ptr| &mut *ptr)
-        }) else {
-            return Err((
-                ErrorKind::NotFound,
-                format!("object has no {component} component"),
-            ));
-        };
-        if !instance.deserialize_in_place(value) {
-            return Err((
-                ErrorKind::BadRequest,
-                "value does not deserialize into the component type".into(),
-            ));
-        }
-        if let Some(indexed_id) = indexed_id {
-            // Restores the id when the value omitted it and serde defaulted it.
-            let _ = scene.write_component::<ComponentID, _>(game_object, |id| id.id = indexed_id);
-        }
-        if type_uuid == ComponentTransform::type_uuid() {
-            scene.clear_transform_cache();
-        }
-        Ok(Some(serde_json::Value::Null))
+        set_component_value(scene, game_object, type_uuid, prototype, value)
     }
 
     fn remote_set_transform(
@@ -726,6 +686,58 @@ impl EditorApp {
             }
         }
     }
+}
+
+/// Replaces `game_object`'s `prototype` component with `value`. A
+/// [`ComponentID`] value must keep the object's indexed id.
+fn set_component_value(
+    scene: &mut Scene,
+    game_object: GameObject,
+    type_uuid: Uuid,
+    prototype: &dyn Component,
+    value: &serde_json::Value,
+) -> CommandResult {
+    // `GameObjectStore` indexes objects by `ComponentID::id` and offers no
+    // reindex, so letting the value carry a different id - or omit it and
+    // fall back to a freshly generated serde default - would leave the
+    // object reachable under neither the old nor the new UUID.
+    let indexed_id = (type_uuid == ComponentID::type_uuid()).then(|| scene.uuid(game_object));
+    if let Some(indexed_id) = indexed_id {
+        let requested = value.get("id").and_then(serde_json::Value::as_str);
+        if let Some(requested) = requested {
+            if requested.parse::<Uuid>() != Ok(indexed_id) {
+                return Err((
+                    ErrorKind::BadRequest,
+                    format!("game object ids are immutable; expected {indexed_id}"),
+                ));
+            }
+        }
+    }
+
+    let Some(instance) = (unsafe {
+        scene
+            .get_component_ptr(game_object, prototype)
+            .map(|ptr| &mut *ptr)
+    }) else {
+        return Err((
+            ErrorKind::NotFound,
+            format!("object has no {} component", prototype.type_name()),
+        ));
+    };
+    if !instance.deserialize_in_place(value) {
+        return Err((
+            ErrorKind::BadRequest,
+            "value does not deserialize into the component type".into(),
+        ));
+    }
+    if let Some(indexed_id) = indexed_id {
+        // Restores the id when the value omitted it and serde defaulted it.
+        let _ = scene.write_component::<ComponentID, _>(game_object, |id| id.id = indexed_id);
+    }
+    if type_uuid == ComponentTransform::type_uuid() {
+        scene.clear_transform_cache();
+    }
+    Ok(Some(serde_json::Value::Null))
 }
 
 /// Deletes `game_object` and its descendants immediately and returns their
@@ -1038,6 +1050,44 @@ fn pointer_button_event(pos: egui::Pos2, button: PointerButtonSpec, pressed: boo
 mod tests {
     use super::*;
     use crate::remote::runtime::tests::test_runtime;
+
+    #[test]
+    fn setting_a_parent_transform_moves_the_child() {
+        use nalgebra_glm as glm;
+        let registries = engine::test_support::test_registries();
+        let mut scene = registries.scene();
+        let parent = scene.create(None, None);
+        let child = scene.create(None, Some(parent));
+        scene.set_transform(parent, &glm::translation(&Vec3::new(1.0, 0.0, 0.0)));
+        scene.set_transform(child, &glm::translation(&Vec3::new(0.0, 1.0, 0.0)));
+        assert!((scene.world_transform(child).position - Vec3::new(1.0, 1.0, 0.0)).norm() < 1e-5);
+
+        let component_registry = registries.components.read();
+        let prototype = component_registry
+            .component(ComponentTransform::type_uuid())
+            .expect("transform should be registered");
+        let value = serde_json::json!({
+            "transform": {
+                "position": [5.0, 0.0, 0.0],
+                "rotation": [0.0, 0.0, 0.0, 1.0],
+                "scale": [1.0, 1.0, 1.0],
+            }
+        });
+        set_component_value(
+            &mut scene,
+            parent,
+            ComponentTransform::type_uuid(),
+            prototype,
+            &value,
+        )
+        .expect("the transform should be set");
+
+        let child_world = scene.world_transform(child).position;
+        assert!(
+            (child_world - Vec3::new(5.0, 1.0, 0.0)).norm() < 1e-5,
+            "child world position {child_world:?}"
+        );
+    }
 
     #[test]
     fn deleting_takes_effect_before_the_edit_is_snapshotted() {
