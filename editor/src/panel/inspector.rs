@@ -145,7 +145,7 @@ impl Panel for PanelInspector {
                                     );
                                 }
                             }
-                            for (type_id, component) in component_registry.components() {
+                            for (type_id, _) in component_registry.components() {
                                 if !components_to_remove.contains(type_id) {
                                     continue;
                                 }
@@ -160,15 +160,17 @@ impl Panel for PanelInspector {
                                     &mut structural_edit_before,
                                     state,
                                 );
-                                state
+                                if state
                                     .game
                                     .scenes
                                     .simulation_scene_mut()
-                                    .remove_component_dyn(game_object, &**component);
-                                structural_changed = true;
-                                log::info!(
-                                    "Removed component from game object: component={component_name} type_uuid={type_id} object={object_label}"
-                                );
+                                    .remove_component_dyn(game_object, *type_id)
+                                {
+                                    structural_changed = true;
+                                    log::info!(
+                                        "Removed component from game object: component={component_name} type_uuid={type_id} object={object_label}"
+                                    );
+                                }
                             }
                             if structural_changed {
                                 state.commit_scene_edit(

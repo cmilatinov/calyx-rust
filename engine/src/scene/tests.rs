@@ -1,10 +1,15 @@
 #[cfg(test)]
 mod tests {
-    use crate::component::{ComponentCamera, ComponentID};
+    use crate as engine;
+    use crate::component::{Component, ComponentCamera, ComponentID, ReflectComponent};
     use crate::core::Ref;
-    use crate::scene::{GameObject, Scene, SceneData, SiblingDir};
+    use crate::reflect::{Reflect, ReflectDefault};
+    use crate::scene::game_object_ref::RemapScope;
+    use crate::scene::{GameObject, GameObjectRef, Scene, SceneData, SiblingDir};
     use crate::test_utils::test_scene;
+    use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
     use nalgebra_glm::{self as glm, Vec3};
+    use serde::{Deserialize, Serialize};
     use uuid::Uuid;
 
     // --- Creation & Identity ---
@@ -935,8 +940,10 @@ mod tests {
     #[test]
     fn remove_component_dyn_on_parent_transform_moves_child() {
         let (mut scene, parent, child) = parent_with_cached_child();
-        let prototype = transform_prototype();
-        scene.remove_component_dyn(parent, &prototype);
+        use crate::utils::TypeUuid;
+        assert!(
+            scene.remove_component_dyn(parent, crate::component::ComponentTransform::type_uuid())
+        );
         assert_child_at(&scene, child, Vec3::new(0.0, 1.0, 0.0));
     }
 
@@ -1234,6 +1241,220 @@ mod tests {
         ));
         assert_eq!(scene.world().len(), entity_count);
     }
+
+    // --- Prefab reference remapping ---
+
+    #[derive(Default, Clone, TypeUuid, Serialize, Deserialize, Reflect)]
+    #[uuid = "4f0c8a3e-2b71-4d6a-9e15-c7a3b9d20f84"]
+    #[reflect(Default)]
+    #[repr(C)]
+    struct RefSlot {
+        target: GameObjectRef,
+    }
+
+    #[derive(Default, Clone, TypeUuid, Serialize, Deserialize, Reflect)]
+    #[uuid = "8c5d1f2a-3e47-4b9c-a6d0-71f2e9b4c385"]
+    #[reflect(Default)]
+    #[repr(C)]
+    struct RefPair(f32, GameObjectRef);
+
+    #[derive(Default, Clone, TypeUuid, Serialize, Deserialize, Reflect)]
+    #[uuid = "e2a64c17-9b3f-4d85-b0c6-5f1e8a7d2c93"]
+    enum RefChoice {
+        #[default]
+        Empty,
+        Named {
+            target: GameObjectRef,
+        },
+    }
+
+    /// Component holding references in every shape serde can reach. The `Vec`
+    /// field is `#[reflect_skip]` because reflection does not support `Vec`
+    /// yet; serde still serializes it, which is all remapping needs.
+    #[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
+    #[uuid = "b7d2e915-6c3a-4f08-8a4e-1d9f5c27e6b3"]
+    #[reflect(Default, TypeUuidDynamic, Component)]
+    #[repr(C)]
+    struct NestedRefComponent {
+        direct: GameObjectRef,
+        slot: RefSlot,
+        pair: RefPair,
+        choice: RefChoice,
+        #[reflect_skip]
+        targets: Vec<GameObjectRef>,
+        #[serde(skip)]
+        #[reflect_skip]
+        transient: GameObjectRef,
+    }
+
+    impl Component for NestedRefComponent {}
+
+    /// Builds a prefab whose root holds the component built from the root and
+    /// child ids, instantiates it, and returns the instantiated root and child.
+    fn instantiate_with_refs(
+        scene: &mut Scene,
+        component: impl FnOnce(Uuid, Uuid) -> NestedRefComponent,
+    ) -> (GameObject, GameObject) {
+        let root = scene.create(None, None);
+        let child = scene.create(None, Some(root));
+        let refs = component(scene.uuid(root), scene.uuid(child));
+        scene.add_component(root, refs);
+        let prefab = scene.create_prefab(root);
+        let instance = scene
+            .instantiate_prefab(&prefab, None)
+            .expect("prefab should instantiate");
+        let instance_child = scene.children(instance).next().unwrap();
+        (instance, instance_child)
+    }
+
+    fn with_component<R>(
+        scene: &Scene,
+        game_object: GameObject,
+        f: impl FnOnce(&NestedRefComponent) -> R,
+    ) -> R {
+        let entry = scene.entry(game_object).unwrap();
+        f(entry.get_component::<NestedRefComponent>().unwrap())
+    }
+
+    fn deserialize_ref(id: Uuid) -> Uuid {
+        serde_json::from_value::<GameObjectRef>(serde_json::to_value(id).unwrap())
+            .unwrap()
+            .id()
+    }
+
+    #[test]
+    fn instantiate_prefab_remaps_reference_inside_nested_struct() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+
+        let (instance, instance_child) =
+            instantiate_with_refs(&mut scene, |_, child| NestedRefComponent {
+                slot: RefSlot {
+                    target: GameObjectRef::new(child),
+                },
+                ..Default::default()
+            });
+
+        let slot_target = with_component(&scene, instance, |c| c.slot.target.id());
+        assert_eq!(slot_target, scene.uuid(instance_child));
+    }
+
+    #[test]
+    fn instantiate_prefab_remaps_references_inside_list() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+
+        let (instance, instance_child) =
+            instantiate_with_refs(&mut scene, |root, child| NestedRefComponent {
+                targets: vec![GameObjectRef::new(child), GameObjectRef::new(root)],
+                ..Default::default()
+            });
+
+        let targets = with_component(&scene, instance, |c| {
+            c.targets.iter().map(GameObjectRef::id).collect::<Vec<_>>()
+        });
+        assert_eq!(
+            targets,
+            vec![scene.uuid(instance_child), scene.uuid(instance)]
+        );
+    }
+
+    #[test]
+    fn instantiate_prefab_remaps_references_inside_enum_variant_and_tuple_struct() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+
+        let (instance, instance_child) =
+            instantiate_with_refs(&mut scene, |root, child| NestedRefComponent {
+                direct: GameObjectRef::new(root),
+                pair: RefPair(1.0, GameObjectRef::new(child)),
+                choice: RefChoice::Named {
+                    target: GameObjectRef::new(child),
+                },
+                ..Default::default()
+            });
+
+        let (direct, pair, choice) = with_component(&scene, instance, |c| {
+            let RefChoice::Named { target } = &c.choice else {
+                panic!("expected the named variant");
+            };
+            (c.direct.id(), c.pair.1.id(), target.id())
+        });
+        let new_child = scene.uuid(instance_child);
+        assert_eq!(direct, scene.uuid(instance));
+        assert_eq!(pair, new_child);
+        assert_eq!(choice, new_child);
+    }
+
+    #[test]
+    fn instantiate_prefab_leaves_nil_and_outside_references_unchanged() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+        let outside = scene.create(None, None);
+        let outside_id = scene.uuid(outside);
+
+        let (instance, _) = instantiate_with_refs(&mut scene, |_, _| NestedRefComponent {
+            slot: RefSlot {
+                target: GameObjectRef::new(outside_id),
+            },
+            targets: vec![GameObjectRef::new(outside_id), GameObjectRef::default()],
+            ..Default::default()
+        });
+
+        let (slot_target, targets, direct) = with_component(&scene, instance, |c| {
+            (
+                c.slot.target.id(),
+                c.targets.iter().map(GameObjectRef::id).collect::<Vec<_>>(),
+                c.direct.id(),
+            )
+        });
+        assert_eq!(slot_target, outside_id);
+        assert_eq!(targets, vec![outside_id, Uuid::nil()]);
+        assert_eq!(direct, Uuid::nil());
+    }
+
+    #[test]
+    fn instantiate_prefab_does_not_remap_serde_skipped_references() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+
+        let (instance, _) = instantiate_with_refs(&mut scene, |_, child| NestedRefComponent {
+            transient: GameObjectRef::new(child),
+            ..Default::default()
+        });
+
+        let transient = with_component(&scene, instance, |c| c.transient.id());
+        assert_eq!(transient, Uuid::nil());
+    }
+
+    #[test]
+    fn remap_scope_ends_after_instantiate_prefab() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+        let root = scene.create(None, None);
+        let root_id = scene.uuid(root);
+        let prefab = scene.create_prefab(root);
+        scene.instantiate_prefab(&prefab, None).unwrap();
+
+        assert_eq!(deserialize_ref(root_id), root_id);
+    }
+
+    #[test]
+    fn remap_scope_restores_the_previous_map_when_nested() {
+        let (outer_from, outer_to) = (Uuid::new_v4(), Uuid::new_v4());
+        let (inner_from, inner_to) = (Uuid::new_v4(), Uuid::new_v4());
+
+        let outer = RemapScope::enter([(outer_from, outer_to)].into_iter().collect());
+        {
+            let _inner = RemapScope::enter([(inner_from, inner_to)].into_iter().collect());
+            assert_eq!(deserialize_ref(inner_from), inner_to);
+            assert_eq!(deserialize_ref(outer_from), outer_from);
+        }
+        assert_eq!(deserialize_ref(outer_from), outer_to);
+        drop(outer);
+        assert_eq!(deserialize_ref(outer_from), outer_from);
+    }
+
     // --- Serialization ---
 
     #[test]
