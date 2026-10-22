@@ -30,7 +30,7 @@ use engine::core::Ref;
 use engine::error::BoxedError;
 use engine::input::Input;
 use engine::logging::{DefaultLogger, Log};
-use engine::render::{Camera, SceneRenderer, SceneRendererOptions};
+use engine::render::{Camera, SceneRenderer, SceneRendererError, SceneRendererOptions};
 use engine::runtime::{initial_render_size, wgpu_configuration, FrameCounter};
 use rapier3d::prelude::DebugRenderPipeline;
 use selection::{Selection, SelectionType};
@@ -129,10 +129,34 @@ impl ActiveSceneState {
 }
 
 impl EditorAppState {
-    fn new(game: GameContext, initial_render_size: (u32, u32), project_path: PathBuf) -> Self {
+    fn new(
+        game: GameContext,
+        initial_render_size: (u32, u32),
+        project_path: PathBuf,
+    ) -> Result<Self, SceneRendererError> {
         let asset_context = game.assets.lock_read();
         let inspector_registry = InspectorRegistry::new(&asset_context.registries.types.read());
-        Self {
+        let scene_renderer = SceneRenderer::new(
+            &asset_context,
+            SceneRendererOptions {
+                grid: true,
+                gizmos: true,
+                samples: 1,
+                clear_color: Color32::from_rgb(8, 8, 8),
+                ..Default::default()
+            },
+            initial_render_size,
+        )?;
+        let game_renderer = SceneRenderer::new(
+            &asset_context,
+            SceneRendererOptions {
+                clear_color: Color32::from_rgb(0, 0, 0),
+                ..Default::default()
+            },
+            initial_render_size,
+        )?;
+        drop(asset_context);
+        Ok(Self {
             game,
             camera: Default::default(),
             game_aspect: None,
@@ -149,27 +173,10 @@ impl EditorAppState {
             scene_document: SceneDocument::new(&project_path),
             active_scene: Default::default(),
             window_title: String::new(),
-            scene_renderer: SceneRenderer::new(
-                &asset_context,
-                SceneRendererOptions {
-                    grid: true,
-                    gizmos: true,
-                    samples: 1,
-                    clear_color: Color32::from_rgb(8, 8, 8),
-                    ..Default::default()
-                },
-                initial_render_size,
-            ),
-            game_renderer: SceneRenderer::new(
-                &asset_context,
-                SceneRendererOptions {
-                    clear_color: Color32::from_rgb(0, 0, 0),
-                    ..Default::default()
-                },
-                initial_render_size,
-            ),
+            scene_renderer,
+            game_renderer,
             inspector_registry,
-        }
+        })
     }
 
     pub fn scene_edit_snapshot(&self) -> Option<SceneEditSnapshot> {
@@ -319,7 +326,7 @@ impl EditorApp {
                 game,
                 initial_render_size(&cc.egui_ctx),
                 project_path.clone(),
-            ),
+            )?,
             _log: log,
         })
     }
@@ -411,7 +418,7 @@ impl eframe::App for EditorApp {
 
         let simulated = self.state.game.scenes.is_simulating();
         self.update_game(ctx);
-        self.render_view_outline(frame);
+        self.render_view_outline();
         self.update_window_title(ctx);
         self.state.show_scene_recovery_prompt(ctx);
 
@@ -482,15 +489,14 @@ impl EditorApp {
         }
     }
 
-    fn render_view_outline(&mut self, frame: &mut eframe::Frame) {
+    fn render_view_outline(&mut self) {
         self.state
             .scene_renderer
             .set_hovered_game_object(self.state.hovered_game_object);
         self.state
             .scene_renderer
             .set_selected_game_object(self.state.selection.first(SelectionType::GameObject));
-        let render_state = frame.wgpu_render_state().unwrap();
-        self.state.scene_renderer.finalize_scene(render_state);
+        self.state.scene_renderer.finalize_scene();
     }
 
     fn render_views(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
@@ -527,13 +533,7 @@ impl EditorApp {
         scene_renderer.set_selected_game_object(None);
 
         let scene = scenes.simulation_scene();
-        scene_renderer.render_scene_base(
-            render_state,
-            camera,
-            transform,
-            scene,
-            Some(physics_debug_pipeline),
-        );
+        scene_renderer.render_scene_base(camera, transform, scene, Some(physics_debug_pipeline));
         if let Some((node, c)) = scene.main_camera() {
             game_renderer.options_mut().clear_color = c.clear_color;
             let (width, height) = Self::get_physical_size(ctx, *game_size);
@@ -557,8 +557,8 @@ impl EditorApp {
                 c.near_plane,
                 c.far_plane,
             );
-            game_renderer.render_scene_base(render_state, &camera, &transform, scene, None);
-            game_renderer.finalize_scene(render_state);
+            game_renderer.render_scene_base(&camera, &transform, scene, None);
+            game_renderer.finalize_scene();
         } else {
             let device = &render_state.device;
             let queue = &render_state.queue;

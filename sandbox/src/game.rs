@@ -78,7 +78,7 @@ impl GameApp {
                     ..Default::default()
                 },
                 initial_render_size(&cc.egui_ctx),
-            ),
+            )?,
             ui_runtime: UiRuntime::default(),
             ui_arena: UiArena::default(),
             ui_theme: Theme::default(),
@@ -463,7 +463,7 @@ fn weapon_status_label(
 }
 
 impl eframe::App for GameApp {
-    fn update(&mut self, ctx: &Context, frame: &mut Frame) {
+    fn update(&mut self, ctx: &Context, _frame: &mut Frame) {
         self.game.update();
 
         let texture_id = self
@@ -536,7 +536,6 @@ impl eframe::App for GameApp {
 
         {
             let GameApp { game, renderer, .. } = self;
-            let render_state = frame.wgpu_render_state().unwrap();
             let scene = game.scenes.current_scene();
             let (width, height) = Self::physical_size(ctx, &rect);
             if width != 0 && height != 0 {
@@ -551,8 +550,8 @@ impl eframe::App for GameApp {
                     c_camera.near_plane,
                     c_camera.far_plane,
                 );
-                renderer.render_scene_base(render_state, &camera, &transform, scene, None);
-                renderer.finalize_scene(render_state);
+                renderer.render_scene_base(&camera, &transform, scene, None);
+                renderer.finalize_scene();
             }
         }
 

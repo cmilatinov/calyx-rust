@@ -7,8 +7,8 @@ use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::asset_render_state::AssetRenderState;
 use crate::render::render_utils::RenderUtils;
-use crate::render::{PipelineOptions, Shader};
-use egui_wgpu::{wgpu, RenderState};
+use crate::render::{PipelineOptions, RenderContext, SceneRendererError, Shader};
+use egui_wgpu::wgpu;
 use uuid::Uuid;
 
 pub struct SkyboxRenderer {
@@ -22,29 +22,17 @@ pub struct SkyboxRenderer {
 }
 
 impl SkyboxRenderer {
-    pub fn new(context: &ReadOnlyAssetContext) -> Self {
-        let asset_registry = context.registries.assets.read();
-        Self {
+    pub fn new(context: &ReadOnlyAssetContext) -> Result<Self, SceneRendererError> {
+        let load = |name| SceneRendererError::load::<Shader>(context, name);
+        Ok(Self {
             skybox: None,
-            skybox_shader: asset_registry
-                .load::<Shader>("shaders/environment/skybox")
-                .expect("missing skybox_shader"),
-            skybox_cubemap_shader: asset_registry
-                .load::<Shader>("shaders/environment/cubemap")
-                .expect("missing skybox_cubemap_shader"),
-            skybox_irradiance_cubemap_shader: asset_registry
-                .load::<Shader>("shaders/environment/irradiance")
-                .expect("missing skybox_irradiance_cubemap_shader"),
-            skybox_prefilter_cubemap_shader: asset_registry
-                .load::<Shader>("shaders/environment/prefilter")
-                .expect("missing skybox_prefilter_cubemap_shader"),
-            skybox_brdf_shader: asset_registry
-                .load::<Shader>("shaders/environment/brdf")
-                .expect("missing skybox_brdf_shader"),
-            skybox_cubemap_mip_shader: asset_registry
-                .load::<Shader>("shaders/mip_generator_cube")
-                .expect("missing skybox_cubemap_mip_shader"),
-        }
+            skybox_shader: load("shaders/environment/skybox")?,
+            skybox_cubemap_shader: load("shaders/environment/cubemap")?,
+            skybox_irradiance_cubemap_shader: load("shaders/environment/irradiance")?,
+            skybox_prefilter_cubemap_shader: load("shaders/environment/prefilter")?,
+            skybox_brdf_shader: load("shaders/environment/brdf")?,
+            skybox_cubemap_mip_shader: load("shaders/mip_generator_cube")?,
+        })
     }
 
     pub fn skybox_id(&self) -> Option<AssetId> {
@@ -65,7 +53,7 @@ impl SkyboxRenderer {
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
-        render_state: &RenderState,
+        render_context: &RenderContext,
         encoder: &mut wgpu::CommandEncoder,
         assets: &AssetRenderState,
         cube_mesh: &Ref<Mesh>,
@@ -84,11 +72,11 @@ impl SkyboxRenderer {
                     brdf_shader: &self.skybox_brdf_shader,
                     cubemap_mip_shader: &self.skybox_cubemap_mip_shader,
                 },
-                render_state,
+                render_context,
                 encoder,
             );
 
-            let device = &render_state.device;
+            let device = render_context.device();
             let shader = self.skybox_shader.read();
             let cube_mesh = cube_mesh.read();
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {

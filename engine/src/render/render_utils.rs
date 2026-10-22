@@ -180,7 +180,7 @@ impl RenderUtils {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::test_render_state;
+    use crate::test_support::test_render_context;
 
     const SIZE: u32 = 4;
 
@@ -249,9 +249,9 @@ mod tests {
 
     #[test]
     fn overlay_pass_keeps_existing_color_and_depth() {
-        let render_state = test_render_state();
-        let device = &render_state.device;
-        let queue = &render_state.queue;
+        let render_context = test_render_context();
+        let device = render_context.device();
+        let queue = render_context.queue();
         let (color, color_view) = target(device, wgpu::TextureFormat::Rgba8Unorm);
         let (depth, depth_view) = target(device, wgpu::TextureFormat::Depth32Float);
 
@@ -295,9 +295,9 @@ mod tests {
 
     #[test]
     fn overlay_pass_runs_without_a_depth_attachment() {
-        let render_state = test_render_state();
-        let device = &render_state.device;
-        let queue = &render_state.queue;
+        let render_context = test_render_context();
+        let device = render_context.device();
+        let queue = render_context.queue();
         let (color, color_view) = target(device, wgpu::TextureFormat::Rgba8Unorm);
 
         let mut encoder = device.create_command_encoder(&Default::default());

@@ -6,7 +6,7 @@ use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::asset_render_state::LockedAssetRenderState;
 use crate::render::render_utils::RenderUtils;
-use crate::render::{GizmoRenderer, LightManager, PipelineOptions, Shader};
+use crate::render::{GizmoRenderer, LightManager, PipelineOptions, SceneRendererError, Shader};
 use egui::Color32;
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
@@ -44,20 +44,10 @@ pub struct MeshRenderDefaults<'a> {
 }
 
 impl MeshRenderer {
-    pub fn new(context: &ReadOnlyAssetContext) -> Self {
-        Self {
-            scene_shader: context
-                .registries
-                .assets
-                .read()
-                .load::<Shader>("shaders/pbr")
-                .expect("missing scene_shader"),
-            object_id_shader: context
-                .registries
-                .assets
-                .read()
-                .load::<Shader>("shaders/object_id")
-                .expect("missing object_id_shader"),
+    pub fn new(context: &ReadOnlyAssetContext) -> Result<Self, SceneRendererError> {
+        Ok(Self {
+            scene_shader: SceneRendererError::load::<Shader>(context, "shaders/pbr")?,
+            object_id_shader: SceneRendererError::load::<Shader>(context, "shaders/object_id")?,
             environment_uniform_buffer: context.render_context.device().create_buffer_init(
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("environment_uniform_buffer"),
@@ -66,7 +56,7 @@ impl MeshRenderer {
                 },
             ),
             material_bind_group_cache: Default::default(),
-        }
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -377,7 +367,8 @@ mod tests {
         let key = material.bind_group_cache_key(&read_only_context, default_texture);
         let live_id = Uuid::new_v4();
         let stale_id = Uuid::new_v4();
-        let mut renderer = MeshRenderer::new(&read_only_context);
+        let mut renderer =
+            MeshRenderer::new(&read_only_context).expect("mesh renderer should load");
         renderer.material_bind_group_cache.insert(
             live_id,
             CachedMaterialBindGroups {
