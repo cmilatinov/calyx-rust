@@ -1,12 +1,14 @@
 #[cfg(test)]
 mod tests {
+    use crate::context::GameContext;
     use crate::net::{
         Client, ComponentNetworkObject, GameChannel, GameMessage, MessageHandler,
-        MessageHandlerResult, MessageQueue, MessageSender, Network, NetworkSceneSync, Server,
+        MessageHandlerResult, MessageQueue, MessageRoute, MessageSender, Network, NetworkSceneSync,
+        Server,
     };
     use crate::scene::{GameObject, Scene};
     use crate::test_harness::TestHarness;
-    use crate::test_utils::test_scene;
+    use crate::test_utils::{test_game_context, test_scene};
     use std::collections::HashSet;
     use std::time::Duration;
 
@@ -152,7 +154,7 @@ mod tests {
                 MessageHandlerResult::Consume
             }
         }
-        queue.receive_messages(&mut (), &mut ConsumeAll);
+        queue.receive_messages(None, &mut (), &mut ConsumeAll);
 
         // Verify empty
         let mut count = 0usize;
@@ -168,7 +170,7 @@ mod tests {
                 MessageHandlerResult::Consume
             }
         }
-        queue.receive_messages(&mut count, &mut Counter);
+        queue.receive_messages(None, &mut count, &mut Counter);
         assert_eq!(count, 0);
     }
 
@@ -191,7 +193,7 @@ mod tests {
                 MessageHandlerResult::Ignore
             }
         }
-        queue.receive_messages(&mut (), &mut IgnoreAll);
+        queue.receive_messages(None, &mut (), &mut IgnoreAll);
 
         let mut count = 0usize;
         struct Counter;
@@ -206,8 +208,93 @@ mod tests {
                 MessageHandlerResult::Consume
             }
         }
-        queue.receive_messages(&mut count, &mut Counter);
+        queue.receive_messages(None, &mut count, &mut Counter);
         assert_eq!(count, 1);
+    }
+
+    fn sync_component(network_object_id: u64, component_uuid: uuid::Uuid) -> GameMessage {
+        GameMessage::SyncComponent {
+            time: 0.0,
+            network_object_id,
+            from_client_id: 1,
+            component_uuid,
+            data: Vec::new(),
+        }
+    }
+
+    /// Counts and consumes every message it is offered.
+    struct ConsumeCounter;
+    impl MessageHandler<usize, GameMessage> for ConsumeCounter {
+        fn handle_message(
+            &mut self,
+            count: &mut usize,
+            _: MessageSender,
+            _: &GameMessage,
+        ) -> MessageHandlerResult {
+            *count += 1;
+            MessageHandlerResult::Consume
+        }
+    }
+
+    #[test]
+    fn component_sync_messages_are_routed_by_object_and_component() {
+        let component_a = uuid::Uuid::from_u128(1);
+        let component_b = uuid::Uuid::from_u128(2);
+        let mut queue = MessageQueue::default();
+        queue.queue_message(MessageSender::Server, sync_component(7, component_a));
+        queue.queue_message(MessageSender::Server, sync_component(7, component_a));
+        queue.queue_message(MessageSender::Server, sync_component(7, component_b));
+        queue.queue_message(MessageSender::Server, sync_component(8, component_a));
+        queue.queue_message(
+            MessageSender::Server,
+            GameMessage::SyncTime { current_time: 1.0 },
+        );
+
+        let mut unrouted = 0;
+        queue.receive_messages(None, &mut unrouted, &mut ConsumeCounter);
+        assert_eq!(unrouted, 1, "only SyncTime is in the None bucket");
+
+        let mut routed = 0;
+        queue.receive_messages(
+            Some(MessageRoute {
+                network_object_id: 7,
+                component_uuid: component_a,
+            }),
+            &mut routed,
+            &mut ConsumeCounter,
+        );
+        assert_eq!(routed, 2, "a route sees only its own messages");
+        assert_eq!(queue.len(), 2);
+    }
+
+    #[test]
+    fn unconsumed_messages_expire_at_end_of_tick() {
+        let mut game = test_game_context();
+        let queue = &mut game.resources.network_mut().queue;
+        queue.queue_message(
+            MessageSender::Server,
+            sync_component(999, uuid::Uuid::from_u128(1)),
+        );
+        queue.queue_message(
+            MessageSender::Server,
+            sync_component(999, uuid::Uuid::from_u128(2)),
+        );
+
+        // Every handler gets its pass, and none consumes a message for an
+        // object that does not exist.
+        let GameContext {
+            assets,
+            scenes,
+            resources,
+        } = &mut game;
+        resources
+            .network_mut()
+            .update_scene(scenes.current_scene_mut(), &assets.lock_read());
+        assert_eq!(game.resources.network().queue.len(), 2);
+
+        // The next tick starts with the queue cleared.
+        game.update();
+        assert_eq!(game.resources.network().queue.len(), 0);
     }
 
     #[test]
@@ -423,7 +510,7 @@ mod tests {
         }
         net.clients[0]
             .queue
-            .receive_messages(&mut received_time, &mut TimeCapture);
+            .receive_messages(None, &mut received_time, &mut TimeCapture);
         assert_eq!(received_time, Some(99.0));
     }
 
@@ -470,7 +557,7 @@ mod tests {
             let mut received = None;
             client
                 .queue
-                .receive_messages(&mut received, &mut TimeCapture);
+                .receive_messages(None, &mut received, &mut TimeCapture);
             assert_eq!(received, Some(7.0), "client {i} missed the broadcast");
         }
     }
@@ -500,6 +587,7 @@ mod tests {
         } = &mut net.server;
         let mut scene = scene;
         queue.receive_messages(
+            None,
             &mut (client, server, &mut scene, local_id),
             &mut NetworkSceneSync,
         );
@@ -526,7 +614,7 @@ mod tests {
         let mut count = 0;
         network
             .queue
-            .receive_messages(&mut count, &mut TransferCounter);
+            .receive_messages(None, &mut count, &mut TransferCounter);
         count
     }
 
@@ -670,7 +758,7 @@ mod tests {
             .resources
             .network_mut()
             .queue
-            .receive_messages(&mut received_time, &mut Capture);
+            .receive_messages(None, &mut received_time, &mut Capture);
         assert_eq!(received_time, Some(42.0));
     }
 
