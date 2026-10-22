@@ -10,6 +10,15 @@ members = [
 ]
 resolver = "2"
 
+# Build scripts and proc macros keep full debug info, like everything else.
+# Cargo otherwise builds a crate used both at build time and at run time once
+# when a build needs it at run time and once more with less debug info when it
+# does not, so the project assembly's build and the editor's would compile
+# engine's proc macros differently and link different engine builds (see
+# engine/engine_feature_pins).
+[profile.dev.build-override]
+debug = true
+
 [profile.release-with-debug]
 inherits = "release"
 incremental = true

@@ -60,6 +60,7 @@ Example game project. Compiles as dynamic library (plugin) with `plugin_main` en
 ## Build Notes
 - Windows: uses `rust-lld.exe` linker, `-Cprefer-dynamic` for fast iteration.
 - Linux: `-Clink-arg=-Wl,--undefined-version` for shared lib compat.
+- The project DLL statically links its own copy of `engine`, and engine types cross the DLL boundary keyed by `TypeId`. The DLL is built in a separate `cargo build --lib`, so engine's dependencies must resolve to the same features there as in the editor build, or the DLL gets another engine build with other `TypeId`s. `engine/engine_feature_pins` pins the editor's features; `editor/tests/project_assembly_features.rs` fails when they drift, and the editor logs an error when it loads an assembly built against another engine.
 - `release-with-debug` profile for profiling.
 
 ## Asset File Types

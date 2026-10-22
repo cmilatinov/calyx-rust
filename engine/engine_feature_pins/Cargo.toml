@@ -1,0 +1,62 @@
+# Pins the features of crates in engine's dependency tree to what the editor
+# resolves for them.
+#
+# The editor builds a project assembly (a DLL) with `cargo build --lib` in the
+# project, and Cargo unifies features only across the packages of one build.
+# The editor's own dependencies enable extra features on crates engine also
+# uses. Without these pins the project build resolves those crates with fewer
+# features, which gives `engine` and `legion` other metadata hashes, so the
+# DLL's `TypeId` of every engine type (and with it legion's component ids)
+# differs from the editor's, and project code can neither see nor add engine
+# components. Enabling the editor's features here, under engine, gives both
+# builds the same engine.
+#
+# `editor/tests/project_assembly_features.rs` compares Cargo's unit graphs for
+# the editor, the workspace and the sandbox project, and lists the crates to
+# pin when a dependency change brings the builds apart again.
+[package]
+name = "engine_feature_pins"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+ecolor = { version = "0.31.1", features = ["color-hex"] }
+egui = { version = "0.31.1", features = ["callstack", "color-hex", "rayon"] }
+epaint = { version = "0.31.1", features = ["color-hex", "rayon"] }
+half = { version = "2.7.1", features = ["bytemuck"] }
+lock_api = { version = "0.4.14", features = ["arc_lock"] }
+num-rational = { version = "0.4.2", features = ["num-bigint-std"] }
+parking_lot = { version = "0.12.5", features = ["arc_lock"] }
+rgb = { version = "0.8.53", features = ["argb", "as-bytes", "bytemuck", "grb"] }
+url = { version = "2.5.8", features = ["serde"] }
+uuid = { version = "1.22.0", features = ["js"] }
+# A workspace build also builds engine_derive for the target, which gives the
+# target's syn, proc-macro2 and quote these features.
+proc-macro2 = { version = "1.0.106" }
+quote = { version = "1.0.45" }
+syn = { version = "2.0.117", features = ["extra-traits", "full", "visit-mut"] }
+zeroize = { version = "1.8.2", features = ["alloc"] }
+
+[target.'cfg(windows)'.dependencies]
+bytemuck = { version = "1.25.0", features = ["aarch64_simd"] }
+futures-core = { version = "0.3.32" }
+futures-sink = { version = "0.3.32" }
+getrandom = { version = "0.2.17", features = ["std"] }
+percent-encoding = { version = "2.3.2" }
+rand_core = { version = "0.6.4", features = ["alloc", "std"] }
+smallvec = { version = "1.15.1", features = ["const_new"] }
+tracing = { version = "0.1.44", features = ["log"] }
+winapi = { version = "0.3.9", features = ["consoleapi", "impl-default", "processenv", "synchapi"] }
+windows-sys-0-52 = { package = "windows-sys", version = "0.52.0", features = ["Win32_Networking_WinSock", "Win32_System_IO"] }
+windows-sys-0-59 = { package = "windows-sys", version = "0.59.0", features = ["Win32_Storage_FileSystem", "Win32_System_Console", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
+windows-sys-0-61 = { package = "windows-sys", version = "0.61.2", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_IO", "Win32_Globalization", "Win32_Networking_WinSock", "Win32_Security", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+mio = { version = "1.1.1", features = ["net"] }
+rand = { version = "0.8.5", features = ["small_rng"] }
+rustix = { version = "1.1.4", features = ["stdio", "termios"] }
+strict-num = { version = "0.1.1" }
+tiny-skia = { version = "0.11.4" }
+tiny-skia-path = { version = "0.11.4" }
+winnow = { version = "0.7.15" }

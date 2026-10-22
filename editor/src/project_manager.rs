@@ -244,6 +244,16 @@ impl ProjectManager {
                         registry.begin_plugin_load();
                         let before = registry.types.keys().copied().collect::<HashSet<_>>();
                         load_fn.get()(&mut registry);
+                        if registry.plugin_links_other_engine() {
+                            log::error!(
+                                "Project assembly {} links another engine build than the editor, \
+                                 so the engine components its code reads, writes or adds are not \
+                                 the editor's. Cargo resolved engine's dependencies differently \
+                                 for the project than for the editor; pin the editor's features \
+                                 in engine/engine_feature_pins/Cargo.toml.",
+                                target.display()
+                            );
+                        }
                         let mut registered_count = 0usize;
                         for (id, registration) in
                             registry.types.iter().filter(|(id, _)| !before.contains(id))
