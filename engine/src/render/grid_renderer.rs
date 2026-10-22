@@ -55,27 +55,12 @@ impl GridRenderer {
         let queue = &render_state.queue;
         let mut quad_mesh = screen_space_quad.write();
         let mut shader = self.shader.write();
-        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Scene Grid"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &scene_texture_msaa.view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &scene_depth_texture.view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: None,
-            }),
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
+        let mut render_pass = RenderUtils::overlay_pass(
+            encoder,
+            &scene_texture_msaa.view,
+            Some(&scene_depth_texture.view),
+            "Scene Grid",
+        );
 
         let mut depth_stencil = RenderUtils::depth_default(wgpu::TextureFormat::Depth32Float);
         depth_stencil.depth_write_enabled = false;

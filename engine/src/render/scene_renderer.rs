@@ -410,27 +410,12 @@ impl SceneRenderer {
             self.options.samples,
         );
         if self.options.gizmos {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Scene Gizmos"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.scene_texture_msaa.view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.scene_depth_texture.view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
+            let mut render_pass = RenderUtils::overlay_pass(
+                &mut encoder,
+                &self.scene_texture_msaa.view,
+                Some(&self.scene_depth_texture.view),
+                "Scene Gizmos",
+            );
             self.gizmo_renderer
                 .render_gizmos(self.scene_texture_msaa.descriptor.format, &mut render_pass);
         }

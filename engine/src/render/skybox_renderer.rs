@@ -105,27 +105,12 @@ impl SkyboxRenderer {
                     },
                 ],
             });
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Skybox"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &scene_texture_msaa.view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &scene_depth_texture.view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
+            let mut render_pass = RenderUtils::overlay_pass(
+                encoder,
+                &scene_texture_msaa.view,
+                Some(&scene_depth_texture.view),
+                "Skybox",
+            );
             let options = PipelineOptions::builder()
                 .fragment_targets(vec![Some(wgpu::ColorTargetState {
                     format: scene_texture_msaa.descriptor.format,
