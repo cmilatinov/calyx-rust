@@ -438,6 +438,9 @@ impl SceneRenderer {
     }
 
     /// Applies the current outline state and resolves the scene texture for presentation.
+    ///
+    /// Call it once after each [`Self::render_scene_base`]: above one sample the
+    /// resolve discards the multisampled surface.
     pub fn finalize_scene(&mut self, render_state: &RenderState) {
         let device = &render_state.device;
         let queue = &render_state.queue;
@@ -1109,9 +1112,11 @@ impl SceneRenderer {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &scene_texture_msaa.view,
                     resolve_target: Some(&scene_texture.view),
+                    // This is the multisampled surface's last use: the next
+                    // `render_scene_base` clears it, so only the resolve is kept.
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
+                        store: wgpu::StoreOp::Discard,
                     },
                 })],
                 depth_stencil_attachment: None,
