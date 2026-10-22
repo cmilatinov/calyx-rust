@@ -1,4 +1,6 @@
-use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
+use crate::inspector::type_inspector::{
+    InspectorContext, InspectorResponse, ReflectTypeInspector, TypeInspector,
+};
 use crate::inspector::widgets::Widgets;
 use egui::Ui;
 use engine::component::ComponentTransform;
@@ -19,29 +21,37 @@ impl TypeInspector for TransformInspector {
         type_uuids!(ComponentTransform)
     }
 
-    fn show_inspector(&self, ui: &mut Ui, _ctx: &InspectorContext, instance: &mut dyn Reflect) {
-        if let Some(t_comp) = instance.downcast_mut::<ComponentTransform>() {
-            let mut changed = false;
-            let mut transform = t_comp.transform;
-            Widgets::inspector_prop_value(ui, "Position", |ui, _| {
-                changed |= Widgets::drag_float3(ui, 0.1, &mut transform.position);
-            });
-            Widgets::inspector_prop_value(ui, "Rotation", |ui, _| {
-                let (z, y, x) = transform.rotation.euler_angles();
-                let mut euler_rot = Vec3::new(x, y, z);
-                if Widgets::drag_angle3(ui, &mut euler_rot) {
-                    transform.rotation =
-                        UnitQuaternion::from_euler_angles(euler_rot.z, euler_rot.y, euler_rot.x);
-                    changed = true;
-                }
-            });
-            Widgets::inspector_prop_value(ui, "Scale", |ui, _| {
-                changed |= Widgets::drag_float3(ui, 0.1, &mut transform.scale);
-            });
-            if changed {
-                t_comp.transform = transform;
+    fn show_inspector(
+        &self,
+        ui: &mut Ui,
+        _ctx: &InspectorContext,
+        instance: &mut dyn Reflect,
+    ) -> InspectorResponse {
+        let Some(t_comp) = instance.downcast_mut::<ComponentTransform>() else {
+            return InspectorResponse::NONE;
+        };
+        let mut response = InspectorResponse::NONE;
+        let mut transform = t_comp.transform;
+        Widgets::inspector_prop_value(ui, "Position", |ui, _| {
+            response |= Widgets::drag_float3(ui, 0.1, &mut transform.position);
+        });
+        Widgets::inspector_prop_value(ui, "Rotation", |ui, _| {
+            let (z, y, x) = transform.rotation.euler_angles();
+            let mut euler_rot = Vec3::new(x, y, z);
+            let rotation = Widgets::drag_angle3(ui, &mut euler_rot);
+            if rotation.changed {
+                transform.rotation =
+                    UnitQuaternion::from_euler_angles(euler_rot.z, euler_rot.y, euler_rot.x);
             }
+            response |= rotation;
+        });
+        Widgets::inspector_prop_value(ui, "Scale", |ui, _| {
+            response |= Widgets::drag_float3(ui, 0.1, &mut transform.scale);
+        });
+        if response.changed {
+            t_comp.transform = transform;
         }
+        response
     }
 
     fn show_inspector_context(
@@ -49,14 +59,14 @@ impl TypeInspector for TransformInspector {
         ui: &mut Ui,
         _ctx: &InspectorContext,
         instance: &mut dyn Reflect,
-    ) {
+    ) -> InspectorResponse {
         if let Some(t_comp) = instance.downcast_mut::<ComponentTransform>() {
             if ui.button("Reset").clicked() {
                 t_comp.transform = Default::default();
-                ui.close_menu()
+                ui.close_menu();
+                return InspectorResponse::CHANGED;
             }
         }
+        InspectorResponse::NONE
     }
 }
-
-impl TransformInspector {}

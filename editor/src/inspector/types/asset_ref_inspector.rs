@@ -1,4 +1,6 @@
-use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
+use crate::inspector::type_inspector::{
+    InspectorContext, InspectorResponse, ReflectTypeInspector, TypeInspector,
+};
 use crate::inspector::widgets::Widgets;
 use egui::Ui;
 use engine::assets::animation::Animation;
@@ -34,26 +36,31 @@ impl TypeInspector for AssetRefInspector {
         )
     }
 
-    fn show_inspector(&self, ui: &mut Ui, ctx: &InspectorContext, instance: &mut dyn Reflect) {
+    fn show_inspector(
+        &self,
+        ui: &mut Ui,
+        ctx: &InspectorContext,
+        instance: &mut dyn Reflect,
+    ) -> InspectorResponse {
         let type_registry = ctx.assets.types.read();
 
         let Some(meta) = type_registry.trait_meta::<ReflectAssetAccess>(instance.uuid()) else {
-            return;
+            return InspectorResponse::NONE;
         };
         let Some(asset_ref) = meta.get_mut(instance) else {
-            return;
+            return InspectorResponse::NONE;
         };
 
-        if Widgets::asset_select(
+        let response = Widgets::asset_select(
             ui,
             &ctx.assets.assets.read(),
             ctx.field_name,
             Some(asset_ref.asset_type_uuid()),
             asset_ref.id_mut(),
-        )
-        .changed()
-        {
+        );
+        if response.changed() {
             asset_ref.clear_cache();
         }
+        InspectorResponse::from_response(&response)
     }
 }

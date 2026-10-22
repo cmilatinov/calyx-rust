@@ -77,15 +77,15 @@ impl std::ops::Deref for SceneWorld {
     }
 }
 
-/// Result of [`Scene::edit_component_dyn`]: what the editor returned and the
-/// component's serialized form around the edit.
+/// What the editor closure of [`Scene::edit_component_dyn`] returns: its own
+/// value and whether it wrote the component.
 pub struct ComponentEdit<R> {
     /// The editor closure's return value.
     pub value: R,
-    /// The component serialized before the edit.
-    pub before: Option<serde_json::Value>,
-    /// The component serialized after the edit.
-    pub after: Option<serde_json::Value>,
+    /// Whether the editor wrote the component. The scene reports a write
+    /// only when this is true, so an editor that changes the component must
+    /// set it.
+    pub written: bool,
 }
 
 /// Runtime scene containing ECS state, hierarchy state, and physics state for a
@@ -780,10 +780,10 @@ impl Scene {
 
     /// Lets `editor` change the component of `component`'s type on
     /// `game_object` while it reads the rest of the scene, as an inspector
-    /// does. The scene compares the component's serialized form before and
-    /// after and reports a write only when it changed, or when the component
-    /// cannot be serialized, so showing a component without editing it is not
-    /// a write.
+    /// does. The scene reports a write only when `editor` says it wrote the
+    /// component, so showing a component without editing it is not a write.
+    /// Returns what `editor` returned, or `None` when the object or component
+    /// is missing.
     ///
     /// # Safety
     ///
@@ -794,8 +794,8 @@ impl Scene {
         &mut self,
         game_object: GameObject,
         component: &dyn Component,
-        editor: impl FnOnce(&mut dyn Component, &Scene) -> R,
-    ) -> Option<ComponentEdit<R>> {
+        editor: impl FnOnce(&mut dyn Component, &Scene) -> ComponentEdit<R>,
+    ) -> Option<R> {
         let instance = {
             let mut entry = self.entry_mut(game_object)?;
             component.get_instance_mut(&mut entry)? as *mut dyn Component
@@ -804,17 +804,11 @@ impl Scene {
         // which nothing moves while `editor` only has shared scene access, and
         // the caller guarantees `editor` does not alias it through the scene.
         let instance = unsafe { &mut *instance };
-        let before = instance.serialize();
-        let value = editor(instance, self);
-        let after = instance.serialize();
-        if before.is_none() || before != after {
+        let edit = editor(instance, self);
+        if edit.written {
             self.component_written(game_object, component.component_type_id());
         }
-        Some(ComponentEdit {
-            value,
-            before,
-            after,
-        })
+        Some(edit.value)
     }
 
     /// Removes component `T` from `game_object`.

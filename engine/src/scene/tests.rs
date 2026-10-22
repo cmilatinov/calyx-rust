@@ -5,7 +5,7 @@ mod tests {
     use crate::core::Ref;
     use crate::reflect::{Reflect, ReflectDefault};
     use crate::scene::game_object_ref::RemapScope;
-    use crate::scene::{GameObject, GameObjectRef, Scene, SceneData, SiblingDir};
+    use crate::scene::{ComponentEdit, GameObject, GameObjectRef, Scene, SceneData, SiblingDir};
     use crate::test_support::test_scene;
     use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
     use nalgebra_glm::{self as glm, Vec3};
@@ -904,30 +904,50 @@ mod tests {
     fn edit_component_dyn_on_parent_transform_moves_child() {
         let (mut scene, parent, child) = parent_with_cached_child();
         let prototype = transform_prototype();
-        let edit = unsafe {
+        let name = unsafe {
             scene.edit_component_dyn(parent, &prototype, |instance, scene| {
                 let c = instance
                     .as_reflect_mut()
                     .downcast_mut::<crate::component::ComponentTransform>()
                     .expect("instance should be a transform");
                 c.transform.position = Vec3::new(5.0, 0.0, 0.0);
-                scene.name(child)
+                ComponentEdit {
+                    value: scene.name(child),
+                    written: true,
+                }
             })
         }
         .expect("the parent should have a transform");
-        assert_eq!(edit.value, scene.name(child));
-        assert_ne!(edit.before, edit.after);
+        assert_eq!(name, scene.name(child));
         assert_child_at(&scene, child, Vec3::new(5.0, 1.0, 0.0));
     }
 
     #[test]
-    fn edit_component_dyn_without_a_change_reports_equal_values() {
+    fn edit_component_dyn_without_a_write_leaves_the_child() {
         let (mut scene, parent, child) = parent_with_cached_child();
         let prototype = transform_prototype();
-        let edit = unsafe { scene.edit_component_dyn(parent, &prototype, |_, _| ()) }
-            .expect("the parent should have a transform");
-        assert_eq!(edit.before, edit.after);
+        unsafe {
+            scene.edit_component_dyn(parent, &prototype, |_, _| ComponentEdit {
+                value: (),
+                written: false,
+            })
+        }
+        .expect("the parent should have a transform");
         assert_child_at(&scene, child, Vec3::new(1.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn edit_component_dyn_on_a_missing_component_returns_none() {
+        let mut scene = crate::test_support::test_scene();
+        let go = scene.create(None, None);
+        let prototype = crate::component::ComponentCollider::default();
+        let edit = unsafe {
+            scene.edit_component_dyn(go, &prototype, |_, _| ComponentEdit {
+                value: (),
+                written: true,
+            })
+        };
+        assert!(edit.is_none());
     }
 
     #[test]

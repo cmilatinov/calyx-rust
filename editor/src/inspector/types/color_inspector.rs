@@ -1,4 +1,6 @@
-use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
+use crate::inspector::type_inspector::{
+    InspectorContext, InspectorResponse, ReflectTypeInspector, TypeInspector,
+};
 use egui::color_picker::Alpha;
 use egui::{Color32, Ui};
 use engine::reflect::{Reflect, ReflectDefault};
@@ -16,11 +18,18 @@ impl TypeInspector for ColorInspector {
         type_uuids!(Color32)
     }
 
-    fn show_inspector(&self, ui: &mut Ui, _ctx: &InspectorContext, instance: &mut dyn Reflect) {
-        if let Some(color) = instance.downcast_mut::<Color32>() {
-            ui.horizontal(|ui| {
-                egui::color_picker::color_edit_button_srgba(ui, color, Alpha::OnlyBlend);
-            });
-        }
+    fn show_inspector(
+        &self,
+        ui: &mut Ui,
+        _ctx: &InspectorContext,
+        instance: &mut dyn Reflect,
+    ) -> InspectorResponse {
+        let Some(color) = instance.downcast_mut::<Color32>() else {
+            return InspectorResponse::NONE;
+        };
+        ui.horizontal(|ui| {
+            egui::color_picker::color_edit_button_srgba(ui, color, Alpha::OnlyBlend).into()
+        })
+        .inner
     }
 }

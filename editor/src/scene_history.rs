@@ -1,6 +1,3 @@
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
-
 use engine::scene::{Scene, SceneSnapshot};
 use serde_json::Value;
 use uuid::Uuid;
@@ -8,7 +5,6 @@ use uuid::Uuid;
 use crate::scene_document::scene_fingerprint;
 
 const DEFAULT_HISTORY_LIMIT: usize = 100;
-pub const INSPECTOR_VALUE_DEBOUNCE: Duration = Duration::from_secs(1);
 
 #[derive(Clone)]
 pub struct SceneEditSnapshot {
@@ -37,100 +33,47 @@ pub enum SceneHistoryRestore {
     },
     InspectorValue {
         label: String,
-        key: InspectorValueKey,
-        value: Value,
+        game_object: Uuid,
+        component: Uuid,
+        /// The values to write back, each at its path inside the component.
+        values: Vec<(Vec<String>, Value)>,
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct InspectorValueKey {
-    pub game_object: Uuid,
-    pub component: Uuid,
+/// One value an inspector edit changed, at its path of object keys and array
+/// indices inside the component's serialized form.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InspectorValueChange {
     pub value_path: Vec<String>,
-}
-
-#[derive(Clone)]
-pub struct InspectorValueEdit {
-    pub label: String,
-    pub key: InspectorValueKey,
     pub before: Value,
     pub after: Value,
 }
 
-#[derive(Default)]
-pub struct InspectorValueDebouncer {
-    pending: HashMap<InspectorValueKey, PendingInspectorValueEdit>,
-    next_sequence: u64,
+/// One inspector edit of one component: every value a drag, a text-field
+/// session or a discrete edit changed, undone and redone together.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InspectorValueEdit {
+    pub label: String,
+    pub game_object: Uuid,
+    pub component: Uuid,
+    pub changes: Vec<InspectorValueChange>,
 }
 
-struct PendingInspectorValueEdit {
-    edit: InspectorValueEdit,
-    last_change: Instant,
-    sequence: u64,
-}
-
-impl InspectorValueDebouncer {
-    pub fn record(&mut self, edit: InspectorValueEdit, now: Instant) {
-        if edit.before == edit.after {
-            return;
+impl InspectorValueEdit {
+    fn restore(&self, after: bool) -> SceneHistoryRestore {
+        SceneHistoryRestore::InspectorValue {
+            label: self.label.clone(),
+            game_object: self.game_object,
+            component: self.component,
+            values: self
+                .changes
+                .iter()
+                .map(|change| {
+                    let value = if after { &change.after } else { &change.before };
+                    (change.value_path.clone(), value.clone())
+                })
+                .collect(),
         }
-
-        self.next_sequence = self.next_sequence.saturating_add(1);
-        let sequence = self.next_sequence;
-        let key = edit.key.clone();
-        let remove = if let Some(pending) = self.pending.get_mut(&key) {
-            pending.edit.after = edit.after;
-            pending.last_change = now;
-            pending.sequence = sequence;
-            pending.edit.before == pending.edit.after
-        } else {
-            self.pending.insert(
-                key.clone(),
-                PendingInspectorValueEdit {
-                    edit,
-                    last_change: now,
-                    sequence,
-                },
-            );
-            false
-        };
-        if remove {
-            self.pending.remove(&key);
-        }
-    }
-
-    pub fn has_pending(&self) -> bool {
-        !self.pending.is_empty()
-    }
-
-    pub fn clear(&mut self) {
-        self.pending.clear();
-    }
-
-    pub fn drain_due(&mut self, now: Instant) -> Vec<InspectorValueEdit> {
-        self.drain_matching(|pending| {
-            now.duration_since(pending.last_change) >= INSPECTOR_VALUE_DEBOUNCE
-        })
-    }
-
-    pub fn drain_all(&mut self) -> Vec<InspectorValueEdit> {
-        self.drain_matching(|_| true)
-    }
-
-    fn drain_matching(
-        &mut self,
-        predicate: impl Fn(&PendingInspectorValueEdit) -> bool,
-    ) -> Vec<InspectorValueEdit> {
-        let pending = std::mem::take(&mut self.pending);
-        let (mut ready, waiting): (Vec<_>, Vec<_>) = pending
-            .into_values()
-            .partition(|pending| predicate(pending));
-        self.pending = waiting
-            .into_iter()
-            .map(|pending| (pending.edit.key.clone(), pending))
-            .collect();
-        ready.sort_by_key(|pending| (pending.last_change, pending.sequence));
-        ready.into_iter().map(|pending| pending.edit).collect()
     }
 }
 
@@ -201,7 +144,11 @@ impl SceneHistory {
     }
 
     pub fn push_inspector_value(&mut self, edit: InspectorValueEdit) -> bool {
-        if edit.before == edit.after {
+        if edit
+            .changes
+            .iter()
+            .all(|change| change.before == change.after)
+        {
             return false;
         }
 
@@ -219,11 +166,7 @@ impl SceneHistory {
         let entry = self.undo.pop()?;
         let restore = match &entry {
             SceneHistoryEntry::Snapshot(entry) => entry.before.restore(&entry.label),
-            SceneHistoryEntry::InspectorValue(entry) => SceneHistoryRestore::InspectorValue {
-                label: entry.label.clone(),
-                key: entry.key.clone(),
-                value: entry.before.clone(),
-            },
+            SceneHistoryEntry::InspectorValue(entry) => entry.restore(false),
         };
         self.redo.push(entry);
         Some(restore)
@@ -233,11 +176,7 @@ impl SceneHistory {
         let entry = self.redo.pop()?;
         let restore = match &entry {
             SceneHistoryEntry::Snapshot(entry) => entry.after.restore(&entry.label),
-            SceneHistoryEntry::InspectorValue(entry) => SceneHistoryRestore::InspectorValue {
-                label: entry.label.clone(),
-                key: entry.key.clone(),
-                value: entry.after.clone(),
-            },
+            SceneHistoryEntry::InspectorValue(entry) => entry.restore(true),
         };
         self.undo.push(entry);
         Some(restore)
@@ -307,89 +246,60 @@ mod tests {
     }
 
     #[test]
-    fn inspector_value_debouncer_coalesces_only_matching_value_keys() {
-        let object = Uuid::new_v4();
+    fn inspector_value_history_restores_every_value_of_an_edit() {
+        let game_object = Uuid::new_v4();
         let component = Uuid::new_v4();
-        let position_x = InspectorValueKey {
-            game_object: object,
-            component,
-            value_path: vec!["position".into(), "0".into()],
-        };
-        let position_y = InspectorValueKey {
-            game_object: object,
-            component,
-            value_path: vec!["position".into(), "1".into()],
-        };
-        let now = Instant::now();
-        let mut debouncer = InspectorValueDebouncer::default();
-
-        debouncer.record(
-            InspectorValueEdit {
-                label: "Edit Transform position.0".into(),
-                key: position_x.clone(),
-                before: json!(0.0),
-                after: json!(1.0),
-            },
-            now,
-        );
-        debouncer.record(
-            InspectorValueEdit {
-                label: "Edit Transform position.0".into(),
-                key: position_x.clone(),
-                before: json!(1.0),
-                after: json!(2.0),
-            },
-            now + Duration::from_millis(500),
-        );
-        debouncer.record(
-            InspectorValueEdit {
-                label: "Edit Transform position.1".into(),
-                key: position_y.clone(),
-                before: json!(0.0),
-                after: json!(3.0),
-            },
-            now + Duration::from_millis(500),
-        );
-
-        assert!(debouncer
-            .drain_due(now + Duration::from_millis(1499))
-            .is_empty());
-        let edits =
-            debouncer.drain_due(now + INSPECTOR_VALUE_DEBOUNCE + Duration::from_millis(500));
-        assert_eq!(edits.len(), 2);
-        assert_eq!(edits[0].key, position_x);
-        assert_eq!(edits[0].before, json!(0.0));
-        assert_eq!(edits[0].after, json!(2.0));
-        assert_eq!(edits[1].key, position_y);
-        assert_eq!(edits[1].before, json!(0.0));
-        assert_eq!(edits[1].after, json!(3.0));
-    }
-
-    #[test]
-    fn inspector_value_history_restores_each_value() {
-        let key = InspectorValueKey {
-            game_object: Uuid::new_v4(),
-            component: Uuid::new_v4(),
-            value_path: vec!["enabled".into()],
-        };
         let mut history = SceneHistory::default();
 
         assert!(history.push_inspector_value(InspectorValueEdit {
-            label: "Edit Collider enabled".into(),
-            key: key.clone(),
-            before: json!(true),
-            after: json!(false),
+            label: "Edit Transform rotation".into(),
+            game_object,
+            component,
+            changes: vec![
+                InspectorValueChange {
+                    value_path: vec!["rotation".into(), "0".into()],
+                    before: json!(0.0),
+                    after: json!(0.5),
+                },
+                InspectorValueChange {
+                    value_path: vec!["rotation".into(), "3".into()],
+                    before: json!(1.0),
+                    after: json!(0.8),
+                },
+            ],
         }));
 
-        assert!(matches!(
-            history.undo(),
-            Some(SceneHistoryRestore::InspectorValue { key: restored, value, .. })
-                if restored == key && value == json!(true)
-        ));
-        assert!(matches!(
-            history.redo(),
-            Some(SceneHistoryRestore::InspectorValue { key: restored, value, .. })
-                if restored == key && value == json!(false)
-        ));
+        let Some(SceneHistoryRestore::InspectorValue { values, .. }) = history.undo() else {
+            panic!("undo should restore the inspector edit");
+        };
+        assert_eq!(
+            values,
+            vec![
+                (vec!["rotation".to_owned(), "0".to_owned()], json!(0.0)),
+                (vec!["rotation".to_owned(), "3".to_owned()], json!(1.0)),
+            ]
+        );
+        assert!(!history.can_undo());
+        let Some(SceneHistoryRestore::InspectorValue { values, .. }) = history.redo() else {
+            panic!("redo should restore the inspector edit");
+        };
+        assert_eq!(values[0].1, json!(0.5));
+        assert_eq!(values[1].1, json!(0.8));
+    }
+
+    #[test]
+    fn inspector_value_history_skips_an_edit_without_changes() {
+        let mut history = SceneHistory::default();
+        assert!(!history.push_inspector_value(InspectorValueEdit {
+            label: "Edit Collider enabled".into(),
+            game_object: Uuid::new_v4(),
+            component: Uuid::new_v4(),
+            changes: vec![InspectorValueChange {
+                value_path: vec!["enabled".into()],
+                before: json!(true),
+                after: json!(true),
+            }],
+        }));
+        assert!(!history.can_undo());
     }
 }

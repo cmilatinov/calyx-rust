@@ -7,7 +7,7 @@ mod tests {
         MessageHandlerResult, MessageQueue, MessageRoute, MessageSender, Network, NetworkSceneSync,
         Server,
     };
-    use crate::scene::{GameObject, Prefab, Scene};
+    use crate::scene::{ComponentEdit, GameObject, Prefab, Scene};
     use crate::test_support::NetworkTestHarness as TestHarness;
     use crate::test_support::{test_game_context, test_scene};
     use std::collections::HashSet;
@@ -1184,7 +1184,10 @@ mod tests {
         let (mut scene, go) = scene_with_object(42, 1);
         let prototype = ComponentNetworkObject::default();
         unsafe {
-            scene.edit_component_dyn(go, &prototype, |instance, _| set_network_id(instance, 43))
+            scene.edit_component_dyn(go, &prototype, |instance, _| ComponentEdit {
+                value: set_network_id(instance, 43),
+                written: true,
+            })
         }
         .expect("the object should have a network object");
 
