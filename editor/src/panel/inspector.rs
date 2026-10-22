@@ -144,7 +144,14 @@ impl Panel for PanelInspector {
                                     );
                                 }
                             }
-                            for (type_id, component) in component_registry.components() {
+                            // The inspectors write through raw component
+                            // pointers, so a network id edit bypasses the scene.
+                            state
+                                .game
+                                .scenes
+                                .simulation_scene_mut()
+                                .refresh_network_object(game_object);
+                            for (type_id, _) in component_registry.components() {
                                 if !components_to_remove.contains(type_id) {
                                     continue;
                                 }
@@ -159,13 +166,12 @@ impl Panel for PanelInspector {
                                     &mut structural_edit_before,
                                     state,
                                 );
-                                if let Some(mut entry) = state
+                                if state
                                     .game
                                     .scenes
                                     .simulation_scene_mut()
-                                    .entry_mut(game_object)
+                                    .remove_component_dyn(game_object, *type_id)
                                 {
-                                    component.remove_instance(&mut entry);
                                     structural_changed = true;
                                     log::info!(
                                         "Removed component from game object: component={component_name} type_uuid={type_id} object={object_label}"
