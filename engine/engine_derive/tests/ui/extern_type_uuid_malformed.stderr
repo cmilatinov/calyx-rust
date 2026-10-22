@@ -1,0 +1,5 @@
+error: invalid uuid: invalid character: expected an optional prefix of `urn:uuid:` followed by [0-9a-fA-F-], found `n` at 1
+ --> tests/ui/extern_type_uuid_malformed.rs:3:48
+  |
+3 | engine_derive::impl_extern_type_uuid!(Foreign, "not-a-uuid");
+  |                                                ^^^^^^^^^^^^

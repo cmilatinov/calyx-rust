@@ -125,7 +125,7 @@ impl PanelViewport {
         }
         let is_active = res.dragged_by(PointerButton::Secondary);
         let EditorAppState { camera, game, .. } = app_state;
-        let input = Input::from_ctx(ui.ctx(), Some(&res), game.resources.input_mut(), is_active);
+        let input = Input::from_ctx(ui.ctx(), Some(&res), &mut camera.input, is_active);
         camera.update(game.resources.time(), &input);
         let screen_rect = ui.ctx().screen_rect();
         app_state.viewport_size = (

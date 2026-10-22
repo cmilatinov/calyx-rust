@@ -682,6 +682,52 @@ mod tests {
         assert!((world.position - Vec3::new(5.0, 1.0, 0.0)).norm() < 1e-5);
     }
 
+    #[test]
+    fn transform_cache_is_not_reused_after_node_is_recycled() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+
+        let template = scene.create(None, None);
+        scene.set_transform(template, &glm::translation(&Vec3::new(2.0, 0.0, 0.0)));
+        let prefab = scene.create_prefab(template);
+
+        let deleted = scene.create(None, None);
+        scene.set_transform(deleted, &glm::translation(&Vec3::new(1.0, 0.0, 0.0)));
+        // Populate a clean cache entry for the node that is about to be freed.
+        let world = scene.world_transform(deleted);
+        assert!((world.position - Vec3::new(1.0, 0.0, 0.0)).norm() < 1e-5);
+
+        scene.delete(deleted);
+        scene.flush_deletes();
+
+        let instance = scene
+            .instantiate_prefab(&prefab, None)
+            .expect("prefab should instantiate");
+        assert_eq!(
+            instance.node, deleted.node,
+            "the new object should reuse the deleted object's node"
+        );
+
+        let world = scene.world_transform(instance);
+        assert!((world.position - Vec3::new(2.0, 0.0, 0.0)).norm() < 1e-5);
+    }
+
+    #[test]
+    fn parentless_prefab_root_starts_with_fresh_world_transform() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+
+        let template = scene.create(None, None);
+        scene.set_transform(template, &glm::translation(&Vec3::new(3.0, 0.0, 0.0)));
+        let prefab = scene.create_prefab(template);
+
+        let instance = scene
+            .instantiate_prefab(&prefab, None)
+            .expect("prefab should instantiate");
+        let world = scene.world_transform(instance);
+        assert!((world.position - Vec3::new(3.0, 0.0, 0.0)).norm() < 1e-5);
+    }
+
     // --- Components ---
 
     #[test]

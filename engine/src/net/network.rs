@@ -84,7 +84,16 @@ impl Network {
 
     /// Advances the networking tick loop and dispatches global protocol
     /// messages such as time sync.
+    ///
+    /// A tick runs from one call to the next: this call, then
+    /// [`Network::update_scene`], then the synchronized component updates.
+    /// Every handler has had its pass on a message by the next call, so this
+    /// call first drops whatever is still queued before polling new messages.
     pub fn update(&mut self, time: &mut Time) {
+        let expired = self.queue.expire();
+        if expired > 0 {
+            log::trace!("Expired {expired} network messages no handler consumed");
+        }
         self.accumulated_time += time.static_duration().as_secs_f32();
         self.tick_sync_timer += time.static_delta_time();
         while self.accumulated_time >= self.tick_period {
@@ -107,7 +116,7 @@ impl Network {
             self.client.update(&mut self.queue, duration);
         }
         self.queue
-            .receive_messages(&mut (time, self.tick_rate), &mut NetworkTimeSync);
+            .receive_messages(None, &mut (time, self.tick_rate), &mut NetworkTimeSync);
     }
 
     /// Applies queued scene-related replication messages.
@@ -120,6 +129,7 @@ impl Network {
         assets: &'a ReadOnlyAssetContext,
     ) {
         self.queue.receive_messages(
+            None,
             &mut (
                 &mut self.client,
                 &mut self.server,
@@ -129,6 +139,7 @@ impl Network {
             &mut NetworkSceneSync,
         );
         self.queue.receive_messages(
+            None,
             &mut (
                 &mut self.client,
                 &mut self.server,
@@ -403,9 +414,10 @@ impl MessageHandler<NetworkPrefabSyncContext<'_, '_>, GameMessage> for NetworkPr
                         return MessageHandlerResult::Consume;
                     }
                 };
+                // The spawning peer owns the replicated objects on every peer.
                 let mut index = 0;
                 Network::traverse_prefab(
-                    client_id,
+                    *from_client_id,
                     scene,
                     prefab_root,
                     &mut index,

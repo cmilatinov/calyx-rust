@@ -1,7 +1,7 @@
-use egui::{Key, PointerButton};
+use egui::{Key, Modifiers, PointerButton};
 use engine::core::Time;
 use engine::ext::nalgebra::UnitQuaternionExt;
-use engine::input::Input;
+use engine::input::{ActionMap, Input, InputBinding, InputState};
 use engine::math::Transform;
 use engine::render::{Camera, CameraLike};
 use nalgebra::UnitQuaternion;
@@ -10,7 +10,38 @@ use nalgebra_glm::{Vec2, Vec3};
 pub struct EditorCamera {
     pub camera: Camera,
     pub transform: Transform,
+    /// Input state interpreting viewport input through the editor's fly-camera map.
+    pub input: InputState,
     rotation: Vec2,
+}
+
+const MOVE_FORWARD: &str = "editor_camera_forward";
+const MOVE_RIGHT: &str = "editor_camera_right";
+const MOVE_UP: &str = "editor_camera_up";
+const BOOST: &str = "editor_camera_boost";
+
+impl EditorCamera {
+    /// Action map for flying the editor camera, independent of the project's map.
+    pub fn action_map() -> ActionMap {
+        let mut map = ActionMap::new();
+        map.bind_axis(
+            MOVE_FORWARD,
+            InputBinding::Key(Key::W),
+            InputBinding::Key(Key::S),
+        );
+        map.bind_axis(
+            MOVE_RIGHT,
+            InputBinding::Key(Key::D),
+            InputBinding::Key(Key::A),
+        );
+        map.bind_axis(
+            MOVE_UP,
+            InputBinding::Key(Key::Space),
+            InputBinding::Modifier(Modifiers::SHIFT),
+        );
+        map.bind_action(BOOST, InputBinding::Modifier(Modifiers::CTRL));
+        map
+    }
 }
 
 impl Default for EditorCamera {
@@ -23,6 +54,7 @@ impl Default for EditorCamera {
         Self {
             camera: Default::default(),
             transform,
+            input: InputState::new(Self::action_map()),
             rotation: transform.rotation.pitch_yaw(),
         }
     }
@@ -34,15 +66,10 @@ impl CameraLike for EditorCamera {
         const ROTATION_SPEED: f32 = 0.5;
         const GIGA_SPEED_FACTOR: f32 = 5.0;
 
-        let Some(res) = input.res() else {
+        let Some(drag) = input.drag_delta(PointerButton::Secondary) else {
             return;
         };
 
-        if !res.dragged_by(PointerButton::Secondary) {
-            return;
-        }
-
-        let drag = res.drag_delta();
         let delta = Vec2::new(drag.y, drag.x).scale(time.static_delta_time() * ROTATION_SPEED);
         self.rotation += delta;
         self.rotation.x =
@@ -50,24 +77,51 @@ impl CameraLike for EditorCamera {
         self.transform.rotation =
             UnitQuaternion::from_euler_angles(self.rotation.x, self.rotation.y, 0.0);
 
-        let movement = input
-            .input(|i| {
-                let forward = (i.key_down(Key::W) as u8 as f32) - (i.key_down(Key::S) as u8 as f32);
-                let lateral = (i.key_down(Key::D) as u8 as f32) - (i.key_down(Key::A) as u8 as f32);
-                let vertical =
-                    (i.key_down(Key::Space) as u8 as f32) - (i.modifiers.shift as u8 as f32);
-                (self.transform.forward().scale(forward)
-                    + self.transform.right().scale(lateral)
-                    + Vec3::y_axis().scale(vertical))
-                .scale(if i.modifiers.ctrl {
-                    GIGA_SPEED_FACTOR
-                } else {
-                    1.0
-                })
-                .scale(time.static_delta_time() * TRANSLATION_SPEED)
-            })
-            .unwrap_or(Vec3::zeros());
+        let speed = if input.action(BOOST).pressed() {
+            GIGA_SPEED_FACTOR
+        } else {
+            1.0
+        };
+        let movement = (self.transform.forward().scale(input.axis(MOVE_FORWARD))
+            + self.transform.right().scale(input.axis(MOVE_RIGHT))
+            + Vec3::y_axis().scale(input.axis(MOVE_UP)))
+        .scale(speed * time.static_delta_time() * TRANSLATION_SPEED);
 
         self.transform.translate(&movement);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::{Event, RawInput};
+
+    #[test]
+    fn editor_camera_map_flies_with_keys_and_modifiers() {
+        let ctx = egui::Context::default();
+        let mut state = InputState::new(EditorCamera::action_map());
+        let key = |key| Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        ctx.begin_pass(RawInput {
+            modifiers: Modifiers {
+                ctrl: true,
+                shift: true,
+                ..Default::default()
+            },
+            events: vec![key(Key::W), key(Key::A)],
+            ..Default::default()
+        });
+        let input = Input::from_ctx(&ctx, None, &mut state, true);
+
+        assert_eq!(input.axis(MOVE_FORWARD), 1.0);
+        assert_eq!(input.axis(MOVE_RIGHT), -1.0);
+        assert_eq!(input.axis(MOVE_UP), -1.0);
+        assert!(input.action(BOOST).pressed());
+        let _ = ctx.end_pass();
     }
 }

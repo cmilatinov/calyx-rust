@@ -29,8 +29,10 @@ pub(crate) fn impl_reflect_value(input: TokenStream) -> TokenStream {
     let def = parse_macro_input!(input as ReflectValueDef);
     let name = &def.type_name;
     let reflect_impls = type_name_and_reflect_impls(name, quote! {});
-    let register_traits_impl =
-        register_trait_meta_impls(name, def.traits.into_iter().collect::<Vec<_>>());
+    let register_traits_impl = match register_trait_meta_impls(name, def.traits) {
+        Ok(tokens) => tokens,
+        Err(err) => return err.into_compile_error().into(),
+    };
     let reflected_type_impl = reflected_type_impl(
         name,
         quote! {
@@ -38,7 +40,14 @@ pub(crate) fn impl_reflect_value(input: TokenStream) -> TokenStream {
             #register_traits_impl
         },
         quote! {
-            inventory::submit!(engine::reflect::type_registry::TypeRegistrationFn(<#name as engine::reflect::ReflectedType>::register));
+            inventory::submit!(
+                engine::ReflectRegistrationFn {
+                    crate_name: env!("CARGO_PKG_NAME"),
+                    module_path: module_path!(),
+                    name: stringify!(#name),
+                    function: <#name as engine::reflect::ReflectedType>::register
+                }
+            );
         },
     );
 

@@ -524,6 +524,10 @@ impl Scene {
 
         if let Some(parent) = parent {
             self.set_parent(game_object, Some(parent))?;
+        } else {
+            // Components were bound dynamically, which does not invalidate the
+            // cache, and a parentless root never goes through `set_parent`.
+            self.transforms.mark_dirty_subtree(game_object, &self.graph);
         }
 
         Ok(game_object)
@@ -585,6 +589,7 @@ impl Scene {
     pub(crate) fn new_game_object(&mut self, parent: Option<GameObject>) -> GameObject {
         let entity = self.world.push(());
         let node = self.graph.add_node(entity);
+        self.transforms.remove(node);
         let game_object = GameObject { node, entity };
         self.store.register_entity(entity, node);
         let parent_node = parent.unwrap_or(self.root);
@@ -826,6 +831,7 @@ impl Scene {
                 self.world.remove(go.entity);
                 self.store.remove(uuid, go.entity);
                 self.graph.remove_node(go.node);
+                self.transforms.remove(go.node);
             }
         }
     }
