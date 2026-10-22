@@ -271,8 +271,9 @@ impl SceneRenderer {
         let particle_renderer = ParticleRenderer::new(context)?;
 
         // Default assets
+        let cube = SceneRendererError::load::<Mesh>(context, "meshes/cube")?;
+        let white_texture = SceneRendererError::load::<Texture>(context, "textures/white")?;
         let asset_registry = context.registries.assets.read();
-        let cube = SceneRendererError::require(asset_registry.cube(), "meshes/cube")?;
         let screen_space_quad = SceneRendererError::require(
             asset_registry.screen_space_quad(),
             AssetRegistry::SCREEN_SPACE_QUAD,
@@ -285,8 +286,6 @@ impl SceneRenderer {
             asset_registry.black_texture_cube(),
             AssetRegistry::BLACK_TEXTURE_CUBE,
         )?;
-        let white_texture =
-            SceneRendererError::require(asset_registry.white_texture(), "textures/white")?;
         drop(asset_registry);
 
         Ok(Self {
@@ -1479,6 +1478,25 @@ mod tests {
             Ok(_) => panic!("a registry without shaders cannot build a scene renderer"),
         }
         std::fs::remove_dir_all(empty).unwrap();
+    }
+
+    #[test]
+    fn construction_reports_why_a_default_mesh_failed_to_load() {
+        let assets = TestAssets::engine();
+        std::fs::write(
+            assets.engine_root().join("meshes/cube.obj"),
+            [0xff, 0xfe, 0x00],
+        )
+        .unwrap();
+        let context = assets.asset_context();
+
+        let result = SceneRenderer::new(&context.lock_read(), Default::default(), (16, 16));
+
+        match result {
+            Err(SceneRendererError::AssetLoad { name, .. }) => assert_eq!(name, "meshes/cube"),
+            Err(error) => panic!("expected the cube's load error, got {error:?}"),
+            Ok(_) => panic!("a malformed cube mesh cannot build a scene renderer"),
+        }
     }
 
     #[test]
