@@ -95,6 +95,11 @@ pub struct ComponentEdit<R> {
 /// one: [`Scene::world`] only hands out shared access, and the methods that
 /// add, write or remove components all report the write to the scene's one
 /// observation point, which keeps cached world transforms current.
+///
+/// Objects enter the scene only through its spawn operation, which registers
+/// an object's entity and id together, and an object's id is read-only: the
+/// observation point puts it back after any write to the object's
+/// [`ComponentID`]. Lookups by entity and by id therefore always agree.
 #[derive(TypeUuid)]
 #[uuid = "9946a2e7-e022-447e-8e60-528da548087f"]
 pub struct Scene {
@@ -132,7 +137,7 @@ impl Scene {
             visible: true,
         });
         let mut store = GameObjectStore::default();
-        store.register_uuid(id, root);
+        store.insert(id, root);
         Self {
             world: SceneWorld(world),
             physics: Default::default(),
@@ -216,8 +221,26 @@ impl From<(&ReadOnlyRegistryContext, SceneData)> for Scene {
     fn from((registries, value): (&ReadOnlyRegistryContext, SceneData)) -> Self {
         let mut scene = registries.scene();
         let registry = registries.components.read();
-        for (_, components) in value.components {
-            let game_object = scene.new_game_object(None);
+        for (game_object_id, mut components) in value.components {
+            // The object's key is its identity, since the hierarchy refers to
+            // objects by key; the stored id component only supplies the rest.
+            let id = components
+                .remove(&ComponentID::type_uuid())
+                .and_then(|data| match serde_json::from_value::<ComponentID>(data) {
+                    Ok(id) => Some(id),
+                    Err(err) => {
+                        log::warn!("Object {game_object_id} has an invalid id component: {err}");
+                        None
+                    }
+                })
+                .unwrap_or_default();
+            let game_object = scene.spawn(
+                ComponentID {
+                    id: game_object_id,
+                    ..id
+                },
+                None,
+            );
             for (component_id, data) in components {
                 let Some(component) = registry.component(component_id) else {
                     continue;
@@ -233,15 +256,6 @@ impl From<(&ReadOnlyRegistryContext, SceneData)> for Scene {
                     }
                 };
                 scene.bind_instance(game_object, component, instance);
-            }
-            let mut id = None;
-            if let Some(entry) = scene.entry(game_object) {
-                if let Ok(c_id) = entry.get_component::<ComponentID>() {
-                    id = Some(c_id.id);
-                }
-            }
-            if let Some(id) = id {
-                scene.store.register_uuid(id, game_object);
             }
         }
         for (parent_id, children) in value.hierarchy {
@@ -276,6 +290,11 @@ impl From<&Scene> for SceneData {
             let Some(game_object) = scene.game_object_from_entity(*entity) else {
                 continue;
             };
+            // The root belongs to the scene instance, not to its content: a
+            // loaded scene creates its own.
+            if game_object == scene.root {
+                continue;
+            }
             scene.serialize_game_object(game_object, id.id, &mut data);
         }
         data
@@ -288,13 +307,8 @@ impl From<(&Scene, GameObject)> for SceneData {
         let game_objects: Vec<GameObject> = scene.graph.descendants(game_object).collect();
         let subtree = game_objects.iter().copied().collect::<HashSet<_>>();
         game_objects.into_iter().for_each(|game_object| {
-            let Some(entry) = scene.entry(game_object) else {
-                return;
-            };
-            let Ok(id) = entry.get_component::<ComponentID>() else {
-                return;
-            };
-            scene.serialize_game_object_filtered(game_object, id.id, &mut data, Some(&subtree));
+            let id = scene.uuid(game_object);
+            scene.serialize_game_object_filtered(game_object, id, &mut data, Some(&subtree));
         });
         data
     }
@@ -340,17 +354,17 @@ impl Scene {
             let Some(parent) = self.parent(game_object) else {
                 break 'insert_hierarchy;
             };
-            let Some(entry) = self.entry(parent) else {
-                break 'insert_hierarchy;
+            // Top-level objects record no parent: the root is never
+            // serialized, unless a subtree explicitly includes it.
+            let parent_included = match parent_filter {
+                Some(filter) => filter.contains(&parent),
+                None => parent != self.root,
             };
-            let Some(parent_id) = entry.get_component::<ComponentID>().ok() else {
-                break 'insert_hierarchy;
-            };
-            if parent_filter.is_some_and(|filter| !filter.contains(&parent)) {
+            if !parent_included {
                 break 'insert_hierarchy;
             }
             data.hierarchy
-                .entry(parent_id.id)
+                .entry(self.uuid(parent))
                 .or_default()
                 .push(game_object_id);
         }
@@ -406,9 +420,7 @@ impl Scene {
         if is_default_id {
             id.name = self.store.next_name();
         }
-        let game_object = self.new_game_object(parent);
-        self.store.register_uuid(id.id, game_object);
-        self.add_component(game_object, id);
+        let game_object = self.spawn(id, parent);
         self.add_component(game_object, ComponentTransform::default());
         game_object
     }
@@ -504,12 +516,23 @@ impl Scene {
         let component_registry = component_registry_ref.read();
         let type_registry_ref = self.registries.types.clone();
         let type_registry = type_registry_ref.read();
-        for (game_object_id, _components) in prefab.data.components.iter() {
-            let game_object = self.new_game_object(None);
+        for (game_object_id, components) in prefab.data.components.iter() {
             let new_game_object_id = *id_mapping.get_by_left(game_object_id).ok_or_else(|| {
                 SceneError::InvalidPrefab(format!("object {game_object_id} has no mapped id"))
             })?;
-            self.store.register_uuid(new_game_object_id, game_object);
+            let id = components
+                .get(&ComponentID::type_uuid())
+                .and_then(|data| serde_json::from_value::<ComponentID>(data.clone()).ok())
+                .ok_or_else(|| {
+                    SceneError::InvalidPrefab(format!("object {game_object_id} has no valid id"))
+                })?;
+            self.spawn(
+                ComponentID {
+                    id: new_game_object_id,
+                    ..id
+                },
+                None,
+            );
         }
 
         // Every `GameObjectRef` deserialized while this scope is held is
@@ -523,6 +546,10 @@ impl Scene {
                 SceneError::InvalidPrefab(format!("object {game_object_id} was not created"))
             })?;
             for (component_id, data) in components {
+                // The object was spawned with its id component.
+                if *component_id == ComponentID::type_uuid() {
+                    continue;
+                }
                 let Some(TypeInfo::Struct(_)) = type_registry.type_info_by_id(*component_id) else {
                     continue;
                 };
@@ -541,9 +568,6 @@ impl Scene {
                 };
                 self.bind_instance(game_object, component, instance);
             }
-            self.write_component::<ComponentID, _>(game_object, |c_id| {
-                c_id.id = new_game_object_id;
-            });
         }
 
         drop(remap_scope);
@@ -633,11 +657,27 @@ impl Scene {
             })
     }
 
-    pub(crate) fn new_game_object(&mut self, parent: Option<GameObject>) -> GameObject {
+    /// Spawns a game object under `parent`, or under the root when `parent`
+    /// is `None`, carrying the identity `id` and no other component.
+    ///
+    /// This is the one way an object enters the scene: it registers the
+    /// object's entity and id together, so lookups by either agree from the
+    /// start. When `id.id` is nil or already held by another object, the
+    /// object gets a fresh id instead, so no two objects share one.
+    pub(crate) fn spawn(&mut self, mut id: ComponentID, parent: Option<GameObject>) -> GameObject {
+        if id.id.is_nil() || self.store.contains(id.id) {
+            let fresh = Uuid::new_v4();
+            log::warn!(
+                "Game object id {} is nil or taken; spawning with {fresh}",
+                id.id
+            );
+            id.id = fresh;
+        }
         let entity = self.world.0.push(());
         let game_object = self.graph.attach(entity, Some(parent.unwrap_or(self.root)));
         self.transforms.remove(game_object.node);
-        self.store.register_entity(entity, game_object.node);
+        self.store.insert(id.id, game_object);
+        self.add_component(game_object, id);
         game_object
     }
 
@@ -737,10 +777,40 @@ impl Scene {
     /// recorded in the scene's change set for consumers such as physics.
     fn component_written(&mut self, game_object: GameObject, component: ComponentTypeId) {
         self.changes.record(game_object.entity, component);
-        if component == ComponentTypeId::of::<ComponentTransform>() {
+        if component == ComponentTypeId::of::<ComponentID>() {
+            self.keep_identity(game_object);
+        } else if component == ComponentTypeId::of::<ComponentTransform>() {
             self.transforms.mark_dirty_subtree(game_object, &self.graph);
         } else if component == ComponentTypeId::of::<ComponentNetworkObject>() {
             self.refresh_network_object(game_object);
+        }
+    }
+
+    /// Puts back the id `game_object` was spawned with after a write to its
+    /// [`ComponentID`], so an object's id is read-only: names and visibility
+    /// change through any write, the id never does. The id component is also
+    /// restored if it went missing; the remove methods refuse to remove it.
+    fn keep_identity(&mut self, game_object: GameObject) {
+        let Some(id) = self.store.uuid(game_object.entity) else {
+            return;
+        };
+        let Some(mut entry) = self.entry_mut(game_object) else {
+            return;
+        };
+        match entry.get_component_mut::<ComponentID>() {
+            Ok(component) => {
+                if component.id != id {
+                    log::warn!(
+                        "Game object ids are read-only; keeping {id} instead of {}",
+                        component.id
+                    );
+                    component.id = id;
+                }
+            }
+            Err(_) => entry.add_component(ComponentID {
+                id,
+                ..Default::default()
+            }),
         }
     }
 
@@ -815,9 +885,15 @@ impl Scene {
         let instance = unsafe { &mut *instance };
         let before = instance.serialize();
         let value = editor(instance, self);
-        let after = instance.serialize();
+        let mut after = instance.serialize();
         if before.is_none() || before != after {
             self.component_written(game_object, component.component_type_id());
+            if component.component_type_id() == ComponentTypeId::of::<ComponentID>() {
+                // The scene may have put the object's id back.
+                after = self
+                    .read_component_dyn(game_object, component, |c| c.serialize())
+                    .flatten();
+            }
         }
         Some(ComponentEdit {
             value,
@@ -826,8 +902,13 @@ impl Scene {
         })
     }
 
-    /// Removes component `T` from `game_object`.
+    /// Removes component `T` from `game_object`. Removing the object's
+    /// [`ComponentID`] is refused, since every object keeps its identity.
     pub fn remove_component<T: Component + 'static>(&mut self, game_object: GameObject) {
+        if ComponentTypeId::of::<T>() == ComponentTypeId::of::<ComponentID>() {
+            log::warn!("Game objects keep their ComponentID; not removing it");
+            return;
+        }
         self.write_entry(game_object, ComponentTypeId::of::<T>(), |entry| {
             entry.remove_component::<T>();
             Some(())
@@ -836,8 +917,13 @@ impl Scene {
 
     /// Removes the component with reflected type UUID `type_uuid` from
     /// `game_object`. Returns whether the component type is registered and
-    /// the object exists.
+    /// the object exists. Removing the object's [`ComponentID`] is refused
+    /// and returns `false`, since every object keeps its identity.
     pub fn remove_component_dyn(&mut self, game_object: GameObject, type_uuid: Uuid) -> bool {
+        if type_uuid == ComponentID::type_uuid() {
+            log::warn!("Game objects keep their ComponentID; not removing it");
+            return false;
+        }
         let component_registry_ref = self.registries.components.clone();
         let component_registry = component_registry_ref.read();
         let Some(component) = component_registry.component(type_uuid) else {
@@ -873,10 +959,11 @@ impl Scene {
         let component_registry = registries.components.read();
 
         // Collect once — each updater's read_component bails early for entities
-        // that don't have its component type.
+        // that don't have its component type. The root carries no behaviour.
         let game_objects: Vec<GameObject> = <Entity>::query()
             .iter(&self.world.0)
             .filter_map(|e| self.game_object_from_entity(*e))
+            .filter(|go| *go != self.root)
             .collect();
 
         for (_type_uuid, updater) in component_registry.components_with_update() {
@@ -940,10 +1027,9 @@ impl Scene {
         for game_object in roots {
             for go in self.graph.detach_subtree(game_object) {
                 self.network_objects.remove_by_right(&go);
-                let uuid = self.uuid(go);
                 self.world.0.remove(go.entity);
                 self.changes.forget(go.entity);
-                self.store.remove(uuid, go.entity);
+                self.store.remove(go.entity);
                 self.transforms.remove(go.node);
             }
         }
@@ -977,11 +1063,10 @@ impl Scene {
         self.is_visible(game_object) && self.ancestors(game_object).all(|go| self.is_visible(go))
     }
 
-    /// Returns the persistent UUID stored in [`ComponentID`] for `game_object`.
+    /// Returns the persistent UUID `game_object` was spawned with, which its
+    /// [`ComponentID`] always holds, or the nil UUID for an unknown object.
     pub fn uuid(&self, game_object: GameObject) -> Uuid {
-        self.entry(game_object)
-            .and_then(|e| e.get_component::<ComponentID>().ok().map(|id| id.id))
-            .unwrap_or_default()
+        self.store.uuid(game_object.entity).unwrap_or_default()
     }
 
     /// Returns the type ids of every component on `game_object`, or an empty

@@ -66,6 +66,225 @@ mod tests {
         assert_eq!(scene.uuid(root), root_id);
     }
 
+    // --- Identity: lookups by entity and by id agree ---
+
+    /// Asserts that `game_object` is found by its entity and by its id, and
+    /// that its id component holds the id the scene reports.
+    fn assert_lookups_agree(scene: &Scene, game_object: GameObject) {
+        let id = scene.uuid(game_object);
+        assert_ne!(id, Uuid::nil());
+        assert_eq!(scene.find(id), Some(game_object));
+        assert_eq!(
+            scene.game_object_from_entity(game_object.entity),
+            Some(game_object)
+        );
+        assert_eq!(
+            scene.read_component::<ComponentID, _, _>(game_object, |c| c.id),
+            Some(id)
+        );
+    }
+
+    /// Builds a scene with a parent, a child and a second top-level object.
+    fn identity_scene(registries: &crate::context::ReadOnlyRegistryContext) -> Scene {
+        let mut scene = registries.scene();
+        let parent = scene.create(None, None);
+        scene.create(None, Some(parent));
+        scene.create(None, None);
+        scene
+    }
+
+    #[test]
+    fn spawn_registers_entity_and_id() {
+        let mut scene = test_scene();
+        let parent = scene.create(None, None);
+        let child = scene.create(None, Some(parent));
+        assert_lookups_agree(&scene, parent);
+        assert_lookups_agree(&scene, child);
+    }
+
+    #[test]
+    fn root_is_registered_by_entity_and_id() {
+        let scene = test_scene();
+        assert_lookups_agree(&scene, scene.root());
+        assert_eq!(scene.find(scene.root_id()), Some(scene.root()));
+    }
+
+    #[test]
+    fn spawn_with_a_taken_id_gets_a_fresh_id() {
+        let mut scene = test_scene();
+        let first = scene.create(None, None);
+        let taken = ComponentID {
+            id: scene.uuid(first),
+            ..Default::default()
+        };
+        let second = scene.create(Some(taken), None);
+        assert_ne!(scene.uuid(first), scene.uuid(second));
+        assert_lookups_agree(&scene, first);
+        assert_lookups_agree(&scene, second);
+    }
+
+    #[test]
+    fn load_registers_entity_and_id() {
+        let registries = crate::test_support::test_registries();
+        let scene = identity_scene(&registries);
+        let data: SceneData = (&scene).into();
+
+        let restored: Scene = (&registries, data).into();
+
+        assert_eq!(restored.objects().count(), 3);
+        for go in scene.objects() {
+            let restored_go = restored.find(scene.uuid(go)).expect("object not loaded");
+            assert_lookups_agree(&restored, restored_go);
+        }
+        assert_lookups_agree(&restored, restored.root());
+    }
+
+    #[test]
+    fn load_gives_an_object_without_id_component_its_key_as_id() {
+        let registries = crate::test_support::test_registries();
+        let scene = identity_scene(&registries);
+        let mut data: SceneData = (&scene).into();
+        let key = *data.components.keys().next().unwrap();
+        data.components
+            .get_mut(&key)
+            .unwrap()
+            .remove(&<ComponentID as TypeUuid>::type_uuid());
+
+        let restored: Scene = (&registries, data).into();
+
+        let go = restored.find(key).expect("object without id not loaded");
+        assert_lookups_agree(&restored, go);
+    }
+
+    #[test]
+    fn clone_registers_entity_and_id() {
+        let registries = crate::test_support::test_registries();
+        let scene = identity_scene(&registries);
+
+        let cloned = scene.clone();
+
+        assert_eq!(cloned.objects().count(), 3);
+        for go in scene.objects() {
+            let cloned_go = cloned.find(scene.uuid(go)).expect("object not cloned");
+            assert_lookups_agree(&cloned, cloned_go);
+        }
+    }
+
+    #[test]
+    fn instantiate_prefab_registers_entity_and_id() {
+        let mut scene = test_scene();
+        let parent = scene.create(None, None);
+        scene.create(None, Some(parent));
+        let prefab = scene.create_prefab(parent);
+
+        let instance = scene.instantiate_prefab(&prefab, None).unwrap();
+
+        assert_ne!(scene.uuid(instance), scene.uuid(parent));
+        let objects: Vec<GameObject> = scene.descendants(instance).collect();
+        assert_eq!(objects.len(), 2);
+        for go in objects {
+            assert_lookups_agree(&scene, go);
+        }
+    }
+
+    #[test]
+    fn serialization_skips_the_root() {
+        let registries = crate::test_support::test_registries();
+        let scene = identity_scene(&registries);
+
+        let data: SceneData = (&scene).into();
+
+        assert_eq!(data.components.len(), 3);
+        assert!(!data.components.contains_key(&scene.root_id()));
+        assert!(!data.hierarchy.contains_key(&scene.root_id()));
+    }
+
+    #[test]
+    fn writing_the_id_keeps_the_registered_id() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        let id = scene.uuid(go);
+        let other = Uuid::new_v4();
+
+        scene.write_component::<ComponentID, _>(go, |c| {
+            c.id = other;
+            c.name = "Renamed".into();
+        });
+
+        assert_eq!(scene.uuid(go), id);
+        assert_eq!(scene.find(other), None);
+        assert_eq!(scene.name(go), "Renamed");
+        assert_lookups_agree(&scene, go);
+    }
+
+    #[test]
+    fn replacing_the_id_component_keeps_the_registered_id() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        let id = scene.uuid(go);
+
+        scene.add_component(
+            go,
+            ComponentID {
+                name: "Replaced".into(),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(scene.uuid(go), id);
+        assert_eq!(scene.name(go), "Replaced");
+        assert_lookups_agree(&scene, go);
+    }
+
+    #[test]
+    fn writing_the_id_through_a_prototype_keeps_the_registered_id() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        let id = scene.uuid(go);
+        let prototype = ComponentID::default();
+
+        scene.write_component_dyn(go, &prototype, |instance| {
+            instance.deserialize_in_place(&serde_json::json!({ "id": Uuid::new_v4() }))
+        });
+        // SAFETY: the editor does not read the edited component through the
+        // scene.
+        let edit = unsafe {
+            scene.edit_component_dyn(go, &prototype, |instance, _| {
+                instance.deserialize_in_place(&serde_json::json!({ "id": Uuid::new_v4() }))
+            })
+        }
+        .unwrap();
+
+        assert_eq!(scene.uuid(go), id);
+        assert_eq!(edit.after.unwrap()["id"], serde_json::json!(id));
+        assert_lookups_agree(&scene, go);
+    }
+
+    #[test]
+    fn removing_the_id_component_is_refused() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+
+        scene.remove_component::<ComponentID>(go);
+        let removed = scene.remove_component_dyn(go, <ComponentID as TypeUuid>::type_uuid());
+
+        assert!(!removed);
+        assert_lookups_agree(&scene, go);
+    }
+
+    #[test]
+    fn deleting_an_object_unregisters_entity_and_id() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        let id = scene.uuid(go);
+
+        scene.delete(go);
+        scene.flush_deletes();
+
+        assert_eq!(scene.find(id), None);
+        assert_eq!(scene.game_object_from_entity(go.entity), None);
+    }
+
     // --- Hierarchy ---
 
     #[test]
