@@ -1,8 +1,9 @@
 use super::RenderContext;
+use crate::assets::error::AssetError;
 use crate::assets::material::Material;
 use crate::assets::mesh::{Instance, Mesh};
 use crate::assets::texture::Texture;
-use crate::assets::AssetId;
+use crate::assets::{Asset, AssetId, AssetRegistry};
 use crate::component::{ComponentMesh, ComponentSkinnedMesh, ComponentSkyLight};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
@@ -14,15 +15,17 @@ use crate::render::{
     MeshRenderer, OutlineRenderer, ParticleRenderer, PipelineOptions, SkyboxRenderer,
 };
 use crate::scene::{GameObject, Scene};
+use crate::utils::TypeUuid;
 use egui::Color32;
+use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
-use egui_wgpu::{wgpu, RenderState};
 use legion::{Entity, IntoQuery};
 use nalgebra_glm as glm;
 use nalgebra_glm::Mat4;
 use rapier3d::pipeline::DebugRenderPipeline;
 use std::collections::{HashMap, HashSet};
 use std::default::Default;
+use std::fmt;
 use std::ops::Range;
 use std::sync::{mpsc, Arc};
 use uuid::Uuid;
@@ -81,6 +84,62 @@ impl Default for SceneRendererOptions {
         }
     }
 }
+
+/// Error returned when a [`SceneRenderer`] or one of its sub-renderers cannot
+/// be created.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SceneRendererError {
+    /// A shader, mesh or texture the renderer draws with is missing or failed
+    /// to load.
+    MissingAsset {
+        /// Registry name or relative path of the asset.
+        name: String,
+        /// The registry's load error, when it reported one.
+        error: Option<AssetError>,
+    },
+}
+
+impl SceneRendererError {
+    /// Loads the asset `name` from the registry, or reports it missing.
+    pub(crate) fn load<A: Asset + TypeUuid>(
+        context: &ReadOnlyAssetContext,
+        name: &str,
+    ) -> Result<Ref<A>, Self> {
+        context
+            .registries
+            .assets
+            .read()
+            .load::<A>(name)
+            .map_err(|error| Self::MissingAsset {
+                name: name.to_string(),
+                error: Some(error),
+            })
+    }
+
+    /// Returns a built-in asset the registry returned, or reports it missing.
+    fn require<T>(asset: Option<T>, name: &str) -> Result<T, Self> {
+        asset.ok_or_else(|| Self::MissingAsset {
+            name: name.to_string(),
+            error: None,
+        })
+    }
+}
+
+impl fmt::Display for SceneRendererError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingAsset {
+                name,
+                error: Some(error),
+            } => write!(f, "scene renderer asset `{name}` failed to load: {error}"),
+            Self::MissingAsset { name, error: None } => {
+                write!(f, "scene renderer asset `{name}` is missing")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SceneRendererError {}
 
 /// One draw-list entry emitted while collecting scene meshes.
 pub struct DrawListElement {
@@ -167,12 +226,14 @@ fn skinned_mesh_world_transform(
 
 impl SceneRenderer {
     /// Creates a scene renderer for `context` with `options`.
+    ///
+    /// The renderer draws on `context`'s render context, headless or not. It
+    /// fails when a shader, mesh or texture it draws with does not load.
     pub fn new(
         context: &ReadOnlyAssetContext,
         mut options: SceneRendererOptions,
         initial_size: (u32, u32),
-    ) -> Self {
-        let asset_registry = context.registries.assets.read();
+    ) -> Result<Self, SceneRendererError> {
         let device = context.render_context.device();
         let (width, height) = if initial_size.0 == 0 || initial_size.1 == 0 {
             log::warn!("SceneRenderer created before a valid render size was available; using 1x1 initial textures");
@@ -205,8 +266,8 @@ impl SceneRenderer {
         );
         let scene_object_id_readback = Self::create_object_id_readback_buffer(device);
 
-        let mesh_renderer = MeshRenderer::new(context);
-        let skybox_renderer = SkyboxRenderer::new(context);
+        let mesh_renderer = MeshRenderer::new(context)?;
+        let skybox_renderer = SkyboxRenderer::new(context)?;
 
         let camera_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("camera_uniform_buffer"),
@@ -214,20 +275,32 @@ impl SceneRenderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let grid_renderer = GridRenderer::new(context, device, &camera_uniform_buffer);
+        let grid_renderer = GridRenderer::new(context, &camera_uniform_buffer)?;
 
-        let gizmo_renderer = GizmoRenderer::new(context, &camera_uniform_buffer, options.samples);
-        let outline_renderer = OutlineRenderer::new(context, device);
-        let particle_renderer = ParticleRenderer::new(context);
+        let gizmo_renderer = GizmoRenderer::new(context, &camera_uniform_buffer, options.samples)?;
+        let outline_renderer = OutlineRenderer::new(context)?;
+        let particle_renderer = ParticleRenderer::new(context)?;
 
         // Default assets
-        let cube = asset_registry.cube().unwrap();
-        let screen_space_quad = asset_registry.screen_space_quad().unwrap();
-        let black_texture_2d = asset_registry.black_texture_2d().unwrap();
-        let black_texture_cube = asset_registry.black_texture_cube().unwrap();
-        let white_texture = asset_registry.white_texture().unwrap();
+        let asset_registry = context.registries.assets.read();
+        let cube = SceneRendererError::require(asset_registry.cube(), "meshes/cube")?;
+        let screen_space_quad = SceneRendererError::require(
+            asset_registry.screen_space_quad(),
+            AssetRegistry::SCREEN_SPACE_QUAD,
+        )?;
+        let black_texture_2d = SceneRendererError::require(
+            asset_registry.black_texture_2d(),
+            AssetRegistry::BLACK_TEXTURE_2D,
+        )?;
+        let black_texture_cube = SceneRendererError::require(
+            asset_registry.black_texture_cube(),
+            AssetRegistry::BLACK_TEXTURE_CUBE,
+        )?;
+        let white_texture =
+            SceneRendererError::require(asset_registry.white_texture(), "textures/white")?;
+        drop(asset_registry);
 
-        Self {
+        Ok(Self {
             asset_context: context.clone(),
             default_assets: SceneRendererAssets {
                 cube,
@@ -261,7 +334,7 @@ impl SceneRenderer {
             selected_game_object: None,
             hovered_game_object: None,
             sky_light_intensity: 0.0,
-        }
+        })
     }
 
     /// Returns the current renderer options.
@@ -284,17 +357,18 @@ impl SceneRenderer {
         self.selected_game_object = selected_game_object;
     }
 
-    /// Renders the main scene content into the internal MSAA scene textures.
+    /// Renders the main scene content into the internal MSAA scene textures,
+    /// on the render context the renderer was created with.
     pub fn render_scene_base(
         &mut self,
-        render_state: &RenderState,
         camera: &Camera,
         camera_transform: &Transform,
         scene: &Scene,
         physics_debug_pipeline: Option<&mut DebugRenderPipeline>,
     ) {
-        let queue = &render_state.queue;
-        let device = &render_state.device;
+        let render_context = self.asset_context.render_context.clone();
+        let queue = render_context.queue();
+        let device = render_context.device();
 
         self.load_camera_uniforms(queue, camera, camera_transform);
 
@@ -311,7 +385,7 @@ impl SceneRenderer {
                 write_mask: Default::default(),
             })])
             .build();
-        self.build_asset_data(render_state, scene);
+        self.build_asset_data(&render_context, scene);
         if self.options.gizmos {
             let object_id_lookup = &mut self.object_id_lookup;
             let object_ids_build = &mut self.object_ids_build;
@@ -333,8 +407,8 @@ impl SceneRenderer {
         }
         self.finish_object_ids();
         let draw_list = self.build_draw_list();
-        self.build_mesh_data(render_state);
-        self.light_manager.build_data(render_state, scene);
+        self.build_mesh_data(&render_context);
+        self.light_manager.build_data(&render_context, scene);
         let assets = self.assets.lock(device);
         {
             let black_texture_cube = self.default_assets.black_texture_cube.read();
@@ -379,7 +453,7 @@ impl SceneRenderer {
         );
         drop(assets);
         self.skybox_renderer.render(
-            render_state,
+            &render_context,
             &mut encoder,
             &self.assets,
             &self.default_assets.cube,
@@ -390,7 +464,7 @@ impl SceneRenderer {
         );
         if self.options.grid {
             self.grid_renderer.render(
-                render_state,
+                &render_context,
                 &mut encoder,
                 &self.default_assets.screen_space_quad,
                 &self.scene_texture_msaa,
@@ -399,7 +473,7 @@ impl SceneRenderer {
             );
         }
         self.particle_renderer.render(
-            render_state,
+            &render_context,
             &mut encoder,
             &self.asset_context,
             scene,
@@ -426,13 +500,14 @@ impl SceneRenderer {
     ///
     /// Call it once after each [`Self::render_scene_base`]: above one sample the
     /// resolve discards the multisampled surface.
-    pub fn finalize_scene(&mut self, render_state: &RenderState) {
-        let device = &render_state.device;
-        let queue = &render_state.queue;
+    pub fn finalize_scene(&mut self) {
+        let render_context = self.asset_context.render_context.clone();
+        let device = render_context.device();
+        let queue = render_context.queue();
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("scene_outline_encoder"),
         });
-        self.render_outline_to_scene(render_state, &mut encoder);
+        self.render_outline_to_scene(&render_context, &mut encoder);
         Self::resolve_scene_texture(&self.scene_texture_msaa, &self.scene_texture, &mut encoder);
         queue.submit(Some(encoder.finish()));
     }
@@ -537,7 +612,7 @@ impl SceneRenderer {
 
     fn render_outline_to_scene(
         &mut self,
-        render_state: &RenderState,
+        render_context: &RenderContext,
         encoder: &mut wgpu::CommandEncoder,
     ) {
         self.outline_renderer
@@ -545,7 +620,7 @@ impl SceneRenderer {
         self.outline_renderer
             .set_hovered_object_id(self.object_id_for_game_object(self.hovered_game_object));
         self.outline_renderer.render(
-            render_state,
+            render_context,
             encoder,
             &self.default_assets.screen_space_quad,
             &self.scene_texture_msaa,
@@ -554,7 +629,7 @@ impl SceneRenderer {
         );
     }
 
-    fn build_asset_data(&mut self, render_state: &RenderState, scene: &Scene) {
+    fn build_asset_data(&mut self, render_context: &RenderContext, scene: &Scene) {
         let world = scene.world();
         self.draw_list.clear();
         self.object_ids_build.clear();
@@ -659,7 +734,7 @@ impl SceneRenderer {
             mesh.instances.clear();
         }
         for (_, mut material) in self.assets.materials.lock_write() {
-            material.load_buffers(render_state);
+            material.load_buffers(render_context);
             let Self {
                 asset_context,
                 assets: AssetRenderState { textures, .. },
@@ -685,9 +760,13 @@ impl SceneRenderer {
         self.object_ids = Arc::from(std::mem::take(&mut self.object_ids_build));
     }
 
-    fn build_mesh_data(&mut self, render_state: &RenderState) {
+    fn build_mesh_data(&mut self, render_context: &RenderContext) {
         for (_, mut mesh) in self.assets.meshes.lock_write() {
-            RenderUtils::rebuild_mesh_data(&render_state.device, &render_state.queue, &mut mesh);
+            RenderUtils::rebuild_mesh_data(
+                render_context.device(),
+                render_context.queue(),
+                &mut mesh,
+            );
         }
     }
 
@@ -1282,12 +1361,14 @@ fn push_capped_batches(
 mod tests {
     use super::*;
     use crate::assets::AssetRef;
-    use crate::component::ComponentMesh;
+    use crate::component::{ComponentID, ComponentMesh};
     use crate::math::Transform;
     use crate::render::{Camera, Shader};
-    use crate::test_support::{SceneBuilder, TestAssets};
+    use crate::test_support::{
+        test_adapter, test_asset_context_with_assets, SceneBuilder, TestAssets,
+    };
     use nalgebra::UnitQuaternion;
-    use nalgebra_glm::{vec3, vec4};
+    use nalgebra_glm::{vec3, vec4, Vec3};
 
     const VIEWPORT: u32 = 512;
 
@@ -1299,6 +1380,77 @@ mod tests {
             .into_iter()
             .map(|(_, _, _, range)| range)
             .collect()
+    }
+
+    /// Creates a PBR material registered as `name`.
+    fn pbr_material(context: &ReadOnlyAssetContext, name: &str) -> Ref<Material> {
+        let registry = context.registries.assets.read();
+        let shader = registry
+            .load::<Shader>("shaders/pbr")
+            .expect("missing pbr shader");
+        registry
+            .create_or_update(name.into(), Material::from_shader(context, shader))
+            .expect("material should be created")
+    }
+
+    /// Spawns a game object drawing `mesh` with `material` at `position`.
+    fn spawn_mesh(
+        builder: &mut SceneBuilder,
+        name: &str,
+        mesh: &Ref<Mesh>,
+        material: &Ref<Material>,
+        position: Vec3,
+    ) -> Uuid {
+        let game_object = builder.spawn(name);
+        builder.add_component(
+            game_object,
+            ComponentMesh {
+                mesh: AssetRef::from_id(mesh.id()),
+                material: AssetRef::from_id(material.id()),
+            },
+        );
+        builder.set_transform(game_object, glm::translation(&position));
+        builder.scene().uuid(game_object)
+    }
+
+    /// A camera on the negative z axis looking at the origin.
+    fn front_camera(aspect: f32, distance: f32) -> (Camera, Transform) {
+        let camera = Camera::new(aspect, 60f32.to_radians(), 0.1, 200.0);
+        let transform = Transform::from_components(
+            vec3(0.0, 0.0, -distance),
+            UnitQuaternion::face_towards(&vec3(0.0, 0.0, 1.0), &vec3(0.0, 1.0, 0.0)),
+            vec3(1.0, 1.0, 1.0),
+        );
+        (camera, transform)
+    }
+
+    /// The pixel `position` lands on in a `width` by `height` target.
+    fn project(
+        camera: &Camera,
+        transform: &Transform,
+        position: Vec3,
+        (width, height): (u32, u32),
+    ) -> (u32, u32) {
+        let clip = camera.projection
+            * transform.inverse_matrix()
+            * vec4(position.x, position.y, position.z, 1.0);
+        let ndc = clip.xyz() / clip.w;
+        (
+            ((ndc.x * 0.5 + 0.5) * width as f32) as u32,
+            ((0.5 - ndc.y * 0.5) * height as f32) as u32,
+        )
+    }
+
+    fn renderer(context: &ReadOnlyAssetContext, samples: u32, size: (u32, u32)) -> SceneRenderer {
+        SceneRenderer::new(
+            context,
+            SceneRendererOptions {
+                samples,
+                ..Default::default()
+            },
+            size,
+        )
+        .expect("scene renderer should load its assets")
     }
 
     #[test]
@@ -1320,6 +1472,214 @@ mod tests {
     }
 
     #[test]
+    fn construction_reports_missing_assets_instead_of_panicking() {
+        let empty = std::env::temp_dir().join(format!("calyx-empty-assets-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&empty).unwrap();
+        let context = test_asset_context_with_assets(vec![empty.clone()]);
+
+        let result = SceneRenderer::new(&context.lock_read(), Default::default(), (16, 16));
+
+        match result {
+            Err(SceneRendererError::MissingAsset { name, error }) => {
+                assert_eq!(name, "shaders/pbr");
+                assert!(error.is_some(), "the registry's load error should be kept");
+            }
+            Ok(_) => panic!("a registry without shaders cannot build a scene renderer"),
+        }
+        std::fs::remove_dir_all(empty).unwrap();
+    }
+
+    #[test]
+    fn draw_list_batches_instances_by_shader_material_and_mesh() {
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let (cube, sphere) = {
+            let registry = read_only_context.registries.assets.read();
+            (
+                registry.cube().expect("missing cube mesh"),
+                registry
+                    .load::<Mesh>("meshes/sphere")
+                    .expect("missing sphere mesh"),
+            )
+        };
+        let first = pbr_material(&read_only_context, "test/batch_first");
+        let second = pbr_material(&read_only_context, "test/batch_second");
+
+        // Interleaved, so batching has to regroup what the scene holds apart.
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        let layout = [
+            (&cube, &first),
+            (&sphere, &first),
+            (&cube, &second),
+            (&cube, &first),
+            (&sphere, &first),
+            (&cube, &second),
+            (&cube, &first),
+        ];
+        for (index, (mesh, material)) in layout.iter().enumerate() {
+            spawn_mesh(
+                &mut builder,
+                &format!("object_{index}"),
+                mesh,
+                material,
+                vec3(index as f32, 0.0, 0.0),
+            );
+        }
+        let hidden = builder.scene_mut().create(
+            Some(ComponentID {
+                name: "hidden".into(),
+                visible: false,
+                ..Default::default()
+            }),
+            None,
+        );
+        builder.add_component(
+            hidden,
+            ComponentMesh {
+                mesh: AssetRef::from_id(cube.id()),
+                material: AssetRef::from_id(first.id()),
+            },
+        );
+        let scene = builder.finish();
+
+        let mut renderer = renderer(&read_only_context, 1, (16, 16));
+        let render_context = read_only_context.render_context.clone();
+        renderer.build_asset_data(&render_context, &scene);
+        renderer.finish_object_ids();
+        let draw_list = renderer.build_draw_list();
+
+        let mut batches: Vec<_> = draw_list
+            .iter()
+            .map(|(_, material, mesh, range)| (*material, *mesh, range.len()))
+            .collect();
+        batches.sort();
+        let mut expected = vec![
+            (first.id(), cube.id(), 3),
+            (first.id(), sphere.id(), 2),
+            (second.id(), cube.id(), 2),
+        ];
+        expected.sort();
+        assert_eq!(batches, expected, "one batch per shader, material and mesh");
+
+        // Batches of one mesh take consecutive slices of its instance buffer.
+        for mesh in [&cube, &sphere] {
+            let mut ranges: Vec<_> = draw_list
+                .iter()
+                .filter(|(_, _, mesh_id, _)| *mesh_id == mesh.id())
+                .map(|(_, _, _, range)| range.clone())
+                .collect();
+            ranges.sort_by_key(|range| range.start);
+            let instances = mesh.read().instances.len() as u32;
+            assert_eq!(ranges.first().map(|range| range.start), Some(0));
+            assert_eq!(ranges.last().map(|range| range.end), Some(instances));
+            for pair in ranges.windows(2) {
+                assert_eq!(pair[0].end, pair[1].start);
+            }
+        }
+        assert_eq!(
+            renderer.object_ids.len(),
+            layout.len(),
+            "every visible object, and only those, gets an object id"
+        );
+    }
+
+    #[test]
+    fn picks_the_object_drawn_at_each_pixel() {
+        const SIZE: (u32, u32) = (128, 64);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let first = pbr_material(&read_only_context, "test/pick_first");
+        let second = pbr_material(&read_only_context, "test/pick_second");
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        let left = vec3(-3.0, 0.0, 0.0);
+        let right = vec3(3.0, 0.0, 0.0);
+        let left_uuid = spawn_mesh(&mut builder, "left", &cube, &first, left);
+        let right_uuid = spawn_mesh(&mut builder, "right", &cube, &second, right);
+        let scene = builder.finish();
+        let (camera, transform) = front_camera(2.0, 10.0);
+
+        let mut renderer = renderer(&read_only_context, 1, SIZE);
+        renderer.render_scene_base(&camera, &transform, &scene, None);
+        renderer.finalize_scene();
+
+        let (x, y) = project(&camera, &transform, left, SIZE);
+        assert_eq!(renderer.pick_game_object(x, y), Some(left_uuid));
+        let (x, y) = project(&camera, &transform, right, SIZE);
+        assert_eq!(renderer.pick_game_object(x, y), Some(right_uuid));
+        assert_eq!(renderer.pick_game_object(0, 0), None, "background");
+        assert_eq!(renderer.pick_game_object(SIZE.0, 0), None, "out of bounds");
+
+        // The non-blocking pick answers once its readback lands.
+        let (x, y) = project(&camera, &transform, left, SIZE);
+        let device = read_only_context.render_context.device();
+        let mut picked = None;
+        for _ in 0..100 {
+            picked = renderer.request_pick_game_object(x, y);
+            if picked == Some(left_uuid) {
+                break;
+            }
+            let _ = device.poll(wgpu::Maintain::Wait);
+        }
+        assert_eq!(picked, Some(left_uuid));
+    }
+
+    #[test]
+    fn resize_renders_and_picks_at_the_new_size() {
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let material = pbr_material(&read_only_context, "test/resize");
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        let uuid = spawn_mesh(&mut builder, "cube", &cube, &material, Vec3::zeros());
+        let scene = builder.finish();
+
+        let mut renderer = renderer(&read_only_context, 1, (32, 32));
+        let (camera, transform) = front_camera(1.0, 5.0);
+        renderer.render_scene_base(&camera, &transform, &scene, None);
+        renderer.finalize_scene();
+        assert_eq!(renderer.pick_game_object(16, 16), Some(uuid));
+        // A readback still in flight when the targets change is dropped.
+        renderer.request_pick_game_object(16, 16);
+
+        renderer.resize_textures(96, 48);
+        assert_eq!(renderer.scene_texture_size(), (96, 48));
+        let (camera, transform) = front_camera(2.0, 5.0);
+        renderer.render_scene_base(&camera, &transform, &scene, None);
+        renderer.finalize_scene();
+
+        assert_eq!(renderer.pick_game_object(48, 24), Some(uuid));
+        assert_eq!(renderer.pick_game_object(95, 0), None);
+        assert_eq!(renderer.pick_game_object(96, 24), None, "out of bounds");
+        let render_context = &read_only_context.render_context;
+        let mut readback = renderer
+            .submit_scene_texture_readback()
+            .expect("scene texture has a size");
+        let image = loop {
+            let _ = render_context.device().poll(wgpu::Maintain::Wait);
+            match readback.try_finish(render_context) {
+                ReadbackPoll::Pending => continue,
+                ReadbackPoll::Ready(image) => break image,
+                ReadbackPoll::Failed(error) => panic!("scene readback failed: {error}"),
+            }
+        };
+        assert_eq!(image.dimensions(), (96, 48));
+    }
+
+    #[test]
     fn renders_more_instances_of_one_mesh_than_the_instance_cap() {
         const COLUMNS: u32 = 9;
         const ROWS: u32 = 5;
@@ -1327,20 +1687,13 @@ mod tests {
         let assets = TestAssets::engine();
         let context = assets.asset_context();
         let read_only_context = context.lock_read();
-        let (cube, material) = {
-            let registry = read_only_context.registries.assets.read();
-            let cube = registry.cube().expect("missing cube mesh");
-            let shader = registry
-                .load::<Shader>("shaders/pbr")
-                .expect("missing pbr shader");
-            let material = registry
-                .create_or_update(
-                    "test/instance_cap_material".into(),
-                    Material::from_shader(&read_only_context, shader),
-                )
-                .expect("material should be created");
-            (cube, material)
-        };
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let material = pbr_material(&read_only_context, "test/instance_cap_material");
 
         let mut builder = SceneBuilder::new(read_only_context.registries.clone());
         let mut expected = Vec::new();
@@ -1351,44 +1704,25 @@ mod tests {
                     (row as f32 - (ROWS - 1) as f32 / 2.0) * SPACING,
                     0.0,
                 );
-                let game_object = builder.spawn(format!("cube_{row}_{column}"));
-                builder.add_component(
-                    game_object,
-                    ComponentMesh {
-                        mesh: AssetRef::from_id(cube.id()),
-                        material: AssetRef::from_id(material.id()),
-                    },
+                let uuid = spawn_mesh(
+                    &mut builder,
+                    &format!("cube_{row}_{column}"),
+                    &cube,
+                    &material,
+                    position,
                 );
-                builder.set_transform(game_object, glm::translation(&position));
-                expected.push((position, builder.scene().uuid(game_object)));
+                expected.push((position, uuid));
             }
         }
         assert!(expected.len() > Mesh::MAX_INSTANCES);
         let scene = builder.finish();
 
-        let camera = Camera::new(1.0, 60f32.to_radians(), 0.1, 200.0);
-        let camera_transform = Transform::from_components(
-            vec3(0.0, 0.0, -30.0),
-            UnitQuaternion::face_towards(&vec3(0.0, 0.0, 1.0), &vec3(0.0, 1.0, 0.0)),
-            vec3(1.0, 1.0, 1.0),
-        );
-        let mut renderer = SceneRenderer::new(
-            &read_only_context,
-            SceneRendererOptions {
-                samples: 1,
-                ..Default::default()
-            },
-            (VIEWPORT, VIEWPORT),
-        );
-        let render_state = crate::test_support::test_render_state();
-        renderer.render_scene_base(&render_state, &camera, &camera_transform, &scene, None);
+        let (camera, camera_transform) = front_camera(1.0, 30.0);
+        let mut renderer = renderer(&read_only_context, 1, (VIEWPORT, VIEWPORT));
+        renderer.render_scene_base(&camera, &camera_transform, &scene, None);
 
-        let view_projection = camera.projection * camera_transform.inverse_matrix();
         for (index, (position, uuid)) in expected.iter().enumerate() {
-            let clip = view_projection * vec4(position.x, position.y, position.z, 1.0);
-            let ndc = clip.xyz() / clip.w;
-            let x = ((ndc.x * 0.5 + 0.5) * VIEWPORT as f32) as u32;
-            let y = ((0.5 - ndc.y * 0.5) * VIEWPORT as f32) as u32;
+            let (x, y) = project(&camera, &camera_transform, *position, (VIEWPORT, VIEWPORT));
             assert_eq!(
                 renderer.pick_game_object(x, y),
                 Some(*uuid),
@@ -1399,15 +1733,15 @@ mod tests {
 
     /// Whether the test device can render to and resolve `format` at `samples`.
     fn supports_samples(
-        render_state: &RenderState,
+        render_context: &RenderContext,
         format: wgpu::TextureFormat,
         samples: u32,
         resolve: bool,
     ) -> bool {
-        let features = render_state.device.features();
+        let features = render_context.device().features();
         let format_features =
             if features.contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES) {
-                render_state.adapter.get_texture_format_features(format)
+                test_adapter().get_texture_format_features(format)
             } else {
                 format.guaranteed_format_features(features)
             };
@@ -1422,14 +1756,17 @@ mod tests {
     fn renders_and_resolves_a_frame_at_four_samples() {
         const SAMPLES: u32 = 4;
         const SIZE: u32 = 64;
-        let render_state = crate::test_support::test_render_state();
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
         if !supports_samples(
-            &render_state,
+            &render_context,
             wgpu::TextureFormat::Rgba16Float,
             SAMPLES,
             true,
         ) || !supports_samples(
-            &render_state,
+            &render_context,
             wgpu::TextureFormat::Depth32Float,
             SAMPLES,
             false,
@@ -1437,28 +1774,18 @@ mod tests {
             eprintln!(
                 "skipping: test adapter {:?} cannot render Rgba16Float and Depth32Float at \
                  {SAMPLES}x MSAA",
-                render_state.adapter.get_info().name
+                test_adapter().get_info().name
             );
             return;
         }
 
-        let assets = TestAssets::engine();
-        let context = assets.asset_context();
-        let read_only_context = context.lock_read();
-        let (cube, material) = {
-            let registry = read_only_context.registries.assets.read();
-            let cube = registry.cube().expect("missing cube mesh");
-            let shader = registry
-                .load::<Shader>("shaders/pbr")
-                .expect("missing pbr shader");
-            let material = registry
-                .create_or_update(
-                    "test/msaa_material".into(),
-                    Material::from_shader(&read_only_context, shader),
-                )
-                .expect("material should be created");
-            (cube, material)
-        };
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let material = pbr_material(&read_only_context, "test/msaa_material");
         let mut builder = SceneBuilder::new(read_only_context.registries.clone());
         let game_object = builder.spawn("cube");
         builder.add_component(
@@ -1477,12 +1804,7 @@ mod tests {
         let uuid = builder.scene().uuid(game_object);
         let scene = builder.finish();
 
-        let camera = Camera::new(1.0, 60f32.to_radians(), 0.1, 100.0);
-        let camera_transform = Transform::from_components(
-            vec3(0.0, 0.0, -5.0),
-            UnitQuaternion::face_towards(&vec3(0.0, 0.0, 1.0), &vec3(0.0, 1.0, 0.0)),
-            vec3(1.0, 1.0, 1.0),
-        );
+        let (camera, camera_transform) = front_camera(1.0, 5.0);
         let mut renderer = SceneRenderer::new(
             &read_only_context,
             SceneRendererOptions {
@@ -1491,17 +1813,17 @@ mod tests {
                 ..Default::default()
             },
             (SIZE, SIZE),
-        );
-        renderer.render_scene_base(&render_state, &camera, &camera_transform, &scene, None);
-        renderer.finalize_scene(&render_state);
+        )
+        .expect("scene renderer should load its assets");
+        renderer.render_scene_base(&camera, &camera_transform, &scene, None);
+        renderer.finalize_scene();
 
-        let render_context = &read_only_context.render_context;
         let mut readback = renderer
             .submit_scene_texture_readback()
             .expect("scene texture has a size");
         let image = loop {
             let _ = render_context.device().poll(wgpu::Maintain::Wait);
-            match readback.try_finish(render_context) {
+            match readback.try_finish(&render_context) {
                 ReadbackPoll::Pending => continue,
                 ReadbackPoll::Ready(image) => break image,
                 ReadbackPoll::Failed(error) => panic!("scene readback failed: {error}"),

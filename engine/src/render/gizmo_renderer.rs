@@ -21,7 +21,7 @@ use crate::render::render_utils::RenderUtils;
 use crate::scene::Scene;
 
 use super::buffer::wgpu_buffer_init_desc;
-use super::{Camera, PipelineOptions, Shader};
+use super::{Camera, PipelineOptions, SceneRendererError, Shader};
 
 const HIDDEN_GIZMO_OPACITY: f32 = 0.35;
 const PHOSPHOR_ICON_ATLAS_PNG: &[u8] =
@@ -135,7 +135,7 @@ impl GizmoRenderer {
         game: &ReadOnlyAssetContext,
         camera_uniform_buffer: &wgpu::Buffer,
         samples: u32,
-    ) -> Self {
+    ) -> Result<Self, SceneRendererError> {
         let device = game.render_context.device();
         let queue = game.render_context.queue();
 
@@ -150,10 +150,10 @@ impl GizmoRenderer {
             }; Mesh::MAX_INSTANCES],
         ));
 
-        let shader = Self::load_shader(game, Path::new("shaders/gizmos.wgsl"));
-        let icon_shader = Self::load_shader(game, Path::new("shaders/gizmo_icons.wgsl"));
+        let shader = Self::load_shader(game, Path::new("shaders/gizmos.wgsl"))?;
+        let icon_shader = Self::load_shader(game, Path::new("shaders/gizmo_icons.wgsl"))?;
         let icon_object_id_shader =
-            Self::load_shader(game, Path::new("shaders/gizmo_icon_object_id.wgsl"));
+            Self::load_shader(game, Path::new("shaders/gizmo_icon_object_id.wgsl"))?;
 
         let gizmo_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("gizmo_bind_group"),
@@ -189,7 +189,7 @@ impl GizmoRenderer {
             &icon_object_id_shader.bind_group_layouts[1],
         );
 
-        let renderer = Self {
+        Ok(Self {
             samples,
             circle_list: Vec::new(),
             cube_list: Vec::new(),
@@ -212,8 +212,7 @@ impl GizmoRenderer {
             cube_instances: InstanceChunks::new("cube_instance_buffer"),
 
             component_registry: game.registries.components.clone(),
-        };
-        renderer
+        })
     }
 
     fn pipeline_options(
@@ -590,15 +589,23 @@ impl GizmoRenderer {
         }
     }
 
-    fn load_shader(game: &ReadOnlyAssetContext, relative_path: &Path) -> Shader {
+    fn load_shader(
+        game: &ReadOnlyAssetContext,
+        relative_path: &Path,
+    ) -> Result<Shader, SceneRendererError> {
+        let missing = |error| SceneRendererError::MissingAsset {
+            name: relative_path.display().to_string(),
+            error,
+        };
         let asset_paths = game.registries.assets.read().asset_paths().clone();
-        for asset_path in asset_paths {
-            let path = asset_path.join(relative_path);
-            if path.exists() {
-                return Shader::from_file(game, &path).unwrap().asset;
-            }
-        }
-        panic!("missing gizmo shader {}", relative_path.display());
+        let path = asset_paths
+            .iter()
+            .map(|asset_path| asset_path.join(relative_path))
+            .find(|path| path.exists())
+            .ok_or_else(|| missing(None))?;
+        Shader::from_file(game, &path)
+            .map(|loaded| loaded.asset)
+            .map_err(|error| missing(Some(error)))
     }
 }
 

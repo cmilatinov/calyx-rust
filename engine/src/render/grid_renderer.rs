@@ -3,8 +3,8 @@ use crate::assets::texture::Texture;
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::render_utils::RenderUtils;
-use crate::render::{PipelineOptions, Shader};
-use egui_wgpu::{wgpu, RenderState};
+use crate::render::{PipelineOptions, RenderContext, SceneRendererError, Shader};
+use egui_wgpu::wgpu;
 use nalgebra_glm::Mat4;
 
 pub struct GridRenderer {
@@ -15,27 +15,25 @@ pub struct GridRenderer {
 impl GridRenderer {
     pub fn new(
         context: &ReadOnlyAssetContext,
-        device: &wgpu::Device,
         camera_uniform_buffer: &wgpu::Buffer,
-    ) -> Self {
-        let shader = context
-            .registries
-            .assets
-            .read()
-            .load::<Shader>("shaders/grid")
-            .expect("missing grid_shader");
-        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("camera_bind_group"),
-            layout: &shader.read().bind_group_layouts[0],
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera_uniform_buffer.as_entire_binding(),
-            }],
-        });
-        Self {
+    ) -> Result<Self, SceneRendererError> {
+        let shader = SceneRendererError::load::<Shader>(context, "shaders/grid")?;
+        let camera_bind_group =
+            context
+                .render_context
+                .device()
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("camera_bind_group"),
+                    layout: &shader.read().bind_group_layouts[0],
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: camera_uniform_buffer.as_entire_binding(),
+                    }],
+                });
+        Ok(Self {
             shader,
             camera_bind_group,
-        }
+        })
     }
 
     pub fn camera_bind_group(&self) -> &wgpu::BindGroup {
@@ -44,15 +42,15 @@ impl GridRenderer {
 
     pub fn render(
         &mut self,
-        render_state: &RenderState,
+        render_context: &RenderContext,
         encoder: &mut wgpu::CommandEncoder,
         screen_space_quad: &Ref<Mesh>,
         scene_texture_msaa: &Texture,
         scene_depth_texture: &Texture,
         samples: u32,
     ) {
-        let device = &render_state.device;
-        let queue = &render_state.queue;
+        let device = render_context.device();
+        let queue = render_context.queue();
         let mut quad_mesh = screen_space_quad.write();
         let shader = self.shader.read();
         let mut render_pass = RenderUtils::overlay_pass(
@@ -104,7 +102,8 @@ mod tests {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let renderer = GridRenderer::new(&read_only_context, device, &camera_uniform_buffer);
+        let renderer = GridRenderer::new(&read_only_context, &camera_uniform_buffer)
+            .expect("grid renderer should load its shader");
 
         let _ = renderer.camera_bind_group();
     }

@@ -3,9 +3,9 @@ use crate::assets::texture::Texture;
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::render_utils::RenderUtils;
-use crate::render::{PipelineOptions, Shader};
+use crate::render::{PipelineOptions, RenderContext, SceneRendererError, Shader};
 use egui::Color32;
-use egui_wgpu::{wgpu, RenderState};
+use egui_wgpu::wgpu;
 use nalgebra_glm::Mat4;
 
 #[repr(C)]
@@ -30,27 +30,26 @@ impl OutlineRenderer {
     const SELECTED_OUTLINE_RADIUS: u32 = 1;
     const HOVERED_OUTLINE_RADIUS: u32 = 2;
 
-    pub fn new(context: &ReadOnlyAssetContext, device: &wgpu::Device) -> Self {
-        let shader = context
-            .registries
-            .assets
-            .read()
-            .load::<Shader>("shaders/object_outline")
-            .expect("missing object_outline shader");
-        let outline_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("outline_uniform_buffer"),
-            size: size_of::<OutlineUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        Self {
+    pub fn new(context: &ReadOnlyAssetContext) -> Result<Self, SceneRendererError> {
+        let shader = SceneRendererError::load::<Shader>(context, "shaders/object_outline")?;
+        let outline_uniform_buffer =
+            context
+                .render_context
+                .device()
+                .create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("outline_uniform_buffer"),
+                    size: size_of::<OutlineUniform>() as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+        Ok(Self {
             shader,
             outline_uniform_buffer,
             selected_object_id: 0,
             hovered_object_id: 0,
             selected_color: Color32::from_rgb(255, 149, 0),
             hovered_color: Color32::from_rgba_unmultiplied(143, 214, 255, 220),
-        }
+        })
     }
 
     pub fn set_selected_object_id(&mut self, selected_object_id: u32) {
@@ -63,7 +62,7 @@ impl OutlineRenderer {
 
     pub fn render(
         &mut self,
-        render_state: &RenderState,
+        render_context: &RenderContext,
         encoder: &mut wgpu::CommandEncoder,
         screen_space_quad: &Ref<Mesh>,
         scene_texture_msaa: &Texture,
@@ -74,7 +73,7 @@ impl OutlineRenderer {
             return;
         }
 
-        let device = &render_state.device;
+        let device = render_context.device();
         let mut quad_mesh = screen_space_quad.write();
         let shader = self.shader.read();
         let options = PipelineOptions::builder()
@@ -97,11 +96,11 @@ impl OutlineRenderer {
                 transform: Mat4::identity().into(),
             },
         );
-        RenderUtils::rebuild_mesh_data(device, &render_state.queue, &mut quad_mesh);
+        RenderUtils::rebuild_mesh_data(device, render_context.queue(), &mut quad_mesh);
 
         if self.hovered_object_id != 0 {
             self.render_pass(
-                render_state,
+                render_context,
                 encoder,
                 &scene_texture_msaa.view,
                 &scene_object_id_texture.view,
@@ -116,7 +115,7 @@ impl OutlineRenderer {
 
         if self.selected_object_id != 0 {
             self.render_pass(
-                render_state,
+                render_context,
                 encoder,
                 &scene_texture_msaa.view,
                 &scene_object_id_texture.view,
@@ -133,7 +132,7 @@ impl OutlineRenderer {
     #[allow(clippy::too_many_arguments)]
     fn render_pass(
         &mut self,
-        render_state: &RenderState,
+        render_context: &RenderContext,
         encoder: &mut wgpu::CommandEncoder,
         scene_texture_view: &wgpu::TextureView,
         object_id_texture_view: &wgpu::TextureView,
@@ -144,8 +143,8 @@ impl OutlineRenderer {
         outline_color: Color32,
         outline_radius: u32,
     ) {
-        let device = &render_state.device;
-        let queue = &render_state.queue;
+        let device = render_context.device();
+        let queue = render_context.queue();
         let uniform = OutlineUniform {
             target_object_id,
             outline_radius,
@@ -212,8 +211,8 @@ mod tests {
         let assets = TestAssets::engine();
         let context = assets.asset_context();
         let read_only_context = context.lock_read();
-        let device = read_only_context.render_context.device();
-        let renderer = OutlineRenderer::new(&read_only_context, device);
+        let renderer =
+            OutlineRenderer::new(&read_only_context).expect("outline renderer should load");
         let shader = renderer.shader.read();
         let options = crate::render::PipelineOptions::builder()
             .samples(1)
