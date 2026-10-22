@@ -122,13 +122,18 @@ impl ListContainer for ReflectListContainer<'_> {
 /// Where a value sits in its component's serialized JSON, and the lists the
 /// inspector changed structurally this frame.
 struct FieldTrail<'a> {
+    /// Identifies the component being inspected.
+    base: Id,
     path: Vec<String>,
     structural: &'a RefCell<Vec<Vec<String>>>,
 }
 
 impl<'a> FieldTrail<'a> {
-    fn root(structural: &'a RefCell<Vec<Vec<String>>>) -> Self {
+    /// The trail of a component's root value. `base` identifies the
+    /// component, such as its game object and type.
+    fn root(base: Id, structural: &'a RefCell<Vec<Vec<String>>>) -> Self {
         Self {
+            base,
             path: Vec::new(),
             structural,
         }
@@ -138,9 +143,17 @@ impl<'a> FieldTrail<'a> {
         let mut path = self.path.clone();
         path.push(segment.to_string());
         Self {
+            base: self.base,
             path,
             structural: self.structural,
         }
+    }
+
+    /// A widget id unique to this value: its component and its full path,
+    /// list indices included, so a field repeated in every element of a
+    /// list gets its own collapse, selection and drag state per element.
+    fn id(&self) -> Id {
+        self.base.with(&self.path)
     }
 
     /// Records that the list at this path was added to, removed from or reordered.
@@ -548,7 +561,10 @@ impl PanelInspector {
                             registry,
                             ctx,
                             instance,
-                            &FieldTrail::root(structural),
+                            &FieldTrail::root(
+                                Id::new((ctx.game_object.node, type_uuid)),
+                                structural,
+                            ),
                         );
                     }
                 },
@@ -639,7 +655,7 @@ impl PanelInspector {
             });
             return;
         }
-        let id = Id::new((ctx.type_info.type_name, field.name, field.type_uuid));
+        let id = trail.id();
         match type_registry.type_info_by_id(instance.uuid()) {
             Some(TypeInfo::Struct(info)) => {
                 let mut nested_ctx = *ctx;
@@ -671,7 +687,7 @@ impl PanelInspector {
                     ctx,
                     &type_registry,
                     name.trim_end(),
-                    id.with(ctx.game_object.node),
+                    id,
                     instance,
                     Some(info),
                     trail,
@@ -967,18 +983,20 @@ impl PanelInspector {
 #[cfg(test)]
 mod tests {
     use super::{
-        collapse_structural_changes, element_view, ElementView, ListEdit, PanelInspector,
-        ReflectListContainer,
+        collapse_structural_changes, element_view, ElementView, FieldTrail, ListEdit,
+        PanelInspector, ReflectListContainer,
     };
     use crate::scene_history::{
         InspectorValueEdit, InspectorValueKey, SceneHistory, SceneHistoryRestore,
     };
     use crate::widgets::ListContainer;
+    use egui::Id;
     use engine::reflect::type_registry::TypeRegistry;
     use engine::reflect::{ListInfo, Reflect, TypeInfo};
     use engine::utils::TypeUuid;
     use serde::{Deserialize, Serialize};
     use serde_json::{json, Value};
+    use std::cell::RefCell;
     use uuid::Uuid;
 
     #[derive(Default, Debug, PartialEq, TypeUuid, Reflect, Serialize, Deserialize)]
@@ -1162,6 +1180,20 @@ mod tests {
 
         assert_eq!(container.edits, vec![ListEdit::Remove(0)]);
         assert!(values.is_empty());
+    }
+
+    #[test]
+    fn field_ids_differ_per_list_element() {
+        let structural = RefCell::new(Vec::new());
+        let component = FieldTrail::root(Id::new("component"), &structural);
+        let rows = component.child("rows");
+        let first = rows.child(0).child("slots");
+        let second = rows.child(1).child("slots");
+
+        assert_ne!(first.id(), second.id());
+        assert_eq!(first.id(), rows.child(0).child("slots").id());
+        let other = FieldTrail::root(Id::new("other"), &structural);
+        assert_ne!(first.id(), other.child("rows").child(0).child("slots").id());
     }
 
     #[test]
