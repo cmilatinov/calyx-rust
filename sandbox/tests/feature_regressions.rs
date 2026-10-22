@@ -121,7 +121,9 @@ fn firing_projectiles_hits_targets_without_moving_them() {
     let (copy, assets) = sandbox_assets();
     let mut scene = load_sandbox_scene(&copy, &assets);
     let aimed_target = object_named(&scene, "Target A");
-    place_on_firing_line(&mut scene, aimed_target, 8.0);
+    // Close enough that the arena's centre cover, whose near face is 7 m
+    // ahead of the spawn and now absorbs rounds, is not in the way.
+    place_on_firing_line(&mut scene, aimed_target, 4.0);
     let target_transforms = ["Target A", "Target B"].map(|name| {
         let target = object_named(&scene, name);
         (name, scene.world_transform(target))
