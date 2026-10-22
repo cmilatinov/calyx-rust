@@ -41,6 +41,8 @@ pub mod reflect;
 pub mod render;
 /// Runtime resource storage and access.
 pub mod resource;
+/// Game runtime setup shared by the standalone player and the editor.
+pub mod runtime;
 /// Scene graphs, game objects, prefabs, and scene management APIs.
 pub mod scene;
 /// Headless and integration-style test helpers.
