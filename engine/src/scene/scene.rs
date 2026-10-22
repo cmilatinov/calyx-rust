@@ -75,12 +75,10 @@ pub struct Scene {
     pub(crate) graph: SceneGraph,
     pub(crate) store: GameObjectStore,
     pub(crate) transforms: TransformCache,
-    /// Index of network objects by id. Entries are hints that lookups check
-    /// and repair; see [`Scene::find_network_object`].
-    network_objects: HashMap<NetworkObjectId, GameObject>,
-    /// Id each indexed object was indexed under, so a changed or removed id
-    /// can be unindexed without knowing its old value.
-    network_ids: HashMap<GameObject, NetworkObjectId>,
+    /// Index of network objects by id, one entry per id and per object.
+    /// Entries are hints that lookups check and repair; see
+    /// [`Scene::find_network_object`].
+    network_objects: BiHashMap<NetworkObjectId, GameObject>,
     root: GameObject,
     camera: Option<GameObject>,
     registries: ReadOnlyRegistryContext,
@@ -107,8 +105,7 @@ impl Scene {
             graph,
             store,
             transforms: TransformCache::default(),
-            network_objects: HashMap::new(),
-            network_ids: HashMap::new(),
+            network_objects: BiHashMap::new(),
             root,
             camera: Default::default(),
             registries: assets,
@@ -866,7 +863,7 @@ impl Scene {
             .collect();
         for game_object in roots {
             for go in self.graph.detach_subtree(game_object) {
-                self.unindex_network_object(go);
+                self.network_objects.remove_by_right(&go);
                 let uuid = self.uuid(go);
                 self.world.remove(go.entity);
                 self.store.remove(uuid, go.entity);
@@ -1049,13 +1046,15 @@ impl Scene {
         &mut self,
         network_object_id: NetworkObjectId,
     ) -> Option<GameObject> {
-        if let Some(&game_object) = self.network_objects.get(&network_object_id) {
+        if let Some(&game_object) = self.network_objects.get_by_left(&network_object_id) {
             if self.network_id(game_object) == Some(network_object_id) {
                 return Some(game_object);
             }
         }
         self.rebuild_network_index();
-        self.network_objects.get(&network_object_id).copied()
+        self.network_objects
+            .get_by_left(&network_object_id)
+            .copied()
     }
 
     /// Returns the indexed game object for `network_object_id` without
@@ -1064,7 +1063,9 @@ impl Scene {
         &self,
         network_object_id: NetworkObjectId,
     ) -> Option<GameObject> {
-        self.network_objects.get(&network_object_id).copied()
+        self.network_objects
+            .get_by_left(&network_object_id)
+            .copied()
     }
 
     /// Returns the network object id of `game_object`, if it has one.
@@ -1081,36 +1082,25 @@ impl Scene {
     /// [`Scene::entry_mut`]; lookups still repair a missed update, at the
     /// cost of a scan.
     pub fn refresh_network_object(&mut self, game_object: GameObject) {
-        let network_id = self.network_id(game_object);
-        if self.network_ids.get(&game_object).copied() == network_id {
-            return;
-        }
-        self.unindex_network_object(game_object);
-        if let Some(network_id) = network_id {
-            if let Some(previous) = self.network_objects.insert(network_id, game_object) {
-                self.network_ids.remove(&previous);
+        // Inserting evicts any pair sharing the id or the object, so an old
+        // id of this object and an older claimant of this id both go.
+        match self.network_id(game_object) {
+            Some(network_id) => {
+                self.network_objects.insert(network_id, game_object);
             }
-            self.network_ids.insert(game_object, network_id);
-        }
-    }
-
-    /// Removes `game_object`'s index entry, if it has one.
-    fn unindex_network_object(&mut self, game_object: GameObject) {
-        if let Some(network_id) = self.network_ids.remove(&game_object) {
-            if self.network_objects.get(&network_id) == Some(&game_object) {
-                self.network_objects.remove(&network_id);
+            None => {
+                self.network_objects.remove_by_right(&game_object);
             }
         }
     }
 
     /// Rebuilds the network object index from every object in the scene.
     fn rebuild_network_index(&mut self) {
-        let network_ids: HashMap<GameObject, NetworkObjectId> = self
+        let network_objects = self
             .objects()
-            .filter_map(|go| self.network_id(go).map(|id| (go, id)))
+            .filter_map(|go| self.network_id(go).map(|id| (id, go)))
             .collect();
-        self.network_objects = network_ids.iter().map(|(&go, &id)| (id, go)).collect();
-        self.network_ids = network_ids;
+        self.network_objects = network_objects;
     }
 
     /// Returns whether the local peer owns `game_object` for networking

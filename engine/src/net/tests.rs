@@ -1218,4 +1218,27 @@ mod tests {
 
         assert_eq!(loaded.indexed_network_object(42), Some(go));
     }
+
+    #[test]
+    fn index_keeps_one_entry_per_id_and_object() {
+        let (mut scene, a) = scene_with_object(42, 1);
+
+        // Rewriting the id through the scene drops the old id's entry.
+        scene.write_component::<ComponentNetworkObject, _>(a, |c| c.id = 43);
+        assert_eq!(scene.indexed_network_object(42), None);
+        assert_eq!(scene.indexed_network_object(43), Some(a));
+
+        // Two objects briefly claim one id: the last writer is indexed.
+        let b = scene.create(None, None);
+        scene.add_component(
+            b,
+            ComponentNetworkObject {
+                id: 43,
+                owner_id: 1,
+            },
+        );
+        assert_eq!(scene.indexed_network_object(43), Some(b));
+        scene.write_component::<ComponentNetworkObject, _>(a, |c| c.id = 43);
+        assert_eq!(scene.indexed_network_object(43), Some(a));
+    }
 }
