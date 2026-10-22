@@ -541,14 +541,13 @@ impl AssetRegistry {
         let LoadedAssetRef { asset, sub_assets } =
             (ctor.load)(self.asset_context(), id, path, existing.as_ref())?;
         let sub_asset_count = sub_assets.len();
-        let sub_asset_ids = sub_assets.clone();
-        self.load_sub_asset_meta(id, sub_assets);
         {
-            // Check and cache under the metadata lock, so a deletion that
-            // forgot this source while it loaded cannot be undone here; the
-            // forgetting side drops metadata before it evicts the cache. The
-            // generation catches a delete and recreate at the same path.
-            let data = self.asset_data();
+            // Check, record sub-assets and cache under the metadata lock, so
+            // a deletion that forgot this source while it loaded cannot be
+            // undone here; the forgetting side drops metadata before it
+            // evicts the cache. The generation catches a delete and recreate
+            // at the same path.
+            let mut data = self.asset_data_mut();
             let registered = data
                 .meta
                 .get(&id)
@@ -556,12 +555,12 @@ impl AssetRegistry {
                 && data.generations.get(&id).copied() == generation;
             let mut cache = self.asset_cache_mut();
             if !registered {
-                cache.remove(&id);
-                for sub_asset_id in &sub_asset_ids {
-                    cache.remove(sub_asset_id);
-                }
+                Self::discard_stale_load_locked(&mut data, &mut cache, id, &sub_assets);
                 log::info!("Not caching asset {id}: its source was removed while it loaded");
-            } else if existing.is_none() {
+                return Ok(asset);
+            }
+            self.load_sub_asset_meta_locked(&mut data, id, sub_assets);
+            if existing.is_none() {
                 cache.insert(id, asset.clone());
             }
         }
@@ -849,8 +848,32 @@ impl AssetRegistry {
         );
     }
 
-    fn load_sub_asset_meta(&self, id: Uuid, sub_assets: Vec<Uuid>) {
-        let mut data = self.asset_data_mut();
+    /// Drops what a load whose source was forgotten while it ran left
+    /// behind: the asset and its sub-assets in the cache, and the metadata
+    /// and names of sub-assets the load created. Sub-assets the asset
+    /// registered now under this id lists as its own are kept.
+    fn discard_stale_load_locked(
+        data: &mut AssetData,
+        cache: &mut AssetCache,
+        id: Uuid,
+        sub_assets: &[Uuid],
+    ) {
+        cache.remove(&id);
+        let kept: HashSet<Uuid> = data
+            .meta
+            .get(&id)
+            .map(|meta| meta.children.iter().copied().collect())
+            .unwrap_or_default();
+        for sub_asset_id in sub_assets {
+            cache.remove(sub_asset_id);
+            if !kept.contains(sub_asset_id) {
+                data.meta.remove(sub_asset_id);
+                data.names.retain(|_, name_id| name_id != sub_asset_id);
+            }
+        }
+    }
+
+    fn load_sub_asset_meta_locked(&self, data: &mut AssetData, id: Uuid, sub_assets: Vec<Uuid>) {
         if let Some(parent_meta) = data.meta.get(&id) {
             if let Some(path) = &parent_meta.path {
                 let meta_path = path.with_extension("meta");
@@ -2257,7 +2280,9 @@ mod tests {
     }
 
     /// Asset whose load signals that it started, then waits to be released,
-    /// so a test can act while the load is in flight.
+    /// so a test can act while the load is in flight. Like an imported
+    /// prefab, it reads its metadata first and creates a `Child` sub-asset
+    /// once released.
     struct GatedTestAsset;
 
     impl TypeUuid for GatedTestAsset {
@@ -2272,13 +2297,28 @@ mod tests {
         }
 
         fn from_file(
-            _assets: &ReadOnlyAssetContext,
+            assets: &ReadOnlyAssetContext,
             path: &Path,
         ) -> Result<LoadedAsset<Self>, AssetError> {
+            let registry = assets.registries.assets.read();
+            let meta = registry
+                .asset_meta_from_path(path)
+                .ok_or_else(|| AssetError::NotFound.with_path(path))?;
             let gate = gated_test_asset_gate(path);
             gate.0.wait();
             gate.1.wait();
-            Ok(LoadedAsset::new(Self))
+            let child = registry.create_or_update_sub_asset(
+                meta.id,
+                &meta.name,
+                "Child",
+                TextTestAsset {
+                    text: "child".into(),
+                },
+            )?;
+            Ok(LoadedAsset {
+                asset: Self,
+                sub_assets: vec![child.id()],
+            })
         }
     }
 
@@ -2319,6 +2359,50 @@ mod tests {
             .read()
             .loaded_by_id::<GatedTestAsset>(id)
             .is_none());
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn discarded_load_rolls_back_the_sub_assets_it_created() {
+        let root = temp_asset_root("calyx-discarded-load-sub-assets");
+        let asset_path = root.join("gated.cxtestgated");
+        std::fs::write(&asset_path, "").expect("failed to write test asset");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let id = {
+            let registry = registries.assets.read();
+            registry.register_asset_type::<GatedTestAsset>();
+            registry.build_meta().expect("failed to rebuild metadata");
+            registry
+                .asset_id("gated")
+                .expect("test asset should have metadata")
+        };
+        let gate = gated_test_asset_gate(&asset_path);
+        let assets = registries.assets.clone();
+        let loader = std::thread::spawn(move || {
+            assets
+                .read()
+                .load_by_id::<GatedTestAsset>(id)
+                .map(|_| ())
+                .map_err(|err| err.to_string())
+        });
+
+        gate.0.wait();
+        std::fs::remove_file(&asset_path).expect("failed to delete test asset");
+        registries.assets.read().recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(asset_path),
+        );
+        gate.1.wait();
+        let _ = loader.join().expect("loader thread panicked");
+
+        let registry = registries.assets.read();
+        assert_eq!(registry.asset_id("gated/Child"), None);
+        assert!(registry
+            .asset_data()
+            .meta
+            .values()
+            .all(|meta| meta.parent != Some(id)));
+        assert!(!root.join("gated.meta").exists());
+        drop(registry);
         std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
 
