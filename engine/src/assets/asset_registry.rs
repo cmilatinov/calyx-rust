@@ -1040,7 +1040,7 @@ impl AssetRegistry {
     /// entries of every asset whose source file is `path` or lies below it,
     /// and of their sub-assets. Assets are matched by their stored source
     /// path, not by name, so a same-name asset in another root survives and
-    /// takes back any name the forgotten asset held.
+    /// is registered again under any name the forgotten asset held.
     fn forget_assets_under(&self, path: &Path) {
         let mut data = self.asset_data_mut();
         let mut ids: HashSet<Uuid> = HashSet::new();
@@ -1068,34 +1068,44 @@ impl AssetRegistry {
         data.dependencies
             .retain(|_, dependents| !dependents.is_empty());
 
-        let mut restored = Vec::new();
-        for meta in data.meta.values() {
-            let Some(source) = meta.path.as_deref() else {
-                continue;
-            };
-            let Some(name) = self
-                .owning_asset_root(source)
-                .and_then(|root| Self::relative_asset_path(root, source).ok())
-            else {
-                continue;
-            };
-            if !freed.contains(&name) {
-                continue;
-            }
-            restored.push((name, meta.id));
-            for child in meta.children.iter().filter_map(|id| data.meta.get(id)) {
-                let child_name = Self::sub_asset_name(&meta.name, &child.name);
-                restored.push((RelativePathBuf::from(child_name).normalize(), child.id));
-            }
-        }
-        for (name, id) in restored {
-            data.names.entry(name).or_insert(id);
-        }
         drop(data);
         // Evict cached values too: a recreated file often gets the same
         // path-derived id and must load fresh. Holders keep their own refs.
         self.asset_cache_mut().retain(|id, _| !ids.contains(id));
+        self.register_sources_named(&freed);
         log::info!("Forgot deleted assets under {}", path.display());
+    }
+
+    /// Registers again, from disk, every asset file in any root whose name
+    /// is in `names`. A same-name file in another root can be hidden by the
+    /// forgotten asset, sometimes under the same generated id, so only a
+    /// rescan of the roots finds it.
+    fn register_sources_named(&self, names: &HashSet<RelativePathBuf>) {
+        let extensions: Vec<String> = self.asset_data().extensions.keys().cloned().collect();
+        for name in names {
+            for root in &self.asset_paths {
+                for ext in &extensions {
+                    let mut candidate = name.to_path(root).into_os_string();
+                    candidate.push(".");
+                    candidate.push(ext);
+                    let candidate = PathBuf::from(candidate);
+                    if !candidate.is_file()
+                        || self.owning_asset_root(&candidate) != Some(root.as_path())
+                    {
+                        continue;
+                    }
+                    if let Err(err) =
+                        self.build_asset_meta(root, &candidate, &candidate.with_extension("meta"))
+                    {
+                        log::warn!(
+                            "Failed to build asset metadata for {}: {}",
+                            candidate.display(),
+                            err
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// Resolves an asset UUID from a filesystem path.
@@ -1883,6 +1893,41 @@ mod tests {
 
         assert!(registry.asset_meta_from_id(second_id).is_none());
         assert_eq!(registry.asset_id("scene"), Some(first_id));
+        drop(registry);
+        std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
+        std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
+    }
+
+    #[test]
+    fn remove_event_restores_same_name_asset_sharing_a_generated_id() {
+        let first_root = temp_asset_root("calyx-shared-id-first-root");
+        let second_root = temp_asset_root("calyx-shared-id-second-root");
+        let first_path = first_root.join("scene.cxscene");
+        let second_path = second_root.join("scene.cxscene");
+        std::fs::write(&first_path, b"{}").expect("failed to write first scene");
+        std::fs::write(&second_path, b"{}").expect("failed to write second scene");
+        let registries = test_registries_with_assets(vec![first_root.clone(), second_root.clone()]);
+        let registry = registries.assets.read();
+        let id = registry.asset_id("scene").expect("scene is registered");
+        assert_eq!(
+            registry.asset_meta_from_id(id).and_then(|meta| meta.path),
+            Some(second_path.clone())
+        );
+
+        std::fs::remove_file(&second_path).expect("failed to delete second scene");
+        registry.recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(second_path),
+        );
+
+        let restored = registry
+            .asset_id("scene")
+            .expect("the first root's scene takes the name back");
+        assert_eq!(
+            registry
+                .asset_meta_from_id(restored)
+                .and_then(|meta| meta.path),
+            Some(first_path)
+        );
         drop(registry);
         std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
         std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
