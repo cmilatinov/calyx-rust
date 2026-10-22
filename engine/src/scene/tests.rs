@@ -2025,6 +2025,25 @@ mod tests {
     }
 
     #[test]
+    fn scene_manager_runs_start_hooks_for_configured_scene() {
+        let mut game = crate::test_support::test_game_context();
+        let mut configured = test_scene();
+        let counter = configured.create(None, None);
+        configured.add_component(counter, StartCounter::default());
+        let counter_id = configured.uuid(counter);
+
+        game.scenes
+            .start_simulation_from_scene(Ref::new(configured).readonly());
+
+        let scene = game.scenes.simulation_scene();
+        let counter = scene.find(counter_id).expect("start counter object");
+        assert_eq!(
+            scene.read_component::<StartCounter, _, _>(counter, |counter| counter.count),
+            Some(1)
+        );
+    }
+
+    #[test]
     fn scene_manager_resumes_configured_simulation_without_reloading() {
         let mut game = crate::test_support::test_game_context();
         let mut configured = test_scene();
