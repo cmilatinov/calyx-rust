@@ -63,8 +63,10 @@ pub struct SceneRendererOptions {
     pub clear_color: Color32,
     /// Mesh face-culling mode used for scene geometry.
     pub mesh_cull_mode: Option<wgpu::Face>,
-    // TODO: figure out why GTX 970 isn't supporting MSAA
     /// MSAA sample count used for offscreen scene rendering.
+    ///
+    /// Values above one must be supported by the adapter for `Rgba16Float`
+    /// color and `Depth32Float` depth; WebGPU guarantees four.
     pub samples: u32,
 }
 
@@ -949,6 +951,7 @@ impl SceneRenderer {
                 format: wgpu::TextureFormat::Rgba16Float,
                 usage: wgpu::TextureUsages::COPY_DST
                     | wgpu::TextureUsages::COPY_SRC
+                    | wgpu::TextureUsages::RENDER_ATTACHMENT
                     | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             },
@@ -1090,11 +1093,33 @@ impl SceneRenderer {
         );
     }
 
+    /// Resolves the scene color into the single-sample `scene_texture`.
+    ///
+    /// A multisampled texture cannot be the source of a texture copy, so above
+    /// one sample the resolve runs as a render pass whose resolve target is the
+    /// scene texture. At one sample the two textures match and a copy suffices.
     fn resolve_scene_texture(
         scene_texture_msaa: &Texture,
         scene_texture: &Texture,
         encoder: &mut wgpu::CommandEncoder,
     ) {
+        if scene_texture_msaa.descriptor.sample_count > 1 {
+            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Scene Resolve"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &scene_texture_msaa.view,
+                    resolve_target: Some(&scene_texture.view),
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            return;
+        }
         encoder.copy_texture_to_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &scene_texture_msaa.texture,
@@ -1388,6 +1413,135 @@ mod tests {
                 "instance {index} was not drawn at its transform"
             );
         }
+    }
+
+    /// Whether the test device can render to and resolve `format` at `samples`.
+    fn supports_samples(
+        render_state: &RenderState,
+        format: wgpu::TextureFormat,
+        samples: u32,
+        resolve: bool,
+    ) -> bool {
+        let features = render_state.device.features();
+        let format_features =
+            if features.contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES) {
+                render_state.adapter.get_texture_format_features(format)
+            } else {
+                format.guaranteed_format_features(features)
+            };
+        format_features.flags.sample_count_supported(samples)
+            && (!resolve
+                || format_features
+                    .flags
+                    .contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE))
+    }
+
+    #[test]
+    fn renders_and_resolves_a_frame_at_four_samples() {
+        const SAMPLES: u32 = 4;
+        const SIZE: u32 = 64;
+        let render_state = crate::test_support::test_render_state();
+        if !supports_samples(
+            &render_state,
+            wgpu::TextureFormat::Rgba16Float,
+            SAMPLES,
+            true,
+        ) || !supports_samples(
+            &render_state,
+            wgpu::TextureFormat::Depth32Float,
+            SAMPLES,
+            false,
+        ) {
+            eprintln!(
+                "skipping: test adapter {:?} cannot render Rgba16Float and Depth32Float at \
+                 {SAMPLES}x MSAA",
+                render_state.adapter.get_info().name
+            );
+            return;
+        }
+
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let (cube, material) = {
+            let registry = read_only_context.registries.assets.read();
+            let cube = registry.cube().expect("missing cube mesh");
+            let shader = registry
+                .load::<Shader>("shaders/pbr")
+                .expect("missing pbr shader");
+            let material = registry
+                .create_or_update(
+                    "test/msaa_material".into(),
+                    Material::from_shader(&read_only_context, shader),
+                )
+                .expect("material should be created");
+            (cube, material)
+        };
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        let game_object = builder.spawn("cube");
+        builder.add_component(
+            game_object,
+            ComponentMesh {
+                mesh: AssetRef::from_id(cube.id()),
+                material: AssetRef::from_id(material.id()),
+            },
+        );
+        // Rotated so its silhouette has diagonal edges that only partially
+        // cover the pixels they cross.
+        builder.set_transform(
+            game_object,
+            glm::rotation(30f32.to_radians(), &vec3(0.0, 0.0, 1.0)),
+        );
+        let uuid = builder.scene().uuid(game_object);
+        let scene = builder.finish();
+
+        let camera = Camera::new(1.0, 60f32.to_radians(), 0.1, 100.0);
+        let camera_transform = Transform::from_components(
+            vec3(0.0, 0.0, -5.0),
+            UnitQuaternion::face_towards(&vec3(0.0, 0.0, 1.0), &vec3(0.0, 1.0, 0.0)),
+            vec3(1.0, 1.0, 1.0),
+        );
+        let mut renderer = SceneRenderer::new(
+            &read_only_context,
+            SceneRendererOptions {
+                samples: SAMPLES,
+                clear_color: Color32::WHITE,
+                ..Default::default()
+            },
+            (SIZE, SIZE),
+        );
+        renderer.render_scene_base(&render_state, &camera, &camera_transform, &scene, None);
+        renderer.finalize_scene(&render_state);
+
+        let render_context = &read_only_context.render_context;
+        let mut readback = renderer
+            .submit_scene_texture_readback()
+            .expect("scene texture has a size");
+        let image = loop {
+            let _ = render_context.device().poll(wgpu::Maintain::Wait);
+            match readback.try_finish(render_context) {
+                ReadbackPoll::Pending => continue,
+                ReadbackPoll::Ready(image) => break image,
+                ReadbackPoll::Failed(error) => panic!("scene readback failed: {error}"),
+            }
+        };
+        // The unlit cube is black on the white clear color, so only a resolve,
+        // which averages an edge pixel's covered and uncovered samples, gives
+        // a grey; a copy keeps a single sample's black or white.
+        let background = image.get_pixel(0, 0)[0];
+        let cube = image.get_pixel(SIZE / 2, SIZE / 2)[0];
+        assert_eq!(background, 255, "the corner should keep the clear color");
+        assert!(cube < 128, "the cube should cover the center, got {cube}");
+        let edge_pixels = image
+            .pixels()
+            .filter(|pixel| pixel[0] > cube + 8 && pixel[0] < background - 8)
+            .count();
+        assert!(
+            edge_pixels > 0,
+            "no pixel along the cube's edges blends it with the background, so the \
+             {SAMPLES} samples were not resolved"
+        );
+        assert_eq!(renderer.pick_game_object(SIZE / 2, SIZE / 2), Some(uuid));
     }
 }
 
