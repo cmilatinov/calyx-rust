@@ -61,13 +61,11 @@ impl Panel for PanelInspector {
                             let component_registry_ref =
                                 state.game.assets.registries.components.clone();
                             let component_registry = component_registry_ref.read();
-                            if let Some(entry) =
-                                state.game.scenes.simulation_scene().entry(game_object)
-                            {
-                                for (type_id, component) in component_registry.components() {
-                                    if component.get_instance(&entry).is_some() {
-                                        entity_components.insert(*type_id);
-                                    }
+                            let component_types =
+                                state.game.scenes.simulation_scene().component_types(game_object);
+                            for (type_id, component) in component_registry.components() {
+                                if component_types.contains(&component.component_type_id()) {
+                                    entity_components.insert(*type_id);
                                 }
                             }
 

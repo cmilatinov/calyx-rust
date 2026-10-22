@@ -280,8 +280,8 @@ impl EditorApp {
                 // Rebinding an existing component silently resets its state, so
                 // require an explicit `set_component` instead.
                 let present = scene
-                    .entry(game_object)
-                    .is_some_and(|entry| prototype.get_instance(&entry).is_some());
+                    .read_component_dyn(game_object, prototype, |_| ())
+                    .is_some();
                 if present {
                     return Err((
                         ErrorKind::BadRequest,
@@ -433,14 +433,7 @@ impl EditorApp {
         let objects = scene
             .objects()
             .map(|game_object| {
-                let component_names = match scene.entry(game_object) {
-                    Some(entry) => components
-                        .components()
-                        .filter(|(_, component)| component.get_instance(&entry).is_some())
-                        .map(|(uuid, _)| component_type_name(&types, *uuid))
-                        .collect::<Vec<_>>(),
-                    None => Vec::new(),
-                };
+                let component_names = object_component_names(scene, &components, &types, game_object);
                 serde_json::json!({
                     "id": scene.uuid(game_object).to_string(),
                     "name": scene.name(game_object),
@@ -457,14 +450,7 @@ impl EditorApp {
         let game_object = resolve_object(scene, selector)?;
         let components = self.state.game.assets.registries.components.read();
         let types = self.state.game.assets.registries.types.read();
-        let component_names = match scene.entry(game_object) {
-            Some(entry) => components
-                .components()
-                .filter(|(_, component)| component.get_instance(&entry).is_some())
-                .map(|(uuid, _)| component_type_name(&types, *uuid))
-                .collect::<Vec<_>>(),
-            None => Vec::new(),
-        };
+        let component_names = object_component_names(scene, &components, &types, game_object);
         Ok(Some(serde_json::json!({
             "id": scene.uuid(game_object).to_string(),
             "name": scene.name(game_object),
@@ -486,20 +472,15 @@ impl EditorApp {
                 format!("unknown component {type_uuid}"),
             )
         })?;
-        let entry = scene.entry(game_object).ok_or_else(|| {
-            (
-                ErrorKind::NotFound,
-                "game object entry disappeared".to_string(),
-            )
-        })?;
-        let instance = prototype.get_instance(&entry).ok_or_else(|| {
-            (
-                ErrorKind::NotFound,
-                format!("object has no {component} component"),
-            )
-        })?;
-        instance
-            .serialize()
+        let serialized = scene
+            .read_component_dyn(game_object, prototype, |instance| instance.serialize())
+            .ok_or_else(|| {
+                (
+                    ErrorKind::NotFound,
+                    format!("object has no {component} component"),
+                )
+            })?;
+        serialized
             .map(Some)
             .ok_or_else(|| (ErrorKind::Internal, "component is not serializable".into()))
     }
@@ -848,6 +829,21 @@ fn resolve_component_type(
         ));
     }
     Ok(first)
+}
+
+/// Returns the type names of the registered components on `game_object`.
+fn object_component_names(
+    scene: &Scene,
+    components: &engine::class_registry::ComponentRegistry,
+    types: &engine::reflect::type_registry::TypeRegistry,
+    game_object: GameObject,
+) -> Vec<String> {
+    let component_types = scene.component_types(game_object);
+    components
+        .components()
+        .filter(|(_, component)| component_types.contains(&component.component_type_id()))
+        .map(|(uuid, _)| component_type_name(types, *uuid))
+        .collect()
 }
 
 fn component_type_name(types: &engine::reflect::type_registry::TypeRegistry, uuid: Uuid) -> String {

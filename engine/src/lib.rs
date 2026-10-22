@@ -27,8 +27,6 @@ pub mod ext;
 pub mod input;
 /// Logging setup and logger implementations.
 pub mod logging;
-/// Public macros re-exported by the engine crate.
-pub mod macros;
 /// Transform math and other math helpers.
 pub mod math;
 /// Multiplayer networking types and synchronization systems.
