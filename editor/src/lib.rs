@@ -427,6 +427,7 @@ impl EditorAppState {
         if key.component == ComponentTransform::type_uuid() {
             scene.clear_transform_cache();
         }
+        scene.refresh_network_object(game_object);
         true
     }
 

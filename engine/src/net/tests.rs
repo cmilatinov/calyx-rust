@@ -1,12 +1,13 @@
 #[cfg(test)]
 mod tests {
     use crate::context::GameContext;
+    use crate::core::Ref;
     use crate::net::{
-        Client, ComponentNetworkObject, GameChannel, GameMessage, MessageHandler,
+        handle_destroy, Client, ComponentNetworkObject, GameChannel, GameMessage, MessageHandler,
         MessageHandlerResult, MessageQueue, MessageRoute, MessageSender, Network, NetworkSceneSync,
         Server,
     };
-    use crate::scene::{GameObject, Scene};
+    use crate::scene::{GameObject, Prefab, Scene};
     use crate::test_harness::TestHarness;
     use crate::test_utils::{test_game_context, test_scene};
     use std::collections::HashSet;
@@ -439,6 +440,106 @@ mod tests {
         );
     }
 
+    #[test]
+    fn destroy_from_owner_removes_object() {
+        let (mut scene, go) = scene_with_object(42, 1);
+        let mut server: Option<Server> = None;
+        let msg = GameMessage::DestroyGameObject {
+            network_object_id: 42,
+            from_client_id: 1,
+        };
+        handle_destroy(&mut server, &mut scene, MessageSender::Server, 42, 1, &msg);
+        scene.flush_deletes();
+
+        assert!(scene.entry(go).is_none(), "owner's destroy was not applied");
+    }
+
+    #[test]
+    fn destroy_from_non_owner_is_rejected() {
+        let (owner, attacker) = (1u64, 2u64);
+        let (mut scene, go) = scene_with_object(42, owner);
+        let mut server: Option<Server> = None;
+        let msg = GameMessage::DestroyGameObject {
+            network_object_id: 42,
+            from_client_id: attacker,
+        };
+        handle_destroy(
+            &mut server,
+            &mut scene,
+            MessageSender::Server,
+            42,
+            attacker,
+            &msg,
+        );
+        scene.flush_deletes();
+
+        assert!(scene.entry(go).is_some(), "non-owner destroyed the object");
+    }
+
+    #[test]
+    fn destroy_is_applied_before_a_later_ownership_transfer() {
+        let (owner, other) = (1u64, 2u64);
+        let mut game = test_game_context();
+        let go = {
+            let scene = game.scenes.current_scene_mut();
+            let go = scene.create(None, None);
+            scene.add_component(
+                go,
+                ComponentNetworkObject {
+                    id: 42,
+                    owner_id: owner,
+                },
+            );
+            go
+        };
+
+        // The owner destroys the object, then transfers it, and both land in
+        // the same tick.
+        let queue = &mut game.resources.network_mut().queue;
+        queue.queue_message(
+            MessageSender::Server,
+            GameMessage::DestroyGameObject {
+                network_object_id: 42,
+                from_client_id: owner,
+            },
+        );
+        queue.queue_message(
+            MessageSender::Server,
+            GameMessage::TransferOwnership {
+                network_object_id: 42,
+                from_client_id: owner,
+                to_client_id: other,
+            },
+        );
+
+        let GameContext {
+            assets,
+            scenes,
+            resources,
+        } = &mut game;
+        resources
+            .network_mut()
+            .update_scene(scenes.current_scene_mut(), &assets.lock_read());
+        let scene = game.scenes.current_scene_mut();
+        scene.flush_deletes();
+
+        assert!(
+            scene.entry(go).is_none(),
+            "the transfer was applied before the earlier destroy"
+        );
+    }
+
+    #[test]
+    fn destroy_game_object_refuses_non_owner() {
+        let (mut scene, go) = scene_with_object(42, 1);
+        let mut network = Network::new(60.0);
+        network.local_id = Some(2);
+
+        assert!(!network.destroy_game_object(&mut scene, go));
+        scene.flush_deletes();
+        assert!(scene.entry(go).is_some());
+    }
+
     // --- Integration tests ---
 
     #[test]
@@ -855,5 +956,289 @@ mod tests {
             find_owner(harness.client(0).scenes.current_scene()),
             Some(sender_id)
         );
+    }
+
+    /// Registers the same one-object network prefab on every peer under
+    /// `name`, so a spawn's prefab id resolves on each of them, and waits
+    /// until every client knows its own id.
+    fn setup_spawn_harness(name: &str) -> (TestHarness, Vec<Ref<Prefab>>) {
+        let mut harness = TestHarness::new(2);
+        assert!(harness.wait_connected(), "not all clients connected");
+
+        let prefab_refs = harness
+            .contexts
+            .iter_mut()
+            .map(|ctx| {
+                let scene = ctx.scenes.current_scene_mut();
+                let root = scene.create(None, None);
+                scene.add_component(root, ComponentNetworkObject::default());
+                let prefab: Prefab = scene.create_prefab(root);
+                scene.delete(root);
+                scene.flush_deletes();
+                ctx.assets
+                    .registries
+                    .assets
+                    .read()
+                    .create(name.to_string(), prefab)
+                    .expect("failed to register prefab")
+            })
+            .collect();
+
+        for _ in 0..200 {
+            harness.pump();
+            if (0..harness.client_count())
+                .all(|i| harness.client(i).resources.network().local_id.is_some())
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        (harness, prefab_refs)
+    }
+
+    /// Spawns `prefab_ref` from client `index` and returns the root with its
+    /// network object id.
+    fn spawn_from_client(
+        harness: &mut TestHarness,
+        index: usize,
+        prefab_ref: Ref<Prefab>,
+    ) -> (GameObject, u64) {
+        let ctx = harness.client_mut(index);
+        let scene = ctx.scenes.current_scene_mut();
+        let spawned = ctx
+            .resources
+            .network_mut()
+            .instantiate_prefab(scene, prefab_ref)
+            .expect("failed to spawn prefab");
+        let network_object_id = ctx
+            .scenes
+            .current_scene()
+            .read_component::<ComponentNetworkObject, _, _>(spawned, |c| c.id)
+            .expect("spawned prefab has no network object");
+        (spawned, network_object_id)
+    }
+
+    /// Returns whether `scene` holds network object `network_object_id`.
+    fn has_network_object(scene: &Scene, network_object_id: u64) -> bool {
+        scene.objects().any(|go| {
+            scene
+                .read_component::<ComponentNetworkObject, _, _>(go, |c| c.id == network_object_id)
+                .unwrap_or(false)
+        })
+    }
+
+    /// Pumps the harness, flushing deletions on every peer as the game loop
+    /// does, until `done` holds or the attempts run out.
+    fn pump_until(harness: &mut TestHarness, mut done: impl FnMut(&TestHarness) -> bool) -> bool {
+        for _ in 0..400 {
+            harness.pump();
+            for ctx in &mut harness.contexts {
+                ctx.scenes.current_scene_mut().flush_deletes();
+            }
+            if done(harness) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        false
+    }
+
+    #[test]
+    fn destroyed_object_is_removed_on_all_peers() {
+        let (mut harness, prefab_refs) = setup_spawn_harness("net_destroy_test_prefab");
+        let (spawned, network_object_id) =
+            spawn_from_client(&mut harness, 0, prefab_refs[1].clone());
+
+        assert!(
+            pump_until(&mut harness, |h| has_network_object(
+                h.client(1).scenes.current_scene(),
+                network_object_id
+            )),
+            "spawn never reached the other client"
+        );
+
+        // The owner destroys its object locally and tells the other peers,
+        // as `Network::destroy_game_object` does.
+        let owner = harness.client_mut(0);
+        owner.scenes.current_scene_mut().delete(spawned);
+        let network = owner.resources.network_mut();
+        let from_client_id = network.local_id.expect("owner has no local id");
+        network
+            .client
+            .send_message(&GameMessage::DestroyGameObject {
+                network_object_id,
+                from_client_id,
+            })
+            .expect("failed to send DestroyGameObject");
+
+        assert!(
+            pump_until(&mut harness, |h| h.contexts.iter().all(|ctx| {
+                !has_network_object(ctx.scenes.current_scene(), network_object_id)
+            })),
+            "destroyed object lingers on a peer"
+        );
+    }
+
+    #[test]
+    fn destroy_right_after_spawn_leaves_no_ghost() {
+        let (mut harness, prefab_refs) = setup_spawn_harness("net_spawn_destroy_test_prefab");
+
+        // Spawn and destroy before any peer pumps, so the server receives
+        // both in the same tick.
+        let (spawned, destroyed_id) = spawn_from_client(&mut harness, 0, prefab_refs[1].clone());
+        let owner = harness.client_mut(0);
+        let scene = owner.scenes.current_scene_mut();
+        assert!(owner
+            .resources
+            .network_mut()
+            .destroy_game_object(scene, spawned));
+
+        // A later spawn travels behind the destroy on the ordered channel, so
+        // once it lands the destroy has been handled everywhere.
+        let (_, marker_id) = spawn_from_client(&mut harness, 0, prefab_refs[1].clone());
+        assert!(
+            pump_until(&mut harness, |h| has_network_object(
+                h.client(1).scenes.current_scene(),
+                marker_id
+            )),
+            "marker spawn never reached the other client"
+        );
+
+        for (i, ctx) in harness.contexts.iter().enumerate() {
+            assert!(
+                !has_network_object(ctx.scenes.current_scene(), destroyed_id),
+                "peer {i} kept a ghost of the destroyed object"
+            );
+        }
+    }
+
+    #[test]
+    fn spawned_objects_are_indexed_on_every_peer() {
+        let (mut harness, prefab_refs) = setup_spawn_harness("net_index_test_prefab");
+        let (spawned, network_object_id) =
+            spawn_from_client(&mut harness, 0, prefab_refs[1].clone());
+
+        assert_eq!(
+            harness
+                .client(0)
+                .scenes
+                .current_scene()
+                .indexed_network_object(network_object_id),
+            Some(spawned),
+            "local instantiate did not index the object"
+        );
+
+        assert!(
+            pump_until(&mut harness, |h| h
+                .client(1)
+                .scenes
+                .current_scene()
+                .indexed_network_object(network_object_id)
+                .is_some()),
+            "remote spawn did not index the object"
+        );
+    }
+
+    #[test]
+    fn destroyed_object_leaves_the_index() {
+        let (mut scene, go) = scene_with_object(42, 1);
+        assert_eq!(scene.find_network_object(42), Some(go));
+
+        let mut server: Option<Server> = None;
+        let msg = GameMessage::DestroyGameObject {
+            network_object_id: 42,
+            from_client_id: 1,
+        };
+        handle_destroy(&mut server, &mut scene, MessageSender::Server, 42, 1, &msg);
+        scene.flush_deletes();
+
+        assert_eq!(scene.indexed_network_object(42), None);
+        assert_eq!(scene.find_network_object(42), None);
+    }
+
+    #[test]
+    fn stale_index_entry_resolves_through_fallback() {
+        let (mut scene, go) = scene_with_object(42, 1);
+        assert_eq!(scene.indexed_network_object(42), Some(go));
+
+        // A raw write bypasses the scene, leaving the index entry stale.
+        scene
+            .entry_mut(go)
+            .unwrap()
+            .get_component_mut::<ComponentNetworkObject>()
+            .unwrap()
+            .id = 43;
+        assert_eq!(scene.indexed_network_object(42), Some(go));
+
+        assert_eq!(scene.find_network_object(42), None);
+        assert_eq!(scene.find_network_object(43), Some(go));
+        assert_eq!(scene.indexed_network_object(42), None);
+        assert_eq!(scene.indexed_network_object(43), Some(go));
+    }
+
+    #[test]
+    fn network_object_added_by_type_uuid_is_indexed() {
+        use crate::utils::TypeUuid;
+
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        scene.bind_component_dyn(go, ComponentNetworkObject::type_uuid());
+        assert_eq!(
+            scene.indexed_network_object(ComponentNetworkObject::default().id),
+            Some(go),
+            "bind_component_dyn did not index the default instance"
+        );
+        scene
+            .write_component::<ComponentNetworkObject, _>(go, |c| c.id = 42)
+            .expect("bind_component_dyn did not add the component");
+
+        assert_eq!(scene.indexed_network_object(42), Some(go));
+        assert_eq!(
+            scene.indexed_network_object(0),
+            None,
+            "old id still indexed"
+        );
+
+        assert!(scene.remove_component_dyn(go, ComponentNetworkObject::type_uuid()));
+        assert_eq!(scene.indexed_network_object(42), None);
+    }
+
+    #[test]
+    fn loaded_scene_indexes_network_objects() {
+        let (scene, _) = scene_with_object(42, 1);
+        let loaded = scene.clone();
+        let go = loaded
+            .objects()
+            .find(|go| {
+                loaded
+                    .read_component::<ComponentNetworkObject, _, _>(*go, |_| ())
+                    .is_some()
+            })
+            .expect("network object was not loaded");
+
+        assert_eq!(loaded.indexed_network_object(42), Some(go));
+    }
+
+    #[test]
+    fn index_keeps_one_entry_per_id_and_object() {
+        let (mut scene, a) = scene_with_object(42, 1);
+
+        // Rewriting the id through the scene drops the old id's entry.
+        scene.write_component::<ComponentNetworkObject, _>(a, |c| c.id = 43);
+        assert_eq!(scene.indexed_network_object(42), None);
+        assert_eq!(scene.indexed_network_object(43), Some(a));
+
+        // Two objects briefly claim one id: the last writer is indexed.
+        let b = scene.create(None, None);
+        scene.add_component(
+            b,
+            ComponentNetworkObject {
+                id: 43,
+                owner_id: 1,
+            },
+        );
+        assert_eq!(scene.indexed_network_object(43), Some(b));
+        scene.write_component::<ComponentNetworkObject, _>(a, |c| c.id = 43);
+        assert_eq!(scene.indexed_network_object(43), Some(a));
     }
 }

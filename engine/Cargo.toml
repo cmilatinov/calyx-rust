@@ -14,7 +14,6 @@ engine_derive = { path = "./engine_derive" }
 bimap.workspace = true
 bytemuck.workspace = true
 chrono.workspace = true
-common-path.workspace = true
 dunce.workspace = true
 eframe.workspace = true
 egui.workspace = true
