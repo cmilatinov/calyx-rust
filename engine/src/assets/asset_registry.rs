@@ -1314,9 +1314,15 @@ impl AssetRegistry {
         let mut data = self.asset_data_mut();
         data.meta.insert(id, meta);
         data.names.insert(name_path, id);
-        data.next_generation += 1;
-        let generation = data.next_generation;
-        data.generations.insert(id, generation);
+        // Only a new registration gets a new generation: forgetting an asset
+        // drops its generation, so a delete and recreate counts as new, while
+        // a create event for a still-registered file must not make in-flight
+        // loads of it stale.
+        if !data.generations.contains_key(&id) {
+            data.next_generation += 1;
+            let generation = data.next_generation;
+            data.generations.insert(id, generation);
+        }
         drop(data);
         self.update_asset_dependencies(id, path);
         log::trace!("Built asset metadata for {}", path.display());
@@ -2402,6 +2408,27 @@ mod tests {
             .values()
             .all(|meta| meta.parent != Some(id)));
         assert!(!root.join("gated.meta").exists());
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn create_event_for_registered_file_keeps_its_generation() {
+        let root = temp_asset_root("calyx-create-keeps-generation");
+        let (asset_path, _, asset_id) = write_scene_with_meta(&root);
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        let before = registry.asset_data().generations.get(&asset_id).copied();
+        assert!(before.is_some());
+
+        registry.recv_notify_event(
+            Event::new(EventKind::Create(notify::event::CreateKind::File)).add_path(asset_path),
+        );
+
+        assert_eq!(
+            registry.asset_data().generations.get(&asset_id).copied(),
+            before
+        );
         drop(registry);
         std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
