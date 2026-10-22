@@ -1280,6 +1280,16 @@ impl AssetRegistry {
         meta_path: &Path,
     ) -> Result<(), BoxedError> {
         let name_path = Self::relative_asset_path(asset_path, path)?;
+        // The asset this name resolves to now, captured before the metadata
+        // read below replaces it, in case this file takes over its id.
+        let previous = {
+            let data = self.asset_data();
+            data.names
+                .get(&name_path)
+                .and_then(|id| data.meta.get(id))
+                .filter(|meta| meta.parent.is_none())
+                .cloned()
+        };
         let mut meta = if meta_path.exists() {
             self.load_meta_file(asset_path, meta_path)?.main
         } else {
@@ -1331,10 +1341,28 @@ impl AssetRegistry {
             data.generations.insert(id, (generation, source));
         }
         if moved {
-            // The cached value was read from the previous source.
+            // The previous source's sub-assets that this source does not
+            // also define belong to a file no longer registered here.
+            let stale_children: HashSet<Uuid> = previous
+                .filter(|previous| previous.id == id)
+                .map(|previous| {
+                    previous
+                        .children
+                        .into_iter()
+                        .filter(|child| !children.contains(child))
+                        .collect()
+                })
+                .unwrap_or_default();
+            data.meta
+                .retain(|meta_id, _| !stale_children.contains(meta_id));
+            data.names
+                .retain(|_, name_id| !stale_children.contains(name_id));
+            data.dirty
+                .retain(|dirty_id, _| !stale_children.contains(dirty_id));
+            // Cached values were read from the previous source.
             let mut cache = self.asset_cache_mut();
             cache.remove(&id);
-            for child in &children {
+            for child in children.iter().chain(&stale_children) {
                 cache.remove(child);
             }
         }
@@ -2641,6 +2669,53 @@ mod tests {
             .load_by_id::<TextTestAsset>(id)
             .expect("second asset should load");
         assert_eq!(loaded.read().text, "second");
+        drop(registry);
+        std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
+        std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
+    }
+
+    #[test]
+    fn id_moving_to_another_source_drops_the_old_sources_sub_assets() {
+        let first_root = temp_asset_root("calyx-id-moves-children-first-root");
+        let second_root = temp_asset_root("calyx-id-moves-children-second-root");
+        let parent_id = Uuid::new_v4();
+        let (body_id, arm_id) = (Uuid::new_v4(), Uuid::new_v4());
+        let write_parent = |root: &Path, child_id: Uuid, child_name: &str| {
+            std::fs::write(root.join("parent.fbx"), b"").expect("failed to write parent asset");
+            std::fs::write(
+                root.join("parent.meta"),
+                serde_json::to_vec_pretty(&json!({
+                    "main": {
+                        "id": parent_id,
+                        "name": "parent",
+                        "display_name": "parent",
+                        "type_uuid": Prefab::type_uuid(),
+                    },
+                    "inner": [{
+                        "id": child_id,
+                        "name": child_name,
+                        "display_name": child_name,
+                        "type_uuid": Mesh::type_uuid(),
+                    }]
+                }))
+                .expect("failed to encode test meta"),
+            )
+            .expect("failed to write parent meta");
+        };
+        write_parent(&first_root, body_id, "Body");
+        let registries = test_registries_with_assets(vec![first_root.clone(), second_root.clone()]);
+        let registry = registries.assets.read();
+        assert_eq!(registry.asset_id("parent/Body"), Some(body_id));
+
+        write_parent(&second_root, arm_id, "Arm");
+        registry.recv_notify_event(
+            Event::new(EventKind::Create(notify::event::CreateKind::File))
+                .add_path(second_root.join("parent.fbx")),
+        );
+
+        assert_eq!(registry.asset_id("parent/Arm"), Some(arm_id));
+        assert_eq!(registry.asset_id("parent/Body"), None);
+        assert!(registry.asset_meta_from_id(body_id).is_none());
         drop(registry);
         std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
         std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
