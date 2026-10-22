@@ -437,6 +437,9 @@ fn build_assembly(
                 log::error!("Project assembly was not produced at {}", source.display());
                 return AssemblyBuildOutcome::Failed(source);
             }
+            if let Ok(editor) = std::env::current_exe() {
+                mark_built_for(&source, &editor);
+            }
             AssemblyBuildOutcome::Built(source)
         }
         Ok(output) => {
@@ -813,6 +816,29 @@ fn predates(assembly: &Path, editor: &Path) -> bool {
     }
 }
 
+/// Records that a successful build checked `assembly` against `editor`'s
+/// engine, by moving its modification time to now when it [`predates`] the
+/// editor.
+///
+/// After an editor-only change Cargo finds the assembly fresh and leaves it
+/// untouched, older than the relinked editor, so without this every startup
+/// would reject the same compatible assembly and build it again.
+fn mark_built_for(assembly: &Path, editor: &Path) {
+    if !predates(assembly, editor) {
+        return;
+    }
+    let touched = std::fs::File::options()
+        .write(true)
+        .open(assembly)
+        .and_then(|file| file.set_modified(SystemTime::now()));
+    if let Err(err) = touched {
+        log::warn!(
+            "Could not mark project assembly {} as built for this editor: {err}",
+            assembly.display()
+        );
+    }
+}
+
 /// Removes the stale shadow copies next to the one `target` was loaded from.
 fn remove_stale_shadow_copies_of(target: &Path) {
     if let Some(current) = target.parent() {
@@ -946,8 +972,8 @@ fn assembly_target_dir(profile: &str) -> &str {
 mod tests {
     use super::{
         assembly_artifact_path, assembly_build_target_dir_from_exe, assembly_target_dir,
-        cargo_build_args, copy_runtime_dependencies, is_rust_runtime_library, predates,
-        remove_stale_shadow_copies, scene_paths_match, shadow_copy_folder_name,
+        cargo_build_args, copy_runtime_dependencies, is_rust_runtime_library, mark_built_for,
+        predates, remove_stale_shadow_copies, scene_paths_match, shadow_copy_folder_name,
         AssemblyBuildOutcome, AssemblyBuildQueue, AssemblyLoad, ProjectAssemblyStatus,
         ShadowCopyFolder, FOREIGN_SHADOW_COPY_GRACE_MS,
     };
@@ -979,6 +1005,12 @@ mod tests {
         touch(&assembly, now + Duration::from_secs(60));
         assert!(!predates(&assembly, &editor));
         assert!(!predates(&dir.join("missing.dll"), &editor));
+
+        // A build that found the older assembly fresh marks it as built for
+        // this editor, so the next startup loads it.
+        touch(&assembly, now - Duration::from_secs(60));
+        mark_built_for(&assembly, &editor);
+        assert!(!predates(&assembly, &editor));
         fs::remove_dir_all(&dir).ok();
     }
 
