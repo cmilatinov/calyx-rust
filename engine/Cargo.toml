@@ -18,6 +18,7 @@ dunce.workspace = true
 eframe.workspace = true
 egui.workspace = true
 egui-wgpu.workspace = true
+thiserror.workspace = true
 transform-gizmo-egui.workspace = true
 serde.workspace = true
 uuid.workspace = true
