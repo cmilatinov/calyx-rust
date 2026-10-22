@@ -48,3 +48,7 @@ dirs.workspace = true
 image.workspace = true
 sha-1.workspace = true
 log = "0.4.27"
+
+[dev-dependencies]
+# The Component derive, used by test components, expands to legion paths.
+legion.workspace = true

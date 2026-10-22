@@ -12,7 +12,7 @@ use transform_gizmo_egui::{GizmoMode, GizmoOrientation};
 
 use self::panel::*;
 pub use self::project_manager::*;
-use self::scene_document::{SceneDocument, ValueChange};
+use self::scene_document::SceneDocument;
 // The inspector's list-edit tests patch values the way undo does.
 #[cfg(test)]
 use self::scene_document::set_json_value;
@@ -90,7 +90,9 @@ pub struct EditorAppState {
     pub gizmo_modes: EnumSet<GizmoMode>,
     pub gizmo_orientation: GizmoOrientation,
     pub thumbnails: ThumbnailService,
-    scene_document: SceneDocument,
+    /// Where the inspector panel was drawn last frame, if it was.
+    pub(crate) inspector_rect: Option<egui::Rect>,
+    pub(crate) scene_document: SceneDocument,
     active_scene: ActiveSceneState,
     window_title: String,
 }
@@ -143,6 +145,7 @@ impl EditorAppState {
             gizmo_modes: GizmoMode::all_translate(),
             gizmo_orientation: GizmoOrientation::Global,
             thumbnails: ThumbnailService::default(),
+            inspector_rect: None,
             scene_document: SceneDocument::new(&project_path),
             active_scene: Default::default(),
             window_title: String::new(),
@@ -181,26 +184,21 @@ impl EditorAppState {
         self.scene_document.commit_edit(&self.game, label, before);
     }
 
-    pub fn record_inspector_value_edits(
-        &mut self,
-        game_object: uuid::Uuid,
-        component: uuid::Uuid,
-        component_name: &str,
-        changes: Vec<ValueChange>,
-        structural: &[Vec<String>],
-    ) {
-        self.scene_document.record_values(
-            &self.game,
-            game_object,
-            component,
-            component_name,
-            changes,
-            structural,
-        );
+    /// Makes `object` the object the inspector tracks, committing the edits
+    /// pending on the previous one first.
+    pub(crate) fn select_inspector_object(&mut self, object: Option<uuid::Uuid>) {
+        self.scene_document
+            .select_inspector_object(&self.game, object);
     }
 
+    /// Commits every inspector edit still pending, such as a drag in
+    /// progress, so it is recorded before another edit or an undo.
     fn flush_pending_inspector_value_edits(&mut self) {
         self.scene_document.flush_pending_values(&self.game);
+    }
+
+    fn refresh_inspector_baselines(&mut self) {
+        self.scene_document.refresh_baselines(&self.game);
     }
 
     pub fn can_undo_scene_edit(&self) -> bool {
@@ -250,6 +248,19 @@ impl EditorAppState {
 
     fn shutdown_scene_document(&mut self) {
         self.scene_document.shutdown(&self.game);
+    }
+}
+
+/// Whether a pointer press at `press` may start an edit outside the inspector
+/// drawn at `inspector_rect`, so pending inspector edits must be committed
+/// first.
+fn press_ends_inspector_edits(
+    press: Option<egui::Pos2>,
+    inspector_rect: Option<egui::Rect>,
+) -> bool {
+    match (press, inspector_rect) {
+        (Some(press), Some(rect)) => !rect.contains(press),
+        _ => true,
     }
 }
 
@@ -358,6 +369,23 @@ impl eframe::App for EditorApp {
         self.state.game_response = None;
         self.state.viewport_response = None;
         self.remote_update_begin(ctx);
+        // A press outside the inspector starts any edit another panel makes
+        // (hierarchy, gizmo, menus) and ends a pending text-field session, so
+        // the session's undo step is committed before that panel writes the
+        // scene. Presses inside the inspector, such as moving the caret, are
+        // left to the inspector's own drag and focus tracking.
+        let press = ctx.input(|input| {
+            input
+                .pointer
+                .any_pressed()
+                .then(|| input.pointer.interact_pos())
+        });
+        let inspector_rect = self.state.inspector_rect.take();
+        if let Some(press) = press {
+            if press_ends_inspector_edits(press, inspector_rect) {
+                self.state.flush_pending_inspector_value_edits();
+            }
+        }
         self.render_views(ctx, frame);
         self.process_thumbnail_jobs(frame);
 
@@ -781,7 +809,7 @@ impl EditorApp {
     /// project's runtime window sets the game aspect, and a fresh simulation
     /// runs the configured startup scene when the project has one.
     pub(crate) fn start_simulation(&mut self) -> Result<(), String> {
-        self.state.flush_pending_inspector_value_edits();
+        self.state.refresh_inspector_baselines();
         let window_size = self
             .project_manager
             .read()
@@ -853,7 +881,7 @@ impl EditorApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{ActiveSceneState, EditorApp};
+    use super::{press_ends_inspector_edits, ActiveSceneState, EditorApp};
     use std::path::PathBuf;
 
     #[test]
@@ -894,6 +922,25 @@ mod tests {
 
         state.set_scene(Some("scene".into()), None);
         assert_eq!(state.title("Sandbox", true), "Calyx - Sandbox - scene *");
+    }
+
+    #[test]
+    fn only_presses_outside_the_inspector_end_its_edits() {
+        let inspector =
+            egui::Rect::from_min_max(egui::pos2(1000.0, 0.0), egui::pos2(1300.0, 800.0));
+        assert!(!press_ends_inspector_edits(
+            Some(egui::pos2(1100.0, 200.0)),
+            Some(inspector)
+        ));
+        assert!(press_ends_inspector_edits(
+            Some(egui::pos2(100.0, 200.0)),
+            Some(inspector)
+        ));
+        assert!(press_ends_inspector_edits(
+            Some(egui::pos2(1100.0, 200.0)),
+            None
+        ));
+        assert!(press_ends_inspector_edits(None, Some(inspector)));
     }
 
     #[test]

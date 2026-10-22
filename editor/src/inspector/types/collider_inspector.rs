@@ -1,4 +1,6 @@
-use crate::inspector::type_inspector::{InspectorContext, ReflectTypeInspector, TypeInspector};
+use crate::inspector::type_inspector::{
+    InspectorContext, InspectorResponse, ReflectTypeInspector, TypeInspector,
+};
 use crate::inspector::widgets::{PropChildrenPhase, Widgets};
 use egui::{Id, Ui};
 use engine::component::{ColliderShape, ComponentCollider, Orientation};
@@ -14,7 +16,12 @@ use uuid::Uuid;
 pub struct ColliderInspector;
 
 impl ColliderInspector {
-    fn collider_shape(ui: &mut Ui, ctx: &InspectorContext, value: &mut ColliderShape) {
+    fn collider_shape(
+        ui: &mut Ui,
+        ctx: &InspectorContext,
+        value: &mut ColliderShape,
+    ) -> InspectorResponse {
+        let mut changed = InspectorResponse::NONE;
         Widgets::inspector_prop_value_children(ui, "Shape", |phase| match phase {
             PropChildrenPhase::Value { ui, .. } => {
                 let id = Id::new(ctx.game_object.node).with(ComponentCollider::type_uuid());
@@ -26,8 +33,12 @@ impl ColliderInspector {
                         ColliderShape::Cone { .. } => "Cone",
                     })
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(value, ColliderShape::Sphere { radius: 1.0 }, "Sphere");
-                        ui.selectable_value(
+                        changed |= ui.selectable_value(
+                            value,
+                            ColliderShape::Sphere { radius: 1.0 },
+                            "Sphere",
+                        );
+                        changed |= ui.selectable_value(
                             value,
                             ColliderShape::Capsule {
                                 orientation: Orientation::Y,
@@ -36,7 +47,7 @@ impl ColliderInspector {
                             },
                             "Capsule",
                         );
-                        ui.selectable_value(
+                        changed |= ui.selectable_value(
                             value,
                             ColliderShape::Cone {
                                 height: 1.0,
@@ -44,7 +55,7 @@ impl ColliderInspector {
                             },
                             "Cone",
                         );
-                        ui.selectable_value(
+                        changed |= ui.selectable_value(
                             value,
                             ColliderShape::Cuboid {
                                 half_extents: glm::vec3(1.0, 1.0, 1.0),
@@ -56,7 +67,7 @@ impl ColliderInspector {
             PropChildrenPhase::Children { ui } => match value {
                 ColliderShape::Sphere { radius } => {
                     Widgets::inspector_prop_value(ui, "Radius", |ui, _| {
-                        ui.add(egui::DragValue::new(radius).speed(0.1));
+                        changed |= ui.add(egui::DragValue::new(radius).speed(0.1));
                     });
                 }
                 ColliderShape::Capsule {
@@ -72,33 +83,34 @@ impl ColliderInspector {
                                 Orientation::Z => "Z",
                             })
                             .show_ui(ui, |ui| {
-                                ui.selectable_value(orientation, Orientation::X, "X");
-                                ui.selectable_value(orientation, Orientation::Y, "Y");
-                                ui.selectable_value(orientation, Orientation::Z, "Z");
+                                changed |= ui.selectable_value(orientation, Orientation::X, "X");
+                                changed |= ui.selectable_value(orientation, Orientation::Y, "Y");
+                                changed |= ui.selectable_value(orientation, Orientation::Z, "Z");
                             });
                     });
                     Widgets::inspector_prop_value(ui, "Height", |ui, _| {
-                        ui.add(egui::DragValue::new(height).speed(0.1));
+                        changed |= ui.add(egui::DragValue::new(height).speed(0.1));
                     });
                     Widgets::inspector_prop_value(ui, "Radius", |ui, _| {
-                        ui.add(egui::DragValue::new(radius).speed(0.1));
+                        changed |= ui.add(egui::DragValue::new(radius).speed(0.1));
                     });
                 }
                 ColliderShape::Cuboid { half_extents } => {
                     Widgets::inspector_prop_value(ui, "Half Extents", |ui, _| {
-                        Widgets::drag_float3(ui, 0.1, half_extents);
+                        changed |= Widgets::drag_float3(ui, 0.1, half_extents);
                     });
                 }
                 ColliderShape::Cone { height, radius } => {
                     Widgets::inspector_prop_value(ui, "Height", |ui, _| {
-                        ui.add(egui::DragValue::new(height).speed(0.1));
+                        changed |= ui.add(egui::DragValue::new(height).speed(0.1));
                     });
                     Widgets::inspector_prop_value(ui, "Radius", |ui, _| {
-                        ui.add(egui::DragValue::new(radius).speed(0.1));
+                        changed |= ui.add(egui::DragValue::new(radius).speed(0.1));
                     });
                 }
             },
         });
+        changed
     }
 }
 
@@ -107,19 +119,26 @@ impl TypeInspector for ColliderInspector {
         type_uuids!(ComponentCollider)
     }
 
-    fn show_inspector(&self, ui: &mut Ui, ctx: &InspectorContext, instance: &mut dyn Reflect) {
+    fn show_inspector(
+        &self,
+        ui: &mut Ui,
+        ctx: &InspectorContext,
+        instance: &mut dyn Reflect,
+    ) -> InspectorResponse {
         let Some(value) = instance.downcast_mut::<ComponentCollider>() else {
-            return;
+            return InspectorResponse::NONE;
         };
+        let mut changed = InspectorResponse::NONE;
         Widgets::inspector_prop_value(ui, "Enabled", |ui, _| {
-            ui.add(egui::Checkbox::without_text(&mut value.enabled));
+            changed |= ui.add(egui::Checkbox::without_text(&mut value.enabled));
         });
-        Self::collider_shape(ui, ctx, &mut value.shape);
+        changed |= Self::collider_shape(ui, ctx, &mut value.shape);
         Widgets::inspector_prop_value(ui, "Friction", |ui, _| {
-            ui.add(egui::DragValue::new(&mut value.friction));
+            changed |= ui.add(egui::DragValue::new(&mut value.friction));
         });
         Widgets::inspector_prop_value(ui, "Density", |ui, _| {
-            ui.add(egui::DragValue::new(&mut value.density));
+            changed |= ui.add(egui::DragValue::new(&mut value.density));
         });
+        changed
     }
 }

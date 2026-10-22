@@ -178,13 +178,13 @@ impl MaterialInspector {
                 changed |= ui.add(egui::DragValue::new(float).speed(0.1)).changed();
             }
             ShaderVariableValue::Vec2(ref mut vec) => {
-                changed |= Widgets::drag_floatn(ui, 0.1, vec);
+                changed |= Widgets::drag_floatn(ui, 0.1, vec).changed;
             }
             ShaderVariableValue::Vec3(ref mut vec) => {
-                changed |= Widgets::drag_floatn(ui, 0.1, vec);
+                changed |= Widgets::drag_floatn(ui, 0.1, vec).changed;
             }
             ShaderVariableValue::Vec4(ref mut vec) => {
-                changed |= Widgets::drag_floatn(ui, 0.1, vec);
+                changed |= Widgets::drag_floatn(ui, 0.1, vec).changed;
             }
             ShaderVariableValue::Texture2D(ref mut texture) => {
                 let id = (var.group, var.binding, var.offset, "texture_source");

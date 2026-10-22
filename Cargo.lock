@@ -1909,6 +1909,7 @@ dependencies = [
  "image",
  "inventory",
  "lazy_static 1.5.0",
+ "legion",
  "log",
  "mint",
  "nalgebra",

@@ -1,13 +1,12 @@
-//! The editor's scene document: the authoring scene's undo history, inspector
-//! value debounce, recovery autosave, dirty state and file identity, behind
-//! edit, undo, redo, open and save.
+//! The editor's scene document: the authoring scene's undo history, the
+//! inspector's undo baselines, recovery autosave, dirty state and file
+//! identity, behind edit, undo, redo, open and save.
 //!
 //! Edits are refused while a simulation copy of the scene exists. That rule
 //! lives in [`authoring`], which every edit, undo and redo goes through.
 
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
 use eframe::egui;
 use engine::component::Component;
@@ -16,20 +15,18 @@ use engine::scene::{GameObject, Scene};
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::inspector::edit_tracker::{self, CommittedEdit, InspectorEditTracker};
+use crate::panel::PanelInspector;
 use crate::scene_autosave::EditorSceneAutosave;
 use crate::scene_file::{scene_fingerprint, write_scene_file};
 use crate::scene_history::{
-    InspectorValueDebouncer, InspectorValueEdit, InspectorValueKey, SceneEditSnapshot,
-    SceneHistory, SceneHistoryRestore,
+    InspectorValueChange, InspectorValueEdit, SceneEditSnapshot, SceneHistory, SceneHistoryRestore,
 };
-
-/// One changed component value: its path in the component's JSON, then the
-/// value before and after the change.
-pub type ValueChange = (Vec<String>, Value, Value);
 
 pub struct SceneDocument {
     history: SceneHistory,
-    pending_values: InspectorValueDebouncer,
+    /// The inspector's undo baselines for the selected object's components.
+    inspector_edits: InspectorEditTracker,
     autosave: EditorSceneAutosave,
 }
 
@@ -49,7 +46,7 @@ impl SceneDocument {
     pub fn new(project_path: &Path) -> Self {
         Self {
             history: SceneHistory::default(),
-            pending_values: InspectorValueDebouncer::default(),
+            inspector_edits: InspectorEditTracker::default(),
             autosave: EditorSceneAutosave::new(project_path),
         }
     }
@@ -76,7 +73,9 @@ impl SceneDocument {
         let Some(game) = authoring(game) else {
             return;
         };
-        self.commit_pending_values(game);
+        // The edit wrote the scene outside the inspector, so its baselines
+        // are taken again.
+        self.refresh_baselines(game);
 
         let Some(before) = before else {
             self.autosave.mark_dirty();
@@ -90,68 +89,81 @@ impl SceneDocument {
         }
     }
 
-    /// Records value edits the inspector already applied to `component` on
-    /// `game_object`. Edits to the same value merge until they settle; a
-    /// change at a `structural` path, or one that resizes a list, is its own
-    /// undo step at once.
-    pub fn record_values(
+    /// The tracker the inspector shows components through.
+    pub fn inspector_edits_mut(&mut self) -> &mut InspectorEditTracker {
+        &mut self.inspector_edits
+    }
+
+    /// Whether the inspector records its edits this frame. While the scene
+    /// cannot be edited it records none and keeps no baselines.
+    pub fn track_inspector_edits(&mut self, game: &GameContext) -> bool {
+        let track = authoring(game).is_some();
+        if !track {
+            self.inspector_edits.clear();
+        }
+        track
+    }
+
+    /// Makes `object` the object the inspector tracks, committing the edits
+    /// pending on the previous one first.
+    pub fn select_inspector_object(&mut self, game: &GameContext, object: Option<Uuid>) {
+        if self.inspector_edits.object() != object {
+            self.flush_pending_values(game);
+            self.inspector_edits.reset(object);
+        }
+    }
+
+    /// Takes what one frame of the inspector did to a component: whether it
+    /// `changed` the scene, whether an edit `completed`, and the undo step it
+    /// `committed`, if any.
+    pub fn inspector_shown(
         &mut self,
         game: &GameContext,
-        game_object: Uuid,
-        component: Uuid,
-        component_name: &str,
-        changes: Vec<ValueChange>,
-        structural: &[Vec<String>],
+        changed: bool,
+        completed: bool,
+        committed: Option<CommittedEdit>,
     ) {
         let Some(game) = authoring(game) else {
             return;
         };
-        if changes.is_empty() {
-            return;
+        // The undo step may wait for the drag or text session to end, but
+        // the scene has changed now: autosave and scene switches must see it
+        // as dirty.
+        if changed {
+            self.autosave.mark_dirty();
         }
-
-        for (value_path, before, after) in changes {
-            let value_name = if value_path.is_empty() {
-                "value".to_owned()
-            } else {
-                value_path.join(".")
-            };
-            let edit = InspectorValueEdit {
-                label: format!("Edit {component_name} {value_name}"),
-                key: InspectorValueKey {
-                    game_object,
-                    component,
-                    value_path,
-                },
-                before,
-                after,
-            };
-            if structural.contains(&edit.key.value_path) || edit.resizes_list() {
-                // Adding, removing or moving an element is one undo step. Pending
-                // element edits commit first so their indices still match on undo.
-                self.commit_pending_values(game);
-                self.history.push_inspector_value(edit);
-            } else {
-                self.pending_values.record(edit, Instant::now());
-            }
+        match committed {
+            Some(committed) => self.record_inspector_edit(game, committed),
+            // An edit that left the component as it was: undo the dirty mark
+            // it set.
+            None if completed => self.sync_dirty(game),
+            None => {}
         }
-        self.sync_dirty(game);
     }
 
-    /// Commits every pending value edit to the history now.
+    /// Commits every inspector edit still pending, such as a drag in
+    /// progress, so it is recorded before another edit or an undo.
     pub fn flush_pending_values(&mut self, game: &GameContext) {
         match authoring(game) {
             Some(game) => self.commit_pending_values(game),
-            None => self.pending_values.clear(),
+            None => self.inspector_edits.clear(),
         }
     }
 
+    /// Commits pending inspector edits and drops the inspector's baselines,
+    /// so each is taken again from the scene, after a write the inspector
+    /// did not make.
+    pub fn refresh_baselines(&mut self, game: &GameContext) {
+        self.flush_pending_values(game);
+        self.inspector_edits.clear();
+    }
+
     pub fn can_undo(&self, game: &GameContext) -> bool {
-        authoring(game).is_some() && (self.history.can_undo() || self.pending_values.has_pending())
+        authoring(game).is_some() && (self.history.can_undo() || self.inspector_edits.has_pending())
     }
 
     pub fn can_redo(&self, game: &GameContext) -> bool {
-        authoring(game).is_some() && !self.pending_values.has_pending() && self.history.can_redo()
+        authoring(game).is_some() && !self.inspector_edits.has_pending() && self.history.can_redo()
     }
 
     pub fn undo(&mut self, game: &mut GameContext) {
@@ -165,6 +177,7 @@ impl SceneDocument {
     /// Opens the scene file at `file`, which must be a registered asset. Keeps
     /// the current scene when its recovery autosave or the load fails.
     pub fn open_file(&mut self, game: &mut GameContext, file: PathBuf) -> bool {
+        self.flush_pending_values(game);
         if !self.autosave.prepare_scene_change(game) {
             return false;
         }
@@ -195,6 +208,7 @@ impl SceneDocument {
     /// Opens the scene asset `asset_id`. Keeps the current scene when its
     /// recovery autosave or the load fails.
     pub fn open_asset(&mut self, game: &mut GameContext, asset_id: Uuid) -> bool {
+        self.flush_pending_values(game);
         if !self.autosave.prepare_scene_change(game) {
             return false;
         }
@@ -226,6 +240,7 @@ impl SceneDocument {
     /// Replaces the authoring scene with a copy of the default scene, with no
     /// file.
     pub fn open_default(&mut self, game: &mut GameContext) {
+        self.flush_pending_values(game);
         if !self.autosave.prepare_scene_change(game) {
             return;
         }
@@ -252,16 +267,9 @@ impl SceneDocument {
         true
     }
 
-    /// Runs once per frame: commits value edits that have settled and starts
-    /// or finishes a background recovery autosave when one is due.
+    /// Runs once per frame: starts or finishes a background recovery
+    /// autosave when one is due.
     pub fn update(&mut self, game: &GameContext) {
-        match authoring(game) {
-            Some(game) => {
-                let edits = self.pending_values.drain_due(Instant::now());
-                self.commit_values(game, edits);
-            }
-            None => self.pending_values.clear(),
-        }
         self.autosave.update(game);
     }
 
@@ -288,7 +296,7 @@ impl SceneDocument {
             HistoryStep::Redo => (self.history.redo(), "Redid"),
         };
         match restore {
-            None => {}
+            None => return,
             Some(SceneHistoryRestore::Scene {
                 label,
                 snapshot,
@@ -298,27 +306,66 @@ impl SceneDocument {
                 self.autosave.sync_dirty_to_fingerprint(fingerprint);
                 log::info!("{verb} scene edit: {label}");
             }
-            Some(SceneHistoryRestore::InspectorValue { label, key, value }) => {
-                if restore_inspector_value(game, &key, value) {
+            Some(SceneHistoryRestore::InspectorValue {
+                label,
+                game_object,
+                component,
+                values,
+            }) => {
+                if restore_inspector_values(game, game_object, component, &values) {
                     self.sync_dirty(game);
                     log::info!("{verb} scene edit: {label}");
                 }
             }
         }
+        self.inspector_edits.clear();
     }
 
-    fn commit_pending_values(&mut self, game: &GameContext) {
-        let edits = self.pending_values.drain_all();
-        self.commit_values(game, edits);
-    }
-
-    fn commit_values(&mut self, game: &GameContext, edits: Vec<InspectorValueEdit>) {
-        let mut committed = false;
-        for edit in edits {
-            committed |= self.history.push_inspector_value(edit);
-        }
-        if committed {
+    /// Records an edit the inspector committed as one undo step. Callers
+    /// have passed the simulation guard.
+    fn record_inspector_edit(&mut self, game: &GameContext, edit: CommittedEdit) {
+        let component_name = PanelInspector::type_display_name(
+            &game.assets.registries.types.read(),
+            edit.key.component,
+        )
+        .unwrap_or_else(|| edit.key.component.to_string());
+        let label = match common_value_path(&edit.changes) {
+            path if path.is_empty() => format!("Edit {component_name}"),
+            path => format!("Edit {component_name} {}", path.join(".")),
+        };
+        if self.history.push_inspector_value(InspectorValueEdit {
+            label,
+            game_object: edit.key.game_object,
+            component: edit.key.component,
+            changes: edit.changes,
+        }) {
             self.sync_dirty(game);
+        }
+    }
+
+    /// Commits every pending inspector edit. Callers have passed the
+    /// simulation guard.
+    fn commit_pending_values(&mut self, game: &GameContext) {
+        let pending = self.inspector_edits.pending();
+        if pending.is_empty() {
+            return;
+        }
+        // Reconcile the dirty mark the pending edits set even when they turn
+        // out to change nothing.
+        self.sync_dirty(game);
+        let edits = {
+            let components = game.assets.registries.components.read();
+            let scene = game.scenes.current_scene();
+            pending
+                .into_iter()
+                .filter_map(|key| {
+                    let current = edit_tracker::serialize_component(scene, &components, key);
+                    self.inspector_edits.commit(key, current)
+                })
+                .collect::<Vec<_>>()
+        };
+        for edit in edits {
+            self.record_inspector_edit(game, edit);
         }
     }
 
@@ -329,36 +376,36 @@ impl SceneDocument {
 
     fn clear_history(&mut self) {
         self.history.clear();
-        self.pending_values.clear();
+        self.inspector_edits.reset(None);
     }
 }
 
-fn restore_inspector_value(game: &mut GameContext, key: &InspectorValueKey, value: Value) -> bool {
+fn restore_inspector_values(
+    game: &mut GameContext,
+    game_object_id: Uuid,
+    component_id: Uuid,
+    values: &[(Vec<String>, Value)],
+) -> bool {
     let component_registry_ref = game.assets.registries.components.clone();
     let component_registry = component_registry_ref.read();
-    let Some(component) = component_registry.component(key.component) else {
+    let Some(component) = component_registry.component(component_id) else {
         log::warn!(
-            "Skipped inspector history restore because component {} is no longer registered",
-            key.component
+            "Skipped inspector history restore because component {component_id} is no longer registered"
         );
         return false;
     };
     let scene = game.scenes.current_scene_mut();
-    let Some(game_object) = scene.find(key.game_object) else {
+    let Some(game_object) = scene.find(game_object_id) else {
         log::warn!(
-            "Skipped inspector history restore because game object {} no longer exists",
-            key.game_object
+            "Skipped inspector history restore because game object {game_object_id} no longer exists"
         );
         return false;
     };
-    match restore_component_value(scene, game_object, component, &key.value_path, value) {
+    match restore_component_values(scene, game_object, component, values) {
         Ok(()) => true,
         Err(err) => {
             log::warn!(
-                "Skipped inspector history restore of component {} on game object {} at {:?}: {err}",
-                key.component,
-                key.game_object,
-                key.value_path
+                "Skipped inspector history restore of component {component_id} on game object {game_object_id}: {err}"
             );
             false
         }
@@ -385,22 +432,23 @@ impl std::fmt::Display for ValueRestoreError {
     }
 }
 
-/// Writes `value` at `value_path` inside `game_object`'s `component`, leaving
+/// Writes each value at its path inside `game_object`'s `component`, leaving
 /// the component's other values as they are.
-fn restore_component_value(
+fn restore_component_values(
     scene: &mut Scene,
     game_object: GameObject,
     component: &dyn Component,
-    value_path: &[String],
-    value: Value,
+    values: &[(Vec<String>, Value)],
 ) -> Result<(), ValueRestoreError> {
     scene
         .write_component_dyn(game_object, component, |instance| {
             let mut serialized = instance
                 .serialize()
                 .ok_or(ValueRestoreError::NotSerializable)?;
-            if !set_json_value(&mut serialized, value_path, value) {
-                return Err(ValueRestoreError::MissingValuePath);
+            for (value_path, value) in values {
+                if !set_json_value(&mut serialized, value_path, value.clone()) {
+                    return Err(ValueRestoreError::MissingValuePath);
+                }
             }
             if !instance.deserialize_in_place(&serialized) {
                 return Err(ValueRestoreError::NotDeserializable);
@@ -408,6 +456,24 @@ fn restore_component_value(
             Ok(())
         })
         .unwrap_or(Err(ValueRestoreError::MissingComponent))
+}
+
+/// The path prefix every change shares, which names an edit that changed
+/// several values of one field, such as a rotation.
+fn common_value_path(changes: &[InspectorValueChange]) -> Vec<String> {
+    let Some((first, rest)) = changes.split_first() else {
+        return Vec::new();
+    };
+    let mut prefix = first.value_path.clone();
+    for change in rest {
+        let shared = prefix
+            .iter()
+            .zip(&change.value_path)
+            .take_while(|(left, right)| left == right)
+            .count();
+        prefix.truncate(shared);
+    }
+    prefix
 }
 
 pub(crate) fn set_json_value(target: &mut Value, path: &[String], value: Value) -> bool {
@@ -431,7 +497,10 @@ pub(crate) fn set_json_value(target: &mut Value, path: &[String], value: Value) 
 
 #[cfg(test)]
 mod tests {
-    use super::{restore_component_value, set_json_value, SceneDocument};
+    use super::{common_value_path, restore_component_values, set_json_value, SceneDocument};
+    use crate::inspector::edit_tracker::{self, ComponentKey};
+    use crate::inspector::type_inspector::InspectorResponse;
+    use crate::scene_history::InspectorValueChange;
     use engine::component::ComponentTransform;
     use engine::context::GameContext;
     use engine::test_support::{test_asset_context_with_assets, test_game_context};
@@ -562,40 +631,47 @@ mod tests {
     }
 
     #[test]
-    fn value_edits_merge_into_one_undo_step() {
+    fn a_pending_inspector_drag_is_one_undo_step() {
         let mut game = test_game_context();
         let mut document = document();
         let scene = game.scenes.current_scene_mut();
         let object = scene.create(None, None);
-        let object_id = scene.uuid(object);
-        let transform = ComponentTransform::type_uuid();
-        let path = vec!["transform".to_owned(), "position".to_owned()];
+        let key = ComponentKey {
+            game_object: scene.uuid(object),
+            component: ComponentTransform::type_uuid(),
+        };
         let set_position = |game: &mut GameContext, x: f32| {
             let scene = game.scenes.current_scene_mut();
             scene.set_transform(object, &glm::translation(&Vec3::new(x, 0.0, 0.0)));
         };
+        let serialize = |game: &GameContext| {
+            let components = game.assets.registries.components.read();
+            edit_tracker::serialize_component(game.scenes.current_scene(), &components, key)
+        };
+        document.select_inspector_object(&game, Some(key.game_object));
+        assert!(document.track_inspector_edits(&game));
+        let baseline = serialize(&game);
+        document.inspector_edits_mut().set_baseline(key, baseline);
 
-        for (before, after) in [(0.0, 1.0), (1.0, 2.0)] {
-            set_position(&mut game, after);
-            document.record_values(
-                &game,
-                object_id,
-                transform,
-                "Transform",
-                vec![(
-                    path.clone(),
-                    json!([before, 0.0, 0.0]),
-                    json!([after, 0.0, 0.0]),
-                )],
-                &[],
-            );
+        // A drag over two frames that has not stopped yet.
+        for (x, drag_started) in [(1.0, true), (2.0, false)] {
+            set_position(&mut game, x);
+            let response = InspectorResponse {
+                changed: true,
+                drag_started,
+                drag_stopped: false,
+            };
+            assert!(!document.inspector_edits_mut().report(key, response, true));
+            document.inspector_shown(&game, true, false, None);
         }
-        assert!(document.can_undo(&game));
+        assert!(document.is_dirty());
+        assert!(document.can_undo(&game), "the pending drag can be undone");
         assert!(!document.can_redo(&game), "pending edits block redo");
 
         document.undo(&mut game);
         let position = game.scenes.current_scene().world_transform(object).position;
         assert!(position.norm() < 1e-5, "position {position:?}");
+        assert!(!document.can_undo(&game), "the drag was one step");
 
         document.redo(&mut game);
         let position = game.scenes.current_scene().world_transform(object).position;
@@ -611,6 +687,7 @@ mod tests {
         game.scenes.start_simulation();
 
         assert!(SceneDocument::begin_edit(&game).is_none());
+        assert!(!document.track_inspector_edits(&game));
         assert!(!document.can_undo(&game));
         document.undo(&mut game);
         assert_eq!(object_count(&game), 1, "undo leaves the scene alone");
@@ -639,12 +716,14 @@ mod tests {
         let component = component_registry
             .component(ComponentTransform::type_uuid())
             .expect("transform should be registered");
-        restore_component_value(
+        restore_component_values(
             &mut scene,
             parent,
             component,
-            &["transform".into(), "position".into()],
-            json!([5.0, 0.0, 0.0]),
+            &[(
+                vec!["transform".into(), "position".into()],
+                json!([5.0, 0.0, 0.0]),
+            )],
         )
         .expect("the position should restore");
 
@@ -653,6 +732,24 @@ mod tests {
             (child_world - Vec3::new(5.0, 1.0, 0.0)).norm() < 1e-5,
             "child world position {child_world:?}"
         );
+    }
+
+    #[test]
+    fn edit_labels_name_the_field_every_change_shares() {
+        let change = |path: &[&str]| InspectorValueChange {
+            value_path: path.iter().map(|segment| segment.to_string()).collect(),
+            before: json!(0.0),
+            after: json!(1.0),
+        };
+        assert_eq!(
+            common_value_path(&[
+                change(&["transform", "rotation", "0"]),
+                change(&["transform", "rotation", "3"]),
+            ]),
+            vec!["transform", "rotation"]
+        );
+        assert_eq!(common_value_path(&[change(&["enabled"])]), vec!["enabled"]);
+        assert!(common_value_path(&[change(&["mass"]), change(&["enabled"])]).is_empty());
     }
 
     #[test]

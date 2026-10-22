@@ -759,6 +759,10 @@ mod tests {
                     .downcast_mut::<ComponentCollider>()
                     .expect("instance should be a collider");
                 c.shape = ColliderShape::Sphere { radius: 2.5 };
+                crate::scene::ComponentEdit {
+                    value: (),
+                    written: true,
+                }
             });
             scene.edit_component_dyn(go, &ComponentRigidBody::default(), |instance, _| {
                 let c = instance
@@ -766,6 +770,10 @@ mod tests {
                     .downcast_mut::<ComponentRigidBody>()
                     .expect("instance should be a rigid body");
                 c.ty = RigidBodyType::Fixed;
+                crate::scene::ComponentEdit {
+                    value: (),
+                    written: true,
+                }
             });
         }
 
