@@ -477,6 +477,59 @@ mod tests {
     }
 
     #[test]
+    fn destroy_is_applied_before_a_later_ownership_transfer() {
+        let (owner, other) = (1u64, 2u64);
+        let mut game = test_game_context();
+        let go = {
+            let scene = game.scenes.current_scene_mut();
+            let go = scene.create(None, None);
+            scene.add_component(
+                go,
+                ComponentNetworkObject {
+                    id: 42,
+                    owner_id: owner,
+                },
+            );
+            go
+        };
+
+        // The owner destroys the object, then transfers it, and both land in
+        // the same tick.
+        let queue = &mut game.resources.network_mut().queue;
+        queue.queue_message(
+            MessageSender::Server,
+            GameMessage::DestroyGameObject {
+                network_object_id: 42,
+                from_client_id: owner,
+            },
+        );
+        queue.queue_message(
+            MessageSender::Server,
+            GameMessage::TransferOwnership {
+                network_object_id: 42,
+                from_client_id: owner,
+                to_client_id: other,
+            },
+        );
+
+        let GameContext {
+            assets,
+            scenes,
+            resources,
+        } = &mut game;
+        resources
+            .network_mut()
+            .update_scene(scenes.current_scene_mut(), &assets.lock_read());
+        let scene = game.scenes.current_scene_mut();
+        scene.flush_deletes();
+
+        assert!(
+            scene.entry(go).is_none(),
+            "the transfer was applied before the earlier destroy"
+        );
+    }
+
+    #[test]
     fn destroy_game_object_refuses_non_owner() {
         let (mut scene, go) = scene_with_object(42, 1);
         let mut network = Network::new(60.0);

@@ -128,16 +128,9 @@ impl Network {
         mut scene: &'a mut Scene,
         assets: &'a ReadOnlyAssetContext,
     ) {
-        self.queue.receive_messages(
-            None,
-            &mut (
-                &mut self.client,
-                &mut self.server,
-                &mut scene,
-                &mut self.local_id,
-            ),
-            &mut NetworkSceneSync,
-        );
+        // One pass over the queue, so lifecycle messages for the same object
+        // (spawn, ownership transfer, destroy) apply in the order they were
+        // sent.
         self.queue.receive_messages(
             None,
             &mut (
@@ -147,7 +140,7 @@ impl Network {
                 assets,
                 &mut self.local_id,
             ),
-            &mut NetworkPrefabSync,
+            &mut NetworkReplicationSync,
         );
     }
 
@@ -450,6 +443,34 @@ fn find_network_object(
             .flatten()
             .map(|owner_id| (go, owner_id))
     })
+}
+
+/// Message handler that offers each message to [`NetworkSceneSync`], then to
+/// [`NetworkPrefabSync`], so every scene replication message is handled in
+/// one FIFO pass over the queue.
+struct NetworkReplicationSync;
+impl MessageHandler<NetworkPrefabSyncContext<'_, '_>, GameMessage> for NetworkReplicationSync {
+    fn handle_message(
+        &mut self,
+        context: &mut NetworkPrefabSyncContext,
+        sender: MessageSender,
+        message: &GameMessage,
+    ) -> MessageHandlerResult {
+        let (client, server, scene, assets, local_id) = context;
+        let result = NetworkSceneSync.handle_message(
+            &mut (&mut **client, &mut **server, &mut **scene, &mut **local_id),
+            sender,
+            message,
+        );
+        match result {
+            MessageHandlerResult::Consume => MessageHandlerResult::Consume,
+            MessageHandlerResult::Ignore => NetworkPrefabSync.handle_message(
+                &mut (client, server, scene, assets, local_id),
+                sender,
+                message,
+            ),
+        }
+    }
 }
 
 struct NetworkPrefabSync;
