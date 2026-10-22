@@ -1,4 +1,5 @@
 use proc_macro::TokenStream;
+use proc_macro2::Span;
 use quote::quote;
 use sha1::Digest;
 use syn::parse::{Parse, ParseStream};
@@ -22,8 +23,7 @@ fn uuid_from_str(value: &str) -> Uuid {
 fn uuid_lits(uuid: Uuid) -> Vec<LitInt> {
     uuid.as_bytes()
         .iter()
-        .map(|byte| format!("{byte:#X}"))
-        .map(|byte_str| syn::parse_str::<LitInt>(&byte_str).unwrap())
+        .map(|byte| LitInt::new(&format!("{byte:#X}"), Span::call_site()))
         .collect()
 }
 
@@ -93,7 +93,14 @@ impl Parse for ExternTypeUuidInput {
 pub fn extern_type_uuid(input: TokenStream) -> TokenStream {
     let ExternTypeUuidInput { path, uuid_str, .. } =
         parse_macro_input!(input as ExternTypeUuidInput);
-    let uuid = Uuid::parse_str(&uuid_str.value()).expect("Value was not a valid UUID");
+    let uuid = match Uuid::parse_str(&uuid_str.value()) {
+        Ok(uuid) => uuid,
+        Err(err) => {
+            return syn::Error::new_spanned(&uuid_str, format!("invalid uuid: {err}"))
+                .into_compile_error()
+                .into()
+        }
+    };
     let bytes = uuid_lits(uuid);
     let fq_type_uuid = FQTypeUuid;
     let fq_uuid = FQUuid;

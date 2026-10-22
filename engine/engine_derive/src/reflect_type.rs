@@ -4,6 +4,7 @@ use crate::fq::FQAttributeValue;
 use crate::reflect_impl::{
     reflected_type_impl, register_trait_meta_impls, type_name_and_reflect_impls,
 };
+use crate::repr::require_repr_c;
 use darling::ast::NestedMeta;
 use proc_macro2::{Ident, Span};
 use quote::quote;
@@ -24,9 +25,7 @@ impl TryFrom<NestedMeta> for ReflectAttribute {
         match value {
             NestedMeta::Meta(Meta::Path(path)) => {
                 let Some(name) = path.get_ident().cloned() else {
-                    return Err(darling::Error::custom(
-                        "reflect_attr keys must be identifiers",
-                    ));
+                    return Err(non_ident_key(&path));
                 };
                 Ok(Self { name, value: None })
             }
@@ -36,20 +35,23 @@ impl TryFrom<NestedMeta> for ReflectAttribute {
                 ..
             })) => {
                 let Some(name) = path.get_ident().cloned() else {
-                    return Err(darling::Error::custom(
-                        "reflect_attr keys must be identifiers",
-                    ));
+                    return Err(non_ident_key(&path));
                 };
                 Ok(Self {
                     name,
                     value: Some(lit),
                 })
             }
-            _ => Err(darling::Error::custom(
+            other => Err(darling::Error::custom(
                 "reflect_attr entries must be `name` or `name = literal`",
-            )),
+            )
+            .with_span(&other)),
         }
     }
+}
+
+fn non_ident_key(path: &Path) -> darling::Error {
+    darling::Error::custom("reflect_attr keys must be identifiers").with_span(path)
 }
 
 fn attribute_map(attrs: &[ReflectAttribute]) -> proc_macro2::TokenStream {
@@ -75,31 +77,40 @@ fn attribute_map(attrs: &[ReflectAttribute]) -> proc_macro2::TokenStream {
 }
 
 pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
-    let ast: DeriveInput = syn::parse(input).unwrap();
+    let ast = syn::parse_macro_input!(input as DeriveInput);
+    expand(&ast)
+        .unwrap_or_else(darling::Error::write_errors)
+        .into()
+}
+
+fn expand(ast: &DeriveInput) -> darling::Result<proc_macro2::TokenStream> {
     let name = &ast.ident;
     let attrs = &ast.attrs;
 
-    let mut trait_paths = None;
+    let mut trait_paths = Vec::new();
     let mut reflect_attrs = quote! { [].into() };
     for attr in attrs {
         if attr.path().is_ident("reflect") {
-            trait_paths = Some(reflect_trait_paths(attr).unwrap());
+            trait_paths = reflect_trait_paths(attr)?;
         } else if attr.path().is_ident("reflect_attr") {
-            reflect_attrs = attribute_map(&reflect_attributes(attr).unwrap());
+            reflect_attrs = attribute_map(&reflect_attributes(attr)?);
         }
     }
 
     let reflect_impls = type_name_and_reflect_impls(name);
-    let register_traits_impl = register_trait_meta_impls(name, trait_paths.unwrap_or_default());
+    let register_traits_impl = register_trait_meta_impls(name, trait_paths)?;
     let register_type_info = match &ast.data {
         Data::Struct(s) => {
-            if !has_repr_c(attrs) {
-                panic!("Reflect requires #[repr(C)]");
-            }
-            struct_type_info(name, &s.fields, &reflect_attrs)
+            require_repr_c(ast, "Reflect")?;
+            struct_type_info(name, &s.fields, &reflect_attrs)?
         }
         Data::Enum(e) => enum_type_info(name, e.variants.iter(), &reflect_attrs),
-        _ => panic!("Reflect only works on structs and enums!"),
+        Data::Union(u) => {
+            return Err(
+                darling::Error::custom("Reflect only works on structs and enums")
+                    .with_span(&u.union_token),
+            )
+        }
     };
     let reflected_type_impl = reflected_type_impl(
         name,
@@ -119,7 +130,7 @@ pub(crate) fn derive_reflect(input: TokenStream) -> TokenStream {
         },
     );
 
-    TokenStream::from(quote! {
+    Ok(quote! {
         #reflect_impls
         #reflected_type_impl
     })
@@ -129,7 +140,7 @@ fn struct_type_info(
     name: &Ident,
     fields: &Fields,
     reflect_attrs: &proc_macro2::TokenStream,
-) -> proc_macro2::TokenStream {
+) -> darling::Result<proc_macro2::TokenStream> {
     let mut field_info = Vec::new();
     if let Fields::Named(named) = fields {
         for field in &named.named {
@@ -152,18 +163,14 @@ fn struct_type_info(
                 Some(value) => quote! { Some(#value) },
                 None => quote! { None },
             };
-            let reflect_attrs = field
+            let reflect_attrs = match field
                 .attrs
                 .iter()
-                .filter_map(|attr| {
-                    if attr.path().is_ident("reflect_attr") {
-                        Some(attribute_map(&reflect_attributes(attr).unwrap()))
-                    } else {
-                        None
-                    }
-                })
-                .next()
-                .unwrap_or_else(|| quote! { [].into() });
+                .find(|attr| attr.path().is_ident("reflect_attr"))
+            {
+                Some(attr) => attribute_map(&reflect_attributes(attr)?),
+                None => quote! { [].into() },
+            };
             if field
                 .attrs
                 .iter()
@@ -208,10 +215,10 @@ fn struct_type_info(
         }
     });
 
-    quote! {
+    Ok(quote! {
         registry.meta_struct::<#name>(#reflect_attrs)
             #(#add_field_calls)*;
-    }
+    })
 }
 
 fn enum_type_info<'a>(
@@ -278,24 +285,10 @@ fn reflect_trait_paths(attr: &Attribute) -> darling::Result<Vec<Path>> {
         .into_iter()
         .map(|meta| match meta {
             NestedMeta::Meta(Meta::Path(path)) => Ok(path),
-            _ => Err(darling::Error::custom(
+            other => Err(darling::Error::custom(
                 "reflect traits must be paths, for example #[reflect(Default)]",
-            )),
+            )
+            .with_span(&other)),
         })
         .collect()
-}
-
-fn has_repr_c(attrs: &[Attribute]) -> bool {
-    for attr in attrs {
-        if !attr.meta.path().is_ident("repr") {
-            continue;
-        }
-        let Ok(path) = attr.parse_args::<Path>() else {
-            continue;
-        };
-        if path.is_ident("C") {
-            return true;
-        }
-    }
-    false
 }

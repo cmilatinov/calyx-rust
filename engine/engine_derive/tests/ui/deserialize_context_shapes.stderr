@@ -1,0 +1,29 @@
+error: DeserializeWithContext requires a context type, as in `#[context(MyContext)]`
+ --> tests/ui/deserialize_context_shapes.rs:4:8
+  |
+4 | struct MissingContext {
+  |        ^^^^^^^^^^^^^^
+
+error: DeserializeWithContext only supports structs with named fields
+  --> tests/ui/deserialize_context_shapes.rs:10:13
+   |
+10 | struct Tuple(u32);
+   |             ^^^^^
+
+error: DeserializeWithContext only supports structs with fields
+  --> tests/ui/deserialize_context_shapes.rs:14:8
+   |
+14 | struct Unit;
+   |        ^^^^
+
+error: DeserializeWithContext does not support unions
+  --> tests/ui/deserialize_context_shapes.rs:18:1
+   |
+18 | union NotSupported {
+   | ^^^^^
+
+error: expected parentheses: #[context(...)]
+  --> tests/ui/deserialize_context_shapes.rs:23:11
+   |
+23 | #[context = 1]
+   |           ^
