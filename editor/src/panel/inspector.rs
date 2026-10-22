@@ -212,10 +212,8 @@ impl Panel for PanelInspector {
                         if let Some(game_object) = selected_game_object {
                             // Play mode records no undo history, so the
                             // inspector keeps no baselines there.
-                            let track_edits = !state.game.scenes.has_simulation_scene();
-                            if !track_edits {
-                                state.inspector_edits.clear();
-                            }
+                            let track_edits =
+                                state.scene_document.track_inspector_edits(&state.game);
                             let pointer_down = ui.input(|input| input.pointer.any_down());
                             let mut structural_changed = false;
                             let mut structural_edit_before = None;
@@ -267,7 +265,7 @@ impl Panel for PanelInspector {
                                 // components through the scene, never the
                                 // component they are editing.
                                 let Some(shown) = (unsafe {
-                                    state.inspector_edits.show_component(
+                                    state.scene_document.inspector_edits_mut().show_component(
                                         state.game.scenes.simulation_scene_mut(),
                                         game_object,
                                         &**component,
@@ -297,22 +295,12 @@ impl Panel for PanelInspector {
                                 if shown.value {
                                     components_to_remove.insert(*type_id);
                                 }
-                                // The undo step may wait for the drag or
-                                // text session to end, but the scene has
-                                // changed now: autosave and scene switches
-                                // must see it as dirty.
-                                if shown.changed {
-                                    state.mark_scene_dirty();
-                                }
-                                match shown.committed {
-                                    Some(committed) => state.record_inspector_edit(committed),
-                                    // An edit that left the component as it
-                                    // was: undo the dirty mark it set.
-                                    None if shown.completed => {
-                                        state.sync_scene_dirty_to_current_fingerprint()
-                                    }
-                                    None => {}
-                                }
+                                state.scene_document.inspector_shown(
+                                    &state.game,
+                                    shown.changed,
+                                    shown.completed,
+                                    shown.committed,
+                                );
                             }
                             for (type_id, _) in component_registry.components() {
                                 if !components_to_remove.contains(type_id) {

@@ -2,7 +2,7 @@ use engine::scene::{Scene, SceneSnapshot};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::scene_document::scene_fingerprint;
+use crate::scene_file::scene_fingerprint;
 
 const DEFAULT_HISTORY_LIMIT: usize = 100;
 

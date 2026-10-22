@@ -1,5 +1,6 @@
 use crate::inspector::asset_inspector::AssetInspectorAction;
 use crate::panel::Panel;
+use crate::scene_document::SceneDocument;
 use crate::selection::{Selection, SelectionType};
 use crate::widgets::{
     FileButton, ThumbnailPriority, ThumbnailRequest, ThumbnailStatus, THUMBNAIL_MAX_SIZE,
@@ -333,11 +334,7 @@ impl PanelContentBrowser {
                 return;
             };
             if inspector.has_context_menu() {
-                edit_before = if game.scenes.has_simulation_scene() {
-                    None
-                } else {
-                    Some(SceneEditSnapshot::capture(game.scenes.current_scene()))
-                };
+                edit_before = SceneDocument::begin_edit(game);
                 action = inspector.show_context_menu(ui, game, asset_id);
             } else {
                 ui.label("No actions available");
