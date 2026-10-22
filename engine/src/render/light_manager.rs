@@ -94,6 +94,17 @@ impl LightManager {
         self.ambient_light
     }
 
+    /// The point and directional light storage buffers the storage bind
+    /// group binds.
+    pub fn storage_buffers(&self) -> [wgpu::Buffer; 2] {
+        [
+            self.point_light_storage_buffer.get_wgpu_buffer().clone(),
+            self.directional_light_storage_buffer
+                .get_wgpu_buffer()
+                .clone(),
+        ]
+    }
+
     pub fn storage_bind_group(
         &self,
         device: &wgpu::Device,

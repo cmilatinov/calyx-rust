@@ -980,7 +980,7 @@ impl AssetRegistry {
 }
 
 impl AssetRegistry {
-    fn recv_notify_event(&self, event: Event) {
+    pub(crate) fn recv_notify_event(&self, event: Event) {
         log::trace!("Received asset notification: {:?}", event.kind);
         let paths_iter = Self::notify_event_paths(&event);
         match event.kind {

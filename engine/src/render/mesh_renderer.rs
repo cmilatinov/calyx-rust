@@ -6,7 +6,9 @@ use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::asset_render_state::LockedAssetRenderState;
 use crate::render::render_utils::RenderUtils;
-use crate::render::{GizmoRenderer, LightManager, PipelineOptions, SceneRendererError, Shader};
+use crate::render::{
+    CachedBindGroup, GizmoRenderer, LightManager, PipelineOptions, SceneRendererError, Shader,
+};
 use egui::Color32;
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
@@ -25,7 +27,19 @@ pub struct MeshRenderer {
     object_id_shader: Ref<Shader>,
     environment_uniform_buffer: wgpu::Buffer,
     material_bind_group_cache: HashMap<AssetId, CachedMaterialBindGroups>,
+    scene_bind_group: CachedBindGroup<SceneBindGroupKey>,
+    light_storage_bind_group: CachedBindGroup<(wgpu::BindGroupLayout, [wgpu::Buffer; 2])>,
+    object_id_camera_bind_group: CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer)>,
 }
+
+/// The layout and resources the scene bind group binds: the camera buffer,
+/// then the irradiance, prefilter and BRDF maps' views and samplers.
+type SceneBindGroupKey = (
+    wgpu::BindGroupLayout,
+    wgpu::Buffer,
+    [wgpu::TextureView; 3],
+    [wgpu::Sampler; 3],
+);
 
 struct CachedMaterialBindGroups {
     key: MaterialBindGroupCacheKey,
@@ -56,6 +70,9 @@ impl MeshRenderer {
                 },
             ),
             material_bind_group_cache: Default::default(),
+            scene_bind_group: Default::default(),
+            light_storage_bind_group: Default::default(),
+            object_id_camera_bind_group: Default::default(),
         })
     }
 
@@ -116,7 +133,15 @@ impl MeshRenderer {
         );
         let light_storage_bind_group = {
             let scene_shader = self.scene_shader.read();
-            light_manager.storage_bind_group(device, &scene_shader)
+            let key = (
+                scene_shader.bind_group_layouts[2].clone(),
+                light_manager.storage_buffers(),
+            );
+            self.light_storage_bind_group
+                .get_or_create(key, || {
+                    light_manager.storage_bind_group(device, &scene_shader)
+                })
+                .clone()
         };
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -160,7 +185,7 @@ impl MeshRenderer {
             }
             let (chunk, local_instances) = Mesh::instance_chunk(instances);
             if mesh_id != last.2 || chunk != last_chunk {
-                let Some(mesh_instance_group) = assets.mesh_instance_group(mesh_id, chunk) else {
+                let Some(mesh_instance_group) = mesh.instance_bind_group(chunk) else {
                     continue;
                 };
                 render_pass.set_bind_group(1, mesh_instance_group, &[]);
@@ -177,51 +202,71 @@ impl MeshRenderer {
     }
 
     fn scene_bind_group(
-        &self,
+        &mut self,
         device: &wgpu::Device,
         camera_uniform_buffer: &wgpu::Buffer,
         irradiance_map: &Texture,
         prefilter_map: &Texture,
         brdf_map: &Texture,
     ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("scene_bind_group"),
-            layout: &self.scene_shader.read().bind_group_layouts[0],
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: camera_uniform_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&irradiance_map.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&irradiance_map.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&prefilter_map.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::Sampler(&prefilter_map.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: wgpu::BindingResource::TextureView(&brdf_map.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: wgpu::BindingResource::Sampler(&brdf_map.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 7,
-                    resource: self.environment_uniform_buffer.as_entire_binding(),
-                },
+        let layout = self.scene_shader.read().bind_group_layouts[0].clone();
+        let key = (
+            layout.clone(),
+            camera_uniform_buffer.clone(),
+            [
+                irradiance_map.view.clone(),
+                prefilter_map.view.clone(),
+                brdf_map.view.clone(),
             ],
-        })
+            [
+                irradiance_map.sampler.clone(),
+                prefilter_map.sampler.clone(),
+                brdf_map.sampler.clone(),
+            ],
+        );
+        let environment_uniform_buffer = &self.environment_uniform_buffer;
+        self.scene_bind_group
+            .get_or_create(key, || {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("scene_bind_group"),
+                    layout: &layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: camera_uniform_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(&irradiance_map.view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(&irradiance_map.sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::TextureView(&prefilter_map.view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: wgpu::BindingResource::Sampler(&prefilter_map.sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 5,
+                            resource: wgpu::BindingResource::TextureView(&brdf_map.view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 6,
+                            resource: wgpu::BindingResource::Sampler(&brdf_map.sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 7,
+                            resource: environment_uniform_buffer.as_entire_binding(),
+                        },
+                    ],
+                })
+            })
+            .clone()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -245,14 +290,21 @@ impl MeshRenderer {
             .build();
         let shader = self.object_id_shader.read();
         let pipeline = shader.pipeline(&options);
-        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("object_id_camera_bind_group"),
-            layout: &shader.bind_group_layouts[0],
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera_uniform_buffer.as_entire_binding(),
-            }],
-        });
+        let layout = &shader.bind_group_layouts[0];
+        let camera_bind_group = self
+            .object_id_camera_bind_group
+            .get_or_create((layout.clone(), camera_uniform_buffer.clone()), || {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("object_id_camera_bind_group"),
+                    layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: camera_uniform_buffer.as_entire_binding(),
+                    }],
+                })
+            })
+            .clone();
+        drop(shader);
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Viewport Object IDs"),
@@ -283,7 +335,7 @@ impl MeshRenderer {
             };
             let (chunk, local_instances) = Mesh::instance_chunk(instances);
             if mesh_id != last_mesh_id || chunk != last_chunk {
-                let Some(mesh_instance_group) = assets.mesh_instance_group(mesh_id, chunk) else {
+                let Some(mesh_instance_group) = mesh.instance_bind_group(chunk) else {
                     continue;
                 };
                 render_pass.set_bind_group(1, mesh_instance_group, &[]);

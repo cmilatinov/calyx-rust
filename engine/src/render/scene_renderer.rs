@@ -397,7 +397,7 @@ impl SceneRenderer {
         let draw_list = self.build_draw_list();
         self.build_mesh_data(&render_context);
         self.light_manager.build_data(&render_context, scene);
-        let assets = self.assets.lock(device);
+        let assets = self.assets.lock();
         {
             let black_texture_cube = self.default_assets.black_texture_cube.read();
             let black_texture_2d = self.default_assets.black_texture_2d.read();
@@ -622,6 +622,7 @@ impl SceneRenderer {
 
     fn build_asset_data(&mut self, render_context: &RenderContext, scene: &Scene) {
         let world = scene.world();
+        self.assets.clear();
         self.draw_list.clear();
         self.object_ids_build.clear();
         self.object_id_lookup.clear();
@@ -721,18 +722,19 @@ impl SceneRenderer {
         }
         self.skybox_renderer.set_skybox(skybox);
         self.sky_light_intensity = sky_light_intensity;
-        for (_, mut mesh) in self.assets.meshes.lock_write() {
-            mesh.instances.clear();
+        for mesh in self.assets.meshes.values() {
+            mesh.write().instances.clear();
         }
-        for (_, mut material) in self.assets.materials.lock_write() {
+        let AssetRenderState {
+            materials,
+            textures,
+            ..
+        } = &mut self.assets;
+        for material in materials.values() {
+            let mut material = material.write();
             material.load_buffers(render_context);
-            let Self {
-                asset_context,
-                assets: AssetRenderState { textures, .. },
-                ..
-            } = self;
             material.collect_textures(
-                asset_context,
+                &self.asset_context,
                 textures,
                 self.default_assets.white_texture.clone(),
             );
@@ -752,11 +754,11 @@ impl SceneRenderer {
     }
 
     fn build_mesh_data(&mut self, render_context: &RenderContext) {
-        for (_, mut mesh) in self.assets.meshes.lock_write() {
+        for mesh in self.assets.meshes.values() {
             RenderUtils::rebuild_mesh_data(
                 render_context.device(),
                 render_context.queue(),
-                &mut mesh,
+                &mut mesh.write(),
             );
         }
     }
@@ -1715,6 +1717,125 @@ mod tests {
             }
         };
         assert_eq!(image.dimensions(), (96, 48));
+    }
+
+    #[test]
+    fn assets_not_drawn_in_a_frame_are_dropped() {
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let (sphere, cube) = {
+            let registry = read_only_context.registries.assets.read();
+            (
+                registry.sphere().expect("missing sphere mesh"),
+                registry.cube().expect("missing cube mesh"),
+            )
+        };
+        let first = pbr_material(&read_only_context, "test/drop_first");
+        let second = pbr_material(&read_only_context, "test/drop_second");
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        spawn_mesh(&mut builder, "sphere", &sphere, &first, Vec3::zeros());
+        let sphere_scene = builder.finish();
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        spawn_mesh(&mut builder, "cube", &cube, &second, Vec3::zeros());
+        let cube_scene = builder.finish();
+        let (camera, transform) = front_camera(1.0, 5.0);
+
+        let mut renderer = renderer(&read_only_context, 1, (32, 32));
+        renderer.render_scene_base(&camera, &transform, &sphere_scene, None);
+        assert!(renderer.assets.contains(sphere.id()));
+        assert!(renderer.assets.contains(first.id()));
+
+        renderer.render_scene_base(&camera, &transform, &cube_scene, None);
+        assert!(!renderer.assets.contains(sphere.id()));
+        assert!(!renderer.assets.contains(first.id()));
+        assert!(renderer.assets.contains(cube.id()));
+        assert!(renderer.assets.contains(second.id()));
+    }
+
+    #[test]
+    fn an_inactive_outline_pass_releases_its_bind_group() {
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let material = pbr_material(&read_only_context, "test/outline");
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        let uuid = spawn_mesh(&mut builder, "cube", &cube, &material, Vec3::zeros());
+        let scene = builder.finish();
+        let (camera, transform) = front_camera(1.0, 5.0);
+        let mut renderer = renderer(&read_only_context, 1, (32, 32));
+        let frame = |renderer: &mut SceneRenderer| {
+            renderer.render_scene_base(&camera, &transform, &scene, None);
+            renderer.finalize_scene();
+        };
+
+        renderer.set_hovered_game_object(Some(uuid));
+        renderer.set_selected_game_object(Some(uuid));
+        frame(&mut renderer);
+        assert!(renderer.outline_renderer.hovered_pass.is_cached());
+        assert!(renderer.outline_renderer.selected_pass.is_cached());
+
+        renderer.set_hovered_game_object(None);
+        frame(&mut renderer);
+        assert!(!renderer.outline_renderer.hovered_pass.is_cached());
+        assert!(renderer.outline_renderer.selected_pass.is_cached());
+
+        renderer.set_selected_game_object(None);
+        frame(&mut renderer);
+        assert!(!renderer.outline_renderer.selected_pass.is_cached());
+    }
+
+    #[test]
+    fn deleting_a_drawn_mesh_releases_it_from_the_renderer() {
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let sphere = read_only_context
+            .registries
+            .assets
+            .read()
+            .sphere()
+            .expect("missing sphere mesh");
+        let sphere_id = sphere.id();
+        let material = pbr_material(&read_only_context, "test/deleted_mesh");
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        let uuid = spawn_mesh(&mut builder, "sphere", &sphere, &material, Vec3::zeros());
+        let scene = builder.finish();
+        let (camera, transform) = front_camera(1.0, 5.0);
+
+        let mut renderer = renderer(&read_only_context, 1, (32, 32));
+        renderer.render_scene_base(&camera, &transform, &scene, None);
+        renderer.finalize_scene();
+        assert_eq!(renderer.pick_game_object(16, 16), Some(uuid));
+        assert!(renderer.assets.contains(sphere_id));
+        let sphere_weak = sphere.downgrade();
+        drop(sphere);
+
+        let path = assets.engine_root().join("meshes/sphere.obj");
+        std::fs::remove_file(&path).expect("failed to delete the sphere mesh");
+        read_only_context
+            .registries
+            .assets
+            .read()
+            .recv_notify_event(
+                notify::Event::new(notify::EventKind::Remove(notify::event::RemoveKind::File))
+                    .add_path(path),
+            );
+        renderer.render_scene_base(&camera, &transform, &scene, None);
+        renderer.finalize_scene();
+
+        assert!(!renderer.assets.contains(sphere_id));
+        assert!(
+            sphere_weak.upgrade().is_none(),
+            "nothing keeps the deleted mesh alive"
+        );
+        assert_eq!(renderer.pick_game_object(16, 16), None);
     }
 
     #[test]
