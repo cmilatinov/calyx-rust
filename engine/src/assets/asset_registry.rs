@@ -954,6 +954,11 @@ impl AssetRegistry {
                 }
             }
             EventKind::Remove(_) => {
+                // A deleted folder arrives as one extensionless path that
+                // `notify_event_paths` drops, so forget by path prefix here.
+                for removed in event.paths.iter().filter(|path| !path.exists()) {
+                    self.forget_assets_under(removed);
+                }
                 for file in paths_iter {
                     if file.is_file() {
                         log::trace!(
@@ -963,7 +968,6 @@ impl AssetRegistry {
                         self.mark_path_dirty(file);
                         continue;
                     }
-                    self.forget_assets_under(file);
                     let meta_path = file.with_extension("meta");
                     match std::fs::remove_file(&meta_path) {
                         Ok(()) => log::info!("Removed asset metadata {}", meta_path.display()),
@@ -1835,7 +1839,7 @@ mod tests {
         let first_root = temp_asset_root("calyx-same-name-first-root");
         let second_root = temp_asset_root("calyx-same-name-second-root");
         let (first_path, _, first_id) = write_scene_with_meta(&first_root);
-        let (second_path, _, second_id) = write_scene_with_meta(&second_root);
+        let (_, _, second_id) = write_scene_with_meta(&second_root);
         let registries = test_registries_with_assets(vec![first_root.clone(), second_root.clone()]);
         let registry = registries.assets.read();
         assert_eq!(registry.asset_id("scene"), Some(second_id));
@@ -1873,6 +1877,27 @@ mod tests {
         drop(registry);
         std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
         std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
+    }
+
+    #[test]
+    fn folder_remove_event_forgets_assets_below_the_folder() {
+        let root = temp_asset_root("calyx-folder-remove");
+        let folder = root.join("sub");
+        std::fs::create_dir_all(&folder).expect("failed to create asset folder");
+        let (_, _, asset_id) = write_scene_with_meta(&folder);
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        assert_eq!(registry.asset_id("sub/scene"), Some(asset_id));
+
+        std::fs::remove_dir_all(&folder).expect("failed to delete asset folder");
+        registry.recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::Folder)).add_path(folder),
+        );
+
+        assert_eq!(registry.asset_id("sub/scene"), None);
+        assert!(registry.asset_meta_from_id(asset_id).is_none());
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
 
     #[test]
