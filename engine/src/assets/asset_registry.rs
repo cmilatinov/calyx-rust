@@ -1797,7 +1797,7 @@ impl AssetRegistry {
         self.load_or_create(Self::DEFAULT_SCENE, || {
             let mut scene = self.new_empty_scene();
             let game_object = scene.create(None, None);
-            scene.bind_component(
+            scene.add_component(
                 game_object,
                 ComponentMesh {
                     mesh: self.load("meshes/cube").ok().into(),

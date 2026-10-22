@@ -1156,22 +1156,38 @@ mod tests {
         assert_eq!(scene.find_network_object(42), None);
     }
 
+    fn set_network_id(instance: &mut dyn crate::component::Component, id: u64) {
+        instance
+            .as_reflect_mut()
+            .downcast_mut::<ComponentNetworkObject>()
+            .expect("instance should be a network object")
+            .id = id;
+    }
+
     #[test]
-    fn stale_index_entry_resolves_through_fallback() {
+    fn type_erased_write_reindexes_network_object() {
         let (mut scene, go) = scene_with_object(42, 1);
         assert_eq!(scene.indexed_network_object(42), Some(go));
 
-        // A raw write bypasses the scene, leaving the index entry stale.
+        // The undo and remote paths write through the registry prototype.
+        let prototype = ComponentNetworkObject::default();
         scene
-            .entry_mut(go)
-            .unwrap()
-            .get_component_mut::<ComponentNetworkObject>()
-            .unwrap()
-            .id = 43;
-        assert_eq!(scene.indexed_network_object(42), Some(go));
+            .write_component_dyn(go, &prototype, |instance| set_network_id(instance, 43))
+            .expect("the object should have a network object");
 
-        assert_eq!(scene.find_network_object(42), None);
-        assert_eq!(scene.find_network_object(43), Some(go));
+        assert_eq!(scene.indexed_network_object(42), None);
+        assert_eq!(scene.indexed_network_object(43), Some(go));
+    }
+
+    #[test]
+    fn inspector_edit_reindexes_network_object() {
+        let (mut scene, go) = scene_with_object(42, 1);
+        let prototype = ComponentNetworkObject::default();
+        unsafe {
+            scene.edit_component_dyn(go, &prototype, |instance, _| set_network_id(instance, 43))
+        }
+        .expect("the object should have a network object");
+
         assert_eq!(scene.indexed_network_object(42), None);
         assert_eq!(scene.indexed_network_object(43), Some(go));
     }

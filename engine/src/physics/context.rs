@@ -210,11 +210,11 @@ impl PhysicsContext {
     /// or no longer carry the rigid body / collider component.
     fn remove_stale_physics_objects(scene: &mut Scene) {
         let live_bodies: HashSet<Entity> = <(Entity, &ComponentRigidBody)>::query()
-            .iter(&scene.world)
+            .iter(&*scene.world)
             .map(|(&entity, _)| entity)
             .collect();
         let live_colliders: HashSet<Entity> = <(Entity, &ComponentCollider)>::query()
-            .iter(&scene.world)
+            .iter(&*scene.world)
             .map(|(&entity, _)| entity)
             .collect();
         let stale_bodies: Vec<_> = scene
@@ -269,8 +269,8 @@ impl PhysicsContext {
     /// Create or update rigid body properties when the component is dirty.
     fn sync_rigid_bodies(scene: &mut Scene) {
         let mut query = <(Entity, &ComponentRigidBody)>::query();
-        let mut dirty_entities: Vec<Entity> = Vec::new();
-        for (entity, c_rb) in query.iter(&scene.world) {
+        let mut dirty_objects: Vec<GameObject> = Vec::new();
+        for (entity, c_rb) in query.iter(&*scene.world) {
             let Some(go) = scene.game_object_from_entity(*entity) else {
                 continue;
             };
@@ -293,23 +293,19 @@ impl PhysicsContext {
                     rb.activation_mut().normalized_linear_threshold = -1.0;
                     rb.activation_mut().angular_threshold = -1.0;
                 }
-                dirty_entities.push(*entity);
+                dirty_objects.push(go);
             }
         }
-        for entity in dirty_entities {
-            if let Some(mut entry) = scene.world.entry(entity) {
-                if let Ok(c_rb) = entry.get_component_mut::<ComponentRigidBody>() {
-                    c_rb.dirty = false;
-                }
-            }
+        for go in dirty_objects {
+            scene.write_component::<ComponentRigidBody, _>(go, |c_rb| c_rb.dirty = false);
         }
     }
 
     /// Create or update collider properties when the component is dirty.
     fn sync_colliders(scene: &mut Scene) {
         let mut query = <(Entity, &ComponentCollider)>::query();
-        let mut dirty_entities: Vec<Entity> = Vec::new();
-        for (entity, c_collider) in query.iter(&scene.world) {
+        let mut dirty_objects: Vec<GameObject> = Vec::new();
+        for (entity, c_collider) in query.iter(&*scene.world) {
             let Some(go) = scene.game_object_from_entity(*entity) else {
                 continue;
             };
@@ -341,15 +337,11 @@ impl PhysicsContext {
                 c.set_shape(Self::collider_shape(c_collider.shape));
                 c.set_friction(c_collider.friction);
                 c.set_density(c_collider.density);
-                dirty_entities.push(*entity);
+                dirty_objects.push(go);
             }
         }
-        for entity in dirty_entities {
-            if let Some(mut entry) = scene.world.entry(entity) {
-                if let Ok(c_c) = entry.get_component_mut::<ComponentCollider>() {
-                    c_c.dirty = false;
-                }
-            }
+        for go in dirty_objects {
+            scene.write_component::<ComponentCollider, _>(go, |c_c| c_c.dirty = false);
         }
     }
 
@@ -362,7 +354,7 @@ impl PhysicsContext {
     /// stale body pose.
     fn sync_transforms(scene: &mut Scene) {
         let mut query = <(Entity, &ComponentRigidBody)>::query();
-        for (entity, c_rb) in query.iter(&scene.world) {
+        for (entity, c_rb) in query.iter(&*scene.world) {
             let Some(go) = scene.game_object_from_entity(*entity) else {
                 continue;
             };
@@ -382,7 +374,7 @@ impl PhysicsContext {
             }
         }
         let mut query = <(Entity, &ComponentCollider)>::query();
-        for (entity, _) in query.iter(&scene.world) {
+        for (entity, _) in query.iter(&*scene.world) {
             let Some(go) = scene.game_object_from_entity(*entity) else {
                 continue;
             };
@@ -456,7 +448,7 @@ impl PhysicsContext {
 
         let mut query = <(Entity, &ComponentTransform, &ComponentRigidBody)>::query();
         let mut transforms: HashMap<GameObject, Mat4> = Default::default();
-        for (entity, _, _) in query.iter(&scene.world) {
+        for (entity, _, _) in query.iter(&*scene.world) {
             if let Some(go) = scene.game_object_from_entity(*entity) {
                 if let Some(rb_handle) = scene.physics.entity_rigid_body.get(entity).copied() {
                     let rb = &scene.physics.bodies[rb_handle];
@@ -474,7 +466,6 @@ impl PhysicsContext {
         for (go, transform) in transforms {
             scene.set_world_transform(go, transform);
         }
-        scene.clear_transform_cache();
     }
 
     pub fn step_simulation(

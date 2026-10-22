@@ -570,7 +570,7 @@ impl SceneRenderer {
         scene: &Scene,
         render_options: &PipelineOptions,
     ) {
-        let world = &scene.world;
+        let world = scene.world();
         self.draw_list.clear();
         self.object_ids_build.clear();
         self.object_id_lookup.clear();

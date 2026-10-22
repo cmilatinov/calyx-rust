@@ -29,7 +29,6 @@ use egui::{Color32, Frame, Margin, Shadow};
 use egui_tiles::{Container, Linear, LinearDir, Tiles, Tree};
 use egui_wgpu::wgpu::PowerPreference;
 use egui_wgpu::{SurfaceErrorAction, WgpuSetup, WgpuSetupCreateNew};
-use engine::component::ComponentTransform;
 use engine::context::{AssetContext, GameContext};
 use engine::core::Ref;
 use engine::error::BoxedError;
@@ -37,7 +36,6 @@ use engine::input::Input;
 use engine::logging::{DefaultLogger, Log};
 use engine::render::{Camera, SceneRenderer, SceneRendererOptions};
 use engine::scene::Scene;
-use engine::utils::TypeUuid;
 use engine::*;
 use rapier3d::prelude::DebugRenderPipeline;
 use selection::{Selection, SelectionType};
@@ -385,44 +383,18 @@ impl EditorAppState {
             );
             return false;
         };
-        let Some(instance) = (unsafe {
-            scene
-                .get_component_ptr(game_object, component)
-                .map(|ptr| &mut *ptr)
-        }) else {
-            log::warn!(
-                "Skipped inspector history restore because component {} is missing from game object {}",
-                key.component,
-                key.game_object
-            );
-            return false;
-        };
-        let Some(mut serialized) = instance.serialize() else {
-            log::warn!(
-                "Skipped inspector history restore because component {} cannot be serialized",
-                key.component
-            );
-            return false;
-        };
-        if !set_json_value(&mut serialized, &key.value_path, value) {
-            log::warn!(
-                "Skipped inspector history restore because value path {:?} no longer exists",
-                key.value_path
-            );
-            return false;
+        match restore_component_value(scene, game_object, component, &key.value_path, value) {
+            Ok(()) => true,
+            Err(err) => {
+                log::warn!(
+                    "Skipped inspector history restore of component {} on game object {} at {:?}: {err}",
+                    key.component,
+                    key.game_object,
+                    key.value_path
+                );
+                false
+            }
         }
-        if !instance.deserialize_in_place(&serialized) {
-            log::warn!(
-                "Skipped inspector history restore because component {} cannot be deserialized",
-                key.component
-            );
-            return false;
-        }
-        if key.component == ComponentTransform::type_uuid() {
-            scene.clear_transform_cache();
-        }
-        scene.refresh_network_object(game_object);
-        true
     }
 
     pub fn open_scene_file(&mut self, file: PathBuf) -> bool {
@@ -543,6 +515,51 @@ impl EditorAppState {
             }
         }
     }
+}
+
+/// Why a recorded inspector value could not be written back to its component.
+#[derive(Debug, PartialEq, Eq)]
+enum ValueRestoreError {
+    MissingComponent,
+    NotSerializable,
+    MissingValuePath,
+    NotDeserializable,
+}
+
+impl std::fmt::Display for ValueRestoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::MissingComponent => "the component is missing from the game object",
+            Self::NotSerializable => "the component cannot be serialized",
+            Self::MissingValuePath => "the value path no longer exists",
+            Self::NotDeserializable => "the component cannot be deserialized",
+        })
+    }
+}
+
+/// Writes `value` at `value_path` inside `game_object`'s `component`, leaving
+/// the component's other values as they are.
+fn restore_component_value(
+    scene: &mut Scene,
+    game_object: engine::scene::GameObject,
+    component: &dyn engine::component::Component,
+    value_path: &[String],
+    value: serde_json::Value,
+) -> Result<(), ValueRestoreError> {
+    scene
+        .write_component_dyn(game_object, component, |instance| {
+            let mut serialized = instance
+                .serialize()
+                .ok_or(ValueRestoreError::NotSerializable)?;
+            if !set_json_value(&mut serialized, value_path, value) {
+                return Err(ValueRestoreError::MissingValuePath);
+            }
+            if !instance.deserialize_in_place(&serialized) {
+                return Err(ValueRestoreError::NotDeserializable);
+            }
+            Ok(())
+        })
+        .unwrap_or(Err(ValueRestoreError::MissingComponent))
 }
 
 fn set_json_value(
@@ -1210,9 +1227,42 @@ impl EditorApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{set_json_value, ActiveSceneState, EditorApp};
+    use super::{restore_component_value, set_json_value, ActiveSceneState, EditorApp};
+    use engine::component::ComponentTransform;
+    use engine::utils::TypeUuid;
+    use nalgebra_glm::{self as glm, Vec3};
     use serde_json::json;
     use std::path::PathBuf;
+
+    #[test]
+    fn restoring_a_parent_position_moves_the_child() {
+        let registries = engine::test_support::test_registries();
+        let mut scene = registries.scene();
+        let parent = scene.create(None, None);
+        let child = scene.create(None, Some(parent));
+        scene.set_transform(parent, &glm::translation(&Vec3::new(1.0, 0.0, 0.0)));
+        scene.set_transform(child, &glm::translation(&Vec3::new(0.0, 1.0, 0.0)));
+        assert!((scene.world_transform(child).position - Vec3::new(1.0, 1.0, 0.0)).norm() < 1e-5);
+
+        let component_registry = registries.components.read();
+        let component = component_registry
+            .component(ComponentTransform::type_uuid())
+            .expect("transform should be registered");
+        restore_component_value(
+            &mut scene,
+            parent,
+            component,
+            &["transform".into(), "position".into()],
+            json!([5.0, 0.0, 0.0]),
+        )
+        .expect("the position should restore");
+
+        let child_world = scene.world_transform(child).position;
+        assert!(
+            (child_world - Vec3::new(5.0, 1.0, 0.0)).norm() < 1e-5,
+            "child world position {child_world:?}"
+        );
+    }
 
     #[test]
     fn active_scene_title_uses_untitled_fallback() {

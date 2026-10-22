@@ -502,6 +502,46 @@ mod tests {
     }
 
     #[test]
+    fn child_of_dynamic_body_follows_it_after_update() {
+        let mut scene = test_scene();
+        let body = scene.create(None, None);
+        let child = scene.create(None, Some(body));
+        scene.set_transform(body, &nalgebra_glm::translation(&Vec3::new(0.0, 10.0, 0.0)));
+        scene.set_transform(child, &nalgebra_glm::translation(&Vec3::new(1.0, 0.0, 0.0)));
+        scene.add_component(
+            body,
+            ComponentRigidBody {
+                ty: RigidBodyType::Dynamic,
+                ..Default::default()
+            },
+        );
+        scene.add_component(
+            body,
+            ComponentCollider {
+                shape: ColliderShape::Sphere { radius: 0.5 },
+                ..Default::default()
+            },
+        );
+        scene.prepare();
+        // Cache the child's world transform before physics moves the body.
+        assert!((scene.world_transform(child).position.y - 10.0).abs() < 1e-5);
+
+        let time = time_with_delta(1.0 / 60.0);
+        let config = PhysicsConfiguration::default();
+        for _ in 0..30 {
+            PhysicsContext::update(&mut scene, &time, &config);
+        }
+
+        let body_world = scene.world_transform(body).position;
+        let child_world = scene.world_transform(child).position;
+        assert!(body_world.y < 10.0, "body should fall, y={}", body_world.y);
+        assert!(
+            (child_world - (body_world + Vec3::new(1.0, 0.0, 0.0))).norm() < 1e-4,
+            "child {child_world:?} should follow body {body_world:?}"
+        );
+    }
+
+    #[test]
     fn prepare_removes_body_when_rigid_body_component_removed() {
         let mut scene = test_scene();
         let go = scene.create(None, None);
@@ -510,11 +550,7 @@ mod tests {
         scene.prepare();
         assert_eq!(scene.physics.bodies.len(), 1);
 
-        scene
-            .world
-            .entry(go.entity)
-            .unwrap()
-            .remove_component::<ComponentRigidBody>();
+        scene.remove_component::<ComponentRigidBody>(go);
         scene.prepare();
 
         assert_eq!(scene.physics.bodies.len(), 0);
@@ -534,11 +570,7 @@ mod tests {
         scene.prepare();
         assert_eq!(scene.physics.colliders.len(), 1);
 
-        scene
-            .world
-            .entry(go.entity)
-            .unwrap()
-            .remove_component::<ComponentCollider>();
+        scene.remove_component::<ComponentCollider>(go);
         scene.prepare();
 
         assert_eq!(scene.physics.colliders.len(), 0);
@@ -635,12 +667,10 @@ mod tests {
         step(&mut scene, 120);
         assert!(scene.world_transform(ball).position.y > 0.0);
 
-        {
-            let mut entry = scene.world.entry(floor_col.entity).unwrap();
-            let collider = entry.get_component_mut::<ComponentCollider>().unwrap();
+        scene.write_component::<ComponentCollider, _>(floor_col, |collider| {
             collider.enabled = false;
             collider.dirty = true;
-        }
+        });
         scene.prepare();
         let handle = scene.physics.entity_collider[&floor_col.entity];
         assert!(!scene.physics.colliders[handle].is_enabled());
@@ -652,12 +682,10 @@ mod tests {
             "ball should fall once the floor is disabled, y={y}"
         );
 
-        {
-            let mut entry = scene.world.entry(floor_col.entity).unwrap();
-            let collider = entry.get_component_mut::<ComponentCollider>().unwrap();
+        scene.write_component::<ComponentCollider, _>(floor_col, |collider| {
             collider.enabled = true;
             collider.dirty = true;
-        }
+        });
         scene.prepare();
         assert!(scene.physics.colliders[handle].is_enabled());
     }
