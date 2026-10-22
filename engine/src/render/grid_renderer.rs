@@ -54,7 +54,7 @@ impl GridRenderer {
         let device = &render_state.device;
         let queue = &render_state.queue;
         let mut quad_mesh = screen_space_quad.write();
-        let mut shader = self.shader.write();
+        let shader = self.shader.read();
         let mut render_pass = RenderUtils::overlay_pass(
             encoder,
             &scene_texture_msaa.view,
@@ -71,21 +71,18 @@ impl GridRenderer {
                 scene_texture_msaa.descriptor.format,
             ))])
             .build();
-        shader.build_pipeline(&options);
-        if let Some(pipeline) = shader.get_pipeline(&options) {
-            render_pass.set_pipeline(pipeline);
-            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-            quad_mesh.instances.resize(
-                1,
-                Instance {
-                    bone_transform_index: -1,
-                    object_id: 0,
-                    _padding: Default::default(),
-                    transform: Mat4::identity().into(),
-                },
-            );
-            RenderUtils::render_mesh(device, queue, &mut render_pass, &mut quad_mesh);
-        }
+        render_pass.set_pipeline(&shader.pipeline(&options));
+        render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+        quad_mesh.instances.resize(
+            1,
+            Instance {
+                bone_transform_index: -1,
+                object_id: 0,
+                _padding: Default::default(),
+                transform: Mat4::identity().into(),
+            },
+        );
+        RenderUtils::render_mesh(device, queue, &mut render_pass, &mut quad_mesh);
     }
 }
 

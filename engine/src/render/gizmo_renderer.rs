@@ -372,83 +372,68 @@ impl GizmoRenderer {
             .depth_stencil(Some(icon_depth))
             .fragment_targets(vec![Some(RenderUtils::color_alpha_blending(target_format))])
             .build();
-        self.shader.build_pipeline(&circle_options);
-        self.shader.build_pipeline(&cube_options);
-        self.shader.build_pipeline(&line_options);
-        self.shader.build_pipeline(&point_options);
-        self.icon_shader.build_pipeline(&icon_options);
         if !self.circle_list.is_empty() {
-            if let Some(pipeline) = self.shader.get_pipeline(&circle_options) {
-                render_pass.set_pipeline(pipeline);
-                render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
+            render_pass.set_pipeline(&self.shader.pipeline(&circle_options));
+            render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
 
-                RenderUtils::bind_mesh_buffers(render_pass, &self.wire_circle_mesh);
-                for (batch, (_, bind_group)) in self
-                    .circle_list
-                    .chunks(Mesh::MAX_INSTANCES)
-                    .zip(&self.circle_instances.chunks)
-                {
-                    render_pass.set_bind_group(1, bind_group, &[]);
-                    render_pass.draw(
-                        0..(self.wire_circle_mesh.vertices.len() as u32),
-                        0..(batch.len() as u32),
-                    );
-                }
+            RenderUtils::bind_mesh_buffers(render_pass, &self.wire_circle_mesh);
+            for (batch, (_, bind_group)) in self
+                .circle_list
+                .chunks(Mesh::MAX_INSTANCES)
+                .zip(&self.circle_instances.chunks)
+            {
+                render_pass.set_bind_group(1, bind_group, &[]);
+                render_pass.draw(
+                    0..(self.wire_circle_mesh.vertices.len() as u32),
+                    0..(batch.len() as u32),
+                );
             }
         }
 
         if !self.cube_list.is_empty() {
-            if let Some(pipeline) = self.shader.get_pipeline(&cube_options) {
-                render_pass.set_pipeline(pipeline);
-                render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
+            render_pass.set_pipeline(&self.shader.pipeline(&cube_options));
+            render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
 
-                RenderUtils::bind_mesh_buffers(render_pass, &self.wire_cube_mesh);
-                for (batch, (_, bind_group)) in self
-                    .cube_list
-                    .chunks(Mesh::MAX_INSTANCES)
-                    .zip(&self.cube_instances.chunks)
-                {
-                    render_pass.set_bind_group(1, bind_group, &[]);
-                    render_pass.draw_indexed(
-                        0..(self.wire_cube_mesh.indices.len() as u32),
-                        0,
-                        0..(batch.len() as u32),
-                    );
-                }
+            RenderUtils::bind_mesh_buffers(render_pass, &self.wire_cube_mesh);
+            for (batch, (_, bind_group)) in self
+                .cube_list
+                .chunks(Mesh::MAX_INSTANCES)
+                .zip(&self.cube_instances.chunks)
+            {
+                render_pass.set_bind_group(1, bind_group, &[]);
+                render_pass.draw_indexed(
+                    0..(self.wire_cube_mesh.indices.len() as u32),
+                    0,
+                    0..(batch.len() as u32),
+                );
             }
         }
 
         if !self.lines_mesh.vertices.is_empty() {
-            if let Some(pipeline) = self.shader.get_pipeline(&line_options) {
-                render_pass.set_pipeline(pipeline);
-                render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
+            render_pass.set_pipeline(&self.shader.pipeline(&line_options));
+            render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
 
-                RenderUtils::bind_mesh_buffers(render_pass, &self.lines_mesh);
-                render_pass.set_bind_group(1, &self.lines_bind_group, &[]);
-                render_pass.draw(0..(self.lines_mesh.vertices.len() as u32), 0..1);
-            }
+            RenderUtils::bind_mesh_buffers(render_pass, &self.lines_mesh);
+            render_pass.set_bind_group(1, &self.lines_bind_group, &[]);
+            render_pass.draw(0..(self.lines_mesh.vertices.len() as u32), 0..1);
         }
 
         if !self.points_mesh.vertices.is_empty() {
-            if let Some(pipeline) = self.shader.get_pipeline(&point_options) {
-                render_pass.set_pipeline(pipeline);
-                render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
+            render_pass.set_pipeline(&self.shader.pipeline(&point_options));
+            render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
 
-                RenderUtils::bind_mesh_buffers(render_pass, &self.points_mesh);
-                render_pass.set_bind_group(1, &self.points_bind_group, &[]);
-                render_pass.draw(0..(self.points_mesh.vertices.len() as u32), 0..1);
-            }
+            RenderUtils::bind_mesh_buffers(render_pass, &self.points_mesh);
+            render_pass.set_bind_group(1, &self.points_bind_group, &[]);
+            render_pass.draw(0..(self.points_mesh.vertices.len() as u32), 0..1);
         }
 
         if !self.icons_mesh.indices.is_empty() {
-            if let Some(pipeline) = self.icon_shader.get_pipeline(&icon_options) {
-                render_pass.set_pipeline(pipeline);
-                render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
-                render_pass.set_bind_group(1, &self.icon_texture.bind_group, &[]);
+            render_pass.set_pipeline(&self.icon_shader.pipeline(&icon_options));
+            render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.icon_texture.bind_group, &[]);
 
-                RenderUtils::bind_mesh_buffers(render_pass, &self.icons_mesh);
-                render_pass.draw_indexed(0..(self.icons_mesh.indices.len() as u32), 0, 0..1);
-            }
+            RenderUtils::bind_mesh_buffers(render_pass, &self.icons_mesh);
+            render_pass.draw_indexed(0..(self.icons_mesh.indices.len() as u32), 0, 0..1);
         }
     }
 
@@ -475,12 +460,7 @@ impl GizmoRenderer {
                 write_mask: wgpu::ColorWrites::RED,
             })])
             .build();
-        self.icon_object_id_shader.build_pipeline(&options);
-        let Some(pipeline) = self.icon_object_id_shader.get_pipeline(&options) else {
-            return;
-        };
-
-        render_pass.set_pipeline(pipeline);
+        render_pass.set_pipeline(&self.icon_object_id_shader.pipeline(&options));
         render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
         render_pass.set_bind_group(1, &self.icon_texture.object_id_bind_group, &[]);
         RenderUtils::bind_mesh_buffers(render_pass, &self.icons_mesh);
@@ -632,7 +612,7 @@ mod tests {
         let assets = TestAssets::engine();
         let context = assets.asset_context();
         let read_only_context = context.lock_read();
-        let mut shader = Shader::from_file(
+        let shader = Shader::from_file(
             &read_only_context,
             &assets.engine_root().join("shaders/gizmo_icons.wgsl"),
         )
@@ -648,9 +628,9 @@ mod tests {
             ))])
             .build();
 
-        shader.build_pipeline(&icon_options);
+        let pipeline = shader.pipeline(&icon_options);
 
-        assert!(shader.get_pipeline(&icon_options).is_some());
+        assert_eq!(shader.pipeline(&icon_options), pipeline);
     }
 
     #[test]
@@ -658,7 +638,7 @@ mod tests {
         let assets = TestAssets::engine();
         let context = assets.asset_context();
         let read_only_context = context.lock_read();
-        let mut shader = Shader::from_file(
+        let shader = Shader::from_file(
             &read_only_context,
             &assets
                 .engine_root()
@@ -679,9 +659,9 @@ mod tests {
             })])
             .build();
 
-        shader.build_pipeline(&icon_options);
+        let pipeline = shader.pipeline(&icon_options);
 
-        assert!(shader.get_pipeline(&icon_options).is_some());
+        assert_eq!(shader.pipeline(&icon_options), pipeline);
     }
 
     #[test]

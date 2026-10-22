@@ -89,7 +89,7 @@ impl SkyboxRenderer {
             );
 
             let device = &render_state.device;
-            let mut shader = self.skybox_shader.write();
+            let shader = self.skybox_shader.read();
             let cube_mesh = cube_mesh.read();
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
@@ -120,14 +120,11 @@ impl SkyboxRenderer {
                 .samples(samples)
                 .cull_mode(Some(wgpu::Face::Front))
                 .build();
-            shader.build_pipeline(&options);
-            if let Some(pipeline) = shader.get_pipeline(&options) {
-                render_pass.set_pipeline(pipeline);
-                render_pass.set_bind_group(0, camera_bind_group, &[]);
-                render_pass.set_bind_group(1, &bind_group, &[]);
-                RenderUtils::bind_mesh_buffers(&mut render_pass, &cube_mesh);
-                RenderUtils::draw_mesh_instanced(&mut render_pass, &cube_mesh, 0..1);
-            }
+            render_pass.set_pipeline(&shader.pipeline(&options));
+            render_pass.set_bind_group(0, camera_bind_group, &[]);
+            render_pass.set_bind_group(1, &bind_group, &[]);
+            RenderUtils::bind_mesh_buffers(&mut render_pass, &cube_mesh);
+            RenderUtils::draw_mesh_instanced(&mut render_pass, &cube_mesh, 0..1);
         }
     }
 }
