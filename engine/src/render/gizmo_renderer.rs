@@ -24,6 +24,9 @@ use super::buffer::wgpu_buffer_init_desc;
 use super::{Camera, PipelineOptions, SceneRendererError, Shader};
 
 const HIDDEN_GIZMO_OPACITY: f32 = 0.35;
+/// Gizmo instances one instance uniform buffer holds: `MAX_INSTANCES` in
+/// `shaders/gizmos.wgsl`.
+const MAX_GIZMO_INSTANCES: usize = 30;
 const PHOSPHOR_ICON_ATLAS_PNG: &[u8] =
     include_bytes!("../../../resources/icons/phosphor_regular.png");
 const PHOSPHOR_CAMERA_FILL_RECT: (u32, u32, u32, u32) = (4622, 794, 128, 128);
@@ -71,7 +74,7 @@ pub struct GizmoRenderer {
     cube_instances: InstanceChunks,
 }
 
-/// Instance uniform buffers holding at most `Mesh::MAX_INSTANCES` gizmo
+/// Instance uniform buffers holding at most `MAX_GIZMO_INSTANCES` gizmo
 /// instances each, so lists beyond the cap are drawn in further batches.
 struct InstanceChunks {
     label: &'static str,
@@ -94,11 +97,11 @@ impl InstanceChunks {
         layout: &wgpu::BindGroupLayout,
         instances: &[GizmoInstance],
     ) {
-        for (index, batch) in instances.chunks(Mesh::MAX_INSTANCES).enumerate() {
+        for (index, batch) in instances.chunks(MAX_GIZMO_INSTANCES).enumerate() {
             if index >= self.chunks.len() {
                 let buffer = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some(self.label),
-                    size: (size_of::<GizmoInstance>() * Mesh::MAX_INSTANCES) as u64,
+                    size: (size_of::<GizmoInstance>() * MAX_GIZMO_INSTANCES) as u64,
                     usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
@@ -147,7 +150,7 @@ impl GizmoRenderer {
                 enable_normals: 0,
                 use_uv_colors: 1,
                 _padding: Default::default(),
-            }; Mesh::MAX_INSTANCES],
+            }; MAX_GIZMO_INSTANCES],
         ));
 
         let shader = Self::load_shader(game, Path::new("shaders/gizmos.wgsl"))?;
@@ -378,7 +381,7 @@ impl GizmoRenderer {
             RenderUtils::bind_mesh_buffers(render_pass, &self.wire_circle_mesh);
             for (batch, (_, bind_group)) in self
                 .circle_list
-                .chunks(Mesh::MAX_INSTANCES)
+                .chunks(MAX_GIZMO_INSTANCES)
                 .zip(&self.circle_instances.chunks)
             {
                 render_pass.set_bind_group(1, bind_group, &[]);
@@ -396,7 +399,7 @@ impl GizmoRenderer {
             RenderUtils::bind_mesh_buffers(render_pass, &self.wire_cube_mesh);
             for (batch, (_, bind_group)) in self
                 .cube_list
-                .chunks(Mesh::MAX_INSTANCES)
+                .chunks(MAX_GIZMO_INSTANCES)
                 .zip(&self.cube_instances.chunks)
             {
                 render_pass.set_bind_group(1, bind_group, &[]);
@@ -689,7 +692,7 @@ mod tests {
             use_uv_colors: 0,
             _padding: Default::default(),
         };
-        let instances = vec![instance; Mesh::MAX_INSTANCES * 2 + 1];
+        let instances = vec![instance; MAX_GIZMO_INSTANCES * 2 + 1];
         let mut chunks = InstanceChunks::new("test_instance_buffer");
 
         chunks.upload(

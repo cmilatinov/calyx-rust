@@ -1,4 +1,3 @@
-const MAX_INSTANCES = 30u;
 const MAX_BONE_INFLUENCE = 4u;
 
 struct Instance {
@@ -8,9 +7,9 @@ struct Instance {
     transform: mat4x4f,
 };
 
-struct MeshUniforms {
+struct MeshInstances {
     num_bones: u32,
-    instances: array<Instance, MAX_INSTANCES>
+    instances: array<Instance>,
 };
 
 struct BoneTransform {
@@ -23,7 +22,7 @@ struct BoneStorage {
 };
 
 @group(1) @binding(0)
-var<uniform> mesh: MeshUniforms;
+var<storage, read> mesh: MeshInstances;
 
 @group(1) @binding(1)
 var<storage, read> bones: BoneStorage;
