@@ -95,6 +95,11 @@ struct AssetData {
     dirty: HashMap<Uuid, Instant>,
     dependencies: HashMap<PathBuf, HashSet<Uuid>>,
     reload_errors: Vec<AssetReloadError>,
+    /// Registration generation and source path of each on-disk asset id. A
+    /// file deleted and recreated at the same path, or an id moving to
+    /// another source, keeps its id but gets a new generation.
+    generations: HashMap<Uuid, (u64, PathBuf)>,
+    next_generation: u64,
 }
 
 /// Loader registered for one asset type. Cloned out of the registry before it
@@ -476,9 +481,15 @@ impl AssetRegistry {
         mode: LoadMode,
         asset_type: Option<Uuid>,
     ) -> Result<Ref<dyn Asset>, AssetError> {
-        let meta = self
-            .asset_meta_from_id(id)
-            .ok_or_else(|| AssetError::NotFound.with_source(format!("asset id {id}")))?;
+        let (meta, generation) = {
+            let data = self.asset_data();
+            (
+                data.meta.get(&id).cloned(),
+                data.generations.get(&id).map(|(generation, _)| *generation),
+            )
+        };
+        let meta =
+            meta.ok_or_else(|| AssetError::NotFound.with_source(format!("asset id {id}")))?;
         if let Some(parent_id) = meta.parent {
             self.load_asset(parent_id, LoadMode::Load, None)?;
         }
@@ -531,9 +542,30 @@ impl AssetRegistry {
         let LoadedAssetRef { asset, sub_assets } =
             (ctor.load)(self.asset_context(), id, path, existing.as_ref())?;
         let sub_asset_count = sub_assets.len();
-        self.load_sub_asset_meta(id, sub_assets);
-        if existing.is_none() {
-            self.asset_cache_mut().insert(id, asset.clone());
+        {
+            // Check, record sub-assets and cache under the metadata lock, so
+            // a deletion that forgot this source while it loaded cannot be
+            // undone here; the forgetting side drops metadata before it
+            // evicts the cache. The generation catches a delete and recreate
+            // at the same path.
+            let mut data = self.asset_data_mut();
+            let registered = data
+                .meta
+                .get(&id)
+                .is_some_and(|current| current.path == meta.path)
+                && data.generations.get(&id).map(|(generation, _)| *generation) == generation;
+            let mut cache = self.asset_cache_mut();
+            if !registered {
+                Self::discard_stale_load_locked(&mut data, &mut cache, id, &sub_assets);
+                log::info!("Discarding asset {id}: its source was removed while it loaded");
+                return Err(AssetError::NotFound
+                    .with_path(path)
+                    .with_source(format!("asset {id} source was removed while it loaded")));
+            }
+            self.load_sub_asset_meta_locked(&mut data, id, sub_assets);
+            if existing.is_none() {
+                cache.insert(id, asset.clone());
+            }
         }
         match mode {
             LoadMode::Load => log::trace!("Loaded asset {} from {}", id, path.display()),
@@ -819,8 +851,32 @@ impl AssetRegistry {
         );
     }
 
-    fn load_sub_asset_meta(&self, id: Uuid, sub_assets: Vec<Uuid>) {
-        let mut data = self.asset_data_mut();
+    /// Drops what a load whose source was forgotten while it ran left
+    /// behind: the asset and its sub-assets in the cache, and the metadata
+    /// and names of sub-assets the load created. Sub-assets the asset
+    /// registered now under this id lists as its own are kept.
+    fn discard_stale_load_locked(
+        data: &mut AssetData,
+        cache: &mut AssetCache,
+        id: Uuid,
+        sub_assets: &[Uuid],
+    ) {
+        cache.remove(&id);
+        let kept: HashSet<Uuid> = data
+            .meta
+            .get(&id)
+            .map(|meta| meta.children.iter().copied().collect())
+            .unwrap_or_default();
+        for sub_asset_id in sub_assets {
+            cache.remove(sub_asset_id);
+            if !kept.contains(sub_asset_id) {
+                data.meta.remove(sub_asset_id);
+                data.names.retain(|_, name_id| name_id != sub_asset_id);
+            }
+        }
+    }
+
+    fn load_sub_asset_meta_locked(&self, data: &mut AssetData, id: Uuid, sub_assets: Vec<Uuid>) {
         if let Some(parent_meta) = data.meta.get(&id) {
             if let Some(path) = &parent_meta.path {
                 let meta_path = path.with_extension("meta");
@@ -930,8 +986,15 @@ impl AssetRegistry {
         match event.kind {
             EventKind::Create(_) => {
                 for file in paths_iter {
+                    let Some(asset_path) = self.owning_asset_root(file) else {
+                        log::warn!(
+                            "Ignoring created file outside every asset root: {}",
+                            file.display()
+                        );
+                        continue;
+                    };
                     if let Err(err) =
-                        self.build_asset_meta(self.root_path(), file, &file.with_extension("meta"))
+                        self.build_asset_meta(asset_path, file, &file.with_extension("meta"))
                     {
                         log::warn!(
                             "Failed to build asset metadata for {}: {}",
@@ -947,6 +1010,11 @@ impl AssetRegistry {
                 }
             }
             EventKind::Remove(_) => {
+                // A deleted folder arrives as one extensionless path that
+                // `notify_event_paths` drops, so forget by path prefix here.
+                for removed in event.paths.iter().filter(|path| !path.exists()) {
+                    self.forget_assets_under(removed);
+                }
                 for file in paths_iter {
                     if file.is_file() {
                         log::trace!(
@@ -1014,20 +1082,103 @@ impl AssetRegistry {
         self.asset_id_from_path(path).map(|id| self.asset_name(id))
     }
 
-    /// Resolves an asset UUID from a filesystem path.
-    pub fn asset_id_from_path(&self, path: &Path) -> Option<Uuid> {
-        for root_path in &self.asset_paths {
-            if common_path::common_path(root_path, path)
-                .map(|prefix| prefix == *root_path)
-                .unwrap_or(false)
-            {
-                return path.relative_to(root_path).ok().and_then(|p| {
-                    let p = p.with_extension("");
-                    self.asset_data().names.get(&p).copied()
-                });
+    /// Returns the asset root that contains `path`, preferring the deepest
+    /// root when roots nest.
+    fn owning_asset_root(&self, path: &Path) -> Option<&Path> {
+        self.asset_paths
+            .iter()
+            .filter(|root| path.starts_with(root))
+            .max_by_key(|root| root.components().count())
+            .map(PathBuf::as_path)
+    }
+
+    /// Drops the in-memory metadata, names, dirty marks, reload errors and
+    /// dependency entries of every asset whose source file is `path` or lies below it,
+    /// and of their sub-assets. Assets are matched by their stored source
+    /// path, not by name, so a same-name asset in another root survives and
+    /// is registered again under any name the forgotten asset held.
+    fn forget_assets_under(&self, path: &Path) {
+        let mut data = self.asset_data_mut();
+        let mut ids: HashSet<Uuid> = HashSet::new();
+        for meta in data.meta.values() {
+            if meta.path.as_deref().is_some_and(|p| p.starts_with(path)) {
+                ids.insert(meta.id);
+                ids.extend(meta.children.iter().copied());
             }
         }
-        None
+        if ids.is_empty() {
+            return;
+        }
+        let freed: HashSet<RelativePathBuf> = data
+            .names
+            .iter()
+            .filter(|(_, id)| ids.contains(id))
+            .map(|(name, _)| name.clone())
+            .collect();
+        data.meta.retain(|id, _| !ids.contains(id));
+        data.names.retain(|_, id| !ids.contains(id));
+        data.dirty.retain(|id, _| !ids.contains(id));
+        data.reload_errors.retain(|error| !ids.contains(&error.id));
+        data.generations.retain(|id, _| !ids.contains(id));
+        for dependents in data.dependencies.values_mut() {
+            dependents.retain(|dependent| !ids.contains(dependent));
+        }
+        data.dependencies
+            .retain(|_, dependents| !dependents.is_empty());
+
+        drop(data);
+        // Evict cached values too: a recreated file often gets the same
+        // path-derived id and must load fresh. Holders keep their own refs.
+        self.asset_cache_mut().retain(|id, _| !ids.contains(id));
+        self.register_sources_named(&freed);
+        log::info!("Forgot deleted assets under {}", path.display());
+    }
+
+    /// Registers again, from disk, every asset file in any root whose name
+    /// is in `names`. A same-name file in another root can be hidden by the
+    /// forgotten asset, sometimes under the same generated id, so only a
+    /// rescan of the roots finds it.
+    fn register_sources_named(&self, names: &HashSet<RelativePathBuf>) {
+        for name in names {
+            for root in &self.asset_paths {
+                let Some(dir) = name.to_path(root).parent().map(Path::to_path_buf) else {
+                    continue;
+                };
+                let Ok(entries) = std::fs::read_dir(&dir) else {
+                    continue;
+                };
+                for candidate in entries.filter_map(|entry| entry.ok().map(|e| e.path())) {
+                    // The same files `build_meta` registers at startup.
+                    let ext = candidate
+                        .extension()
+                        .map_or("", |ext| ext.to_str().unwrap_or(""));
+                    if ext.is_empty() || ext == "meta" || ext == "rs" || !candidate.is_file() {
+                        continue;
+                    }
+                    if self.owning_asset_root(&candidate) != Some(root.as_path())
+                        || Self::relative_asset_path(root, &candidate).ok().as_ref() != Some(name)
+                    {
+                        continue;
+                    }
+                    if let Err(err) =
+                        self.build_asset_meta(root, &candidate, &candidate.with_extension("meta"))
+                    {
+                        log::warn!(
+                            "Failed to build asset metadata for {}: {}",
+                            candidate.display(),
+                            err
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Resolves an asset UUID from a filesystem path.
+    pub fn asset_id_from_path(&self, path: &Path) -> Option<Uuid> {
+        let root_path = self.owning_asset_root(path)?;
+        let name = Self::relative_asset_path(root_path, path).ok()?;
+        self.asset_data().names.get(&name).copied()
     }
 
     /// Returns metadata for the asset named `name`.
@@ -1104,6 +1255,10 @@ impl AssetRegistry {
                 if ext.is_empty() || ext == "meta" || ext == "rs" {
                     continue;
                 }
+                if self.owning_asset_root(&path) != Some(asset_path.as_path()) {
+                    // A deeper root owns this file; its own pass registers it.
+                    continue;
+                }
                 let meta_path = path.with_extension("meta");
                 if let Err(err) = self.build_asset_meta(asset_path, &path, &meta_path) {
                     log::warn!(
@@ -1126,6 +1281,17 @@ impl AssetRegistry {
         path: &Path,
         meta_path: &Path,
     ) -> Result<(), BoxedError> {
+        let name_path = Self::relative_asset_path(asset_path, path)?;
+        // The asset this name resolves to now, captured before the metadata
+        // read below replaces it, in case this file takes over its id.
+        let previous = {
+            let data = self.asset_data();
+            data.names
+                .get(&name_path)
+                .and_then(|id| data.meta.get(id))
+                .filter(|meta| meta.parent.is_none())
+                .cloned()
+        };
         let mut meta = if meta_path.exists() {
             self.load_meta_file(asset_path, meta_path)?.main
         } else {
@@ -1158,10 +1324,58 @@ impl AssetRegistry {
             Cow::Owned(p) => p,
         });
         let id = meta.id;
+        let source = meta.path.clone().unwrap_or_default();
         let mut data = self.asset_data_mut();
+        let children = meta.children.clone();
         data.meta.insert(id, meta);
-        data.names
-            .insert(Self::relative_asset_path(asset_path, path), id);
+        data.names.insert(name_path.clone(), id);
+        // Only a new registration gets a new generation: forgetting an asset
+        // drops its generation, so a delete and recreate counts as new, and
+        // so does the id moving to another source, while a create event for
+        // a still-registered file must not make in-flight loads of it stale.
+        let moved = data
+            .generations
+            .get(&id)
+            .is_some_and(|(_, previous)| *previous != source);
+        if moved || !data.generations.contains_key(&id) {
+            data.next_generation += 1;
+            let generation = data.next_generation;
+            data.generations.insert(id, (generation, source));
+        }
+        if moved {
+            // The previous source's sub-assets that this source does not
+            // also define belong to a file no longer registered here.
+            let stale_children: HashSet<Uuid> = previous
+                .filter(|previous| previous.id == id)
+                .map(|previous| {
+                    previous
+                        .children
+                        .into_iter()
+                        .filter(|child| !children.contains(child))
+                        .collect()
+                })
+                .unwrap_or_default();
+            data.meta
+                .retain(|meta_id, _| !stale_children.contains(meta_id));
+            // Names the previous source gave this id and its sub-assets, as
+            // when the file moved along with its `.meta`, no longer apply.
+            data.names.retain(|name, name_id| {
+                let ours = *name_id == id || children.contains(name_id);
+                !stale_children.contains(name_id)
+                    && (!ours || *name == name_path || name.starts_with(&name_path))
+            });
+            data.dirty
+                .retain(|dirty_id, _| !stale_children.contains(dirty_id));
+            // A reload error described the previous source.
+            data.reload_errors
+                .retain(|error| error.id != id && !stale_children.contains(&error.id));
+            // Cached values were read from the previous source.
+            let mut cache = self.asset_cache_mut();
+            cache.remove(&id);
+            for child in children.iter().chain(&stale_children) {
+                cache.remove(child);
+            }
+        }
         drop(data);
         self.update_asset_dependencies(id, path);
         log::trace!("Built asset metadata for {}", path.display());
@@ -1200,11 +1414,20 @@ impl AssetRegistry {
         std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
     }
 
-    fn relative_asset_path(asset_path: &Path, path: &Path) -> RelativePathBuf {
-        path.relative_to(asset_path)
-            .unwrap()
+    /// Returns `path` relative to `asset_path` without its extension, or an
+    /// error when `path` is not inside `asset_path`.
+    fn relative_asset_path(asset_path: &Path, path: &Path) -> Result<RelativePathBuf, BoxedError> {
+        let relative = path.strip_prefix(asset_path).map_err(|_| {
+            format!(
+                "{} is not inside asset root {}",
+                path.display(),
+                asset_path.display()
+            )
+        })?;
+        Ok(RelativePathBuf::from_path(relative)
+            .map_err(Box::new)?
             .normalize()
-            .with_extension("")
+            .with_extension(""))
     }
 
     fn sub_asset_name(parent_name: &str, local_name: &str) -> String {
@@ -1228,18 +1451,22 @@ impl AssetRegistry {
         asset_path: &Path,
         meta_path: &Path,
     ) -> Result<AssetMetaData, BoxedError> {
+        let name_path = Self::relative_asset_path(asset_path, meta_path)?;
         let file = File::open(meta_path).map_err(Box::new)?;
         let reader = BufReader::new(file);
         let mut meta: AssetMetaData = serde_json::from_reader(reader).map_err(Box::new)?;
+        // Child names may carry the stored main name as a legacy prefix, so
+        // strip it before the main name is rebased onto the file's location
+        // under its owning root (an older scan may have used an outer root).
+        for child in meta.inner.iter_mut() {
+            child.name = Self::local_sub_asset_name(&meta.main.name, &child.name);
+        }
+        meta.main.name = name_path.to_string();
         let mut data = self.asset_data_mut();
         meta.main.children = meta.inner.iter().map(|m| m.id).collect();
         data.meta.insert(meta.main.id, meta.main.clone());
-        data.names.insert(
-            Self::relative_asset_path(asset_path, meta_path),
-            meta.main.id,
-        );
+        data.names.insert(name_path, meta.main.id);
         for child in meta.inner.iter_mut() {
-            child.name = Self::local_sub_asset_name(&meta.main.name, &child.name);
             child.parent = Some(meta.main.id);
             let name = Self::sub_asset_name(&meta.main.name, &child.name);
             data.meta.insert(child.id, child.clone());
@@ -1299,7 +1526,14 @@ impl AssetRegistry {
         };
 
         for id in reload_ids {
-            let Some(meta) = self.asset_meta_from_id(id) else {
+            let (meta, generation) = {
+                let data = self.asset_data();
+                (
+                    data.meta.get(&id).cloned(),
+                    data.generations.get(&id).map(|(generation, _)| *generation),
+                )
+            };
+            let Some(meta) = meta else {
                 continue;
             };
             let Some(path) = meta.path else {
@@ -1323,9 +1557,28 @@ impl AssetRegistry {
                     path.display(),
                     error
                 );
-                self.set_reload_error(AssetReloadError { id, path, error });
+                self.set_current_reload_error(generation, AssetReloadError { id, path, error });
             }
         }
+    }
+
+    /// Records a reload error only while the source it was read from is
+    /// still registered under the same generation, so a failure of a file
+    /// deleted, or deleted and recreated, during the reload is dropped.
+    fn set_current_reload_error(&self, generation: Option<u64>, reload_error: AssetReloadError) {
+        let mut data = self.asset_data_mut();
+        let id = reload_error.id;
+        let current = data
+            .meta
+            .get(&id)
+            .is_some_and(|meta| meta.path.as_ref() == Some(&reload_error.path))
+            && data.generations.get(&id).map(|(generation, _)| *generation) == generation;
+        if !current {
+            log::info!("Dropping reload error for asset {id}: its source was removed");
+            return;
+        }
+        data.reload_errors.retain(|error| error.id != id);
+        data.reload_errors.push(reload_error);
     }
 
     /// Returns the current list of asset hot-reload failures.
@@ -1337,13 +1590,6 @@ impl AssetRegistry {
         self.asset_data_mut()
             .reload_errors
             .retain(|error| error.id != id);
-    }
-
-    fn set_reload_error(&self, reload_error: AssetReloadError) {
-        let mut data = self.asset_data_mut();
-        data.reload_errors
-            .retain(|error| error.id != reload_error.id);
-        data.reload_errors.push(reload_error);
     }
 }
 
@@ -1679,6 +1925,330 @@ mod tests {
     }
 
     #[test]
+    fn create_event_in_second_root_registers_relative_to_that_root() {
+        let first_root = temp_asset_root("calyx-create-event-first-root");
+        let second_root = temp_asset_root("calyx-create-event-second-root");
+        let registries = test_registries_with_assets(vec![first_root.clone(), second_root.clone()]);
+        let registry = registries.assets.read();
+        std::fs::create_dir_all(second_root.join("nested")).expect("failed to create nested dir");
+        let asset_path = second_root.join("nested").join("created.cxscene");
+        std::fs::write(&asset_path, b"{}").expect("failed to write created asset");
+        let event = Event::new(EventKind::Create(notify::event::CreateKind::File))
+            .add_path(asset_path.clone());
+
+        registry.recv_notify_event(event);
+
+        let id = registry
+            .asset_id("nested/created")
+            .expect("created asset is registered under the second root");
+        let meta = registry
+            .asset_meta_from_id(id)
+            .expect("created asset has metadata");
+        assert_eq!(meta.name, "nested/created");
+        assert_eq!(registry.asset_id_from_path(&asset_path), Some(id));
+        assert!(second_root.join("nested").join("created.meta").exists());
+        drop(registry);
+        std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
+        std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
+    }
+
+    #[test]
+    fn path_lookup_uses_deepest_root_when_roots_nest() {
+        let outer_root = temp_asset_root("calyx-nested-roots");
+        let inner_root = outer_root.join("inner");
+        std::fs::create_dir_all(&inner_root).expect("failed to create inner asset root");
+        let registries = test_registries_with_assets(vec![outer_root.clone(), inner_root.clone()]);
+        let registry = registries.assets.read();
+        let asset_path = inner_root.join("created.cxscene");
+        std::fs::write(&asset_path, b"{}").expect("failed to write created asset");
+        let event = Event::new(EventKind::Create(notify::event::CreateKind::File))
+            .add_path(asset_path.clone());
+
+        registry.recv_notify_event(event);
+
+        let id = registry
+            .asset_id("created")
+            .expect("created asset is registered under the inner root");
+        assert_eq!(registry.asset_id_from_path(&asset_path), Some(id));
+        drop(registry);
+        std::fs::remove_dir_all(outer_root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn startup_scan_names_nested_assets_relative_to_deepest_root() {
+        let outer_root = temp_asset_root("calyx-nested-startup");
+        let inner_root = outer_root.join("inner");
+        std::fs::create_dir_all(&inner_root).expect("failed to create inner asset root");
+        let asset_path = inner_root.join("existing.cxscene");
+        std::fs::write(&asset_path, b"{}").expect("failed to write existing asset");
+        let registries = test_registries_with_assets(vec![outer_root.clone(), inner_root.clone()]);
+        let registry = registries.assets.read();
+
+        let id = registry
+            .asset_id("existing")
+            .expect("existing asset is registered under the inner root");
+        assert_eq!(
+            registry.asset_meta_from_id(id).map(|meta| meta.name),
+            Some("existing".into())
+        );
+        assert_eq!(registry.asset_id_from_path(&asset_path), Some(id));
+        assert_eq!(registry.asset_id("inner/existing"), None);
+        drop(registry);
+        std::fs::remove_dir_all(outer_root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn remove_event_forgets_only_the_asset_at_the_removed_path() {
+        let first_root = temp_asset_root("calyx-same-name-first-root");
+        let second_root = temp_asset_root("calyx-same-name-second-root");
+        let (first_path, _, first_id) = write_scene_with_meta(&first_root);
+        let (_, _, second_id) = write_scene_with_meta(&second_root);
+        let registries = test_registries_with_assets(vec![first_root.clone(), second_root.clone()]);
+        let registry = registries.assets.read();
+        assert_eq!(registry.asset_id("scene"), Some(second_id));
+
+        std::fs::remove_file(&first_path).expect("failed to delete first scene");
+        registry.recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(first_path),
+        );
+
+        assert!(registry.asset_meta_from_id(first_id).is_none());
+        assert!(registry.asset_meta_from_id(second_id).is_some());
+        assert_eq!(registry.asset_id("scene"), Some(second_id));
+        drop(registry);
+        std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
+        std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
+    }
+
+    #[test]
+    fn remove_event_for_name_owner_restores_same_name_asset_from_other_root() {
+        let first_root = temp_asset_root("calyx-same-name-restore-first-root");
+        let second_root = temp_asset_root("calyx-same-name-restore-second-root");
+        let (_, _, first_id) = write_scene_with_meta(&first_root);
+        let (second_path, _, second_id) = write_scene_with_meta(&second_root);
+        let registries = test_registries_with_assets(vec![first_root.clone(), second_root.clone()]);
+        let registry = registries.assets.read();
+        assert_eq!(registry.asset_id("scene"), Some(second_id));
+
+        std::fs::remove_file(&second_path).expect("failed to delete second scene");
+        registry.recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(second_path),
+        );
+
+        assert!(registry.asset_meta_from_id(second_id).is_none());
+        assert_eq!(registry.asset_id("scene"), Some(first_id));
+        drop(registry);
+        std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
+        std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
+    }
+
+    #[test]
+    fn remove_event_restores_same_name_asset_sharing_a_generated_id() {
+        let first_root = temp_asset_root("calyx-shared-id-first-root");
+        let second_root = temp_asset_root("calyx-shared-id-second-root");
+        let first_path = first_root.join("scene.cxscene");
+        let second_path = second_root.join("scene.cxscene");
+        std::fs::write(&first_path, b"{}").expect("failed to write first scene");
+        std::fs::write(&second_path, b"{}").expect("failed to write second scene");
+        let registries = test_registries_with_assets(vec![first_root.clone(), second_root.clone()]);
+        let registry = registries.assets.read();
+        let id = registry.asset_id("scene").expect("scene is registered");
+        assert_eq!(
+            registry.asset_meta_from_id(id).and_then(|meta| meta.path),
+            Some(second_path.clone())
+        );
+
+        std::fs::remove_file(&second_path).expect("failed to delete second scene");
+        registry.recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(second_path),
+        );
+
+        let restored = registry
+            .asset_id("scene")
+            .expect("the first root's scene takes the name back");
+        assert_eq!(
+            registry
+                .asset_meta_from_id(restored)
+                .and_then(|meta| meta.path),
+            Some(first_path)
+        );
+        drop(registry);
+        std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
+        std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
+    }
+
+    #[test]
+    fn remove_event_clears_reload_errors_of_deleted_asset() {
+        let root = temp_asset_root("calyx-remove-clears-reload-error");
+        let (asset_path, _, asset_id) = write_scene_with_meta(&root);
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        let generation = registry
+            .asset_data()
+            .generations
+            .get(&asset_id)
+            .map(|(generation, _)| *generation);
+        registry.set_current_reload_error(
+            generation,
+            AssetReloadError {
+                id: asset_id,
+                path: asset_path.clone(),
+                error: AssetError::LoadError.with_source("test reload failure"),
+            },
+        );
+        assert_eq!(registry.reload_errors().len(), 1);
+
+        std::fs::remove_file(&asset_path).expect("failed to delete scene asset");
+        registry.recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(asset_path),
+        );
+
+        assert!(registry.reload_errors().is_empty());
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn remove_event_restores_same_name_asset_with_unregistered_extension() {
+        let first_root = temp_asset_root("calyx-unregistered-ext-first-root");
+        let second_root = temp_asset_root("calyx-unregistered-ext-second-root");
+        let first_path = first_root.join("scene.custom");
+        let second_path = second_root.join("scene.custom");
+        std::fs::write(&first_path, b"").expect("failed to write first file");
+        std::fs::write(&second_path, b"").expect("failed to write second file");
+        let registries = test_registries_with_assets(vec![first_root.clone(), second_root.clone()]);
+        let registry = registries.assets.read();
+        assert!(registry.asset_id("scene").is_some());
+
+        std::fs::remove_file(&second_path).expect("failed to delete second file");
+        registry.recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(second_path),
+        );
+
+        let restored = registry
+            .asset_id("scene")
+            .expect("the first root's file takes the name back");
+        assert_eq!(
+            registry
+                .asset_meta_from_id(restored)
+                .and_then(|meta| meta.path),
+            Some(first_path)
+        );
+        drop(registry);
+        std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
+        std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
+    }
+
+    #[test]
+    fn folder_remove_event_forgets_assets_below_the_folder() {
+        let root = temp_asset_root("calyx-folder-remove");
+        let folder = root.join("sub");
+        std::fs::create_dir_all(&folder).expect("failed to create asset folder");
+        let (_, _, asset_id) = write_scene_with_meta(&folder);
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        assert_eq!(registry.asset_id("sub/scene"), Some(asset_id));
+
+        std::fs::remove_dir_all(&folder).expect("failed to delete asset folder");
+        registry.recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::Folder)).add_path(folder),
+        );
+
+        assert_eq!(registry.asset_id("sub/scene"), None);
+        assert!(registry.asset_meta_from_id(asset_id).is_none());
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn legacy_outer_relative_meta_is_rebased_to_owning_root() {
+        let outer_root = temp_asset_root("calyx-legacy-nested-meta");
+        let inner_root = outer_root.join("inner");
+        std::fs::create_dir_all(&inner_root).expect("failed to create inner asset root");
+        let parent_id = Uuid::new_v4();
+        let child_id = Uuid::new_v4();
+        std::fs::write(inner_root.join("parent.fbx"), b"").expect("failed to write parent asset");
+        std::fs::write(
+            inner_root.join("parent.meta"),
+            serde_json::to_vec_pretty(&json!({
+                "main": {
+                    "id": parent_id,
+                    "name": "inner/parent",
+                    "display_name": "parent",
+                    "type_uuid": Prefab::type_uuid(),
+                },
+                "inner": [
+                    {
+                        "id": child_id,
+                        "name": "inner/parent/Body",
+                        "display_name": "Body",
+                        "type_uuid": Mesh::type_uuid(),
+                    }
+                ]
+            }))
+            .expect("failed to encode test meta"),
+        )
+        .expect("failed to write parent meta");
+        let registries = test_registries_with_assets(vec![outer_root.clone(), inner_root.clone()]);
+        let registry = registries.assets.read();
+
+        assert_eq!(registry.asset_id("parent"), Some(parent_id));
+        assert_eq!(registry.asset_id("parent/Body"), Some(child_id));
+        assert_eq!(registry.asset_name(parent_id), "parent");
+        assert_eq!(registry.asset_name(child_id), "Body");
+        drop(registry);
+        std::fs::remove_dir_all(outer_root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn remove_event_for_deleted_asset_forgets_metadata_and_names() {
+        let first_root = temp_asset_root("calyx-remove-event-first-root");
+        let second_root = temp_asset_root("calyx-remove-event-second-root");
+        let (asset_path, meta_path, asset_id) = write_scene_with_meta(&second_root);
+        let (parent_id, child_id) = write_parent_with_child_meta(&second_root, "Body");
+        let registries = test_registries_with_assets(vec![first_root.clone(), second_root.clone()]);
+        let registry = registries.assets.read();
+        assert_eq!(registry.asset_id("scene"), Some(asset_id));
+        assert_eq!(registry.asset_id("parent/Body"), Some(child_id));
+        std::fs::remove_file(&asset_path).expect("failed to delete scene asset");
+        let parent_path = second_root.join("parent.fbx");
+        std::fs::remove_file(&parent_path).expect("failed to delete parent asset");
+        let event = Event::new(EventKind::Remove(notify::event::RemoveKind::File))
+            .add_path(asset_path)
+            .add_path(parent_path);
+
+        registry.recv_notify_event(event);
+
+        assert!(!meta_path.exists());
+        assert!(!second_root.join("parent.meta").exists());
+        assert_eq!(registry.asset_id("scene"), None);
+        assert!(registry.asset_meta_from_id(asset_id).is_none());
+        assert_eq!(registry.asset_id("parent"), None);
+        assert_eq!(registry.asset_id("parent/Body"), None);
+        assert!(registry.asset_meta_from_id(parent_id).is_none());
+        assert!(registry.asset_meta_from_id(child_id).is_none());
+        drop(registry);
+        std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
+        std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
+    }
+
+    #[test]
+    fn relative_asset_path_rejects_path_outside_root() {
+        let root = temp_asset_root("calyx-relative-path-root");
+        let other = temp_asset_root("calyx-relative-path-other");
+
+        assert!(AssetRegistry::relative_asset_path(&root, &other.join("asset.obj")).is_err());
+        assert_eq!(
+            AssetRegistry::relative_asset_path(&root, &root.join("dir").join("asset.obj"))
+                .expect("path inside root resolves")
+                .as_str(),
+            "dir/asset"
+        );
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+        std::fs::remove_dir_all(other).expect("failed to remove other temp dir");
+    }
+
+    #[test]
     fn create_or_update_rejects_disk_asset_name() {
         let root = temp_asset_root("calyx-disk-create-or-update");
         std::fs::write(root.join("existing.obj"), b"").expect("failed to write test asset");
@@ -1778,6 +2348,279 @@ mod tests {
         }
     }
 
+    type TestGate = Arc<(std::sync::Barrier, std::sync::Barrier)>;
+
+    /// Start and release barriers for [`GatedTestAsset`] loads, per source
+    /// path so tests running in parallel do not share a gate.
+    static GATED_TEST_ASSET_GATES: std::sync::OnceLock<Mutex<HashMap<PathBuf, TestGate>>> =
+        std::sync::OnceLock::new();
+
+    fn gated_test_asset_gate(path: &Path) -> TestGate {
+        GATED_TEST_ASSET_GATES
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap()
+            .entry(path.to_path_buf())
+            .or_insert_with(|| Arc::new((std::sync::Barrier::new(2), std::sync::Barrier::new(2))))
+            .clone()
+    }
+
+    /// Asset whose load, when its file contains `gate`, signals that it
+    /// started and then waits to be released, so a test can act while the
+    /// load is in flight. A file containing `fail` makes the load fail once
+    /// released. Like an imported prefab, it reads its metadata first and
+    /// creates a `Child` sub-asset once released.
+    struct GatedTestAsset;
+
+    impl TypeUuid for GatedTestAsset {
+        fn type_uuid() -> Uuid {
+            Uuid::from_u128(0x2c84_f1e9_5a30_4d7b_a6c1_08f3_9e52_b713)
+        }
+    }
+
+    impl Asset for GatedTestAsset {
+        fn file_extensions() -> &'static [&'static str] {
+            &["cxtestgated"]
+        }
+
+        fn from_file(
+            assets: &ReadOnlyAssetContext,
+            path: &Path,
+        ) -> Result<LoadedAsset<Self>, AssetError> {
+            let registry = assets.registries.assets.read();
+            let meta = registry
+                .asset_meta_from_path(path)
+                .ok_or_else(|| AssetError::NotFound.with_path(path))?;
+            let content = std::fs::read_to_string(path)
+                .map_err(|err| AssetError::LoadError.with_path(path).with_source(err))?;
+            if content.contains("gate") {
+                let gate = gated_test_asset_gate(path);
+                gate.0.wait();
+                gate.1.wait();
+            }
+            if content.contains("fail") {
+                return Err(AssetError::LoadError
+                    .with_path(path)
+                    .with_source("test load failure"));
+            }
+            let child = registry.create_or_update_sub_asset(
+                meta.id,
+                &meta.name,
+                "Child",
+                TextTestAsset {
+                    text: "child".into(),
+                },
+            )?;
+            Ok(LoadedAsset {
+                asset: Self,
+                sub_assets: vec![child.id()],
+            })
+        }
+    }
+
+    #[test]
+    fn load_in_flight_during_deletion_does_not_cache_the_deleted_asset() {
+        let root = temp_asset_root("calyx-delete-during-load");
+        let asset_path = root.join("gated.cxtestgated");
+        std::fs::write(&asset_path, "gate").expect("failed to write test asset");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let id = {
+            let registry = registries.assets.read();
+            registry.register_asset_type::<GatedTestAsset>();
+            registry.build_meta().expect("failed to rebuild metadata");
+            registry
+                .asset_id("gated")
+                .expect("test asset should have metadata")
+        };
+        let gate = gated_test_asset_gate(&asset_path);
+        let assets = registries.assets.clone();
+        let loader = std::thread::spawn(move || {
+            assets
+                .read()
+                .load_by_id::<GatedTestAsset>(id)
+                .map(|_| ())
+                .map_err(|err| err.to_string())
+        });
+
+        gate.0.wait();
+        std::fs::remove_file(&asset_path).expect("failed to delete test asset");
+        registries.assets.read().recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(asset_path),
+        );
+        gate.1.wait();
+        let result = loader.join().expect("loader thread panicked");
+
+        assert!(result.is_err(), "a load of a deleted source must fail");
+
+        assert!(registries
+            .assets
+            .read()
+            .loaded_by_id::<GatedTestAsset>(id)
+            .is_none());
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn discarded_load_rolls_back_the_sub_assets_it_created() {
+        let root = temp_asset_root("calyx-discarded-load-sub-assets");
+        let asset_path = root.join("gated.cxtestgated");
+        std::fs::write(&asset_path, "gate").expect("failed to write test asset");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let id = {
+            let registry = registries.assets.read();
+            registry.register_asset_type::<GatedTestAsset>();
+            registry.build_meta().expect("failed to rebuild metadata");
+            registry
+                .asset_id("gated")
+                .expect("test asset should have metadata")
+        };
+        let gate = gated_test_asset_gate(&asset_path);
+        let assets = registries.assets.clone();
+        let loader = std::thread::spawn(move || {
+            assets
+                .read()
+                .load_by_id::<GatedTestAsset>(id)
+                .map(|_| ())
+                .map_err(|err| err.to_string())
+        });
+
+        gate.0.wait();
+        std::fs::remove_file(&asset_path).expect("failed to delete test asset");
+        registries.assets.read().recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(asset_path),
+        );
+        gate.1.wait();
+        let _ = loader.join().expect("loader thread panicked");
+
+        let registry = registries.assets.read();
+        assert_eq!(registry.asset_id("gated/Child"), None);
+        assert!(registry
+            .asset_data()
+            .meta
+            .values()
+            .all(|meta| meta.parent != Some(id)));
+        assert!(!root.join("gated.meta").exists());
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn create_event_for_registered_file_keeps_its_generation() {
+        let root = temp_asset_root("calyx-create-keeps-generation");
+        let (asset_path, _, asset_id) = write_scene_with_meta(&root);
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        let before = registry
+            .asset_data()
+            .generations
+            .get(&asset_id)
+            .map(|(generation, _)| *generation);
+        assert!(before.is_some());
+
+        registry.recv_notify_event(
+            Event::new(EventKind::Create(notify::event::CreateKind::File)).add_path(asset_path),
+        );
+
+        assert_eq!(
+            registry
+                .asset_data()
+                .generations
+                .get(&asset_id)
+                .map(|(generation, _)| *generation),
+            before
+        );
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn reload_failing_after_deletion_records_no_reload_error() {
+        let root = temp_asset_root("calyx-failed-reload-after-delete");
+        let asset_path = root.join("gated.cxtestgated");
+        std::fs::write(&asset_path, "plain").expect("failed to write test asset");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let id = {
+            let registry = registries.assets.read();
+            registry.register_asset_type::<GatedTestAsset>();
+            registry.build_meta().expect("failed to rebuild metadata");
+            let id = registry
+                .asset_id("gated")
+                .expect("test asset should have metadata");
+            registry
+                .load_by_id::<GatedTestAsset>(id)
+                .expect("test asset should load");
+            id
+        };
+        std::fs::write(&asset_path, "gate fail").expect("failed to rewrite test asset");
+        registries
+            .assets
+            .read()
+            .asset_data_mut()
+            .dirty
+            .insert(id, Instant::now() - Duration::from_secs(1));
+        let gate = gated_test_asset_gate(&asset_path);
+        let assets = registries.assets.clone();
+        let reloader = std::thread::spawn(move || assets.read().reload_assets());
+
+        gate.0.wait();
+        std::fs::remove_file(&asset_path).expect("failed to delete test asset");
+        registries.assets.read().recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(asset_path),
+        );
+        gate.1.wait();
+        reloader.join().expect("reloader thread panicked");
+
+        assert!(registries.assets.read().reload_errors().is_empty());
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn load_spanning_delete_and_recreate_does_not_cache_the_old_file() {
+        let root = temp_asset_root("calyx-recreate-during-load");
+        let asset_path = root.join("gated.cxtestgated");
+        std::fs::write(&asset_path, "gate").expect("failed to write test asset");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let id = {
+            let registry = registries.assets.read();
+            registry.register_asset_type::<GatedTestAsset>();
+            registry.build_meta().expect("failed to rebuild metadata");
+            registry
+                .asset_id("gated")
+                .expect("test asset should have metadata")
+        };
+        let gate = gated_test_asset_gate(&asset_path);
+        let assets = registries.assets.clone();
+        let loader = std::thread::spawn(move || {
+            assets
+                .read()
+                .load_by_id::<GatedTestAsset>(id)
+                .map(|_| ())
+                .map_err(|err| err.to_string())
+        });
+
+        gate.0.wait();
+        std::fs::remove_file(&asset_path).expect("failed to delete test asset");
+        registries.assets.read().recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File))
+                .add_path(asset_path.clone()),
+        );
+        std::fs::write(&asset_path, "gate").expect("failed to recreate test asset");
+        registries.assets.read().recv_notify_event(
+            Event::new(EventKind::Create(notify::event::CreateKind::File))
+                .add_path(asset_path.clone()),
+        );
+        assert_eq!(registries.assets.read().asset_id("gated"), Some(id));
+        gate.1.wait();
+        let _ = loader.join().expect("loader thread panicked");
+
+        assert!(registries
+            .assets
+            .read()
+            .loaded_by_id::<GatedTestAsset>(id)
+            .is_none());
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
     #[test]
     fn reload_by_id_updates_existing_reference_in_place() {
         let root = temp_asset_root("calyx-reload-in-place");
@@ -1805,6 +2648,197 @@ mod tests {
             .loaded_by_id::<TextTestAsset>(id)
             .expect("reloaded asset should stay cached");
         assert_eq!(cached.ptr_id(), held.ptr_id());
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn id_moving_to_another_source_loads_the_new_source() {
+        let first_root = temp_asset_root("calyx-id-moves-first-root");
+        let second_root = temp_asset_root("calyx-id-moves-second-root");
+        std::fs::write(first_root.join("note.cxtesttext"), "first")
+            .expect("failed to write first asset");
+        let registries = test_registries_with_assets(vec![first_root.clone(), second_root.clone()]);
+        let registry = registries.assets.read();
+        registry.register_asset_type::<TextTestAsset>();
+        registry.build_meta().expect("failed to rebuild metadata");
+        let id = registry
+            .asset_id("note")
+            .expect("first asset is registered");
+        let held = registry
+            .load_by_id::<TextTestAsset>(id)
+            .expect("first asset should load");
+        assert_eq!(held.read().text, "first");
+
+        let second_path = second_root.join("note.cxtesttext");
+        std::fs::write(&second_path, "second").expect("failed to write second asset");
+        registry.recv_notify_event(
+            Event::new(EventKind::Create(notify::event::CreateKind::File)).add_path(second_path),
+        );
+
+        assert_eq!(registry.asset_id("note"), Some(id));
+        let loaded = registry
+            .load_by_id::<TextTestAsset>(id)
+            .expect("second asset should load");
+        assert_eq!(loaded.read().text, "second");
+        drop(registry);
+        std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
+        std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
+    }
+
+    #[test]
+    fn id_moving_to_another_source_drops_the_old_sources_sub_assets() {
+        let first_root = temp_asset_root("calyx-id-moves-children-first-root");
+        let second_root = temp_asset_root("calyx-id-moves-children-second-root");
+        let parent_id = Uuid::new_v4();
+        let (body_id, arm_id) = (Uuid::new_v4(), Uuid::new_v4());
+        let write_parent = |root: &Path, child_id: Uuid, child_name: &str| {
+            std::fs::write(root.join("parent.fbx"), b"").expect("failed to write parent asset");
+            std::fs::write(
+                root.join("parent.meta"),
+                serde_json::to_vec_pretty(&json!({
+                    "main": {
+                        "id": parent_id,
+                        "name": "parent",
+                        "display_name": "parent",
+                        "type_uuid": Prefab::type_uuid(),
+                    },
+                    "inner": [{
+                        "id": child_id,
+                        "name": child_name,
+                        "display_name": child_name,
+                        "type_uuid": Mesh::type_uuid(),
+                    }]
+                }))
+                .expect("failed to encode test meta"),
+            )
+            .expect("failed to write parent meta");
+        };
+        write_parent(&first_root, body_id, "Body");
+        let registries = test_registries_with_assets(vec![first_root.clone(), second_root.clone()]);
+        let registry = registries.assets.read();
+        assert_eq!(registry.asset_id("parent/Body"), Some(body_id));
+
+        write_parent(&second_root, arm_id, "Arm");
+        registry.recv_notify_event(
+            Event::new(EventKind::Create(notify::event::CreateKind::File))
+                .add_path(second_root.join("parent.fbx")),
+        );
+
+        assert_eq!(registry.asset_id("parent/Arm"), Some(arm_id));
+        assert_eq!(registry.asset_id("parent/Body"), None);
+        assert!(registry.asset_meta_from_id(body_id).is_none());
+        drop(registry);
+        std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
+        std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
+    }
+
+    #[test]
+    fn id_moving_to_another_source_clears_its_reload_error() {
+        let first_root = temp_asset_root("calyx-id-moves-reload-error-first-root");
+        let second_root = temp_asset_root("calyx-id-moves-reload-error-second-root");
+        let first_path = first_root.join("note.cxtesttext");
+        std::fs::write(&first_path, "first").expect("failed to write first asset");
+        let registries = test_registries_with_assets(vec![first_root.clone(), second_root.clone()]);
+        let registry = registries.assets.read();
+        registry.register_asset_type::<TextTestAsset>();
+        registry.build_meta().expect("failed to rebuild metadata");
+        let id = registry
+            .asset_id("note")
+            .expect("first asset is registered");
+        let generation = registry
+            .asset_data()
+            .generations
+            .get(&id)
+            .map(|(generation, _)| *generation);
+        registry.set_current_reload_error(
+            generation,
+            AssetReloadError {
+                id,
+                path: registry
+                    .asset_meta_from_id(id)
+                    .and_then(|meta| meta.path)
+                    .expect("first asset has a source path"),
+                error: AssetError::LoadError.with_source("test reload failure"),
+            },
+        );
+        assert_eq!(registry.reload_errors().len(), 1);
+
+        let second_path = second_root.join("note.cxtesttext");
+        std::fs::write(&second_path, "second").expect("failed to write second asset");
+        registry.recv_notify_event(
+            Event::new(EventKind::Create(notify::event::CreateKind::File)).add_path(second_path),
+        );
+
+        assert_eq!(registry.asset_id("note"), Some(id));
+        assert!(registry.reload_errors().is_empty());
+        drop(registry);
+        std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
+        std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
+    }
+
+    #[test]
+    fn asset_moved_with_its_meta_drops_its_old_names() {
+        let root = temp_asset_root("calyx-moved-with-meta");
+        let (old_path, old_meta_path, asset_id) = write_scene_with_meta(&root);
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        assert_eq!(registry.asset_id("scene"), Some(asset_id));
+
+        std::fs::create_dir_all(root.join("moved")).expect("failed to create target folder");
+        let new_path = root.join("moved").join("scene.cxscene");
+        std::fs::rename(&old_path, &new_path).expect("failed to move asset");
+        std::fs::rename(&old_meta_path, root.join("moved").join("scene.meta"))
+            .expect("failed to move asset metadata");
+        registry.recv_notify_event(
+            Event::new(EventKind::Create(notify::event::CreateKind::File)).add_path(new_path),
+        );
+        registry.recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(old_path),
+        );
+
+        assert_eq!(registry.asset_id("moved/scene"), Some(asset_id));
+        assert_eq!(registry.asset_id("scene"), None);
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn deleted_asset_is_evicted_and_recreated_file_loads_fresh() {
+        let root = temp_asset_root("calyx-delete-evicts-cache");
+        let asset_path = root.join("note.cxtesttext");
+        std::fs::write(&asset_path, "first").expect("failed to write test asset");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        registry.register_asset_type::<TextTestAsset>();
+        registry.build_meta().expect("failed to rebuild metadata");
+        let id = registry
+            .asset_id("note")
+            .expect("test asset should have metadata");
+        let held = registry
+            .load_by_id::<TextTestAsset>(id)
+            .expect("test asset should load");
+
+        std::fs::remove_file(&asset_path).expect("failed to delete test asset");
+        registry.recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File))
+                .add_path(asset_path.clone()),
+        );
+
+        assert!(registry.loaded_by_id::<TextTestAsset>(id).is_none());
+        std::fs::write(&asset_path, "second").expect("failed to recreate test asset");
+        registry.recv_notify_event(
+            Event::new(EventKind::Create(notify::event::CreateKind::File))
+                .add_path(asset_path.clone()),
+        );
+        let recreated_id = registry
+            .asset_id("note")
+            .expect("recreated asset should have metadata");
+        let recreated = registry
+            .load_by_id::<TextTestAsset>(recreated_id)
+            .expect("recreated asset should load");
+        assert_eq!(recreated.read().text, "second");
+        assert_eq!(held.read().text, "first");
         drop(registry);
         std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
