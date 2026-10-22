@@ -203,19 +203,17 @@ impl Network {
         src_ids: Option<&HashMap<u32, NetworkObjectId>>,
         dst_ids: &mut Option<&mut HashMap<u32, NetworkObjectId>>,
     ) {
-        'traverse: {
-            try_all!(
-                None => break 'traverse;
-                let mut entry = scene.entry_mut(root);
-                let c_netobj = entry.get_component_mut::<ComponentNetworkObject>().ok();
-            );
+        // Written through the scene so its network object index sees the id.
+        let mut network_object_id = None;
+        scene.write_component::<ComponentNetworkObject, _>(root, |c_netobj| {
             c_netobj.owner_id = client_id;
             c_netobj.id = src_ids
                 .and_then(|ids| ids.get(index).copied())
                 .unwrap_or_else(Self::new_id);
-            if let Some(dst_ids) = dst_ids {
-                dst_ids.insert(*index, c_netobj.id);
-            }
+            network_object_id = Some(c_netobj.id);
+        });
+        if let (Some(network_object_id), Some(dst_ids)) = (network_object_id, dst_ids.as_mut()) {
+            dst_ids.insert(*index, network_object_id);
         }
         *index += 1;
         for child in scene.children_ordered(root).collect::<Vec<_>>() {
@@ -355,16 +353,10 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                 to_client_id,
             } => {
                 let acting_client_id = sender.acting_client(*from_client_id);
-                // TODO(Cristian): Optimize this, maybe cache network ids in scene
-                let Some(game_object) = scene.objects().find(|go| {
-                    let Some(entry) = scene.entry(*go) else {
-                        return false;
-                    };
-                    let Ok(c_netobj) = entry.get_component::<ComponentNetworkObject>() else {
-                        return false;
-                    };
-                    c_netobj.id == *network_object_id && c_netobj.owner_id == acting_client_id
-                }) else {
+                let Some(game_object) = find_network_object(scene, *network_object_id)
+                    .filter(|(_, owner_id)| *owner_id == acting_client_id)
+                    .map(|(game_object, _)| game_object)
+                else {
                     return MessageHandlerResult::Consume;
                 };
                 'server_logic: {
@@ -431,18 +423,13 @@ pub(crate) fn handle_destroy(
 /// Finds the game object carrying network object `network_object_id` and
 /// returns it with its owner.
 fn find_network_object(
-    scene: &Scene,
+    scene: &mut Scene,
     network_object_id: NetworkObjectId,
 ) -> Option<(GameObject, ClientId)> {
-    // TODO(Cristian): Optimize this, maybe cache network ids in scene
-    scene.objects().find_map(|go| {
-        scene
-            .read_component::<ComponentNetworkObject, _, _>(go, |c| {
-                (c.id == network_object_id).then_some(c.owner_id)
-            })
-            .flatten()
-            .map(|owner_id| (go, owner_id))
-    })
+    let game_object = scene.find_network_object(network_object_id)?;
+    scene
+        .read_component::<ComponentNetworkObject, _, _>(game_object, |c| c.owner_id)
+        .map(|owner_id| (game_object, owner_id))
 }
 
 /// Message handler that offers each message to [`NetworkSceneSync`], then to

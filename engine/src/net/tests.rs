@@ -1111,4 +1111,68 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn spawned_objects_are_indexed_on_every_peer() {
+        let (mut harness, prefab_refs) = setup_spawn_harness("net_index_test_prefab");
+        let (spawned, network_object_id) =
+            spawn_from_client(&mut harness, 0, prefab_refs[1].clone());
+
+        assert_eq!(
+            harness
+                .client(0)
+                .scenes
+                .current_scene()
+                .indexed_network_object(network_object_id),
+            Some(spawned),
+            "local instantiate did not index the object"
+        );
+
+        assert!(
+            pump_until(&mut harness, |h| h
+                .client(1)
+                .scenes
+                .current_scene()
+                .indexed_network_object(network_object_id)
+                .is_some()),
+            "remote spawn did not index the object"
+        );
+    }
+
+    #[test]
+    fn destroyed_object_leaves_the_index() {
+        let (mut scene, go) = scene_with_object(42, 1);
+        assert_eq!(scene.find_network_object(42), Some(go));
+
+        let mut server: Option<Server> = None;
+        let msg = GameMessage::DestroyGameObject {
+            network_object_id: 42,
+            from_client_id: 1,
+        };
+        handle_destroy(&mut server, &mut scene, MessageSender::Server, 42, 1, &msg);
+        scene.flush_deletes();
+
+        assert_eq!(scene.indexed_network_object(42), None);
+        assert_eq!(scene.find_network_object(42), None);
+    }
+
+    #[test]
+    fn stale_index_entry_resolves_through_fallback() {
+        let (mut scene, go) = scene_with_object(42, 1);
+        assert_eq!(scene.indexed_network_object(42), Some(go));
+
+        // A raw write bypasses the scene, leaving the index entry stale.
+        scene
+            .entry_mut(go)
+            .unwrap()
+            .get_component_mut::<ComponentNetworkObject>()
+            .unwrap()
+            .id = 43;
+        assert_eq!(scene.indexed_network_object(42), Some(go));
+
+        assert_eq!(scene.find_network_object(42), None);
+        assert_eq!(scene.find_network_object(43), Some(go));
+        assert_eq!(scene.indexed_network_object(42), None);
+        assert_eq!(scene.indexed_network_object(43), Some(go));
+    }
 }
