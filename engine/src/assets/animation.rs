@@ -225,7 +225,7 @@ mod tests {
     use super::{Animation, AnimationKeyFrames, QuatKeyFrame, VectorKeyFrame};
     use crate::assets::error::AssetError;
     use crate::assets::Asset;
-    use crate::test_utils::test_game_context;
+    use crate::test_support::test_game_context;
     use nalgebra::Unit;
     use nalgebra_glm::{Quat, Vec3};
     use std::collections::HashMap;

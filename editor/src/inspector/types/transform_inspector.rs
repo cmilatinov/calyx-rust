@@ -19,7 +19,7 @@ impl TypeInspector for TransformInspector {
         type_uuids!(ComponentTransform)
     }
 
-    fn show_inspector(&self, ui: &mut Ui, ctx: &InspectorContext, instance: &mut dyn Reflect) {
+    fn show_inspector(&self, ui: &mut Ui, _ctx: &InspectorContext, instance: &mut dyn Reflect) {
         if let Some(t_comp) = instance.downcast_mut::<ComponentTransform>() {
             let mut changed = false;
             let mut transform = t_comp.transform;
@@ -40,7 +40,6 @@ impl TypeInspector for TransformInspector {
             });
             if changed {
                 t_comp.transform = transform;
-                ctx.scene.clear_transform_cache();
             }
         }
     }
@@ -48,13 +47,12 @@ impl TypeInspector for TransformInspector {
     fn show_inspector_context(
         &self,
         ui: &mut Ui,
-        ctx: &InspectorContext,
+        _ctx: &InspectorContext,
         instance: &mut dyn Reflect,
     ) {
         if let Some(t_comp) = instance.downcast_mut::<ComponentTransform>() {
             if ui.button("Reset").clicked() {
                 t_comp.transform = Default::default();
-                ctx.scene.clear_transform_cache();
                 ui.close_menu()
             }
         }

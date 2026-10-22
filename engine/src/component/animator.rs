@@ -417,16 +417,12 @@ impl ComponentAnimator {
                     slot.transform = (transform * bone.inverse_bind_transform).into();
                 }
             }
-            let Some(mut entry) = scene.entry_mut(skinned_mesh_go) else {
-                continue;
-            };
-            let Ok(c_skinned_mesh) = entry.get_component_mut::<ComponentSkinnedMesh>() else {
-                continue;
-            };
-            c_skinned_mesh.bone_transforms.clear();
-            c_skinned_mesh
-                .bone_transforms
-                .extend(pose.bone_transforms.drain(0..));
+            scene.write_component::<ComponentSkinnedMesh, _>(skinned_mesh_go, |c_skinned_mesh| {
+                c_skinned_mesh.bone_transforms.clear();
+                c_skinned_mesh
+                    .bone_transforms
+                    .extend(pose.bone_transforms.drain(0..));
+            });
         }
     }
 
@@ -515,11 +511,9 @@ impl ComponentAnimator {
             );
         }
         if let Some(bind_pose) = captured_bind_pose {
-            if let Some(mut entry) = scene.entry_mut(game_object) {
-                if let Ok(c_bone) = entry.get_component_mut::<ComponentBone>() {
-                    c_bone.bind_pose = Some(bind_pose);
-                }
-            }
+            scene.write_component::<ComponentBone, _>(game_object, |c_bone| {
+                c_bone.bind_pose = Some(bind_pose);
+            });
         }
         parent_transform *= local_transform;
         scene.set_transform(game_object, &local_transform);
@@ -684,7 +678,7 @@ mod tests {
     use crate::assets::animation_graph::{
         AnimationClip, AnimationMotion, AnimationNode, BlendTree,
     };
-    use crate::test_utils::test_registries;
+    use crate::test_support::test_registries;
 
     fn bind_pose() -> Transform {
         Transform::from_xyz(1.0, 2.0, 3.0)
@@ -806,7 +800,7 @@ mod tests {
         // Two meshes skinned by one joint tree: the body's skin lists [Hip, Spine], the arm's
         // [Arm, Spine, Hip]. Halfway through the clip the hip has moved 1 along z and the spine
         // has turned 45 degrees about z; the arm on the spine has no channel and turns with it.
-        let test_assets = crate::test_utils::TestAssets::models();
+        let test_assets = crate::test_support::TestAssets::models();
         let assets = test_assets.registries();
         let path = test_assets.fixtures_root().join("gltf/TwoSkins.gltf");
         let registry = assets.assets.read();

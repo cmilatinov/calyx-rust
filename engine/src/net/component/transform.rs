@@ -62,12 +62,10 @@ impl ComponentUpdate for ComponentNetworkTransform {
                 c_transform.transform
             },
         ) {
-            try_all!(
-                None => return Default::default();
-                let mut entry = ctx.scene.entry_mut(ctx.game_object);
-                let c_transform = entry.get_component_mut::<ComponentTransform>().ok();
-            );
-            c_transform.transform = value;
+            ctx.scene
+                .write_component::<ComponentTransform, _>(ctx.game_object, |c_transform| {
+                    c_transform.transform = value;
+                });
         }
         ctx.scene
             .write_component::<ComponentNetworkTransform, _>(ctx.game_object, |c| {

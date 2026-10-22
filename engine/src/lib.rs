@@ -52,10 +52,5 @@ pub mod ui;
 /// Miscellaneous utility traits, macros, and helper functions.
 pub mod utils;
 
-#[cfg(test)]
-pub mod test_harness;
-#[cfg(test)]
-pub mod test_utils;
-
 pub use engine_derive::*;
 pub use reflect::type_registry::ReflectRegistrationFn;

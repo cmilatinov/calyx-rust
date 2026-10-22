@@ -318,7 +318,7 @@ impl Prefab {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::test_game_context;
+    use crate::test_support::test_game_context;
 
     #[test]
     fn from_file_returns_error_for_path_without_extension() {
@@ -409,7 +409,7 @@ mod tests {
 
     #[test]
     fn malformed_model_file_returns_load_error_naming_the_file() {
-        let assets = crate::test_utils::TestAssets::models();
+        let assets = crate::test_support::TestAssets::models();
         let files: [(&str, &[u8]); 3] = [
             ("broken.fbx", b"Kaydara FBX Binary  \0 not really"),
             (
@@ -439,7 +439,7 @@ mod tests {
 
     /// Imports the sandbox tank, whose left and right parts share node names.
     fn import_tank() -> Prefab {
-        let assets = crate::test_utils::TestAssets::models();
+        let assets = crate::test_support::TestAssets::models();
         let context = assets.asset_context();
         let context = context.lock_read();
         let path = assets.sandbox_root().join("models/tank_game/Tank_002.fbx");
@@ -487,7 +487,7 @@ mod tests {
     #[test]
     fn every_part_of_a_shared_mesh_is_attached_with_its_node_skin() {
         // One mesh of two primitives, used by a skinned node and by an unskinned node.
-        let assets = crate::test_utils::TestAssets::models();
+        let assets = crate::test_support::TestAssets::models();
         let context = assets.asset_context();
         let context = context.lock_read();
         let path = assets.fixtures_root().join("gltf/SharedMesh.gltf");
@@ -509,7 +509,7 @@ mod tests {
     #[test]
     fn every_material_part_of_an_fbx_node_is_attached() {
         // One cube node whose top face uses a second material.
-        let assets = crate::test_utils::TestAssets::models();
+        let assets = crate::test_support::TestAssets::models();
         let context = assets.asset_context();
         let context = context.lock_read();
         let path = assets.fixtures_root().join("fbx/TwoMaterials.fbx");
