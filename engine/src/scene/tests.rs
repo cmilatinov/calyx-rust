@@ -1009,7 +1009,14 @@ mod tests {
         targets: Vec<GameObjectRef>,
         choices: Vec<RefChoice>,
         slots: SlotList,
+        pair: RefPair,
     }
+
+    #[derive(Default, Clone, TypeUuid, Serialize, Deserialize, Reflect)]
+    #[uuid = "8c5d1f2a-3e47-4b9c-a6d0-71f2e9b4c385"]
+    #[reflect(Default)]
+    #[repr(C)]
+    struct RefPair(f32, GameObjectRef);
 
     type SlotList = Vec<RefSlot>;
 
@@ -1108,6 +1115,22 @@ mod tests {
             })
             .collect();
         assert_eq!(ids, vec![scene.uuid(instance_child), scene.uuid(instance)]);
+    }
+
+    #[test]
+    fn instantiate_prefab_remaps_reference_inside_tuple_struct() {
+        let registries = crate::test_utils::test_registries();
+        let mut scene = registries.scene();
+
+        let (instance, instance_child) =
+            instantiate_with_refs(&mut scene, |_, child| NestedRefComponent {
+                pair: RefPair(1.0, GameObjectRef::new(child)),
+                ..Default::default()
+            });
+
+        let entry = scene.entry(instance).unwrap();
+        let component = entry.get_component::<NestedRefComponent>().unwrap();
+        assert_eq!(component.pair.1.id(), scene.uuid(instance_child));
     }
 
     #[test]

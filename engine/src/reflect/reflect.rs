@@ -46,9 +46,10 @@ pub trait Reflect: TypeUuidDynamic + TypeNameDynamic + Any + Send + Sync {
     /// Assigns `value` into `self` when the concrete types match.
     fn assign(&mut self, value: Box<dyn Reflect>) -> bool;
     /// Calls `visit` on each element when this value is a container such as a
-    /// `Vec`, or on each field of the active variant when it is a reflected
-    /// enum. Struct fields are reached through [`crate::reflect::StructInfo`]
-    /// instead, so the default visits nothing.
+    /// `Vec`, on each field of the active variant when it is a reflected enum,
+    /// and on each field of a reflected tuple struct. Named struct fields are
+    /// reached through [`crate::reflect::StructInfo`] instead, so the default
+    /// visits nothing.
     fn visit_elements_mut(&mut self, _visit: &mut dyn FnMut(&mut dyn Reflect)) {}
 }
 

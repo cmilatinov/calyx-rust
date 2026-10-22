@@ -99,7 +99,8 @@ fn expand(ast: &DeriveInput) -> darling::Result<proc_macro2::TokenStream> {
 
     let extra_methods = match &ast.data {
         Data::Enum(e) => enum_visit_elements(e.variants.iter()),
-        _ => quote! {},
+        Data::Struct(s) => tuple_struct_visit_elements(&s.fields),
+        Data::Union(_) => quote! {},
     };
     let reflect_impls = type_name_and_reflect_impls(name, extra_methods);
     let register_traits_impl = register_trait_meta_impls(name, trait_paths)?;
@@ -254,6 +255,35 @@ fn enum_type_info<'a>(
     quote! {
         registry.meta_enum::<#name>(#reflect_attrs)
             #(#add_variant_calls)*;
+    }
+}
+
+/// Generates a `visit_elements_mut` override that visits each unnamed field of
+/// a tuple struct, skipping `#[reflect_skip]` fields. Named fields are reached
+/// through `StructInfo` instead, so other structs get no override.
+fn tuple_struct_visit_elements(fields: &Fields) -> proc_macro2::TokenStream {
+    let Fields::Unnamed(unnamed) = fields else {
+        return quote! {};
+    };
+    let indices = unnamed
+        .unnamed
+        .iter()
+        .enumerate()
+        .filter(|(_, field)| {
+            field
+                .attrs
+                .iter()
+                .all(|attr| !attr.path().is_ident("reflect_skip"))
+        })
+        .map(|(index, _)| syn::Index::from(index))
+        .collect::<Vec<_>>();
+    if indices.is_empty() {
+        return quote! {};
+    }
+    quote! {
+        fn visit_elements_mut(&mut self, visit: &mut dyn FnMut(&mut dyn #FQReflect)) {
+            #(visit(&mut self.#indices);)*
+        }
     }
 }
 
