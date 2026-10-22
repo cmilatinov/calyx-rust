@@ -152,8 +152,14 @@ impl Panel for PanelInspector {
                                 if shown.changed {
                                     state.mark_scene_dirty();
                                 }
-                                if let Some(committed) = shown.committed {
-                                    state.record_inspector_edit(committed);
+                                match shown.committed {
+                                    Some(committed) => state.record_inspector_edit(committed),
+                                    // An edit that left the component as it
+                                    // was: undo the dirty mark it set.
+                                    None if shown.completed => {
+                                        state.sync_scene_dirty_to_current_fingerprint()
+                                    }
+                                    None => {}
                                 }
                             }
                             for (type_id, _) in component_registry.components() {

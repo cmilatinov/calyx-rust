@@ -54,6 +54,8 @@ struct Session {
     commits: Vec<CommittedEdit>,
     /// Frames on which the tracker reported a change, committed or not.
     changed_frames: usize,
+    /// Edits that completed, with or without an undo step.
+    completed: usize,
     track: bool,
 }
 
@@ -69,6 +71,7 @@ impl Session {
             child,
             commits: Vec::new(),
             changed_frames: 0,
+            completed: 0,
             track: true,
         }
     }
@@ -107,6 +110,9 @@ impl Session {
             .expect("the component should exist");
             if shown.changed {
                 self.changed_frames += 1;
+            }
+            if shown.completed {
+                self.completed += 1;
             }
             self.commits.extend(shown.committed);
             shown.value
@@ -243,6 +249,38 @@ fn typing_in_a_text_field_records_one_undo_step() {
 
     assert_eq!(session.commits.len(), 1, "{:?}", session.commits);
     assert_eq!(session.commits[0].changes[0].value_path, vec!["name"]);
+}
+
+#[test]
+fn a_drag_back_to_its_start_completes_without_an_undo_step() {
+    let mut h = InspectorHarness::new();
+    let registry = h.inspector_registry();
+    let inspector = registry
+        .type_inspector_lookup(ComponentTransform::type_uuid())
+        .unwrap();
+    let component = ComponentTransform::default();
+    let mut session = Session::new(&h);
+
+    {
+        let mut draw = session.draw(&component, inspector, whole);
+        h.idle(2, &mut draw);
+        let position_x = h.widget(Role::SpinButton, 0);
+        h.drag_through(
+            position_x,
+            &[Vec2::new(40.0, 0.0), Vec2::new(0.0, 0.0)],
+            &mut draw,
+        );
+    }
+
+    assert!(
+        session.changed_frames > 0,
+        "the drag should change the value"
+    );
+    assert!(session.commits.is_empty(), "{:?}", session.commits);
+    // The editor reconciles the scene's dirty state when an edit completes,
+    // so a no-op drag must still complete.
+    assert_eq!(session.completed, 1);
+    assert!(!session.tracker.has_pending());
 }
 
 #[test]

@@ -203,6 +203,29 @@ impl InspectorHarness {
         responses
     }
 
+    /// Drags from `pos` through each offset in `offsets`, one frame each,
+    /// then releases, and returns what each frame reported.
+    pub fn drag_through(
+        &mut self,
+        pos: Pos2,
+        offsets: &[Vec2],
+        draw: &mut Draw,
+    ) -> Vec<InspectorResponse> {
+        let mut responses = Vec::new();
+        self.move_to(pos);
+        responses.push(self.frame(draw));
+        self.button(true);
+        responses.push(self.frame(draw));
+        for offset in offsets {
+            self.move_to(pos + *offset);
+            responses.push(self.frame(draw));
+        }
+        self.button(false);
+        responses.push(self.frame(draw));
+        responses.extend(self.idle(2, draw));
+        responses
+    }
+
     /// Types `text` into the focused widget and returns what each frame
     /// reported.
     pub fn type_text(&mut self, text: &str, draw: &mut Draw) -> Vec<InspectorResponse> {

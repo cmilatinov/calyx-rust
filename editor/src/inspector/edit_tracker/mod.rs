@@ -50,6 +50,10 @@ pub struct ShownComponent<R> {
     /// still be pending, its undo step waiting for a drag or text-field
     /// session to end, but the scene already holds it.
     pub changed: bool,
+    /// Whether an edit completed this frame. It completes without a
+    /// `committed` step when the interaction left the component as it was,
+    /// such as a drag that returned to its start.
+    pub completed: bool,
     /// The undo step this frame completed, if any.
     pub committed: Option<CommittedEdit>,
 }
@@ -218,10 +222,12 @@ impl InspectorEditTracker {
                 }
             })
         }?;
+        let completed = current.is_some();
         let committed = current.and_then(|current| self.commit(key, current));
         Some(ShownComponent {
             value,
             changed,
+            completed,
             committed,
         })
     }

@@ -261,6 +261,9 @@ impl EditorAppState {
         if pending.is_empty() {
             return;
         }
+        // Reconcile the dirty mark the pending edits set even when they
+        // turn out to change nothing.
+        self.sync_scene_dirty_to_current_fingerprint();
         let edits = {
             let components = self.game.assets.registries.components.read();
             let scene = self.game.scenes.current_scene();
@@ -285,7 +288,7 @@ impl EditorAppState {
         self.inspector_edits.clear();
     }
 
-    fn sync_scene_dirty_to_current_fingerprint(&mut self) {
+    pub(crate) fn sync_scene_dirty_to_current_fingerprint(&mut self) {
         self.scene_autosave
             .sync_dirty_to_fingerprint(scene_fingerprint(self.game.scenes.current_scene()));
     }
