@@ -167,6 +167,18 @@ impl ProjectManager {
             self.refresh_assembly_status();
             return false;
         }
+        match std::env::current_exe() {
+            Ok(editor) if predates(&source, &editor) => {
+                log::info!(
+                    "Project assembly {} is older than the editor, so it may be built against \
+                     another engine; rebuilding it instead of loading it",
+                    source.display()
+                );
+                self.refresh_assembly_status();
+                return false;
+            }
+            _ => {}
+        }
         log::info!("Loading existing project assembly: {}", source.display());
         self.load_assembly(&source)
     }
@@ -780,6 +792,27 @@ fn parse_digits(value: &str) -> Option<u128> {
     value.parse().ok()
 }
 
+/// Whether `assembly` was built before `editor`, as told by their modification
+/// times; `false` when either time is unknown.
+///
+/// The assembly links its own copy of the engine and shares engine types with
+/// the editor, so an assembly built against an older engine than the editor's
+/// can disagree with it on type layouts and trait vtables, which `TypeId`s do
+/// not reveal. Cargo relinks the editor whenever the engine changes, so an
+/// assembly older than the editor may predate the editor's engine and must be
+/// rebuilt before it is loaded.
+fn predates(assembly: &Path, editor: &Path) -> bool {
+    let modified = |path: &Path| {
+        std::fs::metadata(path)
+            .and_then(|meta| meta.modified())
+            .ok()
+    };
+    match (modified(assembly), modified(editor)) {
+        (Some(assembly), Some(editor)) => assembly < editor,
+        _ => false,
+    }
+}
+
 /// Removes the stale shadow copies next to the one `target` was loaded from.
 fn remove_stale_shadow_copies_of(target: &Path) {
     if let Some(current) = target.parent() {
@@ -913,14 +946,41 @@ fn assembly_target_dir(profile: &str) -> &str {
 mod tests {
     use super::{
         assembly_artifact_path, assembly_build_target_dir_from_exe, assembly_target_dir,
-        cargo_build_args, copy_runtime_dependencies, is_rust_runtime_library,
+        cargo_build_args, copy_runtime_dependencies, is_rust_runtime_library, predates,
         remove_stale_shadow_copies, scene_paths_match, shadow_copy_folder_name,
         AssemblyBuildOutcome, AssemblyBuildQueue, AssemblyLoad, ProjectAssemblyStatus,
         ShadowCopyFolder, FOREIGN_SHADOW_COPY_GRACE_MS,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn an_assembly_built_before_the_editor_predates_it() {
+        let dir =
+            std::env::temp_dir().join(format!("calyx_assembly_predates_{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let (assembly, editor) = (dir.join("project.dll"), dir.join("editor.exe"));
+        let now = SystemTime::now();
+        let touch = |path: &Path, time: SystemTime| {
+            fs::write(path, b"").unwrap();
+            fs::File::options()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_modified(time)
+                .unwrap();
+        };
+
+        touch(&assembly, now - Duration::from_secs(60));
+        touch(&editor, now);
+        assert!(predates(&assembly, &editor));
+
+        touch(&assembly, now + Duration::from_secs(60));
+        assert!(!predates(&assembly, &editor));
+        assert!(!predates(&dir.join("missing.dll"), &editor));
+        fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn project_assembly_status_defaults_to_unloaded() {
