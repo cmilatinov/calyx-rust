@@ -25,7 +25,6 @@ use crate::scene::game_object_store::GameObjectStore;
 use crate::scene::scene_graph::SceneGraph;
 use crate::scene::transform_cache::TransformCache;
 use crate::scene::{Prefab, SceneError};
-use crate::try_all;
 use crate::utils::{ContextSeed, TypeUuid};
 
 use super::game_object_ref::RemapScope;
@@ -215,10 +214,9 @@ impl From<(&ReadOnlyRegistryContext, SceneData)> for Scene {
         for (_, components) in value.components {
             let game_object = scene.new_game_object(None);
             for (component_id, data) in components {
-                try_all!(
-                    None => continue;
-                    let component = registry.component(component_id);
-                );
+                let Some(component) = registry.component(component_id) else {
+                    continue;
+                };
                 let instance = match component.deserialize(&data) {
                     Ok(instance) => instance,
                     Err(err) => {
@@ -242,15 +240,13 @@ impl From<(&ReadOnlyRegistryContext, SceneData)> for Scene {
             }
         }
         for (parent_id, children) in value.hierarchy {
-            try_all!(
-                None => continue;
-                let parent = scene.find(parent_id);
-            );
+            let Some(parent) = scene.find(parent_id) else {
+                continue;
+            };
             for child_id in children {
-                try_all!(
-                    None => continue;
-                    let child = scene.find(child_id);
-                );
+                let Some(child) = scene.find(child_id) else {
+                    continue;
+                };
                 if let Err(err) = scene.set_parent(child, Some(parent)) {
                     log::warn!("Skipping invalid scene hierarchy entry: {err}");
                 }
@@ -336,12 +332,15 @@ impl Scene {
         parent_filter: Option<&HashSet<GameObject>>,
     ) {
         'insert_hierarchy: {
-            try_all!(
-                None => break 'insert_hierarchy;
-                let parent = self.parent(game_object);
-                let entry = self.entry(parent);
-                let parent_id = entry.get_component::<ComponentID>().ok();
-            );
+            let Some(parent) = self.parent(game_object) else {
+                break 'insert_hierarchy;
+            };
+            let Some(entry) = self.entry(parent) else {
+                break 'insert_hierarchy;
+            };
+            let Some(parent_id) = entry.get_component::<ComponentID>().ok() else {
+                break 'insert_hierarchy;
+            };
             if parent_filter.is_some_and(|filter| !filter.contains(&parent)) {
                 break 'insert_hierarchy;
             }
@@ -519,11 +518,12 @@ impl Scene {
                 SceneError::InvalidPrefab(format!("object {game_object_id} was not created"))
             })?;
             for (component_id, data) in components {
-                try_all!(
-                    None => continue;
-                    let TypeInfo::Struct(_) = type_registry.type_info_by_id(*component_id);
-                    let component = component_registry.component(*component_id);
-                );
+                let Some(TypeInfo::Struct(_)) = type_registry.type_info_by_id(*component_id) else {
+                    continue;
+                };
+                let Some(component) = component_registry.component(*component_id) else {
+                    continue;
+                };
                 let instance = match component.deserialize(data) {
                     Ok(instance) => instance,
                     Err(err) => {
@@ -544,17 +544,19 @@ impl Scene {
         drop(remap_scope);
 
         for (parent_id, children) in prefab.data.hierarchy.iter() {
-            try_all!(
-                None => continue;
-                let new_parent_id = id_mapping.get_by_left(parent_id);
-                let parent = self.find(*new_parent_id);
-            );
+            let Some(new_parent_id) = id_mapping.get_by_left(parent_id) else {
+                continue;
+            };
+            let Some(parent) = self.find(*new_parent_id) else {
+                continue;
+            };
             for child_id in children {
-                try_all!(
-                    None => continue;
-                    let new_child_id = id_mapping.get_by_left(child_id);
-                    let child = self.find(*new_child_id);
-                );
+                let Some(new_child_id) = id_mapping.get_by_left(child_id) else {
+                    continue;
+                };
+                let Some(child) = self.find(*new_child_id) else {
+                    continue;
+                };
                 self.set_parent(child, Some(parent))?;
             }
         }

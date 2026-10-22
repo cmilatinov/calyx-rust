@@ -36,7 +36,6 @@ use engine::input::Input;
 use engine::logging::{DefaultLogger, Log};
 use engine::render::{Camera, SceneRenderer, SceneRendererOptions};
 use engine::scene::Scene;
-use engine::*;
 use rapier3d::prelude::DebugRenderPipeline;
 use selection::{Selection, SelectionType};
 use transform_gizmo_egui::EnumSet;
@@ -975,10 +974,9 @@ impl EditorApp {
     }
 
     fn save_interaction(&mut self, save_as: bool) {
-        try_all!(
-            None => return;
-            let file = self.scene_save_file(save_as);
-        );
+        let Some(file) = self.scene_save_file(save_as) else {
+            return;
+        };
         self.state.save_current_scene(file);
     }
 
