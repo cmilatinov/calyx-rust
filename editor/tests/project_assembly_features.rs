@@ -10,7 +10,8 @@
 
 use serde_json::Value;
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Lists every compilation unit in engine's dependency graph, engine
@@ -66,6 +67,50 @@ fn engine_units(dir: &Path, selection: &[&str]) -> BTreeSet<String> {
     found
 }
 
+/// Lists engine's units when the editor builds the project assembly in `dir`,
+/// with the editor's own cargo arguments.
+fn assembly_units(dir: &Path) -> BTreeSet<String> {
+    let args = editor::project_assembly_build_args("dev", Path::new("target"));
+    let selection: Vec<&str> = args
+        .iter()
+        .skip_while(|arg| *arg == "build")
+        .map(String::as_str)
+        .collect();
+    engine_units(dir, &selection)
+}
+
+/// Writes a project outside the workspace, the way a user project depends on
+/// engine: its own workspace root, so none of this workspace's manifest
+/// settings apply to it. It keeps this workspace's lockfile so it resolves the
+/// same versions.
+fn external_project(root: &Path) -> PathBuf {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("external_assembly_project");
+    fs::create_dir_all(dir.join("src")).expect("creates the external project");
+    let engine = root.join("engine").display().to_string().replace('\\', "/");
+    fs::write(
+        dir.join("Cargo.toml"),
+        format!(
+            r#"[package]
+name = "external_assembly_project"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+engine = {{ path = "{engine}" }}
+
+[workspace]
+"#
+        ),
+    )
+    .expect("writes the external manifest");
+    fs::write(dir.join("src/lib.rs"), "").expect("writes the external library");
+    fs::copy(root.join("Cargo.lock"), dir.join("Cargo.lock")).expect("copies the lockfile");
+    dir
+}
+
 /// Names a unit for the failure message.
 fn describe(unit: &str) -> String {
     let unit: Value = serde_json::from_str(unit).expect("units are JSON");
@@ -98,8 +143,12 @@ fn project_assembly_links_the_editors_engine_build() {
         ),
         // What the editor runs in the project to build its assembly.
         (
-            "cargo build --lib in sandbox",
-            engine_units(&root.join("sandbox"), &["--lib"]),
+            "the sandbox assembly build",
+            assembly_units(&root.join("sandbox")),
+        ),
+        (
+            "an external project's assembly build",
+            assembly_units(&external_project(root)),
         ),
     ];
 

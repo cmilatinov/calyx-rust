@@ -623,14 +623,23 @@ fn assembly_profile() -> &'static str {
     env!("CALYX_EDITOR_PROFILE")
 }
 
-fn cargo_build_args(profile: &str, target_dir: &Path) -> Vec<String> {
+/// Arguments of the `cargo` command that builds the project assembly.
+pub fn cargo_build_args(profile: &str, target_dir: &Path) -> Vec<String> {
     let mut args = vec![
         "build".to_string(),
         "--lib".to_string(),
         "--target-dir".to_string(),
         target_dir.display().to_string(),
     ];
-    if profile != "dev" {
+    if profile == "dev" {
+        // The workspace manifest sets this for the editor's build, but a
+        // project outside the workspace is its own root and ignores it.
+        // Without it Cargo builds the project's build scripts and proc macros
+        // with less debug info than the editor's, which gives the assembly
+        // another engine build.
+        args.push("--config".to_string());
+        args.push("profile.dev.build-override.debug=true".to_string());
+    } else {
         args.push("--profile".to_string());
         args.push(profile.to_string());
     }
@@ -914,7 +923,14 @@ mod tests {
     fn dev_profile_uses_default_cargo_build() {
         assert_eq!(
             cargo_build_args("dev", Path::new("target")),
-            ["build", "--lib", "--target-dir", "target"]
+            [
+                "build",
+                "--lib",
+                "--target-dir",
+                "target",
+                "--config",
+                "profile.dev.build-override.debug=true"
+            ]
         );
         assert_eq!(assembly_target_dir("dev"), "debug");
     }
