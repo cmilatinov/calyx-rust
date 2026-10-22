@@ -610,10 +610,8 @@ fn cursor_ground_intersection(
     controller: &ComponentTankController,
     ground_y: f32,
 ) -> Option<Vec3> {
-    let rect = input.res().map(|response| response.rect)?;
-    let cursor = input
-        .input(|state| state.pointer.interact_pos())
-        .flatten()?;
+    let rect = input.surface_rect()?;
+    let cursor = input.pointer_pos()?;
     let camera_object = controller.camera.game_object(scene)?;
     let camera_transform = scene.world_transform(camera_object);
     let aspect = rect.width() / rect.height().max(f32::EPSILON);
