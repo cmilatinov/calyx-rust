@@ -612,8 +612,17 @@ fn update_projectile(
     let start = transform.position;
     let end = start + direction * projectile.speed * travel_time;
 
-    if let Some(target) = first_projectile_hit(scene, game_object, start, end, projectile.radius) {
+    // Static obstacles such as arena walls and cover absorb the round, so a
+    // target only takes damage when it is reached before the first obstacle.
+    let obstacle_time = first_obstacle_time(scene, start, end, projectile.radius);
+    let reach = obstacle_time.map_or(end, |time| start + (end - start) * time);
+    if let Some(target) = first_projectile_hit(scene, game_object, start, reach, projectile.radius)
+    {
         apply_projectile_damage(scene, target, projectile.damage);
+        scene.delete(game_object);
+        return;
+    }
+    if obstacle_time.is_some() {
         scene.delete(game_object);
         return;
     }
@@ -631,6 +640,29 @@ fn update_projectile(
         component.direction = projectile.direction;
         component.lifetime_remaining = projectile.lifetime_remaining;
     });
+}
+
+/// Fraction of the `start`..`end` segment a round of `radius` travels before
+/// it touches a static obstacle, if it touches one.
+fn first_obstacle_time(scene: &Scene, start: Vec3, end: Vec3, radius: f32) -> Option<f32> {
+    let obstacles = static_obstacles(scene);
+    let is_obstacle = |collider: ColliderHandle, _: &Collider| {
+        scene
+            .physics
+            .collider_entity(collider)
+            .is_some_and(|entity| obstacles.contains(&entity))
+    };
+    scene
+        .physics
+        .cast_shape(
+            ColliderShape::Sphere { radius },
+            start,
+            UnitQuaternion::identity(),
+            end - start,
+            1.0,
+            QueryFilter::default().predicate(&is_obstacle),
+        )
+        .map(|hit| hit.hit.time_of_impact.clamp(0.0, 1.0))
 }
 
 fn apply_projectile_damage(
@@ -1426,6 +1458,76 @@ mod tests {
             .read_component::<ComponentProjectileTarget, _, _>(target, |target| target.hit_count)
             .unwrap();
         assert_eq!(hit_count, 0, "health damage replaces legacy hit counting");
+    }
+
+    #[test]
+    fn arena_wall_stops_projectile_before_target() {
+        let mut scene = engine::test_support::test_scene();
+        add_fixed_cube(&mut scene, vec3(0.0, 0.0, 2.5), vec3(5.0, 1.0, 0.25));
+        let projectile = scene.create(None, None);
+        scene.add_component(
+            projectile,
+            ComponentProjectile {
+                direction: vec3(0.0, 0.0, 1.0),
+                speed: 10.0,
+                damage: 25.0,
+                lifetime_remaining: 1.0,
+                radius: 0.1,
+            },
+        );
+        let target = scene.create(None, None);
+        scene.set_world_transform(target, Transform::from_xyz(0.0, 0.0, 5.0).matrix());
+        scene.add_component(target, ComponentProjectileTarget::default());
+        scene.add_component(
+            target,
+            ComponentHealth {
+                current_health: 60.0,
+                max_health: 60.0,
+                ..Default::default()
+            },
+        );
+        scene.prepare();
+
+        update_projectile(&mut scene, projectile, 0.5);
+        scene.flush_deletes();
+
+        let health = scene
+            .read_component::<ComponentHealth, _, _>(target, |health| health.current_health)
+            .expect("target should keep its health");
+        assert_eq!(health, 60.0, "the wall should absorb the round");
+        assert!(
+            !scene.objects().any(|object| object == projectile),
+            "the round should be destroyed on the wall"
+        );
+    }
+
+    #[test]
+    fn projectile_is_destroyed_when_it_reaches_a_wall() {
+        let mut scene = engine::test_support::test_scene();
+        add_fixed_cube(&mut scene, vec3(0.0, 0.0, 2.5), vec3(5.0, 1.0, 0.25));
+        let projectile = scene.create(None, None);
+        scene.add_component(
+            projectile,
+            ComponentProjectile {
+                direction: vec3(0.0, 0.0, 1.0),
+                speed: 10.0,
+                damage: 25.0,
+                lifetime_remaining: 1.0,
+                radius: 0.1,
+            },
+        );
+        scene.prepare();
+
+        update_projectile(&mut scene, projectile, 0.1);
+        scene.flush_deletes();
+        assert!(
+            scene.objects().any(|object| object == projectile),
+            "the round has not reached the wall yet"
+        );
+
+        update_projectile(&mut scene, projectile, 0.5);
+        scene.flush_deletes();
+        assert!(!scene.objects().any(|object| object == projectile));
     }
 
     #[test]
