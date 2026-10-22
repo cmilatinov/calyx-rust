@@ -36,18 +36,19 @@ enum ListEdit {
     Remove(usize),
 }
 
-/// The element type's [`ReflectDefault`], which the inspector needs to add elements.
+/// The element type's [`ReflectDefault`], which the inspector needs to add
+/// elements. A list with no registered [`ListInfo`] cannot grow.
 fn list_element_default<'a>(
     type_registry: &'a TypeRegistry,
-    info: &ListInfo,
+    info: Option<&ListInfo>,
 ) -> Option<&'a ReflectDefault> {
-    type_registry.trait_meta::<ReflectDefault>(info.element.type_uuid)
+    type_registry.trait_meta::<ReflectDefault>(info?.element.type_uuid)
 }
 
 /// Applies `edit` to `list`, returning whether the list changed.
 fn apply_list_edit(
     type_registry: &TypeRegistry,
-    info: &ListInfo,
+    info: Option<&ListInfo>,
     list: &mut dyn ReflectList,
     edit: ListEdit,
 ) -> bool {
@@ -55,6 +56,33 @@ fn apply_list_edit(
         ListEdit::Add => list_element_default(type_registry, info)
             .is_some_and(|default| list.push(default.default()).is_ok()),
         ListEdit::Remove(index) => list.remove(index).is_some(),
+    }
+}
+
+/// How the inspector draws one list element.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum ElementView {
+    /// A type inspector drawn inline on the element's row.
+    Inline,
+    /// An enum type inspector, which draws its own rows under the element.
+    Enum,
+    /// A struct's fields, under the element.
+    Struct,
+    /// A nested list's elements, under the element.
+    List,
+    /// The element's type name, read-only.
+    Label,
+}
+
+/// Picks how to draw a list element from its type inspector, its registered
+/// type info and whether it is itself a list.
+fn element_view(has_inspector: bool, info: Option<&TypeInfo>, is_list: bool) -> ElementView {
+    match info {
+        Some(TypeInfo::Enum(_)) if has_inspector => ElementView::Enum,
+        _ if has_inspector => ElementView::Inline,
+        Some(TypeInfo::Struct(_)) => ElementView::Struct,
+        _ if is_list => ElementView::List,
+        _ => ElementView::Label,
     }
 }
 
@@ -489,7 +517,7 @@ impl PanelInspector {
                     name,
                     id,
                     instance,
-                    info,
+                    Some(info),
                 );
             }
             Some(_) => {
@@ -501,8 +529,8 @@ impl PanelInspector {
         }
     }
 
-    /// Shows a list field's elements, each removable, with a button that
-    /// appends a default element when the element type has one.
+    /// Shows a list's elements, each removable, with a button that appends a
+    /// default element when the element type has one.
     #[allow(clippy::too_many_arguments)]
     fn show_list_inspector(
         &self,
@@ -513,7 +541,7 @@ impl PanelInspector {
         name: String,
         id: Id,
         instance: &mut dyn Reflect,
-        info: &ListInfo,
+        info: Option<&ListInfo>,
     ) {
         let Some(list) = instance.as_list_mut() else {
             return;
@@ -578,48 +606,67 @@ impl PanelInspector {
         let label = format!("Element {index} ");
         let element_info = type_registry.type_info_by_id(element.uuid());
         let inspector = registry.type_inspector_lookup(element.uuid());
-        let is_enum = matches!(element_info, Some(TypeInfo::Enum(_)));
-        match (inspector, element_info) {
-            (Some(inspector), _) if !is_enum => {
-                ui.list_item_flat_noninteractive(
-                    PropertyContent::new(label)
-                        .value_fn(|ui, _| inspector.show_inspector(ui, ctx, element))
-                        .action_button(&re_ui::icons::REMOVE, || remove = true),
-                );
-            }
-            (inspector, element_info) => {
-                ListItem::new()
-                    .interactive(false)
-                    .show_hierarchical_with_children(
-                        ui,
-                        id,
-                        true,
-                        PropertyContent::new(label)
-                            .show_only_when_collapsed(false)
-                            .action_button(&re_ui::icons::REMOVE, || remove = true),
-                        |ui| match (inspector, element_info) {
-                            (Some(inspector), _) => inspector.show_inspector(ui, ctx, element),
-                            (None, Some(TypeInfo::Struct(info))) => {
-                                let mut nested_ctx = *ctx;
-                                nested_ctx.field_name = None;
-                                nested_ctx.type_info = info;
-                                self.show_default_struct_inspector(
-                                    ui,
-                                    registry,
-                                    &nested_ctx,
-                                    element,
-                                    info,
-                                );
-                            }
-                            _ => {
-                                Widgets::inspector_prop_value(ui, "Value ", |ui, _| {
-                                    ui.label(element.type_name_short());
-                                });
-                            }
-                        },
-                    );
-            }
+        let view = element_view(
+            inspector.is_some(),
+            element_info,
+            element.as_list().is_some(),
+        );
+        if let (ElementView::Inline, Some(inspector)) = (view, inspector) {
+            ui.list_item_flat_noninteractive(
+                PropertyContent::new(label)
+                    .value_fn(|ui, _| inspector.show_inspector(ui, ctx, element))
+                    .action_button(&re_ui::icons::REMOVE, || remove = true),
+            );
+            return remove;
         }
+        ListItem::new()
+            .interactive(false)
+            .show_hierarchical_with_children(
+                ui,
+                id,
+                true,
+                PropertyContent::new(label)
+                    .show_only_when_collapsed(false)
+                    .action_button(&re_ui::icons::REMOVE, || remove = true),
+                |ui| match (view, inspector, element_info) {
+                    (ElementView::Enum, Some(inspector), _) => {
+                        inspector.show_inspector(ui, ctx, element)
+                    }
+                    (ElementView::Struct, _, Some(TypeInfo::Struct(info))) => {
+                        let mut nested_ctx = *ctx;
+                        nested_ctx.field_name = None;
+                        nested_ctx.type_info = info;
+                        self.show_default_struct_inspector(
+                            ui,
+                            registry,
+                            &nested_ctx,
+                            element,
+                            info,
+                        );
+                    }
+                    (ElementView::List, _, info) => {
+                        let info = match info {
+                            Some(TypeInfo::List(info)) => Some(info),
+                            _ => None,
+                        };
+                        self.show_list_inspector(
+                            ui,
+                            registry,
+                            ctx,
+                            type_registry,
+                            String::from("Elements "),
+                            id.with("elements"),
+                            element,
+                            info,
+                        );
+                    }
+                    _ => {
+                        Widgets::inspector_prop_value(ui, "Value ", |ui, _| {
+                            ui.label(element.type_name_short());
+                        });
+                    }
+                },
+            );
         remove
     }
 
@@ -768,7 +815,9 @@ impl PanelInspector {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_list_edit, list_element_default, ListEdit, PanelInspector};
+    use super::{
+        apply_list_edit, element_view, list_element_default, ElementView, ListEdit, PanelInspector,
+    };
     use crate::scene_history::{
         InspectorValueEdit, InspectorValueKey, SceneHistory, SceneHistoryRestore,
     };
@@ -841,7 +890,7 @@ mod tests {
     fn list_edits_round_trip_through_inspector_history() {
         let registry = TypeRegistry::new();
         let info = values_info(&registry);
-        assert!(list_element_default(&registry, info).is_some());
+        assert!(list_element_default(&registry, Some(info)).is_some());
         let mut history = SceneHistory::default();
         let mut holder = ListHolder {
             values: vec![1.0, 2.0],
@@ -849,7 +898,7 @@ mod tests {
 
         inspector_edit(&registry, &mut history, &mut holder, |values| {
             let list = values.as_list_mut().unwrap();
-            assert!(apply_list_edit(&registry, info, list, ListEdit::Add));
+            assert!(apply_list_edit(&registry, Some(info), list, ListEdit::Add));
         });
         assert_eq!(holder.values, vec![1.0, 2.0, 0.0]);
 
@@ -861,7 +910,12 @@ mod tests {
 
         inspector_edit(&registry, &mut history, &mut holder, |values| {
             let list = values.as_list_mut().unwrap();
-            assert!(apply_list_edit(&registry, info, list, ListEdit::Remove(0)));
+            assert!(apply_list_edit(
+                &registry,
+                Some(info),
+                list,
+                ListEdit::Remove(0)
+            ));
         });
         assert_eq!(holder.values, vec![2.0, 7.0]);
 
@@ -886,8 +940,46 @@ mod tests {
         let mut values = vec![1.0f32];
 
         let list = values.as_reflect_mut().as_list_mut().unwrap();
-        assert!(!apply_list_edit(&registry, info, list, ListEdit::Remove(3)));
+        assert!(!apply_list_edit(
+            &registry,
+            Some(info),
+            list,
+            ListEdit::Remove(3)
+        ));
         assert_eq!(values, vec![1.0]);
+    }
+
+    #[test]
+    fn nested_lists_render_as_lists() {
+        let registry = TypeRegistry::new();
+        let inner = registry.type_info::<Vec<f32>>();
+        assert!(matches!(inner, Some(TypeInfo::List(_))));
+
+        assert_eq!(element_view(false, inner, true), ElementView::List);
+        // An inner list type that no field registered still shows its elements.
+        assert_eq!(element_view(false, None, true), ElementView::List);
+    }
+
+    #[test]
+    fn list_elements_prefer_their_type_inspector() {
+        let registry = TypeRegistry::new();
+        let holder = registry.type_info::<ListHolder>();
+
+        assert_eq!(element_view(true, None, false), ElementView::Inline);
+        assert_eq!(element_view(false, holder, false), ElementView::Struct);
+        assert_eq!(element_view(false, None, false), ElementView::Label);
+    }
+
+    #[test]
+    fn lists_without_list_info_cannot_grow() {
+        let registry = TypeRegistry::new();
+        let mut values = vec![1.0f32];
+
+        let list = values.as_reflect_mut().as_list_mut().unwrap();
+        assert!(list_element_default(&registry, None).is_none());
+        assert!(!apply_list_edit(&registry, None, list, ListEdit::Add));
+        assert!(apply_list_edit(&registry, None, list, ListEdit::Remove(0)));
+        assert!(values.is_empty());
     }
 
     #[test]
