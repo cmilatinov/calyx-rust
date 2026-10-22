@@ -557,8 +557,10 @@ impl AssetRegistry {
             let mut cache = self.asset_cache_mut();
             if !registered {
                 Self::discard_stale_load_locked(&mut data, &mut cache, id, &sub_assets);
-                log::info!("Not caching asset {id}: its source was removed while it loaded");
-                return Ok(asset);
+                log::info!("Discarding asset {id}: its source was removed while it loaded");
+                return Err(AssetError::NotFound
+                    .with_path(path)
+                    .with_source(format!("asset {id} source was removed while it loaded")));
             }
             self.load_sub_asset_meta_locked(&mut data, id, sub_assets);
             if existing.is_none() {
@@ -2441,7 +2443,9 @@ mod tests {
             Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(asset_path),
         );
         gate.1.wait();
-        let _ = loader.join().expect("loader thread panicked");
+        let result = loader.join().expect("loader thread panicked");
+
+        assert!(result.is_err(), "a load of a deleted source must fail");
 
         assert!(registries
             .assets
