@@ -1359,6 +1359,9 @@ impl AssetRegistry {
                 .retain(|_, name_id| !stale_children.contains(name_id));
             data.dirty
                 .retain(|dirty_id, _| !stale_children.contains(dirty_id));
+            // A reload error described the previous source.
+            data.reload_errors
+                .retain(|error| error.id != id && !stale_children.contains(&error.id));
             // Cached values were read from the previous source.
             let mut cache = self.asset_cache_mut();
             cache.remove(&id);
@@ -2716,6 +2719,50 @@ mod tests {
         assert_eq!(registry.asset_id("parent/Arm"), Some(arm_id));
         assert_eq!(registry.asset_id("parent/Body"), None);
         assert!(registry.asset_meta_from_id(body_id).is_none());
+        drop(registry);
+        std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
+        std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
+    }
+
+    #[test]
+    fn id_moving_to_another_source_clears_its_reload_error() {
+        let first_root = temp_asset_root("calyx-id-moves-reload-error-first-root");
+        let second_root = temp_asset_root("calyx-id-moves-reload-error-second-root");
+        let first_path = first_root.join("note.cxtesttext");
+        std::fs::write(&first_path, "first").expect("failed to write first asset");
+        let registries = test_registries_with_assets(vec![first_root.clone(), second_root.clone()]);
+        let registry = registries.assets.read();
+        registry.register_asset_type::<TextTestAsset>();
+        registry.build_meta().expect("failed to rebuild metadata");
+        let id = registry
+            .asset_id("note")
+            .expect("first asset is registered");
+        let generation = registry
+            .asset_data()
+            .generations
+            .get(&id)
+            .map(|(generation, _)| *generation);
+        registry.set_current_reload_error(
+            generation,
+            AssetReloadError {
+                id,
+                path: registry
+                    .asset_meta_from_id(id)
+                    .and_then(|meta| meta.path)
+                    .expect("first asset has a source path"),
+                error: AssetError::LoadError.with_source("test reload failure"),
+            },
+        );
+        assert_eq!(registry.reload_errors().len(), 1);
+
+        let second_path = second_root.join("note.cxtesttext");
+        std::fs::write(&second_path, "second").expect("failed to write second asset");
+        registry.recv_notify_event(
+            Event::new(EventKind::Create(notify::event::CreateKind::File)).add_path(second_path),
+        );
+
+        assert_eq!(registry.asset_id("note"), Some(id));
+        assert!(registry.reload_errors().is_empty());
         drop(registry);
         std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
         std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
