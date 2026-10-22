@@ -1,0 +1,5 @@
+error: Reflect requires #[repr(C)]
+ --> tests/ui/reflect_missing_repr_c.rs:2:8
+  |
+2 | struct NoRepr {
+  |        ^^^^^^

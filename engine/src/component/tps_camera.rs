@@ -59,12 +59,8 @@ impl ComponentUpdate for ComponentThirdPersonCamera {
         if !scene.is_owner(game_object, resources.network()) {
             return;
         }
-        let delta = input
-            .input(|input| input.pointer.motion().unwrap_or_default())
-            .unwrap_or(egui::Vec2::ZERO);
-        let zoom_delta = input
-            .input(|input| input.smooth_scroll_delta.y)
-            .unwrap_or(0.0);
+        let delta = input.pointer_motion();
+        let zoom_delta = input.scroll_delta().y;
 
         let Some((target, sensitivity, zoom_sensitivity, distance, rotation)) =
             scene.read_component::<ComponentThirdPersonCamera, _, _>(game_object, |c| {

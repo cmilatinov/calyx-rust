@@ -546,4 +546,119 @@ mod tests {
         assert!(scene.physics.collider_entity.is_empty());
         assert_eq!(scene.physics.bodies.len(), 1);
     }
+
+    /// Builds a dynamic ball above a fixed floor and returns `(ball, floor_col)`.
+    fn ball_over_floor(
+        scene: &mut crate::scene::Scene,
+        floor_enabled: bool,
+    ) -> (crate::scene::GameObject, crate::scene::GameObject) {
+        let ball = scene.create(None, None);
+        scene.set_transform(ball, &nalgebra_glm::translation(&Vec3::new(0.0, 2.0, 0.0)));
+        scene.add_component(
+            ball,
+            ComponentRigidBody {
+                ty: RigidBodyType::Dynamic,
+                ..Default::default()
+            },
+        );
+        let ball_col = scene.create(None, Some(ball));
+        scene.add_component(
+            ball_col,
+            ComponentCollider {
+                shape: ColliderShape::Sphere { radius: 0.5 },
+                ..Default::default()
+            },
+        );
+
+        let floor = scene.create(None, None);
+        scene.add_component(
+            floor,
+            ComponentRigidBody {
+                ty: RigidBodyType::Fixed,
+                ..Default::default()
+            },
+        );
+        let floor_col = scene.create(None, Some(floor));
+        scene.add_component(
+            floor_col,
+            ComponentCollider {
+                enabled: floor_enabled,
+                shape: ColliderShape::Cuboid {
+                    half_extents: Vec3::new(10.0, 0.1, 10.0),
+                },
+                ..Default::default()
+            },
+        );
+        (ball, floor_col)
+    }
+
+    fn step(scene: &mut crate::scene::Scene, frames: usize) {
+        let time = time_with_delta(1.0 / 60.0);
+        let config = PhysicsConfiguration::default();
+        for _ in 0..frames {
+            PhysicsContext::update(scene, &time, &config);
+        }
+    }
+
+    #[test]
+    fn disabled_collider_lets_bodies_pass_through() {
+        let mut scene = test_scene();
+        let (ball, floor_col) = ball_over_floor(&mut scene, false);
+        scene.prepare();
+
+        let handle = scene.physics.entity_collider[&floor_col.entity];
+        assert!(!scene.physics.colliders[handle].is_enabled());
+
+        step(&mut scene, 120);
+
+        let y = scene.world_transform(ball).position.y;
+        assert!(y < -1.0, "ball should fall through a disabled floor, y={y}");
+    }
+
+    #[test]
+    fn enabled_collider_stops_bodies() {
+        let mut scene = test_scene();
+        let (ball, _) = ball_over_floor(&mut scene, true);
+        scene.prepare();
+
+        step(&mut scene, 120);
+
+        let y = scene.world_transform(ball).position.y;
+        assert!(y > 0.0, "ball should rest on an enabled floor, y={y}");
+    }
+
+    #[test]
+    fn toggling_collider_enabled_applies_to_physics() {
+        let mut scene = test_scene();
+        let (ball, floor_col) = ball_over_floor(&mut scene, true);
+        scene.prepare();
+        step(&mut scene, 120);
+        assert!(scene.world_transform(ball).position.y > 0.0);
+
+        {
+            let mut entry = scene.world.entry(floor_col.entity).unwrap();
+            let collider = entry.get_component_mut::<ComponentCollider>().unwrap();
+            collider.enabled = false;
+            collider.dirty = true;
+        }
+        scene.prepare();
+        let handle = scene.physics.entity_collider[&floor_col.entity];
+        assert!(!scene.physics.colliders[handle].is_enabled());
+
+        step(&mut scene, 120);
+        let y = scene.world_transform(ball).position.y;
+        assert!(
+            y < -1.0,
+            "ball should fall once the floor is disabled, y={y}"
+        );
+
+        {
+            let mut entry = scene.world.entry(floor_col.entity).unwrap();
+            let collider = entry.get_component_mut::<ComponentCollider>().unwrap();
+            collider.enabled = true;
+            collider.dirty = true;
+        }
+        scene.prepare();
+        assert!(scene.physics.colliders[handle].is_enabled());
+    }
 }

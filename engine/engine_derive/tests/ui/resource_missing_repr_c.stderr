@@ -1,0 +1,11 @@
+error: Resource requires #[repr(C)]
+ --> tests/ui/resource_missing_repr_c.rs:2:8
+  |
+2 | struct NoRepr {
+  |        ^^^^^^
+
+error: Resource requires #[repr(C)]
+ --> tests/ui/resource_missing_repr_c.rs:8:8
+  |
+8 | struct OtherRepr {
+  |        ^^^^^^^^^

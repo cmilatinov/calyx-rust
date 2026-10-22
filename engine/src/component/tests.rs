@@ -55,6 +55,52 @@ mod tests {
     }
 
     #[test]
+    fn malformed_component_data_reports_the_serde_error() {
+        use crate::utils::TypeUuid;
+        let registries = test_registries();
+        let registry = registries.components.read();
+        let component = registry
+            .component(ComponentCamera::type_uuid())
+            .expect("camera component is registered");
+        let Err(err) = component.deserialize(&serde_json::json!({ "fov": "wide" })) else {
+            panic!("malformed camera data must not deserialize");
+        };
+        assert!(
+            err.to_string()
+                .contains("invalid type: string \"wide\", expected f32"),
+            "unexpected error message: {err}"
+        );
+    }
+
+    #[test]
+    fn scene_load_skips_only_the_malformed_component() {
+        use crate::utils::TypeUuid;
+        let registries = test_registries();
+        let mut scene = registries.scene();
+        let go = scene.create(
+            Some(ComponentID {
+                name: "Kept".into(),
+                ..Default::default()
+            }),
+            None,
+        );
+        scene.add_component(go, ComponentCamera::default());
+        let mut data: SceneData = (&scene).into();
+        let object = data.components.values_mut().next().expect("one object");
+        object.insert(
+            ComponentCamera::type_uuid(),
+            serde_json::json!({ "fov": "wide" }),
+        );
+
+        let restored = crate::scene::Scene::from((&registries, data));
+        let rgo = restored.objects().next().expect("object survives");
+        assert_eq!(restored.name(rgo), "Kept");
+        assert!(restored
+            .read_component::<ComponentCamera, _, _>(rgo, |c| c.fov)
+            .is_none());
+    }
+
+    #[test]
     fn rigid_body_dirty_on_creation() {
         let mut scene = test_scene();
         let go = scene.create(None, None);
