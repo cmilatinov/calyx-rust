@@ -1328,7 +1328,7 @@ impl AssetRegistry {
         let mut data = self.asset_data_mut();
         let children = meta.children.clone();
         data.meta.insert(id, meta);
-        data.names.insert(name_path, id);
+        data.names.insert(name_path.clone(), id);
         // Only a new registration gets a new generation: forgetting an asset
         // drops its generation, so a delete and recreate counts as new, and
         // so does the id moving to another source, while a create event for
@@ -1357,8 +1357,13 @@ impl AssetRegistry {
                 .unwrap_or_default();
             data.meta
                 .retain(|meta_id, _| !stale_children.contains(meta_id));
-            data.names
-                .retain(|_, name_id| !stale_children.contains(name_id));
+            // Names the previous source gave this id and its sub-assets, as
+            // when the file moved along with its `.meta`, no longer apply.
+            data.names.retain(|name, name_id| {
+                let ours = *name_id == id || children.contains(name_id);
+                !stale_children.contains(name_id)
+                    && (!ours || *name == name_path || name.starts_with(&name_path))
+            });
             data.dirty
                 .retain(|dirty_id, _| !stale_children.contains(dirty_id));
             // A reload error described the previous source.
@@ -2770,6 +2775,32 @@ mod tests {
         drop(registry);
         std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
         std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
+    }
+
+    #[test]
+    fn asset_moved_with_its_meta_drops_its_old_names() {
+        let root = temp_asset_root("calyx-moved-with-meta");
+        let (old_path, old_meta_path, asset_id) = write_scene_with_meta(&root);
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        assert_eq!(registry.asset_id("scene"), Some(asset_id));
+
+        std::fs::create_dir_all(root.join("moved")).expect("failed to create target folder");
+        let new_path = root.join("moved").join("scene.cxscene");
+        std::fs::rename(&old_path, &new_path).expect("failed to move asset");
+        std::fs::rename(&old_meta_path, root.join("moved").join("scene.meta"))
+            .expect("failed to move asset metadata");
+        registry.recv_notify_event(
+            Event::new(EventKind::Create(notify::event::CreateKind::File)).add_path(new_path),
+        );
+        registry.recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(old_path),
+        );
+
+        assert_eq!(registry.asset_id("moved/scene"), Some(asset_id));
+        assert_eq!(registry.asset_id("scene"), None);
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
 
     #[test]
