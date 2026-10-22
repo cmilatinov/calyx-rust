@@ -100,25 +100,10 @@ pub fn test_render_context() -> Arc<RenderContext> {
         .clone()
 }
 
-/// Returns an egui-wgpu render state backed by the shared test device, for
-/// tests that drive renderers which take a `RenderState`.
-pub fn test_render_state() -> egui_wgpu::RenderState {
-    let gpu = test_gpu();
-    let target_format = wgpu::TextureFormat::Bgra8Unorm;
-    egui_wgpu::RenderState {
-        adapter: gpu.adapter.clone(),
-        available_adapters: vec![gpu.adapter.clone()],
-        device: gpu.device.clone(),
-        queue: gpu.queue.clone(),
-        target_format,
-        renderer: Arc::new(egui::mutex::RwLock::new(egui_wgpu::Renderer::new(
-            &gpu.device,
-            target_format,
-            None,
-            1,
-            false,
-        ))),
-    }
+/// Returns the adapter behind the shared test device, for tests that query
+/// what it supports.
+pub fn test_adapter() -> &'static wgpu::Adapter {
+    &test_gpu().adapter
 }
 
 /// Builds a registry context with the default engine registrations.

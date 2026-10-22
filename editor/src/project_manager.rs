@@ -11,7 +11,7 @@ use engine::background::Background;
 use engine::context::AssetContext;
 use engine::core::Ref;
 use engine::error::BoxedError;
-use engine::reflect::type_registry::TypeRegistry;
+use engine::reflect::type_registry::{PluginEngineBuild, TypeRegistry};
 use engine::reflect::TypeInfo;
 use engine::resource::Resource;
 use engine::runtime::{ProjectRuntimeSettings, RuntimeSettings};
@@ -244,6 +244,24 @@ impl ProjectManager {
                         registry.begin_plugin_load();
                         let before = registry.types.keys().copied().collect::<HashSet<_>>();
                         load_fn.get()(&mut registry);
+                        match registry.plugin_engine_build() {
+                            PluginEngineBuild::Same => {}
+                            PluginEngineBuild::Other => log::error!(
+                                "Project assembly {} links another engine build than the editor, \
+                                 so the engine components its code reads, writes or adds are not \
+                                 the editor's. Cargo resolved engine's dependencies differently \
+                                 for the project than for the editor; pin the editor's features \
+                                 in engine/engine_feature_pins/Cargo.toml.",
+                                target.display()
+                            ),
+                            PluginEngineBuild::Unknown => log::warn!(
+                                "Project assembly {} did not report which engine build it links: \
+                                 it predates that check or does not call register_crate. If it \
+                                 links another engine build, the engine components its code reads, \
+                                 writes or adds are not the editor's; rebuild it.",
+                                target.display()
+                            ),
+                        }
                         let mut registered_count = 0usize;
                         for (id, registration) in
                             registry.types.iter().filter(|(id, _)| !before.contains(id))
@@ -613,14 +631,23 @@ fn assembly_profile() -> &'static str {
     env!("CALYX_EDITOR_PROFILE")
 }
 
-fn cargo_build_args(profile: &str, target_dir: &Path) -> Vec<String> {
+/// Arguments of the `cargo` command that builds the project assembly.
+pub fn cargo_build_args(profile: &str, target_dir: &Path) -> Vec<String> {
     let mut args = vec![
         "build".to_string(),
         "--lib".to_string(),
         "--target-dir".to_string(),
         target_dir.display().to_string(),
     ];
-    if profile != "dev" {
+    if profile == "dev" {
+        // The workspace manifest sets this for the editor's build, but a
+        // project outside the workspace is its own root and ignores it.
+        // Without it Cargo builds the project's build scripts and proc macros
+        // with less debug info than the editor's, which gives the assembly
+        // another engine build.
+        args.push("--config".to_string());
+        args.push("profile.dev.build-override.debug=true".to_string());
+    } else {
         args.push("--profile".to_string());
         args.push(profile.to_string());
     }
@@ -904,7 +931,14 @@ mod tests {
     fn dev_profile_uses_default_cargo_build() {
         assert_eq!(
             cargo_build_args("dev", Path::new("target")),
-            ["build", "--lib", "--target-dir", "target"]
+            [
+                "build",
+                "--lib",
+                "--target-dir",
+                "target",
+                "--config",
+                "profile.dev.build-override.debug=true"
+            ]
         );
         assert_eq!(assembly_target_dir("dev"), "debug");
     }

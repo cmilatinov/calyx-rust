@@ -1,12 +1,15 @@
 use eframe::wgpu::{self, CommandEncoder};
-use egui_wgpu::RenderState;
 use engine_derive::TypeUuid;
 use std::path::Path;
 use std::sync::RwLockReadGuard;
 
 use super::{error::AssetError, texture::Texture, Asset, LoadedAsset};
 use crate::context::ReadOnlyAssetContext;
-use crate::{self as engine, core::Ref, render::Shader};
+use crate::{
+    self as engine,
+    core::Ref,
+    render::{RenderContext, Shader},
+};
 
 /// Environment map asset with precomputed lighting textures.
 #[derive(TypeUuid)]
@@ -266,7 +269,7 @@ impl Skybox {
     pub(crate) fn prepare(
         &mut self,
         shaders: SkyboxShaders,
-        render_state: &RenderState,
+        render_context: &RenderContext,
         encoder: &mut CommandEncoder,
     ) {
         if !self.dirty {
@@ -275,7 +278,7 @@ impl Skybox {
         {
             let shader = shaders.cubemap_shader.read();
             let bind_group = Self::create_src_dst_bind_group(
-                &render_state.device,
+                render_context.device(),
                 &shader,
                 &self.texture,
                 &self.cubemap,
@@ -289,11 +292,11 @@ impl Skybox {
             );
         }
         self.cubemap
-            .generate_cubemap_mips(render_state, encoder, shaders.cubemap_mip_shader);
+            .generate_cubemap_mips(render_context, encoder, shaders.cubemap_mip_shader);
         {
             let shader = shaders.irradiance_cubemap_shader.read();
             let bind_group = Self::create_src_dst_bind_group(
-                &render_state.device,
+                render_context.device(),
                 &shader,
                 &self.cubemap,
                 &self.irradiance_cubemap,
@@ -309,7 +312,7 @@ impl Skybox {
         {
             let shader = shaders.prefilter_cubemap_shader.read();
             let bind_group = Self::create_src_dst_array_bind_group(
-                &render_state.device,
+                render_context.device(),
                 &shader,
                 &self.cubemap,
                 &self.prefilter_cubemap,
@@ -326,7 +329,7 @@ impl Skybox {
         {
             let shader = shaders.brdf_shader.read();
             let bind_group =
-                Self::create_dst_bind_group(&render_state.device, &shader, &self.brdf_map);
+                Self::create_dst_bind_group(render_context.device(), &shader, &self.brdf_map);
             self.prepare_step(
                 &shader,
                 encoder,

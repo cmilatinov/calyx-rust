@@ -1,8 +1,8 @@
 use crate::component::{ComponentAmbientLight, ComponentDirectionalLight, ComponentPointLight};
 use crate::render::buffer::ResizableBuffer;
-use crate::render::Shader;
+use crate::render::{RenderContext, Shader};
 use crate::scene::Scene;
-use egui_wgpu::{wgpu, RenderState};
+use egui_wgpu::wgpu;
 use legion::{Entity, IntoQuery};
 use nalgebra_glm::Vec3;
 use std::mem::size_of;
@@ -46,9 +46,9 @@ impl Default for LightManager {
 }
 
 impl LightManager {
-    pub fn build_data(&mut self, render_state: &RenderState, scene: &Scene) {
-        let device = &render_state.device;
-        let queue = &render_state.queue;
+    pub fn build_data(&mut self, render_context: &RenderContext, scene: &Scene) {
+        let device = render_context.device();
+        let queue = render_context.queue();
 
         let point_lights = Self::collect_point_lights(scene);
         let size = (16 + std::cmp::max(point_lights.len(), 1) * size_of::<PointLight>()) as u64;
@@ -92,6 +92,17 @@ impl LightManager {
 
     pub fn ambient_light(&self) -> [f32; 4] {
         self.ambient_light
+    }
+
+    /// The point and directional light storage buffers the storage bind
+    /// group binds.
+    pub fn storage_buffers(&self) -> [wgpu::Buffer; 2] {
+        [
+            self.point_light_storage_buffer.get_wgpu_buffer().clone(),
+            self.directional_light_storage_buffer
+                .get_wgpu_buffer()
+                .clone(),
+        ]
     }
 
     pub fn storage_bind_group(

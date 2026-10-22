@@ -1,16 +1,19 @@
 use crate::assets::texture::Texture;
+use crate::assets::AssetId;
 use crate::component::{ComponentParticleSystem, ParticleBlendMode, ParticleRenderInstance};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::buffer::{wgpu_buffer_init_desc, BufferLayout, ResizableBuffer};
-use crate::render::{PipelineOptions, RenderUtils, Shader, VertexLayout};
+use crate::render::{
+    CachedBindGroup, PipelineOptions, RenderContext, RenderUtils, SceneRendererError, Shader,
+    VertexLayout,
+};
 use crate::scene::{GameObject, Scene};
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
-use egui_wgpu::RenderState;
 use legion::{Entity, IntoQuery};
 use nalgebra_glm::Vec3;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -49,23 +52,18 @@ pub struct ParticleRenderer {
     index_buffer: wgpu::Buffer,
     instance_buffer: ResizableBuffer,
     particle_systems: HashMap<GameObject, ParticleSystemRenderState>,
+    camera_bind_group: CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer)>,
+    /// Texture bind groups of the textures drawn last frame, by texture id.
+    texture_bind_groups: HashMap<AssetId, CachedBindGroup<TextureBindGroupKey>>,
 }
 
+type TextureBindGroupKey = (wgpu::BindGroupLayout, wgpu::TextureView, wgpu::Sampler);
+
 impl ParticleRenderer {
-    pub fn new(context: &ReadOnlyAssetContext) -> Self {
+    pub fn new(context: &ReadOnlyAssetContext) -> Result<Self, SceneRendererError> {
         let device = context.render_context.device();
-        let shader = context
-            .registries
-            .assets
-            .read()
-            .load::<Shader>("shaders/particles")
-            .expect("missing particle shader");
-        let default_texture = context
-            .registries
-            .assets
-            .read()
-            .load::<Texture>("textures/white")
-            .expect("missing white texture");
+        let shader = SceneRendererError::load::<Shader>(context, "shaders/particles")?;
+        let default_texture = SceneRendererError::load::<Texture>(context, "textures/white")?;
         let vertices = [
             ParticleVertex {
                 position: [-0.5, -0.5],
@@ -86,7 +84,7 @@ impl ParticleRenderer {
         ];
         let indices = [0u16, 1, 2, 2, 3, 0];
 
-        Self {
+        Ok(Self {
             shader,
             default_texture,
             vertex_buffer: device.create_buffer_init(&wgpu_buffer_init_desc(
@@ -99,13 +97,15 @@ impl ParticleRenderer {
                 wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::VERTEX,
             ),
             particle_systems: HashMap::new(),
-        }
+            camera_bind_group: Default::default(),
+            texture_bind_groups: Default::default(),
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
-        render_state: &RenderState,
+        render_context: &RenderContext,
         encoder: &mut wgpu::CommandEncoder,
         asset_context: &ReadOnlyAssetContext,
         scene: &Scene,
@@ -115,22 +115,28 @@ impl ParticleRenderer {
         depth_target: &Texture,
         samples: u32,
     ) {
-        let device = &render_state.device;
-        let queue = &render_state.queue;
+        let device = render_context.device();
+        let queue = render_context.queue();
         let color_format = color_target.descriptor.format;
         let depth_format = depth_target.descriptor.format;
 
         let camera_bind_group = {
             let shader = self.shader.read();
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("particle_camera_bind_group"),
-                layout: &shader.bind_group_layouts[0],
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: camera_uniform_buffer.as_entire_binding(),
-                }],
-            })
+            let layout = &shader.bind_group_layouts[0];
+            self.camera_bind_group
+                .get_or_create((layout.clone(), camera_uniform_buffer.clone()), || {
+                    device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("particle_camera_bind_group"),
+                        layout,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: camera_uniform_buffer.as_entire_binding(),
+                        }],
+                    })
+                })
+                .clone()
         };
+        let mut drawn_textures = HashSet::new();
 
         let mut query = <(Entity, &ComponentParticleSystem)>::query();
         for (entity, system) in query.iter(scene.world()) {
@@ -161,6 +167,7 @@ impl ParticleRenderer {
                 .get_ref(&asset_context.registries)
                 .unwrap_or_else(|| self.default_texture.clone());
             let blend_mode = system.blend_mode;
+            drawn_textures.insert(texture.id());
             let texture_bind_group = self.texture_bind_group(device, &texture);
             let pipeline = self.pipeline(blend_mode, samples, color_format, depth_format);
 
@@ -178,6 +185,8 @@ impl ParticleRenderer {
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
             render_pass.draw_indexed(0..6, 0, 0..particle_count);
         }
+        self.texture_bind_groups
+            .retain(|id, _| drawn_textures.contains(id));
     }
 
     /// Returns the particle shader's pipeline for `blend_mode` and the given
@@ -221,23 +230,39 @@ impl ParticleRenderer {
             .build()
     }
 
-    fn texture_bind_group(&self, device: &wgpu::Device, texture: &Ref<Texture>) -> wgpu::BindGroup {
+    fn texture_bind_group(
+        &mut self,
+        device: &wgpu::Device,
+        texture_ref: &Ref<Texture>,
+    ) -> wgpu::BindGroup {
         let shader = self.shader.read();
-        let texture = texture.read();
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("particle_texture_bind_group"),
-            layout: &shader.bind_group_layouts[1],
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&texture.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&texture.sampler),
-                },
-            ],
-        })
+        let texture = texture_ref.read();
+        let layout = &shader.bind_group_layouts[1];
+        let key = (
+            layout.clone(),
+            texture.view.clone(),
+            texture.sampler.clone(),
+        );
+        self.texture_bind_groups
+            .entry(texture_ref.id())
+            .or_default()
+            .get_or_create(key, || {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("particle_texture_bind_group"),
+                    layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&texture.view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&texture.sampler),
+                        },
+                    ],
+                })
+            })
+            .clone()
     }
 }
 
@@ -254,7 +279,8 @@ mod tests {
         let assets = TestAssets::engine();
         let context = assets.asset_context();
         let read_only_context = context.lock_read();
-        let renderer = ParticleRenderer::new(&read_only_context);
+        let renderer =
+            ParticleRenderer::new(&read_only_context).expect("particle renderer should load");
 
         let alpha = renderer.pipeline(
             ParticleBlendMode::Alpha,
@@ -294,7 +320,8 @@ mod tests {
         let assets = TestAssets::engine();
         let context = assets.asset_context();
         let read_only_context = context.lock_read();
-        let renderer = ParticleRenderer::new(&read_only_context);
+        let renderer =
+            ParticleRenderer::new(&read_only_context).expect("particle renderer should load");
         let before = renderer.pipeline(
             ParticleBlendMode::Alpha,
             1,

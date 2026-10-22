@@ -226,22 +226,28 @@ impl ThumbnailGenerator {
         let size_px = self.render_settings.size_px;
         let (camera, camera_transform) = camera_for_fit(&camera_fit, frame_margin);
         {
-            let renderer = self.scene_renderer.get_or_insert_with(|| {
-                SceneRenderer::new(
-                    context,
-                    SceneRendererOptions {
-                        grid: false,
-                        gizmos: false,
-                        samples: 1,
-                        clear_color: Color32::TRANSPARENT,
-                        mesh_cull_mode: None,
-                    },
-                    (size_px, size_px),
-                )
-            });
+            if self.scene_renderer.is_none() {
+                self.scene_renderer = Some(
+                    SceneRenderer::new(
+                        context,
+                        SceneRendererOptions {
+                            grid: false,
+                            gizmos: false,
+                            samples: 1,
+                            clear_color: Color32::TRANSPARENT,
+                            mesh_cull_mode: None,
+                        },
+                        (size_px, size_px),
+                    )
+                    .map_err(|error| error.to_string())?,
+                );
+            }
+            let Some(renderer) = self.scene_renderer.as_mut() else {
+                return Err("thumbnail scene renderer was not initialized".into());
+            };
             renderer.resize_textures(size_px, size_px);
-            renderer.render_scene_base(render_state, &camera, &camera_transform, scene, None);
-            renderer.finalize_scene(render_state);
+            renderer.render_scene_base(&camera, &camera_transform, scene, None);
+            renderer.finalize_scene();
         }
 
         if self.texture_downscaler.is_none() {

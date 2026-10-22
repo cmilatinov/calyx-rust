@@ -137,24 +137,3 @@ has been delivered.
   the editor's assembly build inherits it via the editor exe location.
 - **No auth**: the server is localhost-only and trusts every connection. It is
   a development tool.
-
-## Known limitation: tank movement in editor simulation
-
-On `main`, the sandbox tank does not respond to injected movement input during
-editor simulation, so do not treat "the tank did not move" as a verdict on your
-change. Reproduce with the quick-start recipe: with `info.input_debug`
-reporting `game_focused: true` and `keys_down: ["W"]` while `is_simulating` is
-true, the Tank's world transform stays at the origin.
-
-Input reaches the game: the tank controller reads `move_forward = 1.0` with a
-real delta time while W is held, and the `shoot` action fires. The stall is in
-the engine's world-transform bookkeeping during simulation: the Tank's local
-transform changes (a remote `transform Tank --position 0 0 5` shows up in
-`local_transform`), but its `world_transform` keeps reporting the origin while
-its parent `Player` is the identity. Paused, the same write updates both. The
-controller moves the tank from its world transform each frame, so it keeps
-restarting from the stale origin.
-
-Until that is fixed, verify tank gameplay in the standalone game
-(`cargo run -p sandbox`) and use the editor loop for editor-side behavior,
-scene and asset workflows, input plumbing, and state inspection.

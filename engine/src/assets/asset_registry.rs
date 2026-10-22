@@ -980,7 +980,7 @@ impl AssetRegistry {
 }
 
 impl AssetRegistry {
-    fn recv_notify_event(&self, event: Event) {
+    pub(crate) fn recv_notify_event(&self, event: Event) {
         log::trace!("Received asset notification: {:?}", event.kind);
         let paths_iter = Self::notify_event_paths(&event);
         match event.kind {
@@ -1594,9 +1594,9 @@ impl AssetRegistry {
 }
 
 impl AssetRegistry {
-    const SCREEN_SPACE_QUAD: &'static str = "screen_space_quad";
-    const BLACK_TEXTURE_2D: &'static str = "black_texture_2d";
-    const BLACK_TEXTURE_CUBE: &'static str = "black_texture_cube";
+    pub(crate) const SCREEN_SPACE_QUAD: &'static str = "screen_space_quad";
+    pub(crate) const BLACK_TEXTURE_2D: &'static str = "black_texture_2d";
+    pub(crate) const BLACK_TEXTURE_CUBE: &'static str = "black_texture_cube";
     const DEFAULT_SCENE: &'static str = "default_scene";
 
     /// Returns the built-in "missing texture" asset when available.
