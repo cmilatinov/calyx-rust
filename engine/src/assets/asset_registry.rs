@@ -1092,6 +1092,9 @@ impl AssetRegistry {
             data.names.entry(name).or_insert(id);
         }
         drop(data);
+        // Evict cached values too: a recreated file often gets the same
+        // path-derived id and must load fresh. Holders keep their own refs.
+        self.asset_cache_mut().retain(|id, _| !ids.contains(id));
         log::info!("Forgot deleted assets under {}", path.display());
     }
 
@@ -2075,6 +2078,46 @@ mod tests {
             .loaded_by_id::<TextTestAsset>(id)
             .expect("reloaded asset should stay cached");
         assert_eq!(cached.ptr_id(), held.ptr_id());
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn deleted_asset_is_evicted_and_recreated_file_loads_fresh() {
+        let root = temp_asset_root("calyx-delete-evicts-cache");
+        let asset_path = root.join("note.cxtesttext");
+        std::fs::write(&asset_path, "first").expect("failed to write test asset");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        registry.register_asset_type::<TextTestAsset>();
+        registry.build_meta().expect("failed to rebuild metadata");
+        let id = registry
+            .asset_id("note")
+            .expect("test asset should have metadata");
+        let held = registry
+            .load_by_id::<TextTestAsset>(id)
+            .expect("test asset should load");
+
+        std::fs::remove_file(&asset_path).expect("failed to delete test asset");
+        registry.recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File))
+                .add_path(asset_path.clone()),
+        );
+
+        assert!(registry.loaded_by_id::<TextTestAsset>(id).is_none());
+        std::fs::write(&asset_path, "second").expect("failed to recreate test asset");
+        registry.recv_notify_event(
+            Event::new(EventKind::Create(notify::event::CreateKind::File))
+                .add_path(asset_path.clone()),
+        );
+        let recreated_id = registry
+            .asset_id("note")
+            .expect("recreated asset should have metadata");
+        let recreated = registry
+            .load_by_id::<TextTestAsset>(recreated_id)
+            .expect("recreated asset should load");
+        assert_eq!(recreated.read().text, "second");
+        assert_eq!(held.read().text, "first");
         drop(registry);
         std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
