@@ -930,8 +930,15 @@ impl AssetRegistry {
         match event.kind {
             EventKind::Create(_) => {
                 for file in paths_iter {
+                    let Some(asset_path) = self.owning_asset_root(file) else {
+                        log::warn!(
+                            "Ignoring created file outside every asset root: {}",
+                            file.display()
+                        );
+                        continue;
+                    };
                     if let Err(err) =
-                        self.build_asset_meta(self.root_path(), file, &file.with_extension("meta"))
+                        self.build_asset_meta(asset_path, file, &file.with_extension("meta"))
                     {
                         log::warn!(
                             "Failed to build asset metadata for {}: {}",
@@ -956,6 +963,7 @@ impl AssetRegistry {
                         self.mark_path_dirty(file);
                         continue;
                     }
+                    self.forget_asset_at_path(file);
                     let meta_path = file.with_extension("meta");
                     match std::fs::remove_file(&meta_path) {
                         Ok(()) => log::info!("Removed asset metadata {}", meta_path.display()),
@@ -1012,6 +1020,39 @@ impl AssetRegistry {
     /// Resolves a canonical asset name from a filesystem path.
     pub fn asset_name_from_path(&self, path: &Path) -> Option<String> {
         self.asset_id_from_path(path).map(|id| self.asset_name(id))
+    }
+
+    /// Returns the asset root that contains `path`, preferring the deepest
+    /// root when roots nest.
+    fn owning_asset_root(&self, path: &Path) -> Option<&Path> {
+        self.asset_paths
+            .iter()
+            .filter(|root| path.starts_with(root))
+            .max_by_key(|root| root.components().count())
+            .map(PathBuf::as_path)
+    }
+
+    /// Drops the in-memory metadata, names, dirty marks and dependency
+    /// entries of the asset at `path` and of its sub-assets.
+    fn forget_asset_at_path(&self, path: &Path) {
+        let Some(id) = self.asset_id_from_path(path) else {
+            return;
+        };
+        let mut data = self.asset_data_mut();
+        let mut ids: HashSet<Uuid> = HashSet::from([id]);
+        if let Some(meta) = data.meta.get(&id) {
+            ids.extend(meta.children.iter().copied());
+        }
+        data.meta.retain(|meta_id, _| !ids.contains(meta_id));
+        data.names.retain(|_, name_id| !ids.contains(name_id));
+        data.dirty.retain(|dirty_id, _| !ids.contains(dirty_id));
+        for dependents in data.dependencies.values_mut() {
+            dependents.retain(|dependent| !ids.contains(dependent));
+        }
+        data.dependencies
+            .retain(|_, dependents| !dependents.is_empty());
+        drop(data);
+        log::info!("Forgot deleted asset {} ({id})", path.display());
     }
 
     /// Resolves an asset UUID from a filesystem path.
@@ -1126,6 +1167,7 @@ impl AssetRegistry {
         path: &Path,
         meta_path: &Path,
     ) -> Result<(), BoxedError> {
+        let name_path = Self::relative_asset_path(asset_path, path)?;
         let mut meta = if meta_path.exists() {
             self.load_meta_file(asset_path, meta_path)?.main
         } else {
@@ -1160,8 +1202,7 @@ impl AssetRegistry {
         let id = meta.id;
         let mut data = self.asset_data_mut();
         data.meta.insert(id, meta);
-        data.names
-            .insert(Self::relative_asset_path(asset_path, path), id);
+        data.names.insert(name_path, id);
         drop(data);
         self.update_asset_dependencies(id, path);
         log::trace!("Built asset metadata for {}", path.display());
@@ -1200,11 +1241,20 @@ impl AssetRegistry {
         std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
     }
 
-    fn relative_asset_path(asset_path: &Path, path: &Path) -> RelativePathBuf {
-        path.relative_to(asset_path)
-            .unwrap()
+    /// Returns `path` relative to `asset_path` without its extension, or an
+    /// error when `path` is not inside `asset_path`.
+    fn relative_asset_path(asset_path: &Path, path: &Path) -> Result<RelativePathBuf, BoxedError> {
+        let relative = path.strip_prefix(asset_path).map_err(|_| {
+            format!(
+                "{} is not inside asset root {}",
+                path.display(),
+                asset_path.display()
+            )
+        })?;
+        Ok(RelativePathBuf::from_path(relative)
+            .map_err(Box::new)?
             .normalize()
-            .with_extension("")
+            .with_extension(""))
     }
 
     fn sub_asset_name(parent_name: &str, local_name: &str) -> String {
@@ -1228,16 +1278,14 @@ impl AssetRegistry {
         asset_path: &Path,
         meta_path: &Path,
     ) -> Result<AssetMetaData, BoxedError> {
+        let name_path = Self::relative_asset_path(asset_path, meta_path)?;
         let file = File::open(meta_path).map_err(Box::new)?;
         let reader = BufReader::new(file);
         let mut meta: AssetMetaData = serde_json::from_reader(reader).map_err(Box::new)?;
         let mut data = self.asset_data_mut();
         meta.main.children = meta.inner.iter().map(|m| m.id).collect();
         data.meta.insert(meta.main.id, meta.main.clone());
-        data.names.insert(
-            Self::relative_asset_path(asset_path, meta_path),
-            meta.main.id,
-        );
+        data.names.insert(name_path, meta.main.id);
         for child in meta.inner.iter_mut() {
             child.name = Self::local_sub_asset_name(&meta.main.name, &child.name);
             child.parent = Some(meta.main.id);
@@ -1676,6 +1724,82 @@ mod tests {
         assert!(!meta_path.exists());
         drop(registry);
         std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn create_event_in_second_root_registers_relative_to_that_root() {
+        let first_root = temp_asset_root("calyx-create-event-first-root");
+        let second_root = temp_asset_root("calyx-create-event-second-root");
+        let registries = test_registries_with_assets(vec![first_root.clone(), second_root.clone()]);
+        let registry = registries.assets.read();
+        std::fs::create_dir_all(second_root.join("nested")).expect("failed to create nested dir");
+        let asset_path = second_root.join("nested").join("created.cxscene");
+        std::fs::write(&asset_path, b"{}").expect("failed to write created asset");
+        let event = Event::new(EventKind::Create(notify::event::CreateKind::File))
+            .add_path(asset_path.clone());
+
+        registry.recv_notify_event(event);
+
+        let id = registry
+            .asset_id("nested/created")
+            .expect("created asset is registered under the second root");
+        let meta = registry
+            .asset_meta_from_id(id)
+            .expect("created asset has metadata");
+        assert_eq!(meta.name, "nested/created");
+        assert_eq!(registry.asset_id_from_path(&asset_path), Some(id));
+        assert!(second_root.join("nested").join("created.meta").exists());
+        drop(registry);
+        std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
+        std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
+    }
+
+    #[test]
+    fn remove_event_for_deleted_asset_forgets_metadata_and_names() {
+        let first_root = temp_asset_root("calyx-remove-event-first-root");
+        let second_root = temp_asset_root("calyx-remove-event-second-root");
+        let (asset_path, meta_path, asset_id) = write_scene_with_meta(&second_root);
+        let (parent_id, child_id) = write_parent_with_child_meta(&second_root, "Body");
+        let registries = test_registries_with_assets(vec![first_root.clone(), second_root.clone()]);
+        let registry = registries.assets.read();
+        assert_eq!(registry.asset_id("scene"), Some(asset_id));
+        assert_eq!(registry.asset_id("parent/Body"), Some(child_id));
+        std::fs::remove_file(&asset_path).expect("failed to delete scene asset");
+        let parent_path = second_root.join("parent.fbx");
+        std::fs::remove_file(&parent_path).expect("failed to delete parent asset");
+        let event = Event::new(EventKind::Remove(notify::event::RemoveKind::File))
+            .add_path(asset_path)
+            .add_path(parent_path);
+
+        registry.recv_notify_event(event);
+
+        assert!(!meta_path.exists());
+        assert!(!second_root.join("parent.meta").exists());
+        assert_eq!(registry.asset_id("scene"), None);
+        assert!(registry.asset_meta_from_id(asset_id).is_none());
+        assert_eq!(registry.asset_id("parent"), None);
+        assert_eq!(registry.asset_id("parent/Body"), None);
+        assert!(registry.asset_meta_from_id(parent_id).is_none());
+        assert!(registry.asset_meta_from_id(child_id).is_none());
+        drop(registry);
+        std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
+        std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
+    }
+
+    #[test]
+    fn relative_asset_path_rejects_path_outside_root() {
+        let root = temp_asset_root("calyx-relative-path-root");
+        let other = temp_asset_root("calyx-relative-path-other");
+
+        assert!(AssetRegistry::relative_asset_path(&root, &other.join("asset.obj")).is_err());
+        assert_eq!(
+            AssetRegistry::relative_asset_path(&root, &root.join("dir").join("asset.obj"))
+                .expect("path inside root resolves")
+                .as_str(),
+            "dir/asset"
+        );
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+        std::fs::remove_dir_all(other).expect("failed to remove other temp dir");
     }
 
     #[test]
