@@ -1100,16 +1100,24 @@ impl AssetRegistry {
     /// forgotten asset, sometimes under the same generated id, so only a
     /// rescan of the roots finds it.
     fn register_sources_named(&self, names: &HashSet<RelativePathBuf>) {
-        let extensions: Vec<String> = self.asset_data().extensions.keys().cloned().collect();
         for name in names {
             for root in &self.asset_paths {
-                for ext in &extensions {
-                    let mut candidate = name.to_path(root).into_os_string();
-                    candidate.push(".");
-                    candidate.push(ext);
-                    let candidate = PathBuf::from(candidate);
-                    if !candidate.is_file()
-                        || self.owning_asset_root(&candidate) != Some(root.as_path())
+                let Some(dir) = name.to_path(root).parent().map(Path::to_path_buf) else {
+                    continue;
+                };
+                let Ok(entries) = std::fs::read_dir(&dir) else {
+                    continue;
+                };
+                for candidate in entries.filter_map(|entry| entry.ok().map(|e| e.path())) {
+                    // The same files `build_meta` registers at startup.
+                    let ext = candidate
+                        .extension()
+                        .map_or("", |ext| ext.to_str().unwrap_or(""));
+                    if ext.is_empty() || ext == "meta" || ext == "rs" || !candidate.is_file() {
+                        continue;
+                    }
+                    if self.owning_asset_root(&candidate) != Some(root.as_path())
+                        || Self::relative_asset_path(root, &candidate).ok().as_ref() != Some(name)
                     {
                         continue;
                     }
@@ -1973,6 +1981,37 @@ mod tests {
         assert!(registry.reload_errors().is_empty());
         drop(registry);
         std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn remove_event_restores_same_name_asset_with_unregistered_extension() {
+        let first_root = temp_asset_root("calyx-unregistered-ext-first-root");
+        let second_root = temp_asset_root("calyx-unregistered-ext-second-root");
+        let first_path = first_root.join("scene.custom");
+        let second_path = second_root.join("scene.custom");
+        std::fs::write(&first_path, b"").expect("failed to write first file");
+        std::fs::write(&second_path, b"").expect("failed to write second file");
+        let registries = test_registries_with_assets(vec![first_root.clone(), second_root.clone()]);
+        let registry = registries.assets.read();
+        assert!(registry.asset_id("scene").is_some());
+
+        std::fs::remove_file(&second_path).expect("failed to delete second file");
+        registry.recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(second_path),
+        );
+
+        let restored = registry
+            .asset_id("scene")
+            .expect("the first root's file takes the name back");
+        assert_eq!(
+            registry
+                .asset_meta_from_id(restored)
+                .and_then(|meta| meta.path),
+            Some(first_path)
+        );
+        drop(registry);
+        std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
+        std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
     }
 
     #[test]
