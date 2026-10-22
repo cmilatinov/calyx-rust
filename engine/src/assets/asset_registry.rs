@@ -531,9 +531,27 @@ impl AssetRegistry {
         let LoadedAssetRef { asset, sub_assets } =
             (ctor.load)(self.asset_context(), id, path, existing.as_ref())?;
         let sub_asset_count = sub_assets.len();
+        let sub_asset_ids = sub_assets.clone();
         self.load_sub_asset_meta(id, sub_assets);
-        if existing.is_none() {
-            self.asset_cache_mut().insert(id, asset.clone());
+        {
+            // Check and cache under the metadata lock, so a deletion that
+            // forgot this source while it loaded cannot be undone here; the
+            // forgetting side drops metadata before it evicts the cache.
+            let data = self.asset_data();
+            let registered = data
+                .meta
+                .get(&id)
+                .is_some_and(|current| current.path == meta.path);
+            let mut cache = self.asset_cache_mut();
+            if !registered {
+                cache.remove(&id);
+                for sub_asset_id in &sub_asset_ids {
+                    cache.remove(sub_asset_id);
+                }
+                log::info!("Not caching asset {id}: its source was removed while it loaded");
+            } else if existing.is_none() {
+                cache.insert(id, asset.clone());
+            }
         }
         match mode {
             LoadMode::Load => log::trace!("Loaded asset {} from {}", id, path.display()),
@@ -2164,6 +2182,81 @@ mod tests {
             std::thread::sleep(Duration::from_millis(200));
             Ok(LoadedAsset::new(Self))
         }
+    }
+
+    /// Start and release barriers for [`GatedTestAsset`] loads.
+    static GATED_TEST_ASSET_GATE: std::sync::OnceLock<(std::sync::Barrier, std::sync::Barrier)> =
+        std::sync::OnceLock::new();
+
+    fn gated_test_asset_gate() -> &'static (std::sync::Barrier, std::sync::Barrier) {
+        GATED_TEST_ASSET_GATE
+            .get_or_init(|| (std::sync::Barrier::new(2), std::sync::Barrier::new(2)))
+    }
+
+    /// Asset whose load signals that it started, then waits to be released,
+    /// so a test can act while the load is in flight.
+    struct GatedTestAsset;
+
+    impl TypeUuid for GatedTestAsset {
+        fn type_uuid() -> Uuid {
+            Uuid::from_u128(0x2c84_f1e9_5a30_4d7b_a6c1_08f3_9e52_b713)
+        }
+    }
+
+    impl Asset for GatedTestAsset {
+        fn file_extensions() -> &'static [&'static str] {
+            &["cxtestgated"]
+        }
+
+        fn from_file(
+            _assets: &ReadOnlyAssetContext,
+            _path: &Path,
+        ) -> Result<LoadedAsset<Self>, AssetError> {
+            let (started, release) = gated_test_asset_gate();
+            started.wait();
+            release.wait();
+            Ok(LoadedAsset::new(Self))
+        }
+    }
+
+    #[test]
+    fn load_in_flight_during_deletion_does_not_cache_the_deleted_asset() {
+        let root = temp_asset_root("calyx-delete-during-load");
+        let asset_path = root.join("gated.cxtestgated");
+        std::fs::write(&asset_path, "").expect("failed to write test asset");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let id = {
+            let registry = registries.assets.read();
+            registry.register_asset_type::<GatedTestAsset>();
+            registry.build_meta().expect("failed to rebuild metadata");
+            registry
+                .asset_id("gated")
+                .expect("test asset should have metadata")
+        };
+        let (started, release) = gated_test_asset_gate();
+        let assets = registries.assets.clone();
+        let loader = std::thread::spawn(move || {
+            assets
+                .read()
+                .load_by_id::<GatedTestAsset>(id)
+                .map(|_| ())
+                .map_err(|err| err.to_string())
+        });
+
+        started.wait();
+        std::fs::remove_file(&asset_path).expect("failed to delete test asset");
+        registries.assets.read().recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(asset_path),
+        );
+        release.wait();
+        let _ = loader.join().expect("loader thread panicked");
+
+        assert!(registries
+            .assets
+            .read()
+            .loaded_by_id::<GatedTestAsset>(id)
+            .is_none());
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
 
     #[test]
