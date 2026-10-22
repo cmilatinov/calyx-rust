@@ -76,11 +76,11 @@ impl<T: Reflect + TypeUuid> ReflectList for Vec<T> {
         Vec::len(self)
     }
 
-    fn element(&self, index: usize) -> Option<&dyn Reflect> {
+    fn element(&self, index: usize) -> Option<&(dyn Reflect + 'static)> {
         self.get(index).map(|element| element as &dyn Reflect)
     }
 
-    fn element_mut(&mut self, index: usize) -> Option<&mut dyn Reflect> {
+    fn element_mut(&mut self, index: usize) -> Option<&mut (dyn Reflect + 'static)> {
         self.get_mut(index)
             .map(|element| element as &mut dyn Reflect)
     }
@@ -88,6 +88,15 @@ impl<T: Reflect + TypeUuid> ReflectList for Vec<T> {
     fn push(&mut self, value: Box<dyn Reflect>) -> Result<(), Box<dyn Reflect>> {
         let value = value.downcast::<T>()?;
         Vec::push(self, *value);
+        Ok(())
+    }
+
+    fn insert(&mut self, index: usize, value: Box<dyn Reflect>) -> Result<(), Box<dyn Reflect>> {
+        if index > Vec::len(self) {
+            return Err(value);
+        }
+        let value = value.downcast::<T>()?;
+        Vec::insert(self, index, *value);
         Ok(())
     }
 
@@ -132,9 +141,12 @@ mod tests {
         let removed = list.remove(1).expect("index 1 exists");
         assert_eq!(*removed.downcast::<f32>().ok().unwrap(), 2.0);
         assert!(list.remove(5).is_none());
-        assert!(list.element(2).is_none());
+        assert!(list.insert(0, Box::new(8.0f32)).is_ok());
+        assert!(list.insert(9, Box::new(8.0f32)).is_err());
+        assert!(list.insert(0, Box::new(1u32)).is_err());
+        assert!(list.element(3).is_none());
 
-        assert_eq!(values, vec![5.0, 3.0]);
+        assert_eq!(values, vec![8.0, 5.0, 3.0]);
     }
 
     #[test]

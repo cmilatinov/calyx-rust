@@ -80,11 +80,14 @@ pub trait ReflectList {
         self.len() == 0
     }
     /// Element at `index`, or `None` past the end.
-    fn element(&self, index: usize) -> Option<&dyn Reflect>;
+    fn element(&self, index: usize) -> Option<&(dyn Reflect + 'static)>;
     /// Mutable element at `index`, or `None` past the end.
-    fn element_mut(&mut self, index: usize) -> Option<&mut dyn Reflect>;
+    fn element_mut(&mut self, index: usize) -> Option<&mut (dyn Reflect + 'static)>;
     /// Appends `value`, handing it back when it is not of the element type.
     fn push(&mut self, value: Box<dyn Reflect>) -> Result<(), Box<dyn Reflect>>;
+    /// Inserts `value` at `index`, shifting later elements up. Hands `value`
+    /// back when it is not of the element type or `index` is past the end.
+    fn insert(&mut self, index: usize, value: Box<dyn Reflect>) -> Result<(), Box<dyn Reflect>>;
     /// Removes and returns the element at `index`, or `None` past the end.
     fn remove(&mut self, index: usize) -> Option<Box<dyn Reflect>>;
 }

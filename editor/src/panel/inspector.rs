@@ -1,5 +1,5 @@
 use std::any::Any;
-use std::cell::Cell;
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashSet};
 
 use crate::inspector::assets::animation_graph_inspector::AnimationGraphInspector;
@@ -8,6 +8,7 @@ use crate::inspector::type_inspector::InspectorContext;
 use crate::inspector::widgets::{SearchSelectState, Widgets};
 use crate::panel::Panel;
 use crate::selection::SelectionType;
+use crate::widgets::{List, ListContainer, ListItemContext};
 use crate::EditorAppState;
 use convert_case::{Case, Casing};
 use egui::scroll_area::ScrollBarVisibility;
@@ -22,41 +23,169 @@ use engine::reflect::{
 };
 use engine::scene::GameObject;
 use engine::utils::TypeUuid;
-use re_ui::list_item::{LabelContent, ListItem, PropertyContent};
+use re_ui::list_item::{LabelContent, ListItem, PropertyContent, ShowCollapsingResponse};
 use re_ui::{DesignTokens, UiExt};
 use serde_json::Value;
 use uuid::Uuid;
 
-/// A structural change to a reflected list made from the inspector.
+/// A value change in a component's serialized JSON: path, before, after.
+type ValueChange = (Vec<String>, Value, Value);
+
+/// A structural change the inspector made to a reflected list.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum ListEdit {
-    /// Appends a default element.
+    /// Appended a default element.
     Add,
-    /// Removes the element at this index.
+    /// Removed the element at this index.
     Remove(usize),
+    /// Moved the element at `from` so it ended up at `to`.
+    Move { from: usize, to: usize },
 }
 
-/// The element type's [`ReflectDefault`], which the inspector needs to add
-/// elements. A list with no registered [`ListInfo`] cannot grow.
-fn list_element_default<'a>(
-    type_registry: &'a TypeRegistry,
-    info: Option<&ListInfo>,
-) -> Option<&'a ReflectDefault> {
-    type_registry.trait_meta::<ReflectDefault>(info?.element.type_uuid)
+/// Adapts a reflected list to the [`List`] widget.
+///
+/// Adding appends the element type's registered default, and each
+/// structural change is logged in `edits`, so the inspector can commit it as
+/// its own undo step.
+struct ReflectListContainer<'a> {
+    list: &'a mut dyn ReflectList,
+    default: Option<&'a ReflectDefault>,
+    edits: Vec<ListEdit>,
 }
 
-/// Applies `edit` to `list`, returning whether the list changed.
-fn apply_list_edit(
-    type_registry: &TypeRegistry,
-    info: Option<&ListInfo>,
-    list: &mut dyn ReflectList,
-    edit: ListEdit,
-) -> bool {
-    match edit {
-        ListEdit::Add => list_element_default(type_registry, info)
-            .is_some_and(|default| list.push(default.default()).is_ok()),
-        ListEdit::Remove(index) => list.remove(index).is_some(),
+impl<'a> ReflectListContainer<'a> {
+    /// Wraps `list`. Without `info` the element type is unknown, so the list
+    /// cannot grow.
+    fn new(
+        list: &'a mut dyn ReflectList,
+        type_registry: &'a TypeRegistry,
+        info: Option<&ListInfo>,
+    ) -> Self {
+        let default = info
+            .and_then(|info| type_registry.trait_meta::<ReflectDefault>(info.element.type_uuid));
+        Self {
+            list,
+            default,
+            edits: Vec::new(),
+        }
     }
+}
+
+impl ListContainer for ReflectListContainer<'_> {
+    type Item = dyn Reflect;
+
+    fn len(&self) -> usize {
+        self.list.len()
+    }
+
+    fn nth(&self, index: usize) -> &Self::Item {
+        self.list.element(index).expect("list index in range")
+    }
+
+    fn nth_mut(&mut self, index: usize) -> &mut Self::Item {
+        self.list.element_mut(index).expect("list index in range")
+    }
+
+    fn can_add(&self) -> bool {
+        self.default.is_some()
+    }
+
+    fn push_default(&mut self) {
+        let Some(default) = self.default else {
+            return;
+        };
+        if self.list.push(default.default()).is_ok() {
+            self.edits.push(ListEdit::Add);
+        }
+    }
+
+    fn remove(&mut self, index: usize) {
+        if self.list.remove(index).is_some() {
+            self.edits.push(ListEdit::Remove(index));
+        }
+    }
+
+    fn move_item(&mut self, from: usize, to: usize) {
+        let Some(item) = self.list.remove(from) else {
+            return;
+        };
+        match self.list.insert(to, item) {
+            Ok(()) => self.edits.push(ListEdit::Move { from, to }),
+            Err(item) => {
+                // Out of range: put the element back where it was.
+                let _ = self.list.insert(from, item);
+            }
+        }
+    }
+}
+
+/// Where a value sits in its component's serialized JSON, and the lists the
+/// inspector changed structurally this frame.
+struct FieldTrail<'a> {
+    path: Vec<String>,
+    structural: &'a RefCell<Vec<Vec<String>>>,
+}
+
+impl<'a> FieldTrail<'a> {
+    fn root(structural: &'a RefCell<Vec<Vec<String>>>) -> Self {
+        Self {
+            path: Vec::new(),
+            structural,
+        }
+    }
+
+    fn child(&self, segment: impl ToString) -> Self {
+        let mut path = self.path.clone();
+        path.push(segment.to_string());
+        Self {
+            path,
+            structural: self.structural,
+        }
+    }
+
+    /// Records that the list at this path was added to, removed from or reordered.
+    fn mark_structural(&self) {
+        self.structural.borrow_mut().push(self.path.clone());
+    }
+}
+
+/// The JSON value at `path`, or `None` when the path does not resolve.
+fn json_at<'a>(value: &'a Value, path: &[String]) -> Option<&'a Value> {
+    path.iter().try_fold(value, |value, segment| match value {
+        Value::Object(values) => values.get(segment),
+        Value::Array(values) => values.get(segment.parse::<usize>().ok()?),
+        _ => None,
+    })
+}
+
+/// Folds the value changes inside each structurally edited list into one
+/// change of the whole list, so an add, remove or move is a single undo step
+/// rather than one per shifted element. A list path that does not resolve in
+/// the JSON, such as a field serde renames, keeps its per-element changes.
+fn collapse_structural_changes(
+    before: &Value,
+    after: &Value,
+    mut changes: Vec<ValueChange>,
+    structural: &[Vec<String>],
+) -> Vec<ValueChange> {
+    let mut lists = structural.to_vec();
+    lists.sort_by_key(Vec::len);
+    let mut collapsed: Vec<Vec<String>> = Vec::new();
+    for list in lists {
+        if collapsed.iter().any(|outer| list.starts_with(outer)) {
+            continue;
+        }
+        let (Some(list_before), Some(list_after)) = (json_at(before, &list), json_at(after, &list))
+        else {
+            continue;
+        };
+        changes.retain(|(path, _, _)| !path.starts_with(&list));
+        if list_before != list_after {
+            changes.push((list.clone(), list_before.clone(), list_after.clone()));
+        }
+        collapsed.push(list);
+    }
+    changes
 }
 
 /// How the inspector draws one list element.
@@ -181,6 +310,7 @@ impl Panel for PanelInspector {
                                     type_info,
                                     field_name: None,
                                 };
+                                let structural = RefCell::new(Vec::new());
                                 let (before, after, remove) = {
                                     let instance = unsafe { &mut *instance };
                                     let before = instance.serialize();
@@ -189,6 +319,7 @@ impl Panel for PanelInspector {
                                         &state.inspector_registry,
                                         &ctx,
                                         instance.as_reflect_mut(),
+                                        &structural,
                                     );
                                     let after = instance.serialize();
                                     (before, after, remove)
@@ -197,13 +328,20 @@ impl Panel for PanelInspector {
                                     components_to_remove.insert(*type_id);
                                 }
                                 if let (Some(before), Some(after)) = (before, after) {
-                                    let changes = Self::changed_json_values(&before, &after);
+                                    let structural = structural.into_inner();
+                                    let changes = collapse_structural_changes(
+                                        &before,
+                                        &after,
+                                        Self::changed_json_values(&before, &after),
+                                        &structural,
+                                    );
                                     state.record_inspector_value_edits(
                                         game_object_id,
                                         *type_id,
                                         &Self::type_display_name(&type_registry, *type_id)
                                             .unwrap_or_else(|| type_id.to_string()),
                                         changes,
+                                        &structural,
                                     );
                                 }
                             }
@@ -394,6 +532,7 @@ impl PanelInspector {
         registry: &InspectorRegistry,
         ctx: &InspectorContext,
         instance: &mut dyn Reflect,
+        structural: &RefCell<Vec<Vec<String>>>,
     ) -> bool {
         let name = Self::display_name(&ctx.assets.types.read(), instance);
         let id = ui.make_persistent_id(name);
@@ -410,7 +549,13 @@ impl PanelInspector {
                     if let Some(inspector) = registry.type_inspector_lookup(type_uuid) {
                         inspector.show_inspector(ui, ctx, instance);
                     } else {
-                        self.show_default_inspector(ui, registry, ctx, instance);
+                        self.show_default_inspector(
+                            ui,
+                            registry,
+                            ctx,
+                            instance,
+                            &FieldTrail::root(structural),
+                        );
                     }
                 },
             )
@@ -442,10 +587,11 @@ impl PanelInspector {
         registry: &InspectorRegistry,
         ctx: &InspectorContext,
         instance: &mut dyn Reflect,
+        trail: &FieldTrail,
     ) {
         let type_registry = ctx.assets.types.read();
         if let Some(TypeInfo::Struct(info)) = type_registry.type_info_by_id(instance.uuid()) {
-            self.show_default_struct_inspector(ui, registry, ctx, instance, info);
+            self.show_default_struct_inspector(ui, registry, ctx, instance, info, trail);
         }
     }
 
@@ -456,12 +602,20 @@ impl PanelInspector {
         ctx: &InspectorContext,
         instance: &mut dyn Reflect,
         info: &StructInfo,
+        trail: &FieldTrail,
     ) {
         for (_, field) in info.fields.iter() {
             let mut field_ctx = *ctx;
             field_ctx.field_name = Some(field.name);
             if let Some(value) = field.get_reflect_mut(instance.as_reflect_mut()) {
-                self.show_default_inspector_field(ui, registry, &field_ctx, field, value);
+                self.show_default_inspector_field(
+                    ui,
+                    registry,
+                    &field_ctx,
+                    field,
+                    value,
+                    &trail.child(field.name),
+                );
             }
         }
     }
@@ -473,6 +627,7 @@ impl PanelInspector {
         ctx: &InspectorContext,
         field: &NamedField,
         instance: &mut dyn Reflect,
+        trail: &FieldTrail,
     ) {
         let mut name = Self::field_display_name(field);
         name.push(' ');
@@ -510,6 +665,7 @@ impl PanelInspector {
                                 &nested_ctx,
                                 instance,
                                 info,
+                                trail,
                             );
                         },
                     );
@@ -520,10 +676,11 @@ impl PanelInspector {
                     registry,
                     ctx,
                     &type_registry,
-                    name,
-                    id,
+                    name.trim_end(),
+                    id.with(ctx.game_object.node),
                     instance,
                     Some(info),
+                    trail,
                 );
             }
             Some(_) => {
@@ -535,8 +692,9 @@ impl PanelInspector {
         }
     }
 
-    /// Shows a list's elements, each removable, with a button that appends a
-    /// default element when the element type has one.
+    /// Shows a list with the editor's [`List`] widget: a collapsing header
+    /// with the element count and add/remove buttons, selectable elements and
+    /// drag-and-drop reordering.
     #[allow(clippy::too_many_arguments)]
     fn show_list_inspector(
         &self,
@@ -544,59 +702,46 @@ impl PanelInspector {
         registry: &InspectorRegistry,
         ctx: &InspectorContext,
         type_registry: &TypeRegistry,
-        name: String,
+        name: &str,
         id: Id,
         instance: &mut dyn Reflect,
         info: Option<&ListInfo>,
+        trail: &FieldTrail,
     ) {
         let Some(list) = instance.as_list_mut() else {
             return;
         };
-        let can_add = list_element_default(type_registry, info).is_some();
-        let edit = Cell::new(None);
-        let len = list.len();
-        let summary = match len {
-            1 => String::from("1 element"),
-            len => format!("{len} elements"),
-        };
-        ListItem::new()
-            .interactive(false)
-            .show_hierarchical_with_children(
-                ui,
-                id,
-                true,
-                PropertyContent::new(name)
-                    .value_text(summary)
-                    .action_button_with_enabled(&re_ui::icons::ADD, can_add, || {
-                        edit.set(Some(ListEdit::Add));
-                    }),
-                |ui| {
-                    for index in 0..len {
-                        let Some(element) = list.element_mut(index) else {
-                            continue;
-                        };
-                        ui.push_id(index, |ui| {
-                            if self.show_list_element(
-                                ui,
-                                registry,
-                                ctx,
-                                type_registry,
-                                id.with(index),
-                                index,
-                                element,
-                            ) {
-                                edit.set(Some(ListEdit::Remove(index)));
-                            }
-                        });
-                    }
-                },
-            );
-        if let Some(edit) = edit.get() {
-            apply_list_edit(type_registry, info, list, edit);
+        let mut container = ReflectListContainer::new(list, type_registry, info);
+        List::new(name, &mut container, |_| ()).id(id).show(
+            ui,
+            |ui,
+             ListItemContext {
+                 value,
+                 index,
+                 selected,
+             }| {
+                ui.push_id(index, |ui| {
+                    self.show_list_element(
+                        ui,
+                        registry,
+                        ctx,
+                        type_registry,
+                        id.with(index),
+                        index,
+                        selected,
+                        value,
+                        &trail.child(index),
+                    )
+                })
+                .inner
+            },
+        );
+        if !container.edits.is_empty() {
+            trail.mark_structural();
         }
     }
 
-    /// Shows one list element, returning `true` when its remove button was clicked.
+    /// Shows one list element as a selectable, draggable row.
     #[allow(clippy::too_many_arguments)]
     fn show_list_element(
         &self,
@@ -606,10 +751,11 @@ impl PanelInspector {
         type_registry: &TypeRegistry,
         id: Id,
         index: usize,
+        selected: bool,
         element: &mut dyn Reflect,
-    ) -> bool {
-        let mut remove = false;
-        let label = format!("Element {index} ");
+        trail: &FieldTrail,
+    ) -> ShowCollapsingResponse<()> {
+        let label = format!("Element {index}");
         let element_info = type_registry.type_info_by_id(element.uuid());
         let inspector = registry.type_inspector_lookup(element.uuid());
         let view = element_view(
@@ -617,63 +763,68 @@ impl PanelInspector {
             element_info,
             element.as_list().is_some(),
         );
+        let item = ListItem::new()
+            .selected(selected)
+            .interactive(true)
+            .draggable(true);
         if let (ElementView::Inline, Some(inspector)) = (view, inspector) {
-            ui.list_item_flat_noninteractive(
-                PropertyContent::new(label)
-                    .value_fn(|ui, _| inspector.show_inspector(ui, ctx, element))
-                    .action_button(&re_ui::icons::REMOVE, || remove = true),
-            );
-            return remove;
-        }
-        ListItem::new()
-            .interactive(false)
-            .show_hierarchical_with_children(
+            let item_response = item.show_flat(
                 ui,
-                id,
-                true,
                 PropertyContent::new(label)
-                    .show_only_when_collapsed(false)
-                    .action_button(&re_ui::icons::REMOVE, || remove = true),
-                |ui| match (view, inspector, element_info) {
-                    (ElementView::Enum, Some(inspector), _) => {
-                        inspector.show_inspector(ui, ctx, element)
-                    }
-                    (ElementView::Struct, _, Some(TypeInfo::Struct(info))) => {
-                        let mut nested_ctx = *ctx;
-                        nested_ctx.field_name = None;
-                        nested_ctx.type_info = info;
-                        self.show_default_struct_inspector(
-                            ui,
-                            registry,
-                            &nested_ctx,
-                            element,
-                            info,
-                        );
-                    }
-                    (ElementView::List, _, info) => {
-                        let info = match info {
-                            Some(TypeInfo::List(info)) => Some(info),
-                            _ => None,
-                        };
-                        self.show_list_inspector(
-                            ui,
-                            registry,
-                            ctx,
-                            type_registry,
-                            String::from("Elements "),
-                            id.with("elements"),
-                            element,
-                            info,
-                        );
-                    }
-                    _ => {
-                        Widgets::inspector_prop_value(ui, "Value ", |ui, _| {
-                            ui.label(element.type_name_short());
-                        });
-                    }
-                },
+                    .value_fn(|ui, _| inspector.show_inspector(ui, ctx, element)),
             );
-        remove
+            return ShowCollapsingResponse {
+                item_response,
+                body_response: None,
+                openness: 0.0,
+            };
+        }
+        item.show_hierarchical_with_children(
+            ui,
+            id,
+            true,
+            PropertyContent::new(label).show_only_when_collapsed(false),
+            |ui| match (view, inspector, element_info) {
+                (ElementView::Enum, Some(inspector), _) => {
+                    inspector.show_inspector(ui, ctx, element)
+                }
+                (ElementView::Struct, _, Some(TypeInfo::Struct(info))) => {
+                    let mut nested_ctx = *ctx;
+                    nested_ctx.field_name = None;
+                    nested_ctx.type_info = info;
+                    self.show_default_struct_inspector(
+                        ui,
+                        registry,
+                        &nested_ctx,
+                        element,
+                        info,
+                        trail,
+                    );
+                }
+                (ElementView::List, _, info) => {
+                    let info = match info {
+                        Some(TypeInfo::List(info)) => Some(info),
+                        _ => None,
+                    };
+                    self.show_list_inspector(
+                        ui,
+                        registry,
+                        ctx,
+                        type_registry,
+                        "Elements",
+                        id.with("elements"),
+                        element,
+                        info,
+                        trail,
+                    );
+                }
+                _ => {
+                    Widgets::inspector_prop_value(ui, "Value ", |ui, _| {
+                        ui.label(element.type_name_short());
+                    });
+                }
+            },
+        )
     }
 
     fn add_component_button_ui(
@@ -822,11 +973,13 @@ impl PanelInspector {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_list_edit, element_view, list_element_default, ElementView, ListEdit, PanelInspector,
+        collapse_structural_changes, element_view, ElementView, ListEdit, PanelInspector,
+        ReflectListContainer,
     };
     use crate::scene_history::{
         InspectorValueEdit, InspectorValueKey, SceneHistory, SceneHistoryRestore,
     };
+    use crate::widgets::ListContainer;
     use engine::reflect::type_registry::TypeRegistry;
     use engine::reflect::{ListInfo, Reflect, TypeInfo};
     use engine::utils::TypeUuid;
@@ -848,14 +1001,16 @@ mod tests {
         info
     }
 
-    /// Runs `edit` on `holder` the way the inspector panel does, then records
-    /// the resulting value changes in `history`.
+    /// Runs `edit` on `holder`'s `values` list the way the inspector panel
+    /// does: through the list widget's container, then collapsing structural
+    /// changes and recording what is left in `history`. Returns how many
+    /// history entries the edit added.
     fn inspector_edit(
         registry: &TypeRegistry,
         history: &mut SceneHistory,
         holder: &mut ListHolder,
-        edit: impl FnOnce(&mut dyn Reflect),
-    ) {
+        edit: impl FnOnce(&mut ReflectListContainer),
+    ) -> usize {
         let key = |value_path| InspectorValueKey {
             game_object: Uuid::nil(),
             component: ListHolder::type_uuid(),
@@ -866,9 +1021,27 @@ mod tests {
             panic!("expected struct info");
         };
         let field = info.field("values").unwrap();
-        edit(field.get_reflect_mut(holder.as_reflect_mut()).unwrap());
+        let values = field.get_reflect_mut(holder.as_reflect_mut()).unwrap();
+        let mut container = ReflectListContainer::new(
+            values.as_list_mut().unwrap(),
+            registry,
+            Some(values_info(registry)),
+        );
+        edit(&mut container);
+        let structural = if container.edits.is_empty() {
+            Vec::new()
+        } else {
+            vec![vec![String::from("values")]]
+        };
         let after = serde_json::to_value(&*holder).unwrap();
-        for (path, before, after) in PanelInspector::changed_json_values(&before, &after) {
+        let changes = collapse_structural_changes(
+            &before,
+            &after,
+            PanelInspector::changed_json_values(&before, &after),
+            &structural,
+        );
+        let count = changes.len();
+        for (path, before, after) in changes {
             let edit = InspectorValueEdit {
                 label: "Edit List Holder".into(),
                 key: key(path),
@@ -877,6 +1050,7 @@ mod tests {
             };
             assert!(history.push_inspector_value(edit));
         }
+        count
     }
 
     fn restore(holder: &mut ListHolder, restore: Option<SceneHistoryRestore>) {
@@ -895,34 +1069,27 @@ mod tests {
     #[test]
     fn list_edits_round_trip_through_inspector_history() {
         let registry = TypeRegistry::new();
-        let info = values_info(&registry);
-        assert!(list_element_default(&registry, Some(info)).is_some());
         let mut history = SceneHistory::default();
         let mut holder = ListHolder {
             values: vec![1.0, 2.0],
         };
 
-        inspector_edit(&registry, &mut history, &mut holder, |values| {
-            let list = values.as_list_mut().unwrap();
-            assert!(apply_list_edit(&registry, Some(info), list, ListEdit::Add));
+        let added = inspector_edit(&registry, &mut history, &mut holder, |list| {
+            assert!(list.can_add());
+            list.push_default();
         });
+        assert_eq!(added, 1);
         assert_eq!(holder.values, vec![1.0, 2.0, 0.0]);
 
-        inspector_edit(&registry, &mut history, &mut holder, |values| {
-            let list = values.as_list_mut().unwrap();
-            *list.element_mut(2).unwrap().downcast_mut::<f32>().unwrap() = 7.0;
+        inspector_edit(&registry, &mut history, &mut holder, |list| {
+            *list.nth_mut(2).downcast_mut::<f32>().unwrap() = 7.0;
         });
         assert_eq!(holder.values, vec![1.0, 2.0, 7.0]);
 
-        inspector_edit(&registry, &mut history, &mut holder, |values| {
-            let list = values.as_list_mut().unwrap();
-            assert!(apply_list_edit(
-                &registry,
-                Some(info),
-                list,
-                ListEdit::Remove(0)
-            ));
+        let removed = inspector_edit(&registry, &mut history, &mut holder, |list| {
+            list.remove(0);
         });
+        assert_eq!(removed, 1);
         assert_eq!(holder.values, vec![2.0, 7.0]);
 
         restore(&mut holder, history.undo());
@@ -940,19 +1107,85 @@ mod tests {
     }
 
     #[test]
-    fn list_edits_reject_out_of_range_removal() {
+    fn list_moves_are_one_undo_step() {
+        let registry = TypeRegistry::new();
+        let mut history = SceneHistory::default();
+        let mut holder = ListHolder {
+            values: vec![1.0, 2.0, 3.0],
+        };
+
+        // Without collapsing, a move would record every shifted element.
+        let moved = inspector_edit(&registry, &mut history, &mut holder, |list| {
+            list.move_item(0, 2);
+        });
+        assert_eq!(moved, 1);
+        assert_eq!(holder.values, vec![2.0, 3.0, 1.0]);
+
+        restore(&mut holder, history.undo());
+        assert_eq!(holder.values, vec![1.0, 2.0, 3.0]);
+        assert!(!history.can_undo());
+        restore(&mut holder, history.redo());
+        assert_eq!(holder.values, vec![2.0, 3.0, 1.0]);
+    }
+
+    #[test]
+    fn reflect_list_container_adds_removes_and_moves() {
         let registry = TypeRegistry::new();
         let info = values_info(&registry);
-        let mut values = vec![1.0f32];
-
+        let mut values = vec![1.0f32, 2.0];
         let list = values.as_reflect_mut().as_list_mut().unwrap();
-        assert!(!apply_list_edit(
-            &registry,
-            Some(info),
-            list,
-            ListEdit::Remove(3)
-        ));
-        assert_eq!(values, vec![1.0]);
+        let mut container = ReflectListContainer::new(list, &registry, Some(info));
+
+        container.push_default();
+        container.move_item(2, 0);
+        container.remove(1);
+        // Out of range: nothing changes and nothing is logged.
+        container.remove(9);
+        container.move_item(0, 9);
+
+        assert_eq!(container.len(), 2);
+        assert_eq!(
+            container.edits,
+            vec![
+                ListEdit::Add,
+                ListEdit::Move { from: 2, to: 0 },
+                ListEdit::Remove(1)
+            ]
+        );
+        assert_eq!(values, vec![0.0, 2.0]);
+    }
+
+    #[test]
+    fn lists_without_list_info_cannot_grow() {
+        let registry = TypeRegistry::new();
+        let mut values = vec![1.0f32];
+        let list = values.as_reflect_mut().as_list_mut().unwrap();
+        let mut container = ReflectListContainer::new(list, &registry, None);
+
+        assert!(!container.can_add());
+        container.push_default();
+        container.remove(0);
+
+        assert_eq!(container.edits, vec![ListEdit::Remove(0)]);
+        assert!(values.is_empty());
+    }
+
+    #[test]
+    fn structural_changes_keep_unresolved_paths_per_element() {
+        let before = json!({ "values": [1.0, 2.0] });
+        let after = json!({ "values": [2.0, 1.0] });
+        let changes = PanelInspector::changed_json_values(&before, &after);
+
+        let renamed = vec![vec![String::from("renamed")]];
+        assert_eq!(
+            collapse_structural_changes(&before, &after, changes.clone(), &renamed).len(),
+            2
+        );
+        let values = vec![vec![String::from("values")]];
+        let collapsed = collapse_structural_changes(&before, &after, changes, &values);
+        assert_eq!(collapsed.len(), 1);
+        assert_eq!(collapsed[0].0, vec!["values"]);
+        assert_eq!(collapsed[0].2, json!([2.0, 1.0]));
     }
 
     #[test]
@@ -974,18 +1207,6 @@ mod tests {
         assert_eq!(element_view(true, None, false), ElementView::Inline);
         assert_eq!(element_view(false, holder, false), ElementView::Struct);
         assert_eq!(element_view(false, None, false), ElementView::Label);
-    }
-
-    #[test]
-    fn lists_without_list_info_cannot_grow() {
-        let registry = TypeRegistry::new();
-        let mut values = vec![1.0f32];
-
-        let list = values.as_reflect_mut().as_list_mut().unwrap();
-        assert!(list_element_default(&registry, None).is_none());
-        assert!(!apply_list_edit(&registry, None, list, ListEdit::Add));
-        assert!(apply_list_edit(&registry, None, list, ListEdit::Remove(0)));
-        assert!(values.is_empty());
     }
 
     #[test]
