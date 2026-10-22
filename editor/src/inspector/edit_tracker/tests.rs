@@ -284,6 +284,53 @@ fn a_drag_back_to_its_start_completes_without_an_undo_step() {
 }
 
 #[test]
+fn flushing_a_pending_session_keeps_a_later_outside_write_out_of_it() {
+    let mut h = InspectorHarness::new();
+    let registry = h.inspector_registry();
+    let inspector = registry.type_inspector_lookup(String::type_uuid()).unwrap();
+    let component = ComponentID::default();
+    let mut session = Session::new(&h);
+    let id_component = h
+        .registries
+        .components
+        .read()
+        .component(ComponentID::type_uuid())
+        .map(|component| component.uuid())
+        .unwrap();
+
+    {
+        let mut draw = session.draw(&component, inspector, name);
+        h.idle(2, &mut draw);
+        let field = h.widget(Role::TextInput, 0);
+        h.click(field, &mut draw);
+        h.type_text("x", &mut draw);
+    }
+    // The editor flushes pending edits on a pointer press, before another
+    // panel writes the scene.
+    let components = h.registries.components.read();
+    for key in session.tracker.pending() {
+        let current = serialize_component(&session.scene, &components, key);
+        session.commits.extend(session.tracker.commit(key, current));
+    }
+    drop(components);
+    let game_object = session.game_object;
+    session
+        .scene
+        .write_component::<ComponentID, _>(game_object, |id| id.visible = !id.visible);
+    {
+        let mut draw = session.draw(&component, inspector, name);
+        h.click(AWAY, &mut draw);
+    }
+
+    assert_eq!(session.commits.len(), 1, "{:?}", session.commits);
+    assert_eq!(session.commits[0].key.component, id_component);
+    assert!(session.commits[0]
+        .changes
+        .iter()
+        .all(|change| change.value_path == ["name"]));
+}
+
+#[test]
 fn frames_without_a_reported_edit_serialize_nothing() {
     let mut h = InspectorHarness::new();
     let registry = h.inspector_registry();

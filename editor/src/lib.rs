@@ -727,6 +727,12 @@ impl eframe::App for EditorApp {
         self.state.game_response = None;
         self.state.viewport_response = None;
         self.remote_update_begin(ctx);
+        // A press starts any edit outside the inspector (hierarchy, gizmo,
+        // menus) and ends a pending text-field session, so the session's undo
+        // step is committed before another panel writes the scene.
+        if ctx.input(|input| input.pointer.any_pressed()) {
+            self.state.flush_pending_inspector_value_edits();
+        }
         self.render_views(ctx, frame);
         self.process_thumbnail_jobs(frame);
 
