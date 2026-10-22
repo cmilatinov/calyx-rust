@@ -58,6 +58,8 @@ mod selection;
 mod task_id;
 mod widgets;
 
+pub use project_manager::cargo_build_args as project_assembly_build_args;
+
 pub const BASE_FONT_SIZE: f32 = 16.0;
 
 pub struct EditorApp {

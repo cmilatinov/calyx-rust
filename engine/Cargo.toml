@@ -11,6 +11,8 @@ crate-type = ["rlib"]
 
 [dependencies]
 engine_derive = { path = "./engine_derive" }
+# Keeps project assemblies on the editor's engine build; see its Cargo.toml.
+engine_feature_pins = { path = "./engine_feature_pins" }
 bimap.workspace = true
 bytemuck.workspace = true
 chrono.workspace = true

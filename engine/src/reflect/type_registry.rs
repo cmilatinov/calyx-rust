@@ -57,6 +57,20 @@ pub struct TypeRegistry {
 /// the assembly that registered it.
 pub type TypeIdentity = (String, u64);
 
+/// The engine build a plugin assembly links, as seen from the host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginEngineBuild {
+    /// The host's engine build: engine types share their `TypeId`s.
+    Same,
+    /// Another engine build: every engine type has another `TypeId` there, so
+    /// the engine components the plugin reads, writes or adds are not the
+    /// host's.
+    Other,
+    /// The plugin never ran [`TypeRegistry::register_crate`], either because
+    /// it predates this check or registers its types another way.
+    Unknown,
+}
+
 /// Registry-wide record of which Rust type owns each registered UUID.
 #[repr(C)]
 #[derive(Default)]
@@ -67,6 +81,11 @@ pub struct RegistryIdentities {
     pub trait_meta: HashMap<Uuid, TypeIdentity>,
     /// Current registration pass. Pass 0 is the host; each plugin load starts a new one.
     pub generation: u64,
+    /// `TypeId` of [`TypeRegistry`] in the engine build that ran the latest
+    /// [`TypeRegistry::register_crate`], so the host can tell whether a plugin
+    /// assembly links the same engine build. Appended last to keep the layout
+    /// of the fields above.
+    pub registering_engine: Option<TypeId>,
 }
 
 impl RegistryIdentities {
@@ -111,6 +130,7 @@ impl TypeRegistry {
     /// Plugin entry points call this with `env!("CARGO_PKG_NAME")` so they add
     /// only their own types to the host registry.
     pub fn register_crate(&mut self, crate_name: &str) {
+        self.identities.registering_engine = Some(TypeId::of::<TypeRegistry>());
         self.run_registrations(|f| f.crate_name == crate_name);
     }
 
@@ -136,6 +156,17 @@ impl TypeRegistry {
     /// passes may then be replaced by differently named types with the same UUID.
     pub fn begin_plugin_load(&mut self) {
         self.identities.generation += 1;
+        self.identities.registering_engine = None;
+    }
+
+    /// Which engine build the plugin loaded since [`Self::begin_plugin_load`]
+    /// registered its types through.
+    pub fn plugin_engine_build(&self) -> PluginEngineBuild {
+        match self.identities.registering_engine {
+            None => PluginEngineBuild::Unknown,
+            Some(engine) if engine == TypeId::of::<TypeRegistry>() => PluginEngineBuild::Same,
+            Some(_) => PluginEngineBuild::Other,
+        }
     }
 
     /// Registers a reflected type explicitly.
@@ -466,6 +497,35 @@ mod tests {
         };
         Foo::register(&mut registry);
         registry
+    }
+
+    #[test]
+    fn plugin_registering_through_this_engine_links_it() {
+        let mut registry = empty_registry();
+        registry.begin_plugin_load();
+        registry.register_crate("no_such_crate");
+        assert_eq!(registry.plugin_engine_build(), PluginEngineBuild::Same);
+    }
+
+    #[test]
+    fn plugin_registering_through_another_engine_is_detected() {
+        let mut registry = empty_registry();
+        registry.begin_plugin_load();
+        // Another engine build's `TypeId` for `TypeRegistry` is just a
+        // different `TypeId`.
+        registry.identities.registering_engine = Some(TypeId::of::<ListWrapper>());
+        assert_eq!(registry.plugin_engine_build(), PluginEngineBuild::Other);
+    }
+
+    #[test]
+    fn plugin_that_never_reports_its_engine_is_unknown() {
+        let mut registry = empty_registry();
+        registry.begin_plugin_load();
+        registry.register_crate("no_such_crate");
+        // An assembly built before the marker existed, or one that skips
+        // `register_crate`, leaves it unset for the next load.
+        registry.begin_plugin_load();
+        assert_eq!(registry.plugin_engine_build(), PluginEngineBuild::Unknown);
     }
 
     #[test]
