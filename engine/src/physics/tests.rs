@@ -639,7 +639,6 @@ mod tests {
             let mut entry = scene.world.entry(floor_col.entity).unwrap();
             let collider = entry.get_component_mut::<ComponentCollider>().unwrap();
             collider.enabled = false;
-            collider.dirty = true;
         }
         scene.prepare();
         let handle = scene.physics.entity_collider[&floor_col.entity];
@@ -656,9 +655,98 @@ mod tests {
             let mut entry = scene.world.entry(floor_col.entity).unwrap();
             let collider = entry.get_component_mut::<ComponentCollider>().unwrap();
             collider.enabled = true;
-            collider.dirty = true;
         }
         scene.prepare();
         assert!(scene.physics.colliders[handle].is_enabled());
+    }
+
+    #[test]
+    fn collider_size_change_through_component_write_updates_physics() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        scene.add_component(
+            go,
+            ComponentCollider {
+                shape: ColliderShape::Cuboid {
+                    half_extents: Vec3::new(1.0, 1.0, 1.0),
+                },
+                ..Default::default()
+            },
+        );
+        scene.prepare();
+        // A second prepare with no edits must leave the collider as it is.
+        scene.prepare();
+
+        scene.write_component::<ComponentCollider, _>(go, |collider| {
+            collider.shape = ColliderShape::Cuboid {
+                half_extents: Vec3::new(2.0, 3.0, 4.0),
+            };
+        });
+        scene.prepare();
+
+        let handle = scene.physics.entity_collider[&go.entity];
+        let cuboid = scene.physics.colliders[handle]
+            .shape()
+            .as_cuboid()
+            .expect("collider should stay a cuboid");
+        assert_eq!(
+            cuboid.half_extents,
+            nalgebra::Vector3::new(2.0, 3.0, 4.0),
+            "physics collider should take the new half extents"
+        );
+    }
+
+    #[test]
+    fn body_type_change_through_component_write_updates_physics() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        scene.add_component(
+            go,
+            ComponentRigidBody {
+                ty: RigidBodyType::Dynamic,
+                ..Default::default()
+            },
+        );
+        scene.prepare();
+        scene.prepare();
+
+        scene.write_component::<ComponentRigidBody, _>(go, |rigid_body| {
+            rigid_body.ty = RigidBodyType::Fixed;
+        });
+        scene.prepare();
+
+        let handle = scene.physics.entity_rigid_body[&go.entity];
+        assert_eq!(
+            scene.physics.bodies[handle].body_type(),
+            RigidBodyType::Fixed,
+            "physics body should take the new body type"
+        );
+    }
+
+    #[test]
+    fn can_sleep_change_through_component_write_updates_physics() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        scene.add_component(
+            go,
+            ComponentRigidBody {
+                can_sleep: false,
+                ..Default::default()
+            },
+        );
+        scene.prepare();
+
+        let handle = scene.physics.entity_rigid_body[&go.entity];
+        assert!(scene.physics.bodies[handle].activation().angular_threshold < 0.0);
+
+        scene.write_component::<ComponentRigidBody, _>(go, |rigid_body| {
+            rigid_body.can_sleep = true;
+        });
+        scene.prepare();
+
+        assert!(
+            scene.physics.bodies[handle].activation().angular_threshold > 0.0,
+            "a body allowed to sleep again should get its sleep thresholds back"
+        );
     }
 }

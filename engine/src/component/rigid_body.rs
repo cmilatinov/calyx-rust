@@ -6,7 +6,10 @@ use rapier3d::dynamics::RigidBodyType;
 use serde::{Deserialize, Serialize};
 
 /// Physics rigid-body component for dynamic or kinematic simulation.
-#[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
+///
+/// Physics sync compares each rigid body with the values it last applied, so
+/// any write to these fields reaches the physics world on the next prepare.
+#[derive(Clone, PartialEq, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "8cac1bae-e3c3-4ee6-b672-7689e9c10f7e"]
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Rigid Body")]
@@ -25,10 +28,6 @@ pub struct ComponentRigidBody {
     pub gravity_scale: f32,
     /// Whether the body may enter Rapier's sleep state.
     pub can_sleep: bool,
-    /// Internal dirty flag that requests a physics rebuild.
-    #[serde(skip)]
-    #[reflect_skip]
-    pub dirty: bool,
 }
 
 impl Default for ComponentRigidBody {
@@ -39,7 +38,6 @@ impl Default for ComponentRigidBody {
             mass: 100.0,
             gravity_scale: 1.0,
             can_sleep: true,
-            dirty: true,
         }
     }
 }

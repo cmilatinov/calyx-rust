@@ -55,17 +55,6 @@ mod tests {
     }
 
     #[test]
-    fn rigid_body_dirty_on_creation() {
-        let mut scene = test_scene();
-        let go = scene.create(None, None);
-        scene.add_component(go, ComponentRigidBody::default());
-        assert_eq!(
-            scene.read_component::<ComponentRigidBody, _, _>(go, |c| c.dirty),
-            Some(true)
-        );
-    }
-
-    #[test]
     fn all_components_round_trip() {
         let registries = test_registries();
         let mut scene = registries.scene();

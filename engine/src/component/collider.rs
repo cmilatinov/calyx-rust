@@ -51,7 +51,10 @@ pub enum ColliderShape {
 }
 
 /// Physics collider component for a game object.
-#[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
+///
+/// Physics sync compares each collider with the values it last applied, so
+/// any write to these fields reaches the physics world on the next prepare.
+#[derive(Clone, PartialEq, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "53a682cb-a207-4c4c-8795-63f38351c7ef"]
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Collider")]
@@ -66,10 +69,6 @@ pub struct ComponentCollider {
     pub friction: f32,
     /// Density used to derive collider mass properties.
     pub density: f32,
-    /// Internal dirty flag that requests a physics rebuild.
-    #[serde(skip)]
-    #[reflect_skip]
-    pub dirty: bool,
 }
 
 impl Default for ComponentCollider {
@@ -79,7 +78,6 @@ impl Default for ComponentCollider {
             shape: ColliderShape::Sphere { radius: 1.0 },
             friction: 0.5,
             density: 100.0,
-            dirty: true,
         }
     }
 }
