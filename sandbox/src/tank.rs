@@ -250,12 +250,11 @@ fn update_hull(
     let mut changed = false;
 
     if steer.abs() > f32::EPSILON {
-        transform.rotate(&UnitQuaternion::from_euler_angles(
-            0.0,
+        changed |= turn_hull(
+            scene,
+            &mut transform,
             steer * controller.hull_turn_speed * dt,
-            0.0,
-        ));
-        changed = true;
+        );
     }
 
     if throttle.abs() > f32::EPSILON {
@@ -278,6 +277,37 @@ fn update_hull(
         });
     }
     scene.world_transform(game_object)
+}
+
+/// Turns the hull by `yaw` radians unless the turned hull would overlap a
+/// static obstacle it was not already overlapping. Returns whether it turned.
+fn turn_hull(scene: &Scene, transform: &mut Transform, yaw: f32) -> bool {
+    let rotation = transform.rotation * UnitQuaternion::from_euler_angles(0.0, yaw, 0.0);
+    let obstacles = static_obstacles(scene);
+    let is_obstacle = |collider: ColliderHandle, _: &Collider| {
+        scene
+            .physics
+            .collider_entity(collider)
+            .is_some_and(|entity| obstacles.contains(&entity))
+    };
+    let overlaps = |rotation: UnitQuaternion<f32>| {
+        scene
+            .physics
+            .intersect_shape(
+                ColliderShape::Cuboid {
+                    half_extents: TANK_COLLIDER_HALF_EXTENTS,
+                },
+                transform.position + TANK_COLLIDER_OFFSET,
+                rotation,
+                QueryFilter::default().predicate(&is_obstacle),
+            )
+            .is_some()
+    };
+    if overlaps(rotation) && !overlaps(transform.rotation) {
+        return false;
+    }
+    transform.rotation = rotation;
+    true
 }
 
 /// Entities whose colliders block the hull: colliders on a fixed rigid body
@@ -742,7 +772,7 @@ mod tests {
     use super::{
         advance_fire_cooldown, advance_reload, apply_projectile_damage, can_fire, flatten_xz,
         follow_camera_xz, ground_intersection, is_reloading, resolve_hull_movement,
-        segment_intersects_sphere, spawn_projectile, update_projectile, yaw_rotation,
+        segment_intersects_sphere, spawn_projectile, turn_hull, update_projectile, yaw_rotation,
         ComponentHealth, ComponentProjectile, ComponentProjectileTarget, ComponentTankController,
     };
     use crate::spawn::{update_respawn_state, ComponentRespawnState, ComponentSpawnPoint};
@@ -1127,6 +1157,30 @@ mod tests {
         );
 
         assert!((movement.z - 4.0).abs() < 1e-4, "movement: {movement:?}");
+    }
+
+    #[test]
+    fn hull_does_not_turn_its_corners_into_a_wall() {
+        let mut scene = engine::test_support::test_scene();
+        // The wall face sits at x = 0.8, just clear of the hull's 0.75 half
+        // width; a quarter turn would swing the 1.0 half length into it.
+        add_fixed_cube(&mut scene, vec3(1.3, 1.0, 0.0), vec3(0.5, 1.0, 10.0));
+        scene.prepare();
+        let mut transform = Transform::from_xyz(0.0, 0.0, 0.0);
+
+        assert!(!turn_hull(
+            &scene,
+            &mut transform,
+            std::f32::consts::FRAC_PI_2
+        ));
+        assert_eq!(transform.rotation, UnitQuaternion::identity());
+
+        let mut open_transform = Transform::from_xyz(-5.0, 0.0, 0.0);
+        assert!(turn_hull(
+            &scene,
+            &mut open_transform,
+            std::f32::consts::FRAC_PI_2
+        ));
     }
 
     fn add_fixed_cube(
