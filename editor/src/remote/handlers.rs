@@ -577,6 +577,7 @@ impl EditorApp {
         if type_uuid == ComponentTransform::type_uuid() {
             scene.clear_transform_cache();
         }
+        scene.refresh_network_object(game_object);
         Ok(Some(serde_json::Value::Null))
     }
 
