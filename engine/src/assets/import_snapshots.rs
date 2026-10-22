@@ -24,7 +24,7 @@ use crate::component::{
 use crate::context::ReadOnlyAssetContext;
 use crate::math::Transform;
 use crate::scene::Prefab;
-use crate::test_utils::TestAssets;
+use crate::test_support::TestAssets;
 use crate::utils::TypeUuid;
 
 /// Absolute and relative tolerance of a snapshot comparison.

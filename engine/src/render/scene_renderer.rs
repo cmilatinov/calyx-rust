@@ -570,7 +570,7 @@ impl SceneRenderer {
         scene: &Scene,
         render_options: &PipelineOptions,
     ) {
-        let world = &scene.world;
+        let world = scene.world();
         self.draw_list.clear();
         self.object_ids_build.clear();
         self.object_id_lookup.clear();
@@ -1278,8 +1278,7 @@ mod tests {
     use crate::component::ComponentMesh;
     use crate::math::Transform;
     use crate::render::{Camera, Shader};
-    use crate::test_support::SceneBuilder;
-    use crate::test_utils::TestAssets;
+    use crate::test_support::{SceneBuilder, TestAssets};
     use nalgebra::UnitQuaternion;
     use nalgebra_glm::{vec3, vec4};
 

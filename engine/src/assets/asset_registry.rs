@@ -1797,7 +1797,7 @@ impl AssetRegistry {
         self.load_or_create(Self::DEFAULT_SCENE, || {
             let mut scene = self.new_empty_scene();
             let game_object = scene.create(None, None);
-            scene.bind_component(
+            scene.add_component(
                 game_object,
                 ComponentMesh {
                     mesh: self.load("meshes/cube").ok().into(),
@@ -1813,7 +1813,7 @@ impl AssetRegistry {
 mod tests {
     use super::*;
     use crate::assets::error::AssetErrorKind;
-    use crate::test_utils::test_registries_with_assets;
+    use crate::test_support::test_registries_with_assets;
     use serde_json::json;
 
     fn temp_asset_root(prefix: &str) -> PathBuf {

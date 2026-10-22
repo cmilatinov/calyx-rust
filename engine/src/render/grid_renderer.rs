@@ -107,7 +107,7 @@ impl GridRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::TestAssets;
+    use crate::test_support::TestAssets;
     use egui_wgpu::wgpu::util::DeviceExt;
 
     #[test]

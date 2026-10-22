@@ -369,14 +369,12 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                         log::warn!("Failed to broadcast TransferOwnership: {e}");
                     }
                 }
-                'client_logic: {
-                    try_all!(
-                        None => break 'client_logic;
-                        let mut entry = scene.entry_mut(game_object);
-                        let c_netobj = entry.get_component_mut::<ComponentNetworkObject>().ok();
-                    );
+                let transferred =
+                    scene.write_component::<ComponentNetworkObject, _>(game_object, |c_netobj| {
+                        c_netobj.owner_id = *to_client_id;
+                    });
+                if transferred.is_some() {
                     log::trace!("CLIENT - Transferring ownership");
-                    c_netobj.owner_id = *to_client_id;
                 }
                 MessageHandlerResult::Consume
             }

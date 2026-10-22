@@ -1,10 +1,10 @@
 use bimap::BiHashMap;
+use legion::storage::ComponentTypeId;
 use legion::world::{Entry, EntryRef};
 use legion::{Entity, EntityStore, IntoQuery, World};
 use nalgebra_glm::Mat4;
 use serde::de::DeserializeSeed;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use uuid::Uuid;
@@ -63,13 +63,44 @@ pub struct SceneSnapshot {
     data: SceneData,
 }
 
+/// A scene's Legion world, readable throughout the engine through `Deref`.
+///
+/// The world itself is private to this module, so mutable component storage is
+/// only reached through [`Scene`]'s write methods, which observe every write.
+pub(crate) struct SceneWorld(World);
+
+impl std::ops::Deref for SceneWorld {
+    type Target = World;
+
+    fn deref(&self) -> &World {
+        &self.0
+    }
+}
+
+/// Result of [`Scene::edit_component_dyn`]: what the editor returned and the
+/// component's serialized form around the edit.
+pub struct ComponentEdit<R> {
+    /// The editor closure's return value.
+    pub value: R,
+    /// The component serialized before the edit.
+    pub before: Option<serde_json::Value>,
+    /// The component serialized after the edit.
+    pub after: Option<serde_json::Value>,
+}
+
 /// Runtime scene containing ECS state, hierarchy state, and physics state for a
 /// collection of game objects.
+///
+/// Every component write goes through a scene method, so the scene sees each
+/// one: [`Scene::world`] only hands out shared access, and the methods that
+/// add, write or remove components all report the write to the scene's one
+/// observation point, which keeps cached world transforms current.
 #[derive(TypeUuid)]
 #[uuid = "9946a2e7-e022-447e-8e60-528da548087f"]
 pub struct Scene {
-    /// Legion world that stores all scene components.
-    pub world: World,
+    /// Legion world that stores all scene components. The engine reads it
+    /// directly; only this module reaches its mutable side.
+    pub(crate) world: SceneWorld,
     /// Physics state coupled to the scene.
     pub physics: PhysicsContext,
     pub(crate) graph: SceneGraph,
@@ -100,7 +131,7 @@ impl Scene {
         let mut store = GameObjectStore::default();
         store.register_uuid(id, root);
         Self {
-            world,
+            world: SceneWorld(world),
             physics: Default::default(),
             graph,
             store,
@@ -198,13 +229,8 @@ impl From<(&ReadOnlyRegistryContext, SceneData)> for Scene {
                         continue;
                     }
                 };
-                try_all!(
-                    None => continue;
-                    let mut entry = scene.entry_mut(game_object);
-                );
-                let _ = component.bind_instance(&mut entry, instance);
+                scene.bind_instance(game_object, component, instance);
             }
-            scene.refresh_network_object(game_object);
             let mut id = None;
             if let Some(entry) = scene.entry(game_object) {
                 if let Ok(c_id) = entry.get_component::<ComponentID>() {
@@ -242,7 +268,7 @@ impl From<(&ReadOnlyAssetContext, SceneData)> for Scene {
 
 impl From<&Scene> for SceneData {
     fn from(scene: &Scene) -> Self {
-        let world = &scene.world;
+        let world = scene.world();
         let mut query = <(Entity, &ComponentID)>::query();
         let mut data = Default::default();
         for (entity, id) in query.iter(world) {
@@ -378,8 +404,8 @@ impl Scene {
         }
         let game_object = self.new_game_object(parent);
         self.store.register_uuid(id.id, game_object);
-        self.bind_component(game_object, id);
-        self.bind_component(game_object, ComponentTransform::default());
+        self.add_component(game_object, id);
+        self.add_component(game_object, ComponentTransform::default());
         game_object
     }
 
@@ -508,18 +534,11 @@ impl Scene {
                         continue;
                     }
                 };
-                try_all!(
-                    None => continue;
-                    let mut entry = self.entry_mut(game_object);
-                );
-                let _ = component.bind_instance(&mut entry, instance);
+                self.bind_instance(game_object, component, instance);
             }
-            self.refresh_network_object(game_object);
-            if let Some(mut entry) = self.entry_mut(game_object) {
-                if let Ok(c_id) = entry.get_component_mut::<ComponentID>() {
-                    c_id.id = new_game_object_id;
-                }
-            }
+            self.write_component::<ComponentID, _>(game_object, |c_id| {
+                c_id.id = new_game_object_id;
+            });
         }
 
         drop(remap_scope);
@@ -549,10 +568,6 @@ impl Scene {
 
         if let Some(parent) = parent {
             self.set_parent(game_object, Some(parent))?;
-        } else {
-            // Components were bound dynamically, which does not invalidate the
-            // cache, and a parentless root never goes through `set_parent`.
-            self.transforms.mark_dirty_subtree(game_object, &self.graph);
         }
 
         Ok(game_object)
@@ -600,7 +615,7 @@ impl Scene {
     pub fn main_camera(&self) -> Option<(GameObject, &ComponentCamera)> {
         let mut query = <(Entity, &ComponentTransform, &ComponentCamera)>::query();
         query
-            .iter(&self.world)
+            .iter(&self.world.0)
             .filter_map(|(e, _t, c)| self.game_object_from_entity(*e).map(|go| (go, c)))
             .find(|(go, c)| {
                 if let Some(camera) = &self.camera {
@@ -612,36 +627,39 @@ impl Scene {
     }
 
     pub(crate) fn new_game_object(&mut self, parent: Option<GameObject>) -> GameObject {
-        let entity = self.world.push(());
+        let entity = self.world.0.push(());
         let game_object = self.graph.attach(entity, Some(parent.unwrap_or(self.root)));
         self.transforms.remove(game_object.node);
         self.store.register_entity(entity, game_object.node);
         game_object
     }
 
-    /// Adds a concrete component instance to `game_object`.
+    /// Adds a concrete component instance to `game_object`, replacing any
+    /// component of the same type.
     pub fn add_component<T: Component + Send + Sync + 'static>(
         &mut self,
         game_object: GameObject,
         component: T,
     ) {
-        self.bind_component(game_object, component);
+        self.write_entry(game_object, ComponentTypeId::of::<T>(), |entry| {
+            entry.add_component(component);
+            Some(())
+        });
     }
 
-    pub(crate) fn bind_component<T: Component + Send + Sync + 'static>(
+    /// Adds the type-erased `instance` of `component`'s type to `game_object`.
+    /// Returns `false` when the object is missing or `instance` is another
+    /// type.
+    fn bind_instance(
         &mut self,
         game_object: GameObject,
-        component: T,
-    ) {
-        if let Some(mut e) = self.entry_mut(game_object) {
-            e.add_component(component)
-        }
-        if TypeId::of::<T>() == TypeId::of::<ComponentTransform>() {
-            self.transforms.mark_dirty_subtree(game_object, &self.graph);
-        }
-        if TypeId::of::<T>() == TypeId::of::<ComponentNetworkObject>() {
-            self.refresh_network_object(game_object);
-        }
+        component: &dyn Component,
+        instance: Box<dyn crate::reflect::Reflect>,
+    ) -> bool {
+        self.write_entry(game_object, component.component_type_id(), |entry| {
+            component.bind_instance(entry, instance).then_some(())
+        })
+        .is_some()
     }
 
     /// Creates and binds a component by reflected type UUID.
@@ -660,16 +678,7 @@ impl Scene {
             return;
         };
         let default_instance = meta.default();
-        let result = {
-            let Some(mut entry) = self.entry_mut(game_object) else {
-                return;
-            };
-            component.bind_instance(&mut entry, default_instance)
-        };
-        if result {
-            if type_uuid == ComponentTransform::type_uuid() {
-                self.transforms.mark_dirty_subtree(game_object, &self.graph);
-            }
+        if self.bind_instance(game_object, component, default_instance) {
             // Call the registered reset if one exists for this component type.
             if let Some(resetter) = component_registry.reset_component(type_uuid) {
                 let assets = self.registries.clone();
@@ -679,51 +688,7 @@ impl Scene {
                     game_object,
                 });
             }
-            if type_uuid == ComponentNetworkObject::type_uuid() {
-                self.refresh_network_object(game_object);
-            }
         }
-    }
-
-    /// Removes the component with reflected type UUID `type_uuid` from
-    /// `game_object`. Returns whether the component type is registered and
-    /// the object exists.
-    pub fn remove_component_dyn(&mut self, game_object: GameObject, type_uuid: Uuid) -> bool {
-        let component_registry_ref = self.registries.components.clone();
-        let component_registry = component_registry_ref.read();
-        let Some(component) = component_registry.component(type_uuid) else {
-            return false;
-        };
-        let Some(mut entry) = self.entry_mut(game_object) else {
-            return false;
-        };
-        component.remove_instance(&mut entry);
-        if type_uuid == ComponentTransform::type_uuid() {
-            self.transforms.mark_dirty_subtree(game_object, &self.graph);
-        }
-        if type_uuid == ComponentNetworkObject::type_uuid() {
-            self.refresh_network_object(game_object);
-        }
-        true
-    }
-
-    /// Returns a raw mutable pointer to a component instance.
-    ///
-    /// # Safety
-    ///
-    /// The returned pointer is tied to the current contents of the Legion
-    /// world. Callers must not hold it across scene mutations that could move or
-    /// remove the component, and they must uphold Rust aliasing rules manually.
-    pub unsafe fn get_component_ptr(
-        &mut self,
-        game_object: GameObject,
-        component: &dyn Component,
-    ) -> Option<*mut dyn Component> {
-        self.entry_mut(game_object).and_then(|mut entry| {
-            component
-                .get_instance_mut(&mut entry)
-                .map(|instance| instance as *mut dyn Component)
-        })
     }
 
     /// Returns the immutable Legion entry for `game_object`.
@@ -731,9 +696,43 @@ impl Scene {
         self.world.entry_ref(game_object.entity).ok()
     }
 
+    /// Returns the Legion world for read-only queries. Component writes go
+    /// through the scene's write methods instead.
+    pub fn world(&self) -> &World {
+        &self.world.0
+    }
+
     /// Returns the mutable Legion entry for `game_object`.
-    pub fn entry_mut(&mut self, game_object: GameObject) -> Option<Entry<'_>> {
-        self.world.entry(game_object.entity)
+    ///
+    /// This is the only place mutable component storage is handed out. Its
+    /// callers are the scene's write methods, which report each write through
+    /// [`Scene::component_written`]; any other caller would let a write go
+    /// unobserved.
+    fn entry_mut(&mut self, game_object: GameObject) -> Option<Entry<'_>> {
+        self.world.0.entry(game_object.entity)
+    }
+
+    /// Runs `writer` against `game_object`'s mutable entry and, when it returns
+    /// `Some`, reports a write of `component` to the scene.
+    fn write_entry<R>(
+        &mut self,
+        game_object: GameObject,
+        component: ComponentTypeId,
+        writer: impl FnOnce(&mut Entry) -> Option<R>,
+    ) -> Option<R> {
+        let result = writer(&mut self.entry_mut(game_object)?)?;
+        self.component_written(game_object, component);
+        Some(result)
+    }
+
+    /// Observes that `game_object`'s `component` was added, written or
+    /// removed. Every component write in the scene ends here.
+    fn component_written(&mut self, game_object: GameObject, component: ComponentTypeId) {
+        if component == ComponentTypeId::of::<ComponentTransform>() {
+            self.transforms.mark_dirty_subtree(game_object, &self.graph);
+        } else if component == ComponentTypeId::of::<ComponentNetworkObject>() {
+            self.refresh_network_object(game_object);
+        }
     }
 
     /// Reads component `T` from `game_object` and maps it through `reader`.
@@ -749,29 +748,97 @@ impl Scene {
             .map(reader)
     }
 
-    /// Mutates component `T` on `game_object`.
+    /// Mutates component `T` on `game_object` and returns what `writer`
+    /// returns, or `None` when the object or component is missing.
     ///
     /// Transform writes invalidate cached world transforms for the object's
     /// subtree.
-    pub fn write_component<T: Component + 'static, F: FnOnce(&mut T)>(
+    pub fn write_component<T: Component + 'static, R>(
         &mut self,
         game_object: GameObject,
-        writer: F,
-    ) -> Option<()> {
-        let result = {
-            let mut entry = self.entry_mut(game_object);
-            entry
-                .as_mut()
-                .and_then(|entry| entry.get_component_mut::<T>().ok())
-                .map(writer)
+        writer: impl FnOnce(&mut T) -> R,
+    ) -> Option<R> {
+        self.write_entry(game_object, ComponentTypeId::of::<T>(), |entry| {
+            entry.get_component_mut::<T>().ok().map(writer)
+        })
+    }
+
+    /// Mutates the component of `component`'s type on `game_object`, for
+    /// callers that only know the type at runtime, such as through the
+    /// component registry's prototypes. Returns `None` when the object or
+    /// component is missing.
+    pub fn write_component_dyn<R>(
+        &mut self,
+        game_object: GameObject,
+        component: &dyn Component,
+        writer: impl FnOnce(&mut dyn Component) -> R,
+    ) -> Option<R> {
+        self.write_entry(game_object, component.component_type_id(), |entry| {
+            component.get_instance_mut(entry).map(writer)
+        })
+    }
+
+    /// Lets `editor` change the component of `component`'s type on
+    /// `game_object` while it reads the rest of the scene, as an inspector
+    /// does. The scene compares the component's serialized form before and
+    /// after and reports a write only when it changed, or when the component
+    /// cannot be serialized, so showing a component without editing it is not
+    /// a write.
+    ///
+    /// # Safety
+    ///
+    /// `editor` receives the component and a shared scene at once. It must
+    /// not read the edited component through the scene while it holds the
+    /// component.
+    pub unsafe fn edit_component_dyn<R>(
+        &mut self,
+        game_object: GameObject,
+        component: &dyn Component,
+        editor: impl FnOnce(&mut dyn Component, &Scene) -> R,
+    ) -> Option<ComponentEdit<R>> {
+        let instance = {
+            let mut entry = self.entry_mut(game_object)?;
+            component.get_instance_mut(&mut entry)? as *mut dyn Component
         };
-        if result.is_some() && TypeId::of::<T>() == TypeId::of::<ComponentTransform>() {
-            self.transforms.mark_dirty_subtree(game_object, &self.graph);
+        // SAFETY: the pointer targets the component's storage in the world,
+        // which nothing moves while `editor` only has shared scene access, and
+        // the caller guarantees `editor` does not alias it through the scene.
+        let instance = unsafe { &mut *instance };
+        let before = instance.serialize();
+        let value = editor(instance, self);
+        let after = instance.serialize();
+        if before.is_none() || before != after {
+            self.component_written(game_object, component.component_type_id());
         }
-        if result.is_some() && TypeId::of::<T>() == TypeId::of::<ComponentNetworkObject>() {
-            self.refresh_network_object(game_object);
-        }
-        result
+        Some(ComponentEdit {
+            value,
+            before,
+            after,
+        })
+    }
+
+    /// Removes component `T` from `game_object`.
+    pub fn remove_component<T: Component + 'static>(&mut self, game_object: GameObject) {
+        self.write_entry(game_object, ComponentTypeId::of::<T>(), |entry| {
+            entry.remove_component::<T>();
+            Some(())
+        });
+    }
+
+    /// Removes the component with reflected type UUID `type_uuid` from
+    /// `game_object`. Returns whether the component type is registered and
+    /// the object exists.
+    pub fn remove_component_dyn(&mut self, game_object: GameObject, type_uuid: Uuid) -> bool {
+        let component_registry_ref = self.registries.components.clone();
+        let component_registry = component_registry_ref.read();
+        let Some(component) = component_registry.component(type_uuid) else {
+            return false;
+        };
+        self.write_entry(game_object, component.component_type_id(), |entry| {
+            component.remove_instance(entry);
+            Some(())
+        })
+        .is_some()
     }
 
     /// Flushes pending deletions and prepares the physics scene for the next
@@ -799,7 +866,7 @@ impl Scene {
         // Collect once — each updater's read_component bails early for entities
         // that don't have its component type.
         let game_objects: Vec<GameObject> = <Entity>::query()
-            .iter(&self.world)
+            .iter(&self.world.0)
             .filter_map(|e| self.game_object_from_entity(*e))
             .collect();
 
@@ -865,7 +932,7 @@ impl Scene {
             for go in self.graph.detach_subtree(game_object) {
                 self.network_objects.remove_by_right(&go);
                 let uuid = self.uuid(go);
-                self.world.remove(go.entity);
+                self.world.0.remove(go.entity);
                 self.store.remove(uuid, go.entity);
                 self.transforms.remove(go.node);
             }
@@ -968,14 +1035,9 @@ impl Scene {
 
     /// Sets the local transform matrix for `game_object`.
     pub fn set_transform(&mut self, game_object: GameObject, matrix: &Mat4) {
-        let Some(mut entry) = self.entry_mut(game_object) else {
-            return;
-        };
-        let Ok(c_transform) = entry.get_component_mut::<ComponentTransform>() else {
-            return;
-        };
-        c_transform.transform.set_local_matrix(matrix);
-        self.transforms.mark_dirty_subtree(game_object, &self.graph);
+        self.write_component::<ComponentTransform, _>(game_object, |c_transform| {
+            c_transform.transform.set_local_matrix(matrix);
+        });
     }
 
     /// Sets `game_object`'s world transform by converting through its parent
@@ -998,11 +1060,6 @@ impl Scene {
         let transform = self.world_transform(game_object);
         let parent_transform = self.world_transform(parent);
         (parent_transform.inverse_matrix() * transform.matrix()).into()
-    }
-
-    /// Invalidates every cached world transform in the scene.
-    pub fn clear_transform_cache(&self) {
-        self.transforms.clear();
     }
 
     fn map_has_component<T: Component>(&self, game_object: GameObject) -> Option<GameObject> {
@@ -1037,11 +1094,10 @@ impl Scene {
 
     /// Finds the game object carrying network object `network_object_id`.
     ///
-    /// Lookups go through an index kept up to date by the scene's own
-    /// component writes, spawns and deletions. Writes made through a raw
-    /// [`Scene::entry_mut`] bypass it, so a hit is checked against the
-    /// object's [`ComponentNetworkObject`], and a miss or stale hit falls
-    /// back to one scan of the scene that rebuilds the index.
+    /// Lookups go through an index the scene keeps up to date on every
+    /// [`ComponentNetworkObject`] add, write or removal and on deletions. A
+    /// hit is still checked against the object's component, and a miss or
+    /// stale hit falls back to one scan of the scene that rebuilds the index.
     pub fn find_network_object(
         &mut self,
         network_object_id: NetworkObjectId,
@@ -1075,13 +1131,8 @@ impl Scene {
 
     /// Brings the network object index up to date with `game_object`'s
     /// current [`ComponentNetworkObject`], after it was added, written or
-    /// removed.
-    ///
-    /// The scene calls this from its own component paths. Call it after
-    /// changing a network object through a raw component pointer or
-    /// [`Scene::entry_mut`]; lookups still repair a missed update, at the
-    /// cost of a scan.
-    pub fn refresh_network_object(&mut self, game_object: GameObject) {
+    /// removed. [`Scene::component_written`] calls it for every such write.
+    fn refresh_network_object(&mut self, game_object: GameObject) {
         // Inserting evicts any pair sharing the id or the object, so an old
         // id of this object and an older claimant of this id both go.
         match self.network_id(game_object) {

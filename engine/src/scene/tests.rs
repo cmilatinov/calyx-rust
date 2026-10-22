@@ -6,7 +6,7 @@ mod tests {
     use crate::reflect::{Reflect, ReflectDefault};
     use crate::scene::game_object_ref::RemapScope;
     use crate::scene::{GameObject, GameObjectRef, Scene, SceneData, SiblingDir};
-    use crate::test_utils::test_scene;
+    use crate::test_support::test_scene;
     use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
     use nalgebra_glm::{self as glm, Vec3};
     use serde::{Deserialize, Serialize};
@@ -801,20 +801,6 @@ mod tests {
     }
 
     #[test]
-    fn clear_transform_cache() {
-        let mut scene = test_scene();
-        let go = scene.create(None, None);
-        scene.set_transform(go, &glm::translation(&Vec3::new(1.0, 0.0, 0.0)));
-
-        // Populate cache
-        let _ = scene.world_transform(go);
-        // Clear and verify it still works (recomputes)
-        scene.clear_transform_cache();
-        let t = scene.world_transform(go);
-        assert!((t.position - Vec3::new(1.0, 0.0, 0.0)).norm() < 1e-5);
-    }
-
-    #[test]
     fn transform_cache_marks_descendants_dirty() {
         let mut scene = test_scene();
         let parent = scene.create(None, None);
@@ -830,9 +816,140 @@ mod tests {
         assert!((world.position - Vec3::new(5.0, 1.0, 0.0)).norm() < 1e-5);
     }
 
+    // --- Transform writes keep descendants' world transforms current ---
+
+    /// Builds a parent at x=1 with a child at local y=1 and caches the child's
+    /// world transform, so a write that forgets to invalidate the subtree
+    /// leaves the child at its stale position.
+    fn parent_with_cached_child() -> (Scene, GameObject, GameObject) {
+        let mut scene = crate::test_support::test_registries().scene();
+        let parent = scene.create(None, None);
+        let child = scene.create(None, Some(parent));
+        scene.set_transform(parent, &glm::translation(&Vec3::new(1.0, 0.0, 0.0)));
+        scene.set_transform(child, &glm::translation(&Vec3::new(0.0, 1.0, 0.0)));
+        assert_child_at(&scene, child, Vec3::new(1.0, 1.0, 0.0));
+        (scene, parent, child)
+    }
+
+    fn assert_child_at(scene: &Scene, child: GameObject, expected: Vec3) {
+        let world = scene.world_transform(child).position;
+        assert!(
+            (world - expected).norm() < 1e-5,
+            "child world position {world:?}, expected {expected:?}"
+        );
+    }
+
+    #[test]
+    fn set_transform_on_parent_moves_child() {
+        let (mut scene, parent, child) = parent_with_cached_child();
+        scene.set_transform(parent, &glm::translation(&Vec3::new(5.0, 0.0, 0.0)));
+        assert_child_at(&scene, child, Vec3::new(5.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn set_world_transform_on_parent_moves_child() {
+        let (mut scene, parent, child) = parent_with_cached_child();
+        scene.set_world_transform(parent, glm::translation(&Vec3::new(5.0, 0.0, 0.0)));
+        assert_child_at(&scene, child, Vec3::new(5.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn write_component_on_parent_transform_moves_child() {
+        let (mut scene, parent, child) = parent_with_cached_child();
+        scene.write_component::<crate::component::ComponentTransform, _>(parent, |c| {
+            c.transform.position = Vec3::new(5.0, 0.0, 0.0);
+        });
+        assert_child_at(&scene, child, Vec3::new(5.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn add_component_replacing_parent_transform_moves_child() {
+        let (mut scene, parent, child) = parent_with_cached_child();
+        let mut transform = crate::component::ComponentTransform::default();
+        transform.transform.position = Vec3::new(5.0, 0.0, 0.0);
+        scene.add_component(parent, transform);
+        assert_child_at(&scene, child, Vec3::new(5.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn bind_component_dyn_resetting_parent_transform_moves_child() {
+        use crate::utils::TypeUuid;
+        let (mut scene, parent, child) = parent_with_cached_child();
+        scene.bind_component_dyn(parent, crate::component::ComponentTransform::type_uuid());
+        assert_child_at(&scene, child, Vec3::new(0.0, 1.0, 0.0));
+    }
+
+    /// Any transform instance serves as the type-erased handle the dynamic
+    /// write methods take, as a registry prototype does.
+    fn transform_prototype() -> crate::component::ComponentTransform {
+        crate::component::ComponentTransform::default()
+    }
+
+    #[test]
+    fn write_component_dyn_on_parent_transform_moves_child() {
+        let (mut scene, parent, child) = parent_with_cached_child();
+        let prototype = transform_prototype();
+        let written = scene.write_component_dyn(parent, &prototype, |instance| {
+            let c = instance
+                .as_reflect_mut()
+                .downcast_mut::<crate::component::ComponentTransform>()
+                .expect("instance should be a transform");
+            c.transform.position = Vec3::new(5.0, 0.0, 0.0);
+        });
+        assert!(written.is_some());
+        assert_child_at(&scene, child, Vec3::new(5.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn edit_component_dyn_on_parent_transform_moves_child() {
+        let (mut scene, parent, child) = parent_with_cached_child();
+        let prototype = transform_prototype();
+        let edit = unsafe {
+            scene.edit_component_dyn(parent, &prototype, |instance, scene| {
+                let c = instance
+                    .as_reflect_mut()
+                    .downcast_mut::<crate::component::ComponentTransform>()
+                    .expect("instance should be a transform");
+                c.transform.position = Vec3::new(5.0, 0.0, 0.0);
+                scene.name(child)
+            })
+        }
+        .expect("the parent should have a transform");
+        assert_eq!(edit.value, scene.name(child));
+        assert_ne!(edit.before, edit.after);
+        assert_child_at(&scene, child, Vec3::new(5.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn edit_component_dyn_without_a_change_reports_equal_values() {
+        let (mut scene, parent, child) = parent_with_cached_child();
+        let prototype = transform_prototype();
+        let edit = unsafe { scene.edit_component_dyn(parent, &prototype, |_, _| ()) }
+            .expect("the parent should have a transform");
+        assert_eq!(edit.before, edit.after);
+        assert_child_at(&scene, child, Vec3::new(1.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn remove_component_on_parent_transform_moves_child() {
+        let (mut scene, parent, child) = parent_with_cached_child();
+        scene.remove_component::<crate::component::ComponentTransform>(parent);
+        assert_child_at(&scene, child, Vec3::new(0.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn remove_component_dyn_on_parent_transform_moves_child() {
+        let (mut scene, parent, child) = parent_with_cached_child();
+        use crate::utils::TypeUuid;
+        assert!(
+            scene.remove_component_dyn(parent, crate::component::ComponentTransform::type_uuid())
+        );
+        assert_child_at(&scene, child, Vec3::new(0.0, 1.0, 0.0));
+    }
+
     #[test]
     fn transform_cache_is_not_reused_after_node_is_recycled() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
 
         let template = scene.create(None, None);
@@ -862,7 +979,7 @@ mod tests {
 
     #[test]
     fn parentless_prefab_root_starts_with_fresh_world_transform() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
 
         let template = scene.create(None, None);
@@ -917,7 +1034,7 @@ mod tests {
 
     #[test]
     fn bind_component_dyn() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
         let go = scene.create(None, None);
 
@@ -929,18 +1046,13 @@ mod tests {
     }
 
     #[test]
-    fn entry_and_entry_mut() {
+    fn entry() {
         let mut scene = test_scene();
         let go = scene.create(None, None);
 
-        // entry (read)
         let entry = scene.entry(go);
         assert!(entry.is_some());
         assert!(entry.unwrap().get_component::<ComponentID>().is_ok());
-
-        // entry_mut (write)
-        let entry_mut = scene.entry_mut(go);
-        assert!(entry_mut.is_some());
     }
 
     // --- Camera ---
@@ -967,7 +1079,7 @@ mod tests {
 
     #[test]
     fn create_and_instantiate_prefab() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
 
         let parent = scene.create(
@@ -1002,7 +1114,7 @@ mod tests {
 
     #[test]
     fn instantiate_prefab_returns_error_for_missing_root() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
         let root = scene.create(None, None);
         let mut prefab = scene.create_prefab(root);
@@ -1020,7 +1132,7 @@ mod tests {
 
     #[test]
     fn instantiate_prefab_returns_error_for_hierarchy_cycle() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
         let root = scene.create(None, None);
         let a = scene.create(None, None);
@@ -1042,7 +1154,7 @@ mod tests {
             .hierarchy
             .insert(scene.uuid(b), vec![scene.uuid(a)]);
         let object_count = scene.root_objects().count();
-        let entity_count = scene.world.len();
+        let entity_count = scene.world().len();
 
         let result = scene.instantiate_prefab(&prefab, None);
 
@@ -1051,12 +1163,12 @@ mod tests {
             Err(crate::scene::SceneError::HierarchyCycle)
         ));
         assert_eq!(scene.root_objects().count(), object_count);
-        assert_eq!(scene.world.len(), entity_count);
+        assert_eq!(scene.world().len(), entity_count);
     }
 
     #[test]
     fn instantiate_prefab_returns_error_for_hierarchy_entry_outside_prefab() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
         let root = scene.create(None, None);
         let mut prefab = scene.create_prefab(root);
@@ -1064,7 +1176,7 @@ mod tests {
             .data
             .hierarchy
             .insert(scene.uuid(root), vec![Uuid::new_v4()]);
-        let entity_count = scene.world.len();
+        let entity_count = scene.world().len();
 
         let result = scene.instantiate_prefab(&prefab, None);
 
@@ -1072,12 +1184,12 @@ mod tests {
             result,
             Err(crate::scene::SceneError::InvalidPrefab(_))
         ));
-        assert_eq!(scene.world.len(), entity_count);
+        assert_eq!(scene.world().len(), entity_count);
     }
 
     #[test]
     fn instantiate_prefab_returns_error_for_disconnected_or_duplicate_parent_objects() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
         let root = scene.create(None, None);
         let other = scene.create(None, None);
@@ -1087,7 +1199,7 @@ mod tests {
             other_id,
             scene.create_prefab(other).data.components[&other_id].clone(),
         );
-        let entity_count = scene.world.len();
+        let entity_count = scene.world().len();
 
         let disconnected = scene.instantiate_prefab(&prefab, None);
         prefab
@@ -1104,12 +1216,12 @@ mod tests {
             duplicate,
             Err(crate::scene::SceneError::InvalidPrefab(_))
         ));
-        assert_eq!(scene.world.len(), entity_count);
+        assert_eq!(scene.world().len(), entity_count);
     }
 
     #[test]
     fn instantiate_prefab_returns_error_for_missing_id_component() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
         let root = scene.create(None, None);
         let mut prefab = scene.create_prefab(root);
@@ -1119,7 +1231,7 @@ mod tests {
             .get_mut(&prefab.root)
             .unwrap()
             .remove(&<ComponentID as crate::utils::TypeUuid>::type_uuid());
-        let entity_count = scene.world.len();
+        let entity_count = scene.world().len();
 
         let result = scene.instantiate_prefab(&prefab, None);
 
@@ -1127,7 +1239,7 @@ mod tests {
             result,
             Err(crate::scene::SceneError::InvalidPrefab(_))
         ));
-        assert_eq!(scene.world.len(), entity_count);
+        assert_eq!(scene.world().len(), entity_count);
     }
 
     // --- Prefab reference remapping ---
@@ -1209,7 +1321,7 @@ mod tests {
 
     #[test]
     fn instantiate_prefab_remaps_reference_inside_nested_struct() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
 
         let (instance, instance_child) =
@@ -1226,7 +1338,7 @@ mod tests {
 
     #[test]
     fn instantiate_prefab_remaps_references_inside_list() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
 
         let (instance, instance_child) =
@@ -1246,7 +1358,7 @@ mod tests {
 
     #[test]
     fn instantiate_prefab_remaps_references_inside_enum_variant_and_tuple_struct() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
 
         let (instance, instance_child) =
@@ -1273,7 +1385,7 @@ mod tests {
 
     #[test]
     fn instantiate_prefab_leaves_nil_and_outside_references_unchanged() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
         let outside = scene.create(None, None);
         let outside_id = scene.uuid(outside);
@@ -1300,7 +1412,7 @@ mod tests {
 
     #[test]
     fn instantiate_prefab_does_not_remap_serde_skipped_references() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
 
         let (instance, _) = instantiate_with_refs(&mut scene, |_, child| NestedRefComponent {
@@ -1314,7 +1426,7 @@ mod tests {
 
     #[test]
     fn remap_scope_ends_after_instantiate_prefab() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
         let root = scene.create(None, None);
         let root_id = scene.uuid(root);
@@ -1344,7 +1456,7 @@ mod tests {
 
     #[test]
     fn serialization_round_trip_preserves_game_objects() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
 
         scene.create(
@@ -1372,7 +1484,7 @@ mod tests {
 
     #[test]
     fn serialization_round_trip_preserves_hierarchy() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
 
         let parent = scene.create(
@@ -1405,7 +1517,7 @@ mod tests {
 
     #[test]
     fn serialization_round_trip_preserves_components() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
 
         let go = scene.create(None, None);
@@ -1435,7 +1547,7 @@ mod tests {
 
     #[test]
     fn scene_clone_is_equivalent() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
 
         let parent = scene.create(
@@ -1465,7 +1577,7 @@ mod tests {
 
     #[test]
     fn scene_snapshot_restores_equivalent_scene() {
-        let registries = crate::test_utils::test_registries();
+        let registries = crate::test_support::test_registries();
         let mut scene = registries.scene();
 
         let parent = scene.create(
@@ -1499,7 +1611,7 @@ mod tests {
 
     #[test]
     fn scene_manager_restores_authoring_scene_snapshot() {
-        let mut game = crate::test_utils::test_game_context();
+        let mut game = crate::test_support::test_game_context();
         game.scenes.current_scene_mut().create(
             Some(ComponentID {
                 name: "Kept".into(),
@@ -1533,7 +1645,7 @@ mod tests {
 
     #[test]
     fn scene_manager_starts_configured_scene_without_replacing_authoring_scene() {
-        let mut game = crate::test_utils::test_game_context();
+        let mut game = crate::test_support::test_game_context();
         game.scenes.current_scene_mut().create(
             Some(ComponentID {
                 name: "Authoring".into(),
@@ -1572,7 +1684,7 @@ mod tests {
 
     #[test]
     fn scene_manager_resumes_configured_simulation_without_reloading() {
-        let mut game = crate::test_utils::test_game_context();
+        let mut game = crate::test_support::test_game_context();
         let mut configured = test_scene();
         configured.create(
             Some(ComponentID {
@@ -1605,7 +1717,7 @@ mod tests {
 
     #[test]
     fn scene_snapshot_serializes_like_scene() {
-        let mut scene = crate::test_utils::test_scene();
+        let mut scene = crate::test_support::test_scene();
         scene.create(
             Some(ComponentID {
                 name: "Snapshot Object".into(),
