@@ -66,10 +66,6 @@ pub struct ComponentCollider {
     pub friction: f32,
     /// Density used to derive collider mass properties.
     pub density: f32,
-    /// Internal dirty flag that requests a physics rebuild.
-    #[serde(skip)]
-    #[reflect_skip]
-    pub dirty: bool,
 }
 
 impl Default for ComponentCollider {
@@ -79,7 +75,6 @@ impl Default for ComponentCollider {
             shape: ColliderShape::Sphere { radius: 1.0 },
             friction: 0.5,
             density: 100.0,
-            dirty: true,
         }
     }
 }

@@ -139,9 +139,6 @@ impl TypeInspector for ColliderInspector {
         Widgets::inspector_prop_value(ui, "Density", |ui, _| {
             changed |= ui.add(egui::DragValue::new(&mut value.density));
         });
-        if changed.changed {
-            value.dirty = true;
-        }
         changed
     }
 }

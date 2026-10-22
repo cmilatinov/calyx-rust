@@ -72,9 +72,6 @@ impl TypeInspector for RigidBodyInspector {
             Widgets::inspector_prop_value(ui, "Can Sleep", |ui, _| {
                 changed |= ui.add(egui::Checkbox::without_text(&mut value.can_sleep));
             });
-            if changed.changed {
-                value.dirty = true;
-            }
         }
         changed
     }

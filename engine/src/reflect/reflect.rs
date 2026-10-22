@@ -45,6 +45,51 @@ pub trait Reflect: TypeUuidDynamic + TypeNameDynamic + Any + Send + Sync {
     fn into_any(self: Box<Self>) -> Box<dyn Any>;
     /// Assigns `value` into `self` when the concrete types match.
     fn assign(&mut self, value: Box<dyn Reflect>) -> bool;
+    /// Returns this value as a list when it is one, such as a `Vec`.
+    fn as_list(&self) -> Option<&dyn ReflectList> {
+        None
+    }
+    /// Returns this value as a mutable list when it is one, such as a `Vec`.
+    fn as_list_mut(&mut self) -> Option<&mut dyn ReflectList> {
+        None
+    }
+    /// Registers the container metadata this type needs when a reflected
+    /// struct holds it in a field. `Vec<E>` registers its list info and
+    /// default, then recurses into `E`; other types need nothing.
+    ///
+    /// The `Reflect` derive calls this for every reflected field. Dispatching
+    /// on the resolved type means a field declared through a type alias of
+    /// `Vec<E>` registers too.
+    #[doc(hidden)]
+    fn register_field_type(_registry: &mut TypeRegistry)
+    where
+        Self: Sized,
+    {
+    }
+}
+
+/// Type-erased access to a reflected list's elements.
+///
+/// [`crate::reflect::ListInfo`] describes the element type; this trait reads,
+/// edits, adds and removes the elements themselves.
+pub trait ReflectList {
+    /// Number of elements.
+    fn len(&self) -> usize;
+    /// Returns `true` when the list holds no elements.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    /// Element at `index`, or `None` past the end.
+    fn element(&self, index: usize) -> Option<&(dyn Reflect + 'static)>;
+    /// Mutable element at `index`, or `None` past the end.
+    fn element_mut(&mut self, index: usize) -> Option<&mut (dyn Reflect + 'static)>;
+    /// Appends `value`, handing it back when it is not of the element type.
+    fn push(&mut self, value: Box<dyn Reflect>) -> Result<(), Box<dyn Reflect>>;
+    /// Inserts `value` at `index`, shifting later elements up. Hands `value`
+    /// back when it is not of the element type or `index` is past the end.
+    fn insert(&mut self, index: usize, value: Box<dyn Reflect>) -> Result<(), Box<dyn Reflect>>;
+    /// Removes and returns the element at `index`, or `None` past the end.
+    fn remove(&mut self, index: usize) -> Option<Box<dyn Reflect>>;
 }
 
 impl dyn Reflect {

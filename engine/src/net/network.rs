@@ -9,7 +9,6 @@ use crate::net::{
     MessageSender, NetworkObjectId, ServerEvent,
 };
 use crate::scene::{GameObject, Prefab, Scene};
-use crate::try_all;
 use crate::utils::TypeUuid;
 use engine_derive::Resource;
 use renet::ClientId;
@@ -298,10 +297,9 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
     ) -> MessageHandlerResult {
         match message {
             GameMessage::ServerEvent(ServerEvent::ClientConnected { client_id }) => {
-                try_all!(
-                    None => return MessageHandlerResult::Consume;
-                    let server = server;
-                );
+                let Some(server) = server else {
+                    return MessageHandlerResult::Consume;
+                };
                 if let Err(e) = server.send_message(
                     *client_id,
                     &GameMessage::SelfConnected {
@@ -360,10 +358,9 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                     return MessageHandlerResult::Consume;
                 };
                 'server_logic: {
-                    try_all!(
-                        None => break 'server_logic;
-                        let server = server;
-                    );
+                    let Some(server) = server else {
+                        break 'server_logic;
+                    };
                     log::trace!("SERVER - Transferring ownership");
                     if let Err(e) = server.broadcast_message(message) {
                         log::warn!("Failed to broadcast TransferOwnership: {e}");
@@ -486,20 +483,21 @@ impl MessageHandler<NetworkPrefabSyncContext<'_, '_>, GameMessage> for NetworkPr
                     }
                     return MessageHandlerResult::Consume;
                 }
-                try_all!(
-                    None => return MessageHandlerResult::Consume;
-                    let client_id = **local_id;
-                );
+                let Some(client_id) = **local_id else {
+                    return MessageHandlerResult::Consume;
+                };
                 if client_id == *from_client_id {
                     return MessageHandlerResult::Consume;
                 }
-                try_all!(
-                    None => return MessageHandlerResult::Consume;
-                    let prefab_ref = context.registries.assets
-                        .read()
-                        .load_by_id::<Prefab>(*prefab_id)
-                        .ok();
-                );
+                let Some(prefab_ref) = context
+                    .registries
+                    .assets
+                    .read()
+                    .load_by_id::<Prefab>(*prefab_id)
+                    .ok()
+                else {
+                    return MessageHandlerResult::Consume;
+                };
                 let prefab = prefab_ref.read();
                 let prefab_root = match scene.instantiate_prefab(&prefab, None) {
                     Ok(prefab_root) => prefab_root,

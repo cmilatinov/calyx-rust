@@ -27,8 +27,6 @@ pub mod ext;
 pub mod input;
 /// Logging setup and logger implementations.
 pub mod logging;
-/// Public macros re-exported by the engine crate.
-pub mod macros;
 /// Transform math and other math helpers.
 pub mod math;
 /// Multiplayer networking types and synchronization systems.
@@ -41,6 +39,8 @@ pub mod reflect;
 pub mod render;
 /// Runtime resource storage and access.
 pub mod resource;
+/// Game runtime setup shared by the standalone player and the editor.
+pub mod runtime;
 /// Scene graphs, game objects, prefabs, and scene management APIs.
 pub mod scene;
 /// Headless and integration-style test helpers.

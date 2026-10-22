@@ -240,12 +240,11 @@ fn collider_inspector_reports_a_toggle_and_a_drag() {
     let checkbox = h.widget(Role::CheckBox, 0);
     assert_discrete(&h.click(checkbox, draw!(inspector, &mut value)));
     assert_eq!(value.enabled, !enabled);
-    assert!(value.dirty);
 
-    value.dirty = false;
+    let friction = value.friction;
     let field = h.widget(Role::SpinButton, 0);
     assert_drag(&h.drag(field, Vec2::new(40.0, 0.0), draw!(inspector, &mut value)));
-    assert!(value.dirty);
+    assert!(value.friction != friction || value.shape != ComponentCollider::default().shape);
 }
 
 #[test]

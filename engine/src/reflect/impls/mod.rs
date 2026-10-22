@@ -10,3 +10,4 @@ mod std_default;
 mod std_float;
 mod std_int;
 mod uuid;
+mod vec;

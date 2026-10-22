@@ -39,6 +39,10 @@ struct Baseline {
     dirty: bool,
     /// A drag or text-field focus is in progress.
     dragging: bool,
+    /// The scene's write version of the component when the baseline last
+    /// matched it: when the baseline was taken, or when the inspector last
+    /// wrote the component. `None` when unknown.
+    version: Option<u64>,
 }
 
 /// One frame of a component shown through
@@ -88,20 +92,36 @@ impl InspectorEditTracker {
         self.baselines.clear();
     }
 
-    pub fn has_baseline(&self, key: ComponentKey) -> bool {
-        self.baselines.contains_key(&key)
+    /// Takes `value` as `key`'s baseline, with no edit pending.
+    #[cfg(test)]
+    pub fn set_baseline(&mut self, key: ComponentKey, value: Option<Value>) {
+        self.set_baseline_at(key, value, None);
     }
 
-    /// Takes `value` as `key`'s baseline, with no edit pending.
-    pub fn set_baseline(&mut self, key: ComponentKey, value: Option<Value>) {
+    fn set_baseline_at(&mut self, key: ComponentKey, value: Option<Value>, version: Option<u64>) {
         self.baselines.insert(
             key,
             Baseline {
                 value,
                 dirty: false,
                 dragging: false,
+                version,
             },
         );
+    }
+
+    /// Whether `key`'s baseline must be taken (again) before the component
+    /// is shown: it has none, or something other than the inspector wrote
+    /// the component since, as gameplay, physics or an undo does. A baseline
+    /// with an edit pending is kept, since its step must start where the
+    /// edit did.
+    fn needs_baseline(&self, key: ComponentKey, version: u64) -> bool {
+        match self.baselines.get(&key) {
+            None => true,
+            Some(baseline) => {
+                !baseline.dirty && baseline.version.is_some_and(|seen| seen != version)
+            }
+        }
     }
 
     /// Whether any component has an edit not yet committed.
@@ -162,7 +182,8 @@ impl InspectorEditTracker {
 
     /// Shows `component` of `game_object` through `draw` and tracks the edit
     /// it reports. With `track` set, the component's baseline is taken when
-    /// it has none, and a completed edit is committed and returned. Without
+    /// it has none or the scene saw an outside write to it since, and a
+    /// completed edit is committed and returned. Without
     /// it, as in play mode, nothing is recorded. The scene is told about a
     /// write whenever `draw` reports a change.
     ///
@@ -190,14 +211,15 @@ impl InspectorEditTracker {
             game_object: scene.uuid(game_object),
             component: component.uuid(),
         };
-        let needs_baseline = track && !self.has_baseline(key);
+        let version = scene.write_version(game_object, component);
+        let needs_baseline = track && self.needs_baseline(key, version);
         #[cfg(any(debug_assertions, test))]
         let check_reported = self.checks_reported();
         // SAFETY: forwarded to the caller.
-        let (value, changed, current) = unsafe {
+        let (value, changed, current): (R, bool, bool) = unsafe {
             scene.edit_component_dyn(game_object, component, |instance, scene| {
                 if needs_baseline {
-                    self.set_baseline(key, instance.serialize());
+                    self.set_baseline_at(key, instance.serialize(), Some(version));
                 }
                 #[cfg(any(debug_assertions, test))]
                 let before = check_reported.then(|| instance.serialize());
@@ -213,17 +235,29 @@ impl InspectorEditTracker {
                 }
                 let commit = track && self.report(key, response, pointer_down);
                 ComponentEdit {
-                    value: (
-                        value,
-                        response.changed,
-                        commit.then(|| instance.serialize()),
-                    ),
+                    value: (value, response.changed, commit),
                     written: response.changed,
                 }
             })
         }?;
-        let completed = current.is_some();
-        let committed = current.and_then(|current| self.commit(key, current));
+        if changed {
+            // The inspector's own write moved the version; the baseline
+            // still holds every outside write before it.
+            let version = scene.write_version(game_object, component);
+            if let Some(baseline) = self.baselines.get_mut(&key) {
+                baseline.version = Some(version);
+            }
+        }
+        // Read after the write is reported: the scene may adjust the value,
+        // as it puts back an object's id after a ComponentID write.
+        let completed = current;
+        let committed = current
+            .then(|| {
+                scene
+                    .read_component_dyn(game_object, component, |c| c.serialize())
+                    .flatten()
+            })
+            .and_then(|current| self.commit(key, current));
         Some(ShownComponent {
             value,
             changed,
@@ -252,8 +286,9 @@ pub fn serialize_component(
 ) -> Option<Value> {
     let game_object = scene.find(key.game_object)?;
     let component = registry.component(key.component)?;
-    let entry = scene.entry(game_object)?;
-    component.get_instance(&entry)?.serialize()
+    scene
+        .read_component_dyn(game_object, component, |instance| instance.serialize())
+        .flatten()
 }
 
 /// Whether a component changed between `before` and `after` without

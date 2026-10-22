@@ -14,9 +14,10 @@ use engine::error::BoxedError;
 use engine::reflect::type_registry::TypeRegistry;
 use engine::reflect::TypeInfo;
 use engine::resource::Resource;
+use engine::runtime::{ProjectRuntimeSettings, RuntimeSettings};
 use engine::scene::{Scene, SceneManager};
 use engine::utils::TypeUuid;
-use project::{Project, RuntimeSettings};
+use project::Project;
 use rusty_pool::JoinHandle;
 
 #[derive(Default, Resource, TypeUuid)]
@@ -38,6 +39,7 @@ impl ProjectAssemblyStatus {
 
 pub struct ProjectManager {
     current_project: Project,
+    runtime_settings: ProjectRuntimeSettings,
     context: AssetContext,
     background: Ref<Background>,
     assembly_status: Ref<ProjectAssemblyStatus>,
@@ -57,9 +59,11 @@ impl ProjectManager {
     ) -> Result<Ref<Self>, BoxedError> {
         let project_directory = dunce::canonicalize(project_directory.into()).map_err(Box::new)?;
         log::info!("Loading project from {}", project_directory.display());
+        let runtime_settings = ProjectRuntimeSettings::load(&project_directory)?;
         let current_project = Project::load(project_directory)?;
         Ok(Ref::new(Self {
             current_project,
+            runtime_settings,
             context,
             background,
             assembly_status,
@@ -71,7 +75,9 @@ impl ProjectManager {
     pub fn load(&mut self, path: impl Into<PathBuf>) -> Result<(), BoxedError> {
         let path = path.into();
         log::info!("Switching project to {}", path.display());
+        let runtime_settings = ProjectRuntimeSettings::load(&path)?;
         self.current_project = Project::load(path)?;
+        self.runtime_settings = runtime_settings;
         Ok(())
     }
 
@@ -81,7 +87,7 @@ impl ProjectManager {
 
     /// Returns the runtime defaults declared by the current project.
     pub fn runtime_settings(&self) -> &RuntimeSettings {
-        self.current_project.runtime()
+        self.runtime_settings.runtime()
     }
 
     /// Starts the shared runtime from the project's configured startup scene.
@@ -95,7 +101,7 @@ impl ProjectManager {
             scenes.start_simulation();
             return Ok(None);
         }
-        let Some(path) = self.current_project.startup_scene_path() else {
+        let Some(path) = self.runtime_settings.startup_scene_path() else {
             scenes.start_simulation();
             return Ok(None);
         };

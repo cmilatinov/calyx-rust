@@ -101,14 +101,14 @@ mod tests {
     }
 
     #[test]
-    fn rigid_body_dirty_on_creation() {
+    fn adding_a_rigid_body_records_it_in_the_change_set() {
         let mut scene = test_scene();
         let go = scene.create(None, None);
         scene.add_component(go, ComponentRigidBody::default());
-        assert_eq!(
-            scene.read_component::<ComponentRigidBody, _, _>(go, |c| c.dirty),
-            Some(true)
-        );
+        assert!(scene
+            .changes
+            .take::<ComponentRigidBody>()
+            .contains(&go.entity));
     }
 
     #[test]

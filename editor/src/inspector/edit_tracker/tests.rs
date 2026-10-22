@@ -426,6 +426,110 @@ fn a_refreshed_baseline_leaves_outside_writes_out_of_the_next_step() {
 }
 
 #[test]
+fn an_outside_write_moves_the_baseline_before_the_next_step() {
+    let mut h = InspectorHarness::new();
+    let registry = h.inspector_registry();
+    let inspector = registry
+        .type_inspector_lookup(ComponentTransform::type_uuid())
+        .unwrap();
+    let component = ComponentTransform::default();
+    let mut session = Session::new(&h);
+
+    {
+        let mut draw = session.draw(&component, inspector, whole);
+        h.idle(2, &mut draw);
+    }
+    // Gameplay, physics or an undo writes the component; the inspector is
+    // not told, but the scene's write version moves.
+    let game_object = session.game_object;
+    session
+        .scene
+        .write_component::<ComponentTransform, _>(game_object, |transform| {
+            transform.transform.position.x = 5.0;
+        });
+    {
+        let mut draw = session.draw(&component, inspector, whole);
+        h.idle(1, &mut draw);
+        let position_x = h.widget(Role::SpinButton, 0);
+        h.drag(position_x, Vec2::new(40.0, 0.0), &mut draw);
+    }
+
+    assert_eq!(session.commits.len(), 1, "{:?}", session.commits);
+    let change = &session.commits[0].changes[0];
+    assert_eq!(change.value_path.last().map(String::as_str), Some("0"));
+    assert_eq!(change.before, json!(5.0), "{change:?}");
+    assert_ne!(change.after, json!(5.0));
+}
+
+#[test]
+fn the_inspectors_own_writes_keep_its_baseline() {
+    let mut h = InspectorHarness::new();
+    let registry = h.inspector_registry();
+    let inspector = registry
+        .type_inspector_lookup(ComponentTransform::type_uuid())
+        .unwrap();
+    let component = ComponentTransform::default();
+    let mut session = Session::new(&h);
+
+    {
+        let mut draw = session.draw(&component, inspector, whole);
+        h.idle(1, &mut draw);
+        let position_x = h.widget(Role::SpinButton, 0);
+        h.drag(position_x, Vec2::new(40.0, 0.0), &mut draw);
+        h.drag(position_x, Vec2::new(40.0, 0.0), &mut draw);
+    }
+
+    // The second step starts where the first ended, so undoing both
+    // returns to the start.
+    assert_eq!(session.commits.len(), 2, "{:?}", session.commits);
+    assert_eq!(session.commits[0].changes[0].before, json!(0.0));
+    assert_eq!(
+        session.commits[1].changes[0].before,
+        session.commits[0].changes[0].after
+    );
+}
+
+#[test]
+fn a_committed_id_edit_shows_the_id_the_scene_kept() {
+    let h = InspectorHarness::new();
+    let mut session = Session::new(&h);
+    let game_object = session.game_object;
+    let id = session.scene.uuid(game_object);
+    let component = ComponentID::default();
+    // SAFETY: the closure reads nothing through the scene.
+    let shown = unsafe {
+        session.tracker.show_component(
+            &mut session.scene,
+            game_object,
+            &component,
+            true,
+            false,
+            |instance, _| {
+                let c = instance
+                    .as_reflect_mut()
+                    .downcast_mut::<ComponentID>()
+                    .unwrap();
+                c.name = "Renamed".into();
+                c.id = Uuid::new_v4();
+                (InspectorResponse::CHANGED, ())
+            },
+        )
+    }
+    .unwrap();
+
+    let commit = shown.committed.expect("the rename should commit");
+    assert_eq!(session.scene.uuid(game_object), id);
+    assert!(
+        commit
+            .changes
+            .iter()
+            .all(|change| change.value_path == ["name"]),
+        "{:?}",
+        commit.changes
+    );
+}
+
+#[test]
 #[should_panic(expected = "without reporting the edit")]
 fn an_unreported_edit_fails() {
     let h = InspectorHarness::new();
