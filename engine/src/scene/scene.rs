@@ -17,17 +17,18 @@ use crate::component::{ComponentCamera, ComponentID};
 use crate::context::{ReadOnlyAssetContext, ReadOnlyRegistryContext};
 use crate::input::Input;
 use crate::math::Transform;
-use crate::net::{ComponentNetworkObject, Network};
+use crate::net::{ComponentNetworkObject, Network, NetworkObjectId};
 use crate::physics::PhysicsContext;
 use crate::reflect::{ReflectDefault, TypeInfo};
 use crate::resource::ResourceMap;
 use crate::scene::game_object_store::GameObjectStore;
 use crate::scene::scene_graph::SceneGraph;
 use crate::scene::transform_cache::TransformCache;
-use crate::scene::{GameObjectRef, Prefab, SceneError};
+use crate::scene::{Prefab, SceneError};
 use crate::try_all;
 use crate::utils::{ContextSeed, TypeUuid};
 
+use super::game_object_ref::RemapScope;
 use super::scene_graph::{self, SiblingDir};
 
 /// Lightweight handle to a game object stored inside a [`Scene`].
@@ -35,7 +36,7 @@ use super::scene_graph::{self, SiblingDir};
 /// The handle contains both the Legion entity and the scene-graph node index so
 /// hierarchy and ECS lookups can stay cheap. Persist this handle only for the
 /// lifetime of the scene instance; for serialized references use
-/// [`GameObjectRef`].
+/// [`GameObjectRef`](crate::scene::GameObjectRef).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GameObject {
     /// Internal scene-graph node for hierarchy operations.
@@ -74,6 +75,10 @@ pub struct Scene {
     pub(crate) graph: SceneGraph,
     pub(crate) store: GameObjectStore,
     pub(crate) transforms: TransformCache,
+    /// Index of network objects by id, one entry per id and per object.
+    /// Entries are hints that lookups check and repair; see
+    /// [`Scene::find_network_object`].
+    network_objects: BiHashMap<NetworkObjectId, GameObject>,
     root: GameObject,
     camera: Option<GameObject>,
     registries: ReadOnlyRegistryContext,
@@ -100,6 +105,7 @@ impl Scene {
             graph,
             store,
             transforms: TransformCache::default(),
+            network_objects: BiHashMap::new(),
             root,
             camera: Default::default(),
             registries: assets,
@@ -198,6 +204,7 @@ impl From<(&ReadOnlyRegistryContext, SceneData)> for Scene {
                 );
                 let _ = component.bind_instance(&mut entry, instance);
             }
+            scene.refresh_network_object(game_object);
             let mut id = None;
             if let Some(entry) = scene.entry(game_object) {
                 if let Ok(c_id) = entry.get_component::<ComponentID>() {
@@ -444,7 +451,10 @@ impl Scene {
         Ok(())
     }
     /// Instantiates `prefab` into the scene and remaps any embedded
-    /// [`GameObjectRef`] values to the newly created objects.
+    /// [`GameObjectRef`](crate::scene::GameObjectRef) values to the newly created objects. Remapping happens
+    /// while each component is deserialized, so references inside nested
+    /// structs, lists and enum variants are remapped too. A reference to an
+    /// object outside the prefab is left unchanged with a warning.
     ///
     /// Returns [`SceneError::InvalidPrefab`] when the prefab data is malformed.
     pub fn instantiate_prefab(
@@ -472,6 +482,9 @@ impl Scene {
             self.store.register_uuid(new_game_object_id, game_object);
         }
 
+        // Every `GameObjectRef` deserialized while this scope is held is
+        // remapped to the instance's objects, wherever serde reaches it.
+        let remap_scope = RemapScope::enter(id_mapping.clone());
         for (game_object_id, components) in prefab.data.components.iter() {
             let new_game_object_id = *id_mapping.get_by_left(game_object_id).ok_or_else(|| {
                 SceneError::InvalidPrefab(format!("object {game_object_id} has no mapped id"))
@@ -482,10 +495,10 @@ impl Scene {
             for (component_id, data) in components {
                 try_all!(
                     None => continue;
-                    let TypeInfo::Struct(struct_info) = type_registry.type_info_by_id(*component_id);
+                    let TypeInfo::Struct(_) = type_registry.type_info_by_id(*component_id);
                     let component = component_registry.component(*component_id);
                 );
-                let mut instance = match component.deserialize(data) {
+                let instance = match component.deserialize(data) {
                     Ok(instance) => instance,
                     Err(err) => {
                         log::warn!(
@@ -499,29 +512,17 @@ impl Scene {
                     None => continue;
                     let mut entry = self.entry_mut(game_object);
                 );
-                for (name, field) in &struct_info.fields {
-                    try_all!(
-                        None => continue;
-                        let id = field.get::<GameObjectRef>(&*instance).map(|r| r.id());
-                        let target_id = id_mapping.get_by_left(&id);
-                    );
-                    log::trace!("{} - {}", name, field.name);
-                    field
-                        .set(&mut *instance, GameObjectRef::new(*target_id))
-                        .ok_or_else(|| {
-                            SceneError::InvalidPrefab(format!(
-                                "failed to remap object reference field {name} on object {game_object_id}"
-                            ))
-                        })?;
-                }
                 let _ = component.bind_instance(&mut entry, instance);
             }
+            self.refresh_network_object(game_object);
             if let Some(mut entry) = self.entry_mut(game_object) {
                 if let Ok(c_id) = entry.get_component_mut::<ComponentID>() {
                     c_id.id = new_game_object_id;
                 }
             }
         }
+
+        drop(remap_scope);
 
         for (parent_id, children) in prefab.data.hierarchy.iter() {
             try_all!(
@@ -638,6 +639,9 @@ impl Scene {
         if TypeId::of::<T>() == TypeId::of::<ComponentTransform>() {
             self.transforms.mark_dirty_subtree(game_object, &self.graph);
         }
+        if TypeId::of::<T>() == TypeId::of::<ComponentNetworkObject>() {
+            self.refresh_network_object(game_object);
+        }
     }
 
     /// Creates and binds a component by reflected type UUID.
@@ -675,7 +679,32 @@ impl Scene {
                     game_object,
                 });
             }
+            if type_uuid == ComponentNetworkObject::type_uuid() {
+                self.refresh_network_object(game_object);
+            }
         }
+    }
+
+    /// Removes the component with reflected type UUID `type_uuid` from
+    /// `game_object`. Returns whether the component type is registered and
+    /// the object exists.
+    pub fn remove_component_dyn(&mut self, game_object: GameObject, type_uuid: Uuid) -> bool {
+        let component_registry_ref = self.registries.components.clone();
+        let component_registry = component_registry_ref.read();
+        let Some(component) = component_registry.component(type_uuid) else {
+            return false;
+        };
+        let Some(mut entry) = self.entry_mut(game_object) else {
+            return false;
+        };
+        component.remove_instance(&mut entry);
+        if type_uuid == ComponentTransform::type_uuid() {
+            self.transforms.mark_dirty_subtree(game_object, &self.graph);
+        }
+        if type_uuid == ComponentNetworkObject::type_uuid() {
+            self.refresh_network_object(game_object);
+        }
+        true
     }
 
     /// Returns a raw mutable pointer to a component instance.
@@ -738,6 +767,9 @@ impl Scene {
         };
         if result.is_some() && TypeId::of::<T>() == TypeId::of::<ComponentTransform>() {
             self.transforms.mark_dirty_subtree(game_object, &self.graph);
+        }
+        if result.is_some() && TypeId::of::<T>() == TypeId::of::<ComponentNetworkObject>() {
+            self.refresh_network_object(game_object);
         }
         result
     }
@@ -831,6 +863,7 @@ impl Scene {
             .collect();
         for game_object in roots {
             for go in self.graph.detach_subtree(game_object) {
+                self.network_objects.remove_by_right(&go);
                 let uuid = self.uuid(go);
                 self.world.remove(go.entity);
                 self.store.remove(uuid, go.entity);
@@ -1000,6 +1033,74 @@ impl Scene {
     pub fn ancestor_with<T: Component>(&self, game_object: GameObject) -> Option<GameObject> {
         self.ancestors(game_object)
             .find_map(|go| self.map_has_component::<T>(go))
+    }
+
+    /// Finds the game object carrying network object `network_object_id`.
+    ///
+    /// Lookups go through an index kept up to date by the scene's own
+    /// component writes, spawns and deletions. Writes made through a raw
+    /// [`Scene::entry_mut`] bypass it, so a hit is checked against the
+    /// object's [`ComponentNetworkObject`], and a miss or stale hit falls
+    /// back to one scan of the scene that rebuilds the index.
+    pub fn find_network_object(
+        &mut self,
+        network_object_id: NetworkObjectId,
+    ) -> Option<GameObject> {
+        if let Some(&game_object) = self.network_objects.get_by_left(&network_object_id) {
+            if self.network_id(game_object) == Some(network_object_id) {
+                return Some(game_object);
+            }
+        }
+        self.rebuild_network_index();
+        self.network_objects
+            .get_by_left(&network_object_id)
+            .copied()
+    }
+
+    /// Returns the indexed game object for `network_object_id` without
+    /// checking or repairing the index.
+    pub(crate) fn indexed_network_object(
+        &self,
+        network_object_id: NetworkObjectId,
+    ) -> Option<GameObject> {
+        self.network_objects
+            .get_by_left(&network_object_id)
+            .copied()
+    }
+
+    /// Returns the network object id of `game_object`, if it has one.
+    fn network_id(&self, game_object: GameObject) -> Option<NetworkObjectId> {
+        self.read_component::<ComponentNetworkObject, _, _>(game_object, |c| c.id)
+    }
+
+    /// Brings the network object index up to date with `game_object`'s
+    /// current [`ComponentNetworkObject`], after it was added, written or
+    /// removed.
+    ///
+    /// The scene calls this from its own component paths. Call it after
+    /// changing a network object through a raw component pointer or
+    /// [`Scene::entry_mut`]; lookups still repair a missed update, at the
+    /// cost of a scan.
+    pub fn refresh_network_object(&mut self, game_object: GameObject) {
+        // Inserting evicts any pair sharing the id or the object, so an old
+        // id of this object and an older claimant of this id both go.
+        match self.network_id(game_object) {
+            Some(network_id) => {
+                self.network_objects.insert(network_id, game_object);
+            }
+            None => {
+                self.network_objects.remove_by_right(&game_object);
+            }
+        }
+    }
+
+    /// Rebuilds the network object index from every object in the scene.
+    fn rebuild_network_index(&mut self) {
+        let network_objects = self
+            .objects()
+            .filter_map(|go| self.network_id(go).map(|id| (id, go)))
+            .collect();
+        self.network_objects = network_objects;
     }
 
     /// Returns whether the local peer owns `game_object` for networking
