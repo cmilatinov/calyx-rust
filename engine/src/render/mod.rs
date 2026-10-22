@@ -1,4 +1,5 @@
 pub(crate) use asset_render_state::*;
+pub(crate) use bind_group_cache::*;
 pub use camera::*;
 pub use gizmo_renderer::*;
 pub use gizmos::*;
@@ -16,6 +17,7 @@ pub use shader_preprocessor::*;
 pub(crate) use skybox_renderer::*;
 
 mod asset_render_state;
+mod bind_group_cache;
 /// Buffer-layout helpers and resizable GPU buffers.
 pub mod buffer;
 mod camera;
