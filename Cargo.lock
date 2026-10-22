@@ -2232,6 +2232,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha-1",
+ "toml 0.9.12+spec-1.1.0",
  "transform-gizmo-egui",
  "typed-builder",
  "ufbx",
@@ -5152,6 +5153,7 @@ name = "project"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "engine",
  "serde",
  "tinytemplate",
  "toml 0.9.12+spec-1.1.0",

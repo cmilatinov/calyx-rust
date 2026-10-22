@@ -4,7 +4,6 @@
 
 use std::env;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use eframe::egui;
 use inspector::inspector_registry::InspectorRegistry;
@@ -27,8 +26,6 @@ use egui::{include_image, Button, CornerRadius, ImageSource, Response, Sense, Ui
 use egui::{Align, Layout};
 use egui::{Color32, Frame, Margin, Shadow};
 use egui_tiles::{Container, Linear, LinearDir, Tiles, Tree};
-use egui_wgpu::wgpu::PowerPreference;
-use egui_wgpu::{SurfaceErrorAction, WgpuSetup, WgpuSetupCreateNew};
 use engine::component::ComponentTransform;
 use engine::context::{AssetContext, GameContext};
 use engine::core::Ref;
@@ -36,6 +33,7 @@ use engine::error::BoxedError;
 use engine::input::Input;
 use engine::logging::{DefaultLogger, Log};
 use engine::render::{Camera, SceneRenderer, SceneRendererOptions};
+use engine::runtime::{initial_render_size, wgpu_configuration, FrameCounter};
 use engine::scene::Scene;
 use engine::utils::TypeUuid;
 use engine::*;
@@ -67,8 +65,7 @@ mod widgets;
 pub const BASE_FONT_SIZE: f32 = 16.0;
 
 pub struct EditorApp {
-    fps_counter: i32,
-    fps: i32,
+    frame_counter: FrameCounter,
     tree: Tree<&'static str>,
     panels: Panels,
     physics_debug_pipeline: DebugRenderPipeline,
@@ -609,8 +606,7 @@ impl EditorApp {
             }
         });
         Ok(Self {
-            fps: 0,
-            fps_counter: 0,
+            frame_counter: FrameCounter::default(),
             tree,
             panels,
             remote,
@@ -621,7 +617,7 @@ impl EditorApp {
             project_manager,
             state: EditorAppState::new(
                 game,
-                Self::initial_render_size(&cc.egui_ctx),
+                initial_render_size(&cc.egui_ctx),
                 project_path.clone(),
             ),
             _log: log,
@@ -703,12 +699,7 @@ impl eframe::App for EditorApp {
         self.update_window_title(ctx);
         self.state.show_scene_recovery_prompt(ctx);
 
-        self.fps_counter += 1;
-        if self.state.game.resources.time().timer("fps") >= 1.0 {
-            self.fps = self.fps_counter;
-            self.fps_counter = 0;
-            self.state.game.resources.time_mut().reset_timer("fps");
-        }
+        self.frame_counter.tick(self.state.game.resources.time());
 
         self.state.game.scenes.current_scene_mut().flush_deletes();
         self.state.update_scene_autosave();
@@ -860,17 +851,6 @@ impl EditorApp {
             encoder.clear_texture(&game_renderer.scene_texture().texture, &Default::default());
             queue.submit(Some(encoder.finish()));
         }
-    }
-
-    fn initial_render_size(ctx: &egui::Context) -> (u32, u32) {
-        let Some(window_size) = ctx.input(|i| i.viewport().inner_rect) else {
-            return (0, 0);
-        };
-        let pixels_per_point = ctx.pixels_per_point();
-        (
-            (window_size.width() * pixels_per_point) as u32,
-            (window_size.height() * pixels_per_point) as u32,
-        )
     }
 
     fn get_physical_size(ctx: &egui::Context, viewport_size: (f32, f32)) -> (u32, u32) {
@@ -1058,8 +1038,9 @@ impl EditorApp {
             .show(ctx, |ui| {
                 egui::menu::bar(ui, |ui| {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if self.fps > 0 {
-                            ui.label(format!("{}", self.fps));
+                        let fps = self.frame_counter.fps();
+                        if fps > 0 {
+                            ui.label(format!("{fps}"));
                         }
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             let background_ref = self.state.game.resources.background().clone();
@@ -1114,9 +1095,14 @@ impl EditorApp {
     /// runs the configured startup scene when the project has one.
     pub(crate) fn start_simulation(&mut self) -> Result<(), String> {
         self.state.flush_pending_inspector_value_edits();
-        let runtime = self.project_manager.read().runtime_settings().clone();
-        if runtime.window.width != 0 && runtime.window.height != 0 {
-            self.state.game_aspect = Some((runtime.window.width, runtime.window.height));
+        let window_size = self
+            .project_manager
+            .read()
+            .runtime_settings()
+            .window
+            .non_zero_size();
+        if let Some(size) = window_size {
+            self.state.game_aspect = Some(size);
         }
         match self
             .project_manager
@@ -1163,36 +1149,7 @@ impl EditorApp {
             },
             persist_window: true,
             renderer: eframe::Renderer::Wgpu,
-            wgpu_options: egui_wgpu::WgpuConfiguration {
-                present_mode: Default::default(),
-                desired_maximum_frame_latency: None,
-                on_surface_error: Arc::new(|_| SurfaceErrorAction::SkipFrame),
-                wgpu_setup: WgpuSetup::CreateNew(WgpuSetupCreateNew {
-                    instance_descriptor: Default::default(),
-                    power_preference: PowerPreference::HighPerformance,
-                    native_adapter_selector: None,
-                    device_descriptor: Arc::new(|_adapter| {
-                        wgpu::DeviceDescriptor {
-                            required_features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
-                                | wgpu::Features::POLYGON_MODE_LINE
-                                | wgpu::Features::CLEAR_TEXTURE
-                                | wgpu::Features::FLOAT32_FILTERABLE
-                                | wgpu::Features::DEPTH32FLOAT_STENCIL8
-                                | wgpu::Features::BUFFER_BINDING_ARRAY
-                                | wgpu::Features::TEXTURE_BINDING_ARRAY
-                                | wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY
-                                | wgpu::Features::UNIFORM_BUFFER_AND_STORAGE_TEXTURE_ARRAY_NON_UNIFORM_INDEXING,
-                            required_limits: wgpu::Limits {
-                                max_storage_textures_per_shader_stage: 5,
-                                max_uniform_buffers_per_shader_stage: 30,
-                                ..Default::default()
-                            },
-                            ..Default::default()
-                        }
-                    }),
-                    trace_path: None,
-                }),
-            },
+            wgpu_options: wgpu_configuration(),
             event_loop_builder: Some(Box::new(|builder| {
                 builder.with_any_thread(true);
             })),
