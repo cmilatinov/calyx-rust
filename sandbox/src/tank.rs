@@ -306,7 +306,8 @@ fn resolve_hull_movement(physics: &PhysicsContext, transform: &Transform, moveme
         resolved += remaining * safe_time;
 
         let untraveled = remaining * (1.0 - time_of_impact);
-        let normal = transform.rotation * hit.hit.normal1.into_inner();
+        // Rapier reports `normal1` on the hit collider in world space.
+        let normal = hit.hit.normal1.into_inner();
         remaining = untraveled - normal * untraveled.dot(&normal);
         remaining.y = 0.0;
     }
@@ -1042,6 +1043,22 @@ mod tests {
         assert!(movement.x > 0.7);
         assert!(movement.x < 0.75);
         assert!(movement.z > 1.9);
+    }
+
+    #[test]
+    fn yawed_hull_slides_along_wall_using_world_normal() {
+        let mut scene = engine::test_support::test_scene();
+        add_fixed_cube(&mut scene, vec3(2.0, 1.0, 0.0), vec3(0.5, 1.0, 10.0));
+        scene.prepare();
+        let mut transform = Transform::from_xyz(0.0, 0.0, 0.0);
+        transform.rotation =
+            UnitQuaternion::from_euler_angles(0.0, std::f32::consts::FRAC_PI_2, 0.0);
+
+        let movement = resolve_hull_movement(&scene.physics, &transform, vec3(3.0, 0.0, 2.0));
+
+        assert!(movement.x > 0.45, "movement: {movement:?}");
+        assert!(movement.x < 0.5, "movement: {movement:?}");
+        assert!(movement.z > 1.9, "movement: {movement:?}");
     }
 
     fn add_fixed_cube(
