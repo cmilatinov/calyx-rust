@@ -963,7 +963,7 @@ impl AssetRegistry {
                         self.mark_path_dirty(file);
                         continue;
                     }
-                    self.forget_asset_at_path(file);
+                    self.forget_assets_under(file);
                     let meta_path = file.with_extension("meta");
                     match std::fs::remove_file(&meta_path) {
                         Ok(()) => log::info!("Removed asset metadata {}", meta_path.display()),
@@ -1033,26 +1033,62 @@ impl AssetRegistry {
     }
 
     /// Drops the in-memory metadata, names, dirty marks and dependency
-    /// entries of the asset at `path` and of its sub-assets.
-    fn forget_asset_at_path(&self, path: &Path) {
-        let Some(id) = self.asset_id_from_path(path) else {
-            return;
-        };
+    /// entries of every asset whose source file is `path` or lies below it,
+    /// and of their sub-assets. Assets are matched by their stored source
+    /// path, not by name, so a same-name asset in another root survives and
+    /// takes back any name the forgotten asset held.
+    fn forget_assets_under(&self, path: &Path) {
         let mut data = self.asset_data_mut();
-        let mut ids: HashSet<Uuid> = HashSet::from([id]);
-        if let Some(meta) = data.meta.get(&id) {
-            ids.extend(meta.children.iter().copied());
+        let mut ids: HashSet<Uuid> = HashSet::new();
+        for meta in data.meta.values() {
+            if meta.path.as_deref().is_some_and(|p| p.starts_with(path)) {
+                ids.insert(meta.id);
+                ids.extend(meta.children.iter().copied());
+            }
         }
-        data.meta.retain(|meta_id, _| !ids.contains(meta_id));
-        data.names.retain(|_, name_id| !ids.contains(name_id));
-        data.dirty.retain(|dirty_id, _| !ids.contains(dirty_id));
+        if ids.is_empty() {
+            return;
+        }
+        let freed: HashSet<RelativePathBuf> = data
+            .names
+            .iter()
+            .filter(|(_, id)| ids.contains(id))
+            .map(|(name, _)| name.clone())
+            .collect();
+        data.meta.retain(|id, _| !ids.contains(id));
+        data.names.retain(|_, id| !ids.contains(id));
+        data.dirty.retain(|id, _| !ids.contains(id));
         for dependents in data.dependencies.values_mut() {
             dependents.retain(|dependent| !ids.contains(dependent));
         }
         data.dependencies
             .retain(|_, dependents| !dependents.is_empty());
+
+        let mut restored = Vec::new();
+        for meta in data.meta.values() {
+            let Some(source) = meta.path.as_deref() else {
+                continue;
+            };
+            let Some(name) = self
+                .owning_asset_root(source)
+                .and_then(|root| Self::relative_asset_path(root, source).ok())
+            else {
+                continue;
+            };
+            if !freed.contains(&name) {
+                continue;
+            }
+            restored.push((name, meta.id));
+            for child in meta.children.iter().filter_map(|id| data.meta.get(id)) {
+                let child_name = Self::sub_asset_name(&meta.name, &child.name);
+                restored.push((RelativePathBuf::from(child_name).normalize(), child.id));
+            }
+        }
+        for (name, id) in restored {
+            data.names.entry(name).or_insert(id);
+        }
         drop(data);
-        log::info!("Forgot deleted asset {} ({id})", path.display());
+        log::info!("Forgot deleted assets under {}", path.display());
     }
 
     /// Resolves an asset UUID from a filesystem path.
@@ -1792,6 +1828,51 @@ mod tests {
         assert_eq!(registry.asset_id("inner/existing"), None);
         drop(registry);
         std::fs::remove_dir_all(outer_root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn remove_event_forgets_only_the_asset_at_the_removed_path() {
+        let first_root = temp_asset_root("calyx-same-name-first-root");
+        let second_root = temp_asset_root("calyx-same-name-second-root");
+        let (first_path, _, first_id) = write_scene_with_meta(&first_root);
+        let (second_path, _, second_id) = write_scene_with_meta(&second_root);
+        let registries = test_registries_with_assets(vec![first_root.clone(), second_root.clone()]);
+        let registry = registries.assets.read();
+        assert_eq!(registry.asset_id("scene"), Some(second_id));
+
+        std::fs::remove_file(&first_path).expect("failed to delete first scene");
+        registry.recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(first_path),
+        );
+
+        assert!(registry.asset_meta_from_id(first_id).is_none());
+        assert!(registry.asset_meta_from_id(second_id).is_some());
+        assert_eq!(registry.asset_id("scene"), Some(second_id));
+        drop(registry);
+        std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
+        std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
+    }
+
+    #[test]
+    fn remove_event_for_name_owner_restores_same_name_asset_from_other_root() {
+        let first_root = temp_asset_root("calyx-same-name-restore-first-root");
+        let second_root = temp_asset_root("calyx-same-name-restore-second-root");
+        let (_, _, first_id) = write_scene_with_meta(&first_root);
+        let (second_path, _, second_id) = write_scene_with_meta(&second_root);
+        let registries = test_registries_with_assets(vec![first_root.clone(), second_root.clone()]);
+        let registry = registries.assets.read();
+        assert_eq!(registry.asset_id("scene"), Some(second_id));
+
+        std::fs::remove_file(&second_path).expect("failed to delete second scene");
+        registry.recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(second_path),
+        );
+
+        assert!(registry.asset_meta_from_id(second_id).is_none());
+        assert_eq!(registry.asset_id("scene"), Some(first_id));
+        drop(registry);
+        std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
+        std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
     }
 
     #[test]
