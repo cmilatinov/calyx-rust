@@ -23,7 +23,7 @@ pub struct SceneManager {
     current_scene: Scene,
     current_scene_meta: SceneMeta,
     simulation_scene: Option<Scene>,
-    default_scene: ReadOnlyRef<Scene>,
+    default_scene: Ref<Scene>,
     asset_registry: ReadOnlyRef<AssetRegistry>,
 }
 
@@ -39,8 +39,7 @@ impl SceneManager {
             current_scene = asset_registry.new_empty_scene();
             default_scene = asset_registry
                 .default_scene()
-                .expect("failed to load default scene")
-                .readonly();
+                .expect("failed to load default scene");
         }
         Self {
             simulation_running: false,
@@ -219,9 +218,10 @@ impl SceneManager {
         self.current_scene = self.current_scene.restore_snapshot(snapshot);
     }
 
-    /// Takes apart every scene this manager reaches, the authoring scene and
-    /// each scene asset the registry has cached, leaving empty scenes in
-    /// their place, and stops the simulation, dropping its scene.
+    /// Takes apart every scene this manager reaches, the authoring scene, the
+    /// default scene and each scene asset the registry has cached, leaving
+    /// empty scenes in their place, and stops the simulation, dropping its
+    /// scene.
     ///
     /// Component storages run the code of the build that added the component,
     /// so a scene holding a plugin's components must go before the plugin's
@@ -231,10 +231,16 @@ impl SceneManager {
         self.stop_simulation();
         let current = self.current_scene.snapshot();
         self.current_scene = Scene::new(self.current_scene.registries().clone());
-        let assets = self
-            .asset_registry
-            .read()
-            .loaded_assets::<Scene>()
+        // The default scene stays here after the registry evicts it, such as
+        // when its file is deleted.
+        let mut assets = self.asset_registry.read().loaded_assets::<Scene>();
+        if !assets
+            .iter()
+            .any(|asset| asset.ptr_id() == self.default_scene.ptr_id())
+        {
+            assets.push(self.default_scene.clone());
+        }
+        let assets = assets
             .into_iter()
             .map(|asset| {
                 let snapshot = {
@@ -265,4 +271,36 @@ impl SceneManager {
 pub struct SuspendedScenes {
     current: SceneSnapshot,
     assets: Vec<(Ref<Scene>, SceneSnapshot)>,
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::component::ComponentID;
+    use crate::core::Ref;
+    use crate::test_support::{test_game_context, test_scene};
+
+    #[test]
+    fn suspending_scenes_includes_a_default_scene_the_cache_evicted() {
+        let mut game = test_game_context();
+        // A default scene the asset registry no longer caches, as after its
+        // file was deleted, which the manager still holds.
+        let mut default_scene = test_scene();
+        default_scene.create(
+            Some(ComponentID {
+                name: "Default".into(),
+                ..Default::default()
+            }),
+            None,
+        );
+        let default_scene = Ref::new(default_scene);
+        game.scenes.default_scene = default_scene.clone();
+        let objects = |scene: &Ref<crate::scene::Scene>| scene.read().objects().count();
+        assert_eq!(objects(&default_scene), 1);
+
+        let suspended = game.scenes.suspend_scenes();
+        assert_eq!(objects(&default_scene), 0);
+
+        game.scenes.resume_scenes(suspended);
+        assert_eq!(objects(&default_scene), 1);
+    }
 }
