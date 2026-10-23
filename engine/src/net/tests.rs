@@ -1139,6 +1139,34 @@ mod tests {
         );
     }
 
+    /// Returns the owner of network object `network_object_id` in `scene`.
+    fn network_object_owner(scene: &Scene, network_object_id: u64) -> Option<u64> {
+        scene.objects().find_map(|go| {
+            scene
+                .read_component::<ComponentNetworkObject, _, _>(go, |c| {
+                    (c.id == network_object_id).then_some(c.owner_id)
+                })
+                .flatten()
+        })
+    }
+
+    #[test]
+    fn client_spawn_reaches_the_host_and_the_other_client() {
+        let (mut harness, prefab_refs) = setup_spawn_harness("net_relay_spawn_test_prefab");
+        let sender_id = harness.client(0).resources.network().local_id.unwrap();
+        let (_, network_object_id) = spawn_from_client(&mut harness, 0, prefab_refs[1].clone());
+
+        assert!(
+            pump_until(&mut harness, |h| {
+                [h.host(), h.client(1)].iter().all(|ctx| {
+                    network_object_owner(ctx.scenes.current_scene(), network_object_id)
+                        == Some(sender_id)
+                })
+            }),
+            "the spawn did not reach both the host and the other client"
+        );
+    }
+
     #[test]
     fn destroyed_object_leaves_the_index() {
         let (mut scene, go) = scene_with_object(42, 1);

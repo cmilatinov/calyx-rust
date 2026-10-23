@@ -476,17 +476,18 @@ impl MessageHandler<NetworkPrefabSyncContext<'_, '_>, GameMessage> for NetworkPr
                 network_object_ids,
                 prefab_id,
             } => {
+                let acting_client_id = sender.acting_client(*from_client_id);
+                // The server relays the spawn to every other client, then
+                // instantiates it like any other peer.
                 if let Some(server) = server {
-                    let acting_client_id = sender.acting_client(*from_client_id);
                     if let Err(e) = server.broadcast_message_except(acting_client_id, message) {
                         log::warn!("Failed to broadcast SpawnPrefab: {e}");
                     }
-                    return MessageHandlerResult::Consume;
                 }
                 let Some(client_id) = **local_id else {
                     return MessageHandlerResult::Consume;
                 };
-                if client_id == *from_client_id {
+                if client_id == acting_client_id {
                     return MessageHandlerResult::Consume;
                 }
                 let Some(prefab_ref) = context
@@ -509,7 +510,7 @@ impl MessageHandler<NetworkPrefabSyncContext<'_, '_>, GameMessage> for NetworkPr
                 // The spawning peer owns the replicated objects on every peer.
                 let mut index = 0;
                 Network::traverse_prefab(
-                    *from_client_id,
+                    acting_client_id,
                     scene,
                     prefab_root,
                     &mut index,
