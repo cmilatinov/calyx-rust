@@ -35,9 +35,29 @@ pub struct ComponentTankController {
     pub barrel: GameObjectRef,
     pub camera: GameObjectRef,
     pub crosshair: GameObjectRef,
+    /// Top forward speed, in metres per second.
+    #[reflect_attr(min = 0.0, speed = 0.1)]
     pub move_speed: f32,
+    /// Top reverse speed, in metres per second.
+    #[reflect_attr(min = 0.0, speed = 0.1)]
     pub reverse_speed: f32,
+    /// How fast throttle speeds the hull up towards its top speed, in metres
+    /// per second squared.
+    #[reflect_attr(min = 0.0, speed = 0.1)]
+    pub acceleration: f32,
+    /// How fast throttle against the hull's motion slows it down, in metres
+    /// per second squared.
+    #[reflect_attr(min = 0.0, speed = 0.1)]
+    pub braking: f32,
+    /// How fast the hull coasts to a stop with no throttle, in metres per
+    /// second squared.
+    #[reflect_attr(min = 0.0, speed = 0.1)]
+    pub friction: f32,
+    /// Hull turn rate, in radians per second.
+    #[reflect_attr(min = 0.0, speed = 0.1)]
     pub hull_turn_speed: f32,
+    /// Fastest the turret turns towards the cursor, in radians per second.
+    #[reflect_attr(min = 0.0, speed = 0.1)]
     pub turret_turn_speed: f32,
     pub projectile_speed: f32,
     pub projectile_damage: f32,
@@ -54,6 +74,10 @@ pub struct ComponentTankController {
     #[serde(skip)]
     #[reflect_skip]
     pub reload_remaining: f32,
+    /// Signed forward speed of the hull, in metres per second.
+    #[serde(skip)]
+    #[reflect_skip]
+    pub speed: f32,
 }
 
 impl Default for ComponentTankController {
@@ -65,6 +89,9 @@ impl Default for ComponentTankController {
             crosshair: Default::default(),
             move_speed: 7.0,
             reverse_speed: 4.5,
+            acceleration: 14.0,
+            braking: 24.0,
+            friction: 9.0,
             hull_turn_speed: 2.8,
             turret_turn_speed: 12.0,
             projectile_speed: 28.0,
@@ -78,6 +105,7 @@ impl Default for ComponentTankController {
             reload_duration: 1.4,
             fire_cooldown_remaining: 0.0,
             reload_remaining: 0.0,
+            speed: 0.0,
         }
     }
 }
@@ -212,27 +240,41 @@ impl ComponentUpdate for ComponentTankController {
             })
             .unwrap_or(false)
         {
+            // A dead or respawning tank comes back at rest.
+            let _ = scene.write_component::<ComponentTankController, _>(game_object, |component| {
+                component.speed = 0.0;
+            });
             return;
         }
 
         let dt = resources.time().delta_time();
         let previous_tank_transform = scene.world_transform(game_object);
-        let tank_transform = update_hull(scene, game_object, input, dt, &controller);
-        let aim_point =
-            cursor_ground_intersection(scene, input, &controller, tank_transform.position.y);
-        update_crosshair(scene, &controller, aim_point);
-        update_turret(scene, dt, &controller, &tank_transform, aim_point);
-        update_shooting(scene, input, dt, &mut controller);
+        let tank_transform = update_hull(scene, game_object, input, dt, &mut controller);
+        // Follow with the camera first, so the cursor aims through the view
+        // this frame draws.
         update_camera(
             scene,
             &controller,
             &previous_tank_transform,
             &tank_transform,
         );
+        let aim_point =
+            cursor_ground_intersection(scene, input, &controller, tank_transform.position.y);
+        update_crosshair(scene, &controller, aim_point);
+        update_turret(
+            scene,
+            dt,
+            &controller,
+            &previous_tank_transform,
+            &tank_transform,
+            aim_point,
+        );
+        update_shooting(scene, input, dt, &mut controller);
         let _ = scene.write_component::<ComponentTankController, _>(game_object, |component| {
             component.fire_cooldown_remaining = controller.fire_cooldown_remaining;
             component.reload_remaining = controller.reload_remaining;
             component.ammo = controller.ammo;
+            component.speed = controller.speed;
         });
     }
 }
@@ -242,30 +284,35 @@ fn update_hull(
     game_object: engine::scene::GameObject,
     input: &Input,
     dt: TimeType,
-    controller: &ComponentTankController,
+    controller: &mut ComponentTankController,
 ) -> Transform {
     let mut transform = scene.world_transform(game_object);
     let throttle = input.axis("move_forward");
     let steer = input.axis("move_right");
-    let mut changed = false;
 
-    if steer.abs() > f32::EPSILON {
-        changed |= turn_hull(
-            scene,
-            &mut transform,
-            steer * controller.hull_turn_speed * dt,
-        );
-    }
+    let start_rotation = transform.rotation;
+    let yaw = steer * controller.hull_turn_speed * dt;
+    let turned = steer.abs() > f32::EPSILON && turn_hull(scene, &mut transform, yaw);
+    let mut changed = turned;
 
-    if throttle.abs() > f32::EPSILON {
-        let speed = if throttle >= 0.0 {
-            controller.move_speed
+    let (speed, distance) = advance_speed(controller.speed, throttle, controller, dt);
+    controller.speed = speed;
+    if distance.abs() > f32::EPSILON {
+        // Drive along the heading halfway through this frame's turn: the
+        // chord of the arc the hull follows, whatever the frame time.
+        let heading = if turned {
+            start_rotation * UnitQuaternion::from_euler_angles(0.0, yaw * 0.5, 0.0)
         } else {
-            controller.reverse_speed
+            start_rotation
         };
-        let forward = flatten_xz(transform.forward());
-        let movement = forward * (throttle * speed * dt);
-        transform.translate(&resolve_hull_movement(scene, &transform, movement));
+        let forward = flatten_xz(heading * Vec3::z());
+        let movement = resolve_hull_movement(scene, &transform, forward * distance);
+        // Driving into a wall sheds the speed the wall absorbed.
+        let travelled = movement.dot(&forward) / distance;
+        if travelled < 1.0 {
+            controller.speed *= travelled.clamp(0.0, 1.0);
+        }
+        transform.translate(&movement);
         changed = true;
     }
 
@@ -277,6 +324,68 @@ fn update_hull(
         });
     }
     scene.world_transform(game_object)
+}
+
+/// Advances the hull's signed forward speed by `dt` seconds towards the speed
+/// `throttle` asks for and returns the new speed and the distance covered.
+///
+/// Speed changes linearly: at `acceleration` while gaining speed, at
+/// `braking` while throttle opposes the motion, and at `friction` with no
+/// throttle. Each stretch is integrated exactly, so the result does not
+/// depend on how a span of time is split into frames.
+fn advance_speed(
+    speed: f32,
+    throttle: f32,
+    controller: &ComponentTankController,
+    dt: f32,
+) -> (f32, f32) {
+    let throttle = throttle.clamp(-1.0, 1.0);
+    let coasting = throttle.abs() <= f32::EPSILON;
+    let target = if coasting {
+        0.0
+    } else if throttle > 0.0 {
+        throttle * controller.move_speed.max(0.0)
+    } else {
+        throttle * controller.reverse_speed.max(0.0)
+    };
+
+    let mut speed = speed;
+    let mut remaining = dt.max(0.0);
+    let mut distance = 0.0;
+    // At most two stretches: braking to a stop, then accelerating away.
+    for _ in 0..2 {
+        if remaining <= 0.0 || speed == target {
+            break;
+        }
+        let slowing = speed != 0.0 && (target - speed).signum() != speed.signum();
+        let (rate, end) = if coasting {
+            (controller.friction, target)
+        } else if slowing {
+            // Braking through zero hands over to acceleration there.
+            let end = if target == 0.0 || target.signum() == speed.signum() {
+                target
+            } else {
+                0.0
+            };
+            (controller.braking, end)
+        } else {
+            (controller.acceleration, target)
+        };
+        if rate <= 0.0 {
+            break;
+        }
+        let time_to_end = (end - speed).abs() / rate;
+        let (duration, next) = if time_to_end <= remaining {
+            (time_to_end, end)
+        } else {
+            (remaining, speed + (end - speed).signum() * rate * remaining)
+        };
+        distance += (speed + next) * 0.5 * duration;
+        speed = next;
+        remaining -= duration;
+    }
+    distance += speed * remaining;
+    (speed, distance)
 }
 
 /// Turns the hull by `yaw` radians unless the turned hull would overlap a
@@ -387,6 +496,7 @@ fn update_turret(
     scene: &mut engine::scene::Scene,
     dt: TimeType,
     controller: &ComponentTankController,
+    previous_tank_transform: &Transform,
     tank_transform: &Transform,
     aim_point: Option<Vec3>,
 ) {
@@ -403,16 +513,32 @@ fn update_turret(
         return;
     }
 
-    let desired_world_rotation = yaw_rotation(&aim_direction);
-    let desired_local_rotation = tank_transform.rotation.inverse() * desired_world_rotation;
-    let blend = (controller.turret_turn_speed * dt).clamp(0.0, 1.0);
-
+    let max_turn = controller.turret_turn_speed.max(0.0) * dt.max(0.0);
     let _ = scene.write_component::<ComponentTransform, _>(turret_object, |transform| {
-        transform.transform.rotation = transform
-            .transform
-            .rotation
-            .slerp(&desired_local_rotation, blend);
+        // Turn in world space, at a fixed rate, from where the turret pointed
+        // before this frame's hull turn, so its aim depends only on elapsed
+        // time and not on the frame rate.
+        let current_yaw =
+            rotation_yaw(&(previous_tank_transform.rotation * transform.transform.rotation));
+        let desired_yaw = aim_direction.x.atan2(aim_direction.z);
+        let yaw = turn_towards(current_yaw, desired_yaw, max_turn);
+        transform.transform.rotation =
+            tank_transform.rotation.inverse() * UnitQuaternion::from_euler_angles(0.0, yaw, 0.0);
     });
+}
+
+/// Yaw in radians of `rotation`'s forward axis, from +Z towards +X.
+fn rotation_yaw(rotation: &UnitQuaternion<f32>) -> f32 {
+    let forward = rotation * Vec3::z();
+    forward.x.atan2(forward.z)
+}
+
+/// Turns the angle `current` towards `target` the short way round, by at
+/// most `max_step` radians.
+fn turn_towards(current: f32, target: f32, max_step: f32) -> f32 {
+    use std::f32::consts::{PI, TAU};
+    let difference = (target - current + PI).rem_euclid(TAU) - PI;
+    current + difference.clamp(-max_step, max_step)
 }
 
 fn update_crosshair(
@@ -811,10 +937,11 @@ pub(crate) fn yaw_rotation(direction: &Vec3) -> UnitQuaternion<f32> {
 #[cfg(test)]
 mod tests {
     use super::{
-        advance_fire_cooldown, advance_reload, apply_projectile_damage, can_fire, flatten_xz,
-        follow_camera_xz, ground_intersection, is_reloading, resolve_hull_movement,
-        segment_intersects_sphere, spawn_projectile, turn_hull, update_projectile, yaw_rotation,
-        ComponentHealth, ComponentProjectile, ComponentProjectileTarget, ComponentTankController,
+        advance_fire_cooldown, advance_reload, advance_speed, apply_projectile_damage, can_fire,
+        flatten_xz, follow_camera_xz, ground_intersection, is_reloading, resolve_hull_movement,
+        segment_intersects_sphere, spawn_projectile, turn_hull, turn_towards, update_projectile,
+        yaw_rotation, ComponentHealth, ComponentProjectile, ComponentProjectileTarget,
+        ComponentTankController,
     };
     use crate::spawn::{update_respawn_state, ComponentRespawnState, ComponentSpawnPoint};
     use engine::component::{
@@ -1222,6 +1349,75 @@ mod tests {
             &mut open_transform,
             std::f32::consts::FRAC_PI_2
         ));
+    }
+
+    #[test]
+    fn throttle_accelerates_to_top_speed_and_coasting_stops() {
+        let controller = ComponentTankController::default();
+        let to_top = controller.move_speed / controller.acceleration;
+
+        let (speed, distance) = advance_speed(0.0, 1.0, &controller, to_top * 0.5);
+        assert!((speed - controller.move_speed * 0.5).abs() < 1e-4);
+        assert!((distance - controller.move_speed * 0.5 * to_top * 0.25).abs() < 1e-4);
+
+        let (speed, distance) = advance_speed(0.0, 1.0, &controller, to_top + 1.0);
+        assert_eq!(speed, controller.move_speed);
+        assert!((distance - (controller.move_speed * (to_top * 0.5 + 1.0))).abs() < 1e-3);
+
+        let (speed, _) = advance_speed(0.0, -1.0, &controller, 10.0);
+        assert_eq!(speed, -controller.reverse_speed);
+
+        let to_rest = controller.move_speed / controller.friction;
+        let (speed, distance) = advance_speed(controller.move_speed, 0.0, &controller, 10.0);
+        assert_eq!(speed, 0.0);
+        assert!((distance - controller.move_speed * to_rest * 0.5).abs() < 1e-3);
+    }
+
+    #[test]
+    fn reverse_throttle_brakes_then_reverses() {
+        let controller = ComponentTankController::default();
+        let to_rest = controller.move_speed / controller.braking;
+
+        let (speed, distance) = advance_speed(controller.move_speed, -1.0, &controller, to_rest);
+        assert!(speed.abs() < 1e-4);
+        assert!((distance - controller.move_speed * to_rest * 0.5).abs() < 1e-4);
+
+        let (speed, _) = advance_speed(controller.move_speed, -1.0, &controller, to_rest + 0.1);
+        assert!((speed + controller.acceleration * 0.1).abs() < 1e-3);
+    }
+
+    #[test]
+    fn speed_does_not_depend_on_how_time_is_split() {
+        let controller = ComponentTankController::default();
+        let inputs = [(1.0, 0.8), (-1.0, 0.7), (0.0, 1.0), (-1.0, 0.4), (1.0, 0.6)];
+        let drive = |frames_per_second: usize| {
+            let dt = 1.0 / frames_per_second as f32;
+            let mut speed = 0.0;
+            let mut distance = 0.0;
+            for (throttle, duration) in inputs {
+                for _ in 0..(duration * frames_per_second as f32).round() as usize {
+                    let (next, step) = advance_speed(speed, throttle, &controller, dt);
+                    speed = next;
+                    distance += step;
+                }
+            }
+            (speed, distance)
+        };
+
+        let (slow_speed, slow_distance) = drive(30);
+        let (fast_speed, fast_distance) = drive(240);
+        assert!((slow_speed - fast_speed).abs() < 1e-3);
+        assert!((slow_distance - fast_distance).abs() < 1e-3);
+    }
+
+    #[test]
+    fn turret_turns_the_short_way_at_most_its_step() {
+        use std::f32::consts::PI;
+        assert!((turn_towards(0.0, 1.0, 0.25) - 0.25).abs() < 1e-6);
+        assert!((turn_towards(0.0, 0.1, 0.25) - 0.1).abs() < 1e-6);
+        // From just short of +pi to just past -pi is a small turn through pi.
+        let turned = turn_towards(PI - 0.1, -PI + 0.1, 0.05);
+        assert!((turned - (PI - 0.05)).abs() < 1e-5);
     }
 
     fn add_fixed_cube(
