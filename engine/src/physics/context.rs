@@ -129,6 +129,11 @@ impl PhysicsContext {
             .update(&scene.physics.colliders);
     }
 
+    /// Returns the scene entity that owns `collider`, if it is still live.
+    pub fn collider_entity(&self, collider: ColliderHandle) -> Option<Entity> {
+        self.collider_entity.get(&collider).copied()
+    }
+
     /// Casts a normalized ray through the current physics world.
     ///
     /// `max_distance` is measured in world units. A zero-length direction
@@ -204,6 +209,27 @@ impl PhysicsContext {
             collider,
             hit,
         })
+    }
+
+    /// Returns the entity of a collider that overlaps a collider primitive
+    /// placed at `position` and `rotation`, if any.
+    pub fn intersect_shape(
+        &self,
+        shape: ColliderShape,
+        position: Vector3<f32>,
+        rotation: UnitQuaternion<f32>,
+        filter: QueryFilter,
+    ) -> Option<Entity> {
+        let shape = Self::collider_shape(shape);
+        let shape_pos = Isometry::from_parts(Translation3::from(position), rotation);
+        let collider = self.query_pipeline.intersection_with_shape(
+            &self.bodies,
+            &self.colliders,
+            &shape_pos,
+            shape.as_ref(),
+            filter,
+        )?;
+        self.collider_entity(collider)
     }
 
     /// Removes Rapier objects whose owning scene entities have been deleted

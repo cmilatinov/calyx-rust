@@ -68,6 +68,7 @@ impl GameApp {
                 )
             })?;
         game.scenes.load_scene(scene.readonly());
+        game.scenes.current_scene_mut().start();
         Ok(Self {
             game,
             renderer: SceneRenderer::new(

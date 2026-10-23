@@ -11,10 +11,18 @@ use engine::reflect::{Reflect, ReflectDefault};
 use engine::render::{Camera, Ray};
 use engine::resource::ResourceMap;
 use engine::scene::GameObjectRef;
+use engine::scene::Scene;
 use engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
+use legion::Entity;
 use nalgebra::UnitQuaternion;
 use nalgebra_glm::{vec2, vec3, Vec3};
+use rapier3d::prelude::{Collider, ColliderHandle, QueryFilter, RigidBodyType};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+
+const TANK_COLLIDER_HALF_EXTENTS: Vec3 = Vec3::new(0.75, 0.5, 1.0);
+const TANK_COLLIDER_OFFSET: Vec3 = Vec3::new(0.0, 0.75, 0.0);
+const COLLISION_SKIN: f32 = 0.01;
 
 #[derive(Clone, Copy, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "21b467c0-9409-4a7f-b750-418809609eb1"]
@@ -242,12 +250,11 @@ fn update_hull(
     let mut changed = false;
 
     if steer.abs() > f32::EPSILON {
-        transform.rotate(&UnitQuaternion::from_euler_angles(
-            0.0,
+        changed |= turn_hull(
+            scene,
+            &mut transform,
             steer * controller.hull_turn_speed * dt,
-            0.0,
-        ));
-        changed = true;
+        );
     }
 
     if throttle.abs() > f32::EPSILON {
@@ -257,7 +264,8 @@ fn update_hull(
             controller.reverse_speed
         };
         let forward = flatten_xz(transform.forward());
-        transform.translate(&(forward * (throttle * speed * dt)));
+        let movement = forward * (throttle * speed * dt);
+        transform.translate(&resolve_hull_movement(scene, &transform, movement));
         changed = true;
     }
 
@@ -269,6 +277,110 @@ fn update_hull(
         });
     }
     scene.world_transform(game_object)
+}
+
+/// Turns the hull by `yaw` radians unless the turned hull would overlap a
+/// static obstacle it was not already overlapping. Returns whether it turned.
+fn turn_hull(scene: &Scene, transform: &mut Transform, yaw: f32) -> bool {
+    let rotation = transform.rotation * UnitQuaternion::from_euler_angles(0.0, yaw, 0.0);
+    let obstacles = static_obstacles(scene);
+    let is_obstacle = |collider: ColliderHandle, _: &Collider| {
+        scene
+            .physics
+            .collider_entity(collider)
+            .is_some_and(|entity| obstacles.contains(&entity))
+    };
+    let overlaps = |rotation: UnitQuaternion<f32>| {
+        scene
+            .physics
+            .intersect_shape(
+                ColliderShape::Cuboid {
+                    half_extents: TANK_COLLIDER_HALF_EXTENTS,
+                },
+                transform.position + TANK_COLLIDER_OFFSET,
+                rotation,
+                QueryFilter::default().predicate(&is_obstacle),
+            )
+            .is_some()
+    };
+    if overlaps(rotation) && !overlaps(transform.rotation) {
+        return false;
+    }
+    transform.rotation = rotation;
+    true
+}
+
+/// Entities whose colliders block the hull: colliders on a fixed rigid body
+/// (on the object itself or an ancestor) or on no rigid body at all. Colliders
+/// of dynamic or kinematic bodies, such as projectiles, never stop the hull.
+fn static_obstacles(scene: &Scene) -> HashSet<Entity> {
+    scene
+        .objects()
+        .filter(|&object| {
+            scene
+                .read_component::<ComponentCollider, _, _>(object, |_| ())
+                .is_some()
+        })
+        .filter(|&object| {
+            let body_type = scene
+                .read_component::<ComponentRigidBody, _, _>(object, |body| body.ty)
+                .or_else(|| {
+                    scene
+                        .ancestor_with::<ComponentRigidBody>(object)
+                        .and_then(|ancestor| {
+                            scene.read_component::<ComponentRigidBody, _, _>(ancestor, |body| {
+                                body.ty
+                            })
+                        })
+                });
+            matches!(body_type, None | Some(RigidBodyType::Fixed))
+        })
+        .map(|object| object.entity)
+        .collect()
+}
+
+fn resolve_hull_movement(scene: &Scene, transform: &Transform, movement: Vec3) -> Vec3 {
+    let physics = &scene.physics;
+    let obstacles = static_obstacles(scene);
+    let is_obstacle = |collider: ColliderHandle, _: &Collider| {
+        physics
+            .collider_entity(collider)
+            .is_some_and(|entity| obstacles.contains(&entity))
+    };
+    let mut resolved = Vec3::zeros();
+    let mut remaining = movement;
+
+    for _ in 0..2 {
+        let distance = remaining.magnitude();
+        if distance <= f32::EPSILON {
+            break;
+        }
+        let Some(hit) = physics.cast_shape(
+            ColliderShape::Cuboid {
+                half_extents: TANK_COLLIDER_HALF_EXTENTS,
+            },
+            transform.position + resolved + TANK_COLLIDER_OFFSET,
+            transform.rotation,
+            remaining,
+            1.0,
+            QueryFilter::default().predicate(&is_obstacle),
+        ) else {
+            resolved += remaining;
+            break;
+        };
+
+        let time_of_impact = hit.hit.time_of_impact.clamp(0.0, 1.0);
+        let safe_time = (time_of_impact - COLLISION_SKIN / distance).max(0.0);
+        resolved += remaining * safe_time;
+
+        let untraveled = remaining * (1.0 - time_of_impact);
+        // Rapier reports `normal1` on the hit collider in world space.
+        let normal = hit.hit.normal1.into_inner();
+        remaining = untraveled - normal * untraveled.dot(&normal);
+        remaining.y = 0.0;
+    }
+
+    resolved
 }
 
 fn update_turret(
@@ -500,8 +612,17 @@ fn update_projectile(
     let start = transform.position;
     let end = start + direction * projectile.speed * travel_time;
 
-    if let Some(target) = first_projectile_hit(scene, game_object, start, end, projectile.radius) {
+    // Static obstacles such as arena walls and cover absorb the round, so a
+    // target only takes damage when it is reached before the first obstacle.
+    let obstacle_time = first_obstacle_time(scene, start, end, projectile.radius);
+    let reach = obstacle_time.map_or(end, |time| start + (end - start) * time);
+    if let Some(target) = first_projectile_hit(scene, game_object, start, reach, projectile.radius)
+    {
         apply_projectile_damage(scene, target, projectile.damage);
+        scene.delete(game_object);
+        return;
+    }
+    if obstacle_time.is_some() {
         scene.delete(game_object);
         return;
     }
@@ -519,6 +640,29 @@ fn update_projectile(
         component.direction = projectile.direction;
         component.lifetime_remaining = projectile.lifetime_remaining;
     });
+}
+
+/// Fraction of the `start`..`end` segment a round of `radius` travels before
+/// it touches a static obstacle, if it touches one.
+fn first_obstacle_time(scene: &Scene, start: Vec3, end: Vec3, radius: f32) -> Option<f32> {
+    let obstacles = static_obstacles(scene);
+    let is_obstacle = |collider: ColliderHandle, _: &Collider| {
+        scene
+            .physics
+            .collider_entity(collider)
+            .is_some_and(|entity| obstacles.contains(&entity))
+    };
+    scene
+        .physics
+        .cast_shape(
+            ColliderShape::Sphere { radius },
+            start,
+            UnitQuaternion::identity(),
+            end - start,
+            1.0,
+            QueryFilter::default().predicate(&is_obstacle),
+        )
+        .map(|hit| hit.hit.time_of_impact.clamp(0.0, 1.0))
 }
 
 fn apply_projectile_damage(
@@ -659,9 +803,9 @@ fn yaw_rotation(direction: &Vec3) -> UnitQuaternion<f32> {
 mod tests {
     use super::{
         advance_fire_cooldown, advance_reload, apply_projectile_damage, can_fire, flatten_xz,
-        follow_camera_xz, ground_intersection, is_reloading, segment_intersects_sphere,
-        spawn_projectile, update_projectile, yaw_rotation, ComponentHealth, ComponentProjectile,
-        ComponentProjectileTarget, ComponentTankController,
+        follow_camera_xz, ground_intersection, is_reloading, resolve_hull_movement,
+        segment_intersects_sphere, spawn_projectile, turn_hull, update_projectile, yaw_rotation,
+        ComponentHealth, ComponentProjectile, ComponentProjectileTarget, ComponentTankController,
     };
     use crate::spawn::{update_respawn_state, ComponentRespawnState, ComponentSpawnPoint};
     use engine::component::{
@@ -672,6 +816,7 @@ mod tests {
     use engine::scene::GameObjectRef;
     use nalgebra::UnitQuaternion;
     use nalgebra_glm::{vec2, vec3};
+    use rapier3d::dynamics::RigidBodyType;
     use serde_json::Value;
 
     const COMPONENT_ID_TYPE: &str = "02289c92-3412-406e-a7e5-3bbb15d7041e";
@@ -861,7 +1006,7 @@ mod tests {
         game.scenes.start_simulation();
         assert_eq!(
             game.scenes.simulation_scene().objects().count(),
-            authoring_object_count
+            authoring_object_count + 68
         );
         let initial_camera_transform = {
             let scene = game.scenes.simulation_scene();
@@ -965,6 +1110,135 @@ mod tests {
         assert!((camera_transform.position.y - 16.0).abs() < 1e-6);
         assert!((camera_transform.position.z - -3.0).abs() < 1e-6);
         assert_eq!(camera_transform.rotation, rotation);
+    }
+
+    #[test]
+    fn hull_movement_stops_before_middle_cover() {
+        let mut scene = engine::test_support::test_scene();
+        add_fixed_cube(&mut scene, vec3(0.0, 1.0, 3.0), vec3(1.0, 1.0, 1.0));
+        scene.prepare();
+
+        let movement = resolve_hull_movement(
+            &scene,
+            &Transform::from_xyz(0.0, 0.0, 0.0),
+            vec3(0.0, 0.0, 4.0),
+        );
+
+        assert!(movement.z > 0.9);
+        assert!(movement.z < 1.0);
+    }
+
+    #[test]
+    fn diagonal_hull_movement_slides_along_wall() {
+        let mut scene = engine::test_support::test_scene();
+        add_fixed_cube(&mut scene, vec3(2.0, 1.0, 0.0), vec3(0.5, 1.0, 10.0));
+        scene.prepare();
+
+        let movement = resolve_hull_movement(
+            &scene,
+            &Transform::from_xyz(0.0, 0.0, 0.0),
+            vec3(3.0, 0.0, 2.0),
+        );
+
+        assert!(movement.x > 0.7);
+        assert!(movement.x < 0.75);
+        assert!(movement.z > 1.9);
+    }
+
+    #[test]
+    fn yawed_hull_slides_along_wall_using_world_normal() {
+        let mut scene = engine::test_support::test_scene();
+        add_fixed_cube(&mut scene, vec3(2.0, 1.0, 0.0), vec3(0.5, 1.0, 10.0));
+        scene.prepare();
+        let mut transform = Transform::from_xyz(0.0, 0.0, 0.0);
+        transform.rotation =
+            UnitQuaternion::from_euler_angles(0.0, std::f32::consts::FRAC_PI_2, 0.0);
+
+        let movement = resolve_hull_movement(&scene, &transform, vec3(3.0, 0.0, 2.0));
+
+        assert!(movement.x > 0.45, "movement: {movement:?}");
+        assert!(movement.x < 0.5, "movement: {movement:?}");
+        assert!(movement.z > 1.9, "movement: {movement:?}");
+    }
+
+    #[test]
+    fn hull_movement_ignores_projectile_colliders() {
+        let mut scene = engine::test_support::test_scene();
+        let projectile = scene.create(None, None);
+        scene.set_transform(projectile, &Transform::from_xyz(0.0, 0.75, 2.0).matrix());
+        scene.add_component(
+            projectile,
+            ComponentRigidBody {
+                gravity_scale: 0.0,
+                ..Default::default()
+            },
+        );
+        scene.add_component(
+            projectile,
+            ComponentCollider {
+                shape: ColliderShape::Sphere { radius: 0.18 },
+                ..Default::default()
+            },
+        );
+        scene.prepare();
+
+        let movement = resolve_hull_movement(
+            &scene,
+            &Transform::from_xyz(0.0, 0.0, 0.0),
+            vec3(0.0, 0.0, 4.0),
+        );
+
+        assert!((movement.z - 4.0).abs() < 1e-4, "movement: {movement:?}");
+    }
+
+    #[test]
+    fn hull_does_not_turn_its_corners_into_a_wall() {
+        let mut scene = engine::test_support::test_scene();
+        // The wall face sits at x = 0.8, just clear of the hull's 0.75 half
+        // width; a quarter turn would swing the 1.0 half length into it.
+        add_fixed_cube(&mut scene, vec3(1.3, 1.0, 0.0), vec3(0.5, 1.0, 10.0));
+        scene.prepare();
+        let mut transform = Transform::from_xyz(0.0, 0.0, 0.0);
+
+        assert!(!turn_hull(
+            &scene,
+            &mut transform,
+            std::f32::consts::FRAC_PI_2
+        ));
+        assert_eq!(transform.rotation, UnitQuaternion::identity());
+
+        let mut open_transform = Transform::from_xyz(-5.0, 0.0, 0.0);
+        assert!(turn_hull(
+            &scene,
+            &mut open_transform,
+            std::f32::consts::FRAC_PI_2
+        ));
+    }
+
+    fn add_fixed_cube(
+        scene: &mut engine::scene::Scene,
+        position: nalgebra_glm::Vec3,
+        half_extents: nalgebra_glm::Vec3,
+    ) {
+        let object = scene.create(None, None);
+        scene.set_transform(
+            object,
+            &Transform::from_components(position, Default::default(), vec3(1.0, 1.0, 1.0)).matrix(),
+        );
+        scene.add_component(
+            object,
+            ComponentRigidBody {
+                ty: RigidBodyType::Fixed,
+                ..Default::default()
+            },
+        );
+        scene.add_component(
+            object,
+            ComponentCollider {
+                shape: ColliderShape::Cuboid { half_extents },
+                ..Default::default()
+            },
+        );
     }
 
     #[test]
@@ -1184,6 +1458,76 @@ mod tests {
             .read_component::<ComponentProjectileTarget, _, _>(target, |target| target.hit_count)
             .unwrap();
         assert_eq!(hit_count, 0, "health damage replaces legacy hit counting");
+    }
+
+    #[test]
+    fn arena_wall_stops_projectile_before_target() {
+        let mut scene = engine::test_support::test_scene();
+        add_fixed_cube(&mut scene, vec3(0.0, 0.0, 2.5), vec3(5.0, 1.0, 0.25));
+        let projectile = scene.create(None, None);
+        scene.add_component(
+            projectile,
+            ComponentProjectile {
+                direction: vec3(0.0, 0.0, 1.0),
+                speed: 10.0,
+                damage: 25.0,
+                lifetime_remaining: 1.0,
+                radius: 0.1,
+            },
+        );
+        let target = scene.create(None, None);
+        scene.set_world_transform(target, Transform::from_xyz(0.0, 0.0, 5.0).matrix());
+        scene.add_component(target, ComponentProjectileTarget::default());
+        scene.add_component(
+            target,
+            ComponentHealth {
+                current_health: 60.0,
+                max_health: 60.0,
+                ..Default::default()
+            },
+        );
+        scene.prepare();
+
+        update_projectile(&mut scene, projectile, 0.5);
+        scene.flush_deletes();
+
+        let health = scene
+            .read_component::<ComponentHealth, _, _>(target, |health| health.current_health)
+            .expect("target should keep its health");
+        assert_eq!(health, 60.0, "the wall should absorb the round");
+        assert!(
+            !scene.objects().any(|object| object == projectile),
+            "the round should be destroyed on the wall"
+        );
+    }
+
+    #[test]
+    fn projectile_is_destroyed_when_it_reaches_a_wall() {
+        let mut scene = engine::test_support::test_scene();
+        add_fixed_cube(&mut scene, vec3(0.0, 0.0, 2.5), vec3(5.0, 1.0, 0.25));
+        let projectile = scene.create(None, None);
+        scene.add_component(
+            projectile,
+            ComponentProjectile {
+                direction: vec3(0.0, 0.0, 1.0),
+                speed: 10.0,
+                damage: 25.0,
+                lifetime_remaining: 1.0,
+                radius: 0.1,
+            },
+        );
+        scene.prepare();
+
+        update_projectile(&mut scene, projectile, 0.1);
+        scene.flush_deletes();
+        assert!(
+            scene.objects().any(|object| object == projectile),
+            "the round has not reached the wall yet"
+        );
+
+        update_projectile(&mut scene, projectile, 0.5);
+        scene.flush_deletes();
+        assert!(!scene.objects().any(|object| object == projectile));
     }
 
     #[test]

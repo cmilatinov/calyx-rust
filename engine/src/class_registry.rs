@@ -4,8 +4,8 @@ use std::ops::Deref;
 use uuid::Uuid;
 
 use crate::component::{
-    Component, ComponentReset, ComponentUpdate, ReflectComponent, ReflectComponentReset,
-    ReflectComponentUpdate,
+    Component, ComponentReset, ComponentStart, ComponentUpdate, ReflectComponent,
+    ReflectComponentReset, ReflectComponentStart, ReflectComponentUpdate,
 };
 use crate::reflect::type_registry::TypeRegistry;
 use crate::reflect::ReflectDefault;
@@ -15,6 +15,7 @@ use crate::utils::ReflectTypeUuidDynamic;
 /// Registry of reflected component types and their optional lifecycle hooks.
 pub struct ComponentRegistry {
     components: HashMap<Uuid, Box<dyn Component>>,
+    start_components: Vec<(Uuid, Box<dyn ComponentStart>)>,
     update_components: Vec<(Uuid, Box<dyn ComponentUpdate>)>,
     reset_components: HashMap<Uuid, Box<dyn ComponentReset>>,
 }
@@ -24,6 +25,7 @@ impl ComponentRegistry {
     pub fn new(type_registry: &TypeRegistry) -> Self {
         let mut registry = Self {
             components: Default::default(),
+            start_components: Default::default(),
             update_components: Default::default(),
             reset_components: Default::default(),
         };
@@ -45,6 +47,13 @@ impl ComponentRegistry {
             .map(|(id, updater)| (*id, updater.deref()))
     }
 
+    /// Iterates components that implement [`ComponentStart`].
+    pub fn components_with_start(&self) -> impl Iterator<Item = (Uuid, &dyn ComponentStart)> {
+        self.start_components
+            .iter()
+            .map(|(id, starter)| (*id, starter.deref()))
+    }
+
     /// Returns the reset hook registered for `id`, if any.
     pub fn reset_component(&self, id: Uuid) -> Option<&dyn ComponentReset> {
         self.reset_components.get(&id).map(|b| b.deref())
@@ -55,11 +64,12 @@ impl ComponentRegistry {
         self.components.iter()
     }
 
-    /// Rebuilds the component, update, and reset lookup tables from
+    /// Rebuilds the component lifecycle lookup tables from
     /// `type_registry`.
     pub fn refresh_class_lists(&mut self, type_registry: &TypeRegistry) {
         use crate as engine;
         self.components.clear();
+        self.start_components.clear();
         self.update_components.clear();
         self.reset_components.clear();
 
@@ -82,6 +92,17 @@ impl ComponentRegistry {
                 continue;
             };
             self.components.insert(type_id, component);
+
+            if let Some(meta_start) = type_registry.trait_meta::<ReflectComponentStart>(type_id) {
+                let instance = meta_default.default();
+                if let Ok(starter) = meta_start.get_boxed(instance) {
+                    self.start_components.push((type_id, starter));
+                } else {
+                    log::warn!(
+                        "Skipping start hook for component {type_id}: failed to bind metadata"
+                    );
+                }
+            }
 
             // Discover ComponentUpdate implementations via reflection
             if let Some(meta_update) = type_registry.trait_meta::<ReflectComponentUpdate>(type_id) {

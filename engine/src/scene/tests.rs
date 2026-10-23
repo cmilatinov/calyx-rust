@@ -1,7 +1,10 @@
 #[cfg(test)]
 mod tests {
     use crate as engine;
-    use crate::component::{Component, ComponentCamera, ComponentID, ReflectComponent};
+    use crate::component::{
+        Component, ComponentCamera, ComponentEventContext, ComponentID, ComponentStart,
+        ReflectComponent, ReflectComponentStart,
+    };
     use crate::core::Ref;
     use crate::reflect::{Reflect, ReflectDefault};
     use crate::scene::game_object_ref::RemapScope;
@@ -15,6 +18,29 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use uuid::Uuid;
 
+    #[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
+    #[uuid = "7bd0b53d-5b08-4e96-bb8b-fb3b82bf96c9"]
+    #[reflect(Default, TypeUuidDynamic, Component, ComponentStart)]
+    #[repr(C)]
+    struct StartCounter {
+        count: u32,
+    }
+
+    impl Component for StartCounter {}
+
+    impl ComponentStart for StartCounter {
+        fn start(
+            &self,
+            ComponentEventContext {
+                scene, game_object, ..
+            }: ComponentEventContext,
+        ) {
+            let _ = scene.write_component::<StartCounter, _>(game_object, |counter| {
+                counter.count += 1;
+            });
+        }
+    }
+
     // --- Creation & Identity ---
 
     #[test]
@@ -23,6 +49,21 @@ mod tests {
         let go = scene.create(None, None);
         assert_eq!(scene.name(go), "Game Object");
         assert!(scene.find(scene.uuid(go)).is_some());
+    }
+
+    #[test]
+    fn start_hooks_run_once_per_scene() {
+        let mut scene = test_scene();
+        let game_object = scene.create(None, None);
+        scene.add_component(game_object, StartCounter::default());
+
+        scene.start();
+        scene.start();
+
+        assert_eq!(
+            scene.read_component::<StartCounter, _, _>(game_object, |counter| counter.count),
+            Some(1)
+        );
     }
 
     #[test]
@@ -2088,6 +2129,25 @@ mod tests {
         assert!(authoring_names.iter().any(|name| name == "Authoring"));
         assert!(!authoring_names.iter().any(|name| name == "Configured"));
         assert!(simulation_names.iter().any(|name| name == "Configured"));
+    }
+
+    #[test]
+    fn scene_manager_runs_start_hooks_for_configured_scene() {
+        let mut game = crate::test_support::test_game_context();
+        let mut configured = test_scene();
+        let counter = configured.create(None, None);
+        configured.add_component(counter, StartCounter::default());
+        let counter_id = configured.uuid(counter);
+
+        game.scenes
+            .start_simulation_from_scene(Ref::new(configured).readonly());
+
+        let scene = game.scenes.simulation_scene();
+        let counter = scene.find(counter_id).expect("start counter object");
+        assert_eq!(
+            scene.read_component::<StartCounter, _, _>(counter, |counter| counter.count),
+            Some(1)
+        );
     }
 
     #[test]
