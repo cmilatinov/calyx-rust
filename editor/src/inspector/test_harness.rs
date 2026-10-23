@@ -80,9 +80,10 @@ impl InspectorHarness {
         let Some(TypeInfo::Struct(type_info)) = types.type_info_by_id(self.type_info) else {
             panic!("the harness type info should be a reflected struct");
         };
+        let scene = self.scene.view();
         let ctx = InspectorContext {
             assets: &self.registries,
-            scene: &self.scene,
+            scene: &scene,
             game_object: self.game_object,
             parent: None,
             type_info,

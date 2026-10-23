@@ -25,7 +25,7 @@ use crate::scene::change_set::ChangeSet;
 use crate::scene::game_object_store::GameObjectStore;
 use crate::scene::scene_graph::SceneGraph;
 use crate::scene::transform_cache::TransformCache;
-use crate::scene::{Prefab, SceneError};
+use crate::scene::{Prefab, SceneError, SceneView};
 use crate::utils::{ContextSeed, TypeUuid};
 
 use super::scene_graph::{self, SiblingDir};
@@ -778,6 +778,11 @@ impl Scene {
         self.world.entry_ref(game_object.entity).ok()
     }
 
+    /// A read-only view of the scene's object names, ids and hierarchy.
+    pub fn view(&self) -> SceneView<'_> {
+        SceneView::whole(&self.world.0, &self.graph, &self.store, self.root)
+    }
+
     /// Returns the Legion world for read-only queries. Component writes go
     /// through the scene's write methods instead.
     pub fn world(&self) -> &World {
@@ -786,8 +791,9 @@ impl Scene {
 
     /// Returns the mutable Legion entry for `game_object`.
     ///
-    /// This is the only place mutable component storage is handed out. Its
-    /// callers are the scene's write methods, which report each write through
+    /// This and the world split in [`Scene::edit_component_dyn`] are the only
+    /// places mutable component storage is handed out. Their callers are the
+    /// scene's write methods, which report each write through
     /// [`Scene::component_written`]; any other caller would let a write go
     /// unobserved.
     fn entry_mut(&mut self, game_object: GameObject) -> Option<Entry<'_>> {
@@ -899,26 +905,26 @@ impl Scene {
     /// Returns what `editor` returned, or `None` when the object or component
     /// is missing.
     ///
-    /// # Safety
-    ///
-    /// `editor` receives the component and a shared scene at once. It must
-    /// not read the edited component through the scene while it holds the
-    /// component.
-    pub unsafe fn edit_component_dyn<R>(
+    /// The scene's world is split by component type while `editor` runs: it
+    /// holds the component in place through the half that allows only the
+    /// component's type, and reads the scene through a [`SceneView`] of the
+    /// other half, which cannot read that type on any object. Nothing is
+    /// copied or moved, so an idle frame costs no serialization. When `editor`
+    /// panics, the component stays as `editor` left it and no write is
+    /// reported.
+    pub fn edit_component_dyn<R>(
         &mut self,
         game_object: GameObject,
         component: &dyn Component,
-        editor: impl FnOnce(&mut dyn Component, &Scene) -> ComponentEdit<R>,
+        editor: impl FnOnce(&mut dyn Component, &SceneView) -> ComponentEdit<R>,
     ) -> Option<R> {
-        let instance = {
-            let mut entry = self.entry_mut(game_object)?;
-            component.get_instance_mut(&mut entry)? as *mut dyn Component
+        let edit = {
+            let (mut edited, rest) = component.split_world(&mut self.world.0);
+            let entry = edited.entry_mut(game_object.entity).ok()?;
+            let instance = component.split_instance_mut(entry)?;
+            let view = SceneView::split(rest, &self.graph, &self.store, self.root);
+            editor(instance, &view)
         };
-        // SAFETY: the pointer targets the component's storage in the world,
-        // which nothing moves while `editor` only has shared scene access, and
-        // the caller guarantees `editor` does not alias it through the scene.
-        let instance = unsafe { &mut *instance };
-        let edit = editor(instance, self);
         if edit.written {
             // A write to the object's ComponentID may have its id put back
             // here; callers that need the written value read it afterwards.
@@ -1089,18 +1095,12 @@ impl Scene {
 
     /// Iterates every non-root object in the scene.
     pub fn objects(&self) -> impl Iterator<Item = GameObject> + '_ {
-        self.graph.objects(self.root)
+        self.view().objects()
     }
 
     /// Returns the display name stored in [`ComponentID`] for `game_object`.
     pub fn name(&self, game_object: GameObject) -> String {
-        self.entry(game_object)
-            .and_then(|e| {
-                e.get_component::<ComponentID>()
-                    .ok()
-                    .map(|c| c.name.clone())
-            })
-            .unwrap_or_default()
+        self.view().name(game_object).unwrap_or_default()
     }
 
     /// Returns whether `game_object` is locally marked visible.
@@ -1118,7 +1118,7 @@ impl Scene {
     /// Returns the persistent UUID `game_object` was spawned with, which its
     /// [`ComponentID`] always holds, or the nil UUID for an unknown object.
     pub fn uuid(&self, game_object: GameObject) -> Uuid {
-        self.store.uuid(game_object.entity).unwrap_or_default()
+        self.view().uuid(game_object)
     }
 
     /// Returns the type ids of every component on `game_object`, or an empty
@@ -1158,12 +1158,12 @@ impl Scene {
 
     /// Resolves a game object by persistent UUID.
     pub fn find(&self, id: Uuid) -> Option<GameObject> {
-        self.store.find(id)
+        self.view().find(id)
     }
 
     /// Returns the direct parent of `game_object`, if any.
     pub fn parent(&self, game_object: GameObject) -> Option<GameObject> {
-        self.graph.parent(game_object)
+        self.view().parent(game_object)
     }
 
     /// Returns the UUID of `game_object`'s parent, if any.

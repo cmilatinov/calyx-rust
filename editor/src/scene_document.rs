@@ -15,8 +15,8 @@ use engine::scene::{GameObject, Scene};
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::inspector::component_inspector;
 use crate::inspector::edit_tracker::{self, CommittedEdit, InspectorEditTracker};
-use crate::panel::PanelInspector;
 use crate::scene_autosave::EditorSceneAutosave;
 use crate::scene_file::{scene_fingerprint, write_scene_file};
 use crate::scene_history::{
@@ -324,7 +324,7 @@ impl SceneDocument {
     /// Records an edit the inspector committed as one undo step. Callers
     /// have passed the simulation guard.
     fn record_inspector_edit(&mut self, game: &GameContext, edit: CommittedEdit) {
-        let component_name = PanelInspector::type_display_name(
+        let component_name = component_inspector::type_display_name(
             &game.assets.registries.types.read(),
             edit.key.component,
         )

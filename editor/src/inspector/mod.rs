@@ -1,5 +1,6 @@
 pub mod asset_inspector;
 pub(crate) mod assets;
+pub mod component_inspector;
 pub mod edit_tracker;
 pub mod inspector_registry;
 #[cfg(test)]

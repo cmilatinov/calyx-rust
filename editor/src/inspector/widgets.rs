@@ -2,7 +2,7 @@ use egui;
 use egui::{Color32, DragValue, Frame, Id, Response, Shape, Stroke, StrokeKind, Ui, WidgetText};
 use engine::assets::texture::Texture;
 use engine::assets::{Asset, AssetAccess, AssetMeta, AssetRef, AssetRegistry};
-use engine::scene::{GameObjectRef, Scene};
+use engine::scene::{GameObject, GameObjectRef, SceneView};
 use engine::utils::TypeUuid;
 use lazy_static::lazy_static;
 use nalgebra_glm::{Vec2, Vec3, Vec4};
@@ -195,7 +195,7 @@ impl Widgets {
     pub fn game_object_select(
         ui: &mut Ui,
         id: impl std::hash::Hash,
-        scene: &Scene,
+        scene: &SceneView,
         value: &mut GameObjectRef,
     ) -> Response {
         lazy_static! {
@@ -216,9 +216,9 @@ impl Widgets {
                         .truncate()
                         .width(100.0)
                         .selected_text(
-                            value
-                                .game_object(scene)
-                                .map(|go| scene.name(go))
+                            scene
+                                .find(value.id())
+                                .map(|go| Self::game_object_label(scene, go))
                                 .unwrap_or(String::from("None")),
                         )
                         .show_ui(ui, |ui| {
@@ -238,9 +238,10 @@ impl Widgets {
                             }
                             for go in scene.objects() {
                                 let id = scene.uuid(go);
-                                let name = scene.name(go);
-                                changed |=
-                                    ui.selectable_value(&mut game_object_id, id, name).changed();
+                                let label = Self::game_object_label(scene, go);
+                                changed |= ui
+                                    .selectable_value(&mut game_object_id, id, label)
+                                    .changed();
                             }
                         })
                         .response
@@ -273,6 +274,14 @@ impl Widgets {
             *value = GameObjectRef::new(game_object_id);
         }
         res.inner
+    }
+
+    /// An object's name, or its id when `scene` cannot read names, as while
+    /// the inspector edits a [`ComponentID`](engine::component::ComponentID).
+    fn game_object_label(scene: &SceneView, game_object: GameObject) -> String {
+        scene
+            .name(game_object)
+            .unwrap_or_else(|| scene.uuid(game_object).to_string())
     }
 
     pub fn drag_float4(ui: &mut Ui, speed: f32, value: &mut Vec4) -> InspectorResponse {

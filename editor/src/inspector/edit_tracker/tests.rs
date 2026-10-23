@@ -6,7 +6,7 @@ use engine::component::{
     Component, ComponentCollider, ComponentID, ComponentTransform, ReflectComponent,
 };
 use engine::reflect::{Reflect, ReflectDefault};
-use engine::scene::{GameObject, Scene};
+use engine::scene::{GameObject, GameObjectRef, Scene};
 use engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use nalgebra_glm::Vec3;
 use serde::{Deserialize, Serialize};
@@ -87,10 +87,9 @@ impl Session {
         move |ui: &mut Ui, harness_ctx: &InspectorContext| {
             let pointer_down = ui.input(|input| input.pointer.any_down());
             let game_object = self.game_object;
-            // SAFETY: the inspectors under test read nothing through the
-            // scene.
-            let shown = unsafe {
-                self.tracker.show_component(
+            let shown = self
+                .tracker
+                .show_component(
                     &mut self.scene,
                     game_object,
                     component,
@@ -106,8 +105,7 @@ impl Session {
                         (response, response)
                     },
                 )
-            }
-            .expect("the component should exist");
+                .expect("the component should exist");
             if shown.changed {
                 self.changed_frames += 1;
             }
@@ -496,9 +494,9 @@ fn a_committed_id_edit_shows_the_id_the_scene_kept() {
     let game_object = session.game_object;
     let id = session.scene.uuid(game_object);
     let component = ComponentID::default();
-    // SAFETY: the closure reads nothing through the scene.
-    let shown = unsafe {
-        session.tracker.show_component(
+    let shown = session
+        .tracker
+        .show_component(
             &mut session.scene,
             game_object,
             &component,
@@ -514,8 +512,7 @@ fn a_committed_id_edit_shows_the_id_the_scene_kept() {
                 (InspectorResponse::CHANGED, ())
             },
         )
-    }
-    .unwrap();
+        .unwrap();
 
     let commit = shown.committed.expect("the rename should commit");
     assert_eq!(session.scene.uuid(game_object), id);
@@ -530,32 +527,75 @@ fn a_committed_id_edit_shows_the_id_the_scene_kept() {
 }
 
 #[test]
+fn a_game_object_picker_shown_while_editing_an_id_lists_objects_by_id() {
+    let mut h = InspectorHarness::new();
+    let registry = h.inspector_registry();
+    let picker = registry
+        .type_inspector_lookup(GameObjectRef::type_uuid())
+        .unwrap();
+    let mut session = Session::new(&h);
+    let game_object = session.game_object;
+    let child_id = session.scene.uuid(session.child);
+    let component = ComponentID::default();
+    let mut value = GameObjectRef::default();
+
+    // The picker reads the scene while the object's ComponentID is edited,
+    // so it cannot read names and lists each object by its id.
+    let mut draw = |ui: &mut Ui, harness_ctx: &InspectorContext| {
+        session
+            .tracker
+            .show_component(
+                &mut session.scene,
+                game_object,
+                &component,
+                true,
+                false,
+                |_, scene| {
+                    let ctx = InspectorContext {
+                        scene,
+                        game_object,
+                        ..*harness_ctx
+                    };
+                    let response = picker.show_inspector(ui, &ctx, &mut value);
+                    (response, response)
+                },
+            )
+            .expect("every object has an id")
+            .value
+    };
+    h.idle(2, &mut draw);
+    let combo = h.widget(Role::ComboBox, 0);
+    h.click(combo, &mut draw);
+    let option = h.labelled(Role::Button, &child_id.to_string());
+    h.click(option, &mut draw);
+
+    assert_eq!(value.id(), child_id);
+}
+
+#[test]
 #[should_panic(expected = "without reporting the edit")]
 fn an_unreported_edit_fails() {
     let h = InspectorHarness::new();
     let mut session = Session::new(&h);
     let game_object = session.game_object;
     let component = ComponentTransform::default();
-    // SAFETY: the closure reads nothing through the scene.
-    let _ = unsafe {
-        session.tracker.show_component(
-            &mut session.scene,
-            game_object,
-            &component,
-            true,
-            false,
-            |instance, _| {
-                instance
-                    .as_reflect_mut()
-                    .downcast_mut::<ComponentTransform>()
-                    .unwrap()
-                    .transform
-                    .position
-                    .x = 3.0;
-                (InspectorResponse::NONE, ())
-            },
-        )
-    };
+    let _ = session.tracker.show_component(
+        &mut session.scene,
+        game_object,
+        &component,
+        true,
+        false,
+        |instance, _| {
+            instance
+                .as_reflect_mut()
+                .downcast_mut::<ComponentTransform>()
+                .unwrap()
+                .transform
+                .position
+                .x = 3.0;
+            (InspectorResponse::NONE, ())
+        },
+    );
 }
 
 #[test]

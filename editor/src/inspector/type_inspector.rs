@@ -4,7 +4,7 @@ use egui::{Response, Ui};
 use engine::context::ReadOnlyRegistryContext;
 use engine::reflect::{Reflect, StructInfo};
 use engine::reflect_trait;
-use engine::scene::{GameObject, Scene};
+use engine::scene::{GameObject, SceneView};
 use uuid::Uuid;
 
 #[reflect_trait]
@@ -124,7 +124,7 @@ impl BitOrAssign<Response> for InspectorResponse {
 #[derive(Copy, Clone)]
 pub struct InspectorContext<'a> {
     pub assets: &'a ReadOnlyRegistryContext,
-    pub scene: &'a Scene,
+    pub scene: &'a SceneView<'a>,
     pub game_object: GameObject,
     pub parent: Option<GameObject>,
     pub type_info: &'a StructInfo,

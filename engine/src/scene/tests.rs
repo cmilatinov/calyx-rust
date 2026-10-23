@@ -16,6 +16,7 @@ mod tests {
     use legion::Entity;
     use nalgebra_glm::{self as glm, Vec3};
     use serde::{Deserialize, Serialize};
+    use std::cell::Cell;
     use uuid::Uuid;
 
     #[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
@@ -367,15 +368,12 @@ mod tests {
         scene.write_component_dyn(go, &prototype, |instance| {
             instance.deserialize_in_place(&serde_json::json!({ "id": Uuid::new_v4() }))
         });
-        // SAFETY: the editor does not read the edited component through the
-        // scene.
-        unsafe {
-            scene.edit_component_dyn(go, &prototype, |instance, _| ComponentEdit {
+        scene
+            .edit_component_dyn(go, &prototype, |instance, _| ComponentEdit {
                 value: instance.deserialize_in_place(&serde_json::json!({ "id": Uuid::new_v4() })),
                 written: true,
             })
-        }
-        .unwrap();
+            .unwrap();
         let after = scene
             .read_component_dyn(go, &prototype, |instance| instance.serialize())
             .flatten();
@@ -1249,8 +1247,8 @@ mod tests {
     fn edit_component_dyn_on_parent_transform_moves_child() {
         let (mut scene, parent, child) = parent_with_cached_child();
         let prototype = transform_prototype();
-        let name = unsafe {
-            scene.edit_component_dyn(parent, &prototype, |instance, scene| {
+        let name = scene
+            .edit_component_dyn(parent, &prototype, |instance, scene| {
                 let c = instance
                     .as_reflect_mut()
                     .downcast_mut::<crate::component::ComponentTransform>()
@@ -1261,9 +1259,8 @@ mod tests {
                     written: true,
                 }
             })
-        }
-        .expect("the parent should have a transform");
-        assert_eq!(name, scene.name(child));
+            .expect("the parent should have a transform");
+        assert_eq!(name, Some(scene.name(child)));
         assert_child_at(&scene, child, Vec3::new(5.0, 1.0, 0.0));
     }
 
@@ -1271,14 +1268,136 @@ mod tests {
     fn edit_component_dyn_without_a_write_leaves_the_child() {
         let (mut scene, parent, child) = parent_with_cached_child();
         let prototype = transform_prototype();
-        unsafe {
-            scene.edit_component_dyn(parent, &prototype, |_, _| ComponentEdit {
+        scene
+            .edit_component_dyn(parent, &prototype, |_, _| ComponentEdit {
                 value: (),
                 written: false,
             })
-        }
-        .expect("the parent should have a transform");
+            .expect("the parent should have a transform");
         assert_child_at(&scene, child, Vec3::new(1.0, 1.0, 0.0));
+    }
+
+    /// The position of `game_object`'s transform component, as stored.
+    fn stored_position(scene: &Scene, game_object: GameObject) -> Vec3 {
+        scene
+            .read_component::<crate::component::ComponentTransform, _, _>(game_object, |c| {
+                c.transform.position
+            })
+            .expect("the object should have a transform")
+    }
+
+    #[test]
+    fn edit_component_dyn_reads_names_through_the_view() {
+        let (mut scene, parent, child) = parent_with_cached_child();
+        let names = (scene.name(parent), scene.name(child));
+        let prototype = transform_prototype();
+        let seen = scene
+            .edit_component_dyn(parent, &prototype, |_, scene| ComponentEdit {
+                value: (scene.name(parent), scene.name(child), scene.parent(child)),
+                written: false,
+            })
+            .expect("the parent should have a transform");
+
+        assert_eq!(seen, (Some(names.0), Some(names.1), Some(parent)));
+    }
+
+    #[test]
+    fn edit_component_dyn_reports_a_write_only_when_the_editor_says_so() {
+        let (mut scene, parent, child) = parent_with_cached_child();
+        let prototype = transform_prototype();
+        let version = scene.write_version(parent, &prototype);
+        scene
+            .edit_component_dyn(parent, &prototype, |_, _| ComponentEdit {
+                value: (),
+                written: false,
+            })
+            .expect("the parent should have a transform");
+        assert_eq!(scene.write_version(parent, &prototype), version);
+
+        scene
+            .edit_component_dyn(parent, &prototype, |instance, _| {
+                instance
+                    .as_reflect_mut()
+                    .downcast_mut::<crate::component::ComponentTransform>()
+                    .expect("instance should be a transform")
+                    .transform
+                    .position = Vec3::new(5.0, 0.0, 0.0);
+                ComponentEdit {
+                    value: (),
+                    written: true,
+                }
+            })
+            .expect("the parent should have a transform");
+        assert_ne!(scene.write_version(parent, &prototype), version);
+        assert_eq!(stored_position(&scene, parent), Vec3::new(5.0, 0.0, 0.0));
+        assert_child_at(&scene, child, Vec3::new(5.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn edit_component_dyn_on_the_id_reads_no_names() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        let other = scene.create(None, None);
+        let other_id = scene.uuid(other);
+        let prototype = ComponentID::default();
+        let seen = scene
+            .edit_component_dyn(go, &prototype, |_, scene| ComponentEdit {
+                value: (scene.name(other), scene.uuid(other), scene.find(other_id)),
+                written: false,
+            })
+            .expect("every object has an id");
+
+        assert_eq!(seen, (None, other_id, Some(other)));
+    }
+
+    thread_local! {
+        static SERIALIZATIONS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    fn counted<S: serde::Serializer>(value: &f32, serializer: S) -> Result<S::Ok, S::Error> {
+        SERIALIZATIONS.with(|count| count.set(count.get() + 1));
+        serializer.serialize_f32(*value)
+    }
+
+    /// A component registered without a default that counts how often it is
+    /// serialized.
+    #[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
+    #[uuid = "3b8e5f1a-6c2d-4f9e-a07b-5d4c1e8f2a93"]
+    #[reflect(TypeUuidDynamic, Component)]
+    #[repr(C)]
+    struct Counted {
+        #[serde(serialize_with = "counted")]
+        value: f32,
+    }
+
+    impl Component for Counted {}
+
+    #[test]
+    fn edit_component_dyn_without_a_write_serializes_nothing() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        scene.add_component(go, Counted { value: 3.0 });
+        let prototype = Counted { value: 9.0 };
+        let before = SERIALIZATIONS.with(Cell::get);
+        for _ in 0..3 {
+            let seen = scene
+                .edit_component_dyn(go, &prototype, |instance, _| ComponentEdit {
+                    value: instance
+                        .as_reflect()
+                        .downcast_ref::<Counted>()
+                        .expect("instance should be the component")
+                        .value,
+                    written: false,
+                })
+                .expect("the object should have the component");
+            assert_eq!(seen, 3.0, "the editor holds the stored component");
+        }
+
+        assert_eq!(
+            SERIALIZATIONS.with(Cell::get),
+            before,
+            "idle frames serialize nothing"
+        );
     }
 
     #[test]
@@ -1286,12 +1405,10 @@ mod tests {
         let mut scene = crate::test_support::test_scene();
         let go = scene.create(None, None);
         let prototype = crate::component::ComponentCollider::default();
-        let edit = unsafe {
-            scene.edit_component_dyn(go, &prototype, |_, _| ComponentEdit {
-                value: (),
-                written: true,
-            })
-        };
+        let edit = scene.edit_component_dyn(go, &prototype, |_, _| ComponentEdit {
+            value: (),
+            written: true,
+        });
         assert!(edit.is_none());
     }
 

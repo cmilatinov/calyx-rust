@@ -1,30 +1,26 @@
-use std::any::Any;
-use std::collections::HashSet;
+//! Reflection-driven drawing of one component in the inspector.
+//!
+//! A component is drawn under a collapsing header with its type inspector,
+//! or, without one, field by field from its registered type info: nested
+//! structs, lists and the fields' own type inspectors. The header's context
+//! menu offers removing the component, which the caller applies.
 
-use crate::inspector::assets::animation_graph_inspector::AnimationGraphInspector;
-use crate::inspector::inspector_registry::InspectorRegistry;
-use crate::inspector::type_inspector::{InspectorContext, InspectorResponse};
-use crate::inspector::widgets::{SearchSelectState, Widgets};
-use crate::panel::Panel;
-use crate::selection::SelectionType;
-use crate::widgets::{List, ListContainer, ListItemContext};
-use crate::EditorAppState;
 use convert_case::{Case, Casing};
-use egui::scroll_area::ScrollBarVisibility;
-use egui::{Id, PopupCloseBehavior, Ui};
-use engine::assets::animation_graph::AnimationGraph;
+use egui::{Id, Ui};
 use engine::component::{ComponentID, ComponentTransform};
-use engine::context::ReadOnlyRegistryContext;
 use engine::reflect::type_registry::TypeRegistry;
 use engine::reflect::{
     AttributeValue, ListInfo, NamedField, Reflect, ReflectDefault, ReflectList, StructInfo,
     TypeInfo,
 };
-use engine::scene::GameObject;
 use engine::utils::TypeUuid;
 use re_ui::list_item::{LabelContent, ListItem, PropertyContent, ShowCollapsingResponse};
-use re_ui::{DesignTokens, UiExt};
 use uuid::Uuid;
+
+use super::inspector_registry::InspectorRegistry;
+use super::type_inspector::{InspectorContext, InspectorResponse};
+use super::widgets::Widgets;
+use crate::widgets::{List, ListContainer, ListItemContext};
 
 /// A structural change the inspector made to a reflected list.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -175,318 +171,39 @@ fn element_view(has_inspector: bool, info: Option<&TypeInfo>, is_list: bool) -> 
     }
 }
 
-#[derive(Default)]
-pub struct PanelInspector {
-    add_component_select: SearchSelectState,
+/// One frame of a component drawn by [`ComponentInspector::show`].
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct ComponentResponse {
+    /// What the component's widgets did to it.
+    pub edit: InspectorResponse,
+    /// Whether the header's context menu asked to remove the component.
+    pub remove: bool,
 }
 
-impl Panel for PanelInspector {
-    fn name() -> &'static str {
-        "Inspector"
-    }
-
-    fn ui(&mut self, ui: &mut Ui, state: &mut EditorAppState) {
-        state.inspector_rect = Some(ui.clip_rect());
-        let type_registry_ref = state.game.assets.registries.types.clone();
-        let type_registry = type_registry_ref.read();
-
-        egui::ScrollArea::both()
-            .auto_shrink([true, true])
-            .scroll_bar_visibility(ScrollBarVisibility::VisibleWhenNeeded)
-            .show(ui, |ui| {
-                egui::Frame {
-                    fill: ui.style().visuals.panel_fill,
-                    inner_margin: DesignTokens::panel_margin(),
-                    ..Default::default()
-                }
-                .show(ui, |ui| {
-                    re_ui::list_item::list_item_scope(ui, "inspector_scope", |ui| {
-                        let selected_game_object = state
-                            .selection
-                            .first(SelectionType::GameObject)
-                            .and_then(|id| state.game.scenes.simulation_scene().find(id));
-                        state.select_inspector_object(
-                            selected_game_object
-                                .map(|go| state.game.scenes.simulation_scene().uuid(go)),
-                        );
-                        if let Some(game_object) = selected_game_object {
-                            // Play mode records no undo history, so the
-                            // inspector keeps no baselines there.
-                            let track_edits =
-                                state.scene_document.track_inspector_edits(&state.game);
-                            let pointer_down = ui.input(|input| input.pointer.any_down());
-                            let mut structural_changed = false;
-                            let mut structural_edit_before = None;
-                            let mut entity_components = HashSet::new();
-                            let mut components_to_remove = HashSet::new();
-                            let component_registry_ref =
-                                state.game.assets.registries.components.clone();
-                            let component_registry = component_registry_ref.read();
-                            let component_types =
-                                state.game.scenes.simulation_scene().component_types(game_object);
-                            for (type_id, component) in component_registry.components() {
-                                if component_types.contains(&component.component_type_id()) {
-                                    entity_components.insert(*type_id);
-                                }
-                            }
-
-                            let component_to_add = self.add_component_button_ui(
-                                ui,
-                                &state.game.assets.lock_read().registries,
-                                &entity_components,
-                            );
-                            if let Some((type_uuid, name)) = component_to_add {
-                                Self::capture_structural_scene_edit(
-                                    &mut structural_edit_before,
-                                    state,
-                                );
-                                let scene = state.game.scenes.simulation_scene_mut();
-                                scene.bind_component_dyn(game_object, type_uuid);
-                                entity_components.insert(type_uuid);
-                                structural_changed = true;
-                                log::info!(
-                                    "Added component to game object: component={} type_uuid={} object={}",
-                                    name,
-                                    type_uuid,
-                                    Self::game_object_label(scene, game_object)
-                                );
-                            }
-
-                            for (type_id, component) in component_registry.components() {
-                                entity_components.insert(*type_id);
-                                let Some(TypeInfo::Struct(type_info)) =
-                                    type_registry.type_info_by_id(*type_id)
-                                else {
-                                    continue;
-                                };
-                                let assets = state.game.assets.lock_read();
-                                let inspector_registry = &state.inspector_registry;
-                                // SAFETY: inspectors read other objects and
-                                // components through the scene, never the
-                                // component they are editing.
-                                let Some(shown) = (unsafe {
-                                    state.scene_document.inspector_edits_mut().show_component(
-                                        state.game.scenes.simulation_scene_mut(),
-                                        game_object,
-                                        &**component,
-                                        track_edits,
-                                        pointer_down,
-                                        |instance, scene| {
-                                            let ctx = InspectorContext {
-                                                assets: &assets.registries,
-                                                scene,
-                                                game_object,
-                                                parent: scene.parent(game_object),
-                                                type_info,
-                                                field_name: None,
-                                            };
-                                            self.show_inspector(
-                                                ui,
-                                                inspector_registry,
-                                                &ctx,
-                                                instance.as_reflect_mut(),
-                                            )
-                                        },
-                                    )
-                                }) else {
-                                    continue;
-                                };
-                                drop(assets);
-                                if shown.value {
-                                    components_to_remove.insert(*type_id);
-                                }
-                                state.scene_document.inspector_shown(
-                                    &state.game,
-                                    shown.changed,
-                                    shown.completed,
-                                    shown.committed,
-                                );
-                            }
-                            for (type_id, _) in component_registry.components() {
-                                if !components_to_remove.contains(type_id) {
-                                    continue;
-                                }
-                                let component_name =
-                                    Self::type_display_name(&type_registry, *type_id)
-                                        .unwrap_or_else(|| type_id.to_string());
-                                let object_label = Self::game_object_label(
-                                    state.game.scenes.simulation_scene(),
-                                    game_object,
-                                );
-                                Self::capture_structural_scene_edit(
-                                    &mut structural_edit_before,
-                                    state,
-                                );
-                                if state
-                                    .game
-                                    .scenes
-                                    .simulation_scene_mut()
-                                    .remove_component_dyn(game_object, *type_id)
-                                {
-                                    structural_changed = true;
-                                    log::info!(
-                                        "Removed component from game object: component={component_name} type_uuid={type_id} object={object_label}"
-                                    );
-                                }
-                            }
-                            if structural_changed {
-                                state.commit_scene_edit(
-                                    "Edit inspector components",
-                                    structural_edit_before,
-                                );
-                            }
-                        } else if let Some(asset_id) = state.selection.first(SelectionType::Asset) {
-                            let asset_registry_ref = state.game.assets.registries.assets.clone();
-                            let asset_registry = asset_registry_ref.read();
-                            let Some(asset_meta) = asset_registry.asset_meta_from_id(asset_id)
-                            else {
-                                return;
-                            };
-                            let Some(inspector) = state
-                                .inspector_registry
-                                .asset_inspector_lookup(asset_meta.type_uuid)
-                            else {
-                                return;
-                            };
-
-                            let header_id = Id::new(asset_id);
-                            ListItem::new()
-                                .interactive(true)
-                                .force_background(
-                                    re_ui::design_tokens().section_collapsing_header_color(),
-                                )
-                                .show_hierarchical_with_children_unindented(
-                                    ui,
-                                    header_id,
-                                    true,
-                                    LabelContent::new(asset_meta.name.to_string())
-                                        .truncate(true)
-                                        .always_show_buttons(true)
-                                        .with_buttons(|ui| {
-                                            let popup_id = header_id.with("popup");
-                                            let res = ui.small_icon_button(&re_ui::icons::MORE);
-                                            if res.clicked() {
-                                                ui.memory_mut(|mem| mem.open_popup(popup_id))
-                                            }
-                                            ui.list_item_popup(popup_id, &res, 0.0, |ui| {
-                                                if ui
-                                                    .list_item()
-                                                    .show_flat(ui, LabelContent::new("Save"))
-                                                    .clicked()
-                                                {
-                                                    asset_registry.persist(asset_id);
-                                                }
-                                            });
-                                            res
-                                        }),
-                                    |ui| {
-                                        inspector.show_inspector(ui, &mut state.game, asset_id);
-                                    },
-                                );
-                        } else if let SelectionType::AnimationNode(asset_id) = state.selection.ty()
-                        {
-                            if let Some(id) = state.selection.iter().next() {
-                                if let Ok(graph_ref) = state
-                                    .game
-                                    .assets
-                                    .registries
-                                    .assets
-                                    .read()
-                                    .load_by_id::<AnimationGraph>(asset_id)
-                                {
-                                    let mut graph = graph_ref.write();
-                                    let asset_registry = state.game.assets.registries.assets.read();
-                                    AnimationGraphInspector::node(
-                                        ui,
-                                        &asset_registry,
-                                        &mut graph,
-                                        id,
-                                    );
-                                }
-                            }
-                        } else if let SelectionType::AnimationTransition(asset_id) =
-                            state.selection.ty()
-                        {
-                            if let Some(id) = state.selection.iter().next() {
-                                if let Ok(graph_ref) = state
-                                    .game
-                                    .assets
-                                    .registries
-                                    .assets
-                                    .read()
-                                    .load_by_id::<AnimationGraph>(asset_id)
-                                {
-                                    let mut graph = graph_ref.write();
-                                    AnimationGraphInspector::transition(ui, &mut graph, id);
-                                }
-                            }
-                        }
-                    });
-                    ui.allocate_space(ui.available_size());
-                });
-            });
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
+/// Draws components with the type inspectors of `registry`, falling back to
+/// their reflected fields.
+#[derive(Copy, Clone)]
+pub struct ComponentInspector<'a> {
+    registry: &'a InspectorRegistry,
 }
 
-impl PanelInspector {
-    fn capture_structural_scene_edit(
-        before: &mut Option<crate::SceneEditSnapshot>,
-        state: &EditorAppState,
-    ) {
-        if before.is_none() {
-            *before = state.scene_edit_snapshot();
-        }
+impl<'a> ComponentInspector<'a> {
+    pub fn new(registry: &'a InspectorRegistry) -> Self {
+        Self { registry }
     }
 
-    fn display_name(type_registry: &TypeRegistry, instance: &dyn Reflect) -> &'static str {
-        type_registry
-            .type_info_by_id(instance.uuid())
-            .and_then(|info| {
-                match info {
-                    TypeInfo::Struct(info) => {
-                        if let Some(AttributeValue::String(str)) = info.attr("name") {
-                            return Some(str);
-                        }
-                    }
-                    TypeInfo::Enum(info) => {
-                        if let Some(AttributeValue::String(str)) = info.attr("name") {
-                            return Some(str);
-                        }
-                    }
-                    _ => {}
-                }
-                None
-            })
-            .unwrap_or(instance.type_name_short())
-    }
-
-    fn field_display_name(field: &NamedField) -> String {
-        if let Some(AttributeValue::String(name)) = field.attrs.get("name") {
-            (*name).into()
-        } else {
-            field.name.from_case(Case::Snake).to_case(Case::Title)
-        }
-    }
-
-    fn show_inspector(
+    /// Draws `instance` under a collapsing header whose context menu offers
+    /// removing it, except for the components every object keeps.
+    pub fn show(
         &self,
         ui: &mut Ui,
-        registry: &InspectorRegistry,
         ctx: &InspectorContext,
         instance: &mut dyn Reflect,
-    ) -> (InspectorResponse, bool) {
-        let name = Self::display_name(&ctx.assets.types.read(), instance);
+    ) -> ComponentResponse {
+        let name = display_name(&ctx.assets.types.read(), instance);
         let id = ui.make_persistent_id(name);
         let type_uuid = instance.uuid();
-        let mut response = InspectorResponse::NONE;
+        let mut response = ComponentResponse::default();
         let res = ListItem::new()
             .interactive(true)
             .force_background(re_ui::design_tokens().section_collapsing_header_color())
@@ -496,11 +213,10 @@ impl PanelInspector {
                 true,
                 LabelContent::new(name).truncate(true),
                 |ui| {
-                    response |= match registry.type_inspector_lookup(type_uuid) {
+                    response.edit |= match self.registry.type_inspector_lookup(type_uuid) {
                         Some(inspector) => inspector.show_inspector(ui, ctx, instance),
-                        None => self.show_default_inspector(
+                        None => self.show_fields(
                             ui,
-                            registry,
                             ctx,
                             instance,
                             &FieldTrail::root(Id::new((ctx.game_object.node, type_uuid))),
@@ -515,42 +231,39 @@ impl PanelInspector {
                 state.store(ui.ctx());
             }
         }
-        let mut remove = false;
         if type_uuid != ComponentID::type_uuid() {
             res.context_menu(|ui| {
                 if type_uuid != ComponentTransform::type_uuid() && ui.button("Remove").clicked() {
-                    remove = true;
+                    response.remove = true;
                     ui.close_menu();
                 }
-                if let Some(inspector) = registry.type_inspector_lookup(type_uuid) {
-                    response |= inspector.show_inspector_context(ui, ctx, instance);
+                if let Some(inspector) = self.registry.type_inspector_lookup(type_uuid) {
+                    response.edit |= inspector.show_inspector_context(ui, ctx, instance);
                 }
             });
         }
-        (response, remove)
+        response
     }
 
-    fn show_default_inspector(
+    /// Draws `instance`'s fields from its registered struct info, or nothing
+    /// for a type that is not a registered struct.
+    fn show_fields(
         &self,
         ui: &mut Ui,
-        registry: &InspectorRegistry,
         ctx: &InspectorContext,
         instance: &mut dyn Reflect,
         trail: &FieldTrail,
     ) -> InspectorResponse {
         let type_registry = ctx.assets.types.read();
         match type_registry.type_info_by_id(instance.uuid()) {
-            Some(TypeInfo::Struct(info)) => {
-                self.show_default_struct_inspector(ui, registry, ctx, instance, info, trail)
-            }
+            Some(TypeInfo::Struct(info)) => self.show_struct(ui, ctx, instance, info, trail),
             _ => InspectorResponse::NONE,
         }
     }
 
-    fn show_default_struct_inspector(
+    fn show_struct(
         &self,
         ui: &mut Ui,
-        registry: &InspectorRegistry,
         ctx: &InspectorContext,
         instance: &mut dyn Reflect,
         info: &StructInfo,
@@ -561,32 +274,24 @@ impl PanelInspector {
             let mut field_ctx = *ctx;
             field_ctx.field_name = Some(field.name);
             if let Some(value) = field.get_reflect_mut(instance.as_reflect_mut()) {
-                response |= self.show_default_inspector_field(
-                    ui,
-                    registry,
-                    &field_ctx,
-                    field,
-                    value,
-                    &trail.child(field.name),
-                );
+                response |= self.show_field(ui, &field_ctx, field, value, &trail.child(field.name));
             }
         }
         response
     }
 
-    fn show_default_inspector_field(
+    fn show_field(
         &self,
         ui: &mut Ui,
-        registry: &InspectorRegistry,
         ctx: &InspectorContext,
         field: &NamedField,
         instance: &mut dyn Reflect,
         trail: &FieldTrail,
     ) -> InspectorResponse {
-        let mut name = Self::field_display_name(field);
+        let mut name = field_display_name(field);
         name.push(' ');
         let type_registry = ctx.assets.types.read();
-        if let Some(inspector) = registry.type_inspector_lookup(instance.uuid()) {
+        if let Some(inspector) = self.registry.type_inspector_lookup(instance.uuid()) {
             if matches!(
                 type_registry.type_info_by_id(instance.uuid()),
                 Some(TypeInfo::Enum(_))
@@ -614,21 +319,13 @@ impl PanelInspector {
                         true,
                         PropertyContent::new(name).show_only_when_collapsed(false),
                         |ui| {
-                            response = self.show_default_struct_inspector(
-                                ui,
-                                registry,
-                                &nested_ctx,
-                                instance,
-                                info,
-                                trail,
-                            );
+                            response = self.show_struct(ui, &nested_ctx, instance, info, trail);
                         },
                     );
                 response
             }
-            Some(TypeInfo::List(info)) => self.show_list_inspector(
+            Some(TypeInfo::List(info)) => self.show_list(
                 ui,
-                registry,
                 ctx,
                 &type_registry,
                 name.trim_end(),
@@ -653,10 +350,9 @@ impl PanelInspector {
     /// discrete change, so it is one undo step; element edits report as their
     /// inspectors do.
     #[allow(clippy::too_many_arguments)]
-    fn show_list_inspector(
+    fn show_list(
         &self,
         ui: &mut Ui,
-        registry: &InspectorRegistry,
         ctx: &InspectorContext,
         type_registry: &TypeRegistry,
         name: &str,
@@ -682,7 +378,6 @@ impl PanelInspector {
                     .push_id(index, |ui| {
                         self.show_list_element(
                             ui,
-                            registry,
                             ctx,
                             type_registry,
                             id.with(index),
@@ -708,7 +403,6 @@ impl PanelInspector {
     fn show_list_element(
         &self,
         ui: &mut Ui,
-        registry: &InspectorRegistry,
         ctx: &InspectorContext,
         type_registry: &TypeRegistry,
         id: Id,
@@ -719,7 +413,7 @@ impl PanelInspector {
     ) -> (InspectorResponse, ShowCollapsingResponse<()>) {
         let label = format!("Element {index}");
         let element_info = type_registry.type_info_by_id(element.uuid());
-        let inspector = registry.type_inspector_lookup(element.uuid());
+        let inspector = self.registry.type_inspector_lookup(element.uuid());
         let view = element_view(
             inspector.is_some(),
             element_info,
@@ -756,23 +450,15 @@ impl PanelInspector {
                     let mut nested_ctx = *ctx;
                     nested_ctx.field_name = None;
                     nested_ctx.type_info = info;
-                    response = self.show_default_struct_inspector(
-                        ui,
-                        registry,
-                        &nested_ctx,
-                        element,
-                        info,
-                        trail,
-                    );
+                    response = self.show_struct(ui, &nested_ctx, element, info, trail);
                 }
                 (ElementView::List, _, info) => {
                     let info = match info {
                         Some(TypeInfo::List(info)) => Some(info),
                         _ => None,
                     };
-                    response = self.show_list_inspector(
+                    response = self.show_list(
                         ui,
-                        registry,
                         ctx,
                         type_registry,
                         "Elements",
@@ -791,121 +477,75 @@ impl PanelInspector {
         );
         (response, shown)
     }
+}
 
-    fn add_component_button_ui(
-        &mut self,
-        ui: &mut Ui,
-        assets: &ReadOnlyRegistryContext,
-        entity_components: &HashSet<Uuid>,
-    ) -> Option<(Uuid, String)> {
-        let num_components = assets.components.read().components().count();
-        let enabled = num_components > entity_components.len();
-        let mut component_to_add = None;
-        let res = ui
-            .list_item()
-            .draggable(false)
-            .interactive(enabled)
-            .show_flat(
-                ui,
-                LabelContent::new(" Add Component")
-                    .always_show_buttons(true)
-                    .truncate(true)
-                    .with_icon(&re_ui::icons::ADD),
-            )
-            .on_hover_text("Add a new component to this game object");
-        let id = ui.make_persistent_id("add_component_popup");
-        if res.clicked() && enabled {
-            self.add_component_select.open();
-            ui.memory_mut(|mem| mem.open_popup(id));
-        }
-        egui::popup::popup_below_widget(
-            ui,
-            id,
-            &res,
-            PopupCloseBehavior::CloseOnClickOutside,
-            |ui| {
-                Widgets::search_select_contents(
-                    ui,
-                    id,
-                    &mut self.add_component_select,
-                    |ui, search| {
-                        let search = search.trim().to_owned();
-                        let mut shown = 0usize;
-                        for (type_uuid, component) in assets.components.read().components() {
-                            if entity_components.contains(type_uuid) {
-                                continue;
-                            }
-                            let name =
-                                Self::display_name(&assets.types.read(), component.as_reflect());
-                            if !Self::component_matches_search(name, &search) {
-                                continue;
-                            }
-                            shown += 1;
-                            if ui.selectable_label(false, name).clicked() {
-                                component_to_add = Some((*type_uuid, name.to_owned()));
-                                ui.memory_mut(|mem| mem.close_popup());
-                            }
-                        }
+/// The name the inspector shows for `instance`'s type: its `name` attribute,
+/// or its short type name.
+pub fn display_name(type_registry: &TypeRegistry, instance: &dyn Reflect) -> &'static str {
+    type_registry
+        .type_info_by_id(instance.uuid())
+        .and_then(|info| {
+            match info {
+                TypeInfo::Struct(info) => {
+                    if let Some(AttributeValue::String(str)) = info.attr("name") {
+                        return Some(str);
+                    }
+                }
+                TypeInfo::Enum(info) => {
+                    if let Some(AttributeValue::String(str)) = info.attr("name") {
+                        return Some(str);
+                    }
+                }
+                _ => {}
+            }
+            None
+        })
+        .unwrap_or(instance.type_name_short())
+}
 
-                        if shown == 0 {
-                            ui.weak("No matching components");
-                        }
-                    },
-                );
-            },
-        );
-        if component_to_add.is_some() {
-            self.add_component_select.clear_search();
-        }
-        component_to_add
-    }
+/// The name the inspector shows for the type registered as `type_uuid`, or
+/// `None` when no such type is registered.
+pub fn type_display_name(type_registry: &TypeRegistry, type_uuid: Uuid) -> Option<String> {
+    type_registry
+        .type_info_by_id(type_uuid)
+        .map(|info| match info {
+            TypeInfo::Struct(info) => info
+                .attr("name")
+                .and_then(|attr| match attr {
+                    AttributeValue::String(name) => Some(name.to_string()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| short_type_name(info.type_name).to_string()),
+            TypeInfo::Enum(info) => info
+                .attr("name")
+                .and_then(|attr| match attr {
+                    AttributeValue::String(name) => Some(name.to_string()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| short_type_name(info.type_name).to_string()),
+            TypeInfo::List(info) => short_type_name(info.type_name).to_string(),
+            TypeInfo::Option(info) => short_type_name(info.type_name).to_string(),
+            TypeInfo::Map(info) => short_type_name(info.type_name).to_string(),
+            TypeInfo::None => type_uuid.to_string(),
+        })
+}
 
-    fn component_matches_search(name: &str, search: &str) -> bool {
-        let search = search.trim();
-        search.is_empty() || name.to_lowercase().contains(&search.to_lowercase())
-    }
+fn short_type_name(type_name: &str) -> &str {
+    type_name.rsplit("::").next().unwrap_or(type_name)
+}
 
-    pub(crate) fn type_display_name(
-        type_registry: &TypeRegistry,
-        type_uuid: Uuid,
-    ) -> Option<String> {
-        type_registry
-            .type_info_by_id(type_uuid)
-            .map(|info| match info {
-                TypeInfo::Struct(info) => info
-                    .attr("name")
-                    .and_then(|attr| match attr {
-                        AttributeValue::String(name) => Some(name.to_string()),
-                        _ => None,
-                    })
-                    .unwrap_or_else(|| Self::short_type_name(info.type_name).to_string()),
-                TypeInfo::Enum(info) => info
-                    .attr("name")
-                    .and_then(|attr| match attr {
-                        AttributeValue::String(name) => Some(name.to_string()),
-                        _ => None,
-                    })
-                    .unwrap_or_else(|| Self::short_type_name(info.type_name).to_string()),
-                TypeInfo::List(info) => Self::short_type_name(info.type_name).to_string(),
-                TypeInfo::Option(info) => Self::short_type_name(info.type_name).to_string(),
-                TypeInfo::Map(info) => Self::short_type_name(info.type_name).to_string(),
-                TypeInfo::None => type_uuid.to_string(),
-            })
-    }
-
-    fn short_type_name(type_name: &str) -> &str {
-        type_name.rsplit("::").next().unwrap_or(type_name)
-    }
-
-    fn game_object_label(scene: &engine::scene::Scene, game_object: GameObject) -> String {
-        format!("{} ({})", scene.name(game_object), scene.uuid(game_object))
+fn field_display_name(field: &NamedField) -> String {
+    if let Some(AttributeValue::String(name)) = field.attrs.get("name") {
+        (*name).into()
+    } else {
+        field.name.from_case(Case::Snake).to_case(Case::Title)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        element_view, ElementView, FieldTrail, ListEdit, PanelInspector, ReflectListContainer,
+        element_view, ComponentInspector, ElementView, FieldTrail, ListEdit, ReflectListContainer,
     };
     use crate::inspector::edit_tracker::{ComponentKey, InspectorEditTracker};
     use crate::inspector::test_harness::{any_changed, combined, InspectorHarness};
@@ -1054,14 +694,13 @@ mod tests {
         let mut h = InspectorHarness::new();
         h.type_info = ListHolder::type_uuid();
         let registry = h.inspector_registry();
-        let panel = PanelInspector::default();
+        let inspector = ComponentInspector::new(&registry);
         let mut holder = ListHolder {
             values: vec![1.0, 2.0],
         };
         let mut draw = |ui: &mut Ui, ctx: &InspectorContext| {
-            panel.show_default_inspector(
+            inspector.show_fields(
                 ui,
-                &registry,
                 ctx,
                 holder.as_reflect_mut(),
                 &FieldTrail::root(Id::new("list_holder")),
@@ -1162,14 +801,13 @@ mod tests {
         let mut h = InspectorHarness::new();
         h.type_info = ComponentCamera::type_uuid();
         let registry = h.inspector_registry();
-        let panel = PanelInspector::default();
+        let inspector = ComponentInspector::new(&registry);
         let mut camera = ComponentCamera::default();
         let before = serde_json::to_value(&camera).unwrap();
         let mut draw = |ui: &mut Ui, ctx: &InspectorContext| {
-            let (response, remove) =
-                panel.show_inspector(ui, &registry, ctx, camera.as_reflect_mut());
-            assert!(!remove);
-            response
+            let response = inspector.show(ui, ctx, camera.as_reflect_mut());
+            assert!(!response.remove);
+            response.edit
         };
 
         let idle = h.idle(3, &mut draw);
@@ -1192,27 +830,5 @@ mod tests {
             .filter(|field| before[**field] != after[**field])
             .count();
         assert_eq!(numbers_changed, 1, "{before} -> {after}");
-    }
-
-    #[test]
-    fn component_search_matches_case_insensitive_substrings() {
-        assert!(PanelInspector::component_matches_search(
-            "Tank Controller",
-            "tank"
-        ));
-        assert!(PanelInspector::component_matches_search(
-            "Directional Light",
-            "LIGHT"
-        ));
-        assert!(!PanelInspector::component_matches_search(
-            "Component Mesh",
-            "camera"
-        ));
-    }
-
-    #[test]
-    fn component_search_treats_blank_query_as_match() {
-        assert!(PanelInspector::component_matches_search("Camera", ""));
-        assert!(PanelInspector::component_matches_search("Camera", "   "));
     }
 }
