@@ -66,6 +66,13 @@ Example game project. Compiles as dynamic library (plugin) with `plugin_main` en
   - The prefab id remap (`RemapScope`, a thread-local read by `GameObjectRef` deserialization): each component type enters it in its own code through `ComponentInstance::deserialize_remapped`, so a project component sees the remap the editor's prefab instantiation asked for.
   - The `log` logger: `TypeRegistry::register_crate` installs the logger the editor recorded in `begin_plugin_load`, so DLL log records reach the editor's log.
   - Safe as they are: Legion's `ID_CLONE_MAPPINGS` (only `World::clone_from`, which the engine never calls), `COMPONENT_VERSION` (only Legion's `maybe_changed` filter, unused; the scene's change set tracks writes) and `WORLD_ID_COUNTER` (keys Legion query caches, and the engine builds a fresh query per use); network object ids (`NETWORK_ID_PREFIX` is random per copy, made to stay unique across peers); `warn_once` keys (a warning can show once per copy); `inventory` registrations (each copy collects its own, which is how `register_crate` finds only the DLL's types).
+- Reloading the project DLL after a rebuild unloads the previous one, and everything its code backs must go first: Legion storages of project components (their drop, clone and serialize code is the DLL's), the `allocate_entity` pointer of a scene the DLL created, the DLL's type registrations and the component binders made from them. So `ProjectManager` loads the new DLL, then, while the old one is still loaded, has `SceneManager::suspend_scenes` snapshot and empty every scene it reaches, calls `TypeRegistry::unload_plugins` (which resets the registry to the editor's own types, dropping types the new build removed too) and rebuilds the component registry from it. It then registers the new DLL's types, unloads the old DLL and rebuilds each scene from its snapshot with `SceneManager::resume_scenes`. A reload:
+  - keeps the authoring scene with its unsaved edits, its file and dirty state, the selection, and the undo and redo history, which are all serialized;
+  - keeps each cached scene asset, rebuilt in place behind the same reference; prefabs are serialized data and stay as they are;
+  - stops a running or paused simulation and drops its scene, as Stop does; Play starts a fresh one;
+  - commits pending inspector edits before the reload and takes the inspector's baselines again after it;
+  - drops components whose type the new build removed, or that no longer deserialize, from the rebuilt scenes, so saving afterwards writes the scene without them;
+  - does not cover resources or asset types project code adds to the editor; the sandbox adds none.
 - `release-with-debug` profile for profiling.
 
 ## Asset File Types

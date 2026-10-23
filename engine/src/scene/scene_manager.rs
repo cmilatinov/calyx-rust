@@ -1,6 +1,6 @@
 use crate::assets::AssetRegistry;
 use crate::context::ReadOnlyRegistryContext;
-use crate::core::ReadOnlyRef;
+use crate::core::{ReadOnlyRef, Ref};
 use crate::input::Input;
 use crate::resource::ResourceMap;
 use crate::scene::{Scene, SceneSnapshot};
@@ -218,4 +218,51 @@ impl SceneManager {
         self.stop_simulation();
         self.current_scene = self.current_scene.restore_snapshot(snapshot);
     }
+
+    /// Takes apart every scene this manager reaches, the authoring scene and
+    /// each scene asset the registry has cached, leaving empty scenes in
+    /// their place, and stops the simulation, dropping its scene.
+    ///
+    /// Component storages run the code of the build that added the component,
+    /// so a scene holding a plugin's components must go before the plugin's
+    /// assembly unloads. [`Self::resume_scenes`] rebuilds the scenes from the
+    /// returned snapshots through whatever types are registered then.
+    pub fn suspend_scenes(&mut self) -> SuspendedScenes {
+        self.stop_simulation();
+        let current = self.current_scene.snapshot();
+        self.current_scene = Scene::new(self.current_scene.registries().clone());
+        let assets = self
+            .asset_registry
+            .read()
+            .loaded_assets::<Scene>()
+            .into_iter()
+            .map(|asset| {
+                let snapshot = {
+                    let mut scene = asset.write();
+                    let snapshot = scene.snapshot();
+                    *scene = Scene::new(scene.registries().clone());
+                    snapshot
+                };
+                (asset, snapshot)
+            })
+            .collect();
+        SuspendedScenes { current, assets }
+    }
+
+    /// Rebuilds the scenes [`Self::suspend_scenes`] took apart, each in the
+    /// place it was taken from.
+    pub fn resume_scenes(&mut self, suspended: SuspendedScenes) {
+        self.current_scene = self.current_scene.restore_snapshot(suspended.current);
+        for (asset, snapshot) in suspended.assets {
+            let mut scene = asset.write();
+            *scene = scene.restore_snapshot(snapshot);
+        }
+    }
+}
+
+/// Snapshots of the scenes [`SceneManager::suspend_scenes`] took apart.
+#[must_use = "the suspended scenes stay empty until they are resumed"]
+pub struct SuspendedScenes {
+    current: SceneSnapshot,
+    assets: Vec<(Ref<Scene>, SceneSnapshot)>,
 }
