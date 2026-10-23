@@ -16,7 +16,7 @@ use self::scene_document::SceneDocument;
 // The inspector's list-edit tests patch values the way undo does.
 #[cfg(test)]
 use self::scene_document::set_json_value;
-use self::scene_history::SceneEditSnapshot;
+use self::scene_edit::SceneEdit;
 use crate::camera::EditorCamera;
 use crate::task_id::TaskId;
 use crate::widgets::ThumbnailService;
@@ -52,6 +52,7 @@ mod project_manager;
 mod remote;
 mod scene_autosave;
 mod scene_document;
+mod scene_edit;
 mod scene_file;
 mod scene_history;
 mod selection;
@@ -181,16 +182,9 @@ impl EditorAppState {
         })
     }
 
-    pub fn scene_edit_snapshot(&self) -> Option<SceneEditSnapshot> {
-        SceneDocument::begin_edit(&self.game)
-    }
-
-    pub fn commit_scene_edit(
-        &mut self,
-        label: impl Into<String>,
-        before: Option<SceneEditSnapshot>,
-    ) {
-        self.scene_document.commit_edit(&self.game, label, before);
+    /// Records `edit` as one undo step.
+    pub(crate) fn commit_scene_edit(&mut self, edit: SceneEdit) {
+        edit.commit(&mut self.scene_document, &self.game);
     }
 
     /// Makes `object` the object the inspector tracks, committing the edits

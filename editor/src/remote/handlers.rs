@@ -14,6 +14,7 @@ use uuid::Uuid;
 use super::runtime::{color_image_to_rgba, save_png, PendingOp, RemoteRuntime, ResponseSlot};
 use super::server::{parse_error_response, ClientId, Incoming};
 use crate::panel::{Panel, PanelGame};
+use crate::scene_edit::SceneEdit;
 use crate::selection::{Selection, SelectionType};
 use crate::{EditorApp, EditorAppState};
 
@@ -135,13 +136,20 @@ impl EditorApp {
         log::debug!("Remote command from client {client}: {:?}", request.command);
         // Remote edits go through the undo history like the panels' edits;
         // otherwise the next undo would restore a snapshot from before them.
+        // A command writes the scene wherever it needs to, so the edit
+        // captures it up front.
         let scene_edit = scene_edit_label(&request.command).map(|label| {
             self.state.flush_pending_inspector_value_edits();
-            (label, self.state.scene_edit_snapshot())
+            let mut edit = SceneEdit::begin(label);
+            edit.capture(&self.state.game);
+            edit
         });
         let result = self.execute_remote_command(ctx, runtime, &slot, request.command);
-        if let (Some((label, before)), Ok(_)) = (scene_edit, &result) {
-            self.state.commit_scene_edit(label, before);
+        if let Some(edit) = scene_edit {
+            match result {
+                Ok(_) => self.state.commit_scene_edit(edit),
+                Err(_) => edit.cancel(),
+            }
         }
         match result {
             Ok(Some(data)) => runtime.respond_ok(&slot, data),

@@ -1,6 +1,7 @@
 use crate::panel::Panel;
+use crate::scene_edit::SceneEdit;
 use crate::selection::SelectionType;
-use crate::{icons, EditorAppState, SceneEditSnapshot};
+use crate::{icons, EditorAppState};
 use egui::epaint::Vertex;
 use egui::load::SizedTexture;
 use egui::Ui;
@@ -23,7 +24,9 @@ use transform_gizmo_egui::{
 
 pub struct PanelViewport {
     gizmo: Gizmo,
-    transform_edit_before: Option<SceneEditSnapshot>,
+    /// The gizmo drag in progress, from its first move to the pointer's
+    /// release.
+    transform_edit: Option<SceneEdit>,
     last_viewport_pass: Option<u64>,
 }
 
@@ -31,7 +34,7 @@ impl Default for PanelViewport {
     fn default() -> Self {
         Self {
             gizmo: Gizmo::new(GizmoConfig::default()),
-            transform_edit_before: None,
+            transform_edit: None,
             last_viewport_pass: None,
         }
     }
@@ -195,26 +198,25 @@ impl PanelViewport {
                 pointer_in_viewport,
                 &[transform.into()],
             ) {
-                if self.transform_edit_before.is_none() {
-                    self.transform_edit_before = app_state.scene_edit_snapshot();
-                }
                 let res: Transform = transforms[0].into();
-                app_state
-                    .game
-                    .scenes
-                    .simulation_scene_mut()
+                self.transform_edit
+                    .get_or_insert_with(|| SceneEdit::begin("Transform game object"))
+                    .scene_mut(&mut app_state.game)
                     .set_world_transform(game_object, res.matrix());
                 self.gizmo_status(ui, &result);
             }
             gizmo_focused = self.gizmo.is_focused();
         }
 
-        if self.transform_edit_before.is_some()
-            && !ui.input(|input| input.pointer.button_down(PointerButton::Primary))
-        {
-            let edit_before = self.transform_edit_before.take();
-            if viewport_is_continuous && selected_game_object {
-                app_state.commit_scene_edit("Transform game object", edit_before);
+        if !ui.input(|input| input.pointer.button_down(PointerButton::Primary)) {
+            if let Some(edit) = self.transform_edit.take() {
+                // A drag the viewport missed frames of, or whose object went
+                // away, may have a capture that no longer matches the scene.
+                if viewport_is_continuous && selected_game_object {
+                    app_state.commit_scene_edit(edit);
+                } else {
+                    edit.cancel();
+                }
             }
         }
 
