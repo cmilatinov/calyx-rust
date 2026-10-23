@@ -6,6 +6,8 @@
 // checking Send/Sync on assets and components that hold GPU resources.
 #![recursion_limit = "256"]
 extern crate self as engine;
+// Linked only for the features it pins; see engine/engine_feature_pins/Cargo.toml.
+use engine_feature_pins as _;
 
 /// Asset types, asset handles, and asset registry infrastructure.
 pub mod assets;

@@ -45,20 +45,15 @@ impl Default for ParticleSpawnShape {
 }
 
 /// Supported particle blending modes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TypeUuid, Reflect)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "444a8eaa-3d18-486b-96bb-7d038b1979bc"]
 #[repr(C)]
 pub enum ParticleBlendMode {
     /// Standard alpha blending.
     Alpha,
     /// Additive blending for emissive effects.
+    #[default]
     Additive,
-}
-
-impl Default for ParticleBlendMode {
-    fn default() -> Self {
-        Self::Additive
-    }
 }
 
 /// Inclusive scalar range sampled for per-particle values.

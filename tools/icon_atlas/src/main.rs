@@ -337,7 +337,7 @@ fn slash_path(path: &Path) -> String {
 }
 
 fn unpremultiply_rgba(pixels: &mut [u8]) {
-    for pixel in pixels.chunks_exact_mut(4) {
+    for pixel in pixels.as_chunks_mut::<4>().0 {
         let alpha = pixel[3] as u32;
         if alpha == 0 || alpha == 255 {
             continue;

@@ -163,10 +163,7 @@ fn import_primitive(
         )));
     }
     let triangles = match primitive.mode() {
-        Mode::Triangles => indices
-            .chunks_exact(3)
-            .map(|t| [t[0], t[1], t[2]])
-            .collect::<Vec<_>>(),
+        Mode::Triangles => indices.as_chunks::<3>().0.to_vec(),
         // Every other strip triangle is reversed, so all keep the winding of the first.
         Mode::TriangleStrip => indices
             .windows(3)
