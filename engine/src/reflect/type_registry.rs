@@ -86,6 +86,44 @@ pub struct RegistryIdentities {
     /// assembly links the same engine build. Appended last to keep the layout
     /// of the fields above.
     pub registering_engine: Option<TypeId>,
+    /// The host's logger, recorded by [`TypeRegistry::begin_plugin_load`] so
+    /// that [`TypeRegistry::register_crate`] can install it in the plugin
+    /// assembly's own copy of the `log` crate, whose records would otherwise
+    /// go nowhere.
+    pub host_logger: Option<HostLogger>,
+}
+
+/// A logger and the most verbose level it accepts, handed from the host to a
+/// plugin assembly.
+#[derive(Clone, Copy)]
+pub struct HostLogger {
+    /// The host's installed logger.
+    pub logger: &'static dyn log::Log,
+    /// The host's maximum log level.
+    pub max_level: log::LevelFilter,
+}
+
+impl HostLogger {
+    /// The logger and level installed in this binary's copy of `log`.
+    fn current() -> Self {
+        Self {
+            logger: log::logger(),
+            max_level: log::max_level(),
+        }
+    }
+
+    /// Installs this logger in this binary's copy of `log`, unless it is the
+    /// one already installed there, as it is in the host, or another logger
+    /// already is.
+    fn install(self) {
+        let current = log::logger() as *const dyn log::Log;
+        if std::ptr::addr_eq(self.logger as *const dyn log::Log, current) {
+            return;
+        }
+        if log::set_logger(self.logger).is_ok() {
+            log::set_max_level(self.max_level);
+        }
+    }
 }
 
 impl RegistryIdentities {
@@ -131,6 +169,9 @@ impl TypeRegistry {
     /// only their own types to the host registry.
     pub fn register_crate(&mut self, crate_name: &str) {
         self.identities.registering_engine = Some(TypeId::of::<TypeRegistry>());
+        if let Some(logger) = self.identities.host_logger {
+            logger.install();
+        }
         self.run_registrations(|f| f.crate_name == crate_name);
     }
 
@@ -157,6 +198,7 @@ impl TypeRegistry {
     pub fn begin_plugin_load(&mut self) {
         self.identities.generation += 1;
         self.identities.registering_engine = None;
+        self.identities.host_logger = Some(HostLogger::current());
     }
 
     /// Which engine build the plugin loaded since [`Self::begin_plugin_load`]

@@ -12,6 +12,8 @@ mod tests {
     use crate::test_support::test_scene;
     use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
     use legion::storage::ComponentTypeId;
+    use legion::world::Allocate;
+    use legion::Entity;
     use nalgebra_glm::{self as glm, Vec3};
     use serde::{Deserialize, Serialize};
     use uuid::Uuid;
@@ -105,6 +107,84 @@ mod tests {
         let root = scene.root();
         let root_id = scene.root_id();
         assert_eq!(scene.uuid(root), root_id);
+    }
+
+    // --- Entity allocation ---
+
+    fn named(name: &str) -> Option<ComponentID> {
+        Some(ComponentID {
+            name: name.into(),
+            ..Default::default()
+        })
+    }
+
+    thread_local! {
+        /// What [`second_entity_counter`] hands out next, last first.
+        static SECOND_COUNTER: std::cell::RefCell<Vec<Entity>> = const { std::cell::RefCell::new(Vec::new()) };
+        /// Every entity [`recording_allocator`] handed out.
+        static RECORDED: std::cell::RefCell<Vec<Entity>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// Stands in for the project assembly's copy of Legion's entity counter.
+    /// That copy starts over from Legion's first block, so it hands out the
+    /// entities the editor's copy already handed out.
+    fn second_entity_counter() -> Entity {
+        SECOND_COUNTER
+            .with_borrow_mut(Vec::pop)
+            .unwrap_or_else(|| Allocate::new().next().unwrap())
+    }
+
+    fn recording_allocator() -> Entity {
+        let entity = Allocate::new().next().unwrap();
+        RECORDED.with_borrow_mut(|recorded| recorded.push(entity));
+        entity
+    }
+
+    #[test]
+    fn objects_take_entities_from_the_scenes_allocator() {
+        let mut scene = test_scene();
+        scene.allocate_entity = recording_allocator;
+
+        let parent = scene.create(None, None);
+        let child = scene.create(None, Some(parent));
+
+        assert_eq!(
+            RECORDED.with_borrow(Clone::clone),
+            vec![parent.entity, child.entity]
+        );
+    }
+
+    #[test]
+    fn objects_created_through_a_second_entity_counter_leave_existing_objects_intact() {
+        let mut scene = test_scene();
+        let tank = scene.create(named("Tank"), None);
+        let turret = scene.create(named("Turret"), Some(tank));
+        let arena = scene.create(named("Arena"), None);
+        let existing = [
+            (scene.root(), "Root"),
+            (tank, "Tank"),
+            (turret, "Turret"),
+            (arena, "Arena"),
+        ];
+        // The second counter replays the editor's entities, oldest first.
+        SECOND_COUNTER.set(existing.iter().rev().map(|(go, _)| go.entity).collect());
+        scene.allocate_entity = second_entity_counter;
+
+        let walls = (0..6)
+            .map(|i| scene.create(named(&format!("Arena Wall {i}")), Some(arena)))
+            .collect::<Vec<_>>();
+
+        for (game_object, name) in existing {
+            assert_eq!(scene.name(game_object), name);
+            assert_lookups_agree(&scene, game_object);
+        }
+        for (i, wall) in walls.iter().enumerate() {
+            assert_eq!(scene.name(*wall), format!("Arena Wall {i}"));
+            assert_lookups_agree(&scene, *wall);
+            assert!(existing.iter().all(|(go, _)| go.entity != wall.entity));
+        }
+        assert_eq!(scene.world().len(), existing.len() + walls.len());
+        assert_eq!(scene.children(tank).collect::<Vec<_>>(), vec![turret]);
     }
 
     // --- Identity: lookups by entity and by id agree ---
@@ -1659,6 +1739,33 @@ mod tests {
         serde_json::from_value::<GameObjectRef>(serde_json::to_value(id).unwrap())
             .unwrap()
             .id()
+    }
+
+    /// A project component deserializes in the project assembly's copy of
+    /// the engine, which a remap scope entered by the editor's copy never
+    /// reaches, so the component enters the remap itself.
+    #[test]
+    fn component_deserialization_remaps_references_without_a_callers_scope() {
+        use crate::component::ComponentInstance;
+        let (old, new) = (Uuid::new_v4(), Uuid::new_v4());
+        let remap = [(old, new)].into_iter().collect::<bimap::BiHashMap<_, _>>();
+        let data = serde_json::to_value(NestedRefComponent {
+            direct: GameObjectRef::new(old),
+            targets: vec![GameObjectRef::new(old)],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let instance = NestedRefComponent::default()
+            .deserialize_remapped(&data, &remap)
+            .unwrap()
+            .downcast::<NestedRefComponent>()
+            .ok()
+            .unwrap();
+
+        assert_eq!(instance.direct.id(), new);
+        assert_eq!(instance.targets[0].id(), new);
+        assert_eq!(deserialize_ref(old), old, "the remap ends with the call");
     }
 
     #[test]

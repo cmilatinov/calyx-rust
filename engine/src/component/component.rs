@@ -1,7 +1,9 @@
 #![allow(missing_docs)]
 
+use bimap::BiHashMap;
 use legion::storage::ComponentTypeId;
 use legion::world::{Entry, EntryRef};
+use uuid::Uuid;
 
 use engine_derive::reflect_trait;
 pub use engine_derive::Component;
@@ -12,6 +14,7 @@ use crate::input::Input;
 use crate::reflect::Reflect;
 use crate::render::Gizmos;
 use crate::resource::ResourceMap;
+use crate::scene::game_object_ref::RemapScope;
 use crate::scene::{GameObject, Scene};
 use crate::utils::TypeUuidDynamic;
 
@@ -67,6 +70,29 @@ pub trait ComponentInstance: Reflect {
     /// serialized shape.
     fn deserialize(&self, value: &serde_json::Value)
         -> Result<Box<dyn Reflect>, serde_json::Error>;
+
+    /// Deserializes a component like [`Self::deserialize`], with every
+    /// [`GameObjectRef`](crate::scene::GameObjectRef) in it remapped through
+    /// `remap`, from old object ids to new ones.
+    ///
+    /// The remap is entered here, in the component type's own code, because
+    /// `GameObjectRef` reads it from a thread-local and a project assembly
+    /// links its own copy of the engine with its own copy of that
+    /// thread-local. A scope the editor entered would be invisible to a
+    /// project component's deserialization, and the reverse.
+    ///
+    /// # Errors
+    ///
+    /// Returns the serde error when `value` does not match the component's
+    /// serialized shape.
+    fn deserialize_remapped(
+        &self,
+        value: &serde_json::Value,
+        remap: &BiHashMap<Uuid, Uuid>,
+    ) -> Result<Box<dyn Reflect>, serde_json::Error> {
+        let _remap = RemapScope::enter(remap.clone());
+        self.deserialize(value)
+    }
 
     /// Convenience: deserialize JSON and assign the result to `self` in place.
     fn deserialize_in_place(&mut self, value: &serde_json::Value) -> bool {

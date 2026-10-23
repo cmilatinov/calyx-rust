@@ -40,6 +40,8 @@ impl BufferLayout for ParticleRenderInstance {
     const ATTRIBS: &'static [wgpu::VertexAttribute] = &Self::ATTRIBUTES;
 }
 
+/// Per-system scratch space for the instances one frame draws, kept while the
+/// system keeps drawing so its allocation is reused.
 #[derive(Default)]
 struct ParticleSystemRenderState {
     render_buffer: Vec<ParticleRenderInstance>,
@@ -50,7 +52,9 @@ pub struct ParticleRenderer {
     default_texture: Ref<Texture>,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
+    /// Instances of every system drawn this frame, each in its own range.
     instance_buffer: ResizableBuffer,
+    /// Render state of the systems drawn last frame.
     particle_systems: HashMap<GameObject, ParticleSystemRenderState>,
     camera_bind_group: CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer)>,
     /// Texture bind groups of the textures drawn last frame, by texture id.
@@ -136,37 +140,45 @@ impl ParticleRenderer {
                 })
                 .clone()
         };
-        let mut drawn_textures = HashSet::new();
-
+        // Every system's instances go into one buffer at its own offset, so
+        // the single upload before submit holds them all and each draw reads
+        // only its own range.
+        let mut instances = Vec::new();
+        let mut draws = Vec::new();
+        let mut drawn_systems = HashSet::new();
         let mut query = <(Entity, &ComponentParticleSystem)>::query();
         for (entity, system) in query.iter(scene.world()) {
             let Some(game_object) = scene.game_object_from_entity(*entity) else {
                 continue;
             };
             let emitter_transform = scene.world_transform(game_object);
-            let particle_count = {
-                let state = self.particle_systems.entry(game_object).or_default();
-                system.fill_render_buffer(
-                    &emitter_transform,
-                    camera_position,
-                    &mut state.render_buffer,
-                );
-                if state.render_buffer.is_empty() {
-                    continue;
-                }
-                self.instance_buffer
-                    .write_buffer(device, queue, &state.render_buffer, None);
-                state.render_buffer.len() as u32
-            };
-            if particle_count == 0 {
+            let state = self.particle_systems.entry(game_object).or_default();
+            system.fill_render_buffer(
+                &emitter_transform,
+                camera_position,
+                &mut state.render_buffer,
+            );
+            if state.render_buffer.is_empty() {
                 continue;
             }
-
+            drawn_systems.insert(game_object);
+            let start = instances.len() as u32;
+            instances.extend_from_slice(&state.render_buffer);
             let texture = system
                 .texture
                 .get_ref(&asset_context.registries)
                 .unwrap_or_else(|| self.default_texture.clone());
-            let blend_mode = system.blend_mode;
+            draws.push((texture, system.blend_mode, start..instances.len() as u32));
+        }
+        self.particle_systems
+            .retain(|game_object, _| drawn_systems.contains(game_object));
+        if !instances.is_empty() {
+            self.instance_buffer
+                .write_buffer(device, queue, &instances, None);
+        }
+
+        let mut drawn_textures = HashSet::new();
+        for (texture, blend_mode, instance_range) in draws {
             drawn_textures.insert(texture.id());
             let texture_bind_group = self.texture_bind_group(device, &texture);
             let pipeline = self.pipeline(blend_mode, samples, color_format, depth_format);
@@ -183,10 +195,16 @@ impl ParticleRenderer {
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_vertex_buffer(1, self.instance_buffer.get_wgpu_buffer().slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.draw_indexed(0..6, 0, 0..particle_count);
+            render_pass.draw_indexed(0..6, 0, instance_range);
         }
         self.texture_bind_groups
             .retain(|id, _| drawn_textures.contains(id));
+    }
+
+    /// The game objects whose particle state the renderer keeps.
+    #[cfg(test)]
+    pub(crate) fn tracked_systems(&self) -> HashSet<GameObject> {
+        self.particle_systems.keys().copied().collect()
     }
 
     /// Returns the particle shader's pipeline for `blend_mode` and the given

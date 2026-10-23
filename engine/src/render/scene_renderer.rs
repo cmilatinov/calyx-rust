@@ -507,10 +507,16 @@ impl SceneRenderer {
         let mut mesh = None;
         let mut draw_list: Vec<(AssetId, AssetId, AssetId, Range<u32>)> = Default::default();
         let mut insert_instance_list = |last: (AssetId, AssetId, AssetId), instance_count: u32| {
-            if last != Default::default() {
-                let entry = mesh_instances.entry(last.2).or_default();
-                push_capped_batches(&mut draw_list, last, *entry, instance_count);
-                *entry += instance_count;
+            if last != Default::default() && instance_count > 0 {
+                let (shader_id, mat_id, mesh_id) = last;
+                let start = mesh_instances.entry(mesh_id).or_default();
+                draw_list.push((
+                    shader_id,
+                    mat_id,
+                    mesh_id,
+                    *start..(*start + instance_count),
+                ));
+                *start += instance_count;
             }
         };
         for DrawListElement {
@@ -1332,29 +1338,14 @@ fn register_object_id(
     object_id
 }
 
-/// Appends draw batches for `count` mesh instances starting at `start`,
-/// splitting at multiples of `Mesh::MAX_INSTANCES` so no batch reads past a
-/// single instance uniform chunk.
-fn push_capped_batches(
-    draw_list: &mut Vec<(AssetId, AssetId, AssetId, Range<u32>)>,
-    (shader_id, mat_id, mesh_id): (AssetId, AssetId, AssetId),
-    mut start: u32,
-    count: u32,
-) {
-    let cap = Mesh::MAX_INSTANCES as u32;
-    let end = start + count;
-    while start < end {
-        let batch_end = end.min((start / cap + 1) * cap);
-        draw_list.push((shader_id, mat_id, mesh_id, start..batch_end));
-        start = batch_end;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::assets::AssetRef;
-    use crate::component::{ComponentID, ComponentMesh};
+    use crate::component::{
+        ComponentID, ComponentMesh, ComponentParticleSystem, ParticleScalarRange,
+        ParticleSizeCurve, ParticleSpawnShape,
+    };
     use crate::math::Transform;
     use crate::render::{Camera, Shader};
     use crate::test_support::{
@@ -1364,16 +1355,6 @@ mod tests {
     use nalgebra_glm::{vec3, vec4, Vec3};
 
     const VIEWPORT: u32 = 512;
-
-    fn batch(start: u32, count: u32) -> Vec<Range<u32>> {
-        let mut draw_list = Vec::new();
-        let ids = (AssetId::default(), AssetId::default(), AssetId::default());
-        push_capped_batches(&mut draw_list, ids, start, count);
-        draw_list
-            .into_iter()
-            .map(|(_, _, _, range)| range)
-            .collect()
-    }
 
     /// Creates a PBR material registered as `name`.
     fn pbr_material(context: &ReadOnlyAssetContext, name: &str) -> Ref<Material> {
@@ -1446,22 +1427,132 @@ mod tests {
         .expect("scene renderer should load its assets")
     }
 
-    #[test]
-    fn capped_batches_never_cross_the_instance_cap() {
-        let cap = Mesh::MAX_INSTANCES as u32;
-        assert_eq!(batch(0, 0), Vec::<Range<u32>>::new());
-        assert_eq!(batch(0, cap), vec![0..cap]);
-        assert_eq!(batch(0, cap + 1), vec![0..cap, cap..(cap + 1)]);
-        assert_eq!(
-            batch(cap - 2, cap + 4),
-            vec![(cap - 2)..cap, cap..(2 * cap), (2 * cap)..(2 * cap + 2)]
-        );
-        for range in batch(7, 100) {
-            let (chunk, local) = Mesh::instance_chunk(&range);
-            assert_eq!(chunk as u32, range.start / cap);
-            assert!(local.end <= cap);
-            assert_eq!(local.end - local.start, range.end - range.start);
+    /// Spawns an emitter at `position` holding one particle of `color` and
+    /// `size`, emitted on the spot.
+    fn spawn_particle(
+        builder: &mut SceneBuilder,
+        name: &str,
+        position: Vec3,
+        color: Color32,
+        size: f32,
+    ) -> GameObject {
+        let game_object = builder.spawn(name);
+        let mut system = ComponentParticleSystem::default();
+        system.spawn_rate = 0.0;
+        system.burst_count = 1;
+        system.max_particles = 1;
+        system.lifetime = ParticleScalarRange {
+            min: 10.0,
+            max: 10.0,
+        };
+        system.spawn_shape = ParticleSpawnShape::Sphere { radius: 0.0 };
+        system.initial_velocity = Vec3::zeros();
+        system.velocity_randomness = Vec3::zeros();
+        system.acceleration = Vec3::zeros();
+        system.size = ParticleSizeCurve {
+            start: size,
+            end: size,
+            randomness: 0.0,
+        };
+        system.start_color = color;
+        system.end_color = color;
+        builder.add_component(game_object, system);
+        builder.set_transform(game_object, glm::translation(&position));
+        let scene = builder.scene_mut();
+        let emitter_transform = scene.world_transform(game_object);
+        let seed = scene.uuid(game_object);
+        scene.write_component::<ComponentParticleSystem, _>(game_object, |system| {
+            system.reset_runtime(seed);
+            system.step(0.0, &emitter_transform);
+        });
+        game_object
+    }
+
+    fn read_scene_texture(
+        renderer: &SceneRenderer,
+        render_context: &RenderContext,
+    ) -> image::RgbaImage {
+        let mut readback = renderer
+            .submit_scene_texture_readback()
+            .expect("scene texture has a size");
+        loop {
+            let _ = render_context.device().poll(wgpu::Maintain::Wait);
+            match readback.try_finish(render_context) {
+                ReadbackPoll::Pending => continue,
+                ReadbackPoll::Ready(image) => break image,
+                ReadbackPoll::Failed(error) => panic!("scene readback failed: {error}"),
+            }
         }
+    }
+
+    #[test]
+    fn each_particle_system_draws_its_own_particles() {
+        const SIZE: (u32, u32) = (64, 64);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        let left = vec3(-1.5, 0.0, 0.0);
+        let right = vec3(1.5, 0.0, 0.0);
+        spawn_particle(&mut builder, "red", left, Color32::RED, 1.0);
+        spawn_particle(&mut builder, "green", right, Color32::GREEN, 1.0);
+        let scene = builder.finish();
+        let (camera, transform) = front_camera(1.0, 5.0);
+
+        let mut renderer = SceneRenderer::new(
+            &read_only_context,
+            SceneRendererOptions {
+                samples: 1,
+                clear_color: Color32::BLACK,
+                ..Default::default()
+            },
+            SIZE,
+        )
+        .expect("scene renderer should load its assets");
+        renderer.render_scene_base(&camera, &transform, &scene, None);
+        renderer.finalize_scene();
+        let image = read_scene_texture(&renderer, &render_context);
+
+        let (x, y) = project(&camera, &transform, left, SIZE);
+        let pixel = image.get_pixel(x, y);
+        assert!(
+            pixel[0] > 200 && pixel[1] < 50,
+            "the red system should draw its particle on the left, got {pixel:?}"
+        );
+        let (x, y) = project(&camera, &transform, right, SIZE);
+        let pixel = image.get_pixel(x, y);
+        assert!(
+            pixel[1] > 200 && pixel[0] < 50,
+            "the green system should draw its particle on the right, got {pixel:?}"
+        );
+    }
+
+    #[test]
+    fn particle_systems_not_drawn_in_a_frame_are_dropped() {
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        let kept = spawn_particle(&mut builder, "kept", Vec3::zeros(), Color32::RED, 1.0);
+        let removed = spawn_particle(&mut builder, "removed", Vec3::zeros(), Color32::RED, 1.0);
+        let mut scene = builder.finish();
+        let (camera, transform) = front_camera(1.0, 5.0);
+
+        let mut renderer = renderer(&read_only_context, 1, (32, 32));
+        renderer.render_scene_base(&camera, &transform, &scene, None);
+        assert_eq!(
+            renderer.particle_renderer.tracked_systems(),
+            HashSet::from([kept, removed])
+        );
+
+        scene.delete(removed);
+        scene.flush_deletes();
+        renderer.render_scene_base(&camera, &transform, &scene, None);
+        assert_eq!(
+            renderer.particle_renderer.tracked_systems(),
+            HashSet::from([kept])
+        );
     }
 
     #[test]
@@ -1873,13 +1964,81 @@ mod tests {
                 expected.push((position, uuid));
             }
         }
-        assert!(expected.len() > Mesh::MAX_INSTANCES);
+        // More than the 30 instances one uniform buffer held before instances
+        // moved to a storage buffer.
+        assert!(expected.len() > 30);
         let scene = builder.finish();
 
         let (camera, camera_transform) = front_camera(1.0, 30.0);
         let mut renderer = renderer(&read_only_context, 1, (VIEWPORT, VIEWPORT));
         renderer.render_scene_base(&camera, &camera_transform, &scene, None);
 
+        for (index, (position, uuid)) in expected.iter().enumerate() {
+            let (x, y) = project(&camera, &camera_transform, *position, (VIEWPORT, VIEWPORT));
+            assert_eq!(
+                renderer.pick_game_object(x, y),
+                Some(*uuid),
+                "instance {index} was not drawn at its transform"
+            );
+        }
+    }
+
+    #[test]
+    fn renders_a_thousand_instances_of_one_mesh_in_one_batch() {
+        const COLUMNS: u32 = 40;
+        const ROWS: u32 = 25;
+        const SPACING: f32 = 3.0;
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let material = pbr_material(&read_only_context, "test/thousand_instances_material");
+
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        let mut expected = Vec::new();
+        for row in 0..ROWS {
+            for column in 0..COLUMNS {
+                let position = vec3(
+                    (column as f32 - (COLUMNS - 1) as f32 / 2.0) * SPACING,
+                    (row as f32 - (ROWS - 1) as f32 / 2.0) * SPACING,
+                    0.0,
+                );
+                let uuid = spawn_mesh(
+                    &mut builder,
+                    &format!("cube_{row}_{column}"),
+                    &cube,
+                    &material,
+                    position,
+                );
+                expected.push((position, uuid));
+            }
+        }
+        assert_eq!(expected.len(), 1000);
+        let scene = builder.finish();
+
+        let render_context = read_only_context.render_context.clone();
+        let mut batching = renderer(&read_only_context, 1, (16, 16));
+        batching.build_asset_data(&render_context, &scene);
+        batching.finish_object_ids();
+        let draw_list = batching.build_draw_list();
+        let batches: Vec<_> = draw_list
+            .iter()
+            .map(|(_, mat_id, mesh_id, range)| (*mat_id, *mesh_id, range.clone()))
+            .collect();
+        assert_eq!(
+            batches,
+            vec![(material.id(), cube.id(), 0..1000)],
+            "every instance of the mesh is drawn by one batch"
+        );
+
+        let (camera, camera_transform) = front_camera(1.0, 110.0);
+        let mut renderer = renderer(&read_only_context, 1, (VIEWPORT, VIEWPORT));
+        renderer.render_scene_base(&camera, &camera_transform, &scene, None);
         for (index, (position, uuid)) in expected.iter().enumerate() {
             let (x, y) = project(&camera, &camera_transform, *position, (VIEWPORT, VIEWPORT));
             assert_eq!(
