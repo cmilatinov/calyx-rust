@@ -38,10 +38,13 @@ impl Scene {
 ///
 /// The player and the editor's Game panel each own one and call
 /// [`SceneHud::paint`] once per frame, after the scene update.
+///
+/// It keeps no [`UiArena`] between frames: HUD hooks fill the arena with
+/// widget stores whose vtables live in the plugin that built them, and the
+/// editor can unload that plugin between two frames.
 #[derive(Default)]
 pub struct SceneHud {
     runtime: UiRuntime,
-    arena: UiArena,
     theme: Theme,
 }
 
@@ -49,11 +52,11 @@ impl SceneHud {
     /// Lays out the scene's HUD for `viewport`, or returns `None` when the
     /// scene has none.
     pub fn frame(&mut self, scene: &Scene, viewport: UiRect, input: UiInput) -> Option<UiFrame> {
-        self.arena.clear();
-        let root = scene.build_hud(&mut self.arena, viewport)?;
+        let mut arena = UiArena::default();
+        let root = scene.build_hud(&mut arena, viewport)?;
         Some(
             self.runtime
-                .frame(&self.arena, root, viewport, input, &self.theme),
+                .frame(&arena, root, viewport, input, &self.theme),
         )
     }
 
