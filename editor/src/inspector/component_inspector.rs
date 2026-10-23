@@ -3,7 +3,7 @@
 //! A component is drawn under a collapsing header with its type inspector,
 //! or, without one, field by field from its registered type info: nested
 //! structs, lists and the fields' own type inspectors. The header's context
-//! menu offers removing the component, which the caller applies.
+//! menu offers pinning and removing the component, which the caller applies.
 
 use convert_case::{Case, Casing};
 use egui::{Id, Ui};
@@ -18,8 +18,10 @@ use re_ui::list_item::{LabelContent, ListItem, PropertyContent, ShowCollapsingRe
 use uuid::Uuid;
 
 use super::inspector_registry::InspectorRegistry;
+use super::pinned_components::{PinEdit, PinState};
 use super::type_inspector::{InspectorContext, InspectorResponse};
 use super::widgets::Widgets;
+use crate::icons;
 use crate::widgets::{List, ListContainer, ListItemContext};
 
 /// A structural change the inspector made to a reflected list.
@@ -178,6 +180,8 @@ pub struct ComponentResponse {
     pub edit: InspectorResponse,
     /// Whether the header's context menu asked to remove the component.
     pub remove: bool,
+    /// The pin edit the header's context menu asked for.
+    pub pin: Option<PinEdit>,
 }
 
 /// Draws components with the type inspectors of `registry`, falling back to
@@ -192,38 +196,39 @@ impl<'a> ComponentInspector<'a> {
         Self { registry }
     }
 
-    /// Draws `instance` under a collapsing header whose context menu offers
-    /// removing it, except for the components every object keeps.
+    /// Draws `instance` under a collapsing header, marked with a pin icon
+    /// when `pin` says it is pinned. The header's context menu offers the pin
+    /// edits `pin` allows and removing it, except for the components every
+    /// object keeps.
     pub fn show(
         &self,
         ui: &mut Ui,
         ctx: &InspectorContext,
         instance: &mut dyn Reflect,
+        pin: PinState,
     ) -> ComponentResponse {
         let name = display_name(&ctx.assets.types.read(), instance);
         let id = ui.make_persistent_id(name);
         let type_uuid = instance.uuid();
         let mut response = ComponentResponse::default();
+        let mut label = LabelContent::new(name).truncate(true);
+        if pin.pinned {
+            label = label.with_icon(&icons::PIN);
+        }
         let res = ListItem::new()
             .interactive(true)
             .force_background(re_ui::design_tokens().section_collapsing_header_color())
-            .show_hierarchical_with_children_unindented(
-                ui,
-                id,
-                true,
-                LabelContent::new(name).truncate(true),
-                |ui| {
-                    response.edit |= match self.registry.type_inspector_lookup(type_uuid) {
-                        Some(inspector) => inspector.show_inspector(ui, ctx, instance),
-                        None => self.show_fields(
-                            ui,
-                            ctx,
-                            instance,
-                            &FieldTrail::root(Id::new((ctx.game_object.node, type_uuid))),
-                        ),
-                    };
-                },
-            )
+            .show_hierarchical_with_children_unindented(ui, id, true, label, |ui| {
+                response.edit |= match self.registry.type_inspector_lookup(type_uuid) {
+                    Some(inspector) => inspector.show_inspector(ui, ctx, instance),
+                    None => self.show_fields(
+                        ui,
+                        ctx,
+                        instance,
+                        &FieldTrail::root(Id::new((ctx.game_object.node, type_uuid))),
+                    ),
+                };
+            })
             .item_response;
         if res.clicked() {
             if let Some(mut state) = egui::collapsing_header::CollapsingState::load(ui.ctx(), id) {
@@ -231,18 +236,43 @@ impl<'a> ComponentInspector<'a> {
                 state.store(ui.ctx());
             }
         }
-        if type_uuid != ComponentID::type_uuid() {
-            res.context_menu(|ui| {
-                if type_uuid != ComponentTransform::type_uuid() && ui.button("Remove").clicked() {
-                    response.remove = true;
-                    ui.close_menu();
-                }
-                if let Some(inspector) = self.registry.type_inspector_lookup(type_uuid) {
-                    response.edit |= inspector.show_inspector_context(ui, ctx, instance);
-                }
-            });
-        }
+        res.context_menu(|ui| {
+            response.pin = Self::pin_menu(ui, pin);
+            let removable = type_uuid != ComponentID::type_uuid()
+                && type_uuid != ComponentTransform::type_uuid();
+            if removable && ui.button("Remove").clicked() {
+                response.remove = true;
+                ui.close_menu();
+            }
+            if let Some(inspector) = self.registry.type_inspector_lookup(type_uuid) {
+                response.edit |= inspector.show_inspector_context(ui, ctx, instance);
+            }
+        });
         response
+    }
+
+    /// Draws the pin edits `pin` allows and returns the one clicked.
+    fn pin_menu(ui: &mut Ui, pin: PinState) -> Option<PinEdit> {
+        let mut edits = Vec::new();
+        if pin.pinned {
+            edits.push(("Unpin", PinEdit::Unpin));
+            if pin.can_move_up {
+                edits.push(("Move up", PinEdit::MoveUp));
+            }
+            if pin.can_move_down {
+                edits.push(("Move down", PinEdit::MoveDown));
+            }
+        } else {
+            edits.push(("Pin to top", PinEdit::Pin));
+        }
+        let mut clicked = None;
+        for (label, edit) in edits {
+            if ui.button(label).clicked() {
+                clicked = Some(edit);
+                ui.close_menu();
+            }
+        }
+        clicked
     }
 
     /// Draws `instance`'s fields from its registered struct info, or nothing
@@ -548,6 +578,7 @@ mod tests {
         element_view, ComponentInspector, ElementView, FieldTrail, ListEdit, ReflectListContainer,
     };
     use crate::inspector::edit_tracker::{ComponentKey, InspectorEditTracker};
+    use crate::inspector::pinned_components::PinState;
     use crate::inspector::test_harness::{any_changed, combined, InspectorHarness};
     use crate::inspector::type_inspector::{InspectorContext, InspectorResponse};
     use crate::scene_history::{InspectorValueEdit, SceneHistory, SceneHistoryRestore};
@@ -805,7 +836,7 @@ mod tests {
         let mut camera = ComponentCamera::default();
         let before = serde_json::to_value(&camera).unwrap();
         let mut draw = |ui: &mut Ui, ctx: &InspectorContext| {
-            let response = inspector.show(ui, ctx, camera.as_reflect_mut());
+            let response = inspector.show(ui, ctx, camera.as_reflect_mut(), PinState::default());
             assert!(!response.remove);
             response.edit
         };
