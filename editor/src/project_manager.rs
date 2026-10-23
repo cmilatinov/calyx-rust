@@ -1,4 +1,4 @@
-use sharedlib::{Lib, Symbol};
+use libloading::{Library, Symbol};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -236,22 +236,21 @@ impl ProjectManager {
                     None
                 }
             };
-            match Lib::new(target) {
+            match Library::new(target) {
                 Ok(lib) => {
                     let suspended = {
-                        let load_fn = match lib
-                            .find_func::<extern "C" fn(&mut TypeRegistry), &str>("plugin_main")
-                        {
-                            Ok(load_fn) => load_fn,
-                            Err(err) => {
-                                log::error!(
-                                    "Project assembly {} is missing plugin_main: {err}",
-                                    target.display()
-                                );
-                                self.refresh_assembly_status();
-                                return false;
-                            }
-                        };
+                        let load_fn: Symbol<extern "C" fn(&mut TypeRegistry)> =
+                            match lib.get(b"plugin_main\0") {
+                                Ok(load_fn) => load_fn,
+                                Err(err) => {
+                                    log::error!(
+                                        "Project assembly {} is missing plugin_main: {err}",
+                                        target.display()
+                                    );
+                                    self.refresh_assembly_status();
+                                    return false;
+                                }
+                            };
                         // Open scenes hold storages and registrations hold
                         // trait objects whose code is in the loaded assembly,
                         // so take both apart while it is still loaded.
@@ -264,7 +263,7 @@ impl ProjectManager {
                         let mut registry = self.context.registries.types.write();
                         registry.begin_plugin_load();
                         let before = registry.types.keys().copied().collect::<HashSet<_>>();
-                        load_fn.get()(&mut registry);
+                        load_fn(&mut registry);
                         match registry.plugin_engine_build() {
                             PluginEngineBuild::Same => {}
                             PluginEngineBuild::Other => log::error!(
@@ -520,7 +519,7 @@ fn scene_paths_match(current_scene: Option<&Path>, startup_scene: &Path) -> bool
 /// Fields drop in declaration order, so the assembly unloads before the
 /// dependencies it links against.
 struct LoadedAssembly {
-    _lib: Lib,
+    _lib: Library,
     _dependencies: Option<PreloadedAssemblyDependencies>,
 }
 
@@ -554,14 +553,14 @@ impl PreloadedAssemblyDependencies {
 
 struct AssemblyDependency {
     #[allow(dead_code)]
-    lib: Lib,
+    lib: Library,
 }
 
 impl AssemblyDependency {
     unsafe fn load(path: &Path) -> std::io::Result<Self> {
-        Lib::new(path)
+        Library::new(path)
             .map(|lib| Self { lib })
-            .map_err(|error| std::io::Error::other(error.to_string()))
+            .map_err(std::io::Error::other)
     }
 }
 
@@ -1392,9 +1391,7 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    /// Reloads a real project assembly. Windows only: on Linux the assembly
-    /// does not load at all yet (#349).
-    #[cfg(windows)]
+    /// Reloads a real project assembly.
     mod assembly_reload {
         use super::super::{
             assembly_artifact_path, assembly_build_target_dir, assembly_profile, build_assembly,
