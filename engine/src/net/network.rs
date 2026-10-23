@@ -335,6 +335,20 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                 }
                 MessageHandlerResult::Consume
             }
+            GameMessage::ServerEvent(ServerEvent::ClientDisconnected { client_id }) => {
+                let Some(server) = server else {
+                    return MessageHandlerResult::Consume;
+                };
+                if let Err(e) = server.broadcast_message_except(
+                    *client_id,
+                    &GameMessage::ClientDisconnected {
+                        client_id: *client_id,
+                    },
+                ) {
+                    log::warn!("Failed to broadcast ClientDisconnected: {e}");
+                }
+                MessageHandlerResult::Consume
+            }
             GameMessage::SelfConnected { client_ids } => {
                 #[allow(unused)]
                 'client_logic: {

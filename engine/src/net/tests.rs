@@ -5,7 +5,7 @@ mod tests {
     use crate::net::{
         handle_destroy, Client, ComponentNetworkObject, GameChannel, GameMessage, MessageHandler,
         MessageHandlerResult, MessageQueue, MessageRoute, MessageSender, Network, NetworkSceneSync,
-        Server,
+        Server, ServerEvent,
     };
     use crate::scene::{ComponentEdit, GameObject, Prefab, Scene};
     use crate::test_support::NetworkTestHarness as TestHarness;
@@ -1299,6 +1299,48 @@ mod tests {
                     == Some(host_id)
             })),
             "the host's spawn did not reach every client"
+        );
+    }
+
+    #[test]
+    fn client_disconnect_reaches_the_remaining_clients() {
+        let (mut harness, _) = setup_spawn_harness("net_relay_disconnect_test_prefab");
+        let leaving_id = harness.client(1).resources.network().local_id.unwrap();
+        assert!(
+            pump_until(&mut harness, |h| h
+                .client(0)
+                .resources
+                .network()
+                .client
+                .client_ids()
+                .contains(&leaving_id)),
+            "the remaining client never learned of the other client"
+        );
+
+        // The host's transport reports the departure as the server does.
+        let GameContext {
+            assets,
+            scenes,
+            resources,
+        } = harness.host_mut();
+        let network = resources.network_mut();
+        network.queue.queue_message(
+            MessageSender::Local,
+            GameMessage::ServerEvent(ServerEvent::ClientDisconnected {
+                client_id: leaving_id,
+            }),
+        );
+        network.update_scene(scenes.current_scene_mut(), &assets.lock_read());
+
+        assert!(
+            pump_until(&mut harness, |h| !h
+                .client(0)
+                .resources
+                .network()
+                .client
+                .client_ids()
+                .contains(&leaving_id)),
+            "the remaining client still lists the departed client"
         );
     }
 
