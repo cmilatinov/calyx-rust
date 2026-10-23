@@ -118,7 +118,7 @@ impl<T: ?Sized> Clone for Ref<T> {
 
 impl<T: Debug> Debug for Ref<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Ref({:?})", &self.read())
+        write!(f, "Ref({:?})", self.read())
     }
 }
 
@@ -170,7 +170,7 @@ impl<T: ?Sized> ReadOnlyRef<T> {
 
 impl<T: ?Sized + Debug> Debug for ReadOnlyRef<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ReadOnlyRef({:?})", &self.read())
+        write!(f, "ReadOnlyRef({:?})", self.read())
     }
 }
 

@@ -1,16 +1,11 @@
 use super::*;
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 pub enum ThumbnailPriority {
     Low,
+    #[default]
     Normal,
     High,
-}
-
-impl Default for ThumbnailPriority {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

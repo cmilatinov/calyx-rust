@@ -74,6 +74,8 @@ Example game project. Compiles as dynamic library (plugin) with `plugin_main` en
   - commits pending inspector edits before the reload and takes the inspector's baselines again after it;
   - drops components whose type the new build removed, or that no longer deserialize, from the rebuilt scenes, so saving afterwards writes the scene without them;
   - does not cover resources or asset types project code adds to the editor; the sandbox adds none.
+- The editor loads the project DLL with `libloading`, which hands `dlopen` and `dlsym` NUL-terminated strings. `sharedlib`, used before, passed unterminated ones on Linux, so no assembly ever loaded there. Every load is of a fresh shadow copy under its own folder, so on Linux `dlopen` returns a new handle for each build, and dropping the previous one `dlclose`s and unmaps it: after a reload only the new copy is mapped. Linux runs `editor`'s assembly reload test like Windows does.
+- Under WSL, a test or editor process that created a wgpu instance can die with SIGSEGV as it exits, whether or not it loaded a project DLL. The crash is on a thread of NVIDIA's WSL D3D12 driver (`libnvwgf2umx.so`), which Mesa's default Gallium driver there, `d3d12`, runs on for the GLES backend. `GALLIUM_DRIVER=llvmpipe` avoids it. Native Linux and CI are not affected.
 - `release-with-debug` profile for profiling.
 
 ## Asset File Types

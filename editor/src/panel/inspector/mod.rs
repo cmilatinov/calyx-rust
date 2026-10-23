@@ -2,7 +2,7 @@ use std::any::Any;
 use std::collections::HashSet;
 
 use crate::inspector::assets::animation_graph_inspector::AnimationGraphInspector;
-use crate::inspector::component_inspector::ComponentInspector;
+use crate::inspector::component_inspector::{type_display_name, ComponentInspector};
 use crate::inspector::type_inspector::InspectorContext;
 use crate::panel::Panel;
 use crate::scene_edit::SceneEdit;
@@ -123,8 +123,9 @@ impl PanelInspector {
     }
 
     /// Draws each registered component `game_object` has through the scene
-    /// document's edit tracker. Returns the components whose removal was
-    /// asked for, in registry order.
+    /// document's edit tracker, pinned components first, then the rest by
+    /// name. Applies the pin edit asked for from a header's menu. Returns the
+    /// components whose removal was asked for, in display order.
     fn components_ui(
         ui: &mut Ui,
         state: &mut EditorAppState,
@@ -134,13 +135,26 @@ impl PanelInspector {
         // baselines there.
         let track_edits = state.scene_document.track_inspector_edits(&state.game);
         let pointer_down = ui.input(|input| input.pointer.any_down());
+        // Read before the component registry is locked below, which this
+        // reads too.
+        let component_types = Self::component_type_uuids(state, game_object);
         let type_registry_ref = state.game.assets.registries.types.clone();
         let type_registry = type_registry_ref.read();
         let component_registry_ref = state.game.assets.registries.components.clone();
         let component_registry = component_registry_ref.read();
         let inspector = ComponentInspector::new(&state.inspector_registry);
+        let order = state.pinned_components.order(
+            component_types
+                .into_iter()
+                .filter_map(|uuid| Some((uuid, type_display_name(&type_registry, uuid)?))),
+        );
+        let pin_states = state.pinned_components.states(&order);
         let mut removals = Vec::new();
-        for (type_uuid, component) in component_registry.components() {
+        let mut pin_edit = None;
+        for (type_uuid, pin) in order.iter().zip(pin_states) {
+            let Some(component) = component_registry.component(*type_uuid) else {
+                continue;
+            };
             let Some(TypeInfo::Struct(type_info)) = type_registry.type_info_by_id(*type_uuid)
             else {
                 continue;
@@ -149,7 +163,7 @@ impl PanelInspector {
             let Some(shown) = state.scene_document.inspector_edits_mut().show_component(
                 state.game.scenes.simulation_scene_mut(),
                 game_object,
-                &**component,
+                component,
                 track_edits,
                 pointer_down,
                 |instance, scene| {
@@ -161,15 +175,19 @@ impl PanelInspector {
                         type_info,
                         field_name: None,
                     };
-                    let response = inspector.show(ui, &ctx, instance.as_reflect_mut());
-                    (response.edit, response.remove)
+                    let response = inspector.show(ui, &ctx, instance.as_reflect_mut(), pin);
+                    (response.edit, (response.remove, response.pin))
                 },
             ) else {
                 continue;
             };
             drop(assets);
-            if shown.value {
+            let (remove, pin) = shown.value;
+            if remove {
                 removals.push(*type_uuid);
+            }
+            if let Some(edit) = pin {
+                pin_edit = Some((*type_uuid, edit));
             }
             state.scene_document.inspector_shown(
                 &state.game,
@@ -177,6 +195,11 @@ impl PanelInspector {
                 shown.completed,
                 shown.committed,
             );
+        }
+        if let Some((type_uuid, edit)) = pin_edit {
+            state
+                .pinned_components
+                .edit(&type_registry, type_uuid, edit, &order);
         }
         removals
     }

@@ -12,3 +12,4 @@ pub const OBJECT_TREE: Icon = icon_from_path!("../../resources/icons/mdi--file-t
 pub const WALKING: Icon = icon_from_path!("../../resources/icons/healthicons--walking.png");
 pub const GAMEPAD: Icon = icon_from_path!("../../resources/icons/mdi--gamepad-variant.png");
 pub const VIEWPORT_3D: Icon = icon_from_path!("../../resources/icons/iconamoon--3d.png");
+pub const PIN: Icon = icon_from_path!("../../resources/icons/mdi--pin.png");
