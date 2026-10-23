@@ -87,11 +87,15 @@ impl Network {
     /// A tick runs from one call to the next: this call, then
     /// [`Network::update_scene`], then the synchronized component updates.
     /// Every handler has had its pass on a message by the next call, so this
-    /// call first drops whatever is still queued before polling new messages.
+    /// call first drops whatever is still queued, and any component sync the
+    /// host did not relay, before polling new messages.
     pub fn update(&mut self, time: &mut Time) {
         let expired = self.queue.expire();
         if expired > 0 {
             log::trace!("Expired {expired} network messages no handler consumed");
+        }
+        if let Some(server) = &mut self.server {
+            server.discard_component_syncs();
         }
         self.accumulated_time += time.static_duration().as_secs_f32();
         self.tick_sync_timer += time.static_delta_time();
@@ -121,7 +125,8 @@ impl Network {
     /// Applies queued scene-related replication messages.
     ///
     /// This consumes ownership, connection, prefab-spawn and destroy messages
-    /// against `scene`. Call this after [`Network::update`] in the main simulation loop.
+    /// against `scene`, then relays the clients' component syncs on the host.
+    /// Call this after [`Network::update`] in the main simulation loop.
     pub fn update_scene<'a>(
         &'a mut self,
         mut scene: &'a mut Scene,
@@ -141,6 +146,12 @@ impl Network {
             ),
             &mut NetworkReplicationSync,
         );
+        // After the pass, so a spawn received with its first syncs is known.
+        if let Some(server) = &mut self.server {
+            server.relay_component_syncs(|network_object_id| {
+                find_network_object(scene, network_object_id).map(|(_, owner_id)| owner_id)
+            });
+        }
     }
 
     /// Destroys `game_object` locally and tells the other peers to destroy
@@ -246,11 +257,17 @@ impl Network {
             None,
             &mut Some(&mut network_object_ids),
         );
-        if let Err(e) = self.client.send_message(&GameMessage::SpawnPrefab {
+        let message = GameMessage::SpawnPrefab {
             network_object_ids,
             from_client_id: client_id,
             prefab_id: prefab_ref.id(),
-        }) {
+        };
+        // A listen-server host has no connection of its own to send through.
+        let result = match &mut self.server {
+            Some(server) => server.broadcast_message(&message),
+            None => self.client.send_message(&message),
+        };
+        if let Err(e) = result {
             log::warn!("Failed to send SpawnPrefab: {e}");
         }
         Some(prefab_root)
@@ -315,6 +332,20 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                     },
                 ) {
                     log::warn!("Failed to broadcast ClientConnected: {e}");
+                }
+                MessageHandlerResult::Consume
+            }
+            GameMessage::ServerEvent(ServerEvent::ClientDisconnected { client_id }) => {
+                let Some(server) = server else {
+                    return MessageHandlerResult::Consume;
+                };
+                if let Err(e) = server.broadcast_message_except(
+                    *client_id,
+                    &GameMessage::ClientDisconnected {
+                        client_id: *client_id,
+                    },
+                ) {
+                    log::warn!("Failed to broadcast ClientDisconnected: {e}");
                 }
                 MessageHandlerResult::Consume
             }
@@ -476,17 +507,18 @@ impl MessageHandler<NetworkPrefabSyncContext<'_, '_>, GameMessage> for NetworkPr
                 network_object_ids,
                 prefab_id,
             } => {
+                let acting_client_id = sender.acting_client(*from_client_id);
+                // The server relays the spawn to every other client, then
+                // instantiates it like any other peer.
                 if let Some(server) = server {
-                    let acting_client_id = sender.acting_client(*from_client_id);
                     if let Err(e) = server.broadcast_message_except(acting_client_id, message) {
                         log::warn!("Failed to broadcast SpawnPrefab: {e}");
                     }
-                    return MessageHandlerResult::Consume;
                 }
                 let Some(client_id) = **local_id else {
                     return MessageHandlerResult::Consume;
                 };
-                if client_id == *from_client_id {
+                if client_id == acting_client_id {
                     return MessageHandlerResult::Consume;
                 }
                 let Some(prefab_ref) = context
@@ -509,7 +541,7 @@ impl MessageHandler<NetworkPrefabSyncContext<'_, '_>, GameMessage> for NetworkPr
                 // The spawning peer owns the replicated objects on every peer.
                 let mut index = 0;
                 Network::traverse_prefab(
-                    *from_client_id,
+                    acting_client_id,
                     scene,
                     prefab_root,
                     &mut index,
