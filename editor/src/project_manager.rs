@@ -15,7 +15,7 @@ use engine::reflect::type_registry::{PluginEngineBuild, TypeRegistry};
 use engine::reflect::TypeInfo;
 use engine::resource::Resource;
 use engine::runtime::{ProjectRuntimeSettings, RuntimeSettings};
-use engine::scene::{Scene, SceneManager};
+use engine::scene::{Scene, SceneManager, SuspendedScenes};
 use engine::utils::TypeUuid;
 use project::Project;
 use rusty_pool::JoinHandle;
@@ -148,19 +148,25 @@ impl ProjectManager {
         })
     }
 
-    /// Loads the next assembly reported by a finished background build.
+    /// Takes the next assembly reported by a finished background build, for
+    /// [`Self::load_build`].
     ///
     /// Call once per frame on the UI thread so the library swap and type
     /// re-registration never race with code using the plugin's types.
-    pub fn load_completed_build(&mut self) -> bool {
-        match self.builds.next_load(self.assemblies_loaded()) {
-            Some(AssemblyLoad::Snapshot(target)) => self.load_shadow_copy(&target),
-            Some(AssemblyLoad::Source(source)) => self.load_assembly(&source),
-            None => false,
+    pub fn completed_build(&self) -> Option<AssemblyLoad> {
+        self.builds.next_load(self.assemblies_loaded())
+    }
+
+    /// Loads an assembly [`Self::completed_build`] returned, rebuilding the
+    /// scenes `scenes` reaches through its types.
+    pub fn load_build(&mut self, load: AssemblyLoad, scenes: &mut SceneManager) -> bool {
+        match load {
+            AssemblyLoad::Snapshot(target) => self.load_shadow_copy(&target, scenes),
+            AssemblyLoad::Source(source) => self.load_assembly(&source, scenes),
         }
     }
 
-    pub fn load_existing_assemblies(&mut self) -> bool {
+    pub fn load_existing_assemblies(&mut self, scenes: &mut SceneManager) -> bool {
         let source = self.assembly_source_path();
         if !source.exists() {
             log::info!("No project assembly found at {}", source.display());
@@ -177,7 +183,7 @@ impl ProjectManager {
             return false;
         }
         log::info!("Loading existing project assembly: {}", source.display());
-        self.load_assembly(&source)
+        self.load_assembly(&source, scenes)
     }
 
     fn assembly_source_path(&self) -> PathBuf {
@@ -188,7 +194,7 @@ impl ProjectManager {
         )
     }
 
-    fn load_assembly(&mut self, source: &Path) -> bool {
+    fn load_assembly(&mut self, source: &Path, scenes: &mut SceneManager) -> bool {
         log::trace!("Loading project assembly from {}", source.display());
         let target = match shadow_copy_assembly(source, self.current_project().name().as_str()) {
             Ok(target) => target,
@@ -201,11 +207,13 @@ impl ProjectManager {
                 return false;
             }
         };
-        self.load_shadow_copy(&target)
+        self.load_shadow_copy(&target, scenes)
     }
 
-    /// Loads a shadow copy prepared by [`shadow_copy_assembly`].
-    fn load_shadow_copy(&mut self, target: &Path) -> bool {
+    /// Loads a shadow copy prepared by [`shadow_copy_assembly`], replacing the
+    /// loaded assembly, if any, and rebuilding the scenes `scenes` reaches
+    /// through the new assembly's types.
+    fn load_shadow_copy(&mut self, target: &Path, scenes: &mut SceneManager) -> bool {
         unsafe {
             let preloaded_dependencies =
                 match PreloadedAssemblyDependencies::load(target.parent(), target.file_name()) {
@@ -230,7 +238,7 @@ impl ProjectManager {
             };
             match Lib::new(target) {
                 Ok(lib) => {
-                    {
+                    let suspended = {
                         let load_fn = match lib
                             .find_func::<extern "C" fn(&mut TypeRegistry), &str>("plugin_main")
                         {
@@ -244,6 +252,10 @@ impl ProjectManager {
                                 return false;
                             }
                         };
+                        // Open scenes hold storages and registrations hold
+                        // trait objects whose code is in the loaded assembly,
+                        // so take both apart while it is still loaded.
+                        let suspended = self.assemblies_loaded().then(|| self.unload_types(scenes));
                         log::info!(
                             "Loading plugin type registrations from crate {} ({})",
                             self.current_project().name(),
@@ -293,7 +305,8 @@ impl ProjectManager {
                             "Loaded {registered_count} project type registrations from crate {}",
                             self.current_project().name()
                         );
-                    }
+                        suspended
+                    };
                     // Replacing the previous assembly unloads it, so its
                     // shadow copy is no longer in use.
                     self.assembly = Some(LoadedAssembly {
@@ -305,6 +318,10 @@ impl ProjectManager {
                     component_registry_ref
                         .write()
                         .refresh_class_lists(&self.context.registries.types.read());
+                    if let Some(suspended) = suspended {
+                        scenes.resume_scenes(suspended);
+                        log::info!("Rebuilt open scenes through the reloaded project assembly");
+                    }
                     self.refresh_assembly_status();
                     log::info!("Project assemblies loaded");
                     true
@@ -316,6 +333,21 @@ impl ProjectManager {
                 }
             }
         }
+    }
+
+    /// Drops everything the loaded assembly's code backs: the scenes `scenes`
+    /// reaches, whose snapshots are returned, the assembly's type
+    /// registrations and the components bound from them.
+    fn unload_types(&self, scenes: &mut SceneManager) -> SuspendedScenes {
+        let suspended = scenes.suspend_scenes();
+        let mut types = self.context.registries.types.write();
+        types.unload_plugins();
+        self.context
+            .registries
+            .components
+            .write()
+            .refresh_class_lists(&types);
+        suspended
     }
 
     pub fn assemblies_loaded(&self) -> bool {
@@ -341,7 +373,7 @@ enum AssemblyBuildOutcome {
 
 /// What the UI thread loads for a finished build.
 #[derive(Debug, PartialEq)]
-enum AssemblyLoad {
+pub enum AssemblyLoad {
     /// A shadow copy taken by the build task, loaded as is.
     Snapshot(PathBuf),
     /// A previously built library, shadow-copied before loading.
@@ -1358,5 +1390,103 @@ mod tests {
         assert_eq!(queue.next_load(false), None);
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Reloads a real project assembly. Windows only: on Linux the assembly
+    /// does not load at all yet (#349).
+    #[cfg(windows)]
+    mod assembly_reload {
+        use super::super::{
+            assembly_artifact_path, assembly_build_target_dir, assembly_profile, build_assembly,
+            cargo_build_args, AssemblyBuildOutcome, ProjectAssemblyStatus, ProjectManager,
+        };
+        use engine::core::Ref;
+        use engine::input::Input;
+        use engine::scene::Scene;
+        use std::path::{Path, PathBuf};
+        use uuid::Uuid;
+
+        /// The sandbox's tank controller, a project component with an update hook.
+        const TANK_CONTROLLER: &str = "21b467c0-9409-4a7f-b750-418809609eb1";
+
+        /// Builds the sandbox assembly the way the editor does and returns its
+        /// library.
+        fn build_sandbox_assembly() -> PathBuf {
+            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../sandbox");
+            let target_dir = assembly_build_target_dir();
+            let profile = assembly_profile();
+            let source = assembly_artifact_path(&target_dir, profile, "sandbox");
+            match build_assembly(
+                &root,
+                profile,
+                &cargo_build_args(profile, &target_dir),
+                source,
+            ) {
+                AssemblyBuildOutcome::Built(source) => source,
+                AssemblyBuildOutcome::Failed(source) => {
+                    panic!(
+                        "the sandbox assembly failed to build at {}",
+                        source.display()
+                    )
+                }
+            }
+        }
+
+        #[test]
+        fn a_reloaded_assembly_leaves_open_scenes_usable() {
+            let source = build_sandbox_assembly();
+            let mut game = engine::test_support::test_game_context();
+            let project = ProjectManager::new(
+                game.assets.clone(),
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../sandbox"),
+                game.resources.background().clone(),
+                Ref::new(ProjectAssemblyStatus::default()),
+            )
+            .unwrap();
+            assert!(project.write().load_assembly(&source, &mut game.scenes));
+
+            let tank_controller = Uuid::parse_str(TANK_CONTROLLER).unwrap();
+            let scene = game.scenes.current_scene_mut();
+            let tank = scene.create(None, None);
+            scene.bind_component_dyn(tank, tank_controller);
+            let tank = scene.uuid(tank);
+            let cached = game.scenes.current_scene().clone();
+            let cached = game
+                .assets
+                .registries
+                .assets
+                .read()
+                .create("reloaded_scene".into(), cached)
+                .unwrap();
+            game.scenes.start_simulation();
+
+            // A fresh shadow copy is another library, so loading it unloads the
+            // one that created the scenes' project components, as a rebuild does.
+            assert!(project.write().load_assembly(&source, &mut game.scenes));
+
+            // Save, play and close the scene.
+            let holds_tank = |scene: &Scene| {
+                let saved = serde_json::to_value(scene.snapshot()).unwrap();
+                saved["components"][tank.to_string()]
+                    .get(TANK_CONTROLLER)
+                    .is_some()
+            };
+            assert!(holds_tank(game.scenes.current_scene()));
+            assert!(holds_tank(&cached.read()));
+            assert!(!game.scenes.has_simulation_scene());
+            game.scenes.start_simulation();
+            let input_context = egui::Context::default();
+            let input = Input::from_ctx(&input_context, None, game.resources.input_mut(), false);
+            let assets = game.assets.lock_read();
+            game.scenes.prepare();
+            game.scenes
+                .update(&assets.registries, &mut game.resources, &input);
+            game.scenes.stop_simulation();
+            game.scenes.load_empty_scene();
+
+            // The cached scene still holds project components, so it must go
+            // before the project manager unloads the assembly.
+            drop((assets, cached, game));
+        }
     }
 }

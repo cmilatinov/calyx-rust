@@ -201,6 +201,19 @@ impl TypeRegistry {
         self.identities.host_logger = Some(HostLogger::current());
     }
 
+    /// Drops every registration plugin passes made, including the host types
+    /// they registered again, leaving the types linked into this binary as
+    /// [`Self::new`] registers them.
+    ///
+    /// A plugin's registrations hold type names, trait objects and function
+    /// pointers in its assembly, so call this while that assembly is still
+    /// loaded, before unloading it.
+    pub fn unload_plugins(&mut self) {
+        let generation = self.identities.generation;
+        *self = Self::new();
+        self.identities.generation = generation;
+    }
+
     /// Which engine build the plugin loaded since [`Self::begin_plugin_load`]
     /// registered its types through.
     pub fn plugin_engine_build(&self) -> PluginEngineBuild {
@@ -547,6 +560,26 @@ mod tests {
         registry.begin_plugin_load();
         registry.register_crate("no_such_crate");
         assert_eq!(registry.plugin_engine_build(), PluginEngineBuild::Same);
+    }
+
+    #[test]
+    fn unloading_plugins_leaves_only_the_host_registrations() {
+        let mut reg = TypeRegistry::new();
+        let host_types = reg.types.len();
+        reg.begin_plugin_load();
+        // A type the next build may remove, and a host type the plugin
+        // registered again with its own metadata.
+        reg.meta::<DupA>();
+        reg.meta::<Foo>();
+
+        reg.unload_plugins();
+
+        assert!(reg.type_registration::<DupA>().is_none());
+        assert!(!reg.identities.types.contains_key(&DupA::type_uuid()));
+        assert!(matches!(reg.type_info::<Foo>(), Some(TypeInfo::Struct(_))));
+        assert_eq!(reg.types.len(), host_types);
+        reg.begin_plugin_load();
+        assert_eq!(reg.identities.generation, 2);
     }
 
     #[test]

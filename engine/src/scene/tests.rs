@@ -2093,6 +2093,50 @@ mod tests {
     }
 
     #[test]
+    fn scene_manager_rebuilds_every_scene_it_suspended() {
+        let mut game = crate::test_support::test_game_context();
+        let named = |name: &str| {
+            Some(ComponentID {
+                name: name.into(),
+                ..Default::default()
+            })
+        };
+        let names = |scene: &Scene| {
+            scene
+                .objects()
+                .map(|go| scene.name(go))
+                .filter(|name| name != "Root")
+                .collect::<Vec<_>>()
+        };
+        game.scenes
+            .current_scene_mut()
+            .create(named("Authoring"), None);
+        let mut cached = test_scene();
+        cached.create(named("Cached"), None);
+        let cached = game
+            .assets
+            .registries
+            .assets
+            .read()
+            .create("suspended_scene".into(), cached)
+            .unwrap();
+        game.scenes.start_simulation();
+
+        let suspended = game.scenes.suspend_scenes();
+
+        // Nothing is left of the scenes but their snapshots.
+        assert!(!game.scenes.has_simulation_scene());
+        assert!(names(game.scenes.current_scene()).is_empty());
+        assert!(names(&cached.read()).is_empty());
+
+        game.scenes.resume_scenes(suspended);
+
+        assert_eq!(names(game.scenes.current_scene()), ["Authoring"]);
+        assert_eq!(names(&cached.read()), ["Cached"]);
+        assert!(!game.scenes.is_simulating());
+    }
+
+    #[test]
     fn scene_manager_starts_configured_scene_without_replacing_authoring_scene() {
         let mut game = crate::test_support::test_game_context();
         game.scenes.current_scene_mut().create(

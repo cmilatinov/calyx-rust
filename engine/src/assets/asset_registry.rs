@@ -422,6 +422,14 @@ impl AssetRegistry {
             .and_then(|asset| asset.try_downcast::<A>())
     }
 
+    /// Returns every cached asset of type `A`, without loading any from disk.
+    pub fn loaded_assets<A: Asset + TypeUuid>(&self) -> Vec<Ref<A>> {
+        self.asset_cache()
+            .values()
+            .filter_map(|asset| asset.try_downcast::<A>())
+            .collect()
+    }
+
     /// Reloads an asset by filesystem path, replacing the cached value.
     pub fn reload_by_path<A: Asset + TypeUuid>(&self, path: &Path) -> Result<Ref<A>, AssetError> {
         let id = self.asset_id_from_path(path).ok_or_else(|| {

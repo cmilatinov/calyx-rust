@@ -300,7 +300,10 @@ impl EditorApp {
             game.resources.background().clone(),
             assembly_status,
         )?;
-        if !project_manager.write().load_existing_assemblies() {
+        if !project_manager
+            .write()
+            .load_existing_assemblies(&mut game.scenes)
+        {
             project_manager.read().build_assemblies();
         }
         let panels = Panels::new(content_browser_root);
@@ -373,7 +376,7 @@ impl EditorApp {
 
 impl eframe::App for EditorApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        self.project_manager.write().load_completed_build();
+        self.load_completed_build();
         self.state.game.resources.time_mut().update_time();
         self.state.game_response = None;
         self.state.viewport_response = None;
@@ -450,6 +453,19 @@ impl eframe::App for EditorApp {
 }
 
 impl EditorApp {
+    /// Loads the assembly a finished background build reported, if any.
+    fn load_completed_build(&mut self) {
+        let Some(load) = self.project_manager.read().completed_build() else {
+            return;
+        };
+        // The load rebuilds every open scene, so commit the inspector's
+        // pending edits first and take its baselines again afterwards.
+        self.state.refresh_inspector_baselines();
+        self.project_manager
+            .write()
+            .load_build(load, &mut self.state.game.scenes);
+    }
+
     fn process_thumbnail_jobs(&mut self, frame: &mut eframe::Frame) {
         let Some(render_state) = frame.wgpu_render_state() else {
             return;
