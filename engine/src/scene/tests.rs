@@ -367,15 +367,12 @@ mod tests {
         scene.write_component_dyn(go, &prototype, |instance| {
             instance.deserialize_in_place(&serde_json::json!({ "id": Uuid::new_v4() }))
         });
-        // SAFETY: the editor does not read the edited component through the
-        // scene.
-        unsafe {
-            scene.edit_component_dyn(go, &prototype, |instance, _| ComponentEdit {
+        scene
+            .edit_component_dyn(go, &prototype, |instance, _| ComponentEdit {
                 value: instance.deserialize_in_place(&serde_json::json!({ "id": Uuid::new_v4() })),
                 written: true,
             })
-        }
-        .unwrap();
+            .unwrap();
         let after = scene
             .read_component_dyn(go, &prototype, |instance| instance.serialize())
             .flatten();
@@ -1249,8 +1246,8 @@ mod tests {
     fn edit_component_dyn_on_parent_transform_moves_child() {
         let (mut scene, parent, child) = parent_with_cached_child();
         let prototype = transform_prototype();
-        let name = unsafe {
-            scene.edit_component_dyn(parent, &prototype, |instance, scene| {
+        let name = scene
+            .edit_component_dyn(parent, &prototype, |instance, scene| {
                 let c = instance
                     .as_reflect_mut()
                     .downcast_mut::<crate::component::ComponentTransform>()
@@ -1261,8 +1258,7 @@ mod tests {
                     written: true,
                 }
             })
-        }
-        .expect("the parent should have a transform");
+            .expect("the parent should have a transform");
         assert_eq!(name, scene.name(child));
         assert_child_at(&scene, child, Vec3::new(5.0, 1.0, 0.0));
     }
@@ -1271,14 +1267,102 @@ mod tests {
     fn edit_component_dyn_without_a_write_leaves_the_child() {
         let (mut scene, parent, child) = parent_with_cached_child();
         let prototype = transform_prototype();
-        unsafe {
-            scene.edit_component_dyn(parent, &prototype, |_, _| ComponentEdit {
+        scene
+            .edit_component_dyn(parent, &prototype, |_, _| ComponentEdit {
                 value: (),
                 written: false,
             })
-        }
-        .expect("the parent should have a transform");
+            .expect("the parent should have a transform");
         assert_child_at(&scene, child, Vec3::new(1.0, 1.0, 0.0));
+    }
+
+    /// The position of `game_object`'s transform component, as stored.
+    fn stored_position(scene: &Scene, game_object: GameObject) -> Vec3 {
+        scene
+            .read_component::<crate::component::ComponentTransform, _, _>(game_object, |c| {
+                c.transform.position
+            })
+            .expect("the object should have a transform")
+    }
+
+    #[test]
+    fn edit_component_dyn_reads_a_default_in_place_of_the_edited_component() {
+        let (mut scene, parent, _) = parent_with_cached_child();
+        let prototype = transform_prototype();
+        let seen = scene
+            .edit_component_dyn(parent, &prototype, |instance, scene| {
+                let c = instance
+                    .as_reflect_mut()
+                    .downcast_mut::<crate::component::ComponentTransform>()
+                    .expect("instance should be a transform");
+                assert_eq!(c.transform.position, Vec3::new(1.0, 0.0, 0.0));
+                c.transform.position = Vec3::new(5.0, 0.0, 0.0);
+                ComponentEdit {
+                    value: stored_position(scene, parent),
+                    written: true,
+                }
+            })
+            .expect("the parent should have a transform");
+
+        assert_eq!(seen, Vec3::zeros(), "the scene held the type's default");
+        assert_eq!(stored_position(&scene, parent), Vec3::new(5.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn edit_component_dyn_puts_back_an_unwritten_component() {
+        let (mut scene, parent, _) = parent_with_cached_child();
+        let prototype = transform_prototype();
+        let version = scene.write_version(parent, &prototype);
+        scene
+            .edit_component_dyn(parent, &prototype, |_, _| ComponentEdit {
+                value: (),
+                written: false,
+            })
+            .expect("the parent should have a transform");
+
+        assert_eq!(stored_position(&scene, parent), Vec3::new(1.0, 0.0, 0.0));
+        assert_eq!(scene.write_version(parent, &prototype), version);
+    }
+
+    /// A component type registered without a default.
+    #[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
+    #[uuid = "3b8e5f1a-6c2d-4f9e-a07b-5d4c1e8f2a93"]
+    #[reflect(TypeUuidDynamic, Component)]
+    #[repr(C)]
+    struct WithoutDefault {
+        value: f32,
+    }
+
+    impl Component for WithoutDefault {}
+
+    #[test]
+    fn edit_component_dyn_without_a_default_reads_a_copy_of_the_prototype() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        scene.add_component(go, WithoutDefault { value: 3.0 });
+        let prototype = WithoutDefault { value: 9.0 };
+        let read = |scene: &Scene| {
+            scene
+                .read_component::<WithoutDefault, _, _>(go, |c| c.value)
+                .expect("the object should have the component")
+        };
+        let seen = scene
+            .edit_component_dyn(go, &prototype, |instance, scene| {
+                let c = instance
+                    .as_reflect_mut()
+                    .downcast_mut::<WithoutDefault>()
+                    .expect("instance should be the component");
+                assert_eq!(c.value, 3.0);
+                c.value = 4.0;
+                ComponentEdit {
+                    value: read(scene),
+                    written: true,
+                }
+            })
+            .expect("the object should have the component");
+
+        assert_eq!(seen, 9.0, "the scene held a copy of the prototype");
+        assert_eq!(read(&scene), 4.0);
     }
 
     #[test]
@@ -1286,12 +1370,10 @@ mod tests {
         let mut scene = crate::test_support::test_scene();
         let go = scene.create(None, None);
         let prototype = crate::component::ComponentCollider::default();
-        let edit = unsafe {
-            scene.edit_component_dyn(go, &prototype, |_, _| ComponentEdit {
-                value: (),
-                written: true,
-            })
-        };
+        let edit = scene.edit_component_dyn(go, &prototype, |_, _| ComponentEdit {
+            value: (),
+            written: true,
+        });
         assert!(edit.is_none());
     }
 

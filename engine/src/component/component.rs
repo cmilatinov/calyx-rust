@@ -56,6 +56,19 @@ pub trait ComponentInstance: Reflect {
     /// Returns `true` if the downcast to the concrete type succeeded.
     fn bind_instance(&self, entry: &mut Entry, instance: Box<dyn Reflect>) -> bool;
 
+    /// Puts `value` in place of this component type's value on the entity
+    /// and returns the value it replaced. Hands `value` back when the entity
+    /// does not have the component or `value` is another type.
+    ///
+    /// # Errors
+    ///
+    /// Returns `value` itself when nothing was replaced.
+    fn replace_instance(
+        &self,
+        entry: &mut Entry,
+        value: Box<dyn Reflect>,
+    ) -> Result<Box<dyn Component>, Box<dyn Reflect>>;
+
     /// Remove this component type from the entity.
     fn remove_instance(&self, entry: &mut Entry);
 

@@ -899,32 +899,62 @@ impl Scene {
     /// Returns what `editor` returned, or `None` when the object or component
     /// is missing.
     ///
-    /// # Safety
-    ///
-    /// `editor` receives the component and a shared scene at once. It must
-    /// not read the edited component through the scene while it holds the
-    /// component.
-    pub unsafe fn edit_component_dyn<R>(
+    /// The component is out of the scene while `editor` holds it: the scene
+    /// keeps a placeholder of the same type in its place, the type's
+    /// registered default or else a copy of `component`, so `editor` reading
+    /// that component through the scene sees the placeholder. The edited
+    /// component is put back before this returns.
+    pub fn edit_component_dyn<R>(
         &mut self,
         game_object: GameObject,
         component: &dyn Component,
         editor: impl FnOnce(&mut dyn Component, &Scene) -> ComponentEdit<R>,
     ) -> Option<R> {
-        let instance = {
-            let mut entry = self.entry_mut(game_object)?;
-            component.get_instance_mut(&mut entry)? as *mut dyn Component
-        };
-        // SAFETY: the pointer targets the component's storage in the world,
-        // which nothing moves while `editor` only has shared scene access, and
-        // the caller guarantees `editor` does not alias it through the scene.
-        let instance = unsafe { &mut *instance };
-        let edit = editor(instance, self);
+        let placeholder = self.placeholder_instance(component)?;
+        let mut instance = self.replace_instance(game_object, component, placeholder)?;
+        let edit = editor(&mut *instance, self);
+        // `editor` only read the scene, so the component is still there to
+        // put back.
+        let replaced = self.replace_instance(game_object, component, instance);
+        debug_assert!(replaced.is_some(), "the edited component was put back");
         if edit.written {
             // A write to the object's ComponentID may have its id put back
             // here; callers that need the written value read it afterwards.
             self.component_written(game_object, component.component_type_id());
         }
         Some(edit.value)
+    }
+
+    /// A new value of `component`'s type to hold its place in the world: the
+    /// type's registered default, or a copy of `component` for a type
+    /// registered without one.
+    fn placeholder_instance(
+        &self,
+        component: &dyn Component,
+    ) -> Option<Box<dyn crate::reflect::Reflect>> {
+        let default = self
+            .registries
+            .types
+            .read()
+            .trait_meta::<ReflectDefault>(component.uuid())
+            .map(ReflectDefault::default);
+        default.or_else(|| {
+            let value = component.serialize()?;
+            component.deserialize(&value).ok()
+        })
+    }
+
+    /// Puts `value` in place of the component of `component`'s type on
+    /// `game_object` and returns the value it replaced, without reporting a
+    /// write. Returns `None` when the object or component is missing.
+    fn replace_instance(
+        &mut self,
+        game_object: GameObject,
+        component: &dyn Component,
+        value: Box<dyn crate::reflect::Reflect>,
+    ) -> Option<Box<dyn Component>> {
+        let mut entry = self.entry_mut(game_object)?;
+        component.replace_instance(&mut entry, value).ok()
     }
 
     /// Removes component `T` from `game_object`. Removing the object's

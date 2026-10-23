@@ -1183,13 +1183,12 @@ mod tests {
     fn inspector_edit_reindexes_network_object() {
         let (mut scene, go) = scene_with_object(42, 1);
         let prototype = ComponentNetworkObject::default();
-        unsafe {
-            scene.edit_component_dyn(go, &prototype, |instance, _| ComponentEdit {
+        scene
+            .edit_component_dyn(go, &prototype, |instance, _| ComponentEdit {
                 value: set_network_id(instance, 43),
                 written: true,
             })
-        }
-        .expect("the object should have a network object");
+            .expect("the object should have a network object");
 
         assert_eq!(scene.indexed_network_object(42), None);
         assert_eq!(scene.indexed_network_object(43), Some(go));

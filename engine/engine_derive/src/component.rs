@@ -36,6 +36,19 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
                     false
                 }
             }
+            fn replace_instance(
+                &self,
+                entry: &mut legion::world::Entry,
+                value: #FQBox<dyn #FQReflect>
+            ) -> #FQResult<#FQBox<dyn engine::component::Component>, #FQBox<dyn #FQReflect>> {
+                let value = value.downcast::<#name>()?;
+                match entry.get_component_mut::<#name>() {
+                    #FQResult::Ok(instance) => {
+                        #FQResult::Ok(#FQBox::new(::std::mem::replace(instance, *value)))
+                    }
+                    #FQResult::Err(_) => #FQResult::Err(value),
+                }
+            }
             fn remove_instance(
                 &self, entry: &mut legion::world::Entry
             ) {
