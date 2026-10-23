@@ -465,10 +465,10 @@ impl AnimationGraphInspector {
                         }
                     });
             }
-            Some(AnimationParameterValue::Trigger) => {
-                if !matches!(value, AnimationCondition::Trigger) {
-                    *value = AnimationCondition::Trigger;
-                }
+            Some(AnimationParameterValue::Trigger)
+                if !matches!(value, AnimationCondition::Trigger) =>
+            {
+                *value = AnimationCondition::Trigger;
             }
             _ => {}
         }

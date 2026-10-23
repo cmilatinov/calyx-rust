@@ -516,12 +516,7 @@ impl EditorApp {
             physics_debug_pipeline,
             state:
                 EditorAppState {
-                    game:
-                        GameContext {
-                            scenes,
-                            resources: _,
-                            ..
-                        },
+                    game: GameContext { scenes, .. },
                     scene_renderer,
                     game_renderer,
                     game_size,
