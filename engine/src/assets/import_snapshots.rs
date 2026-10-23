@@ -62,7 +62,7 @@ impl Shape {
         let mut centroid = [0.0; 3];
         let mut second_moments = [0.0; 6];
         let mut signed_volume = 0.0;
-        for triangle in indices.chunks_exact(3) {
+        for triangle in indices.as_chunks::<3>().0 {
             let [a, b, c] = [0, 1, 2].map(|i| to_f64(&positions[triangle[i] as usize]));
             for p in [a, b, c] {
                 for axis in 0..3 {
@@ -164,7 +164,7 @@ impl MeshSummary {
                 mean: [0.0; 2],
             })
             .collect::<Vec<_>>();
-        for triangle in mesh.indices.chunks_exact(3) {
+        for triangle in mesh.indices.as_chunks::<3>().0 {
             let [a, b, c] = [0, 1, 2].map(|i| to_f64(&mesh.vertices[triangle[i] as usize]));
             let face = cross(sub(b, a), sub(c, a));
             let area = norm(face) / 2.0;

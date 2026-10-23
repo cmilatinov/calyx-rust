@@ -415,8 +415,8 @@ impl Mesh {
     fn normalize_mesh_data(&mut self) {
         let vertex_count = self.vertices.len();
         self.normals.resize(vertex_count, Vec3::zeros());
-        for i in 0..CX_MESH_NUM_UV_CHANNELS {
-            self.uvs[i].resize(vertex_count, Vec2::zeros());
+        for uvs in &mut self.uvs {
+            uvs.resize(vertex_count, Vec2::zeros());
         }
         self.bone_indices
             .resize(vertex_count, IVec4::new(-1, -1, -1, -1));
