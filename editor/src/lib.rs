@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use eframe::egui;
 use inspector::inspector_registry::InspectorRegistry;
+use inspector::pinned_components::PinnedComponents;
 use num_traits::FromPrimitive;
 use transform_gizmo_egui::{GizmoMode, GizmoOrientation};
 
@@ -95,6 +96,8 @@ pub struct EditorAppState {
     /// Where the inspector panel was drawn last frame, if it was.
     pub(crate) inspector_rect: Option<egui::Rect>,
     pub(crate) scene_document: SceneDocument,
+    /// The components the inspector shows first, read at project load.
+    pub(crate) pinned_components: PinnedComponents,
     active_scene: ActiveSceneState,
     window_title: String,
 }
@@ -173,6 +176,7 @@ impl EditorAppState {
             thumbnails: ThumbnailService::default(),
             inspector_rect: None,
             scene_document: SceneDocument::new(&project_path),
+            pinned_components: PinnedComponents::load(&project_path),
             active_scene: Default::default(),
             window_title: String::new(),
             scene_renderer,

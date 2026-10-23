@@ -8,6 +8,7 @@ use chrono::Utc;
 use engine::runtime::RuntimeSettings;
 use serde::{Deserialize, Serialize};
 use tinytemplate::TinyTemplate;
+use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Project {
@@ -17,8 +18,39 @@ pub struct Project {
     /// [`engine::runtime::ProjectRuntimeSettings`] reads back.
     #[serde(default)]
     runtime: RuntimeSettings,
+    #[serde(default, skip_serializing_if = "InspectorSettings::is_empty")]
+    inspector: InspectorSettings,
+    /// Settings this struct does not model, such as `startup_scene`, kept so
+    /// [`Self::save`] writes them back.
+    #[serde(flatten)]
+    other: toml::Table,
     #[serde(skip)]
     root_directory: PathBuf,
+}
+
+/// The editor inspector's settings, under `[inspector]`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct InspectorSettings {
+    /// The components the game object inspector shows first, in order.
+    /// `None` leaves the editor's defaults; a list, even an empty one,
+    /// replaces them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned: Option<Vec<PinnedComponent>>,
+}
+
+impl InspectorSettings {
+    fn is_empty(&self) -> bool {
+        self.pinned.is_none()
+    }
+}
+
+/// A component type pinned to the top of the inspector.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PinnedComponent {
+    /// The component's type UUID.
+    pub uuid: Uuid,
+    /// The component's display name, only there to make the file readable.
+    pub name: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -47,6 +79,8 @@ impl Project {
             name,
             creation_date: Utc::now().to_rfc3339(),
             runtime: RuntimeSettings::default(),
+            inspector: InspectorSettings::default(),
+            other: toml::Table::new(),
             root_directory: project_directory,
         };
 
@@ -104,6 +138,15 @@ impl Project {
         Ok(project)
     }
 
+    /// Writes the project back to its `project.toml`.
+    pub fn save(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let toml_string = toml::to_string(self)
+            .map_err(|e| format!("Failed to serialize project file 'project.toml': {e}"))?;
+        fs::write(self.root_directory.join("project.toml"), toml_string)
+            .map_err(|e| format!("Failed to write project file 'project.toml': {e}"))?;
+        Ok(())
+    }
+
     pub fn is_valid(&self) -> bool {
         self.root_directory.exists()
             && self.assets_directory().exists()
@@ -129,16 +172,25 @@ impl Project {
     pub fn assets_directory(&self) -> PathBuf {
         self.root_directory.join("assets")
     }
+
+    pub fn inspector(&self) -> &InspectorSettings {
+        &self.inspector
+    }
+
+    pub fn inspector_mut(&mut self) -> &mut InspectorSettings {
+        &mut self.inspector
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use engine::runtime::ProjectRuntimeSettings;
+    use uuid::Uuid;
 
-    use super::Project;
+    use super::{PinnedComponent, Project};
 
     #[test]
     fn project_generate_and_load() {
@@ -174,5 +226,71 @@ mod tests {
 
         // Clean up
         fs::remove_dir_all(Path::new("temp")).unwrap();
+    }
+
+    /// A fresh directory holding `manifest` as its `project.toml`.
+    fn project_dir(test: &str, manifest: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("calyx-project-{test}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("project.toml"), manifest).unwrap();
+        dir
+    }
+
+    const MANIFEST: &str = "name = \"Pins\"\n\
+        creation_date = \"2026-01-01T00:00:00Z\"\n\
+        startup_scene = \"assets/scene.cxscene\"\n";
+
+    #[test]
+    fn manifest_without_inspector_section_has_no_pinned_list() {
+        let dir = project_dir("no-pins", MANIFEST);
+
+        let project = Project::load(dir.clone()).unwrap();
+
+        assert_eq!(project.inspector().pinned, None);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn pinned_list_round_trips_and_keeps_other_settings() {
+        let dir = project_dir("round-trip", MANIFEST);
+        let transform = Uuid::from_u128(2);
+        let mut project = Project::load(dir.clone()).unwrap();
+
+        project.inspector_mut().pinned = Some(vec![PinnedComponent {
+            uuid: transform,
+            name: "Transform".into(),
+        }]);
+        project.save().unwrap();
+
+        let manifest = fs::read_to_string(dir.join("project.toml")).unwrap();
+        assert!(manifest.contains("[[inspector.pinned]]"), "{manifest}");
+        let loaded = Project::load(dir.clone()).unwrap();
+        assert_eq!(
+            loaded.inspector().pinned,
+            Some(vec![PinnedComponent {
+                uuid: transform,
+                name: "Transform".into(),
+            }])
+        );
+        let runtime = ProjectRuntimeSettings::load(&dir).unwrap();
+        assert_eq!(
+            runtime.startup_scene_path(),
+            Some(dir.join("assets/scene.cxscene"))
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn empty_pinned_list_is_kept() {
+        let dir = project_dir("empty-pins", MANIFEST);
+        let mut project = Project::load(dir.clone()).unwrap();
+
+        project.inspector_mut().pinned = Some(Vec::new());
+        project.save().unwrap();
+
+        let loaded = Project::load(dir.clone()).unwrap();
+        assert_eq!(loaded.inspector().pinned, Some(Vec::new()));
+        fs::remove_dir_all(dir).unwrap();
     }
 }
