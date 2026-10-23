@@ -17,6 +17,7 @@ use crate::render::Gizmos;
 use crate::resource::ResourceMap;
 use crate::scene::game_object_ref::RemapScope;
 use crate::scene::{GameObject, Scene};
+use crate::ui::{UiArena, UiNodeHandle, UiRect};
 use crate::utils::TypeUuidDynamic;
 
 /// Provides type-erased access to a concrete component stored in a Legion entity.
@@ -235,6 +236,30 @@ pub trait ComponentUpdate: Send + Sync {
     /// `input` is the active frame input view. Update hooks are skipped when the
     /// scene manager is not simulating.
     fn update(&self, ctx: ComponentEventContext, resources: &mut ResourceMap, input: &Input);
+}
+
+/// Runtime HUD hook, discovered via `#[reflect(ComponentHud)]`.
+///
+/// The `&self` receiver is the prototype instance from the registry, as with
+/// [`ComponentUpdate`]. Implementations read the actual component through
+/// `scene` and build its HUD into `ui`, laid out for `viewport`, or return
+/// `None` to draw nothing this frame.
+///
+/// The hook runs once per frame after the scene update, for every game object.
+/// The player and the editor's Game panel paint the result over the game view
+/// through [`SceneHud`](crate::scene::SceneHud), so the HUD reads the same
+/// frame the view shows. It receives `&Scene`: gameplay belongs in
+/// `ComponentUpdate`.
+#[allow(missing_docs)]
+#[reflect_trait]
+pub trait ComponentHud: Send + Sync {
+    fn build_hud(
+        &self,
+        scene: &Scene,
+        game_object: GameObject,
+        ui: &mut UiArena,
+        viewport: UiRect,
+    ) -> Option<UiNodeHandle>;
 }
 
 /// One-time initialization hook called after a component is bound to a game object.

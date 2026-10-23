@@ -4,8 +4,8 @@ use std::ops::Deref;
 use uuid::Uuid;
 
 use crate::component::{
-    Component, ComponentReset, ComponentStart, ComponentUpdate, ReflectComponent,
-    ReflectComponentReset, ReflectComponentStart, ReflectComponentUpdate,
+    Component, ComponentHud, ComponentReset, ComponentStart, ComponentUpdate, ReflectComponent,
+    ReflectComponentHud, ReflectComponentReset, ReflectComponentStart, ReflectComponentUpdate,
 };
 use crate::reflect::type_registry::TypeRegistry;
 use crate::reflect::ReflectDefault;
@@ -17,6 +17,7 @@ pub struct ComponentRegistry {
     components: HashMap<Uuid, Box<dyn Component>>,
     start_components: Vec<(Uuid, Box<dyn ComponentStart>)>,
     update_components: Vec<(Uuid, Box<dyn ComponentUpdate>)>,
+    hud_components: Vec<(Uuid, Box<dyn ComponentHud>)>,
     reset_components: HashMap<Uuid, Box<dyn ComponentReset>>,
 }
 
@@ -27,6 +28,7 @@ impl ComponentRegistry {
             components: Default::default(),
             start_components: Default::default(),
             update_components: Default::default(),
+            hud_components: Default::default(),
             reset_components: Default::default(),
         };
         registry.refresh_class_lists(type_registry);
@@ -45,6 +47,13 @@ impl ComponentRegistry {
         self.update_components
             .iter()
             .map(|(id, updater)| (*id, updater.deref()))
+    }
+
+    /// Iterates components that implement [`ComponentHud`].
+    pub fn components_with_hud(&self) -> impl Iterator<Item = (Uuid, &dyn ComponentHud)> {
+        self.hud_components
+            .iter()
+            .map(|(id, hud)| (*id, hud.deref()))
     }
 
     /// Iterates components that implement [`ComponentStart`].
@@ -71,6 +80,7 @@ impl ComponentRegistry {
         self.components.clear();
         self.start_components.clear();
         self.update_components.clear();
+        self.hud_components.clear();
         self.reset_components.clear();
 
         for type_id in type_registry.all_of(type_uuids!(
@@ -112,6 +122,17 @@ impl ComponentRegistry {
                 } else {
                     log::warn!(
                         "Skipping update hook for component {type_id}: failed to bind metadata"
+                    );
+                }
+            }
+
+            if let Some(meta_hud) = type_registry.trait_meta::<ReflectComponentHud>(type_id) {
+                let instance = meta_default.default();
+                if let Ok(hud) = meta_hud.get_boxed(instance) {
+                    self.hud_components.push((type_id, hud));
+                } else {
+                    log::warn!(
+                        "Skipping HUD hook for component {type_id}: failed to bind metadata"
                     );
                 }
             }

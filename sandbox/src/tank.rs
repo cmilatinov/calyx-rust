@@ -534,25 +534,10 @@ fn spawn_projectile(
         mesh: mesh.mesh.clone(),
         material: mesh.material.clone(),
     });
-    let projectile_object = scene.create(
-        Some(ComponentID {
-            name: "Projectile".to_string(),
-            ..Default::default()
-        }),
-        None,
-    );
-    let projectile_transform = Transform::from_components(
+    spawn_round(
+        scene,
         barrel_transform.position + direction * controller.muzzle_offset,
         barrel_transform.rotation,
-        vec3(
-            controller.projectile_radius * 2.0,
-            controller.projectile_radius * 2.0,
-            controller.projectile_radius * 2.0,
-        ),
-    );
-    scene.set_world_transform(projectile_object, projectile_transform.matrix());
-    scene.add_component(
-        projectile_object,
         ComponentProjectile {
             direction,
             speed: controller.projectile_speed,
@@ -560,7 +545,32 @@ fn spawn_projectile(
             lifetime_remaining: controller.projectile_lifetime,
             radius: controller.projectile_radius,
         },
+        visual,
     );
+    true
+}
+
+/// Spawns a "Projectile" object at `position` that flies as `projectile`
+/// says, drawn with `visual` scaled to the round's diameter.
+pub(crate) fn spawn_round(
+    scene: &mut Scene,
+    position: Vec3,
+    rotation: UnitQuaternion<f32>,
+    projectile: ComponentProjectile,
+    visual: Option<ComponentMesh>,
+) {
+    let projectile_object = scene.create(
+        Some(ComponentID {
+            name: "Projectile".to_string(),
+            ..Default::default()
+        }),
+        None,
+    );
+    let diameter = projectile.radius * 2.0;
+    let projectile_transform =
+        Transform::from_components(position, rotation, vec3(diameter, diameter, diameter));
+    scene.set_world_transform(projectile_object, projectile_transform.matrix());
+    scene.add_component(projectile_object, projectile);
     scene.add_component(
         projectile_object,
         ComponentRigidBody {
@@ -574,7 +584,7 @@ fn spawn_projectile(
         projectile_object,
         ComponentCollider {
             shape: ColliderShape::Sphere {
-                radius: controller.projectile_radius,
+                radius: projectile.radius,
             },
             ..Default::default()
         },
@@ -582,7 +592,6 @@ fn spawn_projectile(
     if let Some(visual) = visual {
         scene.add_component(projectile_object, visual);
     }
-    true
 }
 
 fn update_projectile(
@@ -786,7 +795,7 @@ fn ground_intersection(ray: &Ray, ground_y: f32) -> Option<Vec3> {
     (t >= 0.0).then_some(ray.origin + ray.direction * t)
 }
 
-fn flatten_xz(vector: Vec3) -> Vec3 {
+pub(crate) fn flatten_xz(vector: Vec3) -> Vec3 {
     let flattened = vec3(vector.x, 0.0, vector.z);
     if flattened.magnitude_squared() <= f32::EPSILON {
         Vec3::zeros()
@@ -795,7 +804,7 @@ fn flatten_xz(vector: Vec3) -> Vec3 {
     }
 }
 
-fn yaw_rotation(direction: &Vec3) -> UnitQuaternion<f32> {
+pub(crate) fn yaw_rotation(direction: &Vec3) -> UnitQuaternion<f32> {
     UnitQuaternion::from_euler_angles(0.0, direction.x.atan2(direction.z), 0.0)
 }
 

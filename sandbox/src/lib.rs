@@ -4,6 +4,8 @@
 
 pub mod arena;
 pub mod game_state;
+pub mod hud;
+pub mod sentry;
 pub mod spawn;
 pub mod tank;
 
@@ -19,6 +21,8 @@ mod tests {
     use super::*;
     use crate::arena::ComponentArena;
     use crate::game_state::ComponentGameState;
+    use crate::hud::ComponentTankHud;
+    use crate::sentry::ComponentSentry;
     use crate::spawn::{ComponentRespawnState, ComponentSpawnPoint};
     use crate::tank::ComponentTankController;
     use engine::component::ComponentTransform;
@@ -37,6 +41,8 @@ mod tests {
             .is_some());
         assert!(registry.type_registration::<ComponentArena>().is_some());
         assert!(registry.type_registration::<ComponentGameState>().is_some());
+        assert!(registry.type_registration::<ComponentTankHud>().is_some());
+        assert!(registry.type_registration::<ComponentSentry>().is_some());
         assert!(registry
             .type_registration::<ComponentSpawnPoint>()
             .is_some());
