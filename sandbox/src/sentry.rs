@@ -131,9 +131,12 @@ mod tests {
     use super::ComponentSentry;
     use crate::spawn::ComponentRespawnState;
     use crate::tank::{ComponentHealth, ComponentProjectile, ComponentProjectileTarget};
+    use engine::component::{ColliderShape, ComponentCollider, ComponentRigidBody};
     use engine::math::Transform;
     use engine::scene::{GameObject, GameObjectRef, Scene};
     use engine::test_support::HeadlessSceneRunner;
+    use nalgebra_glm::vec3;
+    use rapier3d::dynamics::RigidBodyType;
 
     /// A sentry at the origin aimed along nothing yet, and a tank `distance`
     /// metres down +Z.
@@ -203,6 +206,34 @@ mod tests {
             health(runner.scene(), tank) < 100.0,
             "a round should reach the tank and damage it"
         );
+    }
+
+    #[test]
+    fn cover_between_the_sentry_and_the_tank_absorbs_its_rounds() {
+        let (mut scene, _, tank) = sentry_and_tank(8.0);
+        let cover = scene.create(None, None);
+        scene.set_world_transform(cover, Transform::from_xyz(0.0, 0.5, 4.0).matrix());
+        scene.add_component(
+            cover,
+            ComponentRigidBody {
+                ty: RigidBodyType::Fixed,
+                ..Default::default()
+            },
+        );
+        scene.add_component(
+            cover,
+            ComponentCollider {
+                shape: ColliderShape::Cuboid {
+                    half_extents: vec3(2.0, 1.0, 0.5),
+                },
+                ..Default::default()
+            },
+        );
+        let mut runner = HeadlessSceneRunner::from_scene(scene);
+
+        runner.step_many(120);
+
+        assert_eq!(health(runner.scene(), tank), 100.0);
     }
 
     #[test]
