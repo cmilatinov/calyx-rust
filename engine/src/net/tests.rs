@@ -5,7 +5,7 @@ mod tests {
     use crate::net::{
         handle_destroy, Client, ComponentNetworkObject, GameChannel, GameMessage, MessageHandler,
         MessageHandlerResult, MessageQueue, MessageRoute, MessageSender, Network, NetworkSceneSync,
-        Server,
+        Server, ServerEvent,
     };
     use crate::scene::{ComponentEdit, GameObject, Prefab, Scene};
     use crate::test_support::NetworkTestHarness as TestHarness;
@@ -1136,6 +1136,211 @@ mod tests {
                 .indexed_network_object(network_object_id)
                 .is_some()),
             "remote spawn did not index the object"
+        );
+    }
+
+    /// Returns the owner of network object `network_object_id` in `scene`.
+    fn network_object_owner(scene: &Scene, network_object_id: u64) -> Option<u64> {
+        scene.objects().find_map(|go| {
+            scene
+                .read_component::<ComponentNetworkObject, _, _>(go, |c| {
+                    (c.id == network_object_id).then_some(c.owner_id)
+                })
+                .flatten()
+        })
+    }
+
+    #[test]
+    fn client_spawn_reaches_the_host_and_the_other_client() {
+        let (mut harness, prefab_refs) = setup_spawn_harness("net_relay_spawn_test_prefab");
+        let sender_id = harness.client(0).resources.network().local_id.unwrap();
+        let (_, network_object_id) = spawn_from_client(&mut harness, 0, prefab_refs[1].clone());
+
+        assert!(
+            pump_until(&mut harness, |h| {
+                [h.host(), h.client(1)].iter().all(|ctx| {
+                    network_object_owner(ctx.scenes.current_scene(), network_object_id)
+                        == Some(sender_id)
+                })
+            }),
+            "the spawn did not reach both the host and the other client"
+        );
+    }
+
+    /// Consumes component-sync messages and records the sender each claims.
+    struct SyncCapture;
+    impl MessageHandler<Vec<u64>, GameMessage> for SyncCapture {
+        fn handle_message(
+            &mut self,
+            senders: &mut Vec<u64>,
+            _: MessageSender,
+            message: &GameMessage,
+        ) -> MessageHandlerResult {
+            match message {
+                GameMessage::SyncComponent { from_client_id, .. } => {
+                    senders.push(*from_client_id);
+                    MessageHandlerResult::Consume
+                }
+                _ => MessageHandlerResult::Ignore,
+            }
+        }
+    }
+
+    /// Pumps the harness `rounds` times and returns, per peer, the claimed
+    /// senders of the component-sync messages each received for `route`.
+    fn collect_syncs(
+        harness: &mut TestHarness,
+        route: MessageRoute,
+        rounds: usize,
+    ) -> Vec<Vec<u64>> {
+        let mut received = vec![Vec::new(); harness.contexts.len()];
+        for _ in 0..rounds {
+            harness.pump();
+            for (ctx, senders) in harness.contexts.iter_mut().zip(&mut received) {
+                ctx.resources.network_mut().queue.receive_messages(
+                    Some(route),
+                    senders,
+                    &mut SyncCapture,
+                );
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        received
+    }
+
+    /// Spawns a network object from client 0, waits until every peer holds
+    /// it, and returns the route of its transform sync with the owner's id.
+    fn spawn_synced_object(name: &str) -> (TestHarness, MessageRoute, u64) {
+        let (mut harness, prefab_refs) = setup_spawn_harness(name);
+        let owner_id = harness.client(0).resources.network().local_id.unwrap();
+        let (_, network_object_id) = spawn_from_client(&mut harness, 0, prefab_refs[1].clone());
+        assert!(
+            pump_until(&mut harness, |h| h.contexts.iter().all(|ctx| {
+                has_network_object(ctx.scenes.current_scene(), network_object_id)
+            })),
+            "the spawn did not reach every peer"
+        );
+        let route = MessageRoute {
+            network_object_id,
+            component_uuid: uuid::Uuid::from_u128(0x5eed),
+        };
+        (harness, route, owner_id)
+    }
+
+    /// Sends a component sync for `route` from client `index`, as
+    /// `Synchronized` does for an object the client owns.
+    fn send_sync_from_client(harness: &mut TestHarness, index: usize, route: MessageRoute) {
+        let network = harness.client_mut(index).resources.network_mut();
+        let from_client_id = network.local_id.unwrap();
+        network
+            .client
+            .send_message(&GameMessage::SyncComponent {
+                time: 0.0,
+                network_object_id: route.network_object_id,
+                from_client_id,
+                component_uuid: route.component_uuid,
+                data: Vec::new(),
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn client_component_sync_reaches_the_other_client_through_the_server() {
+        let (mut harness, route, owner_id) = spawn_synced_object("net_relay_sync_test_prefab");
+
+        send_sync_from_client(&mut harness, 0, route);
+        let received = collect_syncs(&mut harness, route, 60);
+
+        assert_eq!(received[0], vec![owner_id], "the host missed the sync");
+        assert!(
+            received[1].is_empty(),
+            "the server echoed the sync to its sender"
+        );
+        assert_eq!(
+            received[2],
+            vec![owner_id],
+            "the other client missed the sync"
+        );
+    }
+
+    #[test]
+    fn non_owner_component_sync_is_not_relayed() {
+        let (mut harness, route, _) = spawn_synced_object("net_relay_non_owner_test_prefab");
+
+        send_sync_from_client(&mut harness, 1, route);
+        let received = collect_syncs(&mut harness, route, 60);
+
+        assert!(
+            received[1].is_empty(),
+            "the server relayed a sync for an object its sender does not own"
+        );
+    }
+
+    #[test]
+    fn listen_server_host_spawn_reaches_every_client() {
+        let (mut harness, prefab_refs) = setup_spawn_harness("net_relay_host_spawn_test_prefab");
+        let host = harness.host_mut();
+        let host_id = host.resources.network().local_id.unwrap();
+        let scene = host.scenes.current_scene_mut();
+        let spawned = host
+            .resources
+            .network_mut()
+            .instantiate_prefab(scene, prefab_refs[0].clone())
+            .expect("the host failed to spawn the prefab");
+        let network_object_id = host
+            .scenes
+            .current_scene()
+            .read_component::<ComponentNetworkObject, _, _>(spawned, |c| c.id)
+            .unwrap();
+
+        assert!(
+            pump_until(&mut harness, |h| (0..h.client_count()).all(|i| {
+                network_object_owner(h.client(i).scenes.current_scene(), network_object_id)
+                    == Some(host_id)
+            })),
+            "the host's spawn did not reach every client"
+        );
+    }
+
+    #[test]
+    fn client_disconnect_reaches_the_remaining_clients() {
+        let (mut harness, _) = setup_spawn_harness("net_relay_disconnect_test_prefab");
+        let leaving_id = harness.client(1).resources.network().local_id.unwrap();
+        assert!(
+            pump_until(&mut harness, |h| h
+                .client(0)
+                .resources
+                .network()
+                .client
+                .client_ids()
+                .contains(&leaving_id)),
+            "the remaining client never learned of the other client"
+        );
+
+        // The host's transport reports the departure as the server does.
+        let GameContext {
+            assets,
+            scenes,
+            resources,
+        } = harness.host_mut();
+        let network = resources.network_mut();
+        network.queue.queue_message(
+            MessageSender::Local,
+            GameMessage::ServerEvent(ServerEvent::ClientDisconnected {
+                client_id: leaving_id,
+            }),
+        );
+        network.update_scene(scenes.current_scene_mut(), &assets.lock_read());
+
+        assert!(
+            pump_until(&mut harness, |h| !h
+                .client(0)
+                .resources
+                .network()
+                .client
+                .client_ids()
+                .contains(&leaving_id)),
+            "the remaining client still lists the departed client"
         );
     }
 
