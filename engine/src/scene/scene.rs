@@ -1,6 +1,6 @@
 use bimap::BiHashMap;
 use legion::storage::ComponentTypeId;
-use legion::world::{Entry, EntryRef};
+use legion::world::{Allocate, Entry, EntryRef};
 use legion::{Entity, EntityStore, IntoQuery, World};
 use nalgebra_glm::Mat4;
 use serde::de::DeserializeSeed;
@@ -28,7 +28,6 @@ use crate::scene::transform_cache::TransformCache;
 use crate::scene::{Prefab, SceneError};
 use crate::utils::{ContextSeed, TypeUuid};
 
-use super::game_object_ref::RemapScope;
 use super::scene_graph::{self, SiblingDir};
 
 /// Lightweight handle to a game object stored inside a [`Scene`].
@@ -121,6 +120,25 @@ pub struct Scene {
     root: GameObject,
     camera: Option<GameObject>,
     registries: ReadOnlyRegistryContext,
+    /// Hands out the entities of the objects this scene spawns: the entity
+    /// counter of the engine build that created the scene; see
+    /// [`allocate_entity`].
+    pub(crate) allocate_entity: fn() -> Entity,
+}
+
+/// Hands out an entity from this engine build's copy of Legion's process-wide
+/// entity counter.
+///
+/// A project assembly links its own copy of the engine and of Legion, and so
+/// its own copy of that counter, which starts over and hands out the entities
+/// the editor's copy already did. [`Scene::new`] keeps a pointer to the copy
+/// of this function in the build that creates the scene, so the objects any
+/// code spawns into the scene, the assembly's included, take their entities
+/// from that one counter.
+fn allocate_entity() -> Entity {
+    Allocate::new()
+        .next()
+        .expect("Legion's entity allocator never runs out")
 }
 
 impl Scene {
@@ -128,7 +146,8 @@ impl Scene {
     pub fn new(assets: ReadOnlyRegistryContext) -> Self {
         let mut world: World = Default::default();
         let mut graph = SceneGraph::default();
-        let entity = world.push(());
+        let entity = allocate_entity();
+        world.push_with_id(entity, ());
         let root = graph.attach(entity, None);
         let id = Uuid::new_v4();
         world.entry(entity).unwrap().add_component(ComponentID {
@@ -149,6 +168,7 @@ impl Scene {
             root,
             camera: Default::default(),
             registries: assets,
+            allocate_entity,
         }
     }
 }
@@ -535,9 +555,8 @@ impl Scene {
             );
         }
 
-        // Every `GameObjectRef` deserialized while this scope is held is
-        // remapped to the instance's objects, wherever serde reaches it.
-        let remap_scope = RemapScope::enter(id_mapping.clone());
+        // Every `GameObjectRef` in the components is remapped to the
+        // instance's objects, wherever serde reaches it.
         for (game_object_id, components) in prefab.data.components.iter() {
             let new_game_object_id = *id_mapping.get_by_left(game_object_id).ok_or_else(|| {
                 SceneError::InvalidPrefab(format!("object {game_object_id} has no mapped id"))
@@ -556,7 +575,7 @@ impl Scene {
                 let Some(component) = component_registry.component(*component_id) else {
                     continue;
                 };
-                let instance = match component.deserialize(data) {
+                let instance = match component.deserialize_remapped(data, &id_mapping) {
                     Ok(instance) => instance,
                     Err(err) => {
                         log::warn!(
@@ -569,8 +588,6 @@ impl Scene {
                 self.bind_instance(game_object, component, instance);
             }
         }
-
-        drop(remap_scope);
 
         for (parent_id, children) in prefab.data.hierarchy.iter() {
             let Some(new_parent_id) = id_mapping.get_by_left(parent_id) else {
@@ -673,12 +690,28 @@ impl Scene {
             );
             id.id = fresh;
         }
-        let entity = self.world.0.push(());
+        let entity = self.new_entity();
+        self.world.0.push_with_id(entity, ());
         let game_object = self.graph.attach(entity, Some(parent.unwrap_or(self.root)));
         self.transforms.remove(game_object.node);
         self.store.insert(id.id, game_object);
         self.add_component(game_object, id);
         game_object
+    }
+
+    /// Takes an entity no object in the scene holds from the scene's
+    /// allocator. Legion's `push_with_id` replaces whatever entity holds the
+    /// id it is given, so an entity already in the world, which only an
+    /// allocator other than the one that numbered the world hands out, is
+    /// skipped rather than taken over.
+    fn new_entity(&self) -> Entity {
+        loop {
+            let entity = (self.allocate_entity)();
+            if !self.world.contains(entity) {
+                return entity;
+            }
+            log::error!("Skipping entity {entity:?}, which an object in the scene already holds");
+        }
     }
 
     /// Adds a concrete component instance to `game_object`, replacing any
