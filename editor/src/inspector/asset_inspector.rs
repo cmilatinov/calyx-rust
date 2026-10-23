@@ -6,7 +6,8 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssetInspectorAction {
     None,
-    SceneChanged,
+    /// Instantiate the prefab asset into the scene, as one undo step.
+    ImportPrefab(Uuid),
     OpenScene(Uuid),
 }
 
