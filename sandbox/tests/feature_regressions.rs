@@ -1,9 +1,11 @@
 use engine::context::GameContext;
 use engine::math::Transform;
-use engine::scene::Scene;
+use engine::scene::{Scene, SceneHud};
 use engine::test_support::{HeadlessSceneRunner, TestAssets};
-use nalgebra_glm::Vec3;
-use sandbox::tank::{ComponentProjectileTarget, ComponentTankController};
+use engine::ui::{PaintCommand, UiInput, UiPoint, UiRect, UiSize};
+use nalgebra_glm::{vec3, Vec3};
+use sandbox::spawn::ComponentRespawnState;
+use sandbox::tank::{ComponentHealth, ComponentTankController};
 
 /// Sandbox assets over a temporary copy of the asset roots, so loading them
 /// never rewrites tracked `.meta` files. Keep the `TestAssets` alive while the
@@ -93,12 +95,6 @@ fn tank_moves_without_changing_its_authored_scale() {
     assert_eq!(final_transform.scale, initial.scale);
 }
 
-fn hit_count(scene: &Scene, target: engine::scene::GameObject) -> u32 {
-    scene
-        .read_component::<ComponentProjectileTarget, _, _>(target, |target| target.hit_count)
-        .expect("sandbox targets should be projectile targets")
-}
-
 /// Moves `target` onto the tank barrel's firing line, `distance` metres ahead.
 fn place_on_firing_line(scene: &mut Scene, target: engine::scene::GameObject, distance: f32) {
     let tank = object_named(scene, "Tank");
@@ -116,30 +112,130 @@ fn place_on_firing_line(scene: &mut Scene, target: engine::scene::GameObject, di
     scene.set_world_transform(target, target_transform.matrix());
 }
 
+fn current_health(scene: &Scene, object: engine::scene::GameObject) -> f32 {
+    scene
+        .read_component::<ComponentHealth, _, _>(object, |health| health.current_health)
+        .expect("object should have health")
+}
+
+fn find_named(scene: &Scene, name: &str) -> Option<engine::scene::GameObject> {
+    scene
+        .objects()
+        .find(|game_object| scene.name(*game_object) == name)
+}
+
 #[test]
-fn firing_projectiles_hits_targets_without_moving_them() {
+fn player_rounds_damage_targets_until_they_are_destroyed() {
     let (copy, assets) = sandbox_assets();
     let mut scene = load_sandbox_scene(&copy, &assets);
     let aimed_target = object_named(&scene, "Target A");
     // Close enough that the arena's centre cover, whose near face is 7 m
-    // ahead of the spawn and now absorbs rounds, is not in the way.
+    // ahead of the spawn and absorbs rounds, is not in the way.
     place_on_firing_line(&mut scene, aimed_target, 4.0);
-    let target_transforms = ["Target A", "Target B"].map(|name| {
-        let target = object_named(&scene, name);
-        (name, scene.world_transform(target))
-    });
+    let full_health = current_health(&scene, aimed_target);
+    let other_target = object_named(&scene, "Target B");
+    let other_transform = scene.world_transform(other_target);
+    let other_health = current_health(&scene, other_target);
+    let aimed_transform = scene.world_transform(aimed_target);
     let mut runner = HeadlessSceneRunner::from_scene(scene);
 
     runner.press_key(egui::Key::Space);
-    runner.step_many(120);
+    let mut steps = 0;
+    while current_health(runner.scene(), aimed_target) == full_health {
+        runner.step();
+        steps += 1;
+        assert!(
+            steps < 120,
+            "a round should reach the target on the firing line"
+        );
+    }
 
-    let aimed_target = object_named(runner.scene(), "Target A");
-    assert!(
-        hit_count(runner.scene(), aimed_target) > 0,
-        "a projectile should hit the target on the firing line"
+    assert_eq!(
+        current_health(runner.scene(), aimed_target),
+        full_health - ComponentTankController::default().projectile_damage
     );
-    for (name, expected_transform) in target_transforms {
-        let target = object_named(runner.scene(), name);
-        assert_transform_eq(runner.scene().world_transform(target), expected_transform);
+    assert_transform_eq(
+        runner.scene().world_transform(aimed_target),
+        aimed_transform,
+    );
+    assert_eq!(current_health(runner.scene(), other_target), other_health);
+    assert_transform_eq(
+        runner.scene().world_transform(other_target),
+        other_transform,
+    );
+
+    runner.step_many(240);
+    assert!(
+        find_named(runner.scene(), "Target A").is_none(),
+        "a target is removed once its health runs out"
+    );
+}
+
+#[test]
+fn sentry_kills_the_player_tank_which_respawns_after_the_delay() {
+    let (copy, assets) = sandbox_assets();
+    let mut scene = load_sandbox_scene(&copy, &assets);
+    let tank = object_named(&scene, "Tank");
+    let player = object_named(&scene, "Player");
+    let spawn = scene.world_transform(object_named(&scene, "Player Spawn"));
+    let sentry = scene.world_transform(object_named(&scene, "Sentry"));
+    // Ten metres in front of the sentry, in its range and clear of cover.
+    let mut rig = scene.world_transform(player);
+    rig.position = vec3(sentry.position.x, 0.0, sentry.position.z - 10.0);
+    scene.set_world_transform(player, rig.matrix());
+    let mut runner = HeadlessSceneRunner::from_scene(scene);
+
+    let respawn_state = |runner: &HeadlessSceneRunner| {
+        runner
+            .scene()
+            .read_component::<ComponentRespawnState, _, _>(tank, |state| *state)
+            .expect("the tank should have respawn state")
+    };
+    let mut steps = 0;
+    while respawn_state(&runner).alive {
+        runner.step();
+        steps += 1;
+        assert!(steps < 60 * 15, "the sentry should kill the tank");
+    }
+    assert_eq!(current_health(runner.scene(), tank), 0.0);
+    let death_position = runner.scene().world_transform(tank).position;
+
+    // One second before the delay ends the tank still waits where it died.
+    let delay = respawn_state(&runner).respawn_delay;
+    let wait_steps = (delay * 60.0).round() as usize;
+    runner.step_many(wait_steps - 60);
+    assert!(!respawn_state(&runner).alive);
+    assert_eq!(
+        runner.scene().world_transform(tank).position,
+        death_position
+    );
+
+    runner.step_many(61);
+    let state = respawn_state(&runner);
+    assert!(state.alive, "the tank should respawn after the delay");
+    assert!((runner.scene().world_transform(tank).position - spawn.position).magnitude() < 1e-4);
+    assert_eq!(current_health(runner.scene(), tank), 100.0);
+}
+
+#[test]
+fn sandbox_scene_draws_the_tank_hud() {
+    let (copy, assets) = sandbox_assets();
+    let scene = load_sandbox_scene(&copy, &assets);
+    let viewport = UiRect::from_min_size(UiPoint::ZERO, UiSize::new(1280.0, 720.0));
+
+    let frame = SceneHud::default()
+        .frame(&scene, viewport, UiInput::default())
+        .expect("the sandbox scene should draw a HUD");
+
+    let text: Vec<&str> = frame
+        .paint_commands
+        .iter()
+        .filter_map(|command| match command {
+            PaintCommand::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    for expected in ["HULL INTEGRITY", "100/100", "6/6", "READY"] {
+        assert!(text.contains(&expected), "{expected} in {text:?}");
     }
 }

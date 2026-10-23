@@ -96,6 +96,12 @@
         "name": "Target B",
         "visible": true
       },
+      "8f0175f4-1a76-4c43-8932-6462f9005ab4": {
+        "current_health": 70.0,
+        "dead": false,
+        "destroy_on_death": true,
+        "max_health": 70.0
+      },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
         "material": "c35634f8-fdee-c217-bc6b-22ab01eac817",
         "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
@@ -391,6 +397,9 @@
         "destroy_on_death": false,
         "max_health": 100.0
       },
+      "b7f3a8d2-5c41-4e8b-9a6f-0d2e7c1b4f93": {
+        "screen_margin": 28.0
+      },
       "c5b3b71f-1f14-4b5b-9881-436118684d29": {
         "transform": {
           "position": [
@@ -514,6 +523,47 @@
         }
       }
     },
+    "e182d194-5e14-42f5-a9f7-ea133c90aaa7": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "e182d194-5e14-42f5-a9f7-ea133c90aaa7",
+        "name": "Sentry",
+        "visible": true
+      },
+      "3e9d6c1a-7b52-4f08-a4c3-95e1d2b7f604": {
+        "fire_interval": 1.5,
+        "muzzle_offset": 1.2000000476837158,
+        "projectile_damage": 25.0,
+        "projectile_lifetime": 1.5,
+        "projectile_radius": 0.20000000298023224,
+        "projectile_speed": 16.0,
+        "range": 16.0,
+        "target": "a0e5ad62-7bb8-4b12-9160-c2bd84f5d4dd"
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "material": "0b90da62-df89-b912-f547-aeb5b1ca08a1",
+        "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            8.0,
+            0.5,
+            16.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
     "f80c0819-9a7f-5a24-9a56-64f32933b336": {
       "02289c92-3412-406e-a7e5-3bbb15d7041e": {
         "id": "f80c0819-9a7f-5a24-9a56-64f32933b336",
@@ -578,6 +628,12 @@
         "name": "Target A",
         "visible": true
       },
+      "8f0175f4-1a76-4c43-8932-6462f9005ab4": {
+        "current_health": 70.0,
+        "dead": false,
+        "destroy_on_death": true,
+        "max_health": 70.0
+      },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
         "material": "c35634f8-fdee-c217-bc6b-22ab01eac817",
         "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
@@ -634,6 +690,7 @@
     "1d181f5b-1544-4f00-a19e-6ba14c57288a",
     "ff3e62d5-9f0b-4e43-8f42-81744fdc8a91",
     "27b9ce07-f502-4481-a0c4-48c24358596d",
-    "de2a2612-fa64-4fb4-8801-55a27df12564"
+    "de2a2612-fa64-4fb4-8801-55a27df12564",
+    "e182d194-5e14-42f5-a9f7-ea133c90aaa7"
   ]
 }
