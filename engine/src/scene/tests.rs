@@ -2290,6 +2290,83 @@ mod tests {
         assert_eq!(children, REORDERED_CHILDREN.map(String::from).to_vec());
     }
 
+    /// Builds `reordered_scene` with a camera on every top-level object, so
+    /// each saved object holds several components.
+    fn scene_with_cameras(registries: &crate::context::ReadOnlyRegistryContext) -> Scene {
+        let mut scene = reordered_scene(registries);
+        for game_object in scene.root_objects().collect::<Vec<_>>() {
+            scene.add_component(game_object, ComponentCamera::default());
+        }
+        scene
+    }
+
+    #[test]
+    fn saving_a_scene_twice_writes_identical_files() {
+        let registries = crate::test_support::test_registries();
+        let scene = scene_with_cameras(&registries);
+
+        let first = serde_json::to_string_pretty(&scene).unwrap();
+        let second = serde_json::to_string_pretty(&scene).unwrap();
+
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn loading_and_saving_a_scene_writes_an_identical_file() {
+        let registries = crate::test_support::test_registries();
+        let saved = serde_json::to_string_pretty(&scene_with_cameras(&registries)).unwrap();
+
+        let loaded: Scene = (
+            &registries,
+            serde_json::from_str::<SceneData>(&saved).unwrap(),
+        )
+            .into();
+
+        assert_eq!(serde_json::to_string_pretty(&loaded).unwrap(), saved);
+    }
+
+    #[test]
+    fn changing_one_field_changes_only_its_line_in_the_saved_file() {
+        let registries = crate::test_support::test_registries();
+        let mut scene = scene_with_cameras(&registries);
+        let before = serde_json::to_string_pretty(&scene).unwrap();
+        let parent = scene
+            .objects()
+            .find(|go| scene.name(*go) == "Parent")
+            .unwrap();
+
+        scene.write_component::<ComponentCamera, _>(parent, |camera| camera.fov = 12.5);
+        let after = serde_json::to_string_pretty(&scene).unwrap();
+
+        assert_eq!(before.lines().count(), after.lines().count());
+        let changed = before
+            .lines()
+            .zip(after.lines())
+            .filter(|(before, after)| before != after)
+            .collect::<Vec<_>>();
+        assert_eq!(changed.len(), 1, "{changed:#?}");
+        assert_eq!(changed[0].1.trim(), "\"fov\": 12.5,");
+    }
+
+    #[test]
+    fn saving_a_prefab_twice_writes_identical_files() {
+        let registries = crate::test_support::test_registries();
+        let scene = scene_with_cameras(&registries);
+        let parent = scene
+            .objects()
+            .find(|go| scene.name(*go) == "Parent")
+            .unwrap();
+        let prefab = scene.create_prefab(parent);
+
+        let first = serde_json::to_string_pretty(&prefab).unwrap();
+        let loaded: crate::scene::Prefab = serde_json::from_str::<crate::scene::PrefabData>(&first)
+            .unwrap()
+            .into();
+
+        assert_eq!(serde_json::to_string_pretty(&prefab).unwrap(), first);
+        assert_eq!(serde_json::to_string_pretty(&loaded).unwrap(), first);
+    }
+
     #[test]
     fn scene_manager_restores_authoring_scene_snapshot() {
         let mut game = crate::test_support::test_game_context();
