@@ -136,34 +136,46 @@ pub struct ComponentParticleSystem {
     /// Whether particles simulate in emitter-local space.
     pub local_space: bool,
     /// Continuous emission rate in particles per second.
-    #[reflect_attr(min = 0.0, speed = 0.1)]
+    #[reflect_attr(group = "Emission", min = 0.0, speed = 0.1)]
     pub spawn_rate: f32,
     /// One-shot burst count emitted when the system starts.
+    #[reflect_attr(group = "Emission")]
     pub burst_count: u32,
     /// Maximum live particle count.
+    #[reflect_attr(group = "Emission")]
     pub max_particles: u32,
     /// Loop duration for timed emission. `0.0` means unbounded.
-    #[reflect_attr(min = 0.0, speed = 0.1)]
+    #[reflect_attr(group = "Emission", min = 0.0, speed = 0.1)]
     pub emission_duration: f32,
     /// Lifetime range sampled per particle.
+    #[reflect_attr(group = "Emission")]
     pub lifetime: ParticleScalarRange,
     /// Spawn volume for new particles.
+    #[reflect_attr(group = "Motion")]
     pub spawn_shape: ParticleSpawnShape,
     /// Base local-space spawn velocity.
+    #[reflect_attr(group = "Motion")]
     pub initial_velocity: Vec3,
     /// Random velocity variation per axis.
+    #[reflect_attr(group = "Motion")]
     pub velocity_randomness: Vec3,
     /// Constant acceleration applied to particles.
+    #[reflect_attr(group = "Motion")]
     pub acceleration: Vec3,
     /// Size curve over normalized particle lifetime.
+    #[reflect_attr(group = "Appearance")]
     pub size: ParticleSizeCurve,
     /// Color at birth.
+    #[reflect_attr(group = "Appearance")]
     pub start_color: Color32,
     /// Color at death.
+    #[reflect_attr(group = "Appearance")]
     pub end_color: Color32,
     /// Blend mode used by the renderer.
+    #[reflect_attr(group = "Appearance")]
     pub blend_mode: ParticleBlendMode,
     /// Optional texture asset for billboard rendering.
+    #[reflect_attr(group = "Appearance")]
     pub texture: AssetRef<Texture>,
     #[serde(skip)]
     #[reflect_skip]
