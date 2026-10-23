@@ -1277,6 +1277,32 @@ mod tests {
     }
 
     #[test]
+    fn listen_server_host_spawn_reaches_every_client() {
+        let (mut harness, prefab_refs) = setup_spawn_harness("net_relay_host_spawn_test_prefab");
+        let host = harness.host_mut();
+        let host_id = host.resources.network().local_id.unwrap();
+        let scene = host.scenes.current_scene_mut();
+        let spawned = host
+            .resources
+            .network_mut()
+            .instantiate_prefab(scene, prefab_refs[0].clone())
+            .expect("the host failed to spawn the prefab");
+        let network_object_id = host
+            .scenes
+            .current_scene()
+            .read_component::<ComponentNetworkObject, _, _>(spawned, |c| c.id)
+            .unwrap();
+
+        assert!(
+            pump_until(&mut harness, |h| (0..h.client_count()).all(|i| {
+                network_object_owner(h.client(i).scenes.current_scene(), network_object_id)
+                    == Some(host_id)
+            })),
+            "the host's spawn did not reach every client"
+        );
+    }
+
+    #[test]
     fn destroyed_object_leaves_the_index() {
         let (mut scene, go) = scene_with_object(42, 1);
         assert_eq!(scene.find_network_object(42), Some(go));

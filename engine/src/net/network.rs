@@ -257,11 +257,17 @@ impl Network {
             None,
             &mut Some(&mut network_object_ids),
         );
-        if let Err(e) = self.client.send_message(&GameMessage::SpawnPrefab {
+        let message = GameMessage::SpawnPrefab {
             network_object_ids,
             from_client_id: client_id,
             prefab_id: prefab_ref.id(),
-        }) {
+        };
+        // A listen-server host has no connection of its own to send through.
+        let result = match &mut self.server {
+            Some(server) => server.broadcast_message(&message),
+            None => self.client.send_message(&message),
+        };
+        if let Err(e) = result {
             log::warn!("Failed to send SpawnPrefab: {e}");
         }
         Some(prefab_root)
