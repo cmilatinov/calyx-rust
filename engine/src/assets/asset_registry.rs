@@ -1502,7 +1502,7 @@ impl AssetRegistry {
         list.clear();
         let search_term = search_term.to_lowercase();
         // TODO: Case insensitive and word by word filter
-        for (_, meta) in self.asset_data().meta.iter() {
+        for meta in self.asset_data().meta.values() {
             if (asset_type.is_none() || Some(meta.type_uuid) == asset_type)
                 && meta
                     .display_name

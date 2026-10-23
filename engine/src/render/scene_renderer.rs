@@ -1270,9 +1270,12 @@ impl TextureReadback {
         for row in 0..self.height {
             let start = (row * self.padded_bytes_per_row) as usize;
             let end = start + (self.width * Self::BYTES_PER_PIXEL) as usize;
-            for texel in data[start..end].chunks_exact(Self::BYTES_PER_PIXEL as usize) {
-                for (channel, bytes) in texel.chunks_exact(2).enumerate() {
-                    let value = half_to_f32(u16::from_le_bytes([bytes[0], bytes[1]]));
+            for texel in data[start..end]
+                .as_chunks::<{ Self::BYTES_PER_PIXEL as usize }>()
+                .0
+            {
+                for (channel, bytes) in texel.as_chunks::<2>().0.iter().enumerate() {
+                    let value = half_to_f32(u16::from_le_bytes(*bytes));
                     // Alpha is coverage, not color; only color channels are
                     // sRGB-encoded for display.
                     pixels.push(if channel == 3 {

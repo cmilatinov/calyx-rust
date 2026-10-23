@@ -300,7 +300,7 @@ impl<'a> ComponentInspector<'a> {
         trail: &FieldTrail,
     ) -> InspectorResponse {
         let mut response = InspectorResponse::NONE;
-        for (_, field) in info.fields.iter() {
+        for field in info.fields.values() {
             let mut field_ctx = *ctx;
             field_ctx.field_name = Some(field.name);
             if let Some(value) = field.get_reflect_mut(instance.as_reflect_mut()) {

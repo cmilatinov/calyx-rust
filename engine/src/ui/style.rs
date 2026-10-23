@@ -51,20 +51,15 @@ impl UiColor {
 }
 
 /// Length unit used by layout.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "53a35f1e-66be-446c-a1f4-84b7fe3b4b51"]
 #[repr(C)]
 pub enum UiLength {
+    #[default]
     Auto,
     Px(f32),
     Percent(f32),
     Fill,
-}
-
-impl Default for UiLength {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 /// Per-corner radius for rounded backgrounds and borders.
