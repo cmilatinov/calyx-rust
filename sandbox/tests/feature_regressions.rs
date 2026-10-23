@@ -239,3 +239,121 @@ fn sandbox_scene_draws_the_tank_hud() {
         assert!(text.contains(&expected), "{expected} in {text:?}");
     }
 }
+
+/// Yaw in radians of a world rotation, measured from +Z towards +X.
+fn world_yaw(transform: &Transform) -> f32 {
+    let forward = transform.forward();
+    forward.x.atan2(forward.z)
+}
+
+fn angle_between(a: f32, b: f32) -> f32 {
+    let difference = (a - b).rem_euclid(std::f32::consts::TAU);
+    difference.min(std::f32::consts::TAU - difference)
+}
+
+/// Tank position, hull yaw and turret yaw at a moment of a drive.
+#[derive(Debug, Clone, Copy)]
+struct TankPose {
+    time: f32,
+    position: Vec3,
+    hull_yaw: f32,
+    turret_yaw: f32,
+}
+
+/// Drives the sandbox tank through the same input at `fps` frames per
+/// second: forward and right with the cursor fixed off to one side for one
+/// second, then no throttle. Returns the pose at each
+/// checkpoint, in seconds.
+fn drive_at_fps(fps: usize, checkpoints: &[f32]) -> Vec<TankPose> {
+    let (copy, assets) = sandbox_assets();
+    let scene = load_sandbox_scene(&copy, &assets);
+    let tank = object_named(&scene, "Tank");
+    let turret = scene
+        .read_component::<ComponentTankController, _, _>(tank, |controller| {
+            controller.turret.game_object(&scene)
+        })
+        .flatten()
+        .expect("sandbox tank should reference its turret");
+    let mut runner = HeadlessSceneRunner::from_scene(scene);
+    runner.set_step_seconds(1.0 / fps as f64);
+
+    let release_step = fps;
+    let pose = |runner: &HeadlessSceneRunner, step: usize| {
+        let scene = runner.scene();
+        let hull = scene.world_transform(tank);
+        TankPose {
+            time: step as f32 / fps as f32,
+            position: hull.position,
+            hull_yaw: world_yaw(&hull),
+            turret_yaw: world_yaw(&scene.world_transform(turret)),
+        }
+    };
+
+    runner.move_pointer(egui::pos2(1100.0, 150.0));
+    runner.press_key(egui::Key::W);
+    runner.press_key(egui::Key::D);
+    let mut poses = Vec::new();
+    let mut step = 0;
+    for &checkpoint in checkpoints {
+        let checkpoint_step = (checkpoint * fps as f32).round() as usize;
+        while step < checkpoint_step {
+            if step == release_step {
+                runner.release_key(egui::Key::W);
+                runner.release_key(egui::Key::D);
+            }
+            runner.step();
+            step += 1;
+        }
+        poses.push(pose(&runner, step));
+    }
+    poses
+}
+
+#[test]
+fn tank_handling_is_the_same_at_30_and_144_fps() {
+    // Each checkpoint is a whole number of frames at both rates.
+    let checkpoints = [1.0 / 6.0, 0.5, 1.0, 1.5, 2.5, 3.0];
+    let slow = drive_at_fps(30, &checkpoints);
+    let fast = drive_at_fps(144, &checkpoints);
+
+    let mut mismatches = Vec::new();
+    for (slow, fast) in slow.iter().zip(&fast) {
+        let checks = [
+            (
+                "position",
+                (slow.position - fast.position).magnitude(),
+                0.05,
+            ),
+            (
+                "hull yaw",
+                angle_between(slow.hull_yaw, fast.hull_yaw),
+                0.01,
+            ),
+            (
+                "turret yaw",
+                angle_between(slow.turret_yaw, fast.turret_yaw),
+                0.01,
+            ),
+        ];
+        for (name, difference, tolerance) in checks {
+            if difference >= tolerance {
+                mismatches.push(format!(
+                    "{name} differs by {difference} at {}s\n  30 fps: {slow:?}\n  144 fps: {fast:?}",
+                    slow.time
+                ));
+            }
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+
+    // The drive exercises the handling: the hull moved and turned, the turret
+    // turned towards the cursor, and the hull coasted after the throttle.
+    let [first, _, released, coasting, stopped, last] = fast[..] else {
+        unreachable!()
+    };
+    assert!((released.position - first.position).magnitude() > 1.0);
+    assert!(angle_between(released.hull_yaw, first.hull_yaw) > 1.0);
+    assert!(angle_between(first.turret_yaw, first.hull_yaw) > 0.5);
+    assert!((coasting.position - released.position).magnitude() > 0.5);
+    assert!((last.position - stopped.position).magnitude() < 1e-4);
+}
