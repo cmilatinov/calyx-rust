@@ -227,7 +227,7 @@ impl Network {
                     "No network object ids left to spawn prefab {}",
                     prefab_ref.id()
                 );
-                scene.delete(prefab_root);
+                discard_instance(scene, prefab_root, &objects);
                 return None;
             };
             network_object_ids.insert(index, id);
@@ -578,6 +578,19 @@ fn prefab_network_objects(scene: &Scene, root: GameObject) -> Vec<(u32, GameObje
     objects
 }
 
+/// Deletes the prefab instance rooted at `root`, whose network objects are
+/// `objects`.
+///
+/// Deletion waits for the next flush, so the instance first drops its network
+/// objects: the index then forgets the prefab's ids, and no lookup resolves to
+/// the discarded instance meanwhile.
+fn discard_instance(scene: &mut Scene, root: GameObject, objects: &[(u32, GameObject)]) {
+    for (_, game_object) in objects {
+        scene.remove_component::<ComponentNetworkObject>(*game_object);
+    }
+    scene.delete(root);
+}
+
 /// Gives each of `objects` its id from `ids` and `owner_id` as its owner.
 /// An object without an id keeps the one its prefab gave it.
 fn assign_network_ids(
@@ -674,7 +687,7 @@ fn instantiate_spawn(
         let expected: BTreeSet<_> = objects.iter().map(|(index, _)| *index).collect();
         let named: BTreeMap<_, _> = ids.iter().collect();
         if !named.keys().copied().copied().eq(expected.iter().copied()) {
-            scene.delete(prefab_root);
+            discard_instance(scene, prefab_root, &objects);
             return Err(format!(
                 "its ids {named:?} do not name the prefab's network objects {expected:?}"
             ));

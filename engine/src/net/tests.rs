@@ -1692,4 +1692,42 @@ mod tests {
         let distinct: HashSet<_> = ranges.values().flatten().collect();
         assert_eq!(distinct.len(), 3, "two peers share an id range");
     }
+
+    #[test]
+    fn refused_spawn_does_not_shadow_an_existing_id_before_it_is_deleted() {
+        let (mut harness, prefab_refs) = setup_spawn_harness("net_spawn_shadow_test_prefab");
+        let owner_id = harness.client(0).resources.network().local_id.unwrap();
+
+        // An object authored into the host's scene shares the id the prefab
+        // itself carries.
+        let host_scene = harness.host_mut().scenes.current_scene_mut();
+        let authored = host_scene.create(None, None);
+        host_scene.add_component(authored, ComponentNetworkObject { id: 0, owner_id });
+        let objects_before = host_scene.objects().count();
+
+        // No ids: the host instantiates the prefab, then refuses the spawn.
+        // Deletion is deferred, so the refused instance lives until the next
+        // flush, which this loop never runs.
+        send_spawn_from_client(&mut harness, 1, &prefab_refs[2], Default::default());
+        let mut instantiated = false;
+        for _ in 0..400 {
+            harness.pump();
+            if harness.host().scenes.current_scene().objects().count() > objects_before {
+                instantiated = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(instantiated, "the host never handled the spawn");
+
+        assert_eq!(
+            harness
+                .host_mut()
+                .scenes
+                .current_scene_mut()
+                .find_network_object(0),
+            Some(authored),
+            "the refused instance took over the authored object's id"
+        );
+    }
 }
