@@ -1324,6 +1324,29 @@ mod tests {
         assert_eq!(scene.write_version(parent, &prototype), version);
     }
 
+    #[test]
+    fn edit_component_dyn_puts_back_the_component_when_the_editor_panics() {
+        let (mut scene, parent, child) = parent_with_cached_child();
+        let prototype = transform_prototype();
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            scene.edit_component_dyn(parent, &prototype, |instance, _| -> ComponentEdit<()> {
+                instance
+                    .as_reflect_mut()
+                    .downcast_mut::<crate::component::ComponentTransform>()
+                    .expect("instance should be a transform")
+                    .transform
+                    .position = Vec3::new(5.0, 0.0, 0.0);
+                panic!("the editor failed");
+            })
+        }));
+
+        // The component is back as the editor left it, and the scene treats
+        // it as written, since the editor may have changed it.
+        assert!(panicked.is_err());
+        assert_eq!(stored_position(&scene, parent), Vec3::new(5.0, 0.0, 0.0));
+        assert_child_at(&scene, child, Vec3::new(5.0, 1.0, 0.0));
+    }
+
     /// A component type registered without a default.
     #[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
     #[uuid = "3b8e5f1a-6c2d-4f9e-a07b-5d4c1e8f2a93"]

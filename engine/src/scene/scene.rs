@@ -6,6 +6,7 @@ use nalgebra_glm::Mat4;
 use serde::de::DeserializeSeed;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::{HashMap, HashSet};
+use std::panic::{self, AssertUnwindSafe};
 use std::path::Path;
 use uuid::Uuid;
 
@@ -903,7 +904,9 @@ impl Scene {
     /// keeps a placeholder of the same type in its place, the type's
     /// registered default or else a copy of `component`, so `editor` reading
     /// that component through the scene sees the placeholder. The edited
-    /// component is put back before this returns.
+    /// component is put back before this returns, even when `editor` panics;
+    /// the panic then resumes with the component reported as written, since
+    /// `editor` may have changed it.
     pub fn edit_component_dyn<R>(
         &mut self,
         game_object: GameObject,
@@ -912,11 +915,18 @@ impl Scene {
     ) -> Option<R> {
         let placeholder = self.placeholder_instance(component)?;
         let mut instance = self.replace_instance(game_object, component, placeholder)?;
-        let edit = editor(&mut *instance, self);
+        let edit = panic::catch_unwind(AssertUnwindSafe(|| editor(&mut *instance, self)));
         // `editor` only read the scene, so the component is still there to
         // put back.
         let replaced = self.replace_instance(game_object, component, instance);
         debug_assert!(replaced.is_some(), "the edited component was put back");
+        let edit = match edit {
+            Ok(edit) => edit,
+            Err(payload) => {
+                self.component_written(game_object, component.component_type_id());
+                panic::resume_unwind(payload);
+            }
+        };
         if edit.written {
             // A write to the object's ComponentID may have its id put back
             // here; callers that need the written value read it afterwards.
