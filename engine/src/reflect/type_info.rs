@@ -1,5 +1,6 @@
 use crate::reflect::Reflect;
 use crate::utils::TypeUuid;
+use indexmap::IndexMap;
 use std::any::TypeId;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -66,8 +67,8 @@ pub struct StructInfo {
     pub type_id: TypeId,
     /// Attributes attached to the type.
     pub attrs: AttributeMap,
-    /// Named fields keyed by their Rust field name.
-    pub fields: HashMap<&'static str, NamedField>,
+    /// Named fields keyed by their Rust field name, in declaration order.
+    pub fields: IndexMap<&'static str, NamedField>,
 }
 
 impl StructInfo {
@@ -223,6 +224,13 @@ impl NamedField {
     pub fn attr(&self, name: &str) -> Option<AttributeValue> {
         self.attrs.get(name).copied()
     }
+    /// The inspector group named by the field's `group` attribute, if any.
+    pub fn group(&self) -> Option<&'static str> {
+        match self.attr("group") {
+            Some(AttributeValue::String(group)) => Some(group),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -273,6 +281,73 @@ mod tests {
         assert!(info.variant("Unit").is_some());
         assert_eq!(info.variant("Named").unwrap().fields[0].name, Some("value"));
         assert_eq!(info.variant("Tuple").unwrap().fields[0].name, None);
+    }
+
+    #[derive(TypeUuid, Reflect)]
+    #[allow(dead_code)]
+    #[repr(C)]
+    struct ManyFields {
+        zeta: f32,
+        alpha: f32,
+        mid: f32,
+        beta: f32,
+        omega: f32,
+        gamma: f32,
+        #[reflect_skip]
+        skipped: f32,
+        delta: f32,
+        epsilon: f32,
+        kappa: f32,
+        lambda: f32,
+        iota: f32,
+        theta: f32,
+    }
+
+    #[test]
+    fn struct_fields_keep_declaration_order() {
+        let mut reg = TypeRegistry {
+            types: Default::default(),
+            identities: Default::default(),
+        };
+        ManyFields::register(&mut reg);
+        let TypeInfo::Struct(info) = reg.type_info::<ManyFields>().unwrap() else {
+            panic!("expected StructInfo");
+        };
+
+        let names = info.fields.values().map(|f| f.name).collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            [
+                "zeta", "alpha", "mid", "beta", "omega", "gamma", "delta", "epsilon", "kappa",
+                "lambda", "iota", "theta"
+            ]
+        );
+        assert_eq!(info.field("lambda").unwrap().name, "lambda");
+    }
+
+    #[derive(TypeUuid, Reflect)]
+    #[allow(dead_code)]
+    #[repr(C)]
+    struct Grouped {
+        #[reflect_attr(group = "Physics", min = 0.0)]
+        mass: f32,
+        label: f32,
+    }
+
+    #[test]
+    fn group_attribute_names_the_field_group() {
+        let mut reg = TypeRegistry {
+            types: Default::default(),
+            identities: Default::default(),
+        };
+        Grouped::register(&mut reg);
+        let TypeInfo::Struct(info) = reg.type_info::<Grouped>().unwrap() else {
+            panic!("expected StructInfo");
+        };
+
+        assert_eq!(info.field("mass").unwrap().group(), Some("Physics"));
+        assert!(info.field("mass").unwrap().attr("min").is_some());
+        assert_eq!(info.field("label").unwrap().group(), None);
     }
 
     #[test]

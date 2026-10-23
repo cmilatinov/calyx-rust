@@ -139,6 +139,27 @@ impl InspectorHarness {
             .collect()
     }
 
+    /// The non-empty labels of the last frame's widgets, trimmed, top to
+    /// bottom, left to right.
+    pub fn labels(&self) -> Vec<&str> {
+        self.nodes
+            .iter()
+            .filter_map(|node| node.label.as_deref().map(str::trim))
+            .filter(|label| !label.is_empty())
+            .collect()
+    }
+
+    /// The widget of any role whose trimmed label is `label` in the last
+    /// frame.
+    pub fn labelled_any(&self, label: &str) -> Pos2 {
+        self.nodes
+            .iter()
+            .find(|node| node.label.as_deref().map(str::trim) == Some(label))
+            .unwrap_or_else(|| panic!("no widget labelled {label} in {:#?}", self.nodes))
+            .rect
+            .center()
+    }
+
     /// The `index`th widget with `role` in the last frame.
     pub fn widget(&self, role: Role, index: usize) -> Pos2 {
         let widgets = self.widgets(role);

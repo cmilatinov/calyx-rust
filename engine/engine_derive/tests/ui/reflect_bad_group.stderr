@@ -1,0 +1,17 @@
+error: reflect_attr `group` must be a non-empty string, for example group = "Physics"
+ --> tests/ui/reflect_bad_group.rs:4:28
+  |
+4 |     #[reflect_attr(group = 1)]
+  |                            ^
+
+error: reflect_attr `group` must be a non-empty string, for example group = "Physics"
+  --> tests/ui/reflect_bad_group.rs:11:20
+   |
+11 |     #[reflect_attr(group)]
+   |                    ^^^^^
+
+error: reflect_attr `group` must be a non-empty string, for example group = "Physics"
+  --> tests/ui/reflect_bad_group.rs:18:28
+   |
+18 |     #[reflect_attr(group = "")]
+   |                            ^^

@@ -21,6 +21,7 @@ fn reflect_derive() {
     t.compile_fail("tests/ui/reflect_missing_repr_c.rs");
     t.compile_fail("tests/ui/reflect_union.rs");
     t.compile_fail("tests/ui/reflect_bad_attrs.rs");
+    t.compile_fail("tests/ui/reflect_bad_group.rs");
 }
 
 #[test]

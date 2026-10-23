@@ -2,11 +2,12 @@
 //!
 //! A component is drawn under a collapsing header with its type inspector,
 //! or, without one, field by field from its registered type info: nested
-//! structs, lists and the fields' own type inspectors. The header's context
-//! menu offers pinning and removing the component, which the caller applies.
+//! structs, lists and the fields' own type inspectors, with fields that name
+//! a `group` gathered into collapsible sections. The header's context menu
+//! offers removing the component, which the caller applies.
 
 use convert_case::{Case, Casing};
-use egui::{Id, Ui};
+use egui::{Id, RichText, Ui};
 use engine::component::{ComponentID, ComponentTransform};
 use engine::reflect::type_registry::TypeRegistry;
 use engine::reflect::{
@@ -15,6 +16,7 @@ use engine::reflect::{
 };
 use engine::utils::TypeUuid;
 use re_ui::list_item::{LabelContent, ListItem, PropertyContent, ShowCollapsingResponse};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use super::inspector_registry::InspectorRegistry;
@@ -173,6 +175,39 @@ fn element_view(has_inspector: bool, info: Option<&TypeInfo>, is_list: bool) -> 
     }
 }
 
+/// One entry of a struct's field list as the inspector lays it out.
+enum FieldSection<'a> {
+    /// A field outside any group.
+    Field(&'a NamedField),
+    /// A group's fields, in declaration order.
+    Group(&'static str, Vec<&'a NamedField>),
+}
+
+/// Lays out `info`'s fields in declaration order, each group gathered into
+/// one section at the position of its first field.
+fn field_sections(info: &StructInfo) -> Vec<FieldSection<'_>> {
+    let mut sections = Vec::new();
+    let mut groups = HashMap::new();
+    for field in info.fields.values() {
+        let Some(group) = field.group() else {
+            sections.push(FieldSection::Field(field));
+            continue;
+        };
+        match groups.get(group) {
+            Some(&index) => {
+                if let FieldSection::Group(_, fields) = &mut sections[index] {
+                    fields.push(field);
+                }
+            }
+            None => {
+                groups.insert(group, sections.len());
+                sections.push(FieldSection::Group(group, vec![field]));
+            }
+        }
+    }
+    sections
+}
+
 /// One frame of a component drawn by [`ComponentInspector::show`].
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct ComponentResponse {
@@ -300,14 +335,59 @@ impl<'a> ComponentInspector<'a> {
         trail: &FieldTrail,
     ) -> InspectorResponse {
         let mut response = InspectorResponse::NONE;
-        for field in info.fields.values() {
-            let mut field_ctx = *ctx;
-            field_ctx.field_name = Some(field.name);
-            if let Some(value) = field.get_reflect_mut(instance.as_reflect_mut()) {
-                response |= self.show_field(ui, &field_ctx, field, value, &trail.child(field.name));
+        for section in field_sections(info) {
+            match section {
+                FieldSection::Field(field) => {
+                    response |= self.show_named_field(ui, ctx, instance, field, trail);
+                }
+                FieldSection::Group(group, fields) => {
+                    let id = trail.id().with(("group", group));
+                    let header = ListItem::new()
+                        .interactive(true)
+                        .show_hierarchical_with_children(
+                            ui,
+                            id,
+                            true,
+                            LabelContent::new(RichText::new(group).strong()),
+                            |ui| {
+                                for field in fields {
+                                    response |=
+                                        self.show_named_field(ui, ctx, instance, field, trail);
+                                }
+                            },
+                        )
+                        .item_response;
+                    // The whole header row toggles the section, as a
+                    // component's header does.
+                    if header.clicked() {
+                        if let Some(mut state) =
+                            egui::collapsing_header::CollapsingState::load(ui.ctx(), id)
+                        {
+                            state.toggle(ui);
+                            state.store(ui.ctx());
+                        }
+                    }
+                }
             }
         }
         response
+    }
+
+    /// Draws `field` of `instance`, which `ctx` describes.
+    fn show_named_field(
+        &self,
+        ui: &mut Ui,
+        ctx: &InspectorContext,
+        instance: &mut dyn Reflect,
+        field: &NamedField,
+        trail: &FieldTrail,
+    ) -> InspectorResponse {
+        let mut field_ctx = *ctx;
+        field_ctx.field_name = Some(field.name);
+        match field.get_reflect_mut(instance.as_reflect_mut()) {
+            Some(value) => self.show_field(ui, &field_ctx, field, value, &trail.child(field.name)),
+            None => InspectorResponse::NONE,
+        }
     }
 
     fn show_field(
@@ -599,6 +679,28 @@ mod tests {
         values: Vec<f32>,
     }
 
+    #[derive(Default, TypeUuid, Reflect)]
+    #[uuid = "4b0c8e1d-2f7a-4c39-9e65-a1d3b7f02c58"]
+    #[repr(C)]
+    struct GroupedHolder {
+        first: bool,
+        #[reflect_attr(group = "Physics")]
+        mass: bool,
+        middle: bool,
+        #[reflect_attr(group = "Render")]
+        color: bool,
+        #[reflect_attr(group = "Physics")]
+        drag: bool,
+        last: bool,
+    }
+
+    #[derive(Default, TypeUuid, Reflect)]
+    #[uuid = "9e2d5c47-0a6b-4f18-b3c2-6d84e1f7a093"]
+    #[repr(C)]
+    struct NestedGroups {
+        inner: GroupedHolder,
+    }
+
     fn values_info(registry: &TypeRegistry) -> &ListInfo {
         let Some(TypeInfo::List(info)) = registry.type_info::<Vec<f32>>() else {
             panic!("expected list info for Vec<f32>");
@@ -825,6 +927,61 @@ mod tests {
         assert_eq!(element_view(true, None, false), ElementView::Inline);
         assert_eq!(element_view(false, holder, false), ElementView::Struct);
         assert_eq!(element_view(false, None, false), ElementView::Label);
+    }
+
+    #[test]
+    fn grouped_fields_render_in_collapsible_sections() {
+        let mut h = InspectorHarness::new();
+        h.type_info = GroupedHolder::type_uuid();
+        let registry = h.inspector_registry();
+        let inspector = ComponentInspector::new(&registry);
+        let mut holder = GroupedHolder::default();
+        let mut draw = |ui: &mut Ui, ctx: &InspectorContext| {
+            inspector.show_fields(
+                ui,
+                ctx,
+                holder.as_reflect_mut(),
+                &FieldTrail::root(Id::new("grouped_holder")),
+            )
+        };
+
+        h.idle(3, &mut draw);
+        // Each group sits at its first field, ungrouped fields where declared.
+        assert_eq!(
+            h.labels(),
+            ["First", "Physics", "Mass", "Drag", "Middle", "Render", "Color", "Last"]
+        );
+
+        let physics = h.labelled_any("Physics");
+        h.click(physics, &mut draw);
+        h.idle(10, &mut draw);
+        assert_eq!(
+            h.labels(),
+            ["First", "Physics", "Middle", "Render", "Color", "Last"]
+        );
+    }
+
+    #[test]
+    fn nested_struct_fields_render_their_groups() {
+        let mut h = InspectorHarness::new();
+        h.type_info = NestedGroups::type_uuid();
+        let registry = h.inspector_registry();
+        let inspector = ComponentInspector::new(&registry);
+        let mut nested = NestedGroups::default();
+        let mut draw = |ui: &mut Ui, ctx: &InspectorContext| {
+            inspector.show_fields(
+                ui,
+                ctx,
+                nested.as_reflect_mut(),
+                &FieldTrail::root(Id::new("nested_groups")),
+            )
+        };
+
+        h.idle(3, &mut draw);
+        assert_eq!(
+            h.labels(),
+            ["Inner", "First", "Physics", "Mass", "Drag", "Middle", "Render", "Color", "Last"]
+        );
     }
 
     #[test]

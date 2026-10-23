@@ -168,7 +168,11 @@ fn struct_type_info(
                 .iter()
                 .find(|attr| attr.path().is_ident("reflect_attr"))
             {
-                Some(attr) => attribute_map(&reflect_attributes(attr)?),
+                Some(attr) => {
+                    let attrs = reflect_attributes(attr)?;
+                    check_group(&attrs)?;
+                    attribute_map(&attrs)
+                }
                 None => quote! { [].into() },
             };
             if field
@@ -278,6 +282,25 @@ fn enum_variant_fields(fields: &Fields) -> Vec<proc_macro2::TokenStream> {
             }
         })
         .collect()
+}
+
+/// Requires a field's `group` attribute to name its inspector group with a
+/// non-empty string.
+fn check_group(attrs: &[ReflectAttribute]) -> darling::Result<()> {
+    let Some(group) = attrs.iter().find(|attr| attr.name == "group") else {
+        return Ok(());
+    };
+    match &group.value {
+        Some(Lit::Str(name)) if !name.value().is_empty() => Ok(()),
+        Some(lit) => Err(group_error().with_span(lit)),
+        None => Err(group_error().with_span(&group.name)),
+    }
+}
+
+fn group_error() -> darling::Error {
+    darling::Error::custom(
+        "reflect_attr `group` must be a non-empty string, for example group = \"Physics\"",
+    )
 }
 
 fn reflect_attributes(attr: &Attribute) -> darling::Result<Vec<ReflectAttribute>> {
