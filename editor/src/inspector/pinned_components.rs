@@ -6,6 +6,7 @@
 //! Game Object then Transform are pinned. The list is read once, when the
 //! project loads, and each pin edit writes it back.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use engine::component::{ComponentID, ComponentTransform};
@@ -136,6 +137,10 @@ impl PinnedComponents {
                 })
                 .collect()
         });
+        // A type listed twice shows once, at its first entry; drop the rest
+        // so a move reorders the entry that decides where it shows.
+        let mut seen = HashSet::new();
+        entries.retain(|entry| seen.insert(entry.uuid));
         let position = |entries: &[PinnedComponent], uuid: Uuid| {
             entries.iter().position(|entry| entry.uuid == uuid)
         };
@@ -460,6 +465,41 @@ mod tests {
                 (unknown, "Removed Component"),
                 (ComponentPointLight::type_uuid(), "Point Light"),
             ]))
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn edits_drop_duplicate_entries() {
+        let dir = project_dir(
+            "duplicates",
+            &pins_manifest(&[
+                (ComponentCamera::type_uuid(), "Camera"),
+                (ComponentCamera::type_uuid(), "Camera"),
+                (ComponentMesh::type_uuid(), "Mesh Renderer"),
+            ]),
+        );
+        let registry = TypeRegistry::new();
+        let mut pins = PinnedComponents::load(&dir);
+        let shown = pins.order(components());
+
+        pins.edit(
+            &registry,
+            ComponentCamera::type_uuid(),
+            PinEdit::MoveDown,
+            &shown,
+        );
+
+        assert_eq!(
+            saved(&dir),
+            Some(named(&[
+                (ComponentMesh::type_uuid(), "Mesh Renderer"),
+                (ComponentCamera::type_uuid(), "Camera"),
+            ]))
+        );
+        assert_eq!(
+            &pins.order(components())[..2],
+            &[ComponentMesh::type_uuid(), ComponentCamera::type_uuid()]
         );
         fs::remove_dir_all(dir).unwrap();
     }
