@@ -7,6 +7,7 @@ use crate::reflect::{
     AttributeMap, FieldGetterMut, Reflect, ReflectDefault, ReflectedType, TraitMetaFrom,
 };
 use crate::utils::TypeUuid;
+use indexmap::IndexMap;
 use inventory::collect;
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -244,7 +245,7 @@ impl TypeRegistry {
             type_name: std::any::type_name::<T>(),
             type_id: TypeId::of::<T>(),
             attrs,
-            fields: HashMap::new(),
+            fields: IndexMap::new(),
         }));
         let registration = self.types.get_mut(&type_uuid).unwrap();
         if let TypeInfo::Struct(ref mut type_info) = registration.type_info {

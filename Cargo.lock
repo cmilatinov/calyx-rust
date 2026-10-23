@@ -2202,6 +2202,7 @@ dependencies = [
  "glob",
  "gltf",
  "image",
+ "indexmap 2.13.0",
  "inventory",
  "legion",
  "lerp",

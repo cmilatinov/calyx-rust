@@ -37,6 +37,7 @@ relative-path.workspace = true
 path-absolutize.workspace = true
 rusty_pool.workspace = true
 image.workspace = true
+indexmap.workspace = true
 naga.workspace = true
 downcast-rs.workspace = true
 mint.workspace = true

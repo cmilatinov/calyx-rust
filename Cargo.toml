@@ -59,6 +59,7 @@ relative-path = "2.0.1"
 path-absolutize = "3.1.1"
 rusty_pool = "0.7.0"
 image = "0.25.1"
+indexmap = "2"
 naga = { version = "25.0.1", features = ["wgsl-in"] }
 toml = "0.9.4"
 tinytemplate = "1.2.1"
