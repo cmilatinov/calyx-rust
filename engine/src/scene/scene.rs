@@ -50,8 +50,11 @@ pub struct SceneData {
     /// Component payloads keyed by game object UUID and then component type
     /// UUID.
     pub components: HashMap<Uuid, HashMap<Uuid, serde_json::Value>>,
-    /// Parent-child relationships keyed by parent UUID.
+    /// Each parent's children in sibling order, keyed by parent UUID.
     pub hierarchy: HashMap<Uuid, Vec<Uuid>>,
+    /// Top-level objects in sibling order: the root's children for a whole
+    /// scene, or the subtree's own root for a subtree.
+    pub roots: Vec<Uuid>,
 }
 
 /// Detached snapshot of a scene that can be restored later against a registry
@@ -293,6 +296,20 @@ impl From<(&ReadOnlyRegistryContext, SceneData)> for Scene {
                 }
             }
         }
+        // Each object was spawned under the root, so moving the top-level
+        // ones to the end of the root's children in turn puts them in their
+        // stored order.
+        for root_id in value.roots {
+            let Some(game_object) = scene.find(root_id) else {
+                continue;
+            };
+            if scene.parent(game_object) != Some(scene.root) {
+                continue;
+            }
+            if let Err(err) = scene.set_parent(game_object, None) {
+                log::warn!("Skipping invalid scene root entry: {err}");
+            }
+        }
         scene
     }
 }
@@ -305,28 +322,28 @@ impl From<(&ReadOnlyAssetContext, SceneData)> for Scene {
 
 impl From<&Scene> for SceneData {
     fn from(scene: &Scene) -> Self {
-        let world = scene.world();
-        let mut query = <(Entity, &ComponentID)>::query();
-        let mut data = Default::default();
-        for (entity, id) in query.iter(world) {
-            let Some(game_object) = scene.game_object_from_entity(*entity) else {
-                continue;
-            };
-            // The root belongs to the scene instance, not to its content: a
-            // loaded scene creates its own.
-            if game_object == scene.root {
-                continue;
-            }
-            scene.serialize_game_object(game_object, id.id, &mut data);
+        let mut data = SceneData::default();
+        // Walking the graph in sibling order records each parent's children
+        // in that order. The root belongs to the scene instance, not to its
+        // content: a loaded scene creates its own.
+        for game_object in scene.graph.descendants_ordered(scene.root).skip(1) {
+            scene.serialize_game_object(game_object, scene.uuid(game_object), &mut data);
         }
+        data.roots = scene
+            .children_ordered(scene.root)
+            .map(|game_object| scene.uuid(game_object))
+            .collect();
         data
     }
 }
 
 impl From<(&Scene, GameObject)> for SceneData {
     fn from((scene, game_object): (&Scene, GameObject)) -> Self {
-        let mut data = Default::default();
-        let game_objects: Vec<GameObject> = scene.graph.descendants(game_object).collect();
+        let mut data = SceneData {
+            roots: vec![scene.uuid(game_object)],
+            ..Default::default()
+        };
+        let game_objects: Vec<GameObject> = scene.graph.descendants_ordered(game_object).collect();
         let subtree = game_objects.iter().copied().collect::<HashSet<_>>();
         game_objects.into_iter().for_each(|game_object| {
             let id = scene.uuid(game_object);

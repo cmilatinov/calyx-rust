@@ -215,8 +215,11 @@ impl Prefab {
         meshes: &[Ref<Mesh>],
         root: &ImportedNode,
     ) -> Result<(SceneData, Uuid), AssetError> {
-        let mut data = SceneData::default();
         let root_id = utils::uuid_from_str(&root.name);
+        let mut data = SceneData {
+            roots: vec![root_id],
+            ..Default::default()
+        };
         Self::traverse(
             registry, bones, meshes, root_id, root, &root.name, None, &mut data,
         )?;

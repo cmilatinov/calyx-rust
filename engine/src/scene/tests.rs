@@ -2175,6 +2175,121 @@ mod tests {
         assert_eq!(restored.parent(restored_child), Some(restored_parent));
     }
 
+    /// Builds a scene whose top-level objects and the children of "Parent"
+    /// sit in an order other than their creation order: `REORDERED_TOP` and
+    /// `REORDERED_CHILDREN`.
+    fn reordered_scene(registries: &crate::context::ReadOnlyRegistryContext) -> Scene {
+        let mut scene = registries.scene();
+        let named = |name: String| {
+            Some(ComponentID {
+                name,
+                ..Default::default()
+            })
+        };
+        let top = (0..6)
+            .map(|i| scene.create(named(format!("Top {i}")), None))
+            .collect::<Vec<_>>();
+        let parent = top[2];
+        scene.write_component::<ComponentID, _>(parent, |id| id.name = "Parent".into());
+        let children = (0..5)
+            .map(|i| scene.create(named(format!("Child {i}")), Some(parent)))
+            .collect::<Vec<_>>();
+        for i in [3, 0, 5, 2, 4, 1] {
+            scene.set_parent(top[i], None).unwrap();
+        }
+        scene
+            .set_parent_with_sibling(
+                children[4],
+                Some(parent),
+                Some((children[0], SiblingDir::Before)),
+            )
+            .unwrap();
+        scene
+            .set_parent_with_sibling(
+                children[1],
+                Some(parent),
+                Some((children[3], SiblingDir::After)),
+            )
+            .unwrap();
+        scene
+    }
+
+    const REORDERED_TOP: [&str; 6] = ["Top 3", "Top 0", "Top 5", "Parent", "Top 4", "Top 1"];
+    const REORDERED_CHILDREN: [&str; 5] = ["Child 4", "Child 0", "Child 2", "Child 3", "Child 1"];
+
+    /// Names of the top-level objects, and of the children of "Parent", in
+    /// sibling order.
+    fn sibling_names(scene: &Scene) -> (Vec<String>, Vec<String>) {
+        let top = scene
+            .root_objects()
+            .map(|go| scene.name(go))
+            .collect::<Vec<_>>();
+        let parent = scene
+            .objects()
+            .find(|go| scene.name(*go) == "Parent")
+            .expect("missing parent");
+        let children = scene
+            .children_ordered(parent)
+            .map(|go| scene.name(go))
+            .collect();
+        (top, children)
+    }
+
+    #[test]
+    fn snapshot_restore_keeps_sibling_order() {
+        let registries = crate::test_support::test_registries();
+        let scene = reordered_scene(&registries);
+        assert_eq!(
+            sibling_names(&scene),
+            (
+                REORDERED_TOP.map(String::from).to_vec(),
+                REORDERED_CHILDREN.map(String::from).to_vec()
+            )
+        );
+
+        let restored = scene.restore_snapshot(scene.snapshot());
+
+        assert_eq!(sibling_names(&restored), sibling_names(&scene));
+    }
+
+    #[test]
+    fn save_and_load_keep_sibling_order() {
+        let registries = crate::test_support::test_registries();
+        let scene = reordered_scene(&registries);
+
+        let saved = serde_json::to_string(&scene).unwrap();
+        let loaded: Scene = (
+            &registries,
+            serde_json::from_str::<SceneData>(&saved).unwrap(),
+        )
+            .into();
+
+        assert_eq!(sibling_names(&loaded), sibling_names(&scene));
+    }
+
+    #[test]
+    fn prefab_instantiation_keeps_sibling_order() {
+        let registries = crate::test_support::test_registries();
+        let mut scene = reordered_scene(&registries);
+        let parent = scene
+            .objects()
+            .find(|go| scene.name(*go) == "Parent")
+            .unwrap();
+        let prefab = scene.create_prefab(parent);
+        let saved = serde_json::to_string(&prefab).unwrap();
+        let loaded: crate::scene::Prefab = serde_json::from_str::<crate::scene::PrefabData>(&saved)
+            .unwrap()
+            .into();
+
+        let instance = scene.instantiate_prefab(&loaded, None).unwrap();
+
+        let children = scene
+            .children_ordered(instance)
+            .map(|go| scene.name(go))
+            .collect::<Vec<_>>();
+        assert_eq!(children, REORDERED_CHILDREN.map(String::from).to_vec());
+    }
+
     #[test]
     fn scene_manager_restores_authoring_scene_snapshot() {
         let mut game = crate::test_support::test_game_context();
