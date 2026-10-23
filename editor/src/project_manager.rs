@@ -167,17 +167,14 @@ impl ProjectManager {
             self.refresh_assembly_status();
             return false;
         }
-        match std::env::current_exe() {
-            Ok(editor) if predates(&source, &editor) => {
-                log::info!(
-                    "Project assembly {} is older than the editor, so it may be built against \
-                     another engine; rebuilding it instead of loading it",
-                    source.display()
-                );
-                self.refresh_assembly_status();
-                return false;
-            }
-            _ => {}
+        if predates_editor(&source) {
+            log::info!(
+                "Project assembly {} is older than the editor, so it may be built against \
+                 another engine; rebuilding it instead of loading it",
+                source.display()
+            );
+            self.refresh_assembly_status();
+            return false;
         }
         log::info!("Loading existing project assembly: {}", source.display());
         self.load_assembly(&source)
@@ -373,7 +370,8 @@ impl AssemblyBuildQueue {
     /// Returns the library to load for the next finished build, if any.
     ///
     /// A failed build keeps the loaded assembly, and only falls back to the
-    /// previous library when nothing is loaded yet.
+    /// previous library when nothing is loaded yet and that library is not
+    /// older than the editor.
     fn next_load(&self, assembly_loaded: bool) -> Option<AssemblyLoad> {
         let outcome = self
             .receiver
@@ -384,6 +382,14 @@ impl AssemblyBuildQueue {
         match outcome {
             AssemblyBuildOutcome::Built(target) => Some(AssemblyLoad::Snapshot(target)),
             AssemblyBuildOutcome::Failed(source) if !assembly_loaded && source.exists() => {
+                if predates_editor(&source) {
+                    log::error!(
+                        "Project assembly build failed and {} is older than the editor, so it \
+                         may be built against another engine; leaving it unloaded",
+                        source.display()
+                    );
+                    return None;
+                }
                 log::warn!(
                     "Loading existing project assembly after failed build: {}",
                     source.display()
@@ -814,6 +820,11 @@ fn predates(assembly: &Path, editor: &Path) -> bool {
         (Some(assembly), Some(editor)) => assembly < editor,
         _ => false,
     }
+}
+
+/// Whether `assembly` [`predates`] the running editor executable.
+fn predates_editor(assembly: &Path) -> bool {
+    std::env::current_exe().is_ok_and(|editor| predates(assembly, &editor))
 }
 
 /// Records that a successful build checked `assembly` against `editor`'s
@@ -1316,6 +1327,33 @@ mod tests {
         queue
             .reporter()
             .send(AssemblyBuildOutcome::Failed(root.join("missing.dll")))
+            .unwrap();
+        assert_eq!(queue.next_load(false), None);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_build_never_falls_back_to_an_assembly_older_than_the_editor() {
+        let root = std::env::temp_dir().join(format!(
+            "calyx-assembly-failed-stale-build-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let stale = root.join(engine::utils::lib_file_name("sandbox"));
+        fs::write(&stale, b"sandbox").unwrap();
+        // Older than the running test binary, which stands in for the editor.
+        fs::File::options()
+            .write(true)
+            .open(&stale)
+            .unwrap()
+            .set_modified(UNIX_EPOCH + Duration::from_secs(1))
+            .unwrap();
+        let queue = AssemblyBuildQueue::new();
+
+        queue
+            .reporter()
+            .send(AssemblyBuildOutcome::Failed(stale))
             .unwrap();
         assert_eq!(queue.next_load(false), None);
 
