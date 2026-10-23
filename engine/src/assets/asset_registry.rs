@@ -1484,10 +1484,41 @@ impl AssetRegistry {
         Ok(meta)
     }
 
+    /// Writes `meta` to `meta_path`, leaving the file untouched when it
+    /// already holds the same content in either line-ending style. A changed
+    /// file keeps the line endings it had, so a checkout's CRLF files (git's
+    /// `core.autocrlf`) stay CRLF and only the changed lines differ.
     fn write_meta_file(&self, meta_path: &Path, meta: &AssetMetaData) -> Result<(), BoxedError> {
-        let file = File::create(meta_path).map_err(Box::new)?;
-        let writer = BufWriter::new(file);
-        Ok(serde_json::to_writer_pretty(writer, meta).map_err(Box::new)?)
+        let content = serde_json::to_string_pretty(meta).map_err(Box::new)?;
+        let existing = std::fs::read(meta_path).ok();
+        let crlf = match existing.as_deref() {
+            Some(existing) => {
+                if Self::normalize_line_endings(existing) == content.as_bytes() {
+                    return Ok(());
+                }
+                existing.windows(2).any(|pair| pair == b"\r\n")
+            }
+            None => false,
+        };
+        let content = if crlf {
+            content.replace('\n', "\r\n")
+        } else {
+            content
+        };
+        std::fs::write(meta_path, content).map_err(Box::new)?;
+        Ok(())
+    }
+
+    fn normalize_line_endings(bytes: &[u8]) -> Vec<u8> {
+        let mut normalized = Vec::with_capacity(bytes.len());
+        let mut iter = bytes.iter().peekable();
+        while let Some(&byte) = iter.next() {
+            if byte == b'\r' && iter.peek() == Some(&&b'\n') {
+                continue;
+            }
+            normalized.push(byte);
+        }
+        normalized
     }
 }
 
@@ -2508,6 +2539,66 @@ mod tests {
             .values()
             .all(|meta| meta.parent != Some(id)));
         assert!(!root.join("gated.meta").exists());
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn current_meta_files_keep_their_bytes_across_build_and_load() {
+        let root = temp_asset_root("calyx-current-meta-bytes");
+        let asset_path = root.join("plain.cxtestgated");
+        let meta_path = root.join("plain.meta");
+        std::fs::write(&asset_path, "plain").expect("failed to write test asset");
+        // A first session creates the metadata, sub-asset included.
+        {
+            let registries = test_registries_with_assets(vec![root.clone()]);
+            let registry = registries.assets.read();
+            registry.register_asset_type::<GatedTestAsset>();
+            registry.build_meta().expect("failed to rebuild metadata");
+            registry
+                .load_by_path::<GatedTestAsset>(&asset_path)
+                .expect("test asset should load");
+        }
+        // A Windows checkout with `core.autocrlf=true` has CRLF line endings.
+        let written = std::fs::read_to_string(&meta_path).expect("failed to read test meta");
+        assert!(
+            written.contains("Child"),
+            "the meta should list the sub-asset"
+        );
+        let checked_out = written.replace("\r\n", "\n").replace('\n', "\r\n");
+        std::fs::write(&meta_path, &checked_out).expect("failed to write test meta");
+
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        registry.register_asset_type::<GatedTestAsset>();
+        registry.build_meta().expect("failed to rebuild metadata");
+        registry
+            .load_by_path::<GatedTestAsset>(&asset_path)
+            .expect("test asset should load");
+
+        assert_eq!(
+            std::fs::read_to_string(&meta_path).expect("failed to read test meta"),
+            checked_out,
+            "unchanged metadata must not be rewritten"
+        );
+        drop(registry);
+        drop(registries);
+
+        // A real change keeps the file's line endings, so only changed lines differ.
+        let stale = checked_out.replace("\"name\": \"plain\"", "\"name\": \"stale\"");
+        std::fs::write(&meta_path, &stale).expect("failed to write test meta");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        registry.register_asset_type::<GatedTestAsset>();
+        registry.build_meta().expect("failed to rebuild metadata");
+        registry
+            .load_by_path::<GatedTestAsset>(&asset_path)
+            .expect("test asset should load");
+        assert_eq!(
+            std::fs::read_to_string(&meta_path).expect("failed to read test meta"),
+            checked_out,
+            "changed metadata should be rewritten with the file's line endings"
+        );
         drop(registry);
         std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
