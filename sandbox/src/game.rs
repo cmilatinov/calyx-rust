@@ -65,11 +65,7 @@ impl GameApp {
             game,
             renderer: SceneRenderer::new(
                 &assets.lock_read(),
-                SceneRendererOptions {
-                    samples: 8,
-                    grid: true,
-                    ..Default::default()
-                },
+                renderer_options(),
                 initial_render_size(&cc.egui_ctx),
             )?,
             hud: SceneHud::default(),
@@ -179,6 +175,15 @@ impl eframe::App for GameApp {
     }
 }
 
+/// How the player renders the scene: like the editor's Game panel, without
+/// the editor grid.
+fn renderer_options() -> SceneRendererOptions {
+    SceneRendererOptions {
+        samples: 8,
+        ..Default::default()
+    }
+}
+
 /// Storage id the player's window and egui state persist under.
 const PLAYER_APP_ID: &str = "calyx-player";
 
@@ -222,7 +227,14 @@ fn main() -> eframe::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{native_options, project_directory, ProjectRuntimeSettings};
+    use super::{native_options, project_directory, renderer_options, ProjectRuntimeSettings};
+
+    #[test]
+    fn player_renders_without_the_editor_grid_or_gizmos() {
+        let options = renderer_options();
+        assert!(!options.grid);
+        assert!(!options.gizmos);
+    }
 
     #[test]
     fn player_reads_startup_scene_and_window_from_sandbox_project() {

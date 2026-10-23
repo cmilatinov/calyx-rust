@@ -1540,6 +1540,43 @@ mod tests {
     }
 
     #[test]
+    fn projectile_expires_after_its_lifetime_in_open_space() {
+        let mut scene = engine::test_support::test_scene();
+        let projectile = scene.create(None, None);
+        scene.add_component(
+            projectile,
+            ComponentProjectile {
+                direction: vec3(0.0, 0.0, 1.0),
+                speed: 10.0,
+                damage: 25.0,
+                lifetime_remaining: 0.5,
+                radius: 0.1,
+            },
+        );
+        scene.prepare();
+
+        update_projectile(&mut scene, projectile, 0.2);
+        scene.flush_deletes();
+        let remaining = scene
+            .read_component::<ComponentProjectile, _, _>(projectile, |component| {
+                component.lifetime_remaining
+            })
+            .expect("the round outlives its first update");
+        assert!((remaining - 0.3).abs() < 1e-5, "remaining {remaining}");
+        let position = scene.world_transform(projectile).position;
+        assert!((position.z - 2.0).abs() < 1e-5, "position {position:?}");
+
+        update_projectile(&mut scene, projectile, 0.2);
+        scene.flush_deletes();
+        assert!(scene.objects().any(|object| object == projectile));
+
+        // The last update covers only the 0.1 s left, then removes the round.
+        update_projectile(&mut scene, projectile, 0.2);
+        scene.flush_deletes();
+        assert!(!scene.objects().any(|object| object == projectile));
+    }
+
+    #[test]
     fn lethal_projectile_hit_marks_health_dead_and_can_destroy_target() {
         let mut scene = engine::test_support::test_scene();
         let projectile = scene.create(None, None);
