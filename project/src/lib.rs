@@ -14,16 +14,16 @@ use uuid::Uuid;
 pub struct Project {
     name: String,
     creation_date: String,
+    /// The scene play starts in, relative to the project root; read by
+    /// [`engine::runtime::ProjectRuntimeSettings`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    startup_scene: Option<PathBuf>,
     /// Written with its defaults so new projects show the runtime settings
     /// [`engine::runtime::ProjectRuntimeSettings`] reads back.
     #[serde(default)]
     runtime: RuntimeSettings,
     #[serde(default, skip_serializing_if = "InspectorSettings::is_empty")]
     inspector: InspectorSettings,
-    /// Settings this struct does not model, such as `startup_scene`, kept so
-    /// [`Self::save`] writes them back.
-    #[serde(flatten)]
-    other: toml::Table,
     #[serde(skip)]
     root_directory: PathBuf,
 }
@@ -78,9 +78,9 @@ impl Project {
         let project = Project {
             name,
             creation_date: Utc::now().to_rfc3339(),
+            startup_scene: None,
             runtime: RuntimeSettings::default(),
             inspector: InspectorSettings::default(),
-            other: toml::Table::new(),
             root_directory: project_directory,
         };
 
@@ -252,7 +252,7 @@ mod tests {
     }
 
     #[test]
-    fn pinned_list_round_trips_and_keeps_other_settings() {
+    fn pinned_list_round_trips_and_keeps_the_startup_scene() {
         let dir = project_dir("round-trip", MANIFEST);
         let transform = Uuid::from_u128(2);
         let mut project = Project::load(dir.clone()).unwrap();
