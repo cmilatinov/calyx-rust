@@ -135,13 +135,16 @@ impl PanelInspector {
         // baselines there.
         let track_edits = state.scene_document.track_inspector_edits(&state.game);
         let pointer_down = ui.input(|input| input.pointer.any_down());
+        // Read before the component registry is locked below, which this
+        // reads too.
+        let component_types = Self::component_type_uuids(state, game_object);
         let type_registry_ref = state.game.assets.registries.types.clone();
         let type_registry = type_registry_ref.read();
         let component_registry_ref = state.game.assets.registries.components.clone();
         let component_registry = component_registry_ref.read();
         let inspector = ComponentInspector::new(&state.inspector_registry);
         let order = state.pinned_components.order(
-            Self::component_type_uuids(state, game_object)
+            component_types
                 .into_iter()
                 .filter_map(|uuid| Some((uuid, type_display_name(&type_registry, uuid)?))),
         );
