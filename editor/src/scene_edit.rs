@@ -122,7 +122,7 @@ mod tests {
     #[test]
     fn cancel_records_nothing() {
         let mut game = test_game_context();
-        let mut document = document();
+        let document = document();
 
         let mut edit = SceneEdit::begin("Add object");
         edit.scene_mut(&mut game).create(None, None);
