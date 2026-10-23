@@ -1347,6 +1347,22 @@ mod tests {
         assert_child_at(&scene, child, Vec3::new(5.0, 1.0, 0.0));
     }
 
+    #[test]
+    fn world_transforms_read_during_an_edit_are_not_kept() {
+        let (mut scene, parent, child) = parent_with_cached_child();
+        // Dirties the child's cached world transform without reading it.
+        scene.set_transform(parent, &glm::translation(&Vec3::new(2.0, 0.0, 0.0)));
+        let prototype = transform_prototype();
+        scene
+            .edit_component_dyn(parent, &prototype, |_, scene| ComponentEdit {
+                value: scene.world_transform(child),
+                written: false,
+            })
+            .expect("the parent should have a transform");
+
+        assert_child_at(&scene, child, Vec3::new(2.0, 1.0, 0.0));
+    }
+
     /// A component type registered without a default.
     #[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
     #[uuid = "3b8e5f1a-6c2d-4f9e-a07b-5d4c1e8f2a93"]

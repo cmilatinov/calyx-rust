@@ -1,5 +1,6 @@
 use nalgebra_glm::Mat4;
 use petgraph::stable_graph::NodeIndex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use crate::component::ComponentTransform;
@@ -32,6 +33,8 @@ impl Default for TransformCacheEntry {
 #[derive(Default)]
 pub struct TransformCache {
     entries: Mutex<Vec<Option<TransformCacheEntry>>>,
+    /// How many world transforms have been computed and cached.
+    computed: AtomicU64,
 }
 
 impl TransformCache {
@@ -58,6 +61,12 @@ impl TransformCache {
         }
     }
 
+    /// How many world transforms have been computed and cached so far, so a
+    /// caller can tell whether any were between two reads.
+    pub fn computed(&self) -> u64 {
+        self.computed.load(Ordering::Relaxed)
+    }
+
     fn get(&self, node: NodeIndex) -> Option<Transform> {
         self.entries
             .lock()
@@ -72,6 +81,7 @@ impl TransformCache {
         let entry = Self::entry_mut(&mut entries, node);
         entry.transform = transform;
         entry.dirty = false;
+        self.computed.fetch_add(1, Ordering::Relaxed);
     }
 
     fn entry_mut(

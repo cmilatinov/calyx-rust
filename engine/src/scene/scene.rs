@@ -903,10 +903,11 @@ impl Scene {
     /// The component is out of the scene while `editor` holds it: the scene
     /// keeps a placeholder of the same type in its place, the type's
     /// registered default or else a copy of `component`, so `editor` reading
-    /// that component through the scene sees the placeholder. The edited
-    /// component is put back before this returns, even when `editor` panics;
-    /// the panic then resumes with the component reported as written, since
-    /// `editor` may have changed it.
+    /// that component through the scene sees the placeholder. World
+    /// transforms `editor` reads may reflect either, and none computed during
+    /// the edit is kept. The edited component is put back before this
+    /// returns, even when `editor` panics; the panic then resumes with the
+    /// component reported as written, since `editor` may have changed it.
     pub fn edit_component_dyn<R>(
         &mut self,
         game_object: GameObject,
@@ -915,11 +916,18 @@ impl Scene {
     ) -> Option<R> {
         let placeholder = self.placeholder_instance(component)?;
         let mut instance = self.replace_instance(game_object, component, placeholder)?;
+        let computed = self.transforms.computed();
         let edit = panic::catch_unwind(AssertUnwindSafe(|| editor(&mut *instance, self)));
         // `editor` only read the scene, so the component is still there to
         // put back.
         let replaced = self.replace_instance(game_object, component, instance);
         debug_assert!(replaced.is_some(), "the edited component was put back");
+        if component.component_type_id() == ComponentTypeId::of::<ComponentTransform>()
+            && self.transforms.computed() != computed
+        {
+            // World transforms computed from the placeholder were cached.
+            self.transforms.mark_dirty_subtree(game_object, &self.graph);
+        }
         let edit = match edit {
             Ok(edit) => edit,
             Err(payload) => {
