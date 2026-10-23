@@ -7,6 +7,7 @@
 pub use self::error::*;
 pub use self::game_object_ref::*;
 pub use self::game_object_store::*;
+pub use self::hud::*;
 pub use self::prefab::*;
 pub use self::scene::*;
 pub use self::scene_graph::{SceneGraph, SiblingDir, WalkChildren};
@@ -16,6 +17,7 @@ pub use self::transform_cache::*;
 
 mod error;
 pub(crate) mod game_object_ref;
+mod hud;
 mod prefab;
 mod scene_manager;
 mod scene_view;

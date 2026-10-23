@@ -5,12 +5,15 @@ use egui::{
     Vec2,
 };
 use engine::math::fit_aspect;
+use engine::scene::SceneHud;
+use engine::ui::{UiInput, UiPoint};
 use re_ui::Icon;
 use std::any::Any;
 
-#[derive(Default, Debug)]
+#[derive(Default)]
 pub struct PanelGame {
     pub is_cursor_grabbed: bool,
+    hud: SceneHud,
 }
 
 impl Panel for PanelGame {
@@ -86,13 +89,22 @@ impl PanelGame {
                 else {
                     return ui.response();
                 };
-                ui.add(
+                let response = ui.add(
                     Image::new(ImageSource::Texture(SizedTexture {
                         id: texture_id,
                         size,
                     }))
                     .sense(Sense::click_and_drag()),
-                )
+                );
+                // The texture was rendered from the scene before this frame's
+                // update, so the HUD reads the same state.
+                self.hud.paint(
+                    app_state.game.scenes.simulation_scene(),
+                    ui.painter(),
+                    response.rect,
+                    hud_input(ui),
+                );
+                response
             },
         );
         (size, res.inner)
@@ -125,6 +137,17 @@ impl PanelGame {
         app_state.game_size = (size.x / screen_rect.width(), size.y / screen_rect.height());
         app_state.game_response = Some(res);
     }
+}
+
+fn hud_input(ui: &Ui) -> UiInput {
+    ui.input(|input| UiInput {
+        pointer_position: input
+            .pointer
+            .latest_pos()
+            .map(|position| UiPoint::new(position.x, position.y)),
+        pointer_down: input.pointer.primary_down(),
+        delta_time: input.stable_dt,
+    })
 }
 
 fn cursor_grabbed_after_input(
