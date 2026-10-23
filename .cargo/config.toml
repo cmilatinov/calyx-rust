@@ -1,3 +1,10 @@
+[unstable]
+# Keep Cargo's legacy build-dir layout (target/<profile>/deps). Nightly Cargo switched to the per-unit
+# layout (target/<profile>/build/<pkg>/<hash>/out) by default in July 2026, which passes one
+# `-L dependency=` per dependency; with sccache 0.17+ on Windows the rustc command line then exceeds
+# 32767 characters and fails with os error 206. See docs/process/toolchain.md.
+build-dir-new-layout = false
+
 [target.x86_64-pc-windows-msvc]
 linker = "rust-lld.exe"
 rustflags = ["-Cprefer-dynamic", "-Zshare-generics=n", "-Cdebug-assertions=n"]

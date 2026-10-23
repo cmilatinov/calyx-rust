@@ -25,14 +25,19 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: rustfmt, clippy
+      # rustup reads the dated nightly and its components from rust-toolchain.toml, so CI builds with the
+      # same toolchain as every developer machine.
+      - name: Install the toolchain from rust-toolchain.toml
+        shell: bash
+        run: |
+          rustup toolchain install
+          rustc -vV
+          cargo -V
 
       - uses: Swatinem/rust-cache@v2
         with:
-          # One cache per toolchain channel; rust-cache already keys on Cargo.lock and the rustc version.
-          shared-key: validate-nightly
+          # rust-cache already keys on Cargo.lock and the rustc version, so a new pin starts a new cache.
+          shared-key: validate
 
       # Windows runners have no GPU, and wgpu here is built with only the Vulkan and GLES backends (no DX12, so
       # no WARP). Mesa's software drivers provide both: lavapipe for Vulkan and llvmpipe behind opengl32.dll for
