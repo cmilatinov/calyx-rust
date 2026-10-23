@@ -1,7 +1,7 @@
 use crate::error::BoxedError;
 use crate::net::message::{GameChannel, GameMessage};
-use crate::net::{MessageQueue, MessageSender, ServerEvent};
-use renet::{ClientId, ConnectionConfig, RenetServer};
+use crate::net::{MessageQueue, MessageSender, NetworkObjectId, ServerEvent};
+use renet::{Bytes, ClientId, ConnectionConfig, RenetServer};
 use renet_netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig};
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, SystemTime};
@@ -11,6 +11,18 @@ pub struct Server {
     server: RenetServer,
     transport: NetcodeServerTransport,
     addr: SocketAddr,
+    /// Component syncs received from clients, waiting for
+    /// [`Server::relay_component_syncs`] to check their sender's ownership.
+    pending_syncs: Vec<PendingSync>,
+}
+
+/// Component sync a client sent, kept encoded so the relay forwards the
+/// client's bytes unchanged.
+struct PendingSync {
+    sender: ClientId,
+    network_object_id: NetworkObjectId,
+    channel: GameChannel,
+    bytes: Bytes,
 }
 
 impl Server {
@@ -37,6 +49,7 @@ impl Server {
             server,
             transport,
             addr: bound_addr,
+            pending_syncs: Vec::new(),
         })
     }
 
@@ -55,7 +68,10 @@ impl Server {
     /// client messages.
     pub fn update(&mut self, queue: &mut MessageQueue<GameMessage>, duration: Duration) {
         let Self {
-            server, transport, ..
+            server,
+            transport,
+            pending_syncs,
+            ..
         } = self;
 
         server.update(duration);
@@ -87,26 +103,31 @@ impl Server {
 
         for client_id in server.clients_id() {
             for channel in GameChannel::ALL {
-                while let Some((message, _)) =
-                    server
-                        .receive_message(client_id, channel)
-                        .and_then(|bytes| {
-                            bincode::serde::decode_from_slice::<GameMessage, _>(
-                                &bytes,
-                                bincode::config::standard(),
-                            )
-                            .map_err(|e| {
-                                log::error!(
-                                    "Failed to decode message from client {client_id}: {e}"
-                                );
-                                e
-                            })
-                            .ok()
-                        })
-                {
+                while let Some(bytes) = server.receive_message(client_id, channel) {
+                    let message = match bincode::serde::decode_from_slice::<GameMessage, _>(
+                        &bytes,
+                        bincode::config::standard(),
+                    ) {
+                        Ok((message, _)) => message,
+                        Err(e) => {
+                            log::error!("Failed to decode message from client {client_id}: {e}");
+                            continue;
+                        }
+                    };
                     if let Err(reason) = message.check_client_origin(client_id) {
                         log::warn!("Rejected message from client {client_id}: it {reason}");
                         continue;
+                    }
+                    if let GameMessage::SyncComponent {
+                        network_object_id, ..
+                    } = &message
+                    {
+                        pending_syncs.push(PendingSync {
+                            sender: client_id,
+                            network_object_id: *network_object_id,
+                            channel: message.channel(),
+                            bytes,
+                        });
                     }
                     queue.queue_message(MessageSender::Client(client_id), message);
                 }
@@ -114,6 +135,37 @@ impl Server {
         }
 
         transport.send_packets(server);
+    }
+
+    /// Relays the component syncs received from clients since the last call
+    /// to every client but their sender.
+    ///
+    /// `owner_of` returns the owner of a network object the host holds. A
+    /// sync for an object its sender does not own is dropped. The host may not
+    /// hold every object, so a sync for an object it does not know is relayed
+    /// and each receiving peer checks ownership itself.
+    pub fn relay_component_syncs(
+        &mut self,
+        mut owner_of: impl FnMut(NetworkObjectId) -> Option<ClientId>,
+    ) {
+        for sync in std::mem::take(&mut self.pending_syncs) {
+            match owner_of(sync.network_object_id) {
+                Some(owner_id) if owner_id != sync.sender => log::warn!(
+                    "Rejected sync of network object {} owned by {owner_id} from {}",
+                    sync.network_object_id,
+                    sync.sender
+                ),
+                _ => self
+                    .server
+                    .broadcast_message_except(sync.sender, sync.channel, sync.bytes),
+            }
+        }
+    }
+
+    /// Drops the component syncs no [`Server::relay_component_syncs`] call
+    /// relayed.
+    pub(crate) fn discard_component_syncs(&mut self) {
+        self.pending_syncs.clear();
     }
 
     /// Serializes one protocol message into bytes suitable for Renet.
