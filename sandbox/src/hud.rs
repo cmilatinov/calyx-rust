@@ -174,7 +174,7 @@ impl Widget for SandboxHud<'_> {
     fn build(&self, ui: &mut UiArena) -> UiNodeHandle {
         let margin = self.style.margin(self.viewport);
         let health_size = UiSize::new((self.viewport.width() * 0.28).clamp(250.0, 340.0), 76.0);
-        let ammo_size = UiSize::new((self.viewport.width() * 0.22).clamp(220.0, 300.0), 80.0);
+        let ammo_size = UiSize::new((self.viewport.width() * 0.22).clamp(220.0, 300.0), 114.0);
 
         let health = HealthHud {
             id: "hud-health",
@@ -507,6 +507,34 @@ mod tests {
             "RELOADING 0.8s",
         ] {
             assert!(text.iter().any(|t| t == expected), "{expected} in {text:?}");
+        }
+    }
+
+    #[test]
+    fn hud_panels_fit_their_text_without_shrinking_it() {
+        let (mut scene, tank) = tank_scene(ComponentRespawnState::default());
+        scene.add_component(tank, ComponentTankHud::default());
+        let viewport = UiRect::from_min_size(UiPoint::ZERO, UiSize::new(1280.0, 720.0));
+        let frame = SceneHud::default()
+            .frame(&scene, viewport, UiInput::default())
+            .expect("the tank should draw a HUD");
+
+        for command in &frame.paint_commands {
+            if let PaintCommand::Text {
+                rect,
+                text,
+                font_size,
+                ..
+            } = command
+            {
+                // egui paints a line of text this tall whatever its rect, so a
+                // shorter rect overlaps the next row.
+                let height = rect.max.y - rect.min.y;
+                assert!(
+                    height >= font_size * 1.25 - 1e-3,
+                    "{text} is {height} tall at font size {font_size}"
+                );
+            }
         }
     }
 
