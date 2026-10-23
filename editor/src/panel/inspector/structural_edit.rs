@@ -3,66 +3,46 @@ use engine::scene::{GameObject, Scene};
 use uuid::Uuid;
 
 use crate::inspector::component_inspector::type_display_name;
-use crate::scene_document::SceneDocument;
-use crate::scene_history::SceneEditSnapshot;
+use crate::scene_edit::SceneEdit;
 
-/// The components the inspector adds to and removes from the selected
-/// object in one frame, recorded as one undo step.
-///
-/// The scene is captured before the first change and the step is committed
-/// once, so a frame that adds and removes components is undone at once.
-/// While the scene cannot be edited, as in play mode, the changes still
-/// apply to the simulation scene but nothing is recorded.
-#[derive(Default)]
-pub(super) struct StructuralEdit {
-    before: Option<SceneEditSnapshot>,
-    changed: bool,
+/// The label of the undo step for the components the inspector adds to and
+/// removes from the selected object in one frame.
+pub(super) const LABEL: &str = "Edit inspector components";
+
+/// Adds a default component of type `type_uuid` to `game_object` through
+/// `edit`.
+pub(super) fn add(
+    edit: &mut SceneEdit,
+    game: &mut GameContext,
+    game_object: GameObject,
+    type_uuid: Uuid,
+) {
+    edit.scene_mut(game)
+        .bind_component_dyn(game_object, type_uuid);
+    log::info!(
+        "Added component to game object: component={} type_uuid={type_uuid} object={}",
+        component_name(game, type_uuid),
+        object_label(game.scenes.simulation_scene(), game_object)
+    );
 }
 
-impl StructuralEdit {
-    const LABEL: &'static str = "Edit inspector components";
-
-    /// Adds a default component of type `type_uuid` to `game_object`.
-    pub fn add(&mut self, game: &mut GameContext, game_object: GameObject, type_uuid: Uuid) {
-        self.capture(game);
-        let scene = game.scenes.simulation_scene_mut();
-        scene.bind_component_dyn(game_object, type_uuid);
-        self.changed = true;
+/// Removes the component of type `type_uuid` from `game_object` through
+/// `edit`.
+pub(super) fn remove(
+    edit: &mut SceneEdit,
+    game: &mut GameContext,
+    game_object: GameObject,
+    type_uuid: Uuid,
+) {
+    let component_name = component_name(game, type_uuid);
+    let object_label = object_label(game.scenes.simulation_scene(), game_object);
+    if edit
+        .scene_mut(game)
+        .remove_component_dyn(game_object, type_uuid)
+    {
         log::info!(
-            "Added component to game object: component={} type_uuid={type_uuid} object={}",
-            component_name(game, type_uuid),
-            object_label(game.scenes.simulation_scene(), game_object)
+            "Removed component from game object: component={component_name} type_uuid={type_uuid} object={object_label}"
         );
-    }
-
-    /// Removes the component of type `type_uuid` from `game_object`.
-    pub fn remove(&mut self, game: &mut GameContext, game_object: GameObject, type_uuid: Uuid) {
-        let component_name = component_name(game, type_uuid);
-        let object_label = object_label(game.scenes.simulation_scene(), game_object);
-        self.capture(game);
-        if game
-            .scenes
-            .simulation_scene_mut()
-            .remove_component_dyn(game_object, type_uuid)
-        {
-            self.changed = true;
-            log::info!(
-                "Removed component from game object: component={component_name} type_uuid={type_uuid} object={object_label}"
-            );
-        }
-    }
-
-    /// Records the changes as one undo step, if there were any.
-    pub fn commit(self, document: &mut SceneDocument, game: &GameContext) {
-        if self.changed {
-            document.commit_edit(game, Self::LABEL, self.before);
-        }
-    }
-
-    fn capture(&mut self, game: &GameContext) {
-        if self.before.is_none() {
-            self.before = SceneDocument::begin_edit(game);
-        }
     }
 }
 
@@ -77,8 +57,9 @@ fn object_label(scene: &Scene, game_object: GameObject) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::StructuralEdit;
+    use super::{add, remove, LABEL};
     use crate::scene_document::SceneDocument;
+    use crate::scene_edit::SceneEdit;
     use engine::component::{ComponentCamera, ComponentPointLight};
     use engine::context::GameContext;
     use engine::scene::GameObject;
@@ -111,9 +92,14 @@ mod tests {
         let mut document = document();
         let object = object_with_camera(&mut game);
 
-        let mut edit = StructuralEdit::default();
-        edit.add(&mut game, object, ComponentPointLight::type_uuid());
-        edit.remove(&mut game, object, ComponentCamera::type_uuid());
+        let mut edit = SceneEdit::begin(LABEL);
+        add(
+            &mut edit,
+            &mut game,
+            object,
+            ComponentPointLight::type_uuid(),
+        );
+        remove(&mut edit, &mut game, object, ComponentCamera::type_uuid());
         edit.commit(&mut document, &game);
         assert!(has::<ComponentPointLight>(&game, object));
         assert!(!has::<ComponentCamera>(&game, object));
@@ -135,9 +121,10 @@ mod tests {
         let mut document = document();
         let object = object_with_camera(&mut game);
 
-        let mut edit = StructuralEdit::default();
+        let mut edit = SceneEdit::begin(LABEL);
         // An object keeps its ComponentID, so this removal changes nothing.
-        edit.remove(
+        remove(
+            &mut edit,
             &mut game,
             object,
             engine::component::ComponentID::type_uuid(),
@@ -166,8 +153,13 @@ mod tests {
             })
             .expect("the simulation copies the object");
 
-        let mut edit = StructuralEdit::default();
-        edit.add(&mut game, object, ComponentPointLight::type_uuid());
+        let mut edit = SceneEdit::begin(LABEL);
+        add(
+            &mut edit,
+            &mut game,
+            object,
+            ComponentPointLight::type_uuid(),
+        );
         edit.commit(&mut document, &game);
         game.scenes.stop_simulation();
 

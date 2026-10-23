@@ -287,7 +287,7 @@ struct AnimationSample {
 /// Prefab hierarchy read back from its scene data.
 struct PrefabNodes {
     root: Uuid,
-    children: HashMap<Uuid, Vec<Uuid>>,
+    children: BTreeMap<Uuid, Vec<Uuid>>,
     transforms: HashMap<Uuid, Transform>,
     /// Bone name of each bone object.
     bones: HashMap<Uuid, String>,

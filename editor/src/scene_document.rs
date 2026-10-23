@@ -57,18 +57,18 @@ impl SceneDocument {
     }
 
     /// Captures the authoring scene before an edit, for [`Self::commit_edit`].
-    /// `None` while the scene cannot be edited.
-    pub fn begin_edit(game: &GameContext) -> Option<SceneEditSnapshot> {
+    /// `None` while the scene cannot be edited. Panels edit through
+    /// [`crate::scene_edit::SceneEdit`], which calls this.
+    pub(crate) fn begin_edit(game: &GameContext) -> Option<SceneEditSnapshot> {
         authoring(game).map(|game| SceneEditSnapshot::capture(game.scenes.current_scene()))
     }
 
-    /// Records the edit made since `before` as one undo step. Without a
-    /// `before` snapshot the scene is only marked dirty.
-    pub fn commit_edit(
+    /// Records the edit made since `before` as one undo step.
+    pub(crate) fn commit_edit(
         &mut self,
         game: &GameContext,
         label: impl Into<String>,
-        before: Option<SceneEditSnapshot>,
+        before: SceneEditSnapshot,
     ) {
         let Some(game) = authoring(game) else {
             return;
@@ -76,11 +76,6 @@ impl SceneDocument {
         // The edit wrote the scene outside the inspector, so its baselines
         // are taken again.
         self.refresh_baselines(game);
-
-        let Some(before) = before else {
-            self.autosave.mark_dirty();
-            return;
-        };
 
         let after = SceneEditSnapshot::capture(game.scenes.current_scene());
         let fingerprint = after.fingerprint().map(str::to_owned);
@@ -500,6 +495,7 @@ mod tests {
     use super::{common_value_path, restore_component_values, set_json_value, SceneDocument};
     use crate::inspector::edit_tracker::{self, ComponentKey};
     use crate::inspector::type_inspector::InspectorResponse;
+    use crate::scene_edit::SceneEdit;
     use crate::scene_history::InspectorValueChange;
     use engine::component::ComponentTransform;
     use engine::context::GameContext;
@@ -542,9 +538,9 @@ mod tests {
     }
 
     fn add_object(document: &mut SceneDocument, game: &mut GameContext) {
-        let before = SceneDocument::begin_edit(game);
-        game.scenes.current_scene_mut().create(None, None);
-        document.commit_edit(game, "Add object", before);
+        let mut edit = SceneEdit::begin("Add object");
+        edit.scene_mut(game).create(None, None);
+        edit.commit(document, game);
     }
 
     /// Saves a scene with `objects` objects into `root`, then opens it in a

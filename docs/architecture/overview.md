@@ -27,6 +27,7 @@ egui + eframe editor application.
 - `widgets/` — Tab system, file button, list widget.
 - `camera.rs` — EditorCamera (orbit/fly).
 - `selection.rs` — Selection state (GameObject or Asset).
+- `scene_document.rs` — SceneDocument: the authoring scene's undo history, dirty state, recovery autosave and file. Panels write the scene through a `SceneEdit` (`scene_edit.rs`), which captures the scene at its first write, commits everything written as one undo step, and records nothing while a simulation copy of the scene exists.
 - `project_manager.rs` — Project loading, assembly building, background tasks.
 
 ### `engine_derive` (proc-macro)

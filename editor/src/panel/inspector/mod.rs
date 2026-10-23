@@ -5,6 +5,7 @@ use crate::inspector::assets::animation_graph_inspector::AnimationGraphInspector
 use crate::inspector::component_inspector::{type_display_name, ComponentInspector};
 use crate::inspector::type_inspector::InspectorContext;
 use crate::panel::Panel;
+use crate::scene_edit::SceneEdit;
 use crate::selection::SelectionType;
 use crate::EditorAppState;
 use egui::scroll_area::ScrollBarVisibility;
@@ -17,7 +18,6 @@ use re_ui::{DesignTokens, UiExt};
 use uuid::Uuid;
 
 use self::add_component::AddComponentButton;
-use self::structural_edit::StructuralEdit;
 
 mod add_component;
 mod structural_edit;
@@ -87,7 +87,7 @@ impl PanelInspector {
     /// components added and removed this frame are one undo step; value
     /// edits are tracked per component by the scene document.
     fn game_object_ui(&mut self, ui: &mut Ui, state: &mut EditorAppState, game_object: GameObject) {
-        let mut structure = StructuralEdit::default();
+        let mut structure = SceneEdit::begin(structural_edit::LABEL);
         let entity_components = Self::component_type_uuids(state, game_object);
         let component_to_add = self.add_component.ui(
             ui,
@@ -95,12 +95,12 @@ impl PanelInspector {
             &entity_components,
         );
         if let Some(type_uuid) = component_to_add {
-            structure.add(&mut state.game, game_object, type_uuid);
+            structural_edit::add(&mut structure, &mut state.game, game_object, type_uuid);
         }
         for type_uuid in Self::components_ui(ui, state, game_object) {
-            structure.remove(&mut state.game, game_object, type_uuid);
+            structural_edit::remove(&mut structure, &mut state.game, game_object, type_uuid);
         }
-        structure.commit(&mut state.scene_document, &state.game);
+        state.commit_scene_edit(structure);
     }
 
     /// The type UUIDs of the registered components `game_object` has.

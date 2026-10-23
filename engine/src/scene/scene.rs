@@ -5,7 +5,7 @@ use legion::{Entity, EntityStore, IntoQuery, World};
 use nalgebra_glm::Mat4;
 use serde::de::DeserializeSeed;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use uuid::Uuid;
 
@@ -45,13 +45,17 @@ pub struct GameObject {
 }
 
 /// Serializable representation of a scene or subtree.
+///
+/// Every map is ordered by UUID, so saving the same scene always writes the
+/// same file and an edit changes only its own lines. Component payloads are
+/// `serde_json` values, whose objects keep their keys sorted too.
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct SceneData {
     /// Component payloads keyed by game object UUID and then component type
     /// UUID.
-    pub components: HashMap<Uuid, HashMap<Uuid, serde_json::Value>>,
+    pub components: BTreeMap<Uuid, BTreeMap<Uuid, serde_json::Value>>,
     /// Each parent's children in sibling order, keyed by parent UUID.
-    pub hierarchy: HashMap<Uuid, Vec<Uuid>>,
+    pub hierarchy: BTreeMap<Uuid, Vec<Uuid>>,
     /// Top-level objects in sibling order: the root's children for a whole
     /// scene, or the subtree's own root for a subtree.
     pub roots: Vec<Uuid>,
