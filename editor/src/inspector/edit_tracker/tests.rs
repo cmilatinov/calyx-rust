@@ -6,7 +6,7 @@ use engine::component::{
     Component, ComponentCollider, ComponentID, ComponentTransform, ReflectComponent,
 };
 use engine::reflect::{Reflect, ReflectDefault};
-use engine::scene::{GameObject, Scene};
+use engine::scene::{GameObject, GameObjectRef, Scene};
 use engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use nalgebra_glm::Vec3;
 use serde::{Deserialize, Serialize};
@@ -524,6 +524,53 @@ fn a_committed_id_edit_shows_the_id_the_scene_kept() {
         "{:?}",
         commit.changes
     );
+}
+
+#[test]
+fn a_game_object_picker_shown_while_editing_an_id_lists_objects_by_id() {
+    let mut h = InspectorHarness::new();
+    let registry = h.inspector_registry();
+    let picker = registry
+        .type_inspector_lookup(GameObjectRef::type_uuid())
+        .unwrap();
+    let mut session = Session::new(&h);
+    let game_object = session.game_object;
+    let child_id = session.scene.uuid(session.child);
+    let component = ComponentID::default();
+    let mut value = GameObjectRef::default();
+
+    // The picker reads the scene while the object's ComponentID is edited,
+    // so it cannot read names and lists each object by its id.
+    let mut draw = |ui: &mut Ui, harness_ctx: &InspectorContext| {
+        session
+            .tracker
+            .show_component(
+                &mut session.scene,
+                game_object,
+                &component,
+                true,
+                false,
+                |_, scene| {
+                    let ctx = InspectorContext {
+                        scene,
+                        game_object,
+                        ..*harness_ctx
+                    };
+                    let response = picker.show_inspector(ui, &ctx, &mut value);
+                    (response, response)
+                },
+            )
+            .expect("every object has an id")
+            .value
+    };
+    h.idle(2, &mut draw);
+    let combo = h.widget(Role::ComboBox, 0);
+    h.click(combo, &mut draw);
+    let option = h.labelled(Role::Button, &child_id.to_string());
+    h.click(option, &mut draw);
+    drop(draw);
+
+    assert_eq!(value.id(), child_id);
 }
 
 #[test]

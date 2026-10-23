@@ -12,7 +12,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use engine::class_registry::ComponentRegistry;
 use engine::component::Component;
-use engine::scene::{ComponentEdit, GameObject, Scene};
+use engine::scene::{ComponentEdit, GameObject, Scene, SceneView};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -194,8 +194,8 @@ impl InspectorEditTracker {
     /// the committed edit, or `None` when the object or component is
     /// missing.
     ///
-    /// As with [`Scene::edit_component_dyn`], the scene `draw` reads holds a
-    /// placeholder in the shown component's place.
+    /// As with [`Scene::edit_component_dyn`], `draw` reads the scene through
+    /// a [`SceneView`] that cannot read the shown component's type.
     pub fn show_component<R>(
         &mut self,
         scene: &mut Scene,
@@ -203,7 +203,7 @@ impl InspectorEditTracker {
         component: &dyn Component,
         track: bool,
         pointer_down: bool,
-        draw: impl FnOnce(&mut dyn Component, &Scene) -> (InspectorResponse, R),
+        draw: impl FnOnce(&mut dyn Component, &SceneView) -> (InspectorResponse, R),
     ) -> Option<ShownComponent<R>> {
         let key = ComponentKey {
             game_object: scene.uuid(game_object),

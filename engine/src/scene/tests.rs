@@ -16,6 +16,7 @@ mod tests {
     use legion::Entity;
     use nalgebra_glm::{self as glm, Vec3};
     use serde::{Deserialize, Serialize};
+    use std::cell::Cell;
     use uuid::Uuid;
 
     #[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
@@ -1259,7 +1260,7 @@ mod tests {
                 }
             })
             .expect("the parent should have a transform");
-        assert_eq!(name, scene.name(child));
+        assert_eq!(name, Some(scene.name(child)));
         assert_child_at(&scene, child, Vec3::new(5.0, 1.0, 0.0));
     }
 
@@ -1286,31 +1287,23 @@ mod tests {
     }
 
     #[test]
-    fn edit_component_dyn_reads_a_default_in_place_of_the_edited_component() {
-        let (mut scene, parent, _) = parent_with_cached_child();
+    fn edit_component_dyn_reads_names_through_the_view() {
+        let (mut scene, parent, child) = parent_with_cached_child();
+        let names = (scene.name(parent), scene.name(child));
         let prototype = transform_prototype();
         let seen = scene
-            .edit_component_dyn(parent, &prototype, |instance, scene| {
-                let c = instance
-                    .as_reflect_mut()
-                    .downcast_mut::<crate::component::ComponentTransform>()
-                    .expect("instance should be a transform");
-                assert_eq!(c.transform.position, Vec3::new(1.0, 0.0, 0.0));
-                c.transform.position = Vec3::new(5.0, 0.0, 0.0);
-                ComponentEdit {
-                    value: stored_position(scene, parent),
-                    written: true,
-                }
+            .edit_component_dyn(parent, &prototype, |_, scene| ComponentEdit {
+                value: (scene.name(parent), scene.name(child), scene.parent(child)),
+                written: false,
             })
             .expect("the parent should have a transform");
 
-        assert_eq!(seen, Vec3::zeros(), "the scene held the type's default");
-        assert_eq!(stored_position(&scene, parent), Vec3::new(5.0, 0.0, 0.0));
+        assert_eq!(seen, (Some(names.0), Some(names.1), Some(parent)));
     }
 
     #[test]
-    fn edit_component_dyn_puts_back_an_unwritten_component() {
-        let (mut scene, parent, _) = parent_with_cached_child();
+    fn edit_component_dyn_reports_a_write_only_when_the_editor_says_so() {
+        let (mut scene, parent, child) = parent_with_cached_child();
         let prototype = transform_prototype();
         let version = scene.write_version(parent, &prototype);
         scene
@@ -1319,89 +1312,92 @@ mod tests {
                 written: false,
             })
             .expect("the parent should have a transform");
-
-        assert_eq!(stored_position(&scene, parent), Vec3::new(1.0, 0.0, 0.0));
         assert_eq!(scene.write_version(parent, &prototype), version);
-    }
 
-    #[test]
-    fn edit_component_dyn_puts_back_the_component_when_the_editor_panics() {
-        let (mut scene, parent, child) = parent_with_cached_child();
-        let prototype = transform_prototype();
-        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            scene.edit_component_dyn(parent, &prototype, |instance, _| -> ComponentEdit<()> {
+        scene
+            .edit_component_dyn(parent, &prototype, |instance, _| {
                 instance
                     .as_reflect_mut()
                     .downcast_mut::<crate::component::ComponentTransform>()
                     .expect("instance should be a transform")
                     .transform
                     .position = Vec3::new(5.0, 0.0, 0.0);
-                panic!("the editor failed");
+                ComponentEdit {
+                    value: (),
+                    written: true,
+                }
             })
-        }));
-
-        // The component is back as the editor left it, and the scene treats
-        // it as written, since the editor may have changed it.
-        assert!(panicked.is_err());
+            .expect("the parent should have a transform");
+        assert_ne!(scene.write_version(parent, &prototype), version);
         assert_eq!(stored_position(&scene, parent), Vec3::new(5.0, 0.0, 0.0));
         assert_child_at(&scene, child, Vec3::new(5.0, 1.0, 0.0));
     }
 
     #[test]
-    fn world_transforms_read_during_an_edit_are_not_kept() {
-        let (mut scene, parent, child) = parent_with_cached_child();
-        // Dirties the child's cached world transform without reading it.
-        scene.set_transform(parent, &glm::translation(&Vec3::new(2.0, 0.0, 0.0)));
-        let prototype = transform_prototype();
-        scene
-            .edit_component_dyn(parent, &prototype, |_, scene| ComponentEdit {
-                value: scene.world_transform(child),
+    fn edit_component_dyn_on_the_id_reads_no_names() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        let other = scene.create(None, None);
+        let other_id = scene.uuid(other);
+        let prototype = ComponentID::default();
+        let seen = scene
+            .edit_component_dyn(go, &prototype, |_, scene| ComponentEdit {
+                value: (scene.name(other), scene.uuid(other), scene.find(other_id)),
                 written: false,
             })
-            .expect("the parent should have a transform");
+            .expect("every object has an id");
 
-        assert_child_at(&scene, child, Vec3::new(2.0, 1.0, 0.0));
+        assert_eq!(seen, (None, other_id, Some(other)));
     }
 
-    /// A component type registered without a default.
+    thread_local! {
+        static SERIALIZATIONS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    fn counted<S: serde::Serializer>(value: &f32, serializer: S) -> Result<S::Ok, S::Error> {
+        SERIALIZATIONS.with(|count| count.set(count.get() + 1));
+        serializer.serialize_f32(*value)
+    }
+
+    /// A component registered without a default that counts how often it is
+    /// serialized.
     #[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
     #[uuid = "3b8e5f1a-6c2d-4f9e-a07b-5d4c1e8f2a93"]
     #[reflect(TypeUuidDynamic, Component)]
     #[repr(C)]
-    struct WithoutDefault {
+    struct Counted {
+        #[serde(serialize_with = "counted")]
         value: f32,
     }
 
-    impl Component for WithoutDefault {}
+    impl Component for Counted {}
 
     #[test]
-    fn edit_component_dyn_without_a_default_reads_a_copy_of_the_prototype() {
+    fn edit_component_dyn_without_a_write_serializes_nothing() {
         let mut scene = test_scene();
         let go = scene.create(None, None);
-        scene.add_component(go, WithoutDefault { value: 3.0 });
-        let prototype = WithoutDefault { value: 9.0 };
-        let read = |scene: &Scene| {
-            scene
-                .read_component::<WithoutDefault, _, _>(go, |c| c.value)
-                .expect("the object should have the component")
-        };
-        let seen = scene
-            .edit_component_dyn(go, &prototype, |instance, scene| {
-                let c = instance
-                    .as_reflect_mut()
-                    .downcast_mut::<WithoutDefault>()
-                    .expect("instance should be the component");
-                assert_eq!(c.value, 3.0);
-                c.value = 4.0;
-                ComponentEdit {
-                    value: read(scene),
-                    written: true,
-                }
-            })
-            .expect("the object should have the component");
+        scene.add_component(go, Counted { value: 3.0 });
+        let prototype = Counted { value: 9.0 };
+        let before = SERIALIZATIONS.with(Cell::get);
+        for _ in 0..3 {
+            let seen = scene
+                .edit_component_dyn(go, &prototype, |instance, _| ComponentEdit {
+                    value: instance
+                        .as_reflect()
+                        .downcast_ref::<Counted>()
+                        .expect("instance should be the component")
+                        .value,
+                    written: false,
+                })
+                .expect("the object should have the component");
+            assert_eq!(seen, 3.0, "the editor holds the stored component");
+        }
 
-        assert_eq!(seen, 9.0, "the scene held a copy of the prototype");
-        assert_eq!(read(&scene), 4.0);
+        assert_eq!(
+            SERIALIZATIONS.with(Cell::get),
+            before,
+            "idle frames serialize nothing"
+        );
     }
 
     #[test]

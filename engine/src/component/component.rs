@@ -2,7 +2,8 @@
 
 use bimap::BiHashMap;
 use legion::storage::ComponentTypeId;
-use legion::world::{Entry, EntryRef};
+use legion::world::{Entry, EntryMut, EntryRef, SubWorld};
+use legion::World;
 use uuid::Uuid;
 
 use engine_derive::reflect_trait;
@@ -56,18 +57,15 @@ pub trait ComponentInstance: Reflect {
     /// Returns `true` if the downcast to the concrete type succeeded.
     fn bind_instance(&self, entry: &mut Entry, instance: Box<dyn Reflect>) -> bool;
 
-    /// Puts `value` in place of this component type's value on the entity
-    /// and returns the value it replaced. Hands `value` back when the entity
-    /// does not have the component or `value` is another type.
-    ///
-    /// # Errors
-    ///
-    /// Returns `value` itself when nothing was replaced.
-    fn replace_instance(
-        &self,
-        entry: &mut Entry,
-        value: Box<dyn Reflect>,
-    ) -> Result<Box<dyn Component>, Box<dyn Reflect>>;
+    /// Splits `world` in two: the first half allows access only to this
+    /// component type, the second to every other type. Both halves borrow
+    /// `world` mutably, so nothing else reaches it while they live.
+    fn split_world<'w>(&self, world: &'w mut World) -> (SubWorld<'w>, SubWorld<'w>);
+
+    /// Returns an exclusive reference to this component type through an
+    /// entry of a world split by [`Self::split_world`], or `None` if the
+    /// entity does not have it or the entry's world cannot write it.
+    fn into_instance_mut<'a>(&self, entry: EntryMut<'a>) -> Option<&'a mut dyn Component>;
 
     /// Remove this component type from the entity.
     fn remove_instance(&self, entry: &mut Entry);

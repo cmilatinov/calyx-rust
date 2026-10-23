@@ -6,7 +6,6 @@ use nalgebra_glm::Mat4;
 use serde::de::DeserializeSeed;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::{HashMap, HashSet};
-use std::panic::{self, AssertUnwindSafe};
 use std::path::Path;
 use uuid::Uuid;
 
@@ -26,7 +25,7 @@ use crate::scene::change_set::ChangeSet;
 use crate::scene::game_object_store::GameObjectStore;
 use crate::scene::scene_graph::SceneGraph;
 use crate::scene::transform_cache::TransformCache;
-use crate::scene::{Prefab, SceneError};
+use crate::scene::{Prefab, SceneError, SceneView};
 use crate::utils::{ContextSeed, TypeUuid};
 
 use super::scene_graph::{self, SiblingDir};
@@ -779,6 +778,11 @@ impl Scene {
         self.world.entry_ref(game_object.entity).ok()
     }
 
+    /// A read-only view of the scene's object names, ids and hierarchy.
+    pub fn view(&self) -> SceneView<'_> {
+        SceneView::whole(&self.world.0, &self.graph, &self.store, self.root)
+    }
+
     /// Returns the Legion world for read-only queries. Component writes go
     /// through the scene's write methods instead.
     pub fn world(&self) -> &World {
@@ -787,8 +791,9 @@ impl Scene {
 
     /// Returns the mutable Legion entry for `game_object`.
     ///
-    /// This is the only place mutable component storage is handed out. Its
-    /// callers are the scene's write methods, which report each write through
+    /// This and the world split in [`Scene::edit_component_dyn`] are the only
+    /// places mutable component storage is handed out. Their callers are the
+    /// scene's write methods, which report each write through
     /// [`Scene::component_written`]; any other caller would let a write go
     /// unobserved.
     fn entry_mut(&mut self, game_object: GameObject) -> Option<Entry<'_>> {
@@ -900,40 +905,25 @@ impl Scene {
     /// Returns what `editor` returned, or `None` when the object or component
     /// is missing.
     ///
-    /// The component is out of the scene while `editor` holds it: the scene
-    /// keeps a placeholder of the same type in its place, the type's
-    /// registered default or else a copy of `component`, so `editor` reading
-    /// that component through the scene sees the placeholder. World
-    /// transforms `editor` reads may reflect either, and none computed during
-    /// the edit is kept. The edited component is put back before this
-    /// returns, even when `editor` panics; the panic then resumes with the
-    /// component reported as written, since `editor` may have changed it.
+    /// The scene's world is split by component type while `editor` runs: it
+    /// holds the component in place through the half that allows only the
+    /// component's type, and reads the scene through a [`SceneView`] of the
+    /// other half, which cannot read that type on any object. Nothing is
+    /// copied or moved, so an idle frame costs no serialization. When `editor`
+    /// panics, the component stays as `editor` left it and no write is
+    /// reported.
     pub fn edit_component_dyn<R>(
         &mut self,
         game_object: GameObject,
         component: &dyn Component,
-        editor: impl FnOnce(&mut dyn Component, &Scene) -> ComponentEdit<R>,
+        editor: impl FnOnce(&mut dyn Component, &SceneView) -> ComponentEdit<R>,
     ) -> Option<R> {
-        let placeholder = self.placeholder_instance(component)?;
-        let mut instance = self.replace_instance(game_object, component, placeholder)?;
-        let computed = self.transforms.computed();
-        let edit = panic::catch_unwind(AssertUnwindSafe(|| editor(&mut *instance, self)));
-        // `editor` only read the scene, so the component is still there to
-        // put back.
-        let replaced = self.replace_instance(game_object, component, instance);
-        debug_assert!(replaced.is_some(), "the edited component was put back");
-        if component.component_type_id() == ComponentTypeId::of::<ComponentTransform>()
-            && self.transforms.computed() != computed
-        {
-            // World transforms computed from the placeholder were cached.
-            self.transforms.mark_dirty_subtree(game_object, &self.graph);
-        }
-        let edit = match edit {
-            Ok(edit) => edit,
-            Err(payload) => {
-                self.component_written(game_object, component.component_type_id());
-                panic::resume_unwind(payload);
-            }
+        let edit = {
+            let (mut edited, rest) = component.split_world(&mut self.world.0);
+            let entry = edited.entry_mut(game_object.entity).ok()?;
+            let instance = component.into_instance_mut(entry)?;
+            let view = SceneView::split(rest, &self.graph, &self.store, self.root);
+            editor(instance, &view)
         };
         if edit.written {
             // A write to the object's ComponentID may have its id put back
@@ -941,38 +931,6 @@ impl Scene {
             self.component_written(game_object, component.component_type_id());
         }
         Some(edit.value)
-    }
-
-    /// A new value of `component`'s type to hold its place in the world: the
-    /// type's registered default, or a copy of `component` for a type
-    /// registered without one.
-    fn placeholder_instance(
-        &self,
-        component: &dyn Component,
-    ) -> Option<Box<dyn crate::reflect::Reflect>> {
-        let default = self
-            .registries
-            .types
-            .read()
-            .trait_meta::<ReflectDefault>(component.uuid())
-            .map(ReflectDefault::default);
-        default.or_else(|| {
-            let value = component.serialize()?;
-            component.deserialize(&value).ok()
-        })
-    }
-
-    /// Puts `value` in place of the component of `component`'s type on
-    /// `game_object` and returns the value it replaced, without reporting a
-    /// write. Returns `None` when the object or component is missing.
-    fn replace_instance(
-        &mut self,
-        game_object: GameObject,
-        component: &dyn Component,
-        value: Box<dyn crate::reflect::Reflect>,
-    ) -> Option<Box<dyn Component>> {
-        let mut entry = self.entry_mut(game_object)?;
-        component.replace_instance(&mut entry, value).ok()
     }
 
     /// Removes component `T` from `game_object`. Removing the object's
@@ -1137,18 +1095,12 @@ impl Scene {
 
     /// Iterates every non-root object in the scene.
     pub fn objects(&self) -> impl Iterator<Item = GameObject> + '_ {
-        self.graph.objects(self.root)
+        self.view().objects()
     }
 
     /// Returns the display name stored in [`ComponentID`] for `game_object`.
     pub fn name(&self, game_object: GameObject) -> String {
-        self.entry(game_object)
-            .and_then(|e| {
-                e.get_component::<ComponentID>()
-                    .ok()
-                    .map(|c| c.name.clone())
-            })
-            .unwrap_or_default()
+        self.view().name(game_object).unwrap_or_default()
     }
 
     /// Returns whether `game_object` is locally marked visible.
@@ -1166,7 +1118,7 @@ impl Scene {
     /// Returns the persistent UUID `game_object` was spawned with, which its
     /// [`ComponentID`] always holds, or the nil UUID for an unknown object.
     pub fn uuid(&self, game_object: GameObject) -> Uuid {
-        self.store.uuid(game_object.entity).unwrap_or_default()
+        self.view().uuid(game_object)
     }
 
     /// Returns the type ids of every component on `game_object`, or an empty
@@ -1206,12 +1158,12 @@ impl Scene {
 
     /// Resolves a game object by persistent UUID.
     pub fn find(&self, id: Uuid) -> Option<GameObject> {
-        self.store.find(id)
+        self.view().find(id)
     }
 
     /// Returns the direct parent of `game_object`, if any.
     pub fn parent(&self, game_object: GameObject) -> Option<GameObject> {
-        self.graph.parent(game_object)
+        self.view().parent(game_object)
     }
 
     /// Returns the UUID of `game_object`'s parent, if any.
