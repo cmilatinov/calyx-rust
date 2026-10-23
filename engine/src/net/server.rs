@@ -1,8 +1,9 @@
 use crate::error::BoxedError;
 use crate::net::message::{GameChannel, GameMessage};
-use crate::net::{MessageQueue, MessageSender, NetworkObjectId, ServerEvent};
+use crate::net::{MessageQueue, MessageSender, NetworkIdRange, NetworkObjectId, ServerEvent};
 use renet::{Bytes, ClientId, ConnectionConfig, RenetServer};
 use renet_netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig};
+use std::collections::HashMap;
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, SystemTime};
 
@@ -14,6 +15,12 @@ pub struct Server {
     /// Component syncs received from clients, waiting for
     /// [`Server::relay_component_syncs`] to check their sender's ownership.
     pending_syncs: Vec<PendingSync>,
+    /// Network object id range reserved for each peer that joined this
+    /// session, the host included. A range stays reserved after its peer
+    /// leaves, since its objects may outlive the connection.
+    id_ranges: HashMap<ClientId, NetworkIdRange>,
+    /// Next range [`Server::reserve_id_range`] hands out; 0 is never used.
+    next_id_range: NetworkIdRange,
 }
 
 /// Component sync a client sent, kept encoded so the relay forwards the
@@ -50,6 +57,8 @@ impl Server {
             transport,
             addr: bound_addr,
             pending_syncs: Vec::new(),
+            id_ranges: HashMap::new(),
+            next_id_range: 1,
         })
     }
 
@@ -160,6 +169,24 @@ impl Server {
                     .broadcast_message_except(sync.sender, sync.channel, sync.bytes),
             }
         }
+    }
+
+    /// Returns the network object id range reserved for `client_id`,
+    /// reserving the next unused one on first call. Returns `None` once every
+    /// range is used up.
+    pub fn reserve_id_range(&mut self, client_id: ClientId) -> Option<NetworkIdRange> {
+        if let Some(&range) = self.id_ranges.get(&client_id) {
+            return Some(range);
+        }
+        let range = self.next_id_range;
+        self.next_id_range = range.checked_add(1)?;
+        self.id_ranges.insert(client_id, range);
+        Some(range)
+    }
+
+    /// Returns the network object id range reserved for `client_id`, if any.
+    pub fn id_range(&self, client_id: ClientId) -> Option<NetworkIdRange> {
+        self.id_ranges.get(&client_id).copied()
     }
 
     /// Drops the component syncs no [`Server::relay_component_syncs`] call

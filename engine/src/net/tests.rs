@@ -3,9 +3,9 @@ mod tests {
     use crate::context::GameContext;
     use crate::core::Ref;
     use crate::net::{
-        handle_destroy, Client, ComponentNetworkObject, GameChannel, GameMessage, MessageHandler,
-        MessageHandlerResult, MessageQueue, MessageRoute, MessageSender, Network, NetworkSceneSync,
-        Server, ServerEvent,
+        handle_destroy, network_id_range, Client, ComponentNetworkObject, GameChannel, GameMessage,
+        MessageHandler, MessageHandlerResult, MessageQueue, MessageRoute, MessageSender, Network,
+        NetworkIdAllocator, NetworkSceneSync, Server, ServerEvent,
     };
     use crate::scene::{ComponentEdit, GameObject, Prefab, Scene};
     use crate::test_support::NetworkTestHarness as TestHarness;
@@ -105,14 +105,20 @@ mod tests {
     // --- Unit tests ---
 
     #[test]
-    fn network_ids_are_unique_and_monotonic() {
-        let id1 = Network::new_id();
-        let id2 = Network::new_id();
-        let id3 = Network::new_id();
-        assert_ne!(id1, id2);
-        assert_ne!(id2, id3);
-        assert!(id2 > id1);
-        assert!(id3 > id2);
+    fn network_ids_are_unique_and_monotonic_within_the_assigned_range() {
+        let mut ids = NetworkIdAllocator::default();
+        assert_eq!(ids.allocate(), None, "no range assigned yet");
+
+        ids.assign(7);
+        let id1 = ids.allocate().unwrap();
+        let id2 = ids.allocate().unwrap();
+        let id3 = ids.allocate().unwrap();
+        assert!(id1 < id2 && id2 < id3);
+        assert!([id1, id2, id3].iter().all(|&id| network_id_range(id) == 7));
+        assert_ne!(id1, 7 << 32, "the counter starts at 1");
+
+        ids.assign(8);
+        assert_eq!(ids.allocate(), Some((8 << 32) | 1));
     }
 
     #[test]
@@ -301,7 +307,7 @@ mod tests {
     #[test]
     fn protocol_id_is_schema_derived() {
         assert_ne!(GameMessage::PROTOCOL_ID, 42069);
-        assert_eq!(GameMessage::PROTOCOL_ID, 0xb5f6_8f80_f311_3c28);
+        assert_eq!(GameMessage::PROTOCOL_ID, 0x8d73_0dfb_4fa3_cfbd);
     }
 
     #[test]
@@ -325,7 +331,8 @@ mod tests {
 
         assert_eq!(
             GameMessage::SelfConnected {
-                client_ids: Vec::new()
+                client_ids: Vec::new(),
+                id_range: 1,
             }
             .channel(),
             GameChannel::ReliableUnordered
@@ -1463,5 +1470,226 @@ mod tests {
         assert_eq!(scene.indexed_network_object(43), Some(b));
         scene.write_component::<ComponentNetworkObject, _>(a, |c| c.id = 43);
         assert_eq!(scene.indexed_network_object(43), Some(a));
+    }
+
+    /// Returns how many objects in `scene` carry network object
+    /// `network_object_id`.
+    fn count_network_object(scene: &Scene, network_object_id: u64) -> usize {
+        scene
+            .objects()
+            .filter(|&go| {
+                scene
+                    .read_component::<ComponentNetworkObject, _, _>(go, |c| {
+                        c.id == network_object_id
+                    })
+                    .unwrap_or(false)
+            })
+            .count()
+    }
+
+    /// Returns how many objects in `scene` carry a network object.
+    fn count_network_objects(scene: &Scene) -> usize {
+        scene
+            .objects()
+            .filter(|&go| {
+                scene
+                    .read_component::<ComponentNetworkObject, _, _>(go, |_| ())
+                    .is_some()
+            })
+            .count()
+    }
+
+    /// Sends a hand-made `SpawnPrefab` from client `index`, as a buggy or
+    /// hostile client could, without instantiating anything locally.
+    fn send_spawn_from_client(
+        harness: &mut TestHarness,
+        index: usize,
+        prefab_ref: &Ref<Prefab>,
+        network_object_ids: std::collections::HashMap<u32, u64>,
+    ) {
+        let network = harness.client_mut(index).resources.network_mut();
+        let from_client_id = network.local_id.unwrap();
+        network
+            .client
+            .send_message(&GameMessage::SpawnPrefab {
+                network_object_ids,
+                from_client_id,
+                prefab_id: prefab_ref.id(),
+            })
+            .unwrap();
+    }
+
+    /// Spawns a marker from client `index` and waits until every peer holds
+    /// it. The marker travels behind earlier spawns on the ordered channel,
+    /// so once it lands they have been handled everywhere.
+    fn wait_for_marker_spawn(harness: &mut TestHarness, index: usize, prefab_ref: Ref<Prefab>) {
+        let (_, marker_id) = spawn_from_client(harness, index, prefab_ref);
+        assert!(
+            pump_until(harness, |h| h.contexts.iter().all(|ctx| {
+                has_network_object(ctx.scenes.current_scene(), marker_id)
+            })),
+            "marker spawn never reached every peer"
+        );
+    }
+
+    #[test]
+    fn client_spawn_reusing_another_peers_id_is_refused() {
+        let (mut harness, prefab_refs) = setup_spawn_harness("net_spawn_collide_test_prefab");
+        let owner_id = harness.client(0).resources.network().local_id.unwrap();
+        let (_, network_object_id) = spawn_from_client(&mut harness, 0, prefab_refs[1].clone());
+        assert!(
+            pump_until(&mut harness, |h| h.contexts.iter().all(|ctx| {
+                has_network_object(ctx.scenes.current_scene(), network_object_id)
+            })),
+            "the spawn did not reach every peer"
+        );
+
+        // Client 1 claims client 0's object id for a spawn of its own.
+        send_spawn_from_client(
+            &mut harness,
+            1,
+            &prefab_refs[2],
+            [(0, network_object_id)].into_iter().collect(),
+        );
+        wait_for_marker_spawn(&mut harness, 1, prefab_refs[2].clone());
+
+        for (name, ctx) in [("host", harness.host()), ("client 0", harness.client(0))] {
+            let scene = ctx.scenes.current_scene();
+            assert_eq!(
+                count_network_object(scene, network_object_id),
+                1,
+                "the colliding spawn added a second object with the id on the {name}"
+            );
+            assert_eq!(
+                network_object_owner(scene, network_object_id),
+                Some(owner_id),
+                "the colliding spawn changed the object's owner on the {name}"
+            );
+            let indexed_owner = scene
+                .indexed_network_object(network_object_id)
+                .and_then(|go| {
+                    scene.read_component::<ComponentNetworkObject, _, _>(go, |c| c.owner_id)
+                });
+            assert_eq!(
+                indexed_owner,
+                Some(owner_id),
+                "the colliding spawn changed which object the id resolves to on the {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn client_spawn_into_another_peers_id_range_is_refused() {
+        let (mut harness, prefab_refs) = setup_spawn_harness("net_spawn_range_test_prefab");
+        let (_, network_object_id) = spawn_from_client(&mut harness, 0, prefab_refs[1].clone());
+        assert!(
+            pump_until(&mut harness, |h| h.contexts.iter().all(|ctx| {
+                has_network_object(ctx.scenes.current_scene(), network_object_id)
+            })),
+            "the spawn did not reach every peer"
+        );
+
+        // An id client 0 has not used yet, but that comes from its range.
+        let reserved_id = network_object_id + 1000;
+        send_spawn_from_client(
+            &mut harness,
+            1,
+            &prefab_refs[2],
+            [(0, reserved_id)].into_iter().collect(),
+        );
+        wait_for_marker_spawn(&mut harness, 1, prefab_refs[2].clone());
+
+        for (name, ctx) in [("host", harness.host()), ("client 0", harness.client(0))] {
+            assert!(
+                !has_network_object(ctx.scenes.current_scene(), reserved_id),
+                "the {name} accepted a spawn with an id reserved by another peer"
+            );
+        }
+    }
+
+    #[test]
+    fn client_spawn_with_missing_or_duplicate_ids_is_refused() {
+        let (mut harness, prefab_refs) = setup_spawn_harness("net_spawn_malformed_test_prefab");
+        wait_for_marker_spawn(&mut harness, 1, prefab_refs[2].clone());
+        let before: Vec<_> = [harness.host(), harness.client(0)]
+            .iter()
+            .map(|ctx| count_network_objects(ctx.scenes.current_scene()))
+            .collect();
+
+        // The prefab holds one network object: no id leaves it unnamed, and
+        // two indices sharing one id would alias each other.
+        send_spawn_from_client(&mut harness, 1, &prefab_refs[2], Default::default());
+        let (_, own_id) = spawn_from_client(&mut harness, 1, prefab_refs[2].clone());
+        send_spawn_from_client(
+            &mut harness,
+            1,
+            &prefab_refs[2],
+            [(0, own_id + 500), (1, own_id + 500)].into_iter().collect(),
+        );
+        wait_for_marker_spawn(&mut harness, 1, prefab_refs[2].clone());
+
+        // Only the genuine spawn and the marker arrived.
+        let after: Vec<_> = [harness.host(), harness.client(0)]
+            .iter()
+            .map(|ctx| count_network_objects(ctx.scenes.current_scene()))
+            .collect();
+        assert_eq!(after, before.iter().map(|n| n + 2).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn concurrent_client_spawns_never_collide() {
+        const SPAWNS: usize = 5;
+        let (mut harness, prefab_refs) = setup_spawn_harness("net_spawn_concurrent_test_prefab");
+        let host_id = harness.host().resources.network().local_id.unwrap();
+        let host_object_id = {
+            let host = harness.host_mut();
+            let scene = host.scenes.current_scene_mut();
+            let spawned = host
+                .resources
+                .network_mut()
+                .instantiate_prefab(scene, prefab_refs[0].clone())
+                .unwrap();
+            host.scenes
+                .current_scene()
+                .read_component::<ComponentNetworkObject, _, _>(spawned, |c| c.id)
+                .unwrap()
+        };
+
+        // Both clients spawn before any peer pumps, so the server receives
+        // their spawns in the same tick.
+        let mut spawned: Vec<(u64, u64)> = vec![(host_object_id, host_id)];
+        for _ in 0..SPAWNS {
+            for index in 0..2 {
+                let owner_id = harness.client(index).resources.network().local_id.unwrap();
+                let (_, id) =
+                    spawn_from_client(&mut harness, index, prefab_refs[index + 1].clone());
+                spawned.push((id, owner_id));
+            }
+        }
+
+        let ids: HashSet<_> = spawned.iter().map(|(id, _)| *id).collect();
+        assert_eq!(ids.len(), spawned.len(), "two spawns chose the same id");
+        assert!(
+            pump_until(&mut harness, |h| h.contexts.iter().all(|ctx| {
+                spawned.iter().all(|&(id, owner_id)| {
+                    network_object_owner(ctx.scenes.current_scene(), id) == Some(owner_id)
+                })
+            })),
+            "a spawn did not reach every peer with its owner"
+        );
+        for ctx in &harness.contexts {
+            for &(id, _) in &spawned {
+                assert_eq!(count_network_object(ctx.scenes.current_scene(), id), 1);
+            }
+        }
+
+        // Each peer allocates from its own range, whatever the others pick.
+        let mut ranges: std::collections::HashMap<u64, HashSet<u64>> = Default::default();
+        for &(id, owner_id) in &spawned {
+            ranges.entry(owner_id).or_default().insert(id >> 32);
+        }
+        assert!(ranges.values().all(|r| r.len() == 1));
+        let distinct: HashSet<_> = ranges.values().flatten().collect();
+        assert_eq!(distinct.len(), 3, "two peers share an id range");
     }
 }
