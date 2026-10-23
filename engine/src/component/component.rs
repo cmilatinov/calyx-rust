@@ -65,7 +65,7 @@ pub trait ComponentInstance: Reflect {
     /// Returns an exclusive reference to this component type through an
     /// entry of a world split by [`Self::split_world`], or `None` if the
     /// entity does not have it or the entry's world cannot write it.
-    fn into_instance_mut<'a>(&self, entry: EntryMut<'a>) -> Option<&'a mut dyn Component>;
+    fn split_instance_mut<'a>(&self, entry: EntryMut<'a>) -> Option<&'a mut dyn Component>;
 
     /// Remove this component type from the entity.
     fn remove_instance(&self, entry: &mut Entry);

@@ -568,7 +568,6 @@ fn a_game_object_picker_shown_while_editing_an_id_lists_objects_by_id() {
     h.click(combo, &mut draw);
     let option = h.labelled(Role::Button, &child_id.to_string());
     h.click(option, &mut draw);
-    drop(draw);
 
     assert_eq!(value.id(), child_id);
 }

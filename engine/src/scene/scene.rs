@@ -921,7 +921,7 @@ impl Scene {
         let edit = {
             let (mut edited, rest) = component.split_world(&mut self.world.0);
             let entry = edited.entry_mut(game_object.entity).ok()?;
-            let instance = component.into_instance_mut(entry)?;
+            let instance = component.split_instance_mut(entry)?;
             let view = SceneView::split(rest, &self.graph, &self.store, self.root);
             editor(instance, &view)
         };

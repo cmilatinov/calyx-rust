@@ -41,7 +41,7 @@ pub fn derive_component(input: TokenStream) -> TokenStream {
             ) -> (legion::world::SubWorld<'w>, legion::world::SubWorld<'w>) {
                 world.split::<&mut #name>()
             }
-            fn into_instance_mut<'a>(
+            fn split_instance_mut<'a>(
                 &self, entry: legion::world::EntryMut<'a>
             ) -> #FQOption<&'a mut dyn engine::component::Component> {
                 let instance = entry.into_component_mut::<#name>().ok()?;
