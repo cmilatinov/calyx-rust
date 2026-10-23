@@ -194,11 +194,9 @@ impl InspectorEditTracker {
     /// the committed edit, or `None` when the object or component is
     /// missing.
     ///
-    /// # Safety
-    ///
-    /// As [`Scene::edit_component_dyn`]: `draw` must not read the edited
-    /// component through the scene.
-    pub unsafe fn show_component<R>(
+    /// As with [`Scene::edit_component_dyn`], the scene `draw` reads holds a
+    /// placeholder in the shown component's place.
+    pub fn show_component<R>(
         &mut self,
         scene: &mut Scene,
         game_object: GameObject,
@@ -215,8 +213,7 @@ impl InspectorEditTracker {
         let needs_baseline = track && self.needs_baseline(key, version);
         #[cfg(any(debug_assertions, test))]
         let check_reported = self.checks_reported();
-        // SAFETY: forwarded to the caller.
-        let (value, changed, current): (R, bool, bool) = unsafe {
+        let (value, changed, current): (R, bool, bool) =
             scene.edit_component_dyn(game_object, component, |instance, scene| {
                 if needs_baseline {
                     self.set_baseline_at(key, instance.serialize(), Some(version));
@@ -238,8 +235,7 @@ impl InspectorEditTracker {
                     value: (value, response.changed, commit),
                     written: response.changed,
                 }
-            })
-        }?;
+            })?;
         if changed {
             // The inspector's own write moved the version; the baseline
             // still holds every outside write before it.

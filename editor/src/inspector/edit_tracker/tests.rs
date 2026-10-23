@@ -87,10 +87,9 @@ impl Session {
         move |ui: &mut Ui, harness_ctx: &InspectorContext| {
             let pointer_down = ui.input(|input| input.pointer.any_down());
             let game_object = self.game_object;
-            // SAFETY: the inspectors under test read nothing through the
-            // scene.
-            let shown = unsafe {
-                self.tracker.show_component(
+            let shown = self
+                .tracker
+                .show_component(
                     &mut self.scene,
                     game_object,
                     component,
@@ -106,8 +105,7 @@ impl Session {
                         (response, response)
                     },
                 )
-            }
-            .expect("the component should exist");
+                .expect("the component should exist");
             if shown.changed {
                 self.changed_frames += 1;
             }
@@ -496,9 +494,9 @@ fn a_committed_id_edit_shows_the_id_the_scene_kept() {
     let game_object = session.game_object;
     let id = session.scene.uuid(game_object);
     let component = ComponentID::default();
-    // SAFETY: the closure reads nothing through the scene.
-    let shown = unsafe {
-        session.tracker.show_component(
+    let shown = session
+        .tracker
+        .show_component(
             &mut session.scene,
             game_object,
             &component,
@@ -514,8 +512,7 @@ fn a_committed_id_edit_shows_the_id_the_scene_kept() {
                 (InspectorResponse::CHANGED, ())
             },
         )
-    }
-    .unwrap();
+        .unwrap();
 
     let commit = shown.committed.expect("the rename should commit");
     assert_eq!(session.scene.uuid(game_object), id);
@@ -536,26 +533,23 @@ fn an_unreported_edit_fails() {
     let mut session = Session::new(&h);
     let game_object = session.game_object;
     let component = ComponentTransform::default();
-    // SAFETY: the closure reads nothing through the scene.
-    let _ = unsafe {
-        session.tracker.show_component(
-            &mut session.scene,
-            game_object,
-            &component,
-            true,
-            false,
-            |instance, _| {
-                instance
-                    .as_reflect_mut()
-                    .downcast_mut::<ComponentTransform>()
-                    .unwrap()
-                    .transform
-                    .position
-                    .x = 3.0;
-                (InspectorResponse::NONE, ())
-            },
-        )
-    };
+    let _ = session.tracker.show_component(
+        &mut session.scene,
+        game_object,
+        &component,
+        true,
+        false,
+        |instance, _| {
+            instance
+                .as_reflect_mut()
+                .downcast_mut::<ComponentTransform>()
+                .unwrap()
+                .transform
+                .position
+                .x = 3.0;
+            (InspectorResponse::NONE, ())
+        },
+    );
 }
 
 #[test]
