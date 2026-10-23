@@ -136,6 +136,21 @@ impl SceneGraph {
             .filter_map(|node| self.game_object_from_node(node))
     }
 
+    /// Iterates `game_object` and every descendant depth-first, each object
+    /// before its children and siblings in their stored order.
+    pub fn descendants_ordered(
+        &self,
+        game_object: GameObject,
+    ) -> impl Iterator<Item = GameObject> + '_ {
+        let mut stack = vec![game_object];
+        std::iter::from_fn(move || {
+            let game_object = stack.pop()?;
+            let children = self.children_ordered(game_object).collect::<Vec<_>>();
+            stack.extend(children.into_iter().rev());
+            Some(game_object)
+        })
+    }
+
     /// Iterates graph nodes for `node` and its descendants.
     pub fn descendant_nodes(&self, node: NodeIndex) -> impl Iterator<Item = NodeIndex> + '_ {
         Bfs::new(&self.arena, node).iter(&self.arena)

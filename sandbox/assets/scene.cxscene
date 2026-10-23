@@ -1,288 +1,72 @@
 {
   "components": {
-    "24b73614-e397-4e80-a669-3e64b910c53a": {
-      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
-        "id": "24b73614-e397-4e80-a669-3e64b910c53a",
-        "name": "Sky",
-        "visible": true
-      },
-      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
-        "transform": {
-          "position": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "rotation": [
-            0.0,
-            0.0,
-            0.0,
-            1.0
-          ],
-          "scale": [
-            1.0,
-            1.0,
-            1.0
-          ]
-        }
-      },
-      "eb42f81f-45ab-428c-9d07-961696edc5fa": {
-        "active": true,
-        "intensity": 1.0,
-        "skybox": "f9da6a04-19a6-1f65-dbf9-0a779459c814"
-      }
-    },
-    "36fd779f-b09b-4912-83de-16fce6365981": {
-      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
-        "id": "36fd779f-b09b-4912-83de-16fce6365981",
-        "name": "Crosshair",
-        "visible": true
-      },
-      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
-        "transform": {
-          "position": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "rotation": [
-            0.0,
-            0.0,
-            0.0,
-            1.0
-          ],
-          "scale": [
-            0.25,
-            0.25,
-            0.25
-          ]
-        }
-      },
-      "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263",
-        "material": "c35634f8-fdee-c217-bc6b-22ab01eac817"
-      }
-    },
-    "1d181f5b-1544-4f00-a19e-6ba14c57288a": {
-      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
-        "id": "1d181f5b-1544-4f00-a19e-6ba14c57288a",
-        "name": "Player",
-        "visible": true
-      },
-      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
-        "transform": {
-          "position": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "rotation": [
-            0.0,
-            0.0,
-            0.0,
-            1.0
-          ],
-          "scale": [
-            1.0,
-            1.0,
-            1.0
-          ]
-        }
-      }
-    },
     "a0e5ad62-7bb8-4b12-9160-c2bd84f5d4dd": {
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            0.44999998807907104,
+            0.44999998807907104,
+            0.44999998807907104
+          ]
+        }
+      },
+      "21b467c0-9409-4a7f-b750-418809609eb1": {
+        "ammo": 6,
+        "barrel": "a4e9c1eb-a8bc-4b3f-b3d6-d588fe769a76",
+        "camera": "9985d281-6c72-4fd1-83e2-1abf2a495f77",
+        "crosshair": "36fd779f-b09b-4912-83de-16fce6365981",
+        "fire_cooldown": 0.3499999940395355,
+        "hull_turn_speed": 2.799999952316284,
+        "max_ammo": 6,
+        "move_speed": 7.0,
+        "muzzle_offset": 1.5750000476837158,
+        "projectile_damage": 35.0,
+        "projectile_lifetime": 2.0,
+        "projectile_radius": 0.18000000715255737,
+        "projectile_speed": 28.0,
+        "reload_duration": 1.399999976158142,
+        "reverse_speed": 4.5,
+        "turret": "fd0e2a37-e81e-4b18-af5d-b71c0b2a6825",
+        "turret_turn_speed": 12.0
+      },
+      "28ca6ba9-20bd-4077-8f35-1cf8483c6f4e": {
+        "alive": true,
+        "death_requested": false,
+        "invulnerability_duration": 2.0,
+        "invulnerability_remaining": 0.0,
+        "respawn_delay": 3.0,
+        "respawn_remaining": 0.0,
+        "respawn_requested": false,
+        "team": 4294967295
+      },
+      "f2c31eb5-c999-4125-9cb0-a72a238eca2e": {
+        "hit_count": 0,
+        "hit_radius": 1.25
+      },
       "02289c92-3412-406e-a7e5-3bbb15d7041e": {
         "id": "a0e5ad62-7bb8-4b12-9160-c2bd84f5d4dd",
         "name": "Tank",
         "visible": true
       },
-      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
-        "transform": {
-          "position": [
-            0.0,
-            0.0,
-            0.0
-          ],
-          "rotation": [
-            0.0,
-            0.0,
-            0.0,
-            1.0
-          ],
-          "scale": [
-            0.45,
-            0.45,
-            0.45
-          ]
-        }
-      },
-      "21b467c0-9409-4a7f-b750-418809609eb1": {
-        "turret": "fd0e2a37-e81e-4b18-af5d-b71c0b2a6825",
-        "barrel": "a4e9c1eb-a8bc-4b3f-b3d6-d588fe769a76",
-        "camera": "9985d281-6c72-4fd1-83e2-1abf2a495f77",
-        "crosshair": "36fd779f-b09b-4912-83de-16fce6365981",
-        "move_speed": 7.0,
-        "reverse_speed": 4.5,
-        "hull_turn_speed": 2.8,
-        "turret_turn_speed": 12.0,
-        "muzzle_offset": 1.575
-      },
-        "f2c31eb5-c999-4125-9cb0-a72a238eca2e": {
-          "hit_radius": 1.25,
-          "hit_count": 0
-        },
-        "8f0175f4-1a76-4c43-8932-6462f9005ab4": {
-          "max_health": 100.0,
-          "current_health": 100.0,
-          "destroy_on_death": false,
-          "dead": false
-        },
-        "28ca6ba9-20bd-4077-8f35-1cf8483c6f4e": {
-          "team": 4294967295,
-          "respawn_delay": 3.0,
-          "respawn_remaining": 0.0,
-          "invulnerability_duration": 2.0,
-          "invulnerability_remaining": 0.0,
-          "alive": true,
-          "death_requested": false,
-          "respawn_requested": false
-        }
-      },
-    "c8cd2ec1-8e42-4e44-a15b-c1f75b7162da": {
-      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
-        "id": "c8cd2ec1-8e42-4e44-a15b-c1f75b7162da",
-        "name": "Player Spawn",
-        "visible": true
-      },
-      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
-        "transform": {
-          "position": [0.0, 0.0, 0.0],
-          "rotation": [0.0, 0.0, 0.0, 1.0],
-          "scale": [1.0, 1.0, 1.0]
-        }
-      },
-      "876c7327-0d92-4242-b567-fd9a258c6c06": {
-        "team": 4294967295,
-        "order": 0,
-        "radius": 1.0,
-        "active": true
+      "8f0175f4-1a76-4c43-8932-6462f9005ab4": {
+        "current_health": 100.0,
+        "dead": false,
+        "destroy_on_death": false,
+        "max_health": 100.0
       }
     },
-    "9985d281-6c72-4fd1-83e2-1abf2a495f77": {
-      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
-        "id": "9985d281-6c72-4fd1-83e2-1abf2a495f77",
-        "name": "Camera",
-        "visible": true
-      },
-      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
-        "transform": {
-          "position": [
-            0.0,
-            16.0,
-            -10.0
-          ],
-          "rotation": [
-            0.5,
-            0.0,
-            0.0,
-            0.8660254
-          ],
-          "scale": [
-            1.0,
-            1.0,
-            1.0
-          ]
-        }
-      },
-      "a85867d2-3e68-42b2-b943-ea78c7c6ddb5": {
-        "clear_color": [
-          0,
-          0,
-          0,
-          255
-        ],
-        "enabled": true,
-        "far_plane": 100.0,
-        "fov": 1.2217305,
-        "near_plane": 0.1
-      }
-    },
-    "ff3e62d5-9f0b-4e43-8f42-81744fdc8a91": {
-      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
-        "id": "ff3e62d5-9f0b-4e43-8f42-81744fdc8a91",
-        "name": "Target A",
-        "visible": true
-      },
-      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
-        "transform": {
-          "position": [
-            -3.0,
-            0.5,
-            12.0
-          ],
-          "rotation": [
-            0.0,
-            0.0,
-            0.0,
-            1.0
-          ],
-          "scale": [
-            1.2,
-            1.2,
-            1.2
-          ]
-        }
-      },
-      "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32",
-        "material": "c35634f8-fdee-c217-bc6b-22ab01eac817"
-      },
-      "f2c31eb5-c999-4125-9cb0-a72a238eca2e": {
-        "hit_radius": 1.0,
-        "hit_count": 0
-      }
-    },
-    "27b9ce07-f502-4481-a0c4-48c24358596d": {
-      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
-        "id": "27b9ce07-f502-4481-a0c4-48c24358596d",
-        "name": "Target B",
-        "visible": true
-      },
-      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
-        "transform": {
-          "position": [
-            3.0,
-            0.5,
-            16.0
-          ],
-          "rotation": [
-            0.0,
-            0.0,
-            0.0,
-            1.0
-          ],
-          "scale": [
-            1.2,
-            1.2,
-            1.2
-          ]
-        }
-      },
-      "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32",
-        "material": "c35634f8-fdee-c217-bc6b-22ab01eac817"
-      },
-      "f2c31eb5-c999-4125-9cb0-a72a238eca2e": {
-        "hit_radius": 1.0,
-        "hit_count": 0
-      }
-    },
-    "4cd11c7b-4d12-4d2e-8dcf-acde0d677b26": {
-      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
-        "id": "4cd11c7b-4d12-4d2e-8dcf-acde0d677b26",
-        "name": "Body",
-        "visible": true
-      },
+    "4de34f1d-7cbc-5f73-be21-d1737c1e80ff": {
       "c5b3b71f-1f14-4b5b-9881-436118684d29": {
         "transform": {
           "position": [
@@ -303,23 +87,27 @@
           ]
         }
       },
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "4de34f1d-7cbc-5f73-be21-d1737c1e80ff",
+        "name": "Wheels Left",
+        "visible": true
+      },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "mesh": "9d37ee2c-6027-5091-af9e-7d189b572d64",
-        "material": "4d44d3b2-a480-fd8c-969a-d6f64e7e8a27"
+        "material": "f7a56dda-9f90-8c4e-335f-6e02b73890d9",
+        "mesh": "4d796fc9-5fbe-5d29-9b77-0d192eb6d5d3"
       }
     },
-    "30c0e2db-1518-a549-a451-a720bd44b4f3": {
-      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
-        "id": "30c0e2db-1518-a549-a451-a720bd44b4f3",
-        "name": "Tracks Right",
-        "visible": true
+    "f80c0819-9a7f-5a24-9a56-64f32933b336": {
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "material": "4d44d3b2-a480-fd8c-969a-d6f64e7e8a27",
+        "mesh": "a330e477-435e-5208-8040-e1857c4fe324"
       },
       "c5b3b71f-1f14-4b5b-9881-436118684d29": {
         "transform": {
           "position": [
             0.0,
-            0.0,
-            0.0
+            1.5667041540145874,
+            -0.5127557516098022
           ],
           "rotation": [
             0.0,
@@ -334,23 +122,26 @@
           ]
         }
       },
-      "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "mesh": "6a778530-16fe-5121-bb00-078816d0de61",
-        "material": "0b90da62-df89-b912-f547-aeb5b1ca08a1"
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "f80c0819-9a7f-5a24-9a56-64f32933b336",
+        "name": "Turret Head",
+        "visible": true
       }
     },
-    "9f97b442-c308-bd7c-b20d-9400548a3925": {
-      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
-        "id": "9f97b442-c308-bd7c-b20d-9400548a3925",
-        "name": "Wheels Right",
-        "visible": true
+    "de2a2612-fa64-4fb4-8801-55a27df12564": {
+      "8591392e-d5f6-4543-89eb-93bc865073ea": {
+        "cell_size": 2.0,
+        "columns": 15,
+        "material": "0b90da62-df89-b912-f547-aeb5b1ca08a1",
+        "mesh": "4d2d87eb-60b4-4dcc-b3d4-67bc444396c9",
+        "rows": 16
       },
       "c5b3b71f-1f14-4b5b-9881-436118684d29": {
         "transform": {
           "position": [
             0.0,
             0.0,
-            0.0
+            11.0
           ],
           "rotation": [
             0.0,
@@ -365,12 +156,17 @@
           ]
         }
       },
-      "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "mesh": "59a9bb63-279a-58e6-9104-78de7dccf757",
-        "material": "f7a56dda-9f90-8c4e-335f-6e02b73890d9"
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "de2a2612-fa64-4fb4-8801-55a27df12564",
+        "name": "Arena",
+        "visible": true
       }
     },
     "0c61c5b4-34ef-54eb-afce-bcaed93b9cc2": {
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "material": "0b90da62-df89-b912-f547-aeb5b1ca08a1",
+        "mesh": "cdee48d9-df64-58ac-9cca-fad23de51bd5"
+      },
       "02289c92-3412-406e-a7e5-3bbb15d7041e": {
         "id": "0c61c5b4-34ef-54eb-afce-bcaed93b9cc2",
         "name": "Tracks Left",
@@ -395,16 +191,114 @@
             1.0
           ]
         }
-      },
-      "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "mesh": "cdee48d9-df64-58ac-9cca-fad23de51bd5",
-        "material": "0b90da62-df89-b912-f547-aeb5b1ca08a1"
       }
     },
-    "4de34f1d-7cbc-5f73-be21-d1737c1e80ff": {
+    "ff3e62d5-9f0b-4e43-8f42-81744fdc8a91": {
+      "f2c31eb5-c999-4125-9cb0-a72a238eca2e": {
+        "hit_count": 0,
+        "hit_radius": 1.0
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            -3.0,
+            0.5,
+            12.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.2000000476837158,
+            1.2000000476837158,
+            1.2000000476837158
+          ]
+        }
+      },
       "02289c92-3412-406e-a7e5-3bbb15d7041e": {
-        "id": "4de34f1d-7cbc-5f73-be21-d1737c1e80ff",
-        "name": "Wheels Left",
+        "id": "ff3e62d5-9f0b-4e43-8f42-81744fdc8a91",
+        "name": "Target A",
+        "visible": true
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "material": "c35634f8-fdee-c217-bc6b-22ab01eac817",
+        "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
+      }
+    },
+    "36fd779f-b09b-4912-83de-16fce6365981": {
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "material": "c35634f8-fdee-c217-bc6b-22ab01eac817",
+        "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            0.25,
+            0.25,
+            0.25
+          ]
+        }
+      },
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "36fd779f-b09b-4912-83de-16fce6365981",
+        "name": "Crosshair",
+        "visible": true
+      }
+    },
+    "24b73614-e397-4e80-a669-3e64b910c53a": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "24b73614-e397-4e80-a669-3e64b910c53a",
+        "name": "Sky",
+        "visible": true
+      },
+      "eb42f81f-45ab-428c-9d07-961696edc5fa": {
+        "active": true,
+        "intensity": 1.0,
+        "skybox": "f9da6a04-19a6-1f65-dbf9-0a779459c814"
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    "4cd11c7b-4d12-4d2e-8dcf-acde0d677b26": {
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "material": "4d44d3b2-a480-fd8c-969a-d6f64e7e8a27",
+        "mesh": "9d37ee2c-6027-5091-af9e-7d189b572d64"
+      },
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "4cd11c7b-4d12-4d2e-8dcf-acde0d677b26",
+        "name": "Body",
         "visible": true
       },
       "c5b3b71f-1f14-4b5b-9881-436118684d29": {
@@ -426,40 +320,13 @@
             1.0
           ]
         }
-      },
-      "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "mesh": "4d796fc9-5fbe-5d29-9b77-0d192eb6d5d3",
-        "material": "f7a56dda-9f90-8c4e-335f-6e02b73890d9"
-      }
-    },
-    "fd0e2a37-e81e-4b18-af5d-b71c0b2a6825": {
-      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
-        "id": "fd0e2a37-e81e-4b18-af5d-b71c0b2a6825",
-        "name": "Turret",
-        "visible": true
-      },
-      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
-        "transform": {
-          "position": [
-            0.0,
-            2.4498035,
-            0.14193174
-          ],
-          "rotation": [
-            0.0,
-            0.0,
-            0.0,
-            1.0
-          ],
-          "scale": [
-            1.0,
-            1.0,
-            1.0
-          ]
-        }
       }
     },
     "8dd51911-1d24-5025-8ab2-c371d0c6fdea": {
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "material": "4d44d3b2-a480-fd8c-969a-d6f64e7e8a27",
+        "mesh": "2ede3d56-dd0f-5aab-ae0d-b83db8f18ede"
+      },
       "02289c92-3412-406e-a7e5-3bbb15d7041e": {
         "id": "8dd51911-1d24-5025-8ab2-c371d0c6fdea",
         "name": "Turret Pivot",
@@ -468,9 +335,9 @@
       "c5b3b71f-1f14-4b5b-9881-436118684d29": {
         "transform": {
           "position": [
-            -0.014329132,
-            0.28285215,
-            0.14327431
+            -0.014329131692647934,
+            0.2828521430492401,
+            0.14327430725097656
           ],
           "rotation": [
             0.0,
@@ -484,30 +351,38 @@
             1.0
           ]
         }
-      },
-      "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "mesh": "2ede3d56-dd0f-5aab-ae0d-b83db8f18ede",
-        "material": "4d44d3b2-a480-fd8c-969a-d6f64e7e8a27"
       }
     },
-    "f80c0819-9a7f-5a24-9a56-64f32933b336": {
+    "9985d281-6c72-4fd1-83e2-1abf2a495f77": {
       "02289c92-3412-406e-a7e5-3bbb15d7041e": {
-        "id": "f80c0819-9a7f-5a24-9a56-64f32933b336",
-        "name": "Turret Head",
+        "id": "9985d281-6c72-4fd1-83e2-1abf2a495f77",
+        "name": "Camera",
         "visible": true
+      },
+      "a85867d2-3e68-42b2-b943-ea78c7c6ddb5": {
+        "clear_color": [
+          0,
+          0,
+          0,
+          255
+        ],
+        "enabled": true,
+        "far_plane": 100.0,
+        "fov": 1.2217304706573486,
+        "near_plane": 0.10000000149011612
       },
       "c5b3b71f-1f14-4b5b-9881-436118684d29": {
         "transform": {
           "position": [
             0.0,
-            1.5667041,
-            -0.51275578
+            16.0,
+            -10.0
           ],
           "rotation": [
+            0.5,
             0.0,
             0.0,
-            0.0,
-            1.0
+            0.8660253882408142
           ],
           "scale": [
             1.0,
@@ -515,10 +390,6 @@
             1.0
           ]
         }
-      },
-      "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "mesh": "a330e477-435e-5208-8040-e1857c4fe324",
-        "material": "4d44d3b2-a480-fd8c-969a-d6f64e7e8a27"
       }
     },
     "a4e9c1eb-a8bc-4b3f-b3d6-d588fe769a76": {
@@ -527,12 +398,38 @@
         "name": "Gun",
         "visible": true
       },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "material": "0b90da62-df89-b912-f547-aeb5b1ca08a1",
+        "mesh": "f8a12e80-8f16-5965-b549-d1dfa1bddead"
+      },
       "c5b3b71f-1f14-4b5b-9881-436118684d29": {
         "transform": {
           "position": [
-            0.012641166,
-            1.1204625,
-            1.0884886
+            0.01264116633683443,
+            1.1204625368118286,
+            1.0884885787963867
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    "fd0e2a37-e81e-4b18-af5d-b71c0b2a6825": {
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            2.449803590774536,
+            0.14193174242973328
           ],
           "rotation": [
             0.0,
@@ -547,46 +444,175 @@
           ]
         }
       },
-      "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "mesh": "f8a12e80-8f16-5965-b549-d1dfa1bddead",
-        "material": "0b90da62-df89-b912-f547-aeb5b1ca08a1"
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "fd0e2a37-e81e-4b18-af5d-b71c0b2a6825",
+        "name": "Turret",
+        "visible": true
       }
     },
-    "de2a2612-fa64-4fb4-8801-55a27df12564": {
+    "9f97b442-c308-bd7c-b20d-9400548a3925": {
       "02289c92-3412-406e-a7e5-3bbb15d7041e": {
-        "id": "de2a2612-fa64-4fb4-8801-55a27df12564",
-        "name": "Arena",
+        "id": "9f97b442-c308-bd7c-b20d-9400548a3925",
+        "name": "Wheels Right",
+        "visible": true
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "material": "f7a56dda-9f90-8c4e-335f-6e02b73890d9",
+        "mesh": "59a9bb63-279a-58e6-9104-78de7dccf757"
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    "1d181f5b-1544-4f00-a19e-6ba14c57288a": {
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "1d181f5b-1544-4f00-a19e-6ba14c57288a",
+        "name": "Player",
+        "visible": true
+      }
+    },
+    "27b9ce07-f502-4481-a0c4-48c24358596d": {
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "material": "c35634f8-fdee-c217-bc6b-22ab01eac817",
+        "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            3.0,
+            0.5,
+            16.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.2000000476837158,
+            1.2000000476837158,
+            1.2000000476837158
+          ]
+        }
+      },
+      "f2c31eb5-c999-4125-9cb0-a72a238eca2e": {
+        "hit_count": 0,
+        "hit_radius": 1.0
+      },
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "27b9ce07-f502-4481-a0c4-48c24358596d",
+        "name": "Target B",
+        "visible": true
+      }
+    },
+    "30c0e2db-1518-a549-a451-a720bd44b4f3": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "30c0e2db-1518-a549-a451-a720bd44b4f3",
+        "name": "Tracks Right",
+        "visible": true
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "material": "0b90da62-df89-b912-f547-aeb5b1ca08a1",
+        "mesh": "6a778530-16fe-5121-bb00-078816d0de61"
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    "c8cd2ec1-8e42-4e44-a15b-c1f75b7162da": {
+      "876c7327-0d92-4242-b567-fd9a258c6c06": {
+        "active": true,
+        "order": 0,
+        "radius": 1.0,
+        "team": 4294967295
+      },
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "c8cd2ec1-8e42-4e44-a15b-c1f75b7162da",
+        "name": "Player Spawn",
         "visible": true
       },
       "c5b3b71f-1f14-4b5b-9881-436118684d29": {
         "transform": {
-          "position": [0.0, 0.0, 11.0],
-          "rotation": [0.0, 0.0, 0.0, 1.0],
-          "scale": [1.0, 1.0, 1.0]
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
         }
-      },
-      "8591392e-d5f6-4543-89eb-93bc865073ea": {
-        "mesh": "4d2d87eb-60b4-4dcc-b3d4-67bc444396c9",
-        "material": "0b90da62-df89-b912-f547-aeb5b1ca08a1",
-        "columns": 15,
-        "rows": 16,
-        "cell_size": 2.0
       }
     }
   },
   "hierarchy": {
-    "9a71cfab-2e0b-486a-83aa-37f1caebc71a": [
-      "24b73614-e397-4e80-a669-3e64b910c53a",
-      "c8cd2ec1-8e42-4e44-a15b-c1f75b7162da",
-      "1d181f5b-1544-4f00-a19e-6ba14c57288a",
-      "ff3e62d5-9f0b-4e43-8f42-81744fdc8a91",
-      "27b9ce07-f502-4481-a0c4-48c24358596d",
-      "de2a2612-fa64-4fb4-8801-55a27df12564"
-    ],
-    "1d181f5b-1544-4f00-a19e-6ba14c57288a": [
-      "a0e5ad62-7bb8-4b12-9160-c2bd84f5d4dd",
-      "9985d281-6c72-4fd1-83e2-1abf2a495f77",
-      "36fd779f-b09b-4912-83de-16fce6365981"
+    "fd0e2a37-e81e-4b18-af5d-b71c0b2a6825": [
+      "8dd51911-1d24-5025-8ab2-c371d0c6fdea",
+      "f80c0819-9a7f-5a24-9a56-64f32933b336",
+      "a4e9c1eb-a8bc-4b3f-b3d6-d588fe769a76"
     ],
     "a0e5ad62-7bb8-4b12-9160-c2bd84f5d4dd": [
       "4cd11c7b-4d12-4d2e-8dcf-acde0d677b26",
@@ -596,10 +622,18 @@
       "4de34f1d-7cbc-5f73-be21-d1737c1e80ff",
       "fd0e2a37-e81e-4b18-af5d-b71c0b2a6825"
     ],
-    "fd0e2a37-e81e-4b18-af5d-b71c0b2a6825": [
-      "8dd51911-1d24-5025-8ab2-c371d0c6fdea",
-      "f80c0819-9a7f-5a24-9a56-64f32933b336",
-      "a4e9c1eb-a8bc-4b3f-b3d6-d588fe769a76"
+    "1d181f5b-1544-4f00-a19e-6ba14c57288a": [
+      "a0e5ad62-7bb8-4b12-9160-c2bd84f5d4dd",
+      "9985d281-6c72-4fd1-83e2-1abf2a495f77",
+      "36fd779f-b09b-4912-83de-16fce6365981"
     ]
-  }
+  },
+  "roots": [
+    "24b73614-e397-4e80-a669-3e64b910c53a",
+    "c8cd2ec1-8e42-4e44-a15b-c1f75b7162da",
+    "1d181f5b-1544-4f00-a19e-6ba14c57288a",
+    "ff3e62d5-9f0b-4e43-8f42-81744fdc8a91",
+    "27b9ce07-f502-4481-a0c4-48c24358596d",
+    "de2a2612-fa64-4fb4-8801-55a27df12564"
+  ]
 }
