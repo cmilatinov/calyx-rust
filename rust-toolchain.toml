@@ -1,2 +1,6 @@
 [toolchain]
-channel = "nightly"
+# A dated nightly, so every machine and CI build with the same compiler, clippy and warnings.
+# Moving it is a deliberate change in its own pull request; see docs/process/toolchain.md.
+channel = "nightly-2026-10-22"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
