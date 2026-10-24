@@ -1,5 +1,6 @@
 use super::cache::ThumbnailCache;
 use super::generator::ThumbnailGenerator;
+use super::handle::{ThumbnailHandle, ThumbnailRequestMemo};
 use super::pipeline::*;
 use super::*;
 use std::any::Any;
@@ -14,6 +15,8 @@ pub struct ThumbnailService {
 
 pub(super) struct ThumbnailShared {
     pub(super) state: Mutex<ThumbnailState>,
+    /// Memoized requests for UI lookups by asset; see [`ThumbnailHandle`].
+    pub(super) requests: Mutex<ThumbnailRequestMemo>,
     wake: Condvar,
     state_poisoned: AtomicBool,
 }
@@ -51,6 +54,7 @@ impl ThumbnailService {
                     render_settings: render_settings.sanitized(),
                     ..Default::default()
                 }),
+                requests: Mutex::new(ThumbnailRequestMemo::default()),
                 wake: Condvar::new(),
                 state_poisoned: AtomicBool::new(false),
             }),
@@ -87,22 +91,17 @@ impl ThumbnailService {
         self.shared.wake.notify_one();
     }
 
+    /// Returns a cloneable handle UI code uses to request thumbnails.
+    pub fn handle(&self) -> ThumbnailHandle {
+        ThumbnailHandle::new(self.shared.clone())
+    }
+
     pub fn request(
         &mut self,
         request: ThumbnailRequest,
         priority: ThumbnailPriority,
     ) -> ThumbnailStatus {
-        let mut state = lock_thumbnail_state(&self.shared);
-        state
-            .pipeline
-            .clear_asset_versions_except(request.asset_id, request.source_version);
-        state.textures.retain(|key, _| {
-            key.asset_id != request.asset_id || key.source_version == request.source_version
-        });
-        let status = state.pipeline.request(request, priority);
-        drop(state);
-        self.shared.wake.notify_one();
-        status
+        request_thumbnail(&self.shared, request, priority)
     }
 
     pub fn status(&self, key: ThumbnailKey) -> ThumbnailStatus {
@@ -110,11 +109,7 @@ impl ThumbnailService {
     }
 
     pub fn texture_id(&self, key: ThumbnailKey) -> Option<egui::TextureId> {
-        lock_thumbnail_state(&self.shared)
-            .textures
-            .get(&key)
-            .and_then(|texture| texture.handle.as_ref())
-            .map(|handle| handle.id())
+        thumbnail_texture_id(&self.shared, key)
     }
 
     pub fn process(&mut self, context: &ReadOnlyAssetContext, _render_state: &RenderState) {
@@ -160,6 +155,37 @@ impl Drop for ThumbnailService {
             }
         }
     }
+}
+
+/// Queues `request` (or raises its priority), dropping other versions of the
+/// same asset, and returns its status.
+pub(super) fn request_thumbnail(
+    shared: &ThumbnailShared,
+    request: ThumbnailRequest,
+    priority: ThumbnailPriority,
+) -> ThumbnailStatus {
+    let mut state = lock_thumbnail_state(shared);
+    state
+        .pipeline
+        .clear_asset_versions_except(request.asset_id, request.source_version);
+    state.textures.retain(|key, _| {
+        key.asset_id != request.asset_id || key.source_version == request.source_version
+    });
+    let status = state.pipeline.request(request, priority);
+    drop(state);
+    shared.wake.notify_one();
+    status
+}
+
+pub(super) fn thumbnail_texture_id(
+    shared: &ThumbnailShared,
+    key: ThumbnailKey,
+) -> Option<egui::TextureId> {
+    lock_thumbnail_state(shared)
+        .textures
+        .get(&key)
+        .and_then(|texture| texture.handle.as_ref())
+        .map(|handle| handle.id())
 }
 
 fn lock_thumbnail_state(shared: &ThumbnailShared) -> MutexGuard<'_, ThumbnailState> {

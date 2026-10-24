@@ -4,8 +4,7 @@ use crate::panel::Panel;
 use crate::scene_edit::SceneEdit;
 use crate::selection::{Selection, SelectionType};
 use crate::widgets::{
-    FileButton, ThumbnailPriority, ThumbnailRequest, ThumbnailStatus, THUMBNAIL_MAX_SIZE,
-    THUMBNAIL_MIN_SIZE,
+    FileButton, ThumbnailPriority, ThumbnailView, THUMBNAIL_MAX_SIZE, THUMBNAIL_MIN_SIZE,
 };
 use crate::{icons, EditorAppState};
 use egui::load::SizedTexture;
@@ -176,11 +175,18 @@ impl Panel for PanelContentBrowser {
                                 let is_dir = node.is_dir();
                                 let is_selected = self.is_selected(state, node, is_dir);
                                 let image_size = Vec2::splat(icon_size);
-                                let image_src = if is_dir {
-                                    folder_image.clone()
+                                let thumbnail = if is_dir {
+                                    ThumbnailView::Unsupported
                                 } else {
-                                    self.asset_thumbnail_image(state, node, image_size)
-                                        .unwrap_or_else(|| file_image.clone())
+                                    Self::asset_thumbnail(state, node)
+                                };
+                                let image_src = match thumbnail.texture_id() {
+                                    Some(id) => ImageSource::Texture(SizedTexture {
+                                        id,
+                                        size: image_size,
+                                    }),
+                                    None if is_dir => folder_image.clone(),
+                                    None => file_image.clone(),
                                 };
                                 let res = PanelContentBrowser::render_file_button(
                                     ui,
@@ -190,6 +196,7 @@ impl Panel for PanelContentBrowser {
                                     icon_spacing,
                                     Vec2::new(icon_padding_x, icon_padding_y),
                                     is_selected,
+                                    &thumbnail,
                                 );
                                 if res.clicked() || res.secondary_clicked() {
                                     self.set_selected_file(state, node.clone());
@@ -265,27 +272,13 @@ impl PanelContentBrowser {
             .clamp(THUMBNAIL_MIN_SIZE as f32, THUMBNAIL_MAX_SIZE as f32);
     }
 
-    fn asset_thumbnail_image(
-        &self,
-        state: &mut EditorAppState,
-        path: &Path,
-        image_size: Vec2,
-    ) -> Option<ImageSource<'static>> {
-        let request = {
-            let registry = state.game.assets.registries.assets.read();
-            ThumbnailRequest::from_asset_path(&registry, path)
-        }?;
-        let key = request.key();
-        let status = state.thumbnails.request(request, ThumbnailPriority::Normal);
-        if !matches!(status, ThumbnailStatus::Ready) {
-            return None;
-        }
-        state.thumbnails.texture_id(key).map(|id| {
-            ImageSource::Texture(SizedTexture {
-                id,
-                size: image_size,
-            })
-        })
+    /// Requests the thumbnail of the file at `path` and returns what to draw.
+    fn asset_thumbnail(state: &EditorAppState, path: &Path) -> ThumbnailView {
+        let registry = state.game.assets.registries.assets.read();
+        state
+            .thumbnails
+            .handle()
+            .view_for_path(&registry, path, ThumbnailPriority::Normal)
     }
 
     fn empty_space_interaction(&mut self, ui: &mut Ui, rect: Rect) {
@@ -421,6 +414,7 @@ impl PanelContentBrowser {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_file_button<'a>(
         ui: &'a mut Ui,
         name: &'a str,
@@ -429,6 +423,7 @@ impl PanelContentBrowser {
         image_spacing: f32,
         padding: Vec2,
         selected: bool,
+        thumbnail: &ThumbnailView,
     ) -> Response {
         let image = egui::Image::new(image_src).fit_to_exact_size(image_size);
         let format = TextFormat {
@@ -447,8 +442,16 @@ impl PanelContentBrowser {
             text: job.into(),
             padding,
             selected,
+            badge: thumbnail.badge(),
         };
-        ui.add(button).on_hover_text_at_pointer(name)
+        let hover = match thumbnail.hover_text() {
+            Some(thumbnail_hover) => format!(
+                "{name}
+{thumbnail_hover}"
+            ),
+            None => name.to_string(),
+        };
+        ui.add(button).on_hover_text_at_pointer(hover)
     }
 
     fn set_selected_folder(&mut self, selection: &mut Selection, path: PathBuf) {
