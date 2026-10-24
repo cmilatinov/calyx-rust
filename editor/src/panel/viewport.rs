@@ -219,7 +219,7 @@ impl PanelViewport {
                 if viewport_is_continuous && selected_game_object {
                     drag.commit(&mut app_state.scene_document, &app_state.game);
                 } else {
-                    drag.abandon(&mut app_state.game);
+                    drag.abandon(&mut app_state.scene_document, &mut app_state.game);
                 }
             }
         }
@@ -431,7 +431,9 @@ impl GizmoDrag {
     /// Ends a drag that cannot be recorded, restoring the object's transform
     /// in the scene the drag wrote unless something wrote it since. A simulation copy that has since been
     /// dropped took the drag's writes with it.
-    fn abandon(self, game: &mut GameContext) {
+    /// The authoring scene's dirty state then follows the rollback, which
+    /// matters when the scene was saved while the drag was pending.
+    fn abandon(self, document: &mut SceneDocument, game: &mut GameContext) {
         self.edit.cancel();
         let scene = match (self.simulating, game.scenes.has_simulation_scene()) {
             (false, _) => game.scenes.current_scene_mut(),
@@ -442,8 +444,12 @@ impl GizmoDrag {
             return;
         };
         // Only a transform the drag still owns is rolled back.
-        if self.after == Some(scene.transform(game_object).matrix()) {
-            scene.set_transform(game_object, &self.before);
+        if self.after != Some(scene.transform(game_object).matrix()) {
+            return;
+        }
+        scene.set_transform(game_object, &self.before);
+        if !self.simulating {
+            document.scene_written_outside_history(game);
         }
     }
 }
@@ -457,6 +463,14 @@ mod tests {
     use nalgebra_glm::{translation, vec3, Mat4};
     use std::path::Path;
     use uuid::Uuid;
+
+    fn document() -> SceneDocument {
+        SceneDocument::new(Path::new("gizmo-drag-test-project"))
+    }
+
+    fn temp_scene_file() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("gizmo-drag-{}.cxscene", Uuid::new_v4()))
+    }
 
     fn game_with_object() -> (GameContext, Uuid, Mat4) {
         let mut game = test_game_context();
@@ -497,9 +511,12 @@ mod tests {
     #[test]
     fn an_abandoned_gizmo_drag_restores_the_transform() {
         let (mut game, id, start) = game_with_object();
-        let document = SceneDocument::new(Path::new("gizmo-drag-test-project"));
+        let mut document = document();
+        let file = temp_scene_file();
+        assert!(document.save(&mut game, file.clone()));
 
-        drag(&mut game, id).abandon(&mut game);
+        drag(&mut game, id).abandon(&mut document, &mut game);
+        let _ = std::fs::remove_file(&file);
 
         assert_eq!(local_matrix(&game, id), start, "the drag is rolled back");
         assert!(!document.can_undo(&game));
@@ -511,7 +528,7 @@ mod tests {
         let (mut game, id, start) = game_with_object();
         game.scenes.start_simulation();
 
-        drag(&mut game, id).abandon(&mut game);
+        drag(&mut game, id).abandon(&mut document(), &mut game);
 
         assert_eq!(local_matrix(&game, id), start);
     }
@@ -522,7 +539,7 @@ mod tests {
         let drag = drag(&mut game, id);
         game.scenes.start_simulation();
 
-        drag.abandon(&mut game);
+        drag.abandon(&mut document(), &mut game);
 
         let scene = game.scenes.current_scene();
         assert_eq!(scene.transform(scene.find(id).unwrap()).matrix(), start);
@@ -538,9 +555,29 @@ mod tests {
         let object = scene.find(id).unwrap();
         scene.set_transform(object, &elsewhere);
 
-        drag.abandon(&mut game);
+        drag.abandon(&mut document(), &mut game);
 
         assert_eq!(local_matrix(&game, id), elsewhere);
+    }
+
+    #[test]
+    fn an_abandoned_drag_marks_a_scene_saved_during_it_dirty() {
+        let (mut game, id, start) = game_with_object();
+        let mut document = document();
+        let file = temp_scene_file();
+        let drag = drag(&mut game, id);
+        // Saved while the viewport was hidden, with the drag's transform.
+        assert!(document.save(&mut game, file.clone()));
+        assert!(!document.is_dirty());
+
+        drag.abandon(&mut document, &mut game);
+        let _ = std::fs::remove_file(&file);
+
+        assert_eq!(local_matrix(&game, id), start);
+        assert!(
+            document.is_dirty(),
+            "the file still has the drag's transform"
+        );
     }
 
     #[test]
@@ -552,7 +589,7 @@ mod tests {
         scene.delete(object);
         scene.flush_deletes();
 
-        drag.abandon(&mut game);
+        drag.abandon(&mut document(), &mut game);
 
         assert!(game.scenes.current_scene().find(id).is_none());
     }

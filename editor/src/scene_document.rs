@@ -84,6 +84,17 @@ impl SceneDocument {
         }
     }
 
+    /// Takes a write the authoring scene got outside any edit, such as an
+    /// abandoned gizmo drag rolled back: the inspector's baselines are taken
+    /// again and the dirty state follows the scene.
+    pub(crate) fn scene_written_outside_history(&mut self, game: &GameContext) {
+        let Some(game) = authoring(game) else {
+            return;
+        };
+        self.refresh_baselines(game);
+        self.sync_dirty(game);
+    }
+
     /// The tracker the inspector shows components through.
     pub fn inspector_edits_mut(&mut self) -> &mut InspectorEditTracker {
         &mut self.inspector_edits
