@@ -397,6 +397,10 @@ impl SceneRenderer {
         let draw_list = self.build_draw_list();
         self.build_mesh_data(&render_context);
         self.light_manager.build_data(&render_context, scene);
+        // Compute the skybox's environment maps before the meshes that are lit
+        // by them and the skybox pass that draws its cubemap.
+        self.skybox_renderer
+            .prepare(&render_context, &mut encoder, &self.assets);
         let assets = self.assets.lock();
         {
             let black_texture_cube = self.default_assets.black_texture_cube.read();
