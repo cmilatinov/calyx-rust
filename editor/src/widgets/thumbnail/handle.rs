@@ -89,9 +89,15 @@ pub(crate) fn paint_thumbnail_badge(ui: &Ui, rect: egui::Rect, badge: ThumbnailB
     match badge {
         ThumbnailBadge::None => {}
         ThumbnailBadge::Loading => {
-            let size = (rect.width().min(rect.height()) * 0.4).clamp(8.0, 32.0);
+            // A dark disc keeps the spinner readable over light fallback icons.
+            let size = (rect.width().min(rect.height()) * 0.5).clamp(10.0, 40.0);
+            ui.painter()
+                .circle_filled(rect.center(), size * 0.7, Color32::from_black_alpha(190));
             let spinner_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(size, size));
-            egui::Spinner::new().size(size).paint_at(ui, spinner_rect);
+            egui::Spinner::new()
+                .size(size)
+                .color(ui.visuals().selection.stroke.color)
+                .paint_at(ui, spinner_rect);
         }
         ThumbnailBadge::Failed => {
             let radius = (rect.width().min(rect.height()) * 0.16).clamp(3.0, 12.0);
