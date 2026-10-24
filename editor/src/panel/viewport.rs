@@ -387,13 +387,16 @@ impl PanelViewport {
 /// because the viewport missed frames of it or its object is no longer
 /// selected, is abandoned: the object gets back the local transform it had
 /// before the drag, so no change is left that undo and the dirty mark do not
-/// know about.
+/// know about. A transform written since the drag's last move, such as by an
+/// undo while the viewport was hidden, is left alone.
 struct GizmoDrag {
     edit: SceneEdit,
     /// The dragged object.
     object: Uuid,
     /// The object's local transform before the drag.
     before: Mat4,
+    /// The object's local transform after the drag's last move.
+    after: Option<Mat4>,
     /// Whether the drag writes a simulation copy of the scene rather than
     /// the authoring scene.
     simulating: bool,
@@ -406,6 +409,7 @@ impl GizmoDrag {
             edit: SceneEdit::begin("Transform game object"),
             object: scene.uuid(game_object),
             before: scene.transform(game_object).matrix(),
+            after: None,
             simulating: game.scenes.has_simulation_scene(),
         }
     }
@@ -415,6 +419,7 @@ impl GizmoDrag {
         let scene = self.edit.scene_mut(game);
         if let Some(game_object) = scene.find(self.object) {
             scene.set_world_transform(game_object, matrix);
+            self.after = Some(scene.transform(game_object).matrix());
         }
     }
 
@@ -424,7 +429,7 @@ impl GizmoDrag {
     }
 
     /// Ends a drag that cannot be recorded, restoring the object's transform
-    /// in the scene the drag wrote. A simulation copy that has since been
+    /// in the scene the drag wrote unless something wrote it since. A simulation copy that has since been
     /// dropped took the drag's writes with it.
     fn abandon(self, game: &mut GameContext) {
         self.edit.cancel();
@@ -433,7 +438,11 @@ impl GizmoDrag {
             (true, true) => game.scenes.simulation_scene_mut(),
             (true, false) => return,
         };
-        if let Some(game_object) = scene.find(self.object) {
+        let Some(game_object) = scene.find(self.object) else {
+            return;
+        };
+        // Only a transform the drag still owns is rolled back.
+        if self.after == Some(scene.transform(game_object).matrix()) {
             scene.set_transform(game_object, &self.before);
         }
     }
@@ -517,6 +526,21 @@ mod tests {
 
         let scene = game.scenes.current_scene();
         assert_eq!(scene.transform(scene.find(id).unwrap()).matrix(), start);
+    }
+
+    #[test]
+    fn an_abandoned_drag_keeps_a_transform_written_after_it() {
+        // Such as an undo made while the viewport was hidden mid-drag.
+        let (mut game, id, _) = game_with_object();
+        let drag = drag(&mut game, id);
+        let elsewhere = translation(&vec3(0.0, 4.0, 0.0));
+        let scene = game.scenes.current_scene_mut();
+        let object = scene.find(id).unwrap();
+        scene.set_transform(object, &elsewhere);
+
+        drag.abandon(&mut game);
+
+        assert_eq!(local_matrix(&game, id), elsewhere);
     }
 
     #[test]
