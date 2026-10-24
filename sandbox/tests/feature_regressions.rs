@@ -357,3 +357,36 @@ fn tank_handling_is_the_same_at_30_and_144_fps() {
     assert!((coasting.position - released.position).magnitude() > 0.5);
     assert!((last.position - stopped.position).magnitude() < 1e-4);
 }
+
+/// Drives the sandbox tank with throttle only for `seconds` at `fps`, from
+/// `start` facing `yaw` radians, and returns where it ends up.
+fn drive_from(start: Vec3, yaw: f32, fps: usize, seconds: f32) -> Vec3 {
+    let (copy, assets) = sandbox_assets();
+    let mut scene = load_sandbox_scene(&copy, &assets);
+    let tank = object_named(&scene, "Tank");
+    let mut transform = scene.world_transform(tank);
+    transform.position = start;
+    transform.rotation = nalgebra::UnitQuaternion::from_euler_angles(0.0, yaw, 0.0);
+    scene.set_world_transform(tank, transform.matrix());
+    let mut runner = HeadlessSceneRunner::from_scene(scene);
+    runner.set_step_seconds(1.0 / fps as f64);
+    runner.press_key(egui::Key::W);
+    runner.step_many((seconds * fps as f32).round() as usize);
+    runner.scene().world_transform(tank).position
+}
+
+#[test]
+fn tank_slides_along_a_wall_the_same_at_30_and_144_fps() {
+    // Facing 45 degrees into the arena's +X perimeter wall, whose face is at
+    // x = 13, in the lane between it and the cover.
+    let start = vec3(11.0, 0.0, 0.0);
+    let yaw = std::f32::consts::FRAC_PI_4;
+    let slow = drive_from(start, yaw, 30, 1.5);
+    let fast = drive_from(start, yaw, 144, 1.5);
+
+    assert!(
+        (slow - fast).magnitude() < 0.05,
+        "30 fps: {slow:?}\n144 fps: {fast:?}"
+    );
+    assert!(fast.z - start.z > 2.0, "the tank should slide: {fast:?}");
+}

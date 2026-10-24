@@ -295,7 +295,8 @@ fn update_hull(
     let turned = steer.abs() > f32::EPSILON && turn_hull(scene, &mut transform, yaw);
     let mut changed = turned;
 
-    let (speed, distance) = advance_speed(controller.speed, throttle, controller, dt);
+    let start_speed = controller.speed;
+    let (speed, distance) = advance_speed(start_speed, throttle, controller, dt);
     controller.speed = speed;
     if distance.abs() > f32::EPSILON {
         // Drive along the heading halfway through this frame's turn: the
@@ -306,11 +307,33 @@ fn update_hull(
             start_rotation
         };
         let forward = flatten_xz(heading * Vec3::z());
-        let movement = resolve_hull_movement(scene, &transform, forward * distance);
-        // Driving into a wall sheds the speed the wall absorbed.
-        let travelled = movement.dot(&forward) / distance;
-        if travelled < 1.0 {
-            controller.speed *= travelled.clamp(0.0, 1.0);
+        let (mut movement, contact) = sweep_hull(scene, &transform, forward * distance);
+        // Against a wall the hull's top speed drops to the share of it that
+        // runs along the wall: none head-on, nearly all of it when grazing.
+        // The share depends only on the contact angle, and the frame is
+        // driven again under that cap, so sliding does not depend on the
+        // frame rate.
+        if let Some(normal) = contact {
+            let along = forward - normal * forward.dot(&normal);
+            let share = along.magnitude().min(1.0);
+            let capped = ComponentTankController {
+                move_speed: controller.move_speed.max(0.0) * share,
+                reverse_speed: controller.reverse_speed.max(0.0) * share,
+                ..*controller
+            };
+            let (mut capped_speed, capped_distance) =
+                advance_speed(start_speed, throttle, &capped, dt);
+            if throttle.abs() <= f32::EPSILON {
+                // Coasting never speeds up, so only the cap can apply.
+                let limit = if capped_speed >= 0.0 {
+                    capped.move_speed
+                } else {
+                    capped.reverse_speed
+                };
+                capped_speed = capped_speed.clamp(-limit, limit);
+            }
+            movement *= (capped_distance / distance).clamp(0.0, 1.0);
+            controller.speed = capped_speed;
         }
         transform.translate(&movement);
         changed = true;
@@ -449,6 +472,13 @@ fn static_obstacles(scene: &Scene) -> HashSet<Entity> {
 }
 
 fn resolve_hull_movement(scene: &Scene, transform: &Transform, movement: Vec3) -> Vec3 {
+    sweep_hull(scene, transform, movement).0
+}
+
+/// Moves the hull by `movement`, stopping at static obstacles and sliding
+/// along them. Returns the movement it managed and the flattened normal of
+/// the obstacle that opposed `movement` most, when it hit one.
+fn sweep_hull(scene: &Scene, transform: &Transform, movement: Vec3) -> (Vec3, Option<Vec3>) {
     let physics = &scene.physics;
     let obstacles = static_obstacles(scene);
     let is_obstacle = |collider: ColliderHandle, _: &Collider| {
@@ -458,6 +488,8 @@ fn resolve_hull_movement(scene: &Scene, transform: &Transform, movement: Vec3) -
     };
     let mut resolved = Vec3::zeros();
     let mut remaining = movement;
+    let mut contact: Option<Vec3> = None;
+    let opposition = |normal: &Vec3| normal.dot(&movement).abs();
 
     for _ in 0..2 {
         let distance = remaining.magnitude();
@@ -482,14 +514,19 @@ fn resolve_hull_movement(scene: &Scene, transform: &Transform, movement: Vec3) -
         let safe_time = (time_of_impact - COLLISION_SKIN / distance).max(0.0);
         resolved += remaining * safe_time;
 
-        let untraveled = remaining * (1.0 - time_of_impact);
+        // Everything not travelled, including the skin held back, slides on.
+        let untraveled = remaining * (1.0 - safe_time);
         // Rapier reports `normal1` on the hit collider in world space.
         let normal = hit.hit.normal1.into_inner();
         remaining = untraveled - normal * untraveled.dot(&normal);
         remaining.y = 0.0;
+        let flat_normal = flatten_xz(normal);
+        if contact.is_none_or(|contact| opposition(&flat_normal) > opposition(&contact)) {
+            contact = Some(flat_normal);
+        }
     }
 
-    resolved
+    (resolved, contact)
 }
 
 fn update_turret(
