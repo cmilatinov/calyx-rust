@@ -1,4 +1,5 @@
 use crate::panel::Panel;
+use crate::scene_document::SceneDocument;
 use crate::scene_edit::SceneEdit;
 use crate::selection::SelectionType;
 use crate::{icons, EditorAppState};
@@ -9,9 +10,11 @@ use egui::{
     Align2, Color32, Image, ImageSource, Key, Mesh, Modifiers, PointerButton, Pos2, Response, Rgba,
     Sense, TextStyle,
 };
+use engine::context::GameContext;
 use engine::input::Input;
 use engine::math::Transform;
 use engine::render::CameraLike;
+use engine::scene::GameObject;
 use mint::ColumnMatrix4;
 use nalgebra_glm::{DMat4, Mat4};
 use re_ui::Icon;
@@ -21,12 +24,17 @@ use transform_gizmo_egui::mint::RowMatrix4;
 use transform_gizmo_egui::{
     Gizmo, GizmoConfig, GizmoInteraction, GizmoMode, GizmoOrientation, GizmoResult, GizmoVisuals,
 };
+use uuid::Uuid;
 
 pub struct PanelViewport {
     gizmo: Gizmo,
     /// The gizmo drag in progress, from its first move to the pointer's
     /// release.
-    transform_edit: Option<SceneEdit>,
+    transform_edit: Option<GizmoDrag>,
+    /// Set when a drag was abandoned before the pointer's release, such as
+    /// when the selection changed mid-drag: the gizmo's results are ignored
+    /// until the release, since they are relative to the abandoned drag.
+    drag_suspended: bool,
     last_viewport_pass: Option<u64>,
 }
 
@@ -35,6 +43,7 @@ impl Default for PanelViewport {
         Self {
             gizmo: Gizmo::new(GizmoConfig::default()),
             transform_edit: None,
+            drag_suspended: false,
             last_viewport_pass: None,
         }
     }
@@ -160,6 +169,12 @@ impl PanelViewport {
         let hovered_game_object = self.hovered_game_object(ui, viewport_response, app_state);
         app_state.hovered_game_object = hovered_game_object;
 
+        let selected = app_state
+            .selection
+            .first(SelectionType::GameObject)
+            .filter(|id| app_state.game.scenes.simulation_scene().find(*id).is_some());
+        self.end_mismatched_drag(&mut app_state.scene_document, &mut app_state.game, selected);
+
         if let Some(game_object) = app_state
             .selection
             .first(SelectionType::GameObject)
@@ -198,24 +213,28 @@ impl PanelViewport {
                 pointer_in_viewport,
                 &[transform.into()],
             ) {
-                let res: Transform = transforms[0].into();
-                self.transform_edit
-                    .get_or_insert_with(|| SceneEdit::begin("Transform game object"))
-                    .scene_mut(&mut app_state.game)
-                    .set_world_transform(game_object, res.matrix());
-                self.gizmo_status(ui, &result);
+                if !self.drag_suspended {
+                    let res: Transform = transforms[0].into();
+                    let game = &mut app_state.game;
+                    let document = &app_state.scene_document;
+                    self.transform_edit
+                        .get_or_insert_with(|| GizmoDrag::begin(document, game, game_object))
+                        .move_to(game, res.matrix());
+                    self.gizmo_status(ui, &result);
+                }
             }
             gizmo_focused = self.gizmo.is_focused();
         }
 
         if !ui.input(|input| input.pointer.button_down(PointerButton::Primary)) {
-            if let Some(edit) = self.transform_edit.take() {
+            self.drag_suspended = false;
+            if let Some(drag) = self.transform_edit.take() {
                 // A drag the viewport missed frames of, or whose object went
                 // away, may have a capture that no longer matches the scene.
                 if viewport_is_continuous && selected_game_object {
-                    app_state.commit_scene_edit(edit);
+                    drag.commit(&mut app_state.scene_document, &app_state.game);
                 } else {
-                    edit.cancel();
+                    drag.abandon(&mut app_state.scene_document, &mut app_state.game);
                 }
             }
         }
@@ -368,6 +387,27 @@ impl PanelViewport {
         );
     }
 
+    /// Abandons the pending drag when `selected`, the selected object, is no
+    /// longer the object it drags, and ignores the gizmo until the pointer's
+    /// release.
+    fn end_mismatched_drag(
+        &mut self,
+        document: &mut SceneDocument,
+        game: &mut GameContext,
+        selected: Option<Uuid>,
+    ) {
+        if self
+            .transform_edit
+            .as_ref()
+            .is_some_and(|drag| Some(drag.object) != selected)
+        {
+            if let Some(drag) = self.transform_edit.take() {
+                drag.abandon(document, game);
+            }
+            self.drag_suspended = true;
+        }
+    }
+
     fn viewport_pass_is_continuous(last_pass: Option<u64>, pass: u64) -> bool {
         last_pass.is_none_or(|last_pass| last_pass.saturating_add(1) >= pass)
     }
@@ -377,9 +417,274 @@ impl PanelViewport {
     }
 }
 
+/// A gizmo drag of one game object, from its first move to its end.
+///
+/// A drag that ends normally is one undo step. A drag that cannot be recorded,
+/// because the viewport missed frames of it or its object is no longer
+/// selected, is abandoned: the object gets back the local transform it had
+/// before the drag, so no change is left that undo and the dirty mark do not
+/// know about. That holds only while nothing else has used the drag's writes:
+/// once an edit was recorded, an undo or redo made, or the scene saved since
+/// the drag began, every snapshot taken since holds the dragged transform, so
+/// the drag is kept as part of them instead. A transform written since the
+/// drag's last move is also left alone.
+struct GizmoDrag {
+    edit: SceneEdit,
+    /// The dragged object.
+    object: Uuid,
+    /// The object's local transform before the drag.
+    before: Mat4,
+    /// The object's local transform after the drag's last move.
+    after: Option<Mat4>,
+    /// The scene document's revision when the drag began.
+    revision: u64,
+    /// Whether the drag writes a simulation copy of the scene rather than
+    /// the authoring scene.
+    simulating: bool,
+}
+
+impl GizmoDrag {
+    fn begin(document: &SceneDocument, game: &GameContext, game_object: GameObject) -> Self {
+        let scene = game.scenes.simulation_scene();
+        Self {
+            edit: SceneEdit::begin("Transform game object"),
+            object: scene.uuid(game_object),
+            before: scene.transform(game_object).matrix(),
+            after: None,
+            revision: document.revision(),
+            simulating: game.scenes.has_simulation_scene(),
+        }
+    }
+
+    /// Moves the object to the world transform `matrix`.
+    fn move_to(&mut self, game: &mut GameContext, matrix: Mat4) {
+        let scene = self.edit.scene_mut(game);
+        if let Some(game_object) = scene.find(self.object) {
+            scene.set_world_transform(game_object, matrix);
+            self.after = Some(scene.transform(game_object).matrix());
+        }
+    }
+
+    /// Records the drag as one undo step.
+    fn commit(self, document: &mut SceneDocument, game: &GameContext) {
+        self.edit.commit(document, game);
+    }
+
+    /// Ends a drag that cannot be recorded, restoring the object's transform
+    /// in the scene the drag wrote unless something wrote or captured it
+    /// since. A simulation copy that has since been dropped took the drag's
+    /// writes with it. A rollback of the authoring scene goes to the document
+    /// as a write outside its history.
+    fn abandon(self, document: &mut SceneDocument, game: &mut GameContext) {
+        self.edit.cancel();
+        let scene = match (self.simulating, game.scenes.has_simulation_scene()) {
+            (false, _) => game.scenes.current_scene_mut(),
+            (true, true) => game.scenes.simulation_scene_mut(),
+            (true, false) => return,
+        };
+        let Some(game_object) = scene.find(self.object) else {
+            return;
+        };
+        // Only a transform the drag still owns, and that no snapshot or save
+        // has taken since, is rolled back.
+        if self.after != Some(scene.transform(game_object).matrix())
+            || (!self.simulating && document.revision() != self.revision)
+        {
+            return;
+        }
+        scene.set_transform(game_object, &self.before);
+        if !self.simulating {
+            document.scene_written_outside_history(game);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::PanelViewport;
+    use super::{GizmoDrag, PanelViewport};
+    use crate::scene_document::SceneDocument;
+    use crate::scene_edit::SceneEdit;
+    use engine::context::GameContext;
+    use engine::test_support::test_game_context;
+    use nalgebra_glm::{translation, vec3, Mat4};
+    use std::path::Path;
+    use uuid::Uuid;
+
+    fn document() -> SceneDocument {
+        SceneDocument::new(Path::new("gizmo-drag-test-project"))
+    }
+
+    fn temp_scene_file() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("gizmo-drag-{}.cxscene", Uuid::new_v4()))
+    }
+
+    fn game_with_object() -> (GameContext, Uuid, Mat4) {
+        let mut game = test_game_context();
+        let scene = game.scenes.current_scene_mut();
+        let object = scene.create(None, None);
+        let start = translation(&vec3(1.0, 2.0, 3.0));
+        scene.set_transform(object, &start);
+        let id = scene.uuid(object);
+        (game, id, start)
+    }
+
+    fn local_matrix(game: &GameContext, id: Uuid) -> Mat4 {
+        let scene = game.scenes.simulation_scene();
+        scene.transform(scene.find(id).unwrap()).matrix()
+    }
+
+    fn drag(game: &mut GameContext, id: Uuid) -> GizmoDrag {
+        drag_in(&document(), game, id)
+    }
+
+    fn drag_in(document: &SceneDocument, game: &mut GameContext, id: Uuid) -> GizmoDrag {
+        let object = game.scenes.simulation_scene().find(id).unwrap();
+        let mut drag = GizmoDrag::begin(document, game, object);
+        drag.move_to(game, translation(&vec3(5.0, 0.0, 0.0)));
+        drag.move_to(game, translation(&vec3(9.0, 0.0, 0.0)));
+        drag
+    }
+
+    #[test]
+    fn a_finished_gizmo_drag_is_one_undo_step() {
+        let (mut game, id, start) = game_with_object();
+        let mut document = SceneDocument::new(Path::new("gizmo-drag-test-project"));
+
+        drag(&mut game, id).commit(&mut document, &game);
+        assert_eq!(local_matrix(&game, id), translation(&vec3(9.0, 0.0, 0.0)));
+        assert!(document.is_dirty());
+
+        document.undo(&mut game);
+        assert_eq!(local_matrix(&game, id), start);
+    }
+
+    #[test]
+    fn an_abandoned_gizmo_drag_restores_the_transform() {
+        let (mut game, id, start) = game_with_object();
+        let mut document = document();
+        let file = temp_scene_file();
+        assert!(document.save(&mut game, file.clone()));
+
+        drag_in(&document, &mut game, id).abandon(&mut document, &mut game);
+        let _ = std::fs::remove_file(&file);
+
+        assert_eq!(local_matrix(&game, id), start, "the drag is rolled back");
+        assert!(!document.can_undo(&game));
+        assert!(!document.is_dirty());
+    }
+
+    #[test]
+    fn an_abandoned_simulation_drag_restores_the_simulation_transform() {
+        let (mut game, id, start) = game_with_object();
+        game.scenes.start_simulation();
+
+        drag(&mut game, id).abandon(&mut document(), &mut game);
+
+        assert_eq!(local_matrix(&game, id), start);
+    }
+
+    #[test]
+    fn an_abandoned_drag_restores_the_authoring_scene_after_simulation_starts() {
+        let (mut game, id, start) = game_with_object();
+        let drag = drag(&mut game, id);
+        game.scenes.start_simulation();
+
+        drag.abandon(&mut document(), &mut game);
+
+        let scene = game.scenes.current_scene();
+        assert_eq!(scene.transform(scene.find(id).unwrap()).matrix(), start);
+    }
+
+    #[test]
+    fn an_abandoned_drag_keeps_a_transform_written_after_it() {
+        // Such as an undo made while the viewport was hidden mid-drag.
+        let (mut game, id, _) = game_with_object();
+        let drag = drag(&mut game, id);
+        let elsewhere = translation(&vec3(0.0, 4.0, 0.0));
+        let scene = game.scenes.current_scene_mut();
+        let object = scene.find(id).unwrap();
+        scene.set_transform(object, &elsewhere);
+
+        drag.abandon(&mut document(), &mut game);
+
+        assert_eq!(local_matrix(&game, id), elsewhere);
+    }
+
+    #[test]
+    fn an_abandoned_drag_keeps_a_transform_saved_during_it() {
+        let (mut game, id, _) = game_with_object();
+        let mut document = document();
+        let file = temp_scene_file();
+        let drag = drag_in(&document, &mut game, id);
+        // Saved while the viewport was hidden, with the drag's transform.
+        assert!(document.save(&mut game, file.clone()));
+
+        drag.abandon(&mut document, &mut game);
+        let _ = std::fs::remove_file(&file);
+
+        assert_eq!(local_matrix(&game, id), translation(&vec3(9.0, 0.0, 0.0)));
+        assert!(!document.is_dirty(), "the scene matches the file");
+    }
+
+    #[test]
+    fn an_abandoned_drag_keeps_a_transform_an_edit_recorded_during_it() {
+        // Such as a remote command, which captures the whole scene.
+        let (mut game, id, _) = game_with_object();
+        let mut document = document();
+        let drag = drag_in(&document, &mut game, id);
+        let mut edit = SceneEdit::begin("Create object");
+        edit.scene_mut(&mut game).create(None, None);
+        edit.commit(&mut document, &game);
+
+        drag.abandon(&mut document, &mut game);
+        let moved = translation(&vec3(9.0, 0.0, 0.0));
+        assert_eq!(local_matrix(&game, id), moved);
+
+        // Undoing and redoing the edit agree with the scene.
+        document.undo(&mut game);
+        assert_eq!(local_matrix(&game, id), moved);
+        document.redo(&mut game);
+        assert_eq!(local_matrix(&game, id), moved);
+    }
+
+    #[test]
+    fn changing_the_selection_mid_drag_abandons_the_drag() {
+        let (mut game, a, start) = game_with_object();
+        let b = {
+            let scene = game.scenes.current_scene_mut();
+            let object = scene.create(None, None);
+            scene.uuid(object)
+        };
+        let mut document = document();
+        let mut viewport = PanelViewport::default();
+        viewport.transform_edit = Some(drag_in(&document, &mut game, a));
+
+        viewport.end_mismatched_drag(&mut document, &mut game, Some(a));
+        assert!(
+            viewport.transform_edit.is_some(),
+            "same object: keeps going"
+        );
+
+        viewport.end_mismatched_drag(&mut document, &mut game, Some(b));
+        assert!(viewport.transform_edit.is_none());
+        assert!(viewport.drag_suspended, "the gizmo waits for the release");
+        assert_eq!(local_matrix(&game, a), start);
+        assert!(!document.can_undo(&game));
+    }
+
+    #[test]
+    fn an_abandoned_drag_of_a_removed_object_does_nothing() {
+        let (mut game, id, _) = game_with_object();
+        let drag = drag(&mut game, id);
+        let scene = game.scenes.current_scene_mut();
+        let object = scene.find(id).unwrap();
+        scene.delete(object);
+        scene.flush_deletes();
+
+        drag.abandon(&mut document(), &mut game);
+
+        assert!(game.scenes.current_scene().find(id).is_none());
+    }
 
     #[test]
     fn viewport_pass_continuity_rejects_inactive_tab_gaps() {

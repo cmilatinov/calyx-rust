@@ -28,6 +28,8 @@ pub struct SceneDocument {
     /// The inspector's undo baselines for the selected object's components.
     inspector_edits: InspectorEditTracker,
     autosave: EditorSceneAutosave,
+    /// Counts the changes to the undo history and the saved state.
+    revision: u64,
 }
 
 /// The simulation guard: `game` while its authoring scene may be edited, that
@@ -48,6 +50,7 @@ impl SceneDocument {
             history: SceneHistory::default(),
             inspector_edits: InspectorEditTracker::default(),
             autosave: EditorSceneAutosave::new(project_path),
+            revision: 0,
         }
     }
 
@@ -80,8 +83,28 @@ impl SceneDocument {
         let after = SceneEditSnapshot::capture(game.scenes.current_scene());
         let fingerprint = after.fingerprint().map(str::to_owned);
         if self.history.push(label, before, after) {
+            self.revision += 1;
             self.autosave.sync_dirty_to_fingerprint(fingerprint);
         }
+    }
+
+    /// Changes whenever the undo history or the saved state changes: an edit
+    /// recorded, an undo or redo, a save, or another scene opened. A write
+    /// made outside the history may be rolled back only while it is
+    /// unchanged, since every snapshot taken since holds the write.
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// Takes a write the authoring scene got outside any edit, such as an
+    /// abandoned gizmo drag rolled back: the inspector's baselines are taken
+    /// again and the dirty state follows the scene.
+    pub(crate) fn scene_written_outside_history(&mut self, game: &GameContext) {
+        let Some(game) = authoring(game) else {
+            return;
+        };
+        self.refresh_baselines(game);
+        self.sync_dirty(game);
     }
 
     /// The tracker the inspector shows components through.
@@ -259,6 +282,7 @@ impl SceneDocument {
         game.scenes.set_current_scene_file(Some(file.clone()));
         self.autosave
             .scene_saved(previous_file.as_deref(), &file, game.scenes.current_scene());
+        self.revision += 1;
         true
     }
 
@@ -290,6 +314,9 @@ impl SceneDocument {
             HistoryStep::Undo => (self.history.undo(), "Undid"),
             HistoryStep::Redo => (self.history.redo(), "Redid"),
         };
+        if restore.is_some() {
+            self.revision += 1;
+        }
         match restore {
             None => return,
             Some(SceneHistoryRestore::Scene {
@@ -334,6 +361,7 @@ impl SceneDocument {
             component: edit.key.component,
             changes: edit.changes,
         }) {
+            self.revision += 1;
             self.sync_dirty(game);
         }
     }
@@ -370,6 +398,7 @@ impl SceneDocument {
     }
 
     fn clear_history(&mut self) {
+        self.revision += 1;
         self.history.clear();
         self.inspector_edits.reset(None);
     }
