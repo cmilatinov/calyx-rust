@@ -33,11 +33,16 @@ use uuid::Uuid;
 mod cache;
 mod camera_fit;
 mod generator;
+mod handle;
+#[cfg(test)]
+mod handle_tests;
 mod pipeline;
 mod service;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use handle::paint_thumbnail_badge;
+pub use handle::{ThumbnailBadge, ThumbnailHandle, ThumbnailView};
 #[allow(unused_imports)]
 pub use pipeline::{ThumbnailJob, ThumbnailPipeline, ThumbnailPriority, ThumbnailStatus};
 pub use service::ThumbnailService;
@@ -126,7 +131,15 @@ pub struct ThumbnailRequest {
 
 impl ThumbnailRequest {
     pub fn from_asset_path(registry: &AssetRegistry, path: &Path) -> Option<Self> {
-        let meta = registry.asset_meta_from_path(path)?;
+        Self::from_asset_id(registry, registry.asset_id_from_path(path)?)
+    }
+
+    /// Builds the request for the asset `asset_id`, or `None` when the asset is
+    /// unknown or its type has no thumbnail. Computing the source version reads
+    /// the asset's files, so UI code goes through [`ThumbnailHandle`], which
+    /// memoizes the result.
+    pub fn from_asset_id(registry: &AssetRegistry, asset_id: Uuid) -> Option<Self> {
+        let meta = registry.asset_meta_from_id(asset_id)?;
         if !Self::is_supported_asset_type(meta.type_uuid) {
             return None;
         }

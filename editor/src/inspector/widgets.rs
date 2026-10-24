@@ -13,6 +13,12 @@ use std::sync::RwLock;
 use uuid::Uuid;
 
 use super::type_inspector::InspectorResponse;
+use crate::widgets::{ThumbnailHandle, ThumbnailPriority, ThumbnailRequest};
+
+/// Side of the thumbnail beside an asset selector's selected value, in points.
+const ASSET_SELECT_THUMBNAIL_SIZE: f32 = 18.0;
+/// Side of the thumbnail beside each entry of an open asset selector, in points.
+const ASSET_SELECT_ENTRY_THUMBNAIL_SIZE: f32 = 24.0;
 
 pub struct Widgets;
 
@@ -105,35 +111,73 @@ impl Widgets {
         let mut state = STATE.write().unwrap();
         let asset_meta = registry.asset_meta_from_id(*value);
         let mut changed = false;
+        let thumbnails = Self::asset_select_thumbnails(ui, type_uuid);
 
         let id = ui.make_persistent_id(id);
         let selected_text = asset_meta
+            .as_ref()
             .map(|meta| meta.display_name.clone())
             .unwrap_or("None".into());
-        let mut res = egui::ComboBox::from_id_salt(id)
-            .truncate()
-            .width(100.0)
-            .selected_text(selected_text)
-            .show_ui(ui, |ui| {
-                Self::search_select_contents(ui, id, &mut state, |ui, search| {
-                    let mut assets = Vec::new();
-                    registry.search_assets(search, type_uuid, &mut assets);
-                    assets.retain(|asset| {
-                        filters
-                            .iter()
-                            .all(|filter| Self::asset_matches_filter(registry, asset, *filter))
+        let show_combo = |ui: &mut Ui| {
+            egui::ComboBox::from_id_salt(id)
+                .truncate()
+                .width(100.0)
+                .selected_text(selected_text)
+                .show_ui(ui, |ui| {
+                    Self::search_select_contents(ui, id, &mut state, |ui, search| {
+                        let mut assets = Vec::new();
+                        registry.search_assets(search, type_uuid, &mut assets);
+                        assets.retain(|asset| {
+                            filters
+                                .iter()
+                                .all(|filter| Self::asset_matches_filter(registry, asset, *filter))
+                        });
+                        if search.is_empty() {
+                            changed |= ui.selectable_value(value, Uuid::nil(), "None").changed();
+                        }
+                        for asset in assets {
+                            let Some(thumbnails) = thumbnails.as_ref() else {
+                                changed |= ui
+                                    .selectable_value(value, asset.id, asset.display_name)
+                                    .changed();
+                                continue;
+                            };
+                            ui.horizontal(|ui| {
+                                Self::asset_thumbnail(
+                                    ui,
+                                    registry,
+                                    thumbnails,
+                                    Some(asset.id),
+                                    ASSET_SELECT_ENTRY_THUMBNAIL_SIZE,
+                                    ThumbnailPriority::High,
+                                );
+                                changed |= ui
+                                    .selectable_value(value, asset.id, asset.display_name)
+                                    .changed();
+                            });
+                        }
                     });
-                    if search.is_empty() {
-                        changed |= ui.selectable_value(value, Uuid::nil(), "None").changed();
-                    }
-                    for asset in assets {
-                        changed |= ui
-                            .selectable_value(value, asset.id, asset.display_name)
-                            .changed();
-                    }
-                });
-            })
-            .response;
+                })
+                .response
+        };
+        let mut res = match thumbnails.as_ref() {
+            Some(thumbnails) => {
+                let selected_id = asset_meta.as_ref().map(|meta| meta.id);
+                ui.horizontal(|ui| {
+                    Self::asset_thumbnail(
+                        ui,
+                        registry,
+                        thumbnails,
+                        selected_id,
+                        ASSET_SELECT_THUMBNAIL_SIZE,
+                        ThumbnailPriority::Normal,
+                    );
+                    show_combo(ui)
+                })
+                .inner
+            }
+            None => show_combo(ui),
+        };
         if res.clicked() {
             state.open();
         }
@@ -141,6 +185,46 @@ impl Widgets {
             res.mark_changed();
         }
         res
+    }
+
+    /// The thumbnail handle an asset selector for `type_uuid` uses, or `None`
+    /// when the editor installed none or that asset type has no thumbnails.
+    fn asset_select_thumbnails(ui: &Ui, type_uuid: Option<Uuid>) -> Option<ThumbnailHandle> {
+        if type_uuid.is_some_and(|type_uuid| !ThumbnailRequest::is_supported_asset_type(type_uuid))
+        {
+            return None;
+        }
+        ThumbnailHandle::from_ctx(ui.ctx())
+    }
+
+    /// Allocates a `size` square and, when it is on screen, requests and draws
+    /// the thumbnail of `asset_id` in it with its loading or fallback state.
+    /// Space is allocated even without an asset so rows stay aligned.
+    fn asset_thumbnail(
+        ui: &mut Ui,
+        registry: &AssetRegistry,
+        thumbnails: &ThumbnailHandle,
+        asset_id: Option<Uuid>,
+        size: f32,
+        priority: ThumbnailPriority,
+    ) {
+        let (rect, response) =
+            ui.allocate_exact_size(egui::Vec2::splat(size), egui::Sense::hover());
+        let Some(asset_id) = asset_id else {
+            return;
+        };
+        if !ui.is_rect_visible(rect) {
+            return;
+        }
+        let view = thumbnails.view_for_asset(registry, asset_id, priority);
+        view.paint(
+            ui,
+            rect,
+            egui::include_image!("../../../resources/icons/body_dark.png"),
+        );
+        if let Some(text) = view.hover_text() {
+            response.on_hover_text(text);
+        }
     }
 
     pub(crate) fn search_select_contents(
@@ -375,6 +459,118 @@ impl Widgets {
 mod tests {
     use super::*;
     use egui_wgpu::wgpu;
+
+    fn run_frame(
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        mut draw: impl FnMut(&mut Ui) -> Response,
+    ) -> egui::Rect {
+        let mut rect = egui::Rect::NOTHING;
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            events,
+            ..Default::default()
+        };
+        let _ = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| rect = draw(ui).rect);
+        });
+        rect
+    }
+
+    fn click_events(pos: egui::Pos2) -> Vec<egui::Event> {
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        vec![egui::Event::PointerMoved(pos), button(true), button(false)]
+    }
+
+    #[test]
+    fn asset_select_thumbnails_need_an_installed_handle_and_a_supported_type() {
+        use engine::render::Shader;
+
+        let ctx = egui::Context::default();
+        let service = crate::widgets::ThumbnailService::default();
+        let mut enabled = Vec::new();
+        let mut check = |ctx: &egui::Context| {
+            let _ = ctx.run(Default::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    enabled.push((
+                        Widgets::asset_select_thumbnails(ui, Some(Texture::type_uuid())).is_some(),
+                        Widgets::asset_select_thumbnails(ui, None).is_some(),
+                        Widgets::asset_select_thumbnails(ui, Some(Shader::type_uuid())).is_some(),
+                    ));
+                });
+            });
+        };
+
+        check(&ctx);
+        service.handle().install(&ctx);
+        check(&ctx);
+
+        assert_eq!(enabled, vec![(false, false, false), (true, true, false)]);
+    }
+
+    #[test]
+    fn asset_select_requests_selected_and_listed_thumbnails() {
+        use crate::widgets::{ThumbnailPriority, ThumbnailService, ThumbnailStatus};
+
+        let root = std::env::temp_dir().join(format!("calyx-asset-select-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("failed to create asset root");
+        let selected_path = root.join("selected.png");
+        let listed_path = root.join("listed.png");
+        std::fs::write(&selected_path, b"a").expect("failed to write texture source");
+        std::fs::write(&listed_path, b"b").expect("failed to write texture source");
+
+        let context = engine::test_support::test_asset_context_with_assets(vec![root.clone()]);
+        let registry = context.registries.assets.read();
+        let key = |path: &std::path::Path| {
+            ThumbnailRequest::from_asset_path(&registry, path)
+                .expect("texture should support thumbnails")
+                .key()
+        };
+        let (selected_key, listed_key) = (key(&selected_path), key(&listed_path));
+        let mut value = selected_key.asset_id;
+
+        let service = ThumbnailService::default();
+        let ctx = egui::Context::default();
+        service.handle().install(&ctx);
+        let mut draw = |ui: &mut Ui| {
+            Widgets::asset_select(
+                ui,
+                &registry,
+                "texture_select",
+                Some(Texture::type_uuid()),
+                &mut value,
+            )
+        };
+
+        let combo = run_frame(&ctx, Vec::new(), &mut draw);
+        assert_eq!(
+            service.status(selected_key),
+            ThumbnailStatus::Queued {
+                priority: ThumbnailPriority::Normal
+            }
+        );
+        assert_eq!(service.status(listed_key), ThumbnailStatus::Missing);
+
+        run_frame(&ctx, click_events(combo.center()), &mut draw);
+        run_frame(&ctx, Vec::new(), &mut draw);
+
+        let high = ThumbnailStatus::Queued {
+            priority: ThumbnailPriority::High,
+        };
+        assert_eq!(service.status(listed_key), high);
+        assert_eq!(service.status(selected_key), high);
+
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
 
     #[test]
     fn search_select_focuses_search_field_when_opened() {

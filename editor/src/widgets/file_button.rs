@@ -1,3 +1,4 @@
+use super::thumbnail::ThumbnailBadge;
 use egui::load::TexturePoll;
 use egui::{
     pos2, Color32, CornerRadius, Image, Rect, Response, Stroke, StrokeKind, TextStyle,
@@ -11,6 +12,8 @@ pub struct FileButton<'a> {
     pub text: WidgetText,
     pub padding: Vec2,
     pub selected: bool,
+    /// Indicator drawn over the image, such as a thumbnail still loading.
+    pub badge: ThumbnailBadge,
 }
 
 impl Widget for FileButton<'_> {
@@ -22,6 +25,7 @@ impl Widget for FileButton<'_> {
             text,
             padding,
             selected,
+            badge,
         } = self;
 
         let text = text.into_galley(
@@ -75,6 +79,7 @@ impl Widget for FileButton<'_> {
                     Color32::WHITE,
                 );
             }
+            super::thumbnail::paint_thumbnail_badge(ui, image_rect, badge);
 
             let text_rect = Rect::from_min_size(
                 pos2(image_rect.left(), image_rect.bottom() + image_spacing),

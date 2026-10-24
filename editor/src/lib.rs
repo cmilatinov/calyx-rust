@@ -399,6 +399,9 @@ impl eframe::App for EditorApp {
         }
         self.render_views(ctx, frame);
         self.process_thumbnail_jobs(frame);
+        // Asset selectors drawn by inspectors reach the thumbnail service
+        // through the egui context, since they never see `EditorAppState`.
+        self.state.thumbnails.handle().install(ctx);
 
         self.menu_bar(ctx);
 
