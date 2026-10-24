@@ -1,5 +1,32 @@
 {
   "components": {
+    "07b17e3d-9b73-411b-9d08-c56698a37556": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "07b17e3d-9b73-411b-9d08-c56698a37556",
+        "name": "Campfire",
+        "visible": true
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            -5.0,
+            0.0,
+            3.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
     "0c61c5b4-34ef-54eb-afce-bcaed93b9cc2": {
       "02289c92-3412-406e-a7e5-3bbb15d7041e": {
         "id": "0c61c5b4-34ef-54eb-afce-bcaed93b9cc2",
@@ -162,6 +189,95 @@
         }
       }
     },
+    "355a31e9-7d43-4ff2-a62e-b6687abe63f6": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "355a31e9-7d43-4ff2-a62e-b6687abe63f6",
+        "name": "Smoke",
+        "visible": true
+      },
+      "5214cd04-62ac-48e0-8f0b-4030d2102931": {
+        "active": true,
+        "color": {
+          "end": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "start": [
+            65,
+            48,
+            42,
+            235
+          ]
+        },
+        "emission": {
+          "burst_count": 3,
+          "duration": 0.0,
+          "looping": true,
+          "max_particles": 40,
+          "rate": 9.0
+        },
+        "forces": {
+          "acceleration": [
+            0.4,
+            0.3,
+            0.0
+          ]
+        },
+        "lifetime": {
+          "max": 2.0,
+          "min": 1.4
+        },
+        "local_space": false,
+        "rendering": {
+          "blend_mode": "Alpha",
+          "texture": "7a2bd53d-83b7-4821-a54e-1fa6586225d4"
+        },
+        "shape": {
+          "Sphere": {
+            "radius": 0.35
+          }
+        },
+        "size": {
+          "end": 2.0,
+          "randomness": 0.2,
+          "start": 0.8
+        },
+        "velocity": {
+          "initial": [
+            0.0,
+            1.3,
+            0.0
+          ],
+          "randomness": [
+            0.35,
+            0.25,
+            0.35
+          ]
+        }
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            1.3,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
     "36fd779f-b09b-4912-83de-16fce6365981": {
       "02289c92-3412-406e-a7e5-3bbb15d7041e": {
         "id": "36fd779f-b09b-4912-83de-16fce6365981",
@@ -189,6 +305,95 @@
             0.25,
             0.25,
             0.25
+          ]
+        }
+      }
+    },
+    "424babd7-2447-49ea-8e6c-6bc692ecc7bf": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "424babd7-2447-49ea-8e6c-6bc692ecc7bf",
+        "name": "Flames",
+        "visible": true
+      },
+      "5214cd04-62ac-48e0-8f0b-4030d2102931": {
+        "active": true,
+        "color": {
+          "end": [
+            124,
+            12,
+            6,
+            150
+          ],
+          "start": [
+            255,
+            130,
+            0,
+            255
+          ]
+        },
+        "emission": {
+          "burst_count": 16,
+          "duration": 0.0,
+          "looping": true,
+          "max_particles": 220,
+          "rate": 90.0
+        },
+        "forces": {
+          "acceleration": [
+            0.0,
+            2.0,
+            0.0
+          ]
+        },
+        "lifetime": {
+          "max": 0.8,
+          "min": 0.45
+        },
+        "local_space": false,
+        "rendering": {
+          "blend_mode": "Alpha",
+          "texture": "7a2bd53d-83b7-4821-a54e-1fa6586225d4"
+        },
+        "shape": {
+          "Sphere": {
+            "radius": 0.5
+          }
+        },
+        "size": {
+          "end": 0.3,
+          "randomness": 0.3,
+          "start": 1.5
+        },
+        "velocity": {
+          "initial": [
+            0.0,
+            2.6,
+            0.0
+          ],
+          "randomness": [
+            0.7,
+            0.7,
+            0.7
+          ]
+        }
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.45,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
           ]
         }
       }
@@ -456,6 +661,95 @@
         }
       }
     },
+    "b023df13-7e51-467b-b720-1ef08cf0cd90": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "b023df13-7e51-467b-b720-1ef08cf0cd90",
+        "name": "Flame Core",
+        "visible": true
+      },
+      "5214cd04-62ac-48e0-8f0b-4030d2102931": {
+        "active": true,
+        "color": {
+          "end": [
+            90,
+            42,
+            0,
+            90
+          ],
+          "start": [
+            255,
+            215,
+            30,
+            255
+          ]
+        },
+        "emission": {
+          "burst_count": 8,
+          "duration": 0.0,
+          "looping": true,
+          "max_particles": 110,
+          "rate": 50.0
+        },
+        "forces": {
+          "acceleration": [
+            0.0,
+            1.2,
+            0.0
+          ]
+        },
+        "lifetime": {
+          "max": 0.5,
+          "min": 0.3
+        },
+        "local_space": false,
+        "rendering": {
+          "blend_mode": "Alpha",
+          "texture": "7a2bd53d-83b7-4821-a54e-1fa6586225d4"
+        },
+        "shape": {
+          "Sphere": {
+            "radius": 0.28
+          }
+        },
+        "size": {
+          "end": 0.35,
+          "randomness": 0.15,
+          "start": 1.1
+        },
+        "velocity": {
+          "initial": [
+            0.0,
+            2.0,
+            0.0
+          ],
+          "randomness": [
+            0.3,
+            0.4,
+            0.3
+          ]
+        }
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.3,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
     "c8cd2ec1-8e42-4e44-a15b-c1f75b7162da": {
       "02289c92-3412-406e-a7e5-3bbb15d7041e": {
         "id": "c8cd2ec1-8e42-4e44-a15b-c1f75b7162da",
@@ -665,6 +959,11 @@
     }
   },
   "hierarchy": {
+    "07b17e3d-9b73-411b-9d08-c56698a37556": [
+      "355a31e9-7d43-4ff2-a62e-b6687abe63f6",
+      "424babd7-2447-49ea-8e6c-6bc692ecc7bf",
+      "b023df13-7e51-467b-b720-1ef08cf0cd90"
+    ],
     "1d181f5b-1544-4f00-a19e-6ba14c57288a": [
       "a0e5ad62-7bb8-4b12-9160-c2bd84f5d4dd",
       "9985d281-6c72-4fd1-83e2-1abf2a495f77",
@@ -691,6 +990,7 @@
     "ff3e62d5-9f0b-4e43-8f42-81744fdc8a91",
     "27b9ce07-f502-4481-a0c4-48c24358596d",
     "de2a2612-fa64-4fb4-8801-55a27df12564",
-    "e182d194-5e14-42f5-a9f7-ea133c90aaa7"
+    "e182d194-5e14-42f5-a9f7-ea133c90aaa7",
+    "07b17e3d-9b73-411b-9d08-c56698a37556"
   ]
 }

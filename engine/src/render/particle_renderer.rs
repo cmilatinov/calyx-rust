@@ -165,10 +165,15 @@ impl ParticleRenderer {
             let start = instances.len() as u32;
             instances.extend_from_slice(&state.render_buffer);
             let texture = system
+                .rendering
                 .texture
                 .get_ref(&asset_context.registries)
                 .unwrap_or_else(|| self.default_texture.clone());
-            draws.push((texture, system.blend_mode, start..instances.len() as u32));
+            draws.push((
+                texture,
+                system.rendering.blend_mode,
+                start..instances.len() as u32,
+            ));
         }
         self.particle_systems
             .retain(|game_object, _| drawn_systems.contains(game_object));
