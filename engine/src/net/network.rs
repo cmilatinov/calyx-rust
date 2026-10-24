@@ -616,9 +616,14 @@ fn assign_network_ids(
 /// Every id must come from the range the server reserved for `client_id`,
 /// appear once in the spawn and belong to no object in `scene`. Ids from
 /// another range are reserved by another peer, or by the scene for range 0.
+///
+/// Existing ids are looked up in the scene's network object index, which the
+/// scene updates on every network object add, write, removal and deletion,
+/// without the scan [`Scene::find_network_object`] repairs a miss with: every
+/// id of a valid spawn misses.
 fn check_spawn_ids(
     server: &Server,
-    scene: &mut Scene,
+    scene: &Scene,
     client_id: ClientId,
     ids: &HashMap<u32, NetworkObjectId>,
 ) -> Result<(), String> {
@@ -641,7 +646,7 @@ fn check_spawn_ids(
     }
     let existing: BTreeSet<_> = ids
         .values()
-        .filter(|&&id| scene.find_network_object(id).is_some())
+        .filter(|&&id| scene.indexed_network_object(id).is_some())
         .collect();
     if !existing.is_empty() {
         return Err(format!("ids {existing:?} already exist in the scene"));
