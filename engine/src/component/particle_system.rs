@@ -6,7 +6,7 @@ use crate as engine;
 use crate::assets::texture::Texture;
 use crate::assets::AssetRef;
 use crate::input::Input;
-use crate::math::Transform;
+use crate::math::{Curve, Transform};
 use crate::reflect::{Reflect, ReflectDefault};
 use crate::render::Gizmos;
 use crate::resource::ResourceMap;
@@ -160,6 +160,9 @@ pub struct ComponentParticleSystem {
     /// Size curve over normalized particle lifetime.
     #[reflect_attr(group = "Appearance")]
     pub size: ParticleSizeCurve,
+    /// Multiplier on `size` over normalized particle lifetime.
+    #[reflect_attr(group = "Appearance")]
+    pub size_over_lifetime: Curve,
     /// Color at birth.
     #[reflect_attr(group = "Appearance")]
     pub start_color: Color32,
@@ -205,6 +208,7 @@ impl Default for ComponentParticleSystem {
             velocity_randomness: vec3(1.0, 1.5, 1.0),
             acceleration: vec3(0.0, 5.0, 0.0),
             size: Default::default(),
+            size_over_lifetime: Curve::constant(1.0),
             start_color: Color32::from_rgba_unmultiplied(255, 4, 0, 255),
             end_color: Color32::from_rgba_unmultiplied(255, 169, 0, 84),
             blend_mode: Default::default(),
@@ -421,7 +425,7 @@ impl ComponentParticleSystem {
     fn size_at(&self, random_offset: f32, t: f32) -> f32 {
         let start = (self.size.start + random_offset).max(0.0);
         let end = (self.size.end + random_offset).max(0.0);
-        start + (end - start) * t
+        (start + (end - start) * t) * self.size_over_lifetime.evaluate(t).max(0.0)
     }
 
     fn sample_range(&mut self, range: ParticleScalarRange) -> f32 {
@@ -676,6 +680,43 @@ mod tests {
 
         assert!(later_size < initial_size);
         assert!((later_size - 0.625).abs() < 1e-5);
+    }
+
+    #[test]
+    fn size_over_lifetime_scales_the_size_curve() {
+        let system = ComponentParticleSystem {
+            size: ParticleSizeCurve {
+                start: 1.0,
+                end: 1.0,
+                randomness: 0.0,
+            },
+            size_over_lifetime: Curve::linear(2.0, 0.0),
+            ..Default::default()
+        };
+        assert!((system.size_at(0.0, 0.0) - 2.0).abs() < 1e-5);
+        assert!((system.size_at(0.0, 0.5) - 1.0).abs() < 1e-5);
+        assert_eq!(system.size_at(0.0, 1.0), 0.0);
+    }
+
+    #[test]
+    fn size_over_lifetime_round_trips_and_defaults_to_one() {
+        let system = ComponentParticleSystem {
+            size_over_lifetime: Curve::new(vec![
+                crate::math::CurveKey::new(0.0, 0.5),
+                crate::math::CurveKey::new(0.3, 2.0)
+                    .with_interpolation(crate::math::CurveInterpolation::Smooth),
+                crate::math::CurveKey::new(1.0, 0.0),
+            ]),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&system).unwrap();
+        let back: ComponentParticleSystem = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(back.size_over_lifetime, system.size_over_lifetime);
+
+        let mut old = json;
+        old.as_object_mut().unwrap().remove("size_over_lifetime");
+        let old: ComponentParticleSystem = serde_json::from_value(old).unwrap();
+        assert_eq!(old.size_over_lifetime, Curve::constant(1.0));
     }
 
     #[test]

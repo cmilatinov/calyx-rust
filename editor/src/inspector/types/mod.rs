@@ -3,6 +3,7 @@ mod blend_mode_inspector;
 mod bool_inspector;
 mod collider_inspector;
 mod color_inspector;
+mod curve_inspector;
 mod float_inspector;
 mod game_object_ref_inspector;
 mod integer_inspector;

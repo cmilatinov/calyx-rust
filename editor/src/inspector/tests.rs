@@ -9,6 +9,7 @@ use engine::component::{
     ComponentCollider, ComponentID, ComponentRigidBody, ComponentTransform, ParticleBlendMode,
     ParticleSpawnShape,
 };
+use engine::math::{Curve, CurveInterpolation};
 use engine::reflect::Reflect;
 use engine::scene::GameObjectRef;
 use engine::utils::TypeUuid;
@@ -361,4 +362,60 @@ fn asset_ref_inspector_reports_a_choice() {
         .center();
     assert_discrete(&h.click(option, &mut draw));
     assert_eq!(value.id(), texture.id());
+}
+
+#[test]
+fn curve_inspector_reports_a_key_drag() {
+    let mut h = InspectorHarness::new();
+    let registry = h.inspector_registry();
+    let inspector = lookup(&registry, Curve::type_uuid());
+    let mut value = Curve::linear(0.0, 1.0);
+
+    assert_idle(&h.idle(3, draw!(inspector, &mut value)));
+    let key = h.labelled_any("Curve key 1");
+    let responses = h.drag(key, Vec2::new(-200.0, 20.0), draw!(inspector, &mut value));
+    assert_drag(&responses);
+    assert_eq!(value.keys.len(), 2);
+    assert!(value.keys[1].time < 1.0, "{value:?}");
+    assert!(value.keys[1].value < 1.0, "{value:?}");
+    assert!(value.keys[0].time <= value.keys[1].time);
+}
+
+#[test]
+fn curve_inspector_adds_a_key_on_double_click() {
+    let mut h = InspectorHarness::new();
+    let registry = h.inspector_registry();
+    let inspector = lookup(&registry, Curve::type_uuid());
+    let mut value = Curve::constant(0.0);
+
+    assert_idle(&h.idle(3, draw!(inspector, &mut value)));
+    let graph = h.labelled_any("Curve");
+    assert_discrete(&h.double_click(graph, draw!(inspector, &mut value)));
+    assert_eq!(value.keys.len(), 3);
+    let middle = value.keys[1];
+    assert!(middle.time > 0.0 && middle.time < 1.0, "{value:?}");
+    assert!(middle.value > 0.0, "{value:?}");
+    assert_idle(&h.idle(2, draw!(inspector, &mut value)));
+}
+
+#[test]
+fn curve_inspector_menu_sets_interpolation_and_deletes_a_key() {
+    let mut h = InspectorHarness::new();
+    let registry = h.inspector_registry();
+    let inspector = lookup(&registry, Curve::type_uuid());
+    let mut value = Curve::linear(0.0, 1.0);
+
+    assert_idle(&h.idle(3, draw!(inspector, &mut value)));
+    let key = h.labelled_any("Curve key 0");
+    assert!(!any_changed(
+        &h.secondary_click(key, draw!(inspector, &mut value))
+    ));
+    let smooth = h.labelled(Role::RadioButton, "Smooth");
+    assert_discrete(&h.click(smooth, draw!(inspector, &mut value)));
+    assert_eq!(value.keys[0].interpolation, CurveInterpolation::Smooth);
+
+    let delete = h.labelled(Role::Button, "Delete Key");
+    assert_discrete(&h.click(delete, draw!(inspector, &mut value)));
+    assert_eq!(value.keys.len(), 1);
+    assert_eq!(value.keys[0].value, 1.0);
 }

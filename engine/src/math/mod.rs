@@ -4,11 +4,14 @@ use nalgebra::{Matrix3, UnitQuaternion};
 use nalgebra_glm as glm;
 use nalgebra_glm::{vec3, Mat4, Vec3};
 
+/// Keyframed scalar curves evaluated over time.
+pub use curve::*;
 /// Distance traits and helper implementations for common math types.
 pub use dist::*;
 /// Transform type and helpers for local and world-space math.
 pub use transform::*;
 
+mod curve;
 mod dist;
 mod transform;
 
