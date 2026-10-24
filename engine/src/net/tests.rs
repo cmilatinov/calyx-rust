@@ -1730,4 +1730,39 @@ mod tests {
             "the refused instance took over the authored object's id"
         );
     }
+
+    #[test]
+    fn relayed_spawn_without_ids_is_refused_by_receiving_clients() {
+        let (mut harness, prefab_refs) = setup_spawn_harness("net_spawn_client_only_marker_prefab");
+        // Only the clients hold this prefab, so the host relays spawns of it
+        // without instantiating them.
+        let client_only: Vec<_> = harness.contexts[1..]
+            .iter_mut()
+            .map(|ctx| {
+                let scene = ctx.scenes.current_scene_mut();
+                let root = scene.create(None, None);
+                scene.add_component(root, ComponentNetworkObject::default());
+                let prefab: Prefab = scene.create_prefab(root);
+                scene.delete(root);
+                scene.flush_deletes();
+                ctx.assets
+                    .registries
+                    .assets
+                    .read()
+                    .create("net_spawn_client_only_test_prefab".to_string(), prefab)
+                    .expect("failed to register prefab")
+            })
+            .collect();
+        let before = count_network_objects(harness.client(0).scenes.current_scene());
+
+        send_spawn_from_client(&mut harness, 1, &client_only[1], Default::default());
+        wait_for_marker_spawn(&mut harness, 1, prefab_refs[2].clone());
+
+        // Only the marker arrived.
+        assert_eq!(
+            count_network_objects(harness.client(0).scenes.current_scene()),
+            before + 1,
+            "client 0 instantiated a spawn whose objects came without ids"
+        );
+    }
 }

@@ -510,7 +510,6 @@ impl MessageHandler<NetworkPrefabSyncContext<'_, '_>, GameMessage> for NetworkPr
                     if let Err(reason) = instantiate_spawn(
                         scene,
                         context,
-                        server.is_some(),
                         acting_client_id,
                         *prefab_id,
                         network_object_ids,
@@ -592,7 +591,6 @@ fn discard_instance(scene: &mut Scene, root: GameObject, objects: &[(u32, GameOb
 }
 
 /// Gives each of `objects` its id from `ids` and `owner_id` as its owner.
-/// An object without an id keeps the one its prefab gave it.
 fn assign_network_ids(
     scene: &mut Scene,
     objects: &[(u32, GameObject)],
@@ -603,9 +601,8 @@ fn assign_network_ids(
         // Written through the scene so its network object index sees the id.
         scene.write_component::<ComponentNetworkObject, _>(*game_object, |c_netobj| {
             c_netobj.owner_id = owner_id;
-            match ids.get(index) {
-                Some(&id) => c_netobj.id = id,
-                None => log::warn!("Spawned network object {index} came without an id"),
+            if let Some(&id) = ids.get(index) {
+                c_netobj.id = id;
             }
         });
     }
@@ -657,15 +654,15 @@ fn check_spawn_ids(
 /// Instantiates a spawn of `prefab_id` received from `owner_id` and gives
 /// its network objects the spawn's ids.
 ///
-/// On the server, a spawn whose ids do not name exactly the prefab's network
-/// objects is undone and refused: an object left without an id would keep
-/// its prefab's, which other spawns share. A prefab this peer cannot load is
-/// skipped, and the server then relays the spawn unchecked, as it does an
-/// object it does not hold.
+/// A spawn whose ids do not name exactly the prefab's network objects is
+/// undone and refused, on the server and on every client: an object left
+/// without an id would keep its prefab's, which other spawns share. A prefab
+/// this peer cannot load is skipped; the server then relays the spawn after
+/// checking only its ids, and each client that can load the prefab checks
+/// the rest.
 fn instantiate_spawn(
     scene: &mut Scene,
     context: &ReadOnlyAssetContext,
-    is_server: bool,
     owner_id: ClientId,
     prefab_id: uuid::Uuid,
     ids: &HashMap<u32, NetworkObjectId>,
@@ -688,15 +685,13 @@ fn instantiate_spawn(
         }
     };
     let objects = prefab_network_objects(scene, prefab_root);
-    if is_server {
-        let expected: BTreeSet<_> = objects.iter().map(|(index, _)| *index).collect();
-        let named: BTreeMap<_, _> = ids.iter().collect();
-        if !named.keys().copied().copied().eq(expected.iter().copied()) {
-            discard_instance(scene, prefab_root, &objects);
-            return Err(format!(
-                "its ids {named:?} do not name the prefab's network objects {expected:?}"
-            ));
-        }
+    let expected: BTreeSet<_> = objects.iter().map(|(index, _)| *index).collect();
+    let named: BTreeMap<_, _> = ids.iter().collect();
+    if !named.keys().copied().copied().eq(expected.iter().copied()) {
+        discard_instance(scene, prefab_root, &objects);
+        return Err(format!(
+            "its ids {named:?} do not name the prefab's network objects {expected:?}"
+        ));
     }
     // The spawning peer owns the replicated objects on every peer.
     assign_network_ids(scene, &objects, owner_id, ids);
