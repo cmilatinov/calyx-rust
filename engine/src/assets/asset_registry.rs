@@ -1194,8 +1194,15 @@ impl AssetRegistry {
             }
             _ => {}
         }
-        for file in Self::notify_event_paths(&event) {
-            self.clear_failed_background_load(file);
+        // Only events that can change the source retry a failed load; an
+        // access event, such as the loader opening its own source, cannot.
+        if matches!(
+            event.kind,
+            EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
+        ) {
+            for file in Self::notify_event_paths(&event) {
+                self.clear_failed_background_load(file);
+            }
         }
     }
 
@@ -3387,6 +3394,47 @@ mod tests {
             BackgroundLoad::Loaded(_)
         ));
         assert_eq!(gated_test_asset_loads(&asset_path), 2);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn read_access_events_keep_a_background_load_failure() {
+        let (root, asset_path, registries, id) =
+            gated_background_fixture("calyx-background-load-access", "gate fail");
+        let gate = gated_test_asset_gate(&asset_path);
+        let open_event = || {
+            Event::new(EventKind::Access(notify::event::AccessKind::Open(
+                notify::event::AccessMode::Any,
+            )))
+            .add_path(asset_path.clone())
+        };
+
+        assert!(matches!(
+            registries
+                .assets
+                .read()
+                .load_by_id_in_background::<GatedTestAsset>(id),
+            BackgroundLoad::Loading
+        ));
+        // inotify reports the loader opening its own source as an access.
+        gate.0.wait();
+        registries.assets.read().recv_notify_event(open_event());
+        gate.1.wait();
+        assert!(matches!(
+            poll_until_settled::<GatedTestAsset>(&registries, id),
+            BackgroundLoad::Failed(_)
+        ));
+
+        registries.assets.read().recv_notify_event(open_event());
+        // A retry would start another gated load and report `Loading`.
+        assert!(matches!(
+            registries
+                .assets
+                .read()
+                .load_by_id_in_background::<GatedTestAsset>(id),
+            BackgroundLoad::Failed(_)
+        ));
+        assert_eq!(gated_test_asset_loads(&asset_path), 1);
         std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
 }
