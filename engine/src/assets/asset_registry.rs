@@ -197,6 +197,36 @@ impl Drop for LoadSlotGuard<'_> {
     }
 }
 
+/// Result of polling [`AssetRegistry::load_by_id_in_background`].
+pub enum BackgroundLoad<A: ?Sized> {
+    /// The asset is loaded and cached.
+    Loaded(Ref<A>),
+    /// A background thread is still loading the asset.
+    Loading,
+    /// The last background load failed. It is retried after a change to the
+    /// asset's source file.
+    Failed(AssetError),
+}
+
+impl<A: ?Sized> std::fmt::Debug for BackgroundLoad<A> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Loaded(asset) => f.debug_tuple("Loaded").field(&asset.id()).finish(),
+            Self::Loading => f.write_str("Loading"),
+            Self::Failed(err) => f.debug_tuple("Failed").field(err).finish(),
+        }
+    }
+}
+
+/// Background load of one asset id that has not produced a cached asset.
+#[derive(Debug, Clone)]
+enum BackgroundLoadState {
+    /// A background thread is loading the asset.
+    Loading,
+    /// The background load failed with this error.
+    Failed(AssetError),
+}
+
 /// Error captured while hot-reloading an already loaded asset.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssetReloadError {
@@ -220,6 +250,7 @@ pub struct AssetRegistry {
     asset_data: RwLock<AssetData>,
     asset_constructors: RwLock<HashMap<Uuid, AssetConstructor>>,
     loading: LoadSlots,
+    background_loads: Mutex<HashMap<Uuid, BackgroundLoadState>>,
     watcher_thread: Option<JoinHandle<()>>,
     #[allow(dead_code)]
     watcher: RecommendedWatcher,
@@ -258,6 +289,7 @@ impl AssetRegistry {
                 asset_data: Default::default(),
                 asset_constructors: Default::default(),
                 loading: Default::default(),
+                background_loads: Default::default(),
                 watcher_thread: None,
                 watcher,
             };
@@ -300,6 +332,7 @@ impl AssetRegistry {
             asset_data: Default::default(),
             asset_constructors: Default::default(),
             loading: Default::default(),
+            background_loads: Default::default(),
             watcher_thread: None,
             watcher,
         })
@@ -330,6 +363,7 @@ impl AssetRegistry {
                 asset_data: Default::default(),
                 asset_constructors: Default::default(),
                 loading: Default::default(),
+                background_loads: Default::default(),
                 watcher_thread: None,
                 watcher,
             };
@@ -457,6 +491,106 @@ impl AssetRegistry {
     /// in place, so every holder of its reference sees the new value.
     pub fn reload_by_id<A: Asset + TypeUuid>(&self, id: Uuid) -> Result<Ref<A>, AssetError> {
         self.load_typed(id, LoadMode::Reload)
+    }
+
+    /// Starts loading an asset by UUID on a background thread, or reports the
+    /// progress of the load already started, without waiting for it. Polling
+    /// again while the load runs starts no second load. A failed load is
+    /// reported until the asset's source file changes, then retried.
+    pub fn load_by_id_in_background<A: Asset + TypeUuid>(&self, id: Uuid) -> BackgroundLoad<A> {
+        let mut loads = self
+            .background_loads
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        // Checked under the lock: a finished load caches its asset before it
+        // clears its entry, so the asset is cached or the entry is present.
+        if let Some(asset) = self.cached_asset(id) {
+            return match asset.try_downcast::<A>() {
+                Some(asset) => BackgroundLoad::Loaded(asset),
+                None => BackgroundLoad::Failed(
+                    AssetError::TypeMismatch
+                        .with_type(A::asset_name())
+                        .with_source(format!("asset id {id}")),
+                ),
+            };
+        }
+        if !self.asset_data().meta.contains_key(&id) {
+            return BackgroundLoad::Failed(
+                AssetError::NotFound
+                    .with_type(A::asset_name())
+                    .with_source(format!("asset id {id}")),
+            );
+        }
+        match loads.get(&id) {
+            Some(BackgroundLoadState::Loading) => return BackgroundLoad::Loading,
+            Some(BackgroundLoadState::Failed(err)) => return BackgroundLoad::Failed(err.clone()),
+            None => {}
+        }
+        let Some(registry) = self.asset_registry.upgrade() else {
+            drop(loads);
+            return match self.load_by_id::<A>(id) {
+                Ok(asset) => BackgroundLoad::Loaded(asset),
+                Err(err) => BackgroundLoad::Failed(err),
+            };
+        };
+        loads.insert(id, BackgroundLoadState::Loading);
+        drop(loads);
+        let spawned = std::thread::Builder::new()
+            .name(format!("asset-load-{id}"))
+            .spawn(move || {
+                let registry = registry.read();
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    registry.load_by_id::<A>(id).map(|_| ())
+                }))
+                .unwrap_or_else(|_| {
+                    Err(AssetError::LoadError
+                        .with_type(A::asset_name())
+                        .with_source(format!("background load of asset {id} panicked")))
+                });
+                registry.finish_background_load(id, result);
+            });
+        if let Err(err) = spawned {
+            let err = AssetError::LoadError
+                .with_type(A::asset_name())
+                .with_source(format!("failed to start background load: {err}"));
+            self.finish_background_load(id, Err(err.clone()));
+            return BackgroundLoad::Failed(err);
+        }
+        BackgroundLoad::Loading
+    }
+
+    /// Records the outcome of a background load started by
+    /// [`Self::load_by_id_in_background`].
+    fn finish_background_load(&self, id: Uuid, result: Result<(), AssetError>) {
+        if let Err(err) = &result {
+            log::warn!(
+                "Background load of asset {} ({id}) failed: {err}",
+                self.asset_name(id)
+            );
+        }
+        let mut loads = self
+            .background_loads
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        match result {
+            Ok(()) => loads.remove(&id),
+            Err(err) => loads.insert(id, BackgroundLoadState::Failed(err)),
+        };
+    }
+
+    /// Forgets the failed background load of the asset at `path`, so the next
+    /// poll of it retries.
+    fn clear_failed_background_load(&self, path: &Path) {
+        let Some(id) = self.asset_id_from_path(path) else {
+            return;
+        };
+        let mut loads = self
+            .background_loads
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        if matches!(loads.get(&id), Some(BackgroundLoadState::Failed(_))) {
+            loads.remove(&id);
+        }
     }
 
     /// Loads an asset by UUID as a type-erased handle.
@@ -1044,6 +1178,9 @@ impl AssetRegistry {
                 }
             }
             _ => {}
+        }
+        for file in Self::notify_event_paths(&event) {
+            self.clear_failed_background_load(file);
         }
     }
 
@@ -2394,6 +2531,20 @@ mod tests {
     static GATED_TEST_ASSET_GATES: std::sync::OnceLock<Mutex<HashMap<PathBuf, TestGate>>> =
         std::sync::OnceLock::new();
 
+    /// How many times a [`GatedTestAsset`] load started, per source path.
+    static GATED_TEST_ASSET_LOADS: std::sync::OnceLock<Mutex<HashMap<PathBuf, usize>>> =
+        std::sync::OnceLock::new();
+
+    fn gated_test_asset_loads(path: &Path) -> usize {
+        GATED_TEST_ASSET_LOADS
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap()
+            .get(path)
+            .copied()
+            .unwrap_or_default()
+    }
+
     fn gated_test_asset_gate(path: &Path) -> TestGate {
         GATED_TEST_ASSET_GATES
             .get_or_init(Default::default)
@@ -2432,6 +2583,12 @@ mod tests {
                 .ok_or_else(|| AssetError::NotFound.with_path(path))?;
             let content = std::fs::read_to_string(path)
                 .map_err(|err| AssetError::LoadError.with_path(path).with_source(err))?;
+            *GATED_TEST_ASSET_LOADS
+                .get_or_init(Default::default)
+                .lock()
+                .unwrap()
+                .entry(path.to_path_buf())
+                .or_default() += 1;
             if content.contains("gate") {
                 let gate = gated_test_asset_gate(path);
                 gate.0.wait();
@@ -3063,6 +3220,128 @@ mod tests {
             registry.asset_meta_from_id(child_id).map(|meta| meta.name),
             Some("Body".into())
         );
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    /// Registers [`GatedTestAsset`] over a temp root holding `gated.cxtestgated`
+    /// with `content`, returning the root, the file path, the registries and
+    /// the asset id.
+    fn gated_background_fixture(
+        prefix: &str,
+        content: &str,
+    ) -> (PathBuf, PathBuf, ReadOnlyRegistryContext, Uuid) {
+        let root = temp_asset_root(prefix);
+        let asset_path = root.join("gated.cxtestgated");
+        std::fs::write(&asset_path, content).expect("failed to write test asset");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let id = {
+            let registry = registries.assets.read();
+            registry.register_asset_type::<GatedTestAsset>();
+            registry.build_meta().expect("failed to rebuild metadata");
+            registry
+                .asset_id("gated")
+                .expect("test asset should have metadata")
+        };
+        (root, asset_path, registries, id)
+    }
+
+    /// Polls the background load of `id` until it stops reporting `Loading`.
+    fn poll_until_settled<A: Asset + TypeUuid>(
+        registries: &ReadOnlyRegistryContext,
+        id: Uuid,
+    ) -> BackgroundLoad<A> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let status = registries.assets.read().load_by_id_in_background::<A>(id);
+            if !matches!(status, BackgroundLoad::Loading) {
+                return status;
+            }
+            assert!(Instant::now() < deadline, "background load never finished");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn background_load_returns_at_once_and_loads_once_on_another_thread() {
+        let (root, asset_path, registries, id) =
+            gated_background_fixture("calyx-background-load", "gate");
+        let gate = gated_test_asset_gate(&asset_path);
+
+        // The load blocks on the gate, so a blocking call would hang here.
+        assert!(matches!(
+            registries
+                .assets
+                .read()
+                .load_by_id_in_background::<GatedTestAsset>(id),
+            BackgroundLoad::Loading
+        ));
+        gate.0.wait();
+        for _ in 0..3 {
+            assert!(matches!(
+                registries
+                    .assets
+                    .read()
+                    .load_by_id_in_background::<GatedTestAsset>(id),
+                BackgroundLoad::Loading
+            ));
+        }
+        gate.1.wait();
+
+        let BackgroundLoad::Loaded(loaded) = poll_until_settled::<GatedTestAsset>(&registries, id)
+        else {
+            panic!("background load should have succeeded");
+        };
+        let cached = registries
+            .assets
+            .read()
+            .load_by_id::<GatedTestAsset>(id)
+            .expect("asset should be cached");
+        assert_eq!(loaded.ptr_id(), cached.ptr_id());
+        assert_eq!(gated_test_asset_loads(&asset_path), 1);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn failed_background_load_is_kept_until_its_source_changes() {
+        let (root, asset_path, registries, id) =
+            gated_background_fixture("calyx-background-load-failure", "gate fail");
+        let gate = gated_test_asset_gate(&asset_path);
+
+        assert!(matches!(
+            registries
+                .assets
+                .read()
+                .load_by_id_in_background::<GatedTestAsset>(id),
+            BackgroundLoad::Loading
+        ));
+        gate.0.wait();
+        gate.1.wait();
+        assert!(matches!(
+            poll_until_settled::<GatedTestAsset>(&registries, id),
+            BackgroundLoad::Failed(_)
+        ));
+        // A retry would start another gated load and report `Loading`.
+        for _ in 0..3 {
+            assert!(matches!(
+                registries
+                    .assets
+                    .read()
+                    .load_by_id_in_background::<GatedTestAsset>(id),
+                BackgroundLoad::Failed(_)
+            ));
+        }
+        assert_eq!(gated_test_asset_loads(&asset_path), 1);
+
+        std::fs::write(&asset_path, "fixed").expect("failed to rewrite test asset");
+        registries.assets.read().recv_notify_event(
+            Event::new(EventKind::Modify(notify::event::ModifyKind::Any))
+                .add_path(asset_path.clone()),
+        );
+        assert!(matches!(
+            poll_until_settled::<GatedTestAsset>(&registries, id),
+            BackgroundLoad::Loaded(_)
+        ));
+        assert_eq!(gated_test_asset_loads(&asset_path), 2);
         std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
 }

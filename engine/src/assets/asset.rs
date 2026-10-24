@@ -18,7 +18,7 @@ use crate::assets::error::AssetError;
 use crate::assets::material::Material;
 use crate::assets::mesh::Mesh;
 use crate::assets::texture::Texture;
-use crate::assets::LoadedAsset;
+use crate::assets::{BackgroundLoad, LoadedAsset};
 use crate::context::{ReadOnlyAssetContext, ReadOnlyRegistryContext};
 use crate::core::Ref;
 use crate::render::Shader;
@@ -130,6 +130,13 @@ impl<T: Asset + TypeUuid> AssetRef<T> {
     /// Resolves this asset reference through `context`.
     pub fn get_ref(&self, context: &ReadOnlyRegistryContext) -> Option<Ref<T>> {
         context.assets.read().load_by_id(self.id).ok()
+    }
+
+    /// Resolves this asset reference through `context` without waiting for
+    /// the asset to load: an uncached asset loads on a background thread and
+    /// reports [`BackgroundLoad::Loading`] until it is ready.
+    pub fn get_ref_in_background(&self, context: &ReadOnlyRegistryContext) -> BackgroundLoad<T> {
+        context.assets.read().load_by_id_in_background(self.id)
     }
 }
 
