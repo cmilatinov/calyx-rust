@@ -23,6 +23,7 @@ use crate::reflect::{ReflectDefault, TypeInfo};
 use crate::resource::ResourceMap;
 use crate::scene::change_set::ChangeSet;
 use crate::scene::game_object_store::GameObjectStore;
+use crate::scene::network_index::NetworkObjectIndex;
 use crate::scene::scene_graph::SceneGraph;
 use crate::scene::transform_cache::TransformCache;
 use crate::scene::{Prefab, SceneError, SceneView};
@@ -120,10 +121,10 @@ pub struct Scene {
     /// Entities written per component type since each type's consumer last
     /// took them; see [`Scene::component_written`].
     pub(crate) changes: ChangeSet,
-    /// Index of network objects by id, one entry per id and per object.
+    /// Index of network objects by id, listing every claimant of an id.
     /// Entries are hints that lookups check and repair; see
     /// [`Scene::find_network_object`].
-    network_objects: BiHashMap<NetworkObjectId, GameObject>,
+    network_objects: NetworkObjectIndex,
     root: GameObject,
     camera: Option<GameObject>,
     registries: ReadOnlyRegistryContext,
@@ -172,7 +173,7 @@ impl Scene {
             store,
             transforms: TransformCache::default(),
             changes: ChangeSet::default(),
-            network_objects: BiHashMap::new(),
+            network_objects: NetworkObjectIndex::default(),
             root,
             camera: Default::default(),
             registries: assets,
@@ -1105,7 +1106,7 @@ impl Scene {
             .collect();
         for game_object in roots {
             for go in self.graph.detach_subtree(game_object) {
-                self.network_objects.remove_by_right(&go);
+                self.network_objects.remove(go);
                 self.world.0.remove(go.entity);
                 self.changes.forget(go.entity);
                 self.store.remove(go.entity);
@@ -1305,15 +1306,13 @@ impl Scene {
         &mut self,
         network_object_id: NetworkObjectId,
     ) -> Option<GameObject> {
-        if let Some(&game_object) = self.network_objects.get_by_left(&network_object_id) {
+        if let Some(game_object) = self.network_objects.get(network_object_id) {
             if self.network_id(game_object) == Some(network_object_id) {
                 return Some(game_object);
             }
         }
         self.rebuild_network_index();
-        self.network_objects
-            .get_by_left(&network_object_id)
-            .copied()
+        self.network_objects.get(network_object_id)
     }
 
     /// Returns the indexed game object for `network_object_id` without
@@ -1322,9 +1321,7 @@ impl Scene {
         &self,
         network_object_id: NetworkObjectId,
     ) -> Option<GameObject> {
-        self.network_objects
-            .get_by_left(&network_object_id)
-            .copied()
+        self.network_objects.get(network_object_id)
     }
 
     /// Returns the network object id of `game_object`, if it has one.
@@ -1336,15 +1333,11 @@ impl Scene {
     /// current [`ComponentNetworkObject`], after it was added, written or
     /// removed. [`Scene::component_written`] calls it for every such write.
     fn refresh_network_object(&mut self, game_object: GameObject) {
-        // Inserting evicts any pair sharing the id or the object, so an old
-        // id of this object and an older claimant of this id both go.
+        // Inserting drops an old id of this object; other claimants of the
+        // id stay listed behind it.
         match self.network_id(game_object) {
-            Some(network_id) => {
-                self.network_objects.insert(network_id, game_object);
-            }
-            None => {
-                self.network_objects.remove_by_right(&game_object);
-            }
+            Some(network_id) => self.network_objects.insert(network_id, game_object),
+            None => self.network_objects.remove(game_object),
         }
     }
 

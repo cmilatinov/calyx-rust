@@ -28,6 +28,7 @@ mod scene_view;
 // from external consumers. The public API is re-exported above.
 pub(crate) mod change_set;
 pub(crate) mod game_object_store;
+pub(crate) mod network_index;
 pub(crate) mod scene;
 pub(crate) mod scene_graph;
 pub(crate) mod transform_cache;

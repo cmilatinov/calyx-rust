@@ -1732,6 +1732,26 @@ mod tests {
     }
 
     #[test]
+    fn index_restores_an_id_once_its_later_claimant_lets_go() {
+        let (mut scene, live) = scene_with_object(42, 1);
+
+        // A prefab made from the live object carries its id, so its instance
+        // briefly claims that id too.
+        let prefab = scene.create_prefab(live);
+        let instance = scene.instantiate_prefab(&prefab, None).unwrap();
+        assert_eq!(scene.indexed_network_object(42), Some(instance));
+
+        // Once the instance takes another id, or drops its network object,
+        // the id resolves to the live object again.
+        scene.write_component::<ComponentNetworkObject, _>(instance, |c| c.id = 43);
+        assert_eq!(scene.indexed_network_object(42), Some(live));
+        let other = scene.instantiate_prefab(&prefab, None).unwrap();
+        scene.remove_component::<ComponentNetworkObject>(other);
+        assert_eq!(scene.indexed_network_object(42), Some(live));
+        assert_eq!(scene.indexed_network_object(43), Some(instance));
+    }
+
+    #[test]
     fn relayed_spawn_without_ids_is_refused_by_receiving_clients() {
         let (mut harness, prefab_refs) = setup_spawn_harness("net_spawn_client_only_marker_prefab");
         // Only the clients hold this prefab, so the host relays spawns of it
