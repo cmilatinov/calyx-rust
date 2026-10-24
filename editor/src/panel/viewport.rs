@@ -31,6 +31,10 @@ pub struct PanelViewport {
     /// The gizmo drag in progress, from its first move to the pointer's
     /// release.
     transform_edit: Option<GizmoDrag>,
+    /// Set when a drag was abandoned before the pointer's release, such as
+    /// when the selection changed mid-drag: the gizmo's results are ignored
+    /// until the release, since they are relative to the abandoned drag.
+    drag_suspended: bool,
     last_viewport_pass: Option<u64>,
 }
 
@@ -39,6 +43,7 @@ impl Default for PanelViewport {
         Self {
             gizmo: Gizmo::new(GizmoConfig::default()),
             transform_edit: None,
+            drag_suspended: false,
             last_viewport_pass: None,
         }
     }
@@ -164,6 +169,12 @@ impl PanelViewport {
         let hovered_game_object = self.hovered_game_object(ui, viewport_response, app_state);
         app_state.hovered_game_object = hovered_game_object;
 
+        let selected = app_state
+            .selection
+            .first(SelectionType::GameObject)
+            .filter(|id| app_state.game.scenes.simulation_scene().find(*id).is_some());
+        self.end_mismatched_drag(&mut app_state.scene_document, &mut app_state.game, selected);
+
         if let Some(game_object) = app_state
             .selection
             .first(SelectionType::GameObject)
@@ -202,18 +213,21 @@ impl PanelViewport {
                 pointer_in_viewport,
                 &[transform.into()],
             ) {
-                let res: Transform = transforms[0].into();
-                let game = &mut app_state.game;
-                let document = &app_state.scene_document;
-                self.transform_edit
-                    .get_or_insert_with(|| GizmoDrag::begin(document, game, game_object))
-                    .move_to(game, res.matrix());
-                self.gizmo_status(ui, &result);
+                if !self.drag_suspended {
+                    let res: Transform = transforms[0].into();
+                    let game = &mut app_state.game;
+                    let document = &app_state.scene_document;
+                    self.transform_edit
+                        .get_or_insert_with(|| GizmoDrag::begin(document, game, game_object))
+                        .move_to(game, res.matrix());
+                    self.gizmo_status(ui, &result);
+                }
             }
             gizmo_focused = self.gizmo.is_focused();
         }
 
         if !ui.input(|input| input.pointer.button_down(PointerButton::Primary)) {
+            self.drag_suspended = false;
             if let Some(drag) = self.transform_edit.take() {
                 // A drag the viewport missed frames of, or whose object went
                 // away, may have a capture that no longer matches the scene.
@@ -371,6 +385,27 @@ impl PanelViewport {
                 .clone(),
             Color32::WHITE,
         );
+    }
+
+    /// Abandons the pending drag when `selected`, the selected object, is no
+    /// longer the object it drags, and ignores the gizmo until the pointer's
+    /// release.
+    fn end_mismatched_drag(
+        &mut self,
+        document: &mut SceneDocument,
+        game: &mut GameContext,
+        selected: Option<Uuid>,
+    ) {
+        if self
+            .transform_edit
+            .as_ref()
+            .is_some_and(|drag| Some(drag.object) != selected)
+        {
+            if let Some(drag) = self.transform_edit.take() {
+                drag.abandon(document, game);
+            }
+            self.drag_suspended = true;
+        }
     }
 
     fn viewport_pass_is_continuous(last_pass: Option<u64>, pass: u64) -> bool {
@@ -610,6 +645,31 @@ mod tests {
         assert_eq!(local_matrix(&game, id), moved);
         document.redo(&mut game);
         assert_eq!(local_matrix(&game, id), moved);
+    }
+
+    #[test]
+    fn changing_the_selection_mid_drag_abandons_the_drag() {
+        let (mut game, a, start) = game_with_object();
+        let b = {
+            let scene = game.scenes.current_scene_mut();
+            let object = scene.create(None, None);
+            scene.uuid(object)
+        };
+        let mut document = document();
+        let mut viewport = PanelViewport::default();
+        viewport.transform_edit = Some(drag_in(&document, &mut game, a));
+
+        viewport.end_mismatched_drag(&mut document, &mut game, Some(a));
+        assert!(
+            viewport.transform_edit.is_some(),
+            "same object: keeps going"
+        );
+
+        viewport.end_mismatched_drag(&mut document, &mut game, Some(b));
+        assert!(viewport.transform_edit.is_none());
+        assert!(viewport.drag_suspended, "the gizmo waits for the release");
+        assert_eq!(local_matrix(&game, a), start);
+        assert!(!document.can_undo(&game));
     }
 
     #[test]
