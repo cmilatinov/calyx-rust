@@ -660,6 +660,9 @@ impl EditorApp {
                 Ok(None)
             }
             CaptureTarget::Game | CaptureTarget::Viewport => {
+                if target == CaptureTarget::Game {
+                    self.render_game_view_for_capture(ctx)?;
+                }
                 let renderer = match target {
                     CaptureTarget::Game => &self.state.game_renderer,
                     _ => &self.state.scene_renderer,
@@ -675,6 +678,61 @@ impl EditorApp {
             }
         }
     }
+}
+
+impl EditorApp {
+    /// Renders the game view now when the Game tab has not been laid out
+    /// since the editor started, so a game capture works without the tab.
+    /// Once the tab has been shown, the game view is rendered every frame at
+    /// its size, whether the tab is active or not.
+    fn render_game_view_for_capture(
+        &mut self,
+        ctx: &egui::Context,
+    ) -> Result<(), (ErrorKind, String)> {
+        let Some(size) = game_capture_size(
+            Self::get_physical_size(ctx, self.state.game_size),
+            Self::get_physical_size(ctx, self.state.viewport_size),
+            Self::get_physical_size(ctx, (1.0, 1.0)),
+        )?
+        else {
+            return Ok(());
+        };
+        let scene = self.state.game.scenes.simulation_scene();
+        if !Self::render_game_view(&mut self.state.game_renderer, scene, size) {
+            return Err((
+                ErrorKind::BadRequest,
+                "the scene has no enabled camera to render the game view from".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// The size to render the game view at for a capture, from the physical
+/// sizes of the Game panel, the Scene viewport and the window: `None` when
+/// the Game panel has a size, so the game view is already rendered each
+/// frame, else the Scene viewport's size, which the Game tab shares by
+/// default, or the window's.
+fn game_capture_size(
+    game_panel: (u32, u32),
+    viewport: (u32, u32),
+    window: (u32, u32),
+) -> Result<Option<(u32, u32)>, (ErrorKind, String)> {
+    let renderable = |(width, height): (u32, u32)| width > 1 && height > 1;
+    if renderable(game_panel) {
+        return Ok(None);
+    }
+    [viewport, window]
+        .into_iter()
+        .find(|size| renderable(*size))
+        .map(Some)
+        .ok_or_else(|| {
+            (
+                ErrorKind::BadRequest,
+                "the game view has no size to render at yet; run `calyx_ctl focus-game`, then `calyx_ctl wait --frames 2`, and capture again"
+                    .to_string(),
+            )
+        })
 }
 
 /// Replaces `game_object`'s `prototype` component with `value`. A
@@ -1046,6 +1104,29 @@ mod tests {
     use super::*;
     use crate::remote::runtime::tests::test_runtime;
     use engine::component::ComponentTransform;
+
+    #[test]
+    fn a_game_capture_renders_only_while_the_game_panel_has_no_size() {
+        assert_eq!(
+            game_capture_size((800, 600), (1200, 700), (1920, 1080)).unwrap(),
+            None
+        );
+        assert_eq!(
+            game_capture_size((0, 0), (1200, 700), (1920, 1080)).unwrap(),
+            Some((1200, 700))
+        );
+        assert_eq!(
+            game_capture_size((0, 0), (0, 0), (1920, 1080)).unwrap(),
+            Some((1920, 1080))
+        );
+    }
+
+    #[test]
+    fn a_game_capture_with_nothing_to_size_it_names_focus_game() {
+        let (kind, message) = game_capture_size((0, 0), (1, 1), (0, 0)).unwrap_err();
+        assert_eq!(kind, ErrorKind::BadRequest);
+        assert!(message.contains("focus-game"), "{message}");
+    }
 
     #[test]
     fn setting_a_parent_transform_moves_the_child() {

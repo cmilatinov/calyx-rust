@@ -33,6 +33,7 @@ use engine::input::Input;
 use engine::logging::{DefaultLogger, Log};
 use engine::render::{Camera, SceneRenderer, SceneRendererError, SceneRendererOptions};
 use engine::runtime::{initial_render_size, wgpu_configuration, FrameCounter};
+use engine::scene::Scene;
 use rapier3d::prelude::DebugRenderPipeline;
 use selection::{Selection, SelectionType};
 use transform_gizmo_egui::EnumSet;
@@ -545,10 +546,9 @@ impl EditorApp {
 
         let scene = scenes.simulation_scene();
         scene_renderer.render_scene_base(camera, transform, scene, Some(physics_debug_pipeline));
-        if let Some((node, c)) = scene.main_camera() {
-            game_renderer.options_mut().clear_color = c.clear_color;
-            let (width, height) = Self::get_physical_size(ctx, *game_size);
-            if !Self::has_renderable_size(width, height) {
+        if scene.main_camera().is_some() {
+            let size = Self::get_physical_size(ctx, *game_size);
+            if !Self::has_renderable_size(size.0, size.1) {
                 let mut encoder =
                     render_state
                         .device
@@ -559,17 +559,7 @@ impl EditorApp {
                 render_state.queue.submit(Some(encoder.finish()));
                 return;
             }
-
-            game_renderer.resize_textures(width, height);
-            let transform = scene.world_transform(node);
-            let camera = Camera::new(
-                width as f32 / height as f32,
-                c.fov,
-                c.near_plane,
-                c.far_plane,
-            );
-            game_renderer.render_scene_base(&camera, &transform, scene, None);
-            game_renderer.finalize_scene();
+            Self::render_game_view(game_renderer, scene, size);
         } else {
             let device = &render_state.device;
             let queue = &render_state.queue;
@@ -578,6 +568,31 @@ impl EditorApp {
             encoder.clear_texture(&game_renderer.scene_texture().texture, &Default::default());
             queue.submit(Some(encoder.finish()));
         }
+    }
+
+    /// Renders `scene` from its main camera into `game_renderer` at
+    /// `width` x `height` physical pixels. Returns `false`, rendering
+    /// nothing, when the scene has no main camera.
+    fn render_game_view(
+        game_renderer: &mut SceneRenderer,
+        scene: &Scene,
+        (width, height): (u32, u32),
+    ) -> bool {
+        let Some((node, c)) = scene.main_camera() else {
+            return false;
+        };
+        game_renderer.options_mut().clear_color = c.clear_color;
+        game_renderer.resize_textures(width, height);
+        let transform = scene.world_transform(node);
+        let camera = Camera::new(
+            width as f32 / height as f32,
+            c.fov,
+            c.near_plane,
+            c.far_plane,
+        );
+        game_renderer.render_scene_base(&camera, &transform, scene, None);
+        game_renderer.finalize_scene();
+        true
     }
 
     fn get_physical_size(ctx: &egui::Context, viewport_size: (f32, f32)) -> (u32, u32) {

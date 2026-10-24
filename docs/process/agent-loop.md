@@ -73,7 +73,7 @@ name (`sandbox::tank::ComponentHealth`), or the bare type name
 | `select`, `pick X Y --space S --target T` | `select`/`pick` | pick uses the GPU object-id buffer of the chosen renderer |
 | `focus-game [--release-grab]` | `focus_game` | activates the Game tab and grabs gameplay input focus |
 | `input key/click/move/text/raw` | `inject_input` | see below |
-| `screenshot --target window|game|viewport --out F` | `screenshot` | PNG; `window` includes the whole UI, `game`/`viewport` are the render textures |
+| `screenshot --target window|game|viewport --out F` | `screenshot` | PNG; `window` includes the whole UI, `game`/`viewport` are the render textures. `game` works without the Game tab active: once the tab has been shown it is rendered every frame at the tab's size, and before that a game capture renders it on demand at the Scene viewport's size (or the window's). It fails with `bad_request` when the scene has no enabled camera, or when nothing has a size yet, naming `focus-game` |
 | `raw '<json>'` | any | escape hatch for the full protocol |
 
 Edits to the authoring scene (`object create/delete`, `component set/add`,
