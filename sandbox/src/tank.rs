@@ -471,6 +471,8 @@ fn static_obstacles(scene: &Scene) -> HashSet<Entity> {
         .collect()
 }
 
+/// The movement [`sweep_hull`] manages, for tests of the sweep alone.
+#[cfg(test)]
 fn resolve_hull_movement(scene: &Scene, transform: &Transform, movement: Vec3) -> Vec3 {
     sweep_hull(scene, transform, movement).0
 }
