@@ -526,13 +526,10 @@ impl AssetRegistry {
             Some(BackgroundLoadState::Failed(err)) => return BackgroundLoad::Failed(err.clone()),
             None => {}
         }
-        let Some(registry) = self.asset_registry.upgrade() else {
-            drop(loads);
-            return match self.load_by_id::<A>(id) {
-                Ok(asset) => BackgroundLoad::Loaded(asset),
-                Err(err) => BackgroundLoad::Failed(err),
-            };
-        };
+        let registry = self
+            .asset_registry
+            .upgrade()
+            .expect("asset registry is always owned by its Ref");
         loads.insert(id, BackgroundLoadState::Loading);
         drop(loads);
         let spawned = std::thread::Builder::new()
