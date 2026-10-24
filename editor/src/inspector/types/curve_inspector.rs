@@ -1,6 +1,8 @@
 use crate::inspector::type_inspector::{
     InspectorContext, InspectorResponse, ReflectTypeInspector, TypeInspector,
 };
+use crate::inspector::widgets::{PropChildrenPhase, Widgets};
+use convert_case::{Case, Casing};
 use egui::{
     pos2, vec2, Color32, Id, Pos2, Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui,
     WidgetInfo, WidgetType,
@@ -17,9 +19,10 @@ const HANDLE_RADIUS: f32 = 4.0;
 /// Share of the value range left empty above and below the keys.
 const VALUE_PADDING: f32 = 0.1;
 
-/// Edits a [`Curve`] on a graph of its normalized timeline: drag a key to
-/// move it, double-click the graph to add a key, and right-click a key to
-/// type its time and value, pick its interpolation or delete it.
+/// Edits a [`Curve`] on a graph of its normalized timeline, under a row that
+/// sketches the curve: drag a key to move it, double-click the graph to add
+/// a key, and right-click a key to type its time and value, pick its
+/// interpolation or delete it.
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[uuid = "fb42379b-3cb7-49fd-aedd-780a0fef6186"]
 #[reflect(Default, TypeInspector)]
@@ -87,6 +90,17 @@ fn without_focus(response: &Response) -> InspectorResponse {
     }
 }
 
+/// The width left on the cursor's row before the panel's visible edge and
+/// its scroll bar: list item bodies can reach past that edge.
+fn visible_width(ui: &Ui) -> f32 {
+    let scroll = &ui.spacing().scroll;
+    ui.clip_rect().right()
+        - ui.cursor().min.x
+        - scroll.bar_width
+        - scroll.bar_outer_margin
+        - HANDLE_RADIUS
+}
+
 /// The times key `index` may take without passing its neighbours.
 fn time_bounds(curve: &Curve, index: usize) -> (f32, f32) {
     let min = index
@@ -109,9 +123,14 @@ impl CurveInspector {
     /// Draws the editor for `curve` and reports what it did to it.
     pub fn curve_editor(ui: &mut Ui, id: Id, curve: &mut Curve) -> InspectorResponse {
         let mut response = InspectorResponse::NONE;
-        let width = ui.available_width().max(4.0 * GRAPH_HEIGHT / 3.0);
+        let visible = visible_width(ui);
+        let width = ui
+            .available_width()
+            .min(visible)
+            .max(4.0 * GRAPH_HEIGHT / 3.0);
         let (rect, graph) = ui.allocate_exact_size(vec2(width, GRAPH_HEIGHT), Sense::click());
-        graph.widget_info(|| WidgetInfo::labeled(WidgetType::Other, ui.is_enabled(), "Curve"));
+        graph
+            .widget_info(|| WidgetInfo::labeled(WidgetType::Other, ui.is_enabled(), "Curve graph"));
 
         // Keep the value range still while a key is dragged, so the key
         // stays under the pointer.
@@ -241,6 +260,41 @@ impl CurveInspector {
         response
     }
 
+    /// A row-high, read-only sketch of `curve`, for the row of its field.
+    fn preview(ui: &mut Ui, curve: &Curve) {
+        let visible = visible_width(ui);
+        let width = ui.available_width().min(visible).max(0.0);
+        let size = vec2(width, ui.spacing().interact_size.y);
+        let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+        if ui.is_rect_visible(rect) {
+            let transform = GraphTransform {
+                rect: rect.shrink(2.0),
+                range: ValueRange::fit(curve),
+            };
+            ui.painter_at(rect)
+                .add(Self::curve_line(ui, &transform, curve));
+        }
+    }
+
+    /// `curve` drawn as a line through `transform`'s rectangle.
+    fn curve_line(ui: &Ui, transform: &GraphTransform, curve: &Curve) -> Shape {
+        let samples = (transform.rect.width() / 2.0).ceil().max(2.0) as usize;
+        let points = (0..=samples)
+            .map(|step| {
+                let time = step as f32 / samples as f32;
+                transform.to_screen(time, curve.evaluate(time))
+            })
+            .collect();
+        let visuals = ui.visuals();
+        let line = visuals.selection.stroke.color;
+        let line = if line == Color32::TRANSPARENT {
+            visuals.strong_text_color()
+        } else {
+            line
+        };
+        Shape::line(points, Stroke::new(1.5_f32, line))
+    }
+
     fn paint(ui: &Ui, rect: Rect, transform: &GraphTransform, curve: &Curve, id: Id) {
         let visuals = ui.visuals();
         let painter = ui.painter_at(rect);
@@ -263,20 +317,7 @@ impl CurveInspector {
             painter.hline(rect.x_range(), y, grid);
         }
 
-        let samples = (transform.rect.width() / 2.0).ceil().max(2.0) as usize;
-        let points = (0..=samples)
-            .map(|step| {
-                let time = step as f32 / samples as f32;
-                transform.to_screen(time, curve.evaluate(time))
-            })
-            .collect();
-        let line = ui.visuals().selection.stroke.color;
-        let line = if line == Color32::TRANSPARENT {
-            visuals.strong_text_color()
-        } else {
-            line
-        };
-        painter.add(Shape::line(points, Stroke::new(1.5_f32, line)));
+        painter.add(Self::curve_line(ui, transform, curve));
 
         for (index, key) in curve.keys.iter().enumerate() {
             let center = transform.to_screen(key.time, key.value);
@@ -314,7 +355,22 @@ impl TypeInspector for CurveInspector {
             return InspectorResponse::NONE;
         };
         let id = ui.id().with(ctx.field_name).with("curve");
-        Self::curve_editor(ui, id, curve)
+        let label = ctx
+            .field_name
+            .map(|name| name.from_case(Case::Snake).to_case(Case::Title))
+            .unwrap_or_else(|| String::from("Curve"));
+        let mut response = InspectorResponse::NONE;
+        Widgets::inspector_prop_value_children(ui, label, |phase| match phase {
+            PropChildrenPhase::Value { ui, .. } => Self::preview(ui, curve),
+            PropChildrenPhase::Children { ui } => {
+                response |= Self::curve_editor(ui, id, curve);
+            }
+        });
+        response
+    }
+
+    fn draws_own_rows(&self) -> bool {
+        true
     }
 }
 

@@ -389,7 +389,7 @@ fn curve_inspector_adds_a_key_on_double_click() {
     let mut value = Curve::constant(0.0);
 
     assert_idle(&h.idle(3, draw!(inspector, &mut value)));
-    let graph = h.labelled_any("Curve");
+    let graph = h.labelled_any("Curve graph");
     assert_discrete(&h.double_click(graph, draw!(inspector, &mut value)));
     assert_eq!(value.keys.len(), 3);
     let middle = value.keys[1];
