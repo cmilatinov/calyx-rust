@@ -5,17 +5,15 @@ use crate::error::BoxedError;
 use crate::net::client::Client;
 use crate::net::server::Server;
 use crate::net::{
-    ComponentNetworkObject, GameMessage, MessageHandler, MessageHandlerResult, MessageQueue,
-    MessageSender, NetworkObjectId, ServerEvent,
+    network_id_range, ComponentNetworkObject, GameMessage, MessageHandler, MessageHandlerResult,
+    MessageQueue, MessageSender, NetworkObjectId, ServerEvent,
 };
 use crate::scene::{GameObject, Prefab, Scene};
 use crate::utils::TypeUuid;
 use engine_derive::Resource;
 use renet::ClientId;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::LazyLock;
 use std::time::Duration;
 
 /// High-level networking resource that owns the active client, optional host
@@ -45,18 +43,8 @@ impl Default for Network {
     }
 }
 
-/// Randomized process prefix plus a monotonic counter.
-/// This keeps IDs ordered within a process while avoiding collisions across peers.
-static NETWORK_ID_PREFIX: LazyLock<NetworkObjectId> =
-    LazyLock::new(|| u64::from(rand::random::<u32>()) << 32);
-static NEXT_NETWORK_ID: AtomicU32 = AtomicU32::new(1);
-
 impl Network {
     const DEFAULT_TICK_RATE_HZ: f32 = 30.0;
-
-    pub(crate) fn new_id() -> NetworkObjectId {
-        *NETWORK_ID_PREFIX | u64::from(NEXT_NETWORK_ID.fetch_add(1, Ordering::Relaxed))
-    }
 
     /// Creates a network resource with a fixed replication tick rate.
     pub fn new(tick_rate: f32) -> Self {
@@ -73,11 +61,17 @@ impl Network {
         }
     }
 
-    /// Starts a local host server and assigns a local client ID for the host
-    /// peer.
+    /// Starts a local host server and assigns a local client ID, and the
+    /// first network object id range, to the host peer.
     pub fn host(&mut self, socket_addr: SocketAddr) -> Result<(), BoxedError> {
-        self.server = Some(Server::new(socket_addr)?);
-        self.local_id = Some(Client::generate_client_id());
+        let mut server = Server::new(socket_addr)?;
+        let local_id = Client::generate_client_id();
+        let range = server
+            .reserve_id_range(local_id)
+            .ok_or("no network object id range left for the host")?;
+        self.client.network_ids.assign(range);
+        self.server = Some(server);
+        self.local_id = Some(local_id);
         Ok(())
     }
 
@@ -205,40 +199,18 @@ impl Network {
         self.tick_rate
     }
 
-    fn traverse_prefab(
-        client_id: ClientId,
-        scene: &mut Scene,
-        root: GameObject,
-        index: &mut u32,
-        src_ids: Option<&HashMap<u32, NetworkObjectId>>,
-        dst_ids: &mut Option<&mut HashMap<u32, NetworkObjectId>>,
-    ) {
-        // Written through the scene so its network object index sees the id.
-        let mut network_object_id = None;
-        scene.write_component::<ComponentNetworkObject, _>(root, |c_netobj| {
-            c_netobj.owner_id = client_id;
-            c_netobj.id = src_ids
-                .and_then(|ids| ids.get(index).copied())
-                .unwrap_or_else(Self::new_id);
-            network_object_id = Some(c_netobj.id);
-        });
-        if let (Some(network_object_id), Some(dst_ids)) = (network_object_id, dst_ids.as_mut()) {
-            dst_ids.insert(*index, network_object_id);
-        }
-        *index += 1;
-        for child in scene.children_ordered(root).collect::<Vec<_>>() {
-            Self::traverse_prefab(client_id, scene, child, index, src_ids, dst_ids);
-        }
-    }
-
-    /// Instantiates `prefab_ref` locally, assigns network object IDs, and
-    /// broadcasts the spawn to other peers.
+    /// Instantiates `prefab_ref` locally, assigns network object IDs from the
+    /// local peer's range, and broadcasts the spawn to other peers.
+    ///
+    /// Returns `None` before the local peer has an id and a range, or when
+    /// the range has too few ids left.
     pub fn instantiate_prefab(
         &mut self,
         scene: &mut Scene,
         prefab_ref: Ref<Prefab>,
     ) -> Option<GameObject> {
         let client_id = self.local_id?;
+        self.client.network_ids.range()?;
         let prefab = prefab_ref.read();
         let prefab_root = match scene.instantiate_prefab(&prefab, None) {
             Ok(prefab_root) => prefab_root,
@@ -247,16 +219,20 @@ impl Network {
                 return None;
             }
         };
-        let mut index = 0;
-        let mut network_object_ids = Default::default();
-        Self::traverse_prefab(
-            client_id,
-            scene,
-            prefab_root,
-            &mut index,
-            None,
-            &mut Some(&mut network_object_ids),
-        );
+        let objects = prefab_network_objects(scene, prefab_root);
+        let mut network_object_ids = HashMap::with_capacity(objects.len());
+        for &(index, _) in &objects {
+            let Some(id) = self.client.network_ids.allocate() else {
+                log::warn!(
+                    "No network object ids left to spawn prefab {}",
+                    prefab_ref.id()
+                );
+                discard_instance(scene, prefab_root, &objects);
+                return None;
+            };
+            network_object_ids.insert(index, id);
+        }
+        assign_network_ids(scene, &objects, client_id, &network_object_ids);
         let message = GameMessage::SpawnPrefab {
             network_object_ids,
             from_client_id: client_id,
@@ -317,10 +293,15 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                 let Some(server) = server else {
                     return MessageHandlerResult::Consume;
                 };
+                let Some(id_range) = server.reserve_id_range(*client_id) else {
+                    log::error!("No network object id range left for client {client_id}");
+                    return MessageHandlerResult::Consume;
+                };
                 if let Err(e) = server.send_message(
                     *client_id,
                     &GameMessage::SelfConnected {
                         client_ids: server.client_ids(),
+                        id_range,
                     },
                 ) {
                     log::warn!("Failed to send SelfConnected to {client_id}: {e}");
@@ -349,11 +330,15 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                 }
                 MessageHandlerResult::Consume
             }
-            GameMessage::SelfConnected { client_ids } => {
+            GameMessage::SelfConnected {
+                client_ids,
+                id_range,
+            } => {
                 #[allow(unused)]
                 'client_logic: {
                     let self_client_id = client.client_id();
                     **local_id = self_client_id;
+                    client.network_ids.assign(*id_range);
                     client.client_ids = client_ids.clone();
                     client.client_ids.retain(|cid| self_client_id != Some(*cid));
                     log::trace!("Self connected, local_id: {self_client_id:?}");
@@ -508,46 +493,40 @@ impl MessageHandler<NetworkPrefabSyncContext<'_, '_>, GameMessage> for NetworkPr
                 prefab_id,
             } => {
                 let acting_client_id = sender.acting_client(*from_client_id);
-                // The server relays the spawn to every other client, then
-                // instantiates it like any other peer.
+                // The server checks the ids before it instantiates or relays
+                // anything, so a refused spawn reaches no peer.
+                if let Some(server) = server {
+                    if let Err(reason) =
+                        check_spawn_ids(server, scene, acting_client_id, network_object_ids)
+                    {
+                        log::warn!(
+                            "Refused spawn of prefab {prefab_id} from {acting_client_id}: {reason}"
+                        );
+                        return MessageHandlerResult::Consume;
+                    }
+                }
+                let instantiate = (**local_id).is_some_and(|id| id != acting_client_id);
+                if instantiate {
+                    if let Err(reason) = instantiate_spawn(
+                        scene,
+                        context,
+                        acting_client_id,
+                        *prefab_id,
+                        network_object_ids,
+                    ) {
+                        log::warn!(
+                            "Refused spawn of prefab {prefab_id} from {acting_client_id}: {reason}"
+                        );
+                        return MessageHandlerResult::Consume;
+                    }
+                }
+                // The server relays the spawn to every other client once it
+                // has instantiated it like any other peer.
                 if let Some(server) = server {
                     if let Err(e) = server.broadcast_message_except(acting_client_id, message) {
                         log::warn!("Failed to broadcast SpawnPrefab: {e}");
                     }
                 }
-                let Some(client_id) = **local_id else {
-                    return MessageHandlerResult::Consume;
-                };
-                if client_id == acting_client_id {
-                    return MessageHandlerResult::Consume;
-                }
-                let Some(prefab_ref) = context
-                    .registries
-                    .assets
-                    .read()
-                    .load_by_id::<Prefab>(*prefab_id)
-                    .ok()
-                else {
-                    return MessageHandlerResult::Consume;
-                };
-                let prefab = prefab_ref.read();
-                let prefab_root = match scene.instantiate_prefab(&prefab, None) {
-                    Ok(prefab_root) => prefab_root,
-                    Err(err) => {
-                        log::warn!("Failed to instantiate spawned prefab {prefab_id}: {err}");
-                        return MessageHandlerResult::Consume;
-                    }
-                };
-                // The spawning peer owns the replicated objects on every peer.
-                let mut index = 0;
-                Network::traverse_prefab(
-                    acting_client_id,
-                    scene,
-                    prefab_root,
-                    &mut index,
-                    Some(network_object_ids),
-                    &mut None,
-                );
                 MessageHandlerResult::Consume
             }
             // Handled in the same pass as `SpawnPrefab`, so a destroy that
@@ -569,4 +548,152 @@ impl MessageHandler<NetworkPrefabSyncContext<'_, '_>, GameMessage> for NetworkPr
             _ => MessageHandlerResult::Ignore,
         }
     }
+}
+
+/// Returns, in prefab order, the index of each object of the prefab instance
+/// rooted at `root` that carries a [`ComponentNetworkObject`], with the
+/// object. The index counts every object of the instance, depth first, so it
+/// names the same object on every peer.
+fn prefab_network_objects(scene: &Scene, root: GameObject) -> Vec<(u32, GameObject)> {
+    fn visit(
+        scene: &Scene,
+        game_object: GameObject,
+        index: &mut u32,
+        objects: &mut Vec<(u32, GameObject)>,
+    ) {
+        if scene
+            .read_component::<ComponentNetworkObject, _, _>(game_object, |_| ())
+            .is_some()
+        {
+            objects.push((*index, game_object));
+        }
+        *index += 1;
+        for child in scene.children_ordered(game_object).collect::<Vec<_>>() {
+            visit(scene, child, index, objects);
+        }
+    }
+    let mut objects = Vec::new();
+    visit(scene, root, &mut 0, &mut objects);
+    objects
+}
+
+/// Deletes the prefab instance rooted at `root`, whose network objects are
+/// `objects`.
+///
+/// Deletion waits for the next flush, so the instance first drops its network
+/// objects: the index then forgets the prefab's ids, and no lookup resolves to
+/// the discarded instance meanwhile.
+fn discard_instance(scene: &mut Scene, root: GameObject, objects: &[(u32, GameObject)]) {
+    for (_, game_object) in objects {
+        scene.remove_component::<ComponentNetworkObject>(*game_object);
+    }
+    scene.delete(root);
+}
+
+/// Gives each of `objects` its id from `ids` and `owner_id` as its owner.
+fn assign_network_ids(
+    scene: &mut Scene,
+    objects: &[(u32, GameObject)],
+    owner_id: ClientId,
+    ids: &HashMap<u32, NetworkObjectId>,
+) {
+    for (index, game_object) in objects {
+        // Written through the scene so its network object index sees the id.
+        scene.write_component::<ComponentNetworkObject, _>(*game_object, |c_netobj| {
+            c_netobj.owner_id = owner_id;
+            if let Some(&id) = ids.get(index) {
+                c_netobj.id = id;
+            }
+        });
+    }
+}
+
+/// Checks the ids of a spawn the server received from `client_id`.
+///
+/// Every id must come from the range the server reserved for `client_id`,
+/// appear once in the spawn and belong to no object in `scene`. Ids from
+/// another range are reserved by another peer, or by the scene for range 0.
+///
+/// Existing ids are looked up in the scene's network object index, which the
+/// scene updates on every network object add, write, removal and deletion,
+/// without the scan [`Scene::find_network_object`] repairs a miss with: every
+/// id of a valid spawn misses.
+fn check_spawn_ids(
+    server: &Server,
+    scene: &Scene,
+    client_id: ClientId,
+    ids: &HashMap<u32, NetworkObjectId>,
+) -> Result<(), String> {
+    let Some(range) = server.id_range(client_id) else {
+        return Err(String::from("its sender has no network object id range"));
+    };
+    let mut seen = HashSet::with_capacity(ids.len());
+    let duplicated: BTreeSet<_> = ids.values().filter(|&&id| !seen.insert(id)).collect();
+    if !duplicated.is_empty() {
+        return Err(format!("it names ids {duplicated:?} more than once"));
+    }
+    let foreign: BTreeSet<_> = ids
+        .values()
+        .filter(|&&id| network_id_range(id) != range)
+        .collect();
+    if !foreign.is_empty() {
+        return Err(format!(
+            "ids {foreign:?} are outside its range {range}, reserved by another peer"
+        ));
+    }
+    let existing: BTreeSet<_> = ids
+        .values()
+        .filter(|&&id| scene.indexed_network_object(id).is_some())
+        .collect();
+    if !existing.is_empty() {
+        return Err(format!("ids {existing:?} already exist in the scene"));
+    }
+    Ok(())
+}
+
+/// Instantiates a spawn of `prefab_id` received from `owner_id` and gives
+/// its network objects the spawn's ids.
+///
+/// A spawn whose ids do not name exactly the prefab's network objects is
+/// undone and refused, on the server and on every client: an object left
+/// without an id would keep its prefab's, which other spawns share. A prefab
+/// this peer cannot load is skipped; the server then relays the spawn after
+/// checking only its ids, and each client that can load the prefab checks
+/// the rest.
+fn instantiate_spawn(
+    scene: &mut Scene,
+    context: &ReadOnlyAssetContext,
+    owner_id: ClientId,
+    prefab_id: uuid::Uuid,
+    ids: &HashMap<u32, NetworkObjectId>,
+) -> Result<(), String> {
+    let Some(prefab_ref) = context
+        .registries
+        .assets
+        .read()
+        .load_by_id::<Prefab>(prefab_id)
+        .ok()
+    else {
+        return Ok(());
+    };
+    let prefab = prefab_ref.read();
+    let prefab_root = match scene.instantiate_prefab(&prefab, None) {
+        Ok(prefab_root) => prefab_root,
+        Err(err) => {
+            log::warn!("Failed to instantiate spawned prefab {prefab_id}: {err}");
+            return Ok(());
+        }
+    };
+    let objects = prefab_network_objects(scene, prefab_root);
+    let expected: BTreeSet<_> = objects.iter().map(|(index, _)| *index).collect();
+    let named: BTreeMap<_, _> = ids.iter().collect();
+    if !named.keys().copied().copied().eq(expected.iter().copied()) {
+        discard_instance(scene, prefab_root, &objects);
+        return Err(format!(
+            "its ids {named:?} do not name the prefab's network objects {expected:?}"
+        ));
+    }
+    // The spawning peer owns the replicated objects on every peer.
+    assign_network_ids(scene, &objects, owner_id, ids);
+    Ok(())
 }

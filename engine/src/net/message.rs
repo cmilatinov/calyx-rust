@@ -1,5 +1,5 @@
 use crate::core::AbsoluteTime;
-use crate::net::NetworkObjectId;
+use crate::net::{NetworkIdRange, NetworkObjectId};
 use renet::{ClientId, DefaultChannel};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -52,8 +52,12 @@ pub enum GameMessage {
     /// Wrapped server lifecycle event.
     ServerEvent(ServerEvent),
     // CLIENT EVENTS
-    /// Sent to a newly connected client with its peer list.
-    SelfConnected { client_ids: Vec<ClientId> },
+    /// Sent to a newly connected client with its peer list and the range it
+    /// allocates network object ids from.
+    SelfConnected {
+        client_ids: Vec<ClientId>,
+        id_range: NetworkIdRange,
+    },
     /// Broadcast when a new peer joins.
     ClientConnected { client_id: ClientId },
     /// Broadcast when a peer disconnects.
@@ -93,7 +97,7 @@ impl GameMessage {
         "ServerEvent{ClientConnected(client_id:ClientId),",
         "ClientDisconnected(client_id:ClientId)};",
         "GameMessage{ServerEvent(ServerEvent),",
-        "SelfConnected(client_ids:Vec<ClientId>),",
+        "SelfConnected(client_ids:Vec<ClientId>,id_range:NetworkIdRange),",
         "ClientConnected(client_id:ClientId),",
         "ClientDisconnected(client_id:ClientId),",
         "SyncTime(current_time:AbsoluteTime),",

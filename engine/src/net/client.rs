@@ -1,6 +1,6 @@
 use crate::error::BoxedError;
 use crate::net::message::{GameChannel, GameMessage};
-use crate::net::{MessageQueue, MessageSender};
+use crate::net::{MessageQueue, MessageSender, NetworkIdAllocator};
 use renet::{ClientId, RenetClient};
 use renet_netcode::{ClientAuthentication, NetcodeClientTransport};
 use std::net::{SocketAddr, UdpSocket};
@@ -11,6 +11,9 @@ pub struct Client {
     client: RenetClient,
     transport: Option<NetcodeClientTransport>,
     pub(crate) client_ids: Vec<ClientId>,
+    /// Allocates the local peer's network object ids from the range the
+    /// server assigned it.
+    pub(crate) network_ids: NetworkIdAllocator,
 }
 
 impl Default for Client {
@@ -19,6 +22,7 @@ impl Default for Client {
             client: RenetClient::new(Default::default()),
             transport: None,
             client_ids: Default::default(),
+            network_ids: Default::default(),
         }
     }
 }
@@ -30,6 +34,7 @@ impl Client {
             client: RenetClient::new(Default::default()),
             transport: None,
             client_ids: Default::default(),
+            network_ids: Default::default(),
         }
     }
 
