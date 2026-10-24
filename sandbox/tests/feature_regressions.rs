@@ -1,8 +1,14 @@
+// Matches the crates under test: the particle system component nests deep
+// enough that proving it `Send`/`Sync` passes the default limit.
+#![recursion_limit = "256"]
+
+use engine::component::ComponentParticleSystem;
 use engine::context::GameContext;
 use engine::math::Transform;
-use engine::scene::{Scene, SceneHud};
+use engine::scene::{Prefab, Scene, SceneHud};
 use engine::test_support::{HeadlessSceneRunner, TestAssets};
 use engine::ui::{PaintCommand, UiInput, UiPoint, UiRect, UiSize};
+use engine::utils::TypeUuid;
 use nalgebra_glm::{vec3, Vec3};
 use sandbox::spawn::ComponentRespawnState;
 use sandbox::tank::{ComponentHealth, ComponentTankController};
@@ -389,4 +395,88 @@ fn tank_slides_along_a_wall_the_same_at_30_and_144_fps() {
         "30 fps: {slow:?}\n144 fps: {fast:?}"
     );
     assert!(fast.z - start.z > 2.0, "the tank should slide: {fast:?}");
+}
+
+/// Fails when `authored` names a key `known` lacks, at any depth, so a
+/// misspelt particle module field cannot silently fall back to its default.
+fn assert_known_keys(authored: &serde_json::Value, known: &serde_json::Value, path: &str) {
+    if let (Some(authored), Some(known)) = (authored.as_object(), known.as_object()) {
+        for (key, value) in authored {
+            let field = format!("{path}.{key}");
+            let known_value = known
+                .get(key)
+                .unwrap_or_else(|| panic!("unknown particle field {field}"));
+            assert_known_keys(value, known_value, &field);
+        }
+    }
+}
+
+#[test]
+fn campfire_prefab_loads_with_every_particle_module_field_known() {
+    let (copy, assets) = sandbox_assets();
+    let path = copy.sandbox_root().join("prefabs/campfire.cxprefab");
+    let source: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let particle_type = ComponentParticleSystem::type_uuid().to_string();
+    let mut authored_systems = 0;
+    for components in source["data"]["components"].as_object().unwrap().values() {
+        if let Some(authored) = components.get(&particle_type) {
+            let system: ComponentParticleSystem = serde_json::from_value(authored.clone())
+                .expect("campfire particle system should deserialize");
+            let known = serde_json::to_value(&system).unwrap();
+            assert_known_keys(authored, &known, "particle_system");
+            authored_systems += 1;
+        }
+    }
+    assert_eq!(authored_systems, 3);
+
+    let prefab = assets
+        .registries
+        .assets
+        .read()
+        .reload_by_path::<Prefab>(&path)
+        .expect("campfire prefab should load");
+    let mut scene = load_sandbox_scene(&copy, &assets);
+    let before = scene.objects().count();
+    let (_, dropped) = scene
+        .instantiate_prefab_reporting(&prefab.read(), None)
+        .expect("campfire prefab should instantiate");
+    assert!(
+        dropped.is_empty(),
+        "campfire dropped components: {dropped:?}"
+    );
+    assert_eq!(scene.objects().count(), before + 4);
+}
+
+#[test]
+fn sandbox_campfire_emits_from_each_of_its_systems() {
+    let (copy, assets) = sandbox_assets();
+    let scene = load_sandbox_scene(&copy, &assets);
+    let puff = assets
+        .registries
+        .assets
+        .read()
+        .asset_id("textures/particle_puff")
+        .expect("the puff texture should be a sandbox asset");
+    let systems = ["Flames", "Flame Core", "Smoke"].map(|name| object_named(&scene, name));
+    let mut runner = HeadlessSceneRunner::from_scene(scene);
+    runner.step_many(30);
+
+    for system in systems {
+        let (count, texture) = runner
+            .scene()
+            .read_component::<ComponentParticleSystem, _, _>(system, |system| {
+                (
+                    system.particle_count(),
+                    serde_json::to_value(&system.rendering.texture).unwrap(),
+                )
+            })
+            .expect("campfire child should hold a particle system");
+        assert!(
+            count > 0,
+            "{} should have live particles",
+            runner.scene().name(system)
+        );
+        assert_eq!(texture, serde_json::json!(puff));
+    }
 }

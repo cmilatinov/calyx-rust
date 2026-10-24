@@ -212,25 +212,36 @@ mod tests {
         let particle_texture_id = Uuid::new_v4();
         let mut particle_system = ComponentParticleSystem::default();
         particle_system.active = false;
-        particle_system.looping = false;
         particle_system.local_space = true;
-        particle_system.spawn_rate = 12.0;
-        particle_system.burst_count = 3;
-        particle_system.max_particles = 64;
-        particle_system.emission_duration = 2.0;
+        particle_system.emission = ParticleEmission {
+            looping: false,
+            rate: 12.0,
+            burst_count: 3,
+            max_particles: 64,
+            duration: 2.0,
+        };
         particle_system.lifetime = ParticleScalarRange { min: 0.5, max: 1.5 };
-        particle_system.spawn_shape = ParticleSpawnShape::Sphere { radius: 2.0 };
-        particle_system.initial_velocity = Vec3::new(0.0, 5.0, 0.0);
-        particle_system.velocity_randomness = Vec3::new(1.0, 1.0, 1.0);
-        particle_system.acceleration = Vec3::new(0.0, -9.8, 0.0);
-        particle_system.size = ParticleSizeCurve {
+        particle_system.shape = ParticleSpawnShape::Sphere { radius: 2.0 };
+        particle_system.velocity = ParticleVelocity {
+            initial: Vec3::new(0.0, 5.0, 0.0),
+            randomness: Vec3::new(1.0, 1.0, 1.0),
+        };
+        particle_system.forces = ParticleForces {
+            acceleration: Vec3::new(0.0, -9.8, 0.0),
+        };
+        particle_system.size = ParticleSizeOverLifetime {
             start: 0.5,
             end: 0.0,
             randomness: 0.1,
         };
-        particle_system.start_color = Color32::RED;
-        particle_system.end_color = Color32::from_rgba_unmultiplied(255, 255, 0, 0);
-        particle_system.texture = AssetRef::from_id(particle_texture_id);
+        particle_system.color = ParticleColorOverLifetime {
+            start: Color32::RED,
+            end: Color32::from_rgba_unmultiplied(255, 255, 0, 0),
+        };
+        particle_system.rendering = ParticleRendering {
+            blend_mode: ParticleBlendMode::Alpha,
+            texture: AssetRef::from_id(particle_texture_id),
+        };
         scene.add_component(go, particle_system);
 
         let data: SceneData = (&scene).into();
@@ -292,27 +303,56 @@ mod tests {
             restored.read_component::<ComponentNetworkObject, _, _>(rgo, |c| c.id),
             Some(777)
         );
-        assert_eq!(
-            restored.read_component::<ComponentParticleSystem, _, _>(rgo, |c| {
+        let restored_particles = restored
+            .read_component::<ComponentParticleSystem, _, _>(rgo, |c| {
                 (
-                    c.spawn_rate,
-                    c.burst_count,
-                    c.max_particles,
-                    c.texture.id(),
-                    c.spawn_shape,
-                    c.start_color,
+                    c.active,
                     c.local_space,
+                    c.emission,
+                    c.lifetime,
+                    c.shape,
+                    c.velocity,
+                    c.forces,
+                    c.size,
+                    c.color,
+                    c.rendering.blend_mode,
+                    c.rendering.texture.id(),
                 )
-            }),
-            Some((
-                12.0,
-                3,
-                64,
-                particle_texture_id,
-                ParticleSpawnShape::Sphere { radius: 2.0 },
-                Color32::RED,
+            })
+            .expect("particle system restored");
+        assert_eq!(
+            restored_particles,
+            (
+                false,
                 true,
-            ))
+                ParticleEmission {
+                    looping: false,
+                    rate: 12.0,
+                    burst_count: 3,
+                    max_particles: 64,
+                    duration: 2.0,
+                },
+                ParticleScalarRange { min: 0.5, max: 1.5 },
+                ParticleSpawnShape::Sphere { radius: 2.0 },
+                ParticleVelocity {
+                    initial: Vec3::new(0.0, 5.0, 0.0),
+                    randomness: Vec3::new(1.0, 1.0, 1.0),
+                },
+                ParticleForces {
+                    acceleration: Vec3::new(0.0, -9.8, 0.0),
+                },
+                ParticleSizeOverLifetime {
+                    start: 0.5,
+                    end: 0.0,
+                    randomness: 0.1,
+                },
+                ParticleColorOverLifetime {
+                    start: Color32::RED,
+                    end: Color32::from_rgba_unmultiplied(255, 255, 0, 0),
+                },
+                ParticleBlendMode::Alpha,
+                particle_texture_id,
+            )
         );
     }
 }
