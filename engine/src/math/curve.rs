@@ -124,7 +124,7 @@ impl Curve {
         let (Some(first), Some(last)) = (self.keys.first(), self.keys.last()) else {
             return 0.0;
         };
-        if time.is_nan() || time <= first.time {
+        if time.is_nan() || time < first.time {
             return first.value;
         }
         if time >= last.time {
@@ -228,6 +228,22 @@ mod tests {
         assert_abs_diff_eq!(curve.evaluate(0.25), 0.5);
         assert_abs_diff_eq!(curve.evaluate(0.5), 3.0);
         assert_abs_diff_eq!(curve.evaluate(0.75), 3.0);
+    }
+
+    #[test]
+    fn coincident_first_keys_take_the_later_value_at_their_time() {
+        let curve = Curve::new(vec![
+            CurveKey::new(0.0, 1.0),
+            CurveKey::new(0.0, 3.0),
+            CurveKey::new(1.0, 3.0),
+        ]);
+        assert_abs_diff_eq!(curve.evaluate(-0.5), 1.0);
+        assert_abs_diff_eq!(curve.evaluate(0.0), 3.0);
+        assert_abs_diff_eq!(curve.evaluate(0.5), 3.0);
+
+        let all = Curve::new(vec![CurveKey::new(0.5, 1.0), CurveKey::new(0.5, 2.0)]);
+        assert_abs_diff_eq!(all.evaluate(0.5), 2.0);
+        assert_abs_diff_eq!(all.evaluate(0.0), 1.0);
     }
 
     #[test]
