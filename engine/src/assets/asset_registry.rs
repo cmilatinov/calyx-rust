@@ -221,8 +221,10 @@ impl<A: ?Sized> std::fmt::Debug for BackgroundLoad<A> {
 /// Background load of one asset id that has not produced a cached asset.
 #[derive(Debug, Clone)]
 enum BackgroundLoadState {
-    /// A background thread is loading the asset.
-    Loading,
+    /// A background thread is loading the asset. `source_changed` records
+    /// that its source changed after the load started, so a failure of the
+    /// stale load is not kept.
+    Loading { source_changed: bool },
     /// The background load failed with this error.
     Failed(AssetError),
 }
@@ -522,7 +524,7 @@ impl AssetRegistry {
             );
         }
         match loads.get(&id) {
-            Some(BackgroundLoadState::Loading) => return BackgroundLoad::Loading,
+            Some(BackgroundLoadState::Loading { .. }) => return BackgroundLoad::Loading,
             Some(BackgroundLoadState::Failed(err)) => return BackgroundLoad::Failed(err.clone()),
             None => {}
         }
@@ -530,7 +532,12 @@ impl AssetRegistry {
             .asset_registry
             .upgrade()
             .expect("asset registry is always owned by its Ref");
-        loads.insert(id, BackgroundLoadState::Loading);
+        loads.insert(
+            id,
+            BackgroundLoadState::Loading {
+                source_changed: false,
+            },
+        );
         drop(loads);
         let spawned = std::thread::Builder::new()
             .name(format!("asset-load-{id}"))
@@ -569,14 +576,21 @@ impl AssetRegistry {
             .background_loads
             .lock()
             .unwrap_or_else(|err| err.into_inner());
+        let source_changed = matches!(
+            loads.get(&id),
+            Some(BackgroundLoadState::Loading {
+                source_changed: true
+            })
+        );
         match result {
-            Ok(()) => loads.remove(&id),
-            Err(err) => loads.insert(id, BackgroundLoadState::Failed(err)),
+            Err(err) if !source_changed => loads.insert(id, BackgroundLoadState::Failed(err)),
+            _ => loads.remove(&id),
         };
     }
 
     /// Forgets the failed background load of the asset at `path`, so the next
-    /// poll of it retries.
+    /// poll of it retries. A load still in flight is marked so its failure is
+    /// not kept either.
     fn clear_failed_background_load(&self, path: &Path) {
         let Some(id) = self.asset_id_from_path(path) else {
             return;
@@ -585,8 +599,12 @@ impl AssetRegistry {
             .background_loads
             .lock()
             .unwrap_or_else(|err| err.into_inner());
-        if matches!(loads.get(&id), Some(BackgroundLoadState::Failed(_))) {
-            loads.remove(&id);
+        match loads.get_mut(&id) {
+            Some(BackgroundLoadState::Failed(_)) => {
+                loads.remove(&id);
+            }
+            Some(BackgroundLoadState::Loading { source_changed }) => *source_changed = true,
+            None => {}
         }
     }
 
@@ -3334,6 +3352,36 @@ mod tests {
             Event::new(EventKind::Modify(notify::event::ModifyKind::Any))
                 .add_path(asset_path.clone()),
         );
+        assert!(matches!(
+            poll_until_settled::<GatedTestAsset>(&registries, id),
+            BackgroundLoad::Loaded(_)
+        ));
+        assert_eq!(gated_test_asset_loads(&asset_path), 2);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn source_change_during_a_background_load_retries_its_failure() {
+        let (root, asset_path, registries, id) =
+            gated_background_fixture("calyx-background-load-change", "gate fail");
+        let gate = gated_test_asset_gate(&asset_path);
+
+        assert!(matches!(
+            registries
+                .assets
+                .read()
+                .load_by_id_in_background::<GatedTestAsset>(id),
+            BackgroundLoad::Loading
+        ));
+        // The load has read the failing source; fix it before it finishes.
+        gate.0.wait();
+        std::fs::write(&asset_path, "fixed").expect("failed to rewrite test asset");
+        registries.assets.read().recv_notify_event(
+            Event::new(EventKind::Modify(notify::event::ModifyKind::Any))
+                .add_path(asset_path.clone()),
+        );
+        gate.1.wait();
+
         assert!(matches!(
             poll_until_settled::<GatedTestAsset>(&registries, id),
             BackgroundLoad::Loaded(_)
