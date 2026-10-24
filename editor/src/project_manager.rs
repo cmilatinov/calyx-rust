@@ -1194,6 +1194,103 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// Editor play starts the startup scene a project's `project.toml` names,
+    /// for any project: this one is generated on the fly, with no sandbox
+    /// paths or constants.
+    #[test]
+    fn editor_play_runs_the_startup_scene_named_in_project_configuration() {
+        use super::ProjectManager;
+        use crate::scene_file::write_scene_file;
+        use engine::component::ComponentID;
+        use engine::context::GameContext;
+        use engine::core::Ref;
+        use engine::input::Input;
+        use engine::test_support::{test_asset_context_with_assets, test_scene};
+
+        let root = std::env::temp_dir().join(format!(
+            "calyx-project-startup-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let levels = root.join("assets").join("levels");
+        fs::create_dir_all(&levels).unwrap();
+        let root = dunce::canonicalize(root).unwrap();
+        fs::write(
+            root.join("project.toml"),
+            "name = \"startup-project\"
+             creation_date = \"2026-01-01T00:00:00Z\"
+             startup_scene = \"assets/levels/first.cxscene\"
+             [runtime.window]
+width = 800
+height = 600
+",
+        )
+        .unwrap();
+        let mut startup = test_scene();
+        startup.create(
+            Some(ComponentID {
+                name: "Configured startup object".into(),
+                ..Default::default()
+            }),
+            None,
+        );
+        let startup_path = root.join("assets").join("levels").join("first.cxscene");
+        write_scene_file(&startup_path, &startup).unwrap();
+
+        let mut game = GameContext::new(test_asset_context_with_assets(vec![root.join("assets")]));
+        game.scenes.current_scene_mut().create(
+            Some(ComponentID {
+                name: "Authoring object".into(),
+                ..Default::default()
+            }),
+            None,
+        );
+        let project = ProjectManager::new(
+            game.assets.clone(),
+            &root,
+            game.resources.background().clone(),
+            Ref::new(ProjectAssemblyStatus::default()),
+        )
+        .unwrap();
+        assert_eq!(
+            project.read().runtime_settings().window.non_zero_size(),
+            Some((800, 600))
+        );
+
+        let started = project.read().start_simulation(&mut game.scenes).unwrap();
+        game.scenes.start_simulation();
+
+        assert_eq!(started.as_deref(), Some(startup_path.as_path()));
+        assert!(game.scenes.is_simulating());
+        let names = |scene: &engine::scene::Scene| {
+            scene
+                .objects()
+                .map(|object| scene.name(object))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            names(game.scenes.simulation_scene()),
+            ["Configured startup object"]
+        );
+        assert_eq!(names(game.scenes.current_scene()), ["Authoring object"]);
+
+        // The configured scene runs a frame like any other simulation.
+        let input_context = egui::Context::default();
+        let input = Input::from_ctx(&input_context, None, game.resources.input_mut(), false);
+        let assets = game.assets.lock_read();
+        game.scenes.prepare();
+        game.scenes
+            .update(&assets.registries, &mut game.resources, &input);
+        drop(assets);
+        game.scenes.stop_simulation();
+        assert!(!game.scenes.is_simulating());
+
+        drop((project, game));
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn stale_shadow_copies_are_removed_and_the_current_one_is_kept() {
         let root = std::env::temp_dir().join(format!(
