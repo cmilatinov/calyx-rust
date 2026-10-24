@@ -1346,8 +1346,9 @@ mod tests {
     use super::*;
     use crate::assets::AssetRef;
     use crate::component::{
-        ComponentID, ComponentMesh, ComponentParticleSystem, ParticleScalarRange,
-        ParticleSizeCurve, ParticleSpawnShape,
+        ComponentID, ComponentMesh, ComponentParticleSystem, ParticleColorOverLifetime,
+        ParticleEmission, ParticleForces, ParticleScalarRange, ParticleSizeOverLifetime,
+        ParticleSpawnShape, ParticleVelocity,
     };
     use crate::math::Transform;
     use crate::render::{Camera, Shader};
@@ -1441,24 +1442,33 @@ mod tests {
     ) -> GameObject {
         let game_object = builder.spawn(name);
         let mut system = ComponentParticleSystem::default();
-        system.spawn_rate = 0.0;
-        system.burst_count = 1;
-        system.max_particles = 1;
+        system.emission = ParticleEmission {
+            rate: 0.0,
+            burst_count: 1,
+            max_particles: 1,
+            ..Default::default()
+        };
         system.lifetime = ParticleScalarRange {
             min: 10.0,
             max: 10.0,
         };
-        system.spawn_shape = ParticleSpawnShape::Sphere { radius: 0.0 };
-        system.initial_velocity = Vec3::zeros();
-        system.velocity_randomness = Vec3::zeros();
-        system.acceleration = Vec3::zeros();
-        system.size = ParticleSizeCurve {
+        system.shape = ParticleSpawnShape::Sphere { radius: 0.0 };
+        system.velocity = ParticleVelocity {
+            initial: Vec3::zeros(),
+            randomness: Vec3::zeros(),
+        };
+        system.forces = ParticleForces {
+            acceleration: Vec3::zeros(),
+        };
+        system.size = ParticleSizeOverLifetime {
             start: size,
             end: size,
             randomness: 0.0,
         };
-        system.start_color = color;
-        system.end_color = color;
+        system.color = ParticleColorOverLifetime {
+            start: color,
+            end: color,
+        };
         builder.add_component(game_object, system);
         builder.set_transform(game_object, glm::translation(&position));
         let scene = builder.scene_mut();
