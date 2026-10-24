@@ -186,9 +186,13 @@ impl InspectorHarness {
     }
 
     fn button(&mut self, pressed: bool) {
+        self.press(PointerButton::Primary, pressed);
+    }
+
+    fn press(&mut self, button: PointerButton, pressed: bool) {
         self.events.push(Event::PointerButton {
             pos: self.pointer,
-            button: PointerButton::Primary,
+            button,
             pressed,
             modifiers: Modifiers::NONE,
         });
@@ -196,12 +200,35 @@ impl InspectorHarness {
 
     /// Clicks at `pos` and returns what each frame of the click reported.
     pub fn click(&mut self, pos: Pos2, draw: &mut Draw) -> Vec<InspectorResponse> {
+        self.click_with(PointerButton::Primary, pos, draw)
+    }
+
+    /// Clicks at `pos` with the secondary button, which opens context menus,
+    /// and returns what each frame of the click reported.
+    pub fn secondary_click(&mut self, pos: Pos2, draw: &mut Draw) -> Vec<InspectorResponse> {
+        self.click_with(PointerButton::Secondary, pos, draw)
+    }
+
+    /// Clicks twice at `pos`, close enough in time to double-click, and
+    /// returns what each frame of both clicks reported.
+    pub fn double_click(&mut self, pos: Pos2, draw: &mut Draw) -> Vec<InspectorResponse> {
+        let mut responses = self.click(pos, draw);
+        responses.extend(self.click(pos, draw));
+        responses
+    }
+
+    fn click_with(
+        &mut self,
+        button: PointerButton,
+        pos: Pos2,
+        draw: &mut Draw,
+    ) -> Vec<InspectorResponse> {
         let mut responses = Vec::new();
         self.move_to(pos);
         responses.push(self.frame(draw));
-        self.button(true);
+        self.press(button, true);
         responses.push(self.frame(draw));
-        self.button(false);
+        self.press(button, false);
         responses.push(self.frame(draw));
         responses.extend(self.idle(2, draw));
         responses

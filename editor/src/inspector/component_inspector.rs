@@ -153,7 +153,8 @@ impl FieldTrail {
 enum ElementView {
     /// A type inspector drawn inline on the element's row.
     Inline,
-    /// An enum type inspector, which draws its own rows under the element.
+    /// A type inspector that draws its own rows under the element: an
+    /// enum's, or one whose [`draws_own_rows`](super::type_inspector::TypeInspector::draws_own_rows) is true.
     Enum,
     /// A struct's fields, under the element.
     Struct,
@@ -163,10 +164,17 @@ enum ElementView {
     Label,
 }
 
-/// Picks how to draw a list element from its type inspector, its registered
-/// type info and whether it is itself a list.
-fn element_view(has_inspector: bool, info: Option<&TypeInfo>, is_list: bool) -> ElementView {
+/// Picks how to draw a list element from its type inspector, whether that
+/// inspector draws its own rows, its registered type info and whether it is
+/// itself a list.
+fn element_view(
+    has_inspector: bool,
+    own_rows: bool,
+    info: Option<&TypeInfo>,
+    is_list: bool,
+) -> ElementView {
     match info {
+        _ if has_inspector && own_rows => ElementView::Enum,
         Some(TypeInfo::Enum(_)) if has_inspector => ElementView::Enum,
         _ if has_inspector => ElementView::Inline,
         Some(TypeInfo::Struct(_)) => ElementView::Struct,
@@ -402,10 +410,12 @@ impl<'a> ComponentInspector<'a> {
         name.push(' ');
         let type_registry = ctx.assets.types.read();
         if let Some(inspector) = self.registry.type_inspector_lookup(instance.uuid()) {
-            if matches!(
-                type_registry.type_info_by_id(instance.uuid()),
-                Some(TypeInfo::Enum(_))
-            ) {
+            if inspector.draws_own_rows()
+                || matches!(
+                    type_registry.type_info_by_id(instance.uuid()),
+                    Some(TypeInfo::Enum(_))
+                )
+            {
                 return inspector.show_inspector(ui, ctx, instance);
             }
             let mut response = InspectorResponse::NONE;
@@ -526,6 +536,7 @@ impl<'a> ComponentInspector<'a> {
         let inspector = self.registry.type_inspector_lookup(element.uuid());
         let view = element_view(
             inspector.is_some(),
+            inspector.is_some_and(|inspector| inspector.draws_own_rows()),
             element_info,
             element.as_list().is_some(),
         );
@@ -914,9 +925,9 @@ mod tests {
         let inner = registry.type_info::<Vec<f32>>();
         assert!(matches!(inner, Some(TypeInfo::List(_))));
 
-        assert_eq!(element_view(false, inner, true), ElementView::List);
+        assert_eq!(element_view(false, false, inner, true), ElementView::List);
         // An inner list type that no field registered still shows its elements.
-        assert_eq!(element_view(false, None, true), ElementView::List);
+        assert_eq!(element_view(false, false, None, true), ElementView::List);
     }
 
     #[test]
@@ -924,9 +935,13 @@ mod tests {
         let registry = TypeRegistry::new();
         let holder = registry.type_info::<ListHolder>();
 
-        assert_eq!(element_view(true, None, false), ElementView::Inline);
-        assert_eq!(element_view(false, holder, false), ElementView::Struct);
-        assert_eq!(element_view(false, None, false), ElementView::Label);
+        assert_eq!(element_view(true, false, None, false), ElementView::Inline);
+        assert_eq!(element_view(true, true, None, false), ElementView::Enum);
+        assert_eq!(
+            element_view(false, false, holder, false),
+            ElementView::Struct
+        );
+        assert_eq!(element_view(false, false, None, false), ElementView::Label);
     }
 
     #[test]

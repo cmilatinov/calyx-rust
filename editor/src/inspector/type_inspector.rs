@@ -19,6 +19,13 @@ pub trait TypeInspector: Send + Sync {
         ctx: &InspectorContext,
         instance: &mut dyn Reflect,
     ) -> InspectorResponse;
+    /// Whether the inspector draws its own labelled rows for a field,
+    /// as enum inspectors do, instead of a value in the row the component
+    /// inspector lays out for it. An editor taller than one row, such as the
+    /// curve editor, draws its own rows.
+    fn draws_own_rows(&self) -> bool {
+        false
+    }
     /// Draws the entries this inspector adds to the component's context menu
     /// and reports any change they made, as [`TypeInspector::show_inspector`]
     /// does.
