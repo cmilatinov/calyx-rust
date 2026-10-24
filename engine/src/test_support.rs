@@ -38,6 +38,7 @@ fn desired_test_features() -> wgpu::Features {
         | wgpu::Features::TEXTURE_BINDING_ARRAY
         | wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY
         | wgpu::Features::UNIFORM_BUFFER_AND_STORAGE_TEXTURE_ARRAY_NON_UNIFORM_INDEXING
+        | wgpu::Features::FLOAT32_FILTERABLE
 }
 
 /// Limits matching the editor's device, clamped to what the adapter supports.

@@ -3,7 +3,7 @@ use crate::assets::error::AssetError;
 use crate::assets::material::Material;
 use crate::assets::mesh::{Instance, Mesh};
 use crate::assets::texture::Texture;
-use crate::assets::{Asset, AssetId, AssetRegistry};
+use crate::assets::{Asset, AssetId, AssetRegistry, BackgroundLoad};
 use crate::component::{ComponentMesh, ComponentSkinnedMesh, ComponentSkyLight};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
@@ -706,7 +706,11 @@ impl SceneRenderer {
         let mut skybox = None;
         let mut sky_light_intensity = 0.0;
         for c_sky_light in query.iter(world).filter(|s| s.active) {
-            let Some(skybox_ref) = c_sky_light.skybox.get_ref(&self.asset_context.registries)
+            // Decoding a large HDR skybox takes far longer than a frame, so it
+            // loads in the background and the sky appears once it is ready.
+            let BackgroundLoad::Loaded(skybox_ref) = c_sky_light
+                .skybox
+                .get_ref_in_background(&self.asset_context.registries)
             else {
                 continue;
             };
@@ -1344,6 +1348,7 @@ fn register_object_id(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::assets::skybox::Skybox;
     use crate::assets::AssetRef;
     use crate::component::{
         ComponentID, ComponentMesh, ComponentParticleSystem, ParticleColorOverLifetime,
@@ -1357,6 +1362,7 @@ mod tests {
     };
     use nalgebra::UnitQuaternion;
     use nalgebra_glm::{vec3, vec4, Vec3};
+    use std::path::Path;
 
     const VIEWPORT: u32 = 512;
 
@@ -2177,6 +2183,82 @@ mod tests {
              {SAMPLES} samples were not resolved"
         );
         assert_eq!(renderer.pick_game_object(SIZE / 2, SIZE / 2), Some(uuid));
+    }
+
+    /// Writes a `size` by `size` HDR image of one color to `path`.
+    fn write_test_hdr(path: &Path, size: usize) {
+        std::fs::create_dir_all(path.parent().expect("hdr path has a parent"))
+            .expect("failed to create skybox directory");
+        let file = std::fs::File::create(path).expect("failed to create hdr file");
+        let pixels = vec![image::Rgb([0.2f32, 0.4, 0.8]); size * size];
+        image::codecs::hdr::HdrEncoder::new(std::io::BufWriter::new(file))
+            .encode(&pixels, size, size)
+            .expect("failed to encode hdr file");
+    }
+
+    #[test]
+    fn sky_light_skybox_loads_in_the_background_instead_of_stalling_a_frame() {
+        // HDR skyboxes upload as Rgba32Float, which the editor's device filters
+        // through FLOAT32_FILTERABLE.
+        if !crate::test_support::test_render_context()
+            .device()
+            .features()
+            .contains(wgpu::Features::FLOAT32_FILTERABLE)
+        {
+            eprintln!("skipping: the test adapter cannot filter Rgba32Float skyboxes");
+            return;
+        }
+        let assets = TestAssets::engine();
+        write_test_hdr(&assets.engine_root().join("skyboxes/test_sky.hdr"), 64);
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let skybox_id = read_only_context
+            .registries
+            .assets
+            .read()
+            .asset_id("skyboxes/test_sky")
+            .expect("test skybox should have metadata");
+
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        let sky = builder.spawn("sky");
+        builder.add_component(
+            sky,
+            ComponentSkyLight {
+                skybox: AssetRef::from_id(skybox_id),
+                ..Default::default()
+            },
+        );
+        let scene = builder.finish();
+        let (camera, camera_transform) = front_camera(1.0, 5.0);
+        let mut renderer = renderer(&read_only_context, 1, (64, 64));
+
+        renderer.render_scene_base(&camera, &camera_transform, &scene, None);
+        assert_eq!(
+            renderer.skybox_renderer.skybox_id(),
+            None,
+            "the first frame must render without waiting for the skybox to load"
+        );
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while renderer.skybox_renderer.skybox_id().is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the skybox never finished loading"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            renderer.render_scene_base(&camera, &camera_transform, &scene, None);
+        }
+        assert_eq!(renderer.skybox_renderer.skybox_id(), Some(skybox_id));
+        let skybox = read_only_context
+            .registries
+            .assets
+            .read()
+            .loaded_by_id::<Skybox>(skybox_id)
+            .expect("the loaded skybox should be cached");
+        assert!(
+            !skybox.read().dirty,
+            "the frame that selected the skybox should have prepared its maps"
+        );
     }
 }
 
