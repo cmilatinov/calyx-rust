@@ -530,9 +530,18 @@ impl HeadlessSceneRunner {
         };
         self.input_context.begin_pass(raw_input);
 
+        // Bind the whole screen as the input surface, as the editor's game
+        // view does, so scripts that read the surface rect (cursor aiming)
+        // behave as they do in play.
+        let surface = egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(&self.input_context, |ui| {
+                ui.allocate_rect(ui.max_rect(), egui::Sense::hover())
+            })
+            .inner;
         let input = Input::from_ctx(
             &self.input_context,
-            None,
+            Some(&surface),
             self.resources.input_mut(),
             self.input_active,
         );
