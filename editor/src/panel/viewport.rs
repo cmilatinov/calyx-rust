@@ -204,8 +204,9 @@ impl PanelViewport {
             ) {
                 let res: Transform = transforms[0].into();
                 let game = &mut app_state.game;
+                let document = &app_state.scene_document;
                 self.transform_edit
-                    .get_or_insert_with(|| GizmoDrag::begin(game, game_object))
+                    .get_or_insert_with(|| GizmoDrag::begin(document, game, game_object))
                     .move_to(game, res.matrix());
                 self.gizmo_status(ui, &result);
             }
@@ -387,8 +388,11 @@ impl PanelViewport {
 /// because the viewport missed frames of it or its object is no longer
 /// selected, is abandoned: the object gets back the local transform it had
 /// before the drag, so no change is left that undo and the dirty mark do not
-/// know about. A transform written since the drag's last move, such as by an
-/// undo while the viewport was hidden, is left alone.
+/// know about. That holds only while nothing else has used the drag's writes:
+/// once an edit was recorded, an undo or redo made, or the scene saved since
+/// the drag began, every snapshot taken since holds the dragged transform, so
+/// the drag is kept as part of them instead. A transform written since the
+/// drag's last move is also left alone.
 struct GizmoDrag {
     edit: SceneEdit,
     /// The dragged object.
@@ -397,19 +401,22 @@ struct GizmoDrag {
     before: Mat4,
     /// The object's local transform after the drag's last move.
     after: Option<Mat4>,
+    /// The scene document's revision when the drag began.
+    revision: u64,
     /// Whether the drag writes a simulation copy of the scene rather than
     /// the authoring scene.
     simulating: bool,
 }
 
 impl GizmoDrag {
-    fn begin(game: &GameContext, game_object: GameObject) -> Self {
+    fn begin(document: &SceneDocument, game: &GameContext, game_object: GameObject) -> Self {
         let scene = game.scenes.simulation_scene();
         Self {
             edit: SceneEdit::begin("Transform game object"),
             object: scene.uuid(game_object),
             before: scene.transform(game_object).matrix(),
             after: None,
+            revision: document.revision(),
             simulating: game.scenes.has_simulation_scene(),
         }
     }
@@ -429,10 +436,10 @@ impl GizmoDrag {
     }
 
     /// Ends a drag that cannot be recorded, restoring the object's transform
-    /// in the scene the drag wrote unless something wrote it since. A simulation copy that has since been
-    /// dropped took the drag's writes with it.
-    /// The authoring scene's dirty state then follows the rollback, which
-    /// matters when the scene was saved while the drag was pending.
+    /// in the scene the drag wrote unless something wrote or captured it
+    /// since. A simulation copy that has since been dropped took the drag's
+    /// writes with it. A rollback of the authoring scene goes to the document
+    /// as a write outside its history.
     fn abandon(self, document: &mut SceneDocument, game: &mut GameContext) {
         self.edit.cancel();
         let scene = match (self.simulating, game.scenes.has_simulation_scene()) {
@@ -443,8 +450,11 @@ impl GizmoDrag {
         let Some(game_object) = scene.find(self.object) else {
             return;
         };
-        // Only a transform the drag still owns is rolled back.
-        if self.after != Some(scene.transform(game_object).matrix()) {
+        // Only a transform the drag still owns, and that no snapshot or save
+        // has taken since, is rolled back.
+        if self.after != Some(scene.transform(game_object).matrix())
+            || (!self.simulating && document.revision() != self.revision)
+        {
             return;
         }
         scene.set_transform(game_object, &self.before);
@@ -458,6 +468,7 @@ impl GizmoDrag {
 mod tests {
     use super::{GizmoDrag, PanelViewport};
     use crate::scene_document::SceneDocument;
+    use crate::scene_edit::SceneEdit;
     use engine::context::GameContext;
     use engine::test_support::test_game_context;
     use nalgebra_glm::{translation, vec3, Mat4};
@@ -488,8 +499,12 @@ mod tests {
     }
 
     fn drag(game: &mut GameContext, id: Uuid) -> GizmoDrag {
+        drag_in(&document(), game, id)
+    }
+
+    fn drag_in(document: &SceneDocument, game: &mut GameContext, id: Uuid) -> GizmoDrag {
         let object = game.scenes.simulation_scene().find(id).unwrap();
-        let mut drag = GizmoDrag::begin(game, object);
+        let mut drag = GizmoDrag::begin(document, game, object);
         drag.move_to(game, translation(&vec3(5.0, 0.0, 0.0)));
         drag.move_to(game, translation(&vec3(9.0, 0.0, 0.0)));
         drag
@@ -515,7 +530,7 @@ mod tests {
         let file = temp_scene_file();
         assert!(document.save(&mut game, file.clone()));
 
-        drag(&mut game, id).abandon(&mut document, &mut game);
+        drag_in(&document, &mut game, id).abandon(&mut document, &mut game);
         let _ = std::fs::remove_file(&file);
 
         assert_eq!(local_matrix(&game, id), start, "the drag is rolled back");
@@ -561,23 +576,40 @@ mod tests {
     }
 
     #[test]
-    fn an_abandoned_drag_marks_a_scene_saved_during_it_dirty() {
-        let (mut game, id, start) = game_with_object();
+    fn an_abandoned_drag_keeps_a_transform_saved_during_it() {
+        let (mut game, id, _) = game_with_object();
         let mut document = document();
         let file = temp_scene_file();
-        let drag = drag(&mut game, id);
+        let drag = drag_in(&document, &mut game, id);
         // Saved while the viewport was hidden, with the drag's transform.
         assert!(document.save(&mut game, file.clone()));
-        assert!(!document.is_dirty());
 
         drag.abandon(&mut document, &mut game);
         let _ = std::fs::remove_file(&file);
 
-        assert_eq!(local_matrix(&game, id), start);
-        assert!(
-            document.is_dirty(),
-            "the file still has the drag's transform"
-        );
+        assert_eq!(local_matrix(&game, id), translation(&vec3(9.0, 0.0, 0.0)));
+        assert!(!document.is_dirty(), "the scene matches the file");
+    }
+
+    #[test]
+    fn an_abandoned_drag_keeps_a_transform_an_edit_recorded_during_it() {
+        // Such as a remote command, which captures the whole scene.
+        let (mut game, id, _) = game_with_object();
+        let mut document = document();
+        let drag = drag_in(&document, &mut game, id);
+        let mut edit = SceneEdit::begin("Create object");
+        edit.scene_mut(&mut game).create(None, None);
+        edit.commit(&mut document, &game);
+
+        drag.abandon(&mut document, &mut game);
+        let moved = translation(&vec3(9.0, 0.0, 0.0));
+        assert_eq!(local_matrix(&game, id), moved);
+
+        // Undoing and redoing the edit agree with the scene.
+        document.undo(&mut game);
+        assert_eq!(local_matrix(&game, id), moved);
+        document.redo(&mut game);
+        assert_eq!(local_matrix(&game, id), moved);
     }
 
     #[test]
