@@ -4,6 +4,7 @@
 //! game code use to build, traverse, serialize, and simulate hierarchies of
 //! game objects.
 
+pub use self::dropped_components::{dropped_components_report, DropReason, DroppedComponent};
 pub use self::error::*;
 pub use self::game_object_ref::*;
 pub use self::game_object_store::*;
@@ -15,6 +16,7 @@ pub use self::scene_manager::*;
 pub use self::scene_view::SceneView;
 pub use self::transform_cache::*;
 
+mod dropped_components;
 mod error;
 pub(crate) mod game_object_ref;
 mod hud;

@@ -8,7 +8,10 @@ mod tests {
     use crate::core::Ref;
     use crate::reflect::{Reflect, ReflectDefault};
     use crate::scene::game_object_ref::RemapScope;
-    use crate::scene::{ComponentEdit, GameObject, GameObjectRef, Scene, SceneData, SiblingDir};
+    use crate::scene::{
+        dropped_components_report, ComponentEdit, DropReason, DroppedComponent, GameObject,
+        GameObjectRef, Scene, SceneData, SiblingDir,
+    };
     use crate::test_support::test_scene;
     use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
     use legion::storage::ComponentTypeId;
@@ -2552,5 +2555,138 @@ mod tests {
             serde_json::to_value(scene.snapshot()).expect("snapshot should serialize");
 
         assert_eq!(snapshot_json, scene_json);
+    }
+
+    const UNREGISTERED_COMPONENT: Uuid = Uuid::from_u128(0x5c1e_0000_0000_4000_8000_0000_0000_0366);
+
+    /// A scene with one object named `name`, its id and its data.
+    fn named_object_data(name: &str) -> (Scene, Uuid, SceneData) {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        scene.write_component::<ComponentID, _>(go, |id| id.name = name.to_owned());
+        let id = scene.uuid(go);
+        let data: SceneData = (&scene).into();
+        (scene, id, data)
+    }
+
+    fn components_of(
+        data: &mut SceneData,
+        id: Uuid,
+    ) -> &mut std::collections::BTreeMap<Uuid, serde_json::Value> {
+        data.components.get_mut(&id).unwrap()
+    }
+
+    #[test]
+    fn load_reports_each_skipped_component() {
+        let (scene, id, mut data) = named_object_data("Crate");
+        let transform = <crate::component::ComponentTransform as TypeUuid>::type_uuid();
+        components_of(&mut data, id).insert(UNREGISTERED_COMPONENT, serde_json::json!({"a": 1}));
+        components_of(&mut data, id).insert(transform, serde_json::json!("not a transform"));
+
+        let (loaded, dropped) = Scene::load(scene.registries(), data);
+
+        assert!(loaded.find(id).is_some());
+        assert_eq!(dropped.len(), 2, "{dropped:?}");
+        let unregistered = dropped
+            .iter()
+            .find(|component| component.type_uuid == UNREGISTERED_COMPONENT)
+            .unwrap();
+        assert_eq!(unregistered.object_id, id);
+        assert_eq!(unregistered.object_name, "Crate");
+        assert_eq!(unregistered.type_name, None);
+        assert_eq!(unregistered.reason, DropReason::Unregistered);
+        let invalid = dropped
+            .iter()
+            .find(|component| component.type_uuid == transform)
+            .unwrap();
+        assert_eq!(invalid.object_name, "Crate");
+        assert!(invalid
+            .type_name
+            .as_deref()
+            .is_some_and(|name| name.ends_with("ComponentTransform")));
+        assert!(matches!(invalid.reason, DropReason::Invalid(_)));
+    }
+
+    #[test]
+    fn load_reports_an_invalid_id_component() {
+        let (scene, id, mut data) = named_object_data("Crate");
+        components_of(&mut data, id)
+            .insert(<ComponentID as TypeUuid>::type_uuid(), serde_json::json!(7));
+
+        let (loaded, dropped) = Scene::load(scene.registries(), data);
+
+        assert!(loaded.find(id).is_some(), "the object keeps its key as id");
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(dropped[0].type_uuid, <ComponentID as TypeUuid>::type_uuid());
+        assert!(matches!(dropped[0].reason, DropReason::Invalid(_)));
+    }
+
+    #[test]
+    fn load_reports_nothing_for_a_complete_scene() {
+        let (scene, _, data) = named_object_data("Crate");
+
+        let (_, dropped) = Scene::load(scene.registries(), data);
+
+        assert!(dropped.is_empty());
+        assert_eq!(dropped_components_report("the scene", &dropped), None);
+    }
+
+    #[test]
+    fn instantiate_prefab_reports_each_skipped_component() {
+        let (mut scene, id, _) = named_object_data("Crate");
+        let go = scene.find(id).unwrap();
+        let mut prefab = scene.create_prefab(go);
+        prefab
+            .data
+            .components
+            .get_mut(&prefab.root)
+            .unwrap()
+            .insert(UNREGISTERED_COMPONENT, serde_json::json!({}));
+
+        let (instance, dropped) = scene.instantiate_prefab_reporting(&prefab, None).unwrap();
+
+        assert_ne!(scene.uuid(instance), id);
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(dropped[0].object_id, id, "the id stored in the prefab");
+        assert_eq!(dropped[0].object_name, "Crate");
+        assert_eq!(dropped[0].type_uuid, UNREGISTERED_COMPONENT);
+        assert_eq!(dropped[0].reason, DropReason::Unregistered);
+    }
+
+    #[test]
+    fn the_dropped_components_report_names_object_type_and_reason() {
+        let object_id = Uuid::new_v4();
+        let dropped = [
+            DroppedComponent {
+                object_id,
+                object_name: "Crate".into(),
+                type_uuid: UNREGISTERED_COMPONENT,
+                type_name: None,
+                reason: DropReason::Unregistered,
+            },
+            DroppedComponent {
+                object_id,
+                object_name: String::new(),
+                type_uuid: UNREGISTERED_COMPONENT,
+                type_name: Some("game::Health".into()),
+                reason: DropReason::Invalid("missing field `max`".into()),
+            },
+        ];
+
+        let report = dropped_components_report("the scene", &dropped).unwrap();
+
+        let lines: Vec<&str> = report.lines().collect();
+        assert_eq!(
+            lines,
+            [
+                "Loading the scene skipped 2 component(s); saving will not write them:".to_owned(),
+                format!(
+                    "  - {UNREGISTERED_COMPONENT} on object 'Crate' ({object_id}): its type is not a registered component"
+                ),
+                format!(
+                    "  - {UNREGISTERED_COMPONENT} on object '(unnamed)' ({object_id}): game::Health, its data does not deserialize: missing field `max`"
+                ),
+            ]
+        );
     }
 }

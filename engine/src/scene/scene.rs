@@ -22,10 +22,11 @@ use crate::physics::PhysicsContext;
 use crate::reflect::{ReflectDefault, TypeInfo};
 use crate::resource::ResourceMap;
 use crate::scene::change_set::ChangeSet;
+use crate::scene::dropped_components::{log_dropped_components, registered_type_name};
 use crate::scene::game_object_store::GameObjectStore;
 use crate::scene::scene_graph::SceneGraph;
 use crate::scene::transform_cache::TransformCache;
-use crate::scene::{Prefab, SceneError, SceneView};
+use crate::scene::{DropReason, DroppedComponent, Prefab, SceneError, SceneView};
 use crate::utils::{ContextSeed, TypeUuid};
 
 use super::scene_graph::{self, SiblingDir};
@@ -248,21 +249,55 @@ impl SceneSnapshot {
 
 impl From<(&ReadOnlyRegistryContext, SceneData)> for Scene {
     fn from((registries, value): (&ReadOnlyRegistryContext, SceneData)) -> Self {
+        let (scene, dropped) = Scene::load(registries, value);
+        log_dropped_components("the scene", &dropped);
+        scene
+    }
+}
+
+impl Scene {
+    /// Builds a scene from `value`, returning with it every component that
+    /// was skipped because its type is not registered or its data does not
+    /// deserialize. Converting [`SceneData`] into a [`Scene`] logs them.
+    pub fn load(
+        registries: &ReadOnlyRegistryContext,
+        value: SceneData,
+    ) -> (Scene, Vec<DroppedComponent>) {
         let mut scene = registries.scene();
+        let mut dropped = Vec::new();
         let registry = registries.components.read();
+        let types = registries.types.read();
         for (game_object_id, mut components) in value.components {
             // The object's key is its identity, since the hierarchy refers to
             // objects by key; the stored id component only supplies the rest.
+            let mut invalid_id = None;
             let id = components
                 .remove(&ComponentID::type_uuid())
                 .and_then(|data| match serde_json::from_value::<ComponentID>(data) {
                     Ok(id) => Some(id),
                     Err(err) => {
-                        log::warn!("Object {game_object_id} has an invalid id component: {err}");
+                        invalid_id = Some(err.to_string());
                         None
                     }
                 })
                 .unwrap_or_default();
+            let object_name = id.name.clone();
+            let mut skip = |type_uuid: Uuid, type_name: Option<String>, reason: DropReason| {
+                dropped.push(DroppedComponent {
+                    object_id: game_object_id,
+                    object_name: object_name.clone(),
+                    type_uuid,
+                    type_name,
+                    reason,
+                })
+            };
+            if let Some(err) = invalid_id {
+                skip(
+                    ComponentID::type_uuid(),
+                    Some(std::any::type_name::<ComponentID>().to_owned()),
+                    DropReason::Invalid(err),
+                );
+            }
             let game_object = scene.spawn(
                 ComponentID {
                     id: game_object_id,
@@ -272,14 +307,20 @@ impl From<(&ReadOnlyRegistryContext, SceneData)> for Scene {
             );
             for (component_id, data) in components {
                 let Some(component) = registry.component(component_id) else {
+                    skip(
+                        component_id,
+                        registered_type_name(&types, component_id),
+                        DropReason::Unregistered,
+                    );
                     continue;
                 };
                 let instance = match component.deserialize(&data) {
                     Ok(instance) => instance,
                     Err(err) => {
-                        log::warn!(
-                            "Skipping component {} that failed to deserialize: {err}",
-                            component.type_name()
+                        skip(
+                            component_id,
+                            Some(component.type_name().to_owned()),
+                            DropReason::Invalid(err.to_string()),
                         );
                         continue;
                     }
@@ -314,7 +355,7 @@ impl From<(&ReadOnlyRegistryContext, SceneData)> for Scene {
                 log::warn!("Skipping invalid scene root entry: {err}");
             }
         }
-        scene
+        (scene, dropped)
     }
 }
 
@@ -542,12 +583,28 @@ impl Scene {
     /// object outside the prefab is left unchanged with a warning.
     ///
     /// Returns [`SceneError::InvalidPrefab`] when the prefab data is malformed.
+    /// Every component skipped because its type is not registered or its
+    /// data does not deserialize is logged in one warning.
     pub fn instantiate_prefab(
         &mut self,
         prefab: &Prefab,
         parent: Option<GameObject>,
     ) -> Result<GameObject, SceneError> {
+        let (game_object, dropped) = self.instantiate_prefab_reporting(prefab, parent)?;
+        log_dropped_components("the prefab", &dropped);
+        Ok(game_object)
+    }
+
+    /// [`Self::instantiate_prefab`], returning the skipped components instead
+    /// of logging them.
+    pub fn instantiate_prefab_reporting(
+        &mut self,
+        prefab: &Prefab,
+        parent: Option<GameObject>,
+    ) -> Result<(GameObject, Vec<DroppedComponent>), SceneError> {
         self.validate_prefab(prefab)?;
+        let mut dropped = Vec::new();
+        let mut names = HashMap::new();
         let mut id_mapping = prefab
             .data
             .components
@@ -569,6 +626,7 @@ impl Scene {
                 .ok_or_else(|| {
                     SceneError::InvalidPrefab(format!("object {game_object_id} has no valid id"))
                 })?;
+            names.insert(*game_object_id, id.name.clone());
             self.spawn(
                 ComponentID {
                     id: new_game_object_id,
@@ -587,23 +645,39 @@ impl Scene {
             let game_object = self.find(new_game_object_id).ok_or_else(|| {
                 SceneError::InvalidPrefab(format!("object {game_object_id} was not created"))
             })?;
+            let mut skip = |type_uuid: Uuid, type_name: Option<String>, reason: DropReason| {
+                dropped.push(DroppedComponent {
+                    object_id: *game_object_id,
+                    object_name: names.get(game_object_id).cloned().unwrap_or_default(),
+                    type_uuid,
+                    type_name,
+                    reason,
+                })
+            };
             for (component_id, data) in components {
                 // The object was spawned with its id component.
                 if *component_id == ComponentID::type_uuid() {
                     continue;
                 }
-                let Some(TypeInfo::Struct(_)) = type_registry.type_info_by_id(*component_id) else {
-                    continue;
+                let component = match type_registry.type_info_by_id(*component_id) {
+                    Some(TypeInfo::Struct(_)) => component_registry.component(*component_id),
+                    _ => None,
                 };
-                let Some(component) = component_registry.component(*component_id) else {
+                let Some(component) = component else {
+                    skip(
+                        *component_id,
+                        registered_type_name(&type_registry, *component_id),
+                        DropReason::Unregistered,
+                    );
                     continue;
                 };
                 let instance = match component.deserialize_remapped(data, &id_mapping) {
                     Ok(instance) => instance,
                     Err(err) => {
-                        log::warn!(
-                            "Skipping prefab component {} that failed to deserialize: {err}",
-                            component.type_name()
+                        skip(
+                            *component_id,
+                            Some(component.type_name().to_owned()),
+                            DropReason::Invalid(err.to_string()),
                         );
                         continue;
                     }
@@ -641,7 +715,7 @@ impl Scene {
             self.set_parent(game_object, Some(parent))?;
         }
 
-        Ok(game_object)
+        Ok((game_object, dropped))
     }
 
     /// Reparents `game_object` under `parent`, appending it after existing
