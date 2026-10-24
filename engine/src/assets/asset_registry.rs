@@ -223,7 +223,7 @@ impl<A: ?Sized> std::fmt::Debug for BackgroundLoad<A> {
 enum BackgroundLoadState {
     /// A background thread is loading the asset. `source_changed` records
     /// that its source changed after the load started, so a failure of the
-    /// stale load is not kept.
+    /// stale load is not kept and a success of it is reloaded.
     Loading { source_changed: bool },
     /// The background load failed with this error.
     Failed(AssetError),
@@ -582,10 +582,18 @@ impl AssetRegistry {
                 source_changed: true
             })
         );
+        let succeeded = result.is_ok();
         match result {
             Err(err) if !source_changed => loads.insert(id, BackgroundLoadState::Failed(err)),
             _ => loads.remove(&id),
         };
+        drop(loads);
+        // The hot reload skipped this asset while it was uncached, so a load
+        // that read the source before it changed would stay stale: mark it
+        // dirty again to reload the new source.
+        if succeeded && source_changed {
+            self.mark_asset_dirty(id);
+        }
     }
 
     /// Forgets the failed background load of the asset at `path`, so the next
@@ -3435,6 +3443,43 @@ mod tests {
             BackgroundLoad::Failed(_)
         ));
         assert_eq!(gated_test_asset_loads(&asset_path), 1);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn source_change_during_a_successful_background_load_reloads_it() {
+        let (root, asset_path, registries, id) =
+            gated_background_fixture("calyx-background-load-replace", "gate");
+        let gate = gated_test_asset_gate(&asset_path);
+
+        assert!(matches!(
+            registries
+                .assets
+                .read()
+                .load_by_id_in_background::<GatedTestAsset>(id),
+            BackgroundLoad::Loading
+        ));
+        // The load has read the old source; replace it before it finishes
+        // and let the debounce consume the dirty mark while it is uncached.
+        gate.0.wait();
+        std::fs::write(&asset_path, "replaced").expect("failed to rewrite test asset");
+        registries.assets.read().recv_notify_event(
+            Event::new(EventKind::Modify(notify::event::ModifyKind::Any))
+                .add_path(asset_path.clone()),
+        );
+        std::thread::sleep(HOT_RELOAD_DEBOUNCE * 2);
+        registries.assets.read().reload_assets();
+        gate.1.wait();
+        assert!(matches!(
+            poll_until_settled::<GatedTestAsset>(&registries, id),
+            BackgroundLoad::Loaded(_)
+        ));
+        assert_eq!(gated_test_asset_loads(&asset_path), 1);
+
+        // The stale load must leave a pending reload of the replacement.
+        std::thread::sleep(HOT_RELOAD_DEBOUNCE * 2);
+        registries.assets.read().reload_assets();
+        assert_eq!(gated_test_asset_loads(&asset_path), 2);
         std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
 }
