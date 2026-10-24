@@ -5,33 +5,31 @@
 //! or whose data does not deserialize. Saving afterwards writes the scene
 //! without it, so every load lists what it skipped in one warning.
 
-use std::fmt;
-
 use uuid::Uuid;
 
 use crate::reflect::type_registry::TypeRegistry;
 use crate::reflect::TypeInfo;
 
 /// Why a load skipped a component.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum DropReason {
     /// No component with the type UUID is registered.
+    #[error("its type is not a registered component")]
     Unregistered,
     /// The component is registered but its data does not deserialize.
+    #[error("its data does not deserialize: {0}")]
     Invalid(String),
 }
 
-impl fmt::Display for DropReason {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Unregistered => f.write_str("its type is not a registered component"),
-            Self::Invalid(error) => write!(f, "its data does not deserialize: {error}"),
-        }
-    }
-}
-
 /// A component a load skipped.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// The message reads `<type_uuid> on object '<object_name>' (<object_id>): [<type_name>, ]<reason>`.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "{type_uuid} on object '{}' ({object_id}): {}{reason}",
+    object_label(.object_name),
+    type_name_prefix(.type_name)
+)]
 pub struct DroppedComponent {
     /// The UUID of the object the component belonged to, as stored.
     pub object_id: Uuid,
@@ -44,23 +42,21 @@ pub struct DroppedComponent {
     pub reason: DropReason,
 }
 
-impl fmt::Display for DroppedComponent {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = if self.object_name.is_empty() {
-            "(unnamed)"
-        } else {
-            self.object_name.as_str()
-        };
-        write!(
-            f,
-            "{} on object '{name}' ({}): ",
-            self.type_uuid, self.object_id
-        )?;
-        if let Some(type_name) = &self.type_name {
-            write!(f, "{type_name}, ")?;
-        }
-        write!(f, "{}", self.reason)
+/// The object's name, or `(unnamed)` when it has none.
+fn object_label(object_name: &str) -> &str {
+    if object_name.is_empty() {
+        "(unnamed)"
+    } else {
+        object_name
     }
+}
+
+/// The type name followed by `, `, or nothing when the name is unknown.
+fn type_name_prefix(type_name: &Option<String>) -> String {
+    type_name
+        .as_ref()
+        .map(|type_name| format!("{type_name}, "))
+        .unwrap_or_default()
 }
 
 /// The type name `types` holds for `type_uuid`, if any.
