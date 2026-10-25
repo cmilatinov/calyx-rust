@@ -96,6 +96,10 @@ pub struct EditorAppState {
     pub game_size: (f32, f32),
     pub gizmo_modes: EnumSet<GizmoMode>,
     pub gizmo_orientation: GizmoOrientation,
+    /// Whether the edit scene's particles simulate while play is stopped,
+    /// the viewport's "Simulate particles in edit mode" option. Kept for the
+    /// session only, like the viewport's other display options.
+    pub preview_particles: bool,
     pub thumbnails: ThumbnailService,
     /// Where the inspector panel was drawn last frame, if it was.
     pub(crate) inspector_rect: Option<egui::Rect>,
@@ -177,6 +181,7 @@ impl EditorAppState {
             game_response: Default::default(),
             gizmo_modes: GizmoMode::all_translate(),
             gizmo_orientation: GizmoOrientation::Global,
+            preview_particles: true,
             thumbnails: ThumbnailService::default(),
             inspector_rect: None,
             scene_document: SceneDocument::new(&project_path),
@@ -487,9 +492,10 @@ impl EditorApp {
             self.state.game.resources.input_mut(),
             is_active,
         );
+        let preview_particles = self.state.preview_particles;
         self.state
             .game
-            .update_scene(UpdatedScene::Simulation, &input);
+            .update_scene(UpdatedScene::Editor { preview_particles }, &input);
     }
 
     fn update_window_title(&mut self, ctx: &egui::Context) {

@@ -109,6 +109,12 @@ impl PanelViewport {
             if degrees != radians.to_degrees() {
                 *radians = degrees.to_radians();
             }
+            ui.separator();
+            ui.checkbox(
+                &mut app_state.preview_particles,
+                "Simulate particles in edit mode",
+            )
+            .on_hover_text("Run the edit scene's particle systems while play is stopped");
         });
         ui.add_space(-ui.style().spacing.item_spacing.y + padding);
     }
