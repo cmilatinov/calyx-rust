@@ -10,6 +10,11 @@ use regex::Regex;
 use crate::assets::AssetRegistry;
 
 /// WGSL preprocessor that expands `//#include` directives.
+///
+/// Each file expands at most once per shader, where it is first included: a
+/// later include of the same file, directly or through another include,
+/// expands to nothing. So a module that defines structs or functions can be
+/// included by every file that uses it.
 pub struct ShaderPreprocessor;
 
 impl ShaderPreprocessor {
@@ -18,8 +23,8 @@ impl ShaderPreprocessor {
         asset_registry: &AssetRegistry,
         path: &Path,
     ) -> std::io::Result<String> {
-        let mut include_stack = HashSet::new();
-        Self::load_shader_source_inner(asset_registry, path, &mut include_stack)
+        let mut includes = Includes::default();
+        Self::load_shader_source_inner(asset_registry, path, &mut includes)
     }
 
     /// Returns the transitive include dependency set for `path`.
@@ -36,15 +41,16 @@ impl ShaderPreprocessor {
     fn load_shader_source_inner(
         asset_registry: &AssetRegistry,
         path: &Path,
-        include_stack: &mut HashSet<PathBuf>,
+        includes: &mut Includes,
     ) -> io::Result<String> {
         let path_key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        if !include_stack.insert(path_key.clone()) {
+        if !includes.stack.insert(path_key.clone()) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("shader include cycle detected at {}", path.display()),
             ));
         }
+        includes.expanded.insert(path_key.clone());
 
         let source = std::fs::read_to_string(path)?;
         let mut result = String::with_capacity(source.len());
@@ -68,12 +74,12 @@ impl ShaderPreprocessor {
                 asset_registry,
                 path,
                 &include_path,
-                include_stack,
+                includes,
             )?);
             last_end = match_range.end();
         }
         result.push_str(&source[last_end..]);
-        include_stack.remove(&path_key);
+        includes.stack.remove(&path_key);
         Ok(result)
     }
 
@@ -81,10 +87,15 @@ impl ShaderPreprocessor {
         asset_registry: &AssetRegistry,
         parent_path: &Path,
         include_path: &Path,
-        include_stack: &mut HashSet<PathBuf>,
+        includes: &mut Includes,
     ) -> io::Result<String> {
         let full_path = Self::resolve_include(asset_registry, parent_path, include_path)?;
-        Self::load_shader_source_inner(asset_registry, &full_path, include_stack)
+        let path_key = std::fs::canonicalize(&full_path).unwrap_or_else(|_| full_path.clone());
+        // A file on the stack is a cycle, which the inner call reports.
+        if includes.expanded.contains(&path_key) && !includes.stack.contains(&path_key) {
+            return Ok(String::new());
+        }
+        Self::load_shader_source_inner(asset_registry, &full_path, includes)
     }
 
     fn collect_shader_dependencies(
@@ -147,6 +158,15 @@ impl ShaderPreprocessor {
     }
 }
 
+/// The files of one shader's expansion.
+#[derive(Default)]
+struct Includes {
+    /// Files being expanded, to report cycles.
+    stack: HashSet<PathBuf>,
+    /// Files expanded so far, which later includes skip.
+    expanded: HashSet<PathBuf>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::ShaderPreprocessor;
@@ -175,6 +195,40 @@ mod tests {
         .expect("shader include should expand");
 
         assert_eq!(source, "before\nlet a = 1u;\nafter");
+        fs::remove_dir_all(asset_path).expect("failed to remove temp shader dir");
+    }
+
+    #[test]
+    fn expands_each_include_once_per_shader() {
+        let asset_path =
+            std::env::temp_dir().join(format!("calyx-include-once-{}", Uuid::new_v4()));
+        fs::create_dir_all(&asset_path).expect("failed to create shader dir");
+        fs::write(asset_path.join("common.wgsl"), "struct A { a: u32 };")
+            .expect("failed to write common include");
+        fs::write(
+            asset_path.join("left.wgsl"),
+            "//#include \"common.wgsl\"\nleft",
+        )
+        .expect("failed to write left include");
+        fs::write(
+            asset_path.join("right.wgsl"),
+            "//#include \"common.wgsl\"\nright",
+        )
+        .expect("failed to write right include");
+        fs::write(
+            asset_path.join("main.wgsl"),
+            "//#include \"left.wgsl\"\n//#include \"right.wgsl\"\n//#include \"common.wgsl\"\nmain",
+        )
+        .expect("failed to write shader");
+
+        let registries = test_registries_with_assets(vec![asset_path.clone()]);
+        let registry = registries.assets.read();
+        let source =
+            ShaderPreprocessor::load_shader_source(&registry, &asset_path.join("main.wgsl"))
+                .expect("shader includes should expand");
+
+        // Each skipped include leaves its line empty.
+        assert_eq!(source, "struct A { a: u32 };\nleft\n\nright\n\nmain");
         fs::remove_dir_all(asset_path).expect("failed to remove temp shader dir");
     }
 
