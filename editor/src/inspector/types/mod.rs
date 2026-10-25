@@ -6,6 +6,7 @@ mod color_inspector;
 mod curve_inspector;
 mod float_inspector;
 mod game_object_ref_inspector;
+mod gradient_inspector;
 mod integer_inspector;
 mod particle_spawn_shape_inspector;
 mod rigid_body_inspector;
