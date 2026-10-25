@@ -18,13 +18,13 @@ Core runtime. Modules:
 - `resource.rs` — ResourceMap (TypeId → Box<dyn Resource> HashMap). Holds Time, Background, Network.
 - `context.rs` — RegistryContext, AssetContext, GameContext. Layered read-only wrappers.
 - `class_registry.rs` — ComponentRegistry for type-erased component construction from reflection.
-- `math/` — Transform (position/rotation/scale), matrix decomposition, inverse.
+- `math/` — Transform (position/rotation/scale), matrix decomposition, inverse. Curve: a scalar over time as sorted keys (time, value, interpolation: constant, linear or smooth), evaluated with `Curve::evaluate`, holding the end keys' values outside them; its inspector edits keys on a normalized 0..1 timeline.
 - `input/` — Thin wrapper over egui::InputState.
 
 ### `editor` (binary)
 egui + eframe editor application.
 - `panel/` — Modular panels: Viewport, Inspector, SceneHierarchy, ContentBrowser, Terminal, Game, Animator. Panel trait with name/icon/ui.
-- `inspector/` — InspectorRegistry with type-specific inspectors (bool, float, int, string, color, transform, vec, asset ref, game object ref, collider, rigid body, UUID). Asset inspectors for Material, Shader, Prefab, AnimationGraph.
+- `inspector/` — InspectorRegistry with type-specific inspectors (bool, float, int, string, color, transform, vec, curve, asset ref, game object ref, collider, rigid body, UUID). Asset inspectors for Material, Shader, Prefab, AnimationGraph.
 - `widgets/` — Tab system, file button, list widget.
 - `camera.rs` — EditorCamera (orbit/fly).
 - `selection.rs` — Selection state (GameObject or Asset).
