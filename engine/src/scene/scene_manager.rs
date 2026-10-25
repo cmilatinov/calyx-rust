@@ -165,6 +165,15 @@ impl SceneManager {
         }
     }
 
+    /// Returns the simulation scene while simulation runs, and `None` while
+    /// it is paused or stopped.
+    pub fn running_simulation_scene_mut(&mut self) -> Option<&mut Scene> {
+        if !self.simulation_running {
+            return None;
+        }
+        self.simulation_scene.as_mut()
+    }
+
     /// Returns `true` when a simulation copy currently exists.
     pub fn has_simulation_scene(&self) -> bool {
         self.simulation_scene.is_some()

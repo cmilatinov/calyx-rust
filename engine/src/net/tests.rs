@@ -293,6 +293,7 @@ mod tests {
             assets,
             scenes,
             resources,
+            ..
         } = &mut game;
         resources
             .network_mut()
@@ -523,6 +524,7 @@ mod tests {
             assets,
             scenes,
             resources,
+            ..
         } = &mut game;
         resources
             .network_mut()
@@ -1329,6 +1331,7 @@ mod tests {
             assets,
             scenes,
             resources,
+            ..
         } = harness.host_mut();
         let network = resources.network_mut();
         network.queue.queue_message(

@@ -246,7 +246,7 @@ impl ThumbnailGenerator {
                 return Err("thumbnail scene renderer was not initialized".into());
             };
             renderer.resize_textures(size_px, size_px);
-            renderer.render_scene_base(&camera, &camera_transform, scene, None);
+            renderer.render_scene_base(&camera, &camera_transform, scene, None, None);
             renderer.finalize_scene();
         }
 
@@ -277,9 +277,12 @@ impl SkyboxFrontFaceDownscaler {
             .load::<Shader>("shaders/thumbnail_skybox_front_face")
             .map_err(|err| format!("failed to load skybox thumbnail shader: {err}"))?;
         let shader = shader_ref.read();
-        let pipeline = shader.compute_pipeline.as_ref().cloned().ok_or_else(|| {
-            "skybox thumbnail shader did not build a compute pipeline".to_string()
-        })?;
+        let pipeline = shader
+            .compute_pipeline("compute_main")
+            .map(|kernel| kernel.pipeline)
+            .ok_or_else(|| {
+                "skybox thumbnail shader did not build a compute pipeline".to_string()
+            })?;
         let bind_group_layout =
             shader.bind_group_layouts.first().cloned().ok_or_else(|| {
                 "skybox thumbnail shader did not declare bind group 0".to_string()
@@ -383,9 +386,12 @@ impl TextureDownscaler {
             .load::<Shader>("shaders/thumbnail_downscale")
             .map_err(|err| format!("failed to load thumbnail downscale shader: {err}"))?;
         let shader = shader_ref.read();
-        let pipeline = shader.compute_pipeline.as_ref().cloned().ok_or_else(|| {
-            "thumbnail downscale shader did not build a compute pipeline".to_string()
-        })?;
+        let pipeline = shader
+            .compute_pipeline("compute_main")
+            .map(|kernel| kernel.pipeline)
+            .ok_or_else(|| {
+                "thumbnail downscale shader did not build a compute pipeline".to_string()
+            })?;
         let bind_group_layout =
             shader.bind_group_layouts.first().cloned().ok_or_else(|| {
                 "thumbnail downscale shader did not declare bind group 0".to_string()

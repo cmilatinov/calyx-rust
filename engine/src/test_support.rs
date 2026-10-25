@@ -1,11 +1,13 @@
 use crate::assets::AssetRegistry;
 use crate::class_registry::ComponentRegistry;
 use crate::component::{Component, ComponentID};
-use crate::context::{AssetContext, GameContext, ReadOnlyRegistryContext, RegistryContext};
+use crate::context::{
+    update_scene, AssetContext, GameContext, ReadOnlyRegistryContext, RegistryContext,
+};
 use crate::core::Ref;
 use crate::input::Input;
 use crate::reflect::type_registry::TypeRegistry;
-use crate::render::RenderContext;
+use crate::render::{ParticleSimulation, RenderContext};
 use crate::resource::ResourceMap;
 use crate::scene::{GameObject, Scene};
 use egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput, Rect, Vec2};
@@ -387,6 +389,7 @@ pub struct HeadlessSceneRunner {
     modifiers: Modifiers,
     screen_rect: Rect,
     step_seconds: f64,
+    particles: Option<ParticleSimulation>,
 }
 
 impl Default for HeadlessSceneRunner {
@@ -414,7 +417,21 @@ impl HeadlessSceneRunner {
             modifiers: Modifiers::default(),
             screen_rect: Rect::from_min_size(Pos2::ZERO, DEFAULT_TEST_SCREEN_SIZE),
             step_seconds: FIXED_TEST_STEP_SECONDS,
+            particles: None,
         }
+    }
+
+    /// Simulates the scene's particles on the test GPU after each step, as
+    /// the editor and player do.
+    pub fn with_particles(mut self) -> Self {
+        self.particles = Some(ParticleSimulation::new());
+        self
+    }
+
+    /// Returns the particle simulation, when [`Self::with_particles`] added
+    /// one.
+    pub fn particles(&self) -> Option<&ParticleSimulation> {
+        self.particles.as_ref()
     }
 
     /// Replaces the currently loaded scene.
@@ -546,8 +563,19 @@ impl HeadlessSceneRunner {
             self.resources.input_mut(),
             self.input_active,
         );
-        self.scene
-            .update(&self.registries, &mut self.resources, &input);
+        match &mut self.particles {
+            Some(particles) => update_scene(
+                &mut self.scene,
+                &self.registries,
+                &mut self.resources,
+                &input,
+                particles,
+                &test_render_context(),
+            ),
+            None => self
+                .scene
+                .update(&self.registries, &mut self.resources, &input),
+        }
         let _ = self.input_context.end_pass();
     }
 
@@ -739,7 +767,11 @@ mod tests {
 
     impl ComponentUpdate for TestInputComponent {
         fn update(&self, _ctx: ComponentEventContext, resources: &mut ResourceMap, input: &Input) {
-            let probe = resources.resource_mut::<InputProbe>().unwrap();
+            // The registry runs every update hook for every object, so a
+            // scene without the probe resource is another test's scene.
+            let Some(probe) = resources.resource_mut::<InputProbe>() else {
+                return;
+            };
             if input.action("shoot").just_pressed() {
                 probe.shoot_presses += 1;
             }

@@ -698,7 +698,8 @@ impl EditorApp {
             return Ok(());
         };
         let scene = self.state.game.scenes.simulation_scene();
-        if !Self::render_game_view(&mut self.state.game_renderer, scene, size) {
+        let particles = Some(&self.state.game.particles);
+        if !Self::render_game_view(&mut self.state.game_renderer, scene, particles, size) {
             return Err((
                 ErrorKind::BadRequest,
                 "the scene has no enabled camera to render the game view from".to_string(),

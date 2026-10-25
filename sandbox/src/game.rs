@@ -1,7 +1,7 @@
 use eframe::{Frame, NativeOptions};
 use egui::load::SizedTexture;
 use egui::{Context, Direction, Image, ImageSource, InnerResponse, Layout, Rect, Sense};
-use engine::context::{AssetContext, GameContext};
+use engine::context::{AssetContext, GameContext, UpdatedScene};
 use engine::error::DynError;
 use engine::input::Input;
 use engine::logging::{DefaultLogger, Log};
@@ -136,15 +136,14 @@ impl eframe::App for GameApp {
                     self.game.resources.input_mut(),
                     true,
                 );
-                let assets = self.game.assets.lock_read();
-                let GameContext {
-                    scenes, resources, ..
-                } = &mut self.game;
-                let scene = scenes.current_scene_mut();
-                scene.prepare();
-                scene.update(&assets.registries, resources, &input);
-                self.hud
-                    .paint(scene, ui.painter(), rect, Self::pointer_input(ui.ctx()));
+                self.game.scenes.current_scene_mut().prepare();
+                self.game.update_scene(UpdatedScene::Current, &input);
+                self.hud.paint(
+                    self.game.scenes.current_scene_mut(),
+                    ui.painter(),
+                    rect,
+                    Self::pointer_input(ui.ctx()),
+                );
             });
 
         {
@@ -163,7 +162,7 @@ impl eframe::App for GameApp {
                     c_camera.near_plane,
                     c_camera.far_plane,
                 );
-                renderer.render_scene_base(&camera, &transform, scene, None);
+                renderer.render_scene_base(&camera, &transform, scene, Some(&game.particles), None);
                 renderer.finalize_scene();
             }
         }

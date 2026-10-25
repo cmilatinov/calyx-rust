@@ -12,7 +12,8 @@ use crate::render::asset_render_state::AssetRenderState;
 use crate::render::render_utils::RenderUtils;
 use crate::render::{
     Camera, GizmoRenderer, GridRenderer, LightManager, MeshRenderDefaults, MeshRenderTargets,
-    MeshRenderer, OutlineRenderer, ParticleRenderer, PipelineOptions, SkyboxRenderer,
+    MeshRenderer, OutlineRenderer, ParticleRenderer, ParticleSimulation, PipelineOptions,
+    SkyboxRenderer,
 };
 use crate::scene::{GameObject, Scene};
 use crate::utils::TypeUuid;
@@ -325,6 +326,12 @@ impl SceneRenderer {
         })
     }
 
+    /// Returns the particle renderer of this view.
+    #[cfg(test)]
+    pub(crate) fn particle_renderer(&self) -> &ParticleRenderer {
+        &self.particle_renderer
+    }
+
     /// Returns the current renderer options.
     pub fn options(&self) -> &SceneRendererOptions {
         &self.options
@@ -347,11 +354,15 @@ impl SceneRenderer {
 
     /// Renders the main scene content into the internal MSAA scene textures,
     /// on the render context the renderer was created with.
+    ///
+    /// Particles are drawn from `particles` when it simulates `scene`; any
+    /// other scene, or none, draws no particles.
     pub fn render_scene_base(
         &mut self,
         camera: &Camera,
         camera_transform: &Transform,
         scene: &Scene,
+        particles: Option<&ParticleSimulation>,
         physics_debug_pipeline: Option<&mut DebugRenderPipeline>,
     ) {
         let render_context = self.asset_context.render_context.clone();
@@ -469,6 +480,7 @@ impl SceneRenderer {
             &mut encoder,
             &self.asset_context,
             scene,
+            particles,
             &camera_transform.position,
             &self.camera_uniform_buffer,
             &self.scene_texture_msaa,
@@ -1441,8 +1453,8 @@ mod tests {
         .expect("scene renderer should load its assets")
     }
 
-    /// Spawns an emitter at `position` holding one particle of `color` and
-    /// `size`, emitted on the spot.
+    /// Spawns an emitter at `position` that emits one particle of `color`
+    /// and `size` on the spot, on its first simulated frame.
     fn spawn_particle(
         builder: &mut SceneBuilder,
         name: &str,
@@ -1481,13 +1493,6 @@ mod tests {
         };
         builder.add_component(game_object, system);
         builder.set_transform(game_object, glm::translation(&position));
-        let scene = builder.scene_mut();
-        let emitter_transform = scene.world_transform(game_object);
-        let seed = scene.uuid(game_object);
-        scene.write_component::<ComponentParticleSystem, _>(game_object, |system| {
-            system.reset_runtime(seed);
-            system.step(0.0, &emitter_transform);
-        });
         game_object
     }
 
@@ -1522,6 +1527,8 @@ mod tests {
         spawn_particle(&mut builder, "green", right, Color32::GREEN, 1.0);
         let scene = builder.finish();
         let (camera, transform) = front_camera(1.0, 5.0);
+        let mut particles = ParticleSimulation::new();
+        particles.simulate(&scene, &render_context, 0.0);
 
         let mut renderer = SceneRenderer::new(
             &read_only_context,
@@ -1533,7 +1540,7 @@ mod tests {
             SIZE,
         )
         .expect("scene renderer should load its assets");
-        renderer.render_scene_base(&camera, &transform, &scene, None);
+        renderer.render_scene_base(&camera, &transform, &scene, Some(&particles), None);
         renderer.finalize_scene();
         let image = read_scene_texture(&renderer, &render_context);
 
@@ -1548,33 +1555,6 @@ mod tests {
         assert!(
             pixel[1] > 200 && pixel[0] < 50,
             "the green system should draw its particle on the right, got {pixel:?}"
-        );
-    }
-
-    #[test]
-    fn particle_systems_not_drawn_in_a_frame_are_dropped() {
-        let assets = TestAssets::engine();
-        let context = assets.asset_context();
-        let read_only_context = context.lock_read();
-        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
-        let kept = spawn_particle(&mut builder, "kept", Vec3::zeros(), Color32::RED, 1.0);
-        let removed = spawn_particle(&mut builder, "removed", Vec3::zeros(), Color32::RED, 1.0);
-        let mut scene = builder.finish();
-        let (camera, transform) = front_camera(1.0, 5.0);
-
-        let mut renderer = renderer(&read_only_context, 1, (32, 32));
-        renderer.render_scene_base(&camera, &transform, &scene, None);
-        assert_eq!(
-            renderer.particle_renderer.tracked_systems(),
-            HashSet::from([kept, removed])
-        );
-
-        scene.delete(removed);
-        scene.flush_deletes();
-        renderer.render_scene_base(&camera, &transform, &scene, None);
-        assert_eq!(
-            renderer.particle_renderer.tracked_systems(),
-            HashSet::from([kept])
         );
     }
 
@@ -1761,7 +1741,7 @@ mod tests {
         let (camera, transform) = front_camera(2.0, 10.0);
 
         let mut renderer = renderer(&read_only_context, 1, SIZE);
-        renderer.render_scene_base(&camera, &transform, &scene, None);
+        renderer.render_scene_base(&camera, &transform, &scene, None, None);
         renderer.finalize_scene();
 
         let (x, y) = project(&camera, &transform, left, SIZE);
@@ -1803,7 +1783,7 @@ mod tests {
 
         let mut renderer = renderer(&read_only_context, 1, (32, 32));
         let (camera, transform) = front_camera(1.0, 5.0);
-        renderer.render_scene_base(&camera, &transform, &scene, None);
+        renderer.render_scene_base(&camera, &transform, &scene, None, None);
         renderer.finalize_scene();
         assert_eq!(renderer.pick_game_object(16, 16), Some(uuid));
         // A readback still in flight when the targets change is dropped.
@@ -1812,7 +1792,7 @@ mod tests {
         renderer.resize_textures(96, 48);
         assert_eq!(renderer.scene_texture_size(), (96, 48));
         let (camera, transform) = front_camera(2.0, 5.0);
-        renderer.render_scene_base(&camera, &transform, &scene, None);
+        renderer.render_scene_base(&camera, &transform, &scene, None, None);
         renderer.finalize_scene();
 
         assert_eq!(renderer.pick_game_object(48, 24), Some(uuid));
@@ -1856,11 +1836,11 @@ mod tests {
         let (camera, transform) = front_camera(1.0, 5.0);
 
         let mut renderer = renderer(&read_only_context, 1, (32, 32));
-        renderer.render_scene_base(&camera, &transform, &sphere_scene, None);
+        renderer.render_scene_base(&camera, &transform, &sphere_scene, None, None);
         assert!(renderer.assets.contains(sphere.id()));
         assert!(renderer.assets.contains(first.id()));
 
-        renderer.render_scene_base(&camera, &transform, &cube_scene, None);
+        renderer.render_scene_base(&camera, &transform, &cube_scene, None, None);
         assert!(!renderer.assets.contains(sphere.id()));
         assert!(!renderer.assets.contains(first.id()));
         assert!(renderer.assets.contains(cube.id()));
@@ -1885,7 +1865,7 @@ mod tests {
         let (camera, transform) = front_camera(1.0, 5.0);
         let mut renderer = renderer(&read_only_context, 1, (32, 32));
         let frame = |renderer: &mut SceneRenderer| {
-            renderer.render_scene_base(&camera, &transform, &scene, None);
+            renderer.render_scene_base(&camera, &transform, &scene, None, None);
             renderer.finalize_scene();
         };
 
@@ -1924,7 +1904,7 @@ mod tests {
         let (camera, transform) = front_camera(1.0, 5.0);
 
         let mut renderer = renderer(&read_only_context, 1, (32, 32));
-        renderer.render_scene_base(&camera, &transform, &scene, None);
+        renderer.render_scene_base(&camera, &transform, &scene, None, None);
         renderer.finalize_scene();
         assert_eq!(renderer.pick_game_object(16, 16), Some(uuid));
         assert!(renderer.assets.contains(sphere_id));
@@ -1941,7 +1921,7 @@ mod tests {
                 notify::Event::new(notify::EventKind::Remove(notify::event::RemoveKind::File))
                     .add_path(path),
             );
-        renderer.render_scene_base(&camera, &transform, &scene, None);
+        renderer.render_scene_base(&camera, &transform, &scene, None, None);
         renderer.finalize_scene();
 
         assert!(!renderer.assets.contains(sphere_id));
@@ -1994,7 +1974,7 @@ mod tests {
 
         let (camera, camera_transform) = front_camera(1.0, 30.0);
         let mut renderer = renderer(&read_only_context, 1, (VIEWPORT, VIEWPORT));
-        renderer.render_scene_base(&camera, &camera_transform, &scene, None);
+        renderer.render_scene_base(&camera, &camera_transform, &scene, None, None);
 
         for (index, (position, uuid)) in expected.iter().enumerate() {
             let (x, y) = project(&camera, &camera_transform, *position, (VIEWPORT, VIEWPORT));
@@ -2061,7 +2041,7 @@ mod tests {
 
         let (camera, camera_transform) = front_camera(1.0, 110.0);
         let mut renderer = renderer(&read_only_context, 1, (VIEWPORT, VIEWPORT));
-        renderer.render_scene_base(&camera, &camera_transform, &scene, None);
+        renderer.render_scene_base(&camera, &camera_transform, &scene, None, None);
         for (index, (position, uuid)) in expected.iter().enumerate() {
             let (x, y) = project(&camera, &camera_transform, *position, (VIEWPORT, VIEWPORT));
             assert_eq!(
@@ -2156,7 +2136,7 @@ mod tests {
             (SIZE, SIZE),
         )
         .expect("scene renderer should load its assets");
-        renderer.render_scene_base(&camera, &camera_transform, &scene, None);
+        renderer.render_scene_base(&camera, &camera_transform, &scene, None, None);
         renderer.finalize_scene();
 
         let mut readback = renderer
@@ -2236,7 +2216,7 @@ mod tests {
         let (camera, camera_transform) = front_camera(1.0, 5.0);
         let mut renderer = renderer(&read_only_context, 1, (64, 64));
 
-        renderer.render_scene_base(&camera, &camera_transform, &scene, None);
+        renderer.render_scene_base(&camera, &camera_transform, &scene, None, None);
         assert_eq!(
             renderer.skybox_renderer.skybox_id(),
             None,
@@ -2250,7 +2230,7 @@ mod tests {
                 "the skybox never finished loading"
             );
             std::thread::sleep(std::time::Duration::from_millis(10));
-            renderer.render_scene_base(&camera, &camera_transform, &scene, None);
+            renderer.render_scene_base(&camera, &camera_transform, &scene, None, None);
         }
         assert_eq!(renderer.skybox_renderer.skybox_id(), Some(skybox_id));
         let skybox = read_only_context

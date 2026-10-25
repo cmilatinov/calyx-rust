@@ -26,12 +26,14 @@ use egui::{include_image, Button, CornerRadius, ImageSource, Response, Sense, Ui
 use egui::{Align, Layout};
 use egui::{Color32, Frame, Margin, Shadow};
 use egui_tiles::{Container, Linear, LinearDir, Tiles, Tree};
-use engine::context::{AssetContext, GameContext};
+use engine::context::{AssetContext, GameContext, UpdatedScene};
 use engine::core::Ref;
 use engine::error::BoxedError;
 use engine::input::Input;
 use engine::logging::{DefaultLogger, Log};
-use engine::render::{Camera, SceneRenderer, SceneRendererError, SceneRendererOptions};
+use engine::render::{
+    Camera, ParticleSimulation, SceneRenderer, SceneRendererError, SceneRendererOptions,
+};
 use engine::runtime::{initial_render_size, wgpu_configuration, FrameCounter};
 use engine::scene::Scene;
 use rapier3d::prelude::DebugRenderPipeline;
@@ -485,11 +487,9 @@ impl EditorApp {
             self.state.game.resources.input_mut(),
             is_active,
         );
-        let assets = self.state.game.assets.lock_read();
-        let GameContext {
-            scenes, resources, ..
-        } = &mut self.state.game;
-        scenes.update(&assets.registries, resources, &input);
+        self.state
+            .game
+            .update_scene(UpdatedScene::Simulation, &input);
     }
 
     fn update_window_title(&mut self, ctx: &egui::Context) {
@@ -524,7 +524,10 @@ impl EditorApp {
             physics_debug_pipeline,
             state:
                 EditorAppState {
-                    game: GameContext { scenes, .. },
+                    game:
+                        GameContext {
+                            scenes, particles, ..
+                        },
                     scene_renderer,
                     game_renderer,
                     game_size,
@@ -548,7 +551,14 @@ impl EditorApp {
         scene_renderer.set_selected_game_object(None);
 
         let scene = scenes.simulation_scene();
-        scene_renderer.render_scene_base(camera, transform, scene, Some(physics_debug_pipeline));
+        let particles = Some(&*particles);
+        scene_renderer.render_scene_base(
+            camera,
+            transform,
+            scene,
+            particles,
+            Some(physics_debug_pipeline),
+        );
         if scene.main_camera().is_some() {
             let size = Self::get_physical_size(ctx, *game_size);
             if !Self::has_renderable_size(size.0, size.1) {
@@ -562,7 +572,7 @@ impl EditorApp {
                 render_state.queue.submit(Some(encoder.finish()));
                 return;
             }
-            Self::render_game_view(game_renderer, scene, size);
+            Self::render_game_view(game_renderer, scene, particles, size);
         } else {
             let device = &render_state.device;
             let queue = &render_state.queue;
@@ -579,6 +589,7 @@ impl EditorApp {
     fn render_game_view(
         game_renderer: &mut SceneRenderer,
         scene: &Scene,
+        particles: Option<&ParticleSimulation>,
         (width, height): (u32, u32),
     ) -> bool {
         let Some((node, c)) = scene.main_camera() else {
@@ -593,7 +604,7 @@ impl EditorApp {
             c.near_plane,
             c.far_plane,
         );
-        game_renderer.render_scene_base(&camera, &transform, scene, None);
+        game_renderer.render_scene_base(&camera, &transform, scene, particles, None);
         game_renderer.finalize_scene();
         true
     }
