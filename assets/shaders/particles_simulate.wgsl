@@ -145,19 +145,25 @@ fn evaluate_main(
     @builtin(num_workgroups) workgroups: vec3u,
 ) {
     let index = thread_index(gid, workgroups);
+    // Threads cover the sort buffer: [0, slot_count) are particle slots, and
+    // [slot_count, sort_count) pads the buffer to the power of two bitonic sort needs.
     if index >= view.sort_count {
         return;
     }
-    if index >= view.slot_count {
-        keys[index] = SortKey(DEAD_KEY, index);
+    // `||` short-circuits in WGSL, so padding never reads past the particle buffer.
+    let is_padding = index >= view.slot_count;
+    if is_padding || !is_alive(source_particles[index]) {
+        keys[index] = SortKey(DEAD_KEY, index); // dead and padding keys sort last
+        // `gather_main` copies all `slot_count` sorted entries, dead slots
+        // included (only the first live-count instances are drawn), so a dead
+        // slot's entry is cleared rather than left from an earlier frame.
+        // Padding has no `evaluated` entry: the buffer holds `slot_count`.
+        if !is_padding {
+            evaluated[index] = Instance(vec4f(0.0), vec4f(0.0));
+        }
         return;
     }
     let particle = source_particles[index];
-    if !is_alive(particle) {
-        keys[index] = SortKey(DEAD_KEY, index);
-        evaluated[index] = Instance(vec4f(0.0), vec4f(0.0));
-        return;
-    }
     let t = clamp(particle.age / max(particle.lifetime, MIN_PARTICLE_LIFETIME), 0.0, 1.0);
     let start = max(view.size_start + particle.size_offset, 0.0);
     let end = max(view.size_end + particle.size_offset, 0.0);
@@ -184,6 +190,8 @@ fn sort_main(
     @builtin(num_workgroups) workgroups: vec3u,
 ) {
     let index = thread_index(gid, workgroups);
+    // Sorts the whole padded buffer, [0, sort_count): padding keys take part
+    // in the network and, being dead, end up last.
     if index >= view.sort_count {
         return;
     }
@@ -207,6 +215,9 @@ fn gather_main(
     @builtin(num_workgroups) workgroups: vec3u,
 ) {
     let index = thread_index(gid, workgroups);
+    // Only [0, slot_count) of the sorted keys name particle slots: padding
+    // keys sort after every slot's, dead ones included, so they never land
+    // below `slot_count`.
     if index >= view.slot_count {
         return;
     }
