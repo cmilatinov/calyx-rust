@@ -2,10 +2,11 @@
 
 use crate::component::{ComponentParticleSystem, EmitterState, Particle, ParticleSpawn};
 use crate::core::Ref;
-use crate::math::Curve;
+use crate::math::{Curve, Gradient};
 use crate::render::buffer::ResizableBuffer;
 use crate::render::{
-    CachedBindGroup, ComputeKernel, GpuCurveKeys, GpuCurveRange, RenderContext, Shader,
+    CachedBindGroup, ComputeKernel, GpuCurveKeys, GpuCurveRange, GpuGradientKeys, GpuGradientRange,
+    RenderContext, Shader,
 };
 use crate::scene::{GameObject, Scene, SceneId};
 use egui_wgpu::wgpu;
@@ -51,66 +52,95 @@ struct SimulationKernels {
     scatter: ComputeKernel,
 }
 
-/// The curves of a system the evaluate kernel reads, in the order their
-/// ranges are packed: the size curve, then the red, green, blue and alpha
-/// curves.
-fn system_curves(component: &ComponentParticleSystem) -> [&Curve; 5] {
-    let [red, green, blue, alpha] = component.color.channels();
-    [&component.size.curve, red, green, blue, alpha]
+/// What the evaluate kernel reads of a system's size curve and color
+/// gradient: one buffer of `vec4f`s holding the curve's keys, one `vec4f`
+/// each as [`GpuCurveKey`](crate::render::GpuCurveKey) lays them out, then
+/// from `gradient_base` the gradient's keys, two `vec4f`s each as
+/// [`GpuGradientKey`](crate::render::GpuGradientKey) lays them out. One
+/// buffer keeps the kernels within eight storage buffers per stage.
+#[derive(Clone)]
+pub(crate) struct SystemKeys {
+    pub buffer: wgpu::Buffer,
+    pub size_curve: GpuCurveRange,
+    pub color_gradient: GpuGradientRange,
+    /// Index of the `vec4f` the gradient's keys start at.
+    pub gradient_base: u32,
 }
 
-/// The GPU copy of a system's size and color curves.
-struct SystemCurves {
-    /// The curves the buffer holds, to upload again only when they change.
-    curves: Vec<Curve>,
-    ranges: [GpuCurveRange; 5],
-    keys: wgpu::Buffer,
+/// A system's size curve and color gradient on the GPU, uploaded again only
+/// when either changes.
+struct SystemKeyBuffer {
+    /// The curve and gradient the buffer holds.
+    curve: Curve,
+    gradient: Gradient,
+    keys: SystemKeys,
     /// Times the keys were uploaded.
     #[cfg(test)]
     uploads: u32,
 }
 
-impl SystemCurves {
+impl SystemKeyBuffer {
     fn new(device: &wgpu::Device, component: &ComponentParticleSystem) -> Self {
-        let curves = system_curves(component);
-        let (keys, ranges) = GpuCurveKeys::pack(curves);
+        let curve = &component.size.curve;
+        let gradient = &component.color.gradient;
+        let (contents, size_curve, color_gradient, gradient_base) = Self::pack(curve, gradient);
         Self {
-            curves: curves.into_iter().cloned().collect(),
-            ranges: ranges.try_into().expect("one range per curve"),
-            keys: Self::key_buffer(device, &keys),
+            curve: curve.clone(),
+            gradient: gradient.clone(),
+            keys: SystemKeys {
+                buffer: Self::create(device, &contents),
+                size_curve,
+                color_gradient,
+                gradient_base,
+            },
             #[cfg(test)]
             uploads: 1,
         }
     }
 
-    fn key_buffer(device: &wgpu::Device, keys: &GpuCurveKeys) -> wgpu::Buffer {
+    fn create(device: &wgpu::Device, contents: &[u8]) -> wgpu::Buffer {
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("particle_curve_keys"),
-            contents: keys.contents(),
+            label: Some("particle_keys"),
+            contents,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         })
     }
 
-    /// Uploads `component`'s curves when they differ from the ones held.
+    /// The buffer contents for `curve` and `gradient`, with their ranges and
+    /// the gradient's base.
+    fn pack(curve: &Curve, gradient: &Gradient) -> (Vec<u8>, GpuCurveRange, GpuGradientRange, u32) {
+        let (curve_keys, curve_ranges) = GpuCurveKeys::pack([curve]);
+        let (gradient_keys, gradient_ranges) = GpuGradientKeys::pack([gradient]);
+        let mut contents = curve_keys.contents().to_vec();
+        let gradient_base = (contents.len() / size_of::<[f32; 4]>()) as u32;
+        contents.extend_from_slice(gradient_keys.contents());
+        (contents, curve_ranges[0], gradient_ranges[0], gradient_base)
+    }
+
+    /// Uploads `component`'s size curve and color gradient when either
+    /// changed.
     fn update(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         component: &ComponentParticleSystem,
     ) {
-        let curves = system_curves(component);
-        if self.curves.iter().eq(curves) {
+        let curve = &component.size.curve;
+        let gradient = &component.color.gradient;
+        if self.curve == *curve && self.gradient == *gradient {
             return;
         }
-        let (keys, ranges) = GpuCurveKeys::pack(curves);
-        let contents = keys.contents();
-        if contents.len() as u64 <= self.keys.size() {
-            queue.write_buffer(&self.keys, 0, contents);
+        let (contents, size_curve, color_gradient, gradient_base) = Self::pack(curve, gradient);
+        if contents.len() as u64 <= self.keys.buffer.size() {
+            queue.write_buffer(&self.keys.buffer, 0, &contents);
         } else {
-            self.keys = Self::key_buffer(device, &keys);
+            self.keys.buffer = Self::create(device, &contents);
         }
-        self.ranges = ranges.try_into().expect("one range per curve");
-        self.curves = curves.into_iter().cloned().collect();
+        self.keys.size_curve = size_curve;
+        self.keys.color_gradient = color_gradient;
+        self.keys.gradient_base = gradient_base;
+        self.curve = curve.clone();
+        self.gradient = gradient.clone();
         #[cfg(test)]
         {
             self.uploads += 1;
@@ -126,9 +156,9 @@ pub(crate) struct SimulatedSystem {
     reset_count: u32,
     /// One [`Particle`] per slot; an empty slot holds [`Particle::DEAD`].
     particles: wgpu::Buffer,
-    /// Behind a mutex so a view can refresh the curves of a simulation that
-    /// does not step, as when it is paused.
-    curves: Mutex<SystemCurves>,
+    /// Behind a mutex so a view can refresh the curve and gradient of a
+    /// simulation that does not step, as when it is paused.
+    keys: Mutex<SystemKeyBuffer>,
     params: wgpu::Buffer,
     steps: ResizableBuffer,
     spawns: ResizableBuffer,
@@ -152,7 +182,7 @@ impl SimulatedSystem {
             emitter,
             reset_count: component.reset_count(),
             particles,
-            curves: Mutex::new(SystemCurves::new(device, component)),
+            keys: Mutex::new(SystemKeyBuffer::new(device, component)),
             params: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("particle_simulation_params"),
                 size: size_of::<SimulationParams>() as u64,
@@ -208,38 +238,37 @@ impl SimulatedSystem {
         &self.particles
     }
 
-    fn lock_curves(&self) -> MutexGuard<'_, SystemCurves> {
-        self.curves.lock().unwrap_or_else(PoisonError::into_inner)
+    fn lock_keys(&self) -> MutexGuard<'_, SystemKeyBuffer> {
+        self.keys.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Uploads `component`'s curves when they changed since the last upload,
-    /// then returns the buffer of the curve keys, as `curve.wgsl` reads them,
-    /// and the ranges of the size curve and of the red, green, blue and alpha
-    /// curves in it.
+    /// Uploads `component`'s size curve and color gradient when they changed
+    /// since the last upload, then returns their keys.
     ///
-    /// Views call it before they draw, so a curve edited while the
-    /// simulation does not step still shows.
-    pub(crate) fn curves(
+    /// Views call it before they draw, so a curve or gradient edited while
+    /// the simulation does not step still shows.
+    pub(crate) fn keys(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         component: &ComponentParticleSystem,
-    ) -> (wgpu::Buffer, [GpuCurveRange; 5]) {
-        let mut curves = self.lock_curves();
-        curves.update(device, queue, component);
-        (curves.keys.clone(), curves.ranges)
+    ) -> SystemKeys {
+        let mut keys = self.lock_keys();
+        keys.update(device, queue, component);
+        keys.keys.clone()
     }
 
-    /// Ranges of the size, red, green, blue and alpha curves last uploaded.
+    /// The size curve and color gradient ranges last uploaded.
     #[cfg(test)]
-    pub(crate) fn curve_ranges(&self) -> [GpuCurveRange; 5] {
-        self.lock_curves().ranges
+    pub(crate) fn key_ranges(&self) -> (GpuCurveRange, GpuGradientRange) {
+        let keys = self.lock_keys();
+        (keys.keys.size_curve, keys.keys.color_gradient)
     }
 
-    /// Times the system's curve keys were uploaded.
+    /// Times the size curve and color gradient were uploaded.
     #[cfg(test)]
-    pub(crate) fn curve_uploads(&self) -> u32 {
-        self.lock_curves().uploads
+    pub(crate) fn key_uploads(&self) -> u32 {
+        self.lock_keys().uploads
     }
 
     /// Number of slots.
@@ -453,7 +482,7 @@ impl ParticleSimulation {
                 system.set_capacity(device, &mut encoder, component.emission.max_particles);
             }
             system
-                .curves
+                .keys
                 .get_mut()
                 .unwrap_or_else(PoisonError::into_inner)
                 .update(device, queue, component);

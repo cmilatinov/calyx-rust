@@ -5,9 +5,9 @@ use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::buffer::{wgpu_buffer_init_desc, BufferLayout};
 use crate::render::{
-    buffer_entry, workgroups, CachedBindGroup, ComputeKernel, GpuCurveRange, ParticleSimulation,
-    PipelineOptions, RenderContext, RenderUtils, SceneRendererError, Shader, VertexLayout,
-    PARTICLE_KERNELS,
+    buffer_entry, workgroups, CachedBindGroup, ComputeKernel, GpuCurveRange, GpuGradientRange,
+    ParticleSimulation, PipelineOptions, RenderContext, RenderUtils, SceneRendererError, Shader,
+    SystemKeys, VertexLayout, PARTICLE_KERNELS,
 };
 use crate::scene::{GameObject, Scene, SceneId};
 use egui_wgpu::wgpu;
@@ -50,9 +50,10 @@ struct RenderParams {
     local_space: u32,
     slot_count: u32,
     sort_count: u32,
-    _padding: [u32; 2],
+    gradient_base: u32,
+    _padding: u32,
     size_curve: GpuCurveRange,
-    color_curves: [GpuCurveRange; 4],
+    color_gradient: GpuGradientRange,
 }
 
 /// `SortParams` of `particles_simulate.wgsl`.
@@ -195,12 +196,12 @@ impl ViewSystem {
         kernels: &ViewKernels,
         sort_params: &SortPassParams,
         particles: &wgpu::Buffer,
-        curve_keys: &wgpu::Buffer,
+        keys: &SystemKeys,
         pass: &mut wgpu::ComputePass,
     ) {
         let layout = &kernels.evaluate.bind_group_layouts[0];
         let group = self.evaluate_group.get_or_create(
-            (layout.clone(), particles.clone(), curve_keys.clone()),
+            (layout.clone(), particles.clone(), keys.buffer.clone()),
             || {
                 device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("particle_evaluate_bind_group"),
@@ -210,7 +211,7 @@ impl ViewSystem {
                         buffer_entry(5, particles),
                         buffer_entry(6, &self.keys),
                         buffer_entry(7, &self.evaluated),
-                        buffer_entry(10, curve_keys),
+                        buffer_entry(10, &keys.buffer),
                     ],
                 })
             },
@@ -270,8 +271,8 @@ impl ViewSystem {
 /// One system's draw this frame.
 struct ParticleDraw {
     game_object: GameObject,
-    /// The system's curve keys, refreshed for this draw.
-    curve_keys: wgpu::Buffer,
+    /// The system's curve and gradient keys, refreshed for this draw.
+    keys: SystemKeys,
     texture: Ref<Texture>,
     blend_mode: ParticleBlendMode,
     live_count: u32,
@@ -401,8 +402,7 @@ impl ParticleRenderer {
             if view.slot_count != slot_count {
                 *view = ViewSystem::new(device, slot_count);
             }
-            let (curve_keys, [size_curve, color_curves @ ..]) =
-                simulated.curves(device, queue, system);
+            let keys = simulated.keys(device, queue, system);
             queue.write_buffer(
                 &view.params,
                 0,
@@ -412,9 +412,10 @@ impl ParticleRenderer {
                     local_space: system.local_space as u32,
                     slot_count,
                     sort_count: view.sort_count,
-                    _padding: [0; 2],
-                    size_curve,
-                    color_curves,
+                    gradient_base: keys.gradient_base,
+                    _padding: 0,
+                    size_curve: keys.size_curve,
+                    color_gradient: keys.color_gradient,
                 }),
             );
             let texture = system
@@ -424,7 +425,7 @@ impl ParticleRenderer {
                 .unwrap_or_else(|| self.default_texture.clone());
             draws.push(ParticleDraw {
                 game_object,
-                curve_keys,
+                keys,
                 texture,
                 blend_mode: system.rendering.blend_mode,
                 live_count,
@@ -464,7 +465,7 @@ impl ParticleRenderer {
                         &kernels,
                         sort_params,
                         simulated.particles(),
-                        &draw.curve_keys,
+                        &draw.keys,
                         &mut pass,
                     );
             }

@@ -13,7 +13,7 @@ pub(crate) use particle_renderer::*;
 #[cfg(test)]
 pub(crate) use particle_simulation::read_buffer;
 pub use particle_simulation::ParticleSimulation;
-pub(crate) use particle_simulation::{buffer_entry, workgroups, PARTICLE_KERNELS};
+pub(crate) use particle_simulation::{buffer_entry, workgroups, SystemKeys, PARTICLE_KERNELS};
 pub use pipeline_options::*;
 pub use render_context::*;
 pub use render_utils::*;

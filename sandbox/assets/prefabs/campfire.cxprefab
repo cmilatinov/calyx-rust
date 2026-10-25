@@ -10,64 +10,61 @@
         "5214cd04-62ac-48e0-8f0b-4030d2102931": {
           "active": true,
           "color": {
-            "alpha": {
+            "gradient": {
               "keys": [
                 {
-                  "interpolation": "Linear",
-                  "time": 0.0,
-                  "value": 1.0
+                  "color": [
+                    1.0,
+                    0.8431,
+                    0.1176,
+                    1.0
+                  ],
+                  "time": 0.0
                 },
                 {
-                  "interpolation": "Smooth",
-                  "time": 0.55,
-                  "value": 1.0
+                  "color": [
+                    0.9153,
+                    0.7848,
+                    0.0588,
+                    1.0
+                  ],
+                  "time": 0.2
                 },
                 {
-                  "interpolation": "Linear",
-                  "time": 1.0,
-                  "value": 0.3529412
-                }
-              ]
-            },
-            "blue": {
-              "keys": [
-                {
-                  "interpolation": "Linear",
-                  "time": 0.0,
-                  "value": 0.11764706
+                  "color": [
+                    0.8306,
+                    0.6457,
+                    0.0,
+                    1.0
+                  ],
+                  "time": 0.4
                 },
                 {
-                  "interpolation": "Linear",
-                  "time": 0.4,
-                  "value": 0.0
-                }
-              ]
-            },
-            "green": {
-              "keys": [
-                {
-                  "interpolation": "Smooth",
-                  "time": 0.0,
-                  "value": 0.84313726
+                  "color": [
+                    0.7671,
+                    0.5208,
+                    0.0,
+                    1.0
+                  ],
+                  "time": 0.55
                 },
                 {
-                  "interpolation": "Linear",
-                  "time": 1.0,
-                  "value": 0.28235295
-                }
-              ]
-            },
-            "red": {
-              "keys": [
-                {
-                  "interpolation": "Linear",
-                  "time": 0.0,
-                  "value": 1.0
+                  "color": [
+                    0.6612,
+                    0.3407,
+                    0.0,
+                    0.6228
+                  ],
+                  "time": 0.8
                 },
                 {
-                  "interpolation": "Linear",
-                  "time": 1.0,
-                  "value": 0.5764706
+                  "color": [
+                    0.5765,
+                    0.2824,
+                    0.0,
+                    0.3529
+                  ],
+                  "time": 1.0
                 }
               ]
             }
@@ -165,64 +162,61 @@
         "5214cd04-62ac-48e0-8f0b-4030d2102931": {
           "active": true,
           "color": {
-            "alpha": {
+            "gradient": {
               "keys": [
                 {
-                  "interpolation": "Linear",
-                  "time": 0.0,
-                  "value": 1.0
+                  "color": [
+                    1.0,
+                    0.5098,
+                    0.0,
+                    1.0
+                  ],
+                  "time": 0.0
                 },
                 {
-                  "interpolation": "Smooth",
-                  "time": 0.5,
-                  "value": 1.0
+                  "color": [
+                    0.9049,
+                    0.3818,
+                    0.0098,
+                    1.0
+                  ],
+                  "time": 0.25
                 },
                 {
-                  "interpolation": "Linear",
-                  "time": 1.0,
-                  "value": 0.5882353
-                }
-              ]
-            },
-            "blue": {
-              "keys": [
-                {
-                  "interpolation": "Linear",
-                  "time": 0.0,
-                  "value": 0.0
+                  "color": [
+                    0.8098,
+                    0.1577,
+                    0.0196,
+                    1.0
+                  ],
+                  "time": 0.5
                 },
                 {
-                  "interpolation": "Linear",
-                  "time": 1.0,
-                  "value": 0.039215688
-                }
-              ]
-            },
-            "green": {
-              "keys": [
-                {
-                  "interpolation": "Smooth",
-                  "time": 0.0,
-                  "value": 0.50980395
+                  "color": [
+                    0.7337,
+                    0.0706,
+                    0.0275,
+                    0.8551
+                  ],
+                  "time": 0.7
                 },
                 {
-                  "interpolation": "Linear",
-                  "time": 0.7,
-                  "value": 0.07058824
-                }
-              ]
-            },
-            "red": {
-              "keys": [
-                {
-                  "interpolation": "Linear",
-                  "time": 0.0,
-                  "value": 1.0
+                  "color": [
+                    0.6767,
+                    0.0706,
+                    0.0333,
+                    0.6772
+                  ],
+                  "time": 0.85
                 },
                 {
-                  "interpolation": "Linear",
-                  "time": 1.0,
-                  "value": 0.61960787
+                  "color": [
+                    0.6196,
+                    0.0706,
+                    0.0392,
+                    0.5882
+                  ],
+                  "time": 1.0
                 }
               ]
             }
@@ -347,64 +341,52 @@
         "5214cd04-62ac-48e0-8f0b-4030d2102931": {
           "active": true,
           "color": {
-            "alpha": {
+            "gradient": {
               "keys": [
                 {
-                  "interpolation": "Smooth",
-                  "time": 0.0,
-                  "value": 0.0
+                  "color": [
+                    0.2667,
+                    0.1961,
+                    0.1725,
+                    0.0
+                  ],
+                  "time": 0.0
                 },
                 {
-                  "interpolation": "Smooth",
-                  "time": 0.15,
-                  "value": 0.92156863
+                  "color": [
+                    0.2267,
+                    0.1667,
+                    0.1467,
+                    0.9216
+                  ],
+                  "time": 0.15
                 },
                 {
-                  "interpolation": "Linear",
-                  "time": 1.0,
-                  "value": 0.0
-                }
-              ]
-            },
-            "blue": {
-              "keys": [
-                {
-                  "interpolation": "Linear",
-                  "time": 0.0,
-                  "value": 0.17254902
+                  "color": [
+                    0.1467,
+                    0.1078,
+                    0.0949,
+                    0.6582
+                  ],
+                  "time": 0.45
                 },
                 {
-                  "interpolation": "Linear",
-                  "time": 1.0,
-                  "value": 0.0
-                }
-              ]
-            },
-            "green": {
-              "keys": [
-                {
-                  "interpolation": "Linear",
-                  "time": 0.0,
-                  "value": 0.19607843
+                  "color": [
+                    0.0667,
+                    0.049,
+                    0.0431,
+                    0.1923
+                  ],
+                  "time": 0.75
                 },
                 {
-                  "interpolation": "Linear",
-                  "time": 1.0,
-                  "value": 0.0
-                }
-              ]
-            },
-            "red": {
-              "keys": [
-                {
-                  "interpolation": "Linear",
-                  "time": 0.0,
-                  "value": 0.26666668
-                },
-                {
-                  "interpolation": "Linear",
-                  "time": 1.0,
-                  "value": 0.0
+                  "color": [
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  "time": 1.0
                 }
               ]
             }

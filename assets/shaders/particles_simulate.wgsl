@@ -7,6 +7,7 @@
 // number is used by one role.
 
 //#include "shaders/curve.wgsl"
+//#include "shaders/gradient.wgsl"
 
 const WORKGROUP_SIZE: u32 = 64u;
 // Shortest lifetime a particle can have, as on the CPU.
@@ -45,11 +46,13 @@ struct RenderParams {
     local_space: u32,
     slot_count: u32,
     sort_count: u32,
-    _padding: vec2u,
-    // The size module's curve, and the color module's red, green, blue and
-    // alpha curves, in `curve_keys`.
+    // Index of the `vec4f` of `module_keys` the gradient's keys start at.
+    gradient_base: u32,
+    _padding: u32,
+    // The size module's curve and the color module's gradient in
+    // `module_keys`.
     size_curve: CurveRange,
-    color_curves: array<CurveRange, 4>,
+    color_gradient: GradientRange,
 };
 
 struct SortParams {
@@ -83,11 +86,22 @@ struct Instance {
 @group(0) @binding(7) var<storage, read_write> evaluated: array<Instance>;
 @group(0) @binding(8) var<storage, read_write> instances: array<Instance>;
 @group(0) @binding(9) var<uniform> sort: SortParams;
-@group(0) @binding(10) var<storage, read> curve_keys: array<CurveKey>;
+// The system's curve keys, one `vec4f` each as `CurveKey` lays them out,
+// then from `view.gradient_base` its gradient keys, two `vec4f`s each as
+// `GradientKey` lays them out. One buffer for both keeps the kernels within
+// eight storage buffers per stage.
+@group(0) @binding(10) var<storage, read> module_keys: array<vec4f>;
 
 // The key source of `curve.wgsl`.
 fn curve_key(index: u32) -> CurveKey {
-    return curve_keys[index];
+    let key = module_keys[index];
+    return CurveKey(key.x, key.y, bitcast<u32>(key.z), 0u);
+}
+
+// The key source of `gradient.wgsl`.
+fn gradient_key(index: u32) -> GradientKey {
+    let at = view.gradient_base + 2u * index;
+    return GradientKey(module_keys[at], module_keys[at + 1u].x, 0u, 0u, 0u);
 }
 
 fn thread_index(gid: vec3u, workgroups: vec3u) -> u32 {
@@ -181,12 +195,7 @@ fn evaluate_main(
     if view.local_space != 0u {
         position = (view.emitter * vec4f(position, 1.0)).xyz;
     }
-    let color = vec4f(
-        curve_evaluate(view.color_curves[0], t),
-        curve_evaluate(view.color_curves[1], t),
-        curve_evaluate(view.color_curves[2], t),
-        curve_evaluate(view.color_curves[3], t),
-    );
+    let color = gradient_evaluate(view.color_gradient, t);
     let offset = position - view.camera_position;
     keys[index] = SortKey(-dot(offset, offset), index);
     evaluated[index] = Instance(vec4f(position, size), color);

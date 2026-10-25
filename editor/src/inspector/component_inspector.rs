@@ -1035,10 +1035,10 @@ mod tests {
         assert_eq!(numbers_changed, 1, "{before} -> {after}");
     }
 
-    /// The particle system's size and color modules show a curve editor per
-    /// curve, and dragging a size key edits the size curve.
+    /// The particle system's size module shows its curve in the curve editor,
+    /// and dragging a key edits only the size curve.
     #[test]
-    fn particle_size_and_color_curves_edit_in_the_curve_editor() {
+    fn particle_size_curve_edits_in_the_curve_editor() {
         let mut h = InspectorHarness::new();
         h.type_info = ComponentParticleSystem::type_uuid();
         let registry = h.inspector_registry();
@@ -1060,8 +1060,7 @@ mod tests {
             .iter()
             .filter(|label| **label == "Curve graph")
             .count();
-        assert_eq!(graphs, 5, "{:?}", h.labels());
-        // The size curve is the first one drawn.
+        assert_eq!(graphs, 1, "{:?}", h.labels());
         let key = h.labelled_any("Curve key 1");
         let drag = combined(&h.drag(key, Vec2::new(-200.0, -20.0), &mut draw));
         assert!(
@@ -1072,10 +1071,70 @@ mod tests {
         assert_eq!(system.color, ComponentParticleSystem::default().color);
     }
 
+    /// The particle system's color module shows one gradient strip, and
+    /// dragging one of its keys or clicking the strip to add one edits only
+    /// the color.
+    #[test]
+    fn particle_color_edits_in_the_gradient_editor() {
+        let mut h = InspectorHarness::new();
+        h.type_info = ComponentParticleSystem::type_uuid();
+        let registry = h.inspector_registry();
+        let inspector = ComponentInspector::new(&registry);
+        let mut system = ComponentParticleSystem::default();
+        let defaults = ComponentParticleSystem::default();
+        // Scrolled so the color module, below the screen's height, shows.
+        let mut draw = |ui: &mut Ui, ctx: &InspectorContext| {
+            egui::ScrollArea::vertical()
+                .vertical_scroll_offset(500.0)
+                .show(ui, |ui| {
+                    re_ui::list_item::list_item_scope(ui, "particle_system", |ui| {
+                        inspector.show_fields(
+                            ui,
+                            ctx,
+                            system.as_reflect_mut(),
+                            &FieldTrail::root(Id::new("particle_system")),
+                        )
+                    })
+                })
+                .inner
+        };
+
+        h.idle(3, &mut draw);
+        let strips: Vec<egui::Rect> = h
+            .nodes()
+            .iter()
+            .filter(|node| node.label.as_deref() == Some("Gradient strip"))
+            .map(|node| node.rect)
+            .collect();
+        assert_eq!(strips.len(), 1, "{:?}", h.labels());
+        assert!(
+            strips[0].max.y < 600.0,
+            "the strip is on screen: {strips:?}"
+        );
+
+        let key = h.labelled_any("Gradient key 1");
+        let drag = combined(&h.drag(key, Vec2::new(-80.0, 0.0), &mut draw));
+        assert!(
+            drag.changed && drag.drag_started && drag.drag_stopped,
+            "{drag:?}"
+        );
+        let strip = h.labelled_any("Gradient strip") - Vec2::new(0.0, 6.0);
+        let add = h.click(strip, &mut draw);
+        assert_eq!(add.iter().filter(|r| r.changed).count(), 1, "{add:?}");
+        drop(draw);
+
+        let keys = &system.color.gradient.keys;
+        assert_eq!(keys.len(), 3, "{keys:?}");
+        assert!(keys[2].time < 1.0, "the dragged key moved: {keys:?}");
+        assert_eq!(system.size, defaults.size);
+        assert_eq!(system.emission, defaults.emission);
+        assert_eq!(system.rendering.blend_mode, defaults.rendering.blend_mode);
+    }
+
     /// In a narrow inspector laid out as `PanelInspector` lays it out, the
     /// particle system's fields fit the panel: its scroll area has nothing to
-    /// scroll sideways, every curve editor ends before the panel's right edge
-    /// and every row starts after its left edge.
+    /// scroll sideways, the curve editor and the gradient strip end before the
+    /// panel's right edge and every row starts after its left edge.
     #[test]
     fn particle_system_fields_fit_a_narrow_inspector() {
         let mut h = InspectorHarness::new();
@@ -1122,20 +1181,22 @@ mod tests {
             "content is {content_width} wide in a {} wide inspector",
             viewport.width()
         );
-        let graphs: Vec<egui::Rect> = h
-            .nodes()
-            .iter()
-            .filter(|node| node.label.as_deref() == Some("Curve graph"))
-            .map(|node| node.rect)
-            .collect();
-        assert!(!graphs.is_empty(), "the curve editors are drawn");
-        for graph in graphs {
-            assert!(
-                graph.max.x <= viewport.max.x + 0.5,
-                "a curve editor ends at {} past the inspector's right edge {}",
-                graph.max.x,
-                viewport.max.x
-            );
+        for editor in ["Curve graph", "Gradient strip"] {
+            let rects: Vec<egui::Rect> = h
+                .nodes()
+                .iter()
+                .filter(|node| node.label.as_deref() == Some(editor))
+                .map(|node| node.rect)
+                .collect();
+            assert!(!rects.is_empty(), "the {editor} is drawn");
+            for rect in rects {
+                assert!(
+                    rect.max.x <= viewport.max.x + 0.5,
+                    "the {editor} ends at {} past the inspector's right edge {}",
+                    rect.max.x,
+                    viewport.max.x
+                );
+            }
         }
         let left = h
             .nodes()

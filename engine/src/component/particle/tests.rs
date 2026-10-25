@@ -4,7 +4,7 @@ use crate::component::ComponentID;
 use crate::context::{GameContext, ReadOnlyAssetContext, UpdatedScene};
 use crate::core::Ref;
 use crate::input::Input;
-use crate::math::{Curve, CurveInterpolation, CurveKey, Transform};
+use crate::math::{Curve, CurveInterpolation, CurveKey, Gradient, GradientKey, Transform};
 use crate::render::{
     Camera, ParticleSimulation, RenderContext, SceneRenderer, SceneRendererOptions,
 };
@@ -449,27 +449,15 @@ fn gpu_instances_match_a_cpu_reference_over_120_seeded_steps() {
             acceleration: vec3(0.0, -6.0, 1.5),
         },
         size: ParticleSizeOverLifetime::linear(0.5, 0.05, 0.1),
-        // Non-linear color: green eases down, blue steps up, alpha holds then
-        // fades.
+        // A non-linear color: four keys at uneven times, yellow to orange
+        // to a dim red, holding opaque before fading out.
         color: ParticleColorOverLifetime {
-            green: Curve::new(vec![
-                CurveKey::new(0.0, 0.8).with_interpolation(CurveInterpolation::Smooth),
-                CurveKey::new(0.6, 0.1),
-                CurveKey::new(1.0, 0.0),
+            gradient: Gradient::new(vec![
+                GradientKey::rgba(0.0, [1.0, 0.85, 0.2, 1.0]),
+                GradientKey::rgba(0.2, [1.0, 0.45, 0.05, 1.0]),
+                GradientKey::rgba(0.55, [0.8, 0.1, 0.05, 0.9]),
+                GradientKey::rgba(1.0, [0.2, 0.05, 0.1, 0.0]),
             ]),
-            blue: Curve::new(vec![
-                CurveKey::new(0.0, 0.1).with_interpolation(CurveInterpolation::Constant),
-                CurveKey::new(0.5, 0.9),
-            ]),
-            alpha: Curve::new(vec![
-                CurveKey::new(0.0, 1.0),
-                CurveKey::new(0.3, 1.0).with_interpolation(CurveInterpolation::Smooth),
-                CurveKey::new(1.0, 0.1),
-            ]),
-            ..ParticleColorOverLifetime::linear(
-                Color32::from_rgba_unmultiplied(255, 200, 40, 255),
-                Color32::from_rgba_unmultiplied(40, 10, 220, 30),
-            )
         },
         ..Default::default()
     };
@@ -598,10 +586,10 @@ fn gpu_instances_match_a_cpu_reference_over_120_seeded_steps() {
     }
 }
 
-/// A curve edited while the simulation does not step, as when it is paused,
-/// reaches the particles the next time a view draws them.
+/// A gradient edited while the simulation does not step, as when it is
+/// paused, reaches the particles the next time a view draws them.
 #[test]
-fn a_curve_edit_shows_on_the_next_draw_without_a_simulation_step() {
+fn a_color_edit_shows_on_the_next_draw_without_a_simulation_step() {
     let assets = TestAssets::engine();
     let context = assets.asset_context().lock_read();
     let render_context = context.render_context.clone();
@@ -628,15 +616,15 @@ fn a_curve_edit_shows_on_the_next_draw_without_a_simulation_step() {
     assert!(red(&mut renderer, &scene).iter().all(|&red| red > 0.99));
 
     scene.write_component::<ComponentParticleSystem, _>(game_object, |system| {
-        system.color.red = Curve::constant(0.25);
+        system.color.gradient = Gradient::new(vec![GradientKey::rgba(0.0, [0.25, 1.0, 1.0, 1.0])]);
     });
     assert_eq!(red(&mut renderer, &scene), vec![0.25; 4]);
 }
 
-/// A system's curve keys reach the GPU when it is first simulated and again
-/// only on a frame its curves changed.
+/// A system's size curve and color gradient reach the GPU when it is first
+/// simulated, and each again only on a frame it changed.
 #[test]
-fn curve_keys_upload_only_when_the_curves_change() {
+fn curve_and_gradient_keys_upload_only_when_they_change() {
     let assets = TestAssets::engine();
     let context = assets.asset_context().lock_read();
     let render_context = context.render_context.clone();
@@ -652,7 +640,7 @@ fn curve_keys_upload_only_when_the_curves_change() {
         simulation
             .system(game_object)
             .expect("the system is simulated")
-            .curve_uploads()
+            .key_uploads()
     };
 
     for _ in 0..3 {
@@ -667,13 +655,22 @@ fn curve_keys_upload_only_when_the_curves_change() {
     assert_eq!(uploads(&simulation), 1, "randomness is not a curve");
 
     scene.write_component::<ComponentParticleSystem, _>(game_object, |system| {
-        system.color.alpha.insert(CurveKey::new(0.5, 0.25));
+        system
+            .color
+            .gradient
+            .insert(GradientKey::rgba(0.5, [0.0, 1.0, 0.0, 0.5]));
     });
     simulation.simulate(&scene, &render_context, 0.016);
     simulation.simulate(&scene, &render_context, 0.016);
     assert_eq!(uploads(&simulation), 2);
-    let ranges = simulation.system(game_object).unwrap().curve_ranges();
-    assert_eq!(ranges[4].count, 3, "the alpha curve's new key is uploaded");
+    let (_, gradient) = simulation.system(game_object).unwrap().key_ranges();
+    assert_eq!(gradient.count, 3, "the gradient's new key is uploaded");
+
+    scene.write_component::<ComponentParticleSystem, _>(game_object, |system| {
+        system.size.curve.insert(CurveKey::new(0.5, 2.0));
+    });
+    simulation.simulate(&scene, &render_context, 0.016);
+    assert_eq!(uploads(&simulation), 3);
 }
 
 #[test]
