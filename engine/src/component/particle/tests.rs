@@ -598,6 +598,41 @@ fn gpu_instances_match_a_cpu_reference_over_120_seeded_steps() {
     }
 }
 
+/// A curve edited while the simulation does not step, as when it is paused,
+/// reaches the particles the next time a view draws them.
+#[test]
+fn a_curve_edit_shows_on_the_next_draw_without_a_simulation_step() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context().lock_read();
+    let render_context = context.render_context.clone();
+    let mut scene = context.scene();
+    let game_object = spawn_system(
+        &mut scene,
+        GOLDEN_SEED,
+        &Transform::default(),
+        still_burst(4),
+    );
+    let mut simulation = ParticleSimulation::new();
+    simulation.simulate(&scene, &render_context, 0.016);
+    let (camera, camera_transform) = camera_at(vec3(0.0, 0.0, 10.0));
+    let mut renderer = renderer(&context);
+    let red = |renderer: &mut SceneRenderer, scene: &Scene| {
+        renderer.render_scene_base(&camera, &camera_transform, scene, Some(&simulation), None);
+        renderer
+            .particle_renderer()
+            .read_instances(&render_context, game_object)
+            .iter()
+            .map(|instance| instance.color[0])
+            .collect::<Vec<f32>>()
+    };
+    assert!(red(&mut renderer, &scene).iter().all(|&red| red > 0.99));
+
+    scene.write_component::<ComponentParticleSystem, _>(game_object, |system| {
+        system.color.red = Curve::constant(0.25);
+    });
+    assert_eq!(red(&mut renderer, &scene), vec![0.25; 4]);
+}
+
 /// A system's curve keys reach the GPU when it is first simulated and again
 /// only on a frame its curves changed.
 #[test]

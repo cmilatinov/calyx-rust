@@ -12,6 +12,7 @@ use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use legion::{Entity, IntoQuery};
 use std::collections::{HashMap, HashSet};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 /// Registry name of the shader holding every particle kernel.
 pub(crate) const PARTICLE_KERNELS: &str = "shaders/particles_simulate";
@@ -125,7 +126,9 @@ pub(crate) struct SimulatedSystem {
     reset_count: u32,
     /// One [`Particle`] per slot; an empty slot holds [`Particle::DEAD`].
     particles: wgpu::Buffer,
-    curves: SystemCurves,
+    /// Behind a mutex so a view can refresh the curves of a simulation that
+    /// does not step, as when it is paused.
+    curves: Mutex<SystemCurves>,
     params: wgpu::Buffer,
     steps: ResizableBuffer,
     spawns: ResizableBuffer,
@@ -149,7 +152,7 @@ impl SimulatedSystem {
             emitter,
             reset_count: component.reset_count(),
             particles,
-            curves: SystemCurves::new(device, component),
+            curves: Mutex::new(SystemCurves::new(device, component)),
             params: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("particle_simulation_params"),
                 size: size_of::<SimulationParams>() as u64,
@@ -205,21 +208,38 @@ impl SimulatedSystem {
         &self.particles
     }
 
-    /// The buffer of this system's curve keys, as `curve.wgsl` reads them.
-    pub(crate) fn curve_keys(&self) -> &wgpu::Buffer {
-        &self.curves.keys
+    fn lock_curves(&self) -> MutexGuard<'_, SystemCurves> {
+        self.curves.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The ranges of the size curve, then of the red, green, blue and alpha
-    /// curves, in [`Self::curve_keys`].
+    /// Uploads `component`'s curves when they changed since the last upload,
+    /// then returns the buffer of the curve keys, as `curve.wgsl` reads them,
+    /// and the ranges of the size curve and of the red, green, blue and alpha
+    /// curves in it.
+    ///
+    /// Views call it before they draw, so a curve edited while the
+    /// simulation does not step still shows.
+    pub(crate) fn curves(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        component: &ComponentParticleSystem,
+    ) -> (wgpu::Buffer, [GpuCurveRange; 5]) {
+        let mut curves = self.lock_curves();
+        curves.update(device, queue, component);
+        (curves.keys.clone(), curves.ranges)
+    }
+
+    /// Ranges of the size, red, green, blue and alpha curves last uploaded.
+    #[cfg(test)]
     pub(crate) fn curve_ranges(&self) -> [GpuCurveRange; 5] {
-        self.curves.ranges
+        self.lock_curves().ranges
     }
 
     /// Times the system's curve keys were uploaded.
     #[cfg(test)]
     pub(crate) fn curve_uploads(&self) -> u32 {
-        self.curves.uploads
+        self.lock_curves().uploads
     }
 
     /// Number of slots.
@@ -432,7 +452,11 @@ impl ParticleSimulation {
             if system.capacity() != component.emission.max_particles {
                 system.set_capacity(device, &mut encoder, component.emission.max_particles);
             }
-            system.curves.update(device, queue, component);
+            system
+                .curves
+                .get_mut()
+                .unwrap_or_else(PoisonError::into_inner)
+                .update(device, queue, component);
             let emitter_transform = scene.world_transform(game_object);
             for delta_time in steps {
                 system

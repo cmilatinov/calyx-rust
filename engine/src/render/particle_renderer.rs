@@ -270,6 +270,8 @@ impl ViewSystem {
 /// One system's draw this frame.
 struct ParticleDraw {
     game_object: GameObject,
+    /// The system's curve keys, refreshed for this draw.
+    curve_keys: wgpu::Buffer,
     texture: Ref<Texture>,
     blend_mode: ParticleBlendMode,
     live_count: u32,
@@ -399,7 +401,8 @@ impl ParticleRenderer {
             if view.slot_count != slot_count {
                 *view = ViewSystem::new(device, slot_count);
             }
-            let [size_curve, color_curves @ ..] = simulated.curve_ranges();
+            let (curve_keys, [size_curve, color_curves @ ..]) =
+                simulated.curves(device, queue, system);
             queue.write_buffer(
                 &view.params,
                 0,
@@ -421,6 +424,7 @@ impl ParticleRenderer {
                 .unwrap_or_else(|| self.default_texture.clone());
             draws.push(ParticleDraw {
                 game_object,
+                curve_keys,
                 texture,
                 blend_mode: system.rendering.blend_mode,
                 live_count,
@@ -460,7 +464,7 @@ impl ParticleRenderer {
                         &kernels,
                         sort_params,
                         simulated.particles(),
-                        simulated.curve_keys(),
+                        &draw.curve_keys,
                         &mut pass,
                     );
             }
