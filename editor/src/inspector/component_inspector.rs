@@ -1071,4 +1071,82 @@ mod tests {
         assert_ne!(system.size.curve, before);
         assert_eq!(system.color, ComponentParticleSystem::default().color);
     }
+
+    /// In a narrow inspector laid out as `PanelInspector` lays it out, the
+    /// particle system's fields fit the panel: its scroll area has nothing to
+    /// scroll sideways, every curve editor ends before the panel's right edge
+    /// and every row starts after its left edge.
+    #[test]
+    fn particle_system_fields_fit_a_narrow_inspector() {
+        let mut h = InspectorHarness::new();
+        h.type_info = ComponentParticleSystem::type_uuid();
+        let registry = h.inspector_registry();
+        let inspector = ComponentInspector::new(&registry);
+        let mut system = ComponentParticleSystem::default();
+        let panel = egui::Rect::from_min_size(egui::pos2(40.0, 0.0), egui::vec2(320.0, 4000.0));
+        let content = std::cell::Cell::new((0.0f32, egui::Rect::NOTHING));
+        let mut draw = |ui: &mut Ui, ctx: &InspectorContext| {
+            let mut response = InspectorResponse::NONE;
+            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(panel), |ui| {
+                ui.set_clip_rect(panel);
+                let output = egui::ScrollArea::both()
+                    .auto_shrink([true, true])
+                    .show(ui, |ui| {
+                        // As `PanelInspector` lays out its content.
+                        egui::Frame {
+                            fill: ui.style().visuals.panel_fill,
+                            inner_margin: re_ui::DesignTokens::panel_margin(),
+                            ..Default::default()
+                        }
+                        .show(ui, |ui| {
+                            re_ui::list_item::list_item_scope(ui, "narrow_inspector", |ui| {
+                                response = inspector.show_fields(
+                                    ui,
+                                    ctx,
+                                    system.as_reflect_mut(),
+                                    &FieldTrail::root(Id::new("narrow_particle_system")),
+                                );
+                            });
+                            ui.allocate_space(ui.available_size());
+                        });
+                    });
+                content.set((output.content_size.x, output.inner_rect));
+            });
+            response
+        };
+
+        h.idle(4, &mut draw);
+        let (content_width, viewport) = content.get();
+        assert!(
+            content_width <= viewport.width() + 0.5,
+            "content is {content_width} wide in a {} wide inspector",
+            viewport.width()
+        );
+        let graphs: Vec<egui::Rect> = h
+            .nodes()
+            .iter()
+            .filter(|node| node.label.as_deref() == Some("Curve graph"))
+            .map(|node| node.rect)
+            .collect();
+        assert!(!graphs.is_empty(), "the curve editors are drawn");
+        for graph in graphs {
+            assert!(
+                graph.max.x <= viewport.max.x + 0.5,
+                "a curve editor ends at {} past the inspector's right edge {}",
+                graph.max.x,
+                viewport.max.x
+            );
+        }
+        let left = h
+            .nodes()
+            .iter()
+            .filter(|node| node.label.is_some())
+            .map(|node| node.rect.min.x)
+            .fold(f32::INFINITY, f32::min);
+        assert!(
+            left >= viewport.min.x - 0.5,
+            "a row starts at {left}, left of the inspector at {}",
+            viewport.min.x
+        );
+    }
 }

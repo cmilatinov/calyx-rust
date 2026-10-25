@@ -10,6 +10,7 @@ use egui::{
 use engine::math::{Curve, CurveInterpolation, CurveKey};
 use engine::reflect::{Reflect, ReflectDefault};
 use engine::utils::TypeUuid;
+use re_ui::UiExt;
 use uuid::Uuid;
 
 /// Height of the curve graph, in points.
@@ -90,15 +91,20 @@ fn without_focus(response: &Response) -> InspectorResponse {
     }
 }
 
-/// The width left on the cursor's row before the panel's visible edge and
+/// The width left on the cursor's row before the inspector's right edge and
 /// its scroll bar: list item bodies can reach past that edge.
+///
+/// The edge is the list's full span, which scrolls with the content. The
+/// clip rectangle does not, so measuring from it would widen the editor as
+/// the inspector scrolls sideways, and widen the inspector with it.
 fn visible_width(ui: &Ui) -> f32 {
     let scroll = &ui.spacing().scroll;
-    ui.clip_rect().right()
+    (ui.full_span().max
         - ui.cursor().min.x
         - scroll.bar_width
         - scroll.bar_outer_margin
-        - HANDLE_RADIUS
+        - HANDLE_RADIUS)
+        .max(0.0)
 }
 
 /// The times key `index` may take without passing its neighbours.
@@ -123,11 +129,9 @@ impl CurveInspector {
     /// Draws the editor for `curve` and reports what it did to it.
     pub fn curve_editor(ui: &mut Ui, id: Id, curve: &mut Curve) -> InspectorResponse {
         let mut response = InspectorResponse::NONE;
-        let visible = visible_width(ui);
-        let width = ui
-            .available_width()
-            .min(visible)
-            .max(4.0 * GRAPH_HEIGHT / 3.0);
+        // No wider than the space left, however narrow, so the graph never
+        // widens the inspector.
+        let width = ui.available_width().min(visible_width(ui));
         let (rect, graph) = ui.allocate_exact_size(vec2(width, GRAPH_HEIGHT), Sense::click());
         graph
             .widget_info(|| WidgetInfo::labeled(WidgetType::Other, ui.is_enabled(), "Curve graph"));
@@ -261,11 +265,16 @@ impl CurveInspector {
     }
 
     /// A row-high, read-only sketch of `curve`, for the row of its field.
+    ///
+    /// It paints into the visible part of the row and allocates no width:
+    /// a property row registers the width of its value as the width every
+    /// row of the list asks for, plus its own padding, so a sketch that
+    /// filled the row would widen the inspector past its panel.
     fn preview(ui: &mut Ui, curve: &Curve) {
-        let visible = visible_width(ui);
-        let width = ui.available_width().min(visible).max(0.0);
-        let size = vec2(width, ui.spacing().interact_size.y);
-        let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+        let height = ui.spacing().interact_size.y;
+        let width = ui.available_width().min(visible_width(ui)).max(0.0);
+        let rect = Rect::from_min_size(ui.cursor().min, vec2(width, height));
+        ui.allocate_exact_size(vec2(0.0, height), Sense::hover());
         if ui.is_rect_visible(rect) {
             let transform = GraphTransform {
                 rect: rect.shrink(2.0),
