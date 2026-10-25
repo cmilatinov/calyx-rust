@@ -3,14 +3,15 @@
 // (`engine/src/render/gpu_curve.rs`).
 //
 // Include it with `//#include "shaders/curve.wgsl"`. It declares no bindings:
-// the including shader keeps its curve keys wherever it likes, packed one
-// curve after another with each curve's keys sorted by time, and defines
+// it reads its keys from the parameter `curve_storage`, curves packed one
+// after another with each curve's keys sorted by time, and a `CurveRange`
+// names one curve's keys in it. The including shader binds the parameter by
+// marking its key buffer:
 //
-//     fn curve_key(index: u32) -> CurveKey
-//
-// returning key `index` of that storage. A `CurveRange` names one curve's keys
-// in it. WGSL cannot pass a storage pointer to a function, so the keys reach
-// this module through `curve_key` rather than as an argument.
+//     //#binding curve_storage
+//     @group(0) @binding(10) var<storage, read> curve_keys: array<CurveKey>;
+
+//#param curve_storage: storage<array<CurveKey>>
 
 // How a curve moves from a key to the next one: `CurveInterpolation`.
 const CURVE_CONSTANT: u32 = 0u;
@@ -43,6 +44,11 @@ struct CurveSegment {
     end: f32,
     weight: f32,
 };
+
+// Key `index` of the curve key buffer.
+fn curve_key(index: u32) -> CurveKey {
+    return #curve_storage[index];
+}
 
 fn curve_is_nan(value: f32) -> bool {
     // A bit test, since shader compilers may fold `value != value` to false.

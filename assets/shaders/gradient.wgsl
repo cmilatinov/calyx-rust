@@ -3,16 +3,16 @@
 // (`engine/src/render/gpu_gradient.rs`).
 //
 // Include it with `//#include "shaders/gradient.wgsl"`; it sits next to
-// `curve.wgsl` without clashing. It declares no bindings: the including
-// shader keeps its gradient keys wherever it likes, packed one gradient after
-// another with each gradient's keys sorted by time, and defines
+// `curve.wgsl` without clashing. It declares no bindings: it reads its keys
+// from the parameter `gradient_storage`, gradients packed one after another
+// with each gradient's keys sorted by time, and a `GradientRange` names one
+// gradient's keys in it. The including shader binds the parameter by marking
+// its key buffer:
 //
-//     fn gradient_key(index: u32) -> GradientKey
-//
-// returning key `index` of that storage. A `GradientRange` names one
-// gradient's keys in it. WGSL cannot pass a storage pointer to a function,
-// so the keys reach this module through `gradient_key` rather than as an
-// argument.
+//     //#binding gradient_storage
+//     @group(0) @binding(11) var<storage, read> gradient_keys: array<GradientKey>;
+
+//#param gradient_storage: storage<array<GradientKey>>
 
 // One color key of a gradient: unmultiplied sRGB RGBA at `time`. 32 bytes,
 // so arrays of keys fit uniform layout too.
@@ -34,6 +34,11 @@ struct GradientRange {
 
 // The color of an empty gradient.
 const GRADIENT_EMPTY_COLOR: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+
+// Key `index` of the gradient key buffer.
+fn gradient_key(index: u32) -> GradientKey {
+    return #gradient_storage[index];
+}
 
 fn gradient_is_nan(value: f32) -> bool {
     // A bit test, since shader compilers may fold `value != value` to false.

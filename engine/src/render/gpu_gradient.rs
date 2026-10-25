@@ -98,11 +98,12 @@ static EMPTY_KEY: GpuGradientKey = GpuGradientKey {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::render::test_kernel::{run_kernel, shader_source, wgsl_layout};
+    use crate::render::test_kernel::{preprocess, run_kernel, wgsl_layout};
     use std::mem::offset_of;
 
     /// A kernel that evaluates one query per thread through `gradient.wgsl`,
-    /// included next to `curve.wgsl` as a shader using both would.
+    /// included next to `curve.wgsl` as a shader using both would, each
+    /// module's parameter bound to its own key buffer.
     const KERNEL: &str = r#"
 //#include "shaders/curve.wgsl"
 //#include "shaders/gradient.wgsl"
@@ -112,19 +113,14 @@ struct Query {
     time: f32,
 };
 
+//#binding gradient_storage
 @group(0) @binding(0) var<storage, read> keys: array<GradientKey>;
 @group(0) @binding(1) var<storage, read> ranges: array<GradientRange>;
 @group(0) @binding(2) var<storage, read> queries: array<Query>;
-@group(0) @binding(3) var<storage, read_write> colors: array<vec4f>;
-
-fn gradient_key(index: u32) -> GradientKey {
-    return keys[index];
-}
-
-// This kernel evaluates no curve; `curve.wgsl` still needs its key source.
-fn curve_key(index: u32) -> CurveKey {
-    return CurveKey();
-}
+// This kernel evaluates no curve; `curve.wgsl` still takes its key buffer.
+//#binding curve_storage
+@group(0) @binding(3) var<storage, read> curve_keys: array<CurveKey>;
+@group(0) @binding(4) var<storage, read_write> colors: array<vec4f>;
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
@@ -145,10 +141,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     #[test]
     fn gpu_gradient_types_match_the_layout_of_gradient_wgsl() {
-        let source = shader_source("gradient");
-        let stub = "fn gradient_key(index: u32) -> GradientKey { return GradientKey(); }";
-        let module = naga::front::wgsl::parse_str(&format!("{source}\n{stub}"))
-            .expect("gradient.wgsl parses");
+        let source = preprocess(
+            "//#include \"shaders/gradient.wgsl\"\n//#binding gradient_storage\n\
+             @group(0) @binding(0) var<storage, read> keys: array<GradientKey>;\n",
+        )
+        .expect("gradient.wgsl preprocesses");
+        let module = naga::front::wgsl::parse_str(&source).expect("gradient.wgsl parses");
 
         let (size, members) = wgsl_layout(&module, "GradientKey");
         assert_eq!(size as usize, size_of::<GpuGradientKey>());
@@ -268,6 +266,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
                 keys.contents(),
                 bytemuck::cast_slice(&ranges),
                 bytemuck::cast_slice(&queries),
+                crate::render::GpuCurveKeys::new().contents(),
             ],
             queries.len(),
         );

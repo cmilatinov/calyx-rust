@@ -50,8 +50,7 @@ struct RenderParams {
     local_space: u32,
     slot_count: u32,
     sort_count: u32,
-    gradient_base: u32,
-    _padding: u32,
+    _padding: [u32; 2],
     size_curve: GpuCurveRange,
     color_gradient: GpuGradientRange,
 }
@@ -127,7 +126,12 @@ impl SortPassParams {
 }
 
 type ViewBindGroup = CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer)>;
-type EvaluateBindGroup = CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer, wgpu::Buffer)>;
+type EvaluateBindGroup = CachedBindGroup<(
+    wgpu::BindGroupLayout,
+    wgpu::Buffer,
+    wgpu::Buffer,
+    wgpu::Buffer,
+)>;
 
 /// What one view keeps for one simulated system: the buffers its particles
 /// are evaluated, sorted and gathered through, and the bind groups over
@@ -201,7 +205,12 @@ impl ViewSystem {
     ) {
         let layout = &kernels.evaluate.bind_group_layouts[0];
         let group = self.evaluate_group.get_or_create(
-            (layout.clone(), particles.clone(), keys.buffer.clone()),
+            (
+                layout.clone(),
+                particles.clone(),
+                keys.curve_keys.clone(),
+                keys.gradient_keys.clone(),
+            ),
             || {
                 device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("particle_evaluate_bind_group"),
@@ -211,7 +220,8 @@ impl ViewSystem {
                         buffer_entry(5, particles),
                         buffer_entry(6, &self.keys),
                         buffer_entry(7, &self.evaluated),
-                        buffer_entry(10, &keys.buffer),
+                        buffer_entry(10, &keys.curve_keys),
+                        buffer_entry(11, &keys.gradient_keys),
                     ],
                 })
             },
@@ -412,8 +422,7 @@ impl ParticleRenderer {
                     local_space: system.local_space as u32,
                     slot_count,
                     sort_count: view.sort_count,
-                    gradient_base: keys.gradient_base,
-                    _padding: 0,
+                    _padding: [0; 2],
                     size_curve: keys.size_curve,
                     color_gradient: keys.color_gradient,
                 }),

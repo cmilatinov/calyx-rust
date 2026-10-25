@@ -7,14 +7,22 @@ use std::{
 
 use regex::Regex;
 
+use super::shader_params::{self, Segment, SourceFile};
 use crate::assets::AssetRegistry;
 
-/// WGSL preprocessor that expands `//#include` directives.
+/// WGSL preprocessor that expands `//#include` directives and binds module
+/// parameters.
 ///
 /// Each file expands at most once per shader, where it is first included: a
 /// later include of the same file, directly or through another include,
 /// expands to nothing. So a module that defines structs or functions can be
 /// included by every file that uses it.
+///
+/// A module can use a resource without binding it: it declares a parameter
+/// with `//#param name: storage<T>` and names it `#name` in its code, and the
+/// including shader marks the `var` that fulfills it with `//#binding name`
+/// on the line above. See [`shader_params`](super::shader_params) for the
+/// forms and the errors.
 pub struct ShaderPreprocessor;
 
 impl ShaderPreprocessor {
@@ -24,7 +32,8 @@ impl ShaderPreprocessor {
         path: &Path,
     ) -> std::io::Result<String> {
         let mut includes = Includes::default();
-        Self::load_shader_source_inner(asset_registry, path, &mut includes)
+        Self::load_shader_source_inner(asset_registry, path, &mut includes)?;
+        shader_params::resolve(&includes.files, &includes.segments)
     }
 
     /// Returns the transitive include dependency set for `path`.
@@ -42,7 +51,7 @@ impl ShaderPreprocessor {
         asset_registry: &AssetRegistry,
         path: &Path,
         includes: &mut Includes,
-    ) -> io::Result<String> {
+    ) -> io::Result<()> {
         let path_key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         if !includes.stack.insert(path_key.clone()) {
             return Err(io::Error::new(
@@ -53,7 +62,11 @@ impl ShaderPreprocessor {
         includes.expanded.insert(path_key.clone());
 
         let source = std::fs::read_to_string(path)?;
-        let mut result = String::with_capacity(source.len());
+        let file = includes.files.len();
+        includes.files.push(SourceFile {
+            path: path.to_path_buf(),
+            text: source.clone(),
+        });
         let mut last_end = 0;
         for captures in Self::include_regex().captures_iter(&source) {
             let Some(match_range) = captures.get(0) else {
@@ -69,18 +82,13 @@ impl ShaderPreprocessor {
                     )
                 })?;
 
-            result.push_str(&source[last_end..match_range.start()]);
-            result.push_str(&Self::load_include(
-                asset_registry,
-                path,
-                &include_path,
-                includes,
-            )?);
+            includes.push_segment(file, &source, last_end..match_range.start());
+            Self::load_include(asset_registry, path, &include_path, includes)?;
             last_end = match_range.end();
         }
-        result.push_str(&source[last_end..]);
+        includes.push_segment(file, &source, last_end..source.len());
         includes.stack.remove(&path_key);
-        Ok(result)
+        Ok(())
     }
 
     fn load_include(
@@ -88,12 +96,12 @@ impl ShaderPreprocessor {
         parent_path: &Path,
         include_path: &Path,
         includes: &mut Includes,
-    ) -> io::Result<String> {
+    ) -> io::Result<()> {
         let full_path = Self::resolve_include(asset_registry, parent_path, include_path)?;
         let path_key = std::fs::canonicalize(&full_path).unwrap_or_else(|_| full_path.clone());
         // A file on the stack is a cycle, which the inner call reports.
         if includes.expanded.contains(&path_key) && !includes.stack.contains(&path_key) {
-            return Ok(String::new());
+            return Ok(());
         }
         Self::load_shader_source_inner(asset_registry, &full_path, includes)
     }
@@ -165,6 +173,21 @@ struct Includes {
     stack: HashSet<PathBuf>,
     /// Files expanded so far, which later includes skip.
     expanded: HashSet<PathBuf>,
+    /// Each file expanded, in order.
+    files: Vec<SourceFile>,
+    /// The shader's text, as runs of its files' text between includes.
+    segments: Vec<Segment>,
+}
+
+impl Includes {
+    /// Appends `range` of `file`'s `source` to the shader's text.
+    fn push_segment(&mut self, file: usize, source: &str, range: std::ops::Range<usize>) {
+        self.segments.push(Segment {
+            file,
+            first_line: source[..range.start].matches('\n').count() + 1,
+            text: source[range].to_owned(),
+        });
+    }
 }
 
 #[cfg(test)]

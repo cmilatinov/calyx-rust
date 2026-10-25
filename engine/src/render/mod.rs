@@ -44,6 +44,7 @@ mod render_context;
 mod render_utils;
 mod scene_renderer;
 mod shader;
+mod shader_params;
 mod shader_preprocessor;
 mod skybox_renderer;
 #[cfg(test)]

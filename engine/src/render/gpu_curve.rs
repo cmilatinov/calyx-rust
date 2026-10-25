@@ -107,11 +107,12 @@ static EMPTY_KEY: GpuCurveKey = GpuCurveKey {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::render::test_kernel::{run_kernel, shader_source, wgsl_layout};
+    use crate::render::test_kernel::{preprocess, run_kernel, wgsl_layout};
     use std::mem::offset_of;
 
-    /// A kernel that evaluates one query per thread through `curve.wgsl`.
-    /// It includes the module twice, as two files of one shader might.
+    /// A kernel that evaluates one query per thread through `curve.wgsl`,
+    /// its key buffer bound to the module's `curve_storage`. It includes the
+    /// module twice, as two files of one shader might.
     const KERNEL: &str = r#"
 //#include "shaders/curve.wgsl"
 //#include "shaders/curve.wgsl"
@@ -121,14 +122,11 @@ struct Query {
     time: f32,
 };
 
+//#binding curve_storage
 @group(0) @binding(0) var<storage, read> keys: array<CurveKey>;
 @group(0) @binding(1) var<storage, read> ranges: array<CurveRange>;
 @group(0) @binding(2) var<storage, read> queries: array<Query>;
 @group(0) @binding(3) var<storage, read_write> values: array<f32>;
-
-fn curve_key(index: u32) -> CurveKey {
-    return keys[index];
-}
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
@@ -149,10 +147,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     #[test]
     fn gpu_curve_types_match_the_layout_of_curve_wgsl() {
-        let source = shader_source("curve");
-        let stub = "fn curve_key(index: u32) -> CurveKey { return CurveKey(); }";
-        let module =
-            naga::front::wgsl::parse_str(&format!("{source}\n{stub}")).expect("curve.wgsl parses");
+        let source = preprocess(
+            "//#include \"shaders/curve.wgsl\"\n//#binding curve_storage\n\
+             @group(0) @binding(0) var<storage, read> keys: array<CurveKey>;\n",
+        )
+        .expect("curve.wgsl preprocesses");
+        let module = naga::front::wgsl::parse_str(&source).expect("curve.wgsl parses");
 
         let (size, members) = wgsl_layout(&module, "CurveKey");
         assert_eq!(size as usize, size_of::<GpuCurveKey>());

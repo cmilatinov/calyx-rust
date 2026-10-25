@@ -52,28 +52,24 @@ struct SimulationKernels {
 }
 
 /// What the evaluate kernel reads of a system's size curve and color
-/// gradient: one buffer of `vec4f`s holding the curve's keys, one `vec4f`
-/// each as [`GpuCurveKey`](crate::render::GpuCurveKey) lays them out, then
-/// from `gradient_base` the gradient's keys, two `vec4f`s each as
-/// [`GpuGradientKey`](crate::render::GpuGradientKey) lays them out. One
-/// buffer keeps the kernels within eight storage buffers per stage.
+/// gradient: their key buffers, as `curve.wgsl` and `gradient.wgsl` read
+/// them, and their ranges in them.
 #[derive(Clone)]
 pub(crate) struct SystemKeys {
-    pub buffer: wgpu::Buffer,
+    pub curve_keys: wgpu::Buffer,
+    pub gradient_keys: wgpu::Buffer,
     pub size_curve: GpuCurveRange,
     pub color_gradient: GpuGradientRange,
-    /// Index of the `vec4f` the gradient's keys start at.
-    pub gradient_base: u32,
 }
 
-/// A system's size curve and color gradient on the GPU, uploaded again only
-/// when either changes.
+/// A system's size curve and color gradient on the GPU, each uploaded again
+/// only when it changes.
 struct SystemKeyBuffer {
-    /// The curve and gradient the buffer holds.
+    /// The curve and gradient the buffers hold.
     curve: Curve,
     gradient: Gradient,
     keys: SystemKeys,
-    /// Times the keys were uploaded.
+    /// Times a key buffer was uploaded.
     #[cfg(test)]
     uploads: u32,
 }
@@ -82,41 +78,51 @@ impl SystemKeyBuffer {
     fn new(device: &wgpu::Device, component: &ComponentParticleSystem) -> Self {
         let curve = &component.size.curve;
         let gradient = &component.color.gradient;
-        let (contents, size_curve, color_gradient, gradient_base) = Self::pack(curve, gradient);
+        let (curve_keys, curve_ranges) = GpuCurveKeys::pack([curve]);
+        let (gradient_keys, gradient_ranges) = GpuGradientKeys::pack([gradient]);
         Self {
             curve: curve.clone(),
             gradient: gradient.clone(),
             keys: SystemKeys {
-                buffer: Self::create(device, &contents),
-                size_curve,
-                color_gradient,
-                gradient_base,
+                curve_keys: Self::create(device, "particle_curve_keys", curve_keys.contents()),
+                gradient_keys: Self::create(
+                    device,
+                    "particle_gradient_keys",
+                    gradient_keys.contents(),
+                ),
+                size_curve: curve_ranges[0],
+                color_gradient: gradient_ranges[0],
             },
             #[cfg(test)]
             uploads: 1,
         }
     }
 
-    fn create(device: &wgpu::Device, contents: &[u8]) -> wgpu::Buffer {
+    fn create(device: &wgpu::Device, label: &str, contents: &[u8]) -> wgpu::Buffer {
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("particle_keys"),
+            label: Some(label),
             contents,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         })
     }
 
-    /// The buffer contents for `curve` and `gradient`, with their ranges and
-    /// the gradient's base.
-    fn pack(curve: &Curve, gradient: &Gradient) -> (Vec<u8>, GpuCurveRange, GpuGradientRange, u32) {
-        let (curve_keys, curve_ranges) = GpuCurveKeys::pack([curve]);
-        let (gradient_keys, gradient_ranges) = GpuGradientKeys::pack([gradient]);
-        let mut contents = curve_keys.contents().to_vec();
-        let gradient_base = (contents.len() / size_of::<[f32; 4]>()) as u32;
-        contents.extend_from_slice(gradient_keys.contents());
-        (contents, curve_ranges[0], gradient_ranges[0], gradient_base)
+    /// Writes `contents` into `buffer`, or into a new buffer when they do not
+    /// fit.
+    fn write(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        buffer: &mut wgpu::Buffer,
+        label: &str,
+        contents: &[u8],
+    ) {
+        if contents.len() as u64 <= buffer.size() {
+            queue.write_buffer(buffer, 0, contents);
+        } else {
+            *buffer = Self::create(device, label, contents);
+        }
     }
 
-    /// Uploads `component`'s size curve and color gradient when either
+    /// Uploads `component`'s size curve and color gradient, each when it
     /// changed.
     fn update(
         &mut self,
@@ -125,24 +131,40 @@ impl SystemKeyBuffer {
         component: &ComponentParticleSystem,
     ) {
         let curve = &component.size.curve;
+        if self.curve != *curve {
+            let (keys, ranges) = GpuCurveKeys::pack([curve]);
+            let buffer = &mut self.keys.curve_keys;
+            Self::write(
+                device,
+                queue,
+                buffer,
+                "particle_curve_keys",
+                keys.contents(),
+            );
+            self.keys.size_curve = ranges[0];
+            self.curve = curve.clone();
+            #[cfg(test)]
+            {
+                self.uploads += 1;
+            }
+        }
         let gradient = &component.color.gradient;
-        if self.curve == *curve && self.gradient == *gradient {
-            return;
-        }
-        let (contents, size_curve, color_gradient, gradient_base) = Self::pack(curve, gradient);
-        if contents.len() as u64 <= self.keys.buffer.size() {
-            queue.write_buffer(&self.keys.buffer, 0, &contents);
-        } else {
-            self.keys.buffer = Self::create(device, &contents);
-        }
-        self.keys.size_curve = size_curve;
-        self.keys.color_gradient = color_gradient;
-        self.keys.gradient_base = gradient_base;
-        self.curve = curve.clone();
-        self.gradient = gradient.clone();
-        #[cfg(test)]
-        {
-            self.uploads += 1;
+        if self.gradient != *gradient {
+            let (keys, ranges) = GpuGradientKeys::pack([gradient]);
+            let buffer = &mut self.keys.gradient_keys;
+            Self::write(
+                device,
+                queue,
+                buffer,
+                "particle_gradient_keys",
+                keys.contents(),
+            );
+            self.keys.color_gradient = ranges[0];
+            self.gradient = gradient.clone();
+            #[cfg(test)]
+            {
+                self.uploads += 1;
+            }
         }
     }
 }
