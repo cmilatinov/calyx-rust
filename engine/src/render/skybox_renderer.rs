@@ -52,6 +52,31 @@ impl SkyboxRenderer {
         skybox.and_then(|id| assets.skybox(id))
     }
 
+    /// Records the selected skybox's environment-map passes into `encoder`
+    /// the first time it is used. Call it before anything in the frame draws
+    /// with the skybox, so its maps are computed before they are read.
+    pub fn prepare(
+        &self,
+        render_context: &RenderContext,
+        encoder: &mut wgpu::CommandEncoder,
+        assets: &AssetRenderState,
+    ) {
+        if let Some(skybox_ref) = Self::selected_skybox_ref(self.skybox, assets) {
+            skybox_ref.write().prepare(
+                SkyboxShaders {
+                    cubemap_shader: &self.skybox_cubemap_shader,
+                    irradiance_cubemap_shader: &self.skybox_irradiance_cubemap_shader,
+                    prefilter_cubemap_shader: &self.skybox_prefilter_cubemap_shader,
+                    brdf_shader: &self.skybox_brdf_shader,
+                    cubemap_mip_shader: &self.skybox_cubemap_mip_shader,
+                },
+                render_context,
+                encoder,
+            );
+        }
+    }
+
+    /// Draws the selected skybox once [`Self::prepare`] has computed its maps.
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
@@ -64,20 +89,10 @@ impl SkyboxRenderer {
         camera_bind_group: &wgpu::BindGroup,
         samples: u32,
     ) {
-        if let Some(skybox_ref) = Self::selected_skybox_ref(self.skybox, assets) {
-            let mut skybox = skybox_ref.write();
-            skybox.prepare(
-                SkyboxShaders {
-                    cubemap_shader: &self.skybox_cubemap_shader,
-                    irradiance_cubemap_shader: &self.skybox_irradiance_cubemap_shader,
-                    prefilter_cubemap_shader: &self.skybox_prefilter_cubemap_shader,
-                    brdf_shader: &self.skybox_brdf_shader,
-                    cubemap_mip_shader: &self.skybox_cubemap_mip_shader,
-                },
-                render_context,
-                encoder,
-            );
-
+        let skybox = Self::selected_skybox_ref(self.skybox, assets)
+            .map(|skybox_ref| skybox_ref.read())
+            .filter(|skybox| skybox.environment_maps().is_some());
+        if let Some(skybox) = skybox {
             let device = render_context.device();
             let shader = self.skybox_shader.read();
             let cube_mesh = cube_mesh.read();
@@ -150,5 +165,44 @@ mod tests {
         let skybox_id = Uuid::new_v4();
 
         assert!(SkyboxRenderer::selected_skybox_ref(Some(skybox_id), &assets).is_none());
+    }
+
+    #[test]
+    fn selected_skybox_maps_are_withheld_until_prepared() {
+        let test_assets = crate::test_support::TestAssets::engine();
+        let context = test_assets.asset_context();
+        let context = context.lock_read();
+        let render_context = context.render_context.clone();
+        let mut renderer = SkyboxRenderer::new(&context).expect("skybox shaders should load");
+        let source = Texture::solid_color_2d(render_context.clone(), "sky", [64, 128, 255, 255]);
+        let skybox = Ref::new(Skybox::new(&render_context, source));
+        let skybox_id = Uuid::new_v4();
+        let mut assets = AssetRenderState::default();
+        assets.skyboxes.insert(skybox_id, skybox.clone());
+        renderer.set_skybox(Some(skybox_id));
+
+        assert!(
+            skybox.read().environment_maps().is_none(),
+            "a skybox must not light or draw anything before its maps are computed"
+        );
+
+        let mut encoder =
+            render_context
+                .device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("skybox_prepare_test"),
+                });
+        renderer.prepare(&render_context, &mut encoder, &assets);
+        render_context.queue().submit([encoder.finish()]);
+
+        let skybox = skybox.read();
+        let (irradiance, _, _) = skybox
+            .environment_maps()
+            .expect("prepare should make the skybox's maps available");
+        assert!(
+            irradiance.descriptor.size.width <= 64,
+            "the irradiance map should stay small enough to compute within a frame, got {}",
+            irradiance.descriptor.size.width
+        );
     }
 }

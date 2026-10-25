@@ -1,7 +1,7 @@
 use eframe::wgpu::{self, CommandEncoder};
 use engine_derive::TypeUuid;
 use std::path::Path;
-use std::sync::RwLockReadGuard;
+use std::sync::{Arc, RwLockReadGuard};
 
 use super::{error::AssetError, texture::Texture, Asset, LoadedAsset};
 use crate::context::ReadOnlyAssetContext;
@@ -60,8 +60,24 @@ impl Asset for Skybox {
         path: &Path,
     ) -> Result<LoadedAsset<Self>, AssetError> {
         let LoadedAsset { asset: texture, .. } = Texture::from_file(game, path)?;
+        Ok(LoadedAsset::new(Self::new(&game.render_context, texture)))
+    }
+}
+
+impl Skybox {
+    const WORKGROUP_SIZE: f32 = 8.0;
+    const NUM_ROUGHNESS_VALUES: u32 = 5;
+    /// Edge length of the irradiance cubemap's faces. Irradiance varies slowly
+    /// with direction, so a small map sampled with linear filtering holds it,
+    /// and each texel integrates about 15.8k environment samples: at 512 the
+    /// pass cost most of a second of GPU time on the first frame.
+    const IRRADIANCE_SIZE: u32 = 32;
+
+    /// Creates a skybox for the lat-long `texture`, with derived maps that
+    /// [`Self::prepare`] fills in before the skybox is used.
+    pub fn new(render_context: &Arc<RenderContext>, texture: Texture) -> Self {
         let cubemap = Texture::new(
-            game.render_context.clone(),
+            render_context.clone(),
             &wgpu::TextureDescriptor {
                 label: None,
                 size: wgpu::Extent3d {
@@ -84,12 +100,12 @@ impl Asset for Skybox {
             false,
         );
         let irradiance_cubemap = Texture::new(
-            game.render_context.clone(),
+            render_context.clone(),
             &wgpu::TextureDescriptor {
                 label: None,
                 size: wgpu::Extent3d {
-                    width: 512,
-                    height: 512,
+                    width: Self::IRRADIANCE_SIZE,
+                    height: Self::IRRADIANCE_SIZE,
                     depth_or_array_layers: 6,
                 },
                 mip_level_count: 1,
@@ -107,7 +123,7 @@ impl Asset for Skybox {
             false,
         );
         let prefilter_cubemap = Texture::new(
-            game.render_context.clone(),
+            render_context.clone(),
             &wgpu::TextureDescriptor {
                 label: None,
                 size: wgpu::Extent3d {
@@ -130,7 +146,7 @@ impl Asset for Skybox {
             false,
         );
         let brdf_map = Texture::new(
-            game.render_context.clone(),
+            render_context.clone(),
             &wgpu::TextureDescriptor {
                 label: None,
                 size: wgpu::Extent3d {
@@ -149,20 +165,25 @@ impl Asset for Skybox {
             None,
             false,
         );
-        Ok(LoadedAsset::new(Self {
+        Self {
             texture,
             cubemap,
             irradiance_cubemap,
             prefilter_cubemap,
             brdf_map,
             dirty: true,
-        }))
+        }
     }
-}
 
-impl Skybox {
-    const WORKGROUP_SIZE: f32 = 8.0;
-    const NUM_ROUGHNESS_VALUES: u32 = 5;
+    /// The irradiance, prefilter and BRDF maps for image-based lighting, or
+    /// `None` until [`Self::prepare`] has computed them.
+    pub fn environment_maps(&self) -> Option<(&Texture, &Texture, &Texture)> {
+        (!self.dirty).then_some((
+            &self.irradiance_cubemap,
+            &self.prefilter_cubemap,
+            &self.brdf_map,
+        ))
+    }
 
     fn num_workgroups_xy(texture_size: u32) -> u32 {
         (texture_size as f32 / Self::WORKGROUP_SIZE).ceil() as u32

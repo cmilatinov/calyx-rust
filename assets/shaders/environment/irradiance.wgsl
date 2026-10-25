@@ -20,7 +20,9 @@ fn compute_main(@builtin(global_invocation_id) gid: vec3u) {
     
     let face = CUBEMAP_FACES[gid.z];
     let dst_dimensions_f = vec2f(dst_dimensions);
-    let cube_uv = vec2f(gid.xy) / dst_dimensions_f * 2.0 - 1.0;
+    // Texel centers: the map is small, so a half-texel offset would turn
+    // every direction by a visible angle.
+    let cube_uv = (vec2f(gid.xy) + 0.5) / dst_dimensions_f * 2.0 - 1.0;
     let normal = normalize(face.forward + face.right * cube_uv.x + face.up * cube_uv.y);
     var irradiance = vec3f(0.0);
     var up = vec3f(0.0, 1.0, 0.0);

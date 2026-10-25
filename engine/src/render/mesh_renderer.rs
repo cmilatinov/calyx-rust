@@ -102,14 +102,7 @@ impl MeshRenderer {
             assets,
         );
         let (irradiance_map, prefilter_map, brdf_map) = skybox_id
-            .and_then(|id| {
-                let skybox = assets.skybox(id)?;
-                Some((
-                    &skybox.irradiance_cubemap,
-                    &skybox.prefilter_cubemap,
-                    &skybox.brdf_map,
-                ))
-            })
+            .and_then(|id| assets.skybox(id)?.environment_maps())
             .unwrap_or((
                 defaults.black_texture_cube,
                 defaults.black_texture_cube,
