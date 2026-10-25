@@ -8,6 +8,10 @@ pub(crate) use light_manager::*;
 pub(crate) use mesh_renderer::*;
 pub(crate) use outline_renderer::*;
 pub(crate) use particle_renderer::*;
+#[cfg(test)]
+pub(crate) use particle_simulation::read_buffer;
+pub use particle_simulation::ParticleSimulation;
+pub(crate) use particle_simulation::{buffer_entry, workgroups, PARTICLE_KERNELS};
 pub use pipeline_options::*;
 pub use render_context::*;
 pub use render_utils::*;
@@ -28,6 +32,7 @@ mod light_manager;
 mod mesh_renderer;
 mod outline_renderer;
 mod particle_renderer;
+mod particle_simulation;
 mod pipeline_options;
 /// Post-processing rendering modules.
 pub mod postprocess;

@@ -4,11 +4,12 @@
 //!
 //! - **init**: writes its part of a newly spawned [`Particle`], drawing random
 //!   values from the system's [`ParticleRng`]. Runs on the CPU.
-//! - **update**: a pure step over the particle slice and `delta_time`, with no
-//!   random values, transforms or allocation, so it can move to a compute
-//!   shader unchanged.
+//! - **update**: a pure step of one particle over `delta_time`, run by the
+//!   `update_main` kernel of `particles_simulate.wgsl`.
 //! - **evaluate**: a pure function of one particle and its normalized age,
-//!   used when building render instances.
+//!   run by the `evaluate_main` kernel when building render instances. The
+//!   `evaluate` functions here are the CPU reference the tests check that
+//!   kernel against.
 
 use super::data::{Particle, ParticleRng, SimulationSpace, MIN_PARTICLE_LIFETIME};
 use crate as engine;
@@ -128,7 +129,8 @@ impl ParticleVelocity {
 }
 
 /// Forces module: constant emitter-local acceleration. Init: acceleration.
-/// Update: integrates velocity and position.
+/// Update, on the GPU: semi-implicit Euler, velocity first, then position
+/// with the new velocity.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "6ef001ba-5f23-46e0-83b6-2da991b03ece"]
 #[reflect(Default)]
@@ -150,17 +152,6 @@ impl Default for ParticleForces {
 impl ParticleForces {
     pub(crate) fn init(&self, particle: &mut Particle, space: SimulationSpace) {
         particle.acceleration = space.direction(self.acceleration).into();
-    }
-
-    /// Semi-implicit Euler: velocity first, then position with the new
-    /// velocity.
-    pub(crate) fn update(particles: &mut [Particle], delta_time: f32) {
-        for particle in particles {
-            for axis in 0..3 {
-                particle.velocity[axis] += particle.acceleration[axis] * delta_time;
-                particle.position[axis] += particle.velocity[axis] * delta_time;
-            }
-        }
     }
 }
 
@@ -199,6 +190,7 @@ impl ParticleSizeOverLifetime {
     }
 
     /// The particle's size at normalized age `t`. Never negative.
+    #[cfg(test)]
     pub(crate) fn evaluate(&self, particle: &Particle, t: f32) -> f32 {
         let start = (self.start + particle.size_offset).max(0.0);
         let end = (self.end + particle.size_offset).max(0.0);
@@ -234,6 +226,7 @@ impl Default for ParticleColorOverLifetime {
 
 impl ParticleColorOverLifetime {
     /// Linear RGBA in `0..=1`, interpolated in unmultiplied sRGB bytes.
+    #[cfg(test)]
     pub(crate) fn evaluate(&self, t: f32) -> [f32; 4] {
         let start = self.start.to_srgba_unmultiplied();
         let end = self.end.to_srgba_unmultiplied();
@@ -278,18 +271,6 @@ mod tests {
             lifetime: 1.0,
             ..Default::default()
         }
-    }
-
-    #[test]
-    fn forces_integrate_velocity_before_position() {
-        let mut particles = [Particle {
-            velocity: [1.0, 0.0, 0.0],
-            acceleration: [0.0, 2.0, 0.0],
-            ..particle()
-        }];
-        ParticleForces::update(&mut particles, 0.5);
-        assert_eq!(particles[0].velocity, [1.0, 1.0, 0.0]);
-        assert_eq!(particles[0].position, [0.5, 0.5, 0.0]);
     }
 
     #[test]

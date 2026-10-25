@@ -276,8 +276,8 @@ impl Skybox {
             label: None,
             timestamp_writes: None,
         });
-        if let Some(pipeline) = shader.get_compute_pipeline() {
-            compute_pass.set_pipeline(pipeline);
+        if let Some(kernel) = shader.compute_pipeline("compute_main") {
+            compute_pass.set_pipeline(&kernel.pipeline);
             compute_pass.set_bind_group(0, bind_group, &[]);
             compute_pass.dispatch_workgroups(
                 num_workgroups_xy,

@@ -2,9 +2,10 @@ use crate::assets::AssetRegistry;
 use crate::class_registry::ComponentRegistry;
 use crate::core::{ReadOnlyRef, Ref, Time};
 use crate::error::BoxedError;
+use crate::input::Input;
 use crate::net::Network;
 use crate::reflect::type_registry::TypeRegistry;
-use crate::render::RenderContext;
+use crate::render::{ParticleSimulation, RenderContext};
 use crate::resource::ResourceMap;
 use crate::scene::{Scene, SceneManager};
 use std::path::PathBuf;
@@ -120,6 +121,18 @@ pub struct GameContext {
     pub scenes: SceneManager,
     /// Mutable runtime resources.
     pub resources: ResourceMap,
+    /// GPU particle simulation of the scene that updates, which every view of
+    /// that scene draws from.
+    pub particles: ParticleSimulation,
+}
+
+/// Which scene of a [`GameContext`] a frame updates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpdatedScene {
+    /// The simulation copy, while simulation runs: the editor during play.
+    Simulation,
+    /// The current scene: the player.
+    Current,
 }
 
 impl GameContext {
@@ -136,6 +149,28 @@ impl GameContext {
             scenes: SceneManager::new(assets.registries.assets.readonly()),
             assets,
             resources,
+            particles: ParticleSimulation::new(),
+        }
+    }
+
+    /// Runs one frame of `target`: [`update_scene`] on that scene with this
+    /// context's resources and particle simulation. Does nothing for
+    /// [`UpdatedScene::Simulation`] while simulation is paused or stopped.
+    pub fn update_scene(&mut self, target: UpdatedScene, input: &Input) {
+        let assets = self.assets.lock_read();
+        let scene = match target {
+            UpdatedScene::Simulation => self.scenes.running_simulation_scene_mut(),
+            UpdatedScene::Current => Some(self.scenes.current_scene_mut()),
+        };
+        if let Some(scene) = scene {
+            update_scene(
+                scene,
+                &assets.registries,
+                &mut self.resources,
+                input,
+                &mut self.particles,
+                &assets.render_context,
+            );
         }
     }
 
@@ -149,4 +184,19 @@ impl GameContext {
         let scene = self.scenes.current_scene_mut();
         network.update_scene(scene, &self.assets.lock_read());
     }
+}
+
+/// Runs one frame of `scene`: its physics and component updates, then its
+/// particles on the GPU, by the resources' delta time. The particle
+/// simulation submits its work before any view draws the frame.
+pub fn update_scene(
+    scene: &mut Scene,
+    registries: &ReadOnlyRegistryContext,
+    resources: &mut ResourceMap,
+    input: &Input,
+    particles: &mut ParticleSimulation,
+    render_context: &RenderContext,
+) {
+    scene.update(registries, resources, input);
+    particles.simulate(scene, render_context, resources.time().delta_time());
 }

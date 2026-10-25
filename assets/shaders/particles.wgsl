@@ -23,6 +23,15 @@ var particle_sampler: sampler;
 
 @vertex
 fn vs_main(input: VertexIn) -> VertexOut {
+    var output: VertexOut;
+    // A particle sized zero draws nothing, rather than the minimum diameter:
+    // the quad collapses to a point outside the clip volume.
+    if input.position_size.w <= 0.0 {
+        output.clip_position = vec4f(0.0, 0.0, -1.0, 1.0);
+        output.uv = input.uv;
+        output.color = vec4f(0.0);
+        return output;
+    }
     let clip_center = camera.projection * camera.view * vec4f(input.position_size.xyz, 1.0);
     let clip_w = max(abs(clip_center.w), 1e-5);
     let size_ndc = vec2f(
@@ -41,7 +50,6 @@ fn vs_main(input: VertexIn) -> VertexOut {
         0.0,
     );
 
-    var output: VertexOut;
     output.clip_position = clip_center + clip_offset;
     output.uv = input.uv;
     output.color = input.color;

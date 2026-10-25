@@ -3,12 +3,12 @@ use crate::assets::AssetId;
 use crate::component::{ComponentParticleSystem, ParticleBlendMode, ParticleRenderInstance};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
-use crate::render::buffer::{wgpu_buffer_init_desc, BufferLayout, ResizableBuffer};
+use crate::render::buffer::{wgpu_buffer_init_desc, BufferLayout};
 use crate::render::{
-    CachedBindGroup, PipelineOptions, RenderContext, RenderUtils, SceneRendererError, Shader,
-    VertexLayout,
+    buffer_entry, workgroups, CachedBindGroup, ComputeKernel, ParticleSimulation, PipelineOptions,
+    RenderContext, RenderUtils, SceneRendererError, Shader, VertexLayout, PARTICLE_KERNELS,
 };
-use crate::scene::{GameObject, Scene};
+use crate::scene::{GameObject, Scene, SceneId};
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use legion::{Entity, IntoQuery};
@@ -40,22 +40,253 @@ impl BufferLayout for ParticleRenderInstance {
     const ATTRIBS: &'static [wgpu::VertexAttribute] = &Self::ATTRIBUTES;
 }
 
-/// Per-system scratch space for the instances one frame draws, kept while the
-/// system keeps drawing so its allocation is reused.
-#[derive(Default)]
-struct ParticleSystemRenderState {
-    render_buffer: Vec<ParticleRenderInstance>,
+/// `RenderParams` of `particles_simulate.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct RenderParams {
+    emitter: [[f32; 4]; 4],
+    camera_position: [f32; 3],
+    local_space: u32,
+    color_start: [f32; 4],
+    color_end: [f32; 4],
+    size_start: f32,
+    size_end: f32,
+    slot_count: u32,
+    sort_count: u32,
 }
 
+/// `SortParams` of `particles_simulate.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct SortParams {
+    j: u32,
+    k: u32,
+    _padding: [u32; 2],
+}
+
+/// The `(j, k)` of each compare-and-swap pass of a bitonic sort over `count`
+/// keys, a power of two, in order. The passes of a smaller count are a
+/// prefix of a larger count's.
+fn sort_passes(count: u32) -> Vec<(u32, u32)> {
+    let mut passes = Vec::new();
+    let mut k = 2;
+    while k <= count {
+        let mut j = k / 2;
+        while j > 0 {
+            passes.push((j, k));
+            j /= 2;
+        }
+        k *= 2;
+    }
+    passes
+}
+
+/// The evaluate, sort and gather kernels.
+struct ViewKernels {
+    evaluate: ComputeKernel,
+    sort: ComputeKernel,
+    gather: ComputeKernel,
+}
+
+/// Parameters of every sort pass, one per uniform-aligned entry, shared by
+/// every system the view draws.
+struct SortPassParams {
+    /// Sort size the entries cover.
+    count: u32,
+    stride: u64,
+    buffer: wgpu::Buffer,
+}
+
+impl SortPassParams {
+    fn new(device: &wgpu::Device, count: u32) -> Self {
+        let stride = (device.limits().min_uniform_buffer_offset_alignment as u64)
+            .max(size_of::<SortParams>() as u64);
+        let passes = sort_passes(count);
+        let mut contents = vec![0u8; (passes.len().max(1) as u64 * stride) as usize];
+        for (index, (j, k)) in passes.into_iter().enumerate() {
+            let offset = index * stride as usize;
+            contents[offset..offset + size_of::<SortParams>()].copy_from_slice(bytemuck::bytes_of(
+                &SortParams {
+                    j,
+                    k,
+                    _padding: [0; 2],
+                },
+            ));
+        }
+        Self {
+            count,
+            stride,
+            buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("particle_sort_params"),
+                contents: &contents,
+                usage: wgpu::BufferUsages::UNIFORM,
+            }),
+        }
+    }
+}
+
+type ViewBindGroup = CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer)>;
+
+/// What one view keeps for one simulated system: the buffers its particles
+/// are evaluated, sorted and gathered through, and the bind groups over
+/// them.
+struct ViewSystem {
+    slot_count: u32,
+    /// Keys sorted, a power of two at least `slot_count`.
+    sort_count: u32,
+    params: wgpu::Buffer,
+    keys: wgpu::Buffer,
+    evaluated: wgpu::Buffer,
+    /// The sorted instances the draw reads.
+    instances: wgpu::Buffer,
+    evaluate_group: ViewBindGroup,
+    /// One bind group per sort pass.
+    sort_groups: Vec<ViewBindGroup>,
+    gather_group: CachedBindGroup<wgpu::BindGroupLayout>,
+}
+
+impl ViewSystem {
+    fn new(device: &wgpu::Device, slot_count: u32) -> Self {
+        let sort_count = slot_count.max(1).next_power_of_two();
+        let storage = |label, size: usize, usage| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: size as u64,
+                usage: wgpu::BufferUsages::STORAGE | usage,
+                mapped_at_creation: false,
+            })
+        };
+        let slots = slot_count.max(1) as usize;
+        Self {
+            slot_count,
+            sort_count,
+            params: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("particle_render_params"),
+                size: size_of::<RenderParams>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            keys: storage(
+                "particle_sort_keys",
+                sort_count as usize * 8,
+                wgpu::BufferUsages::empty(),
+            ),
+            evaluated: storage(
+                "particle_evaluated",
+                slots * size_of::<ParticleRenderInstance>(),
+                wgpu::BufferUsages::empty(),
+            ),
+            instances: storage(
+                "particle_instances",
+                slots * size_of::<ParticleRenderInstance>(),
+                wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_SRC,
+            ),
+            evaluate_group: Default::default(),
+            sort_groups: Vec::new(),
+            gather_group: Default::default(),
+        }
+    }
+
+    /// Records evaluate, every sort pass, then gather.
+    fn record(
+        &mut self,
+        device: &wgpu::Device,
+        kernels: &ViewKernels,
+        sort_params: &SortPassParams,
+        particles: &wgpu::Buffer,
+        pass: &mut wgpu::ComputePass,
+    ) {
+        let layout = &kernels.evaluate.bind_group_layouts[0];
+        let group = self
+            .evaluate_group
+            .get_or_create((layout.clone(), particles.clone()), || {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("particle_evaluate_bind_group"),
+                    layout,
+                    entries: &[
+                        buffer_entry(4, &self.params),
+                        buffer_entry(5, particles),
+                        buffer_entry(6, &self.keys),
+                        buffer_entry(7, &self.evaluated),
+                    ],
+                })
+            });
+        let (x, y) = workgroups(self.sort_count);
+        pass.set_pipeline(&kernels.evaluate.pipeline);
+        pass.set_bind_group(0, group, &[]);
+        pass.dispatch_workgroups(x, y, 1);
+
+        let passes = sort_passes(self.sort_count).len();
+        self.sort_groups.resize_with(passes, Default::default);
+        let layout = &kernels.sort.bind_group_layouts[0];
+        pass.set_pipeline(&kernels.sort.pipeline);
+        for (index, group) in self.sort_groups.iter_mut().enumerate() {
+            let group = group.get_or_create((layout.clone(), sort_params.buffer.clone()), || {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("particle_sort_bind_group"),
+                    layout,
+                    entries: &[
+                        buffer_entry(4, &self.params),
+                        buffer_entry(6, &self.keys),
+                        wgpu::BindGroupEntry {
+                            binding: 9,
+                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: &sort_params.buffer,
+                                offset: index as u64 * sort_params.stride,
+                                size: wgpu::BufferSize::new(size_of::<SortParams>() as u64),
+                            }),
+                        },
+                    ],
+                })
+            });
+            pass.set_bind_group(0, group, &[]);
+            pass.dispatch_workgroups(x, y, 1);
+        }
+
+        let layout = &kernels.gather.bind_group_layouts[0];
+        let group = self.gather_group.get_or_create(layout.clone(), || {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("particle_gather_bind_group"),
+                layout,
+                entries: &[
+                    buffer_entry(4, &self.params),
+                    buffer_entry(6, &self.keys),
+                    buffer_entry(7, &self.evaluated),
+                    buffer_entry(8, &self.instances),
+                ],
+            })
+        });
+        let (x, y) = workgroups(self.slot_count);
+        pass.set_pipeline(&kernels.gather.pipeline);
+        pass.set_bind_group(0, group, &[]);
+        pass.dispatch_workgroups(x, y, 1);
+    }
+}
+
+/// One system's draw this frame.
+struct ParticleDraw {
+    game_object: GameObject,
+    texture: Ref<Texture>,
+    blend_mode: ParticleBlendMode,
+    live_count: u32,
+}
+
+/// Draws the particles of a [`ParticleSimulation`] for one view.
+///
+/// It keeps only per-view state: for each simulated system the buffers its
+/// particles are evaluated, sorted back to front and gathered through, kept
+/// until the system leaves the simulation.
 pub struct ParticleRenderer {
     shader: Ref<Shader>,
+    kernels: Ref<Shader>,
     default_texture: Ref<Texture>,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
-    /// Instances of every system drawn this frame, each in its own range.
-    instance_buffer: ResizableBuffer,
-    /// Render state of the systems drawn last frame.
-    particle_systems: HashMap<GameObject, ParticleSystemRenderState>,
+    /// The scene of the simulation the per-view state belongs to.
+    simulation_scene: Option<SceneId>,
+    /// Per-view state of each simulated system drawn so far.
+    particle_systems: HashMap<GameObject, ViewSystem>,
+    sort_params: Option<SortPassParams>,
     camera_bind_group: CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer)>,
     /// Texture bind groups of the textures drawn last frame, by texture id.
     texture_bind_groups: HashMap<AssetId, CachedBindGroup<TextureBindGroupKey>>,
@@ -67,6 +298,7 @@ impl ParticleRenderer {
     pub fn new(context: &ReadOnlyAssetContext) -> Result<Self, SceneRendererError> {
         let device = context.render_context.device();
         let shader = SceneRendererError::load::<Shader>(context, "shaders/particles")?;
+        let kernels = SceneRendererError::load::<Shader>(context, PARTICLE_KERNELS)?;
         let default_texture = SceneRendererError::load::<Texture>(context, "textures/white")?;
         let vertices = [
             ParticleVertex {
@@ -90,6 +322,7 @@ impl ParticleRenderer {
 
         Ok(Self {
             shader,
+            kernels,
             default_texture,
             vertex_buffer: device.create_buffer_init(&wgpu_buffer_init_desc(
                 wgpu::BufferUsages::VERTEX,
@@ -97,15 +330,17 @@ impl ParticleRenderer {
             )),
             index_buffer: device
                 .create_buffer_init(&wgpu_buffer_init_desc(wgpu::BufferUsages::INDEX, &indices)),
-            instance_buffer: ResizableBuffer::new(
-                wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::VERTEX,
-            ),
+            simulation_scene: None,
             particle_systems: HashMap::new(),
+            sort_params: None,
             camera_bind_group: Default::default(),
             texture_bind_groups: Default::default(),
         })
     }
 
+    /// Draws `simulation`'s particles when it simulates `scene`, sorted back
+    /// to front from `camera_position`. Draws nothing for another scene or
+    /// without a simulation.
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
@@ -113,16 +348,119 @@ impl ParticleRenderer {
         encoder: &mut wgpu::CommandEncoder,
         asset_context: &ReadOnlyAssetContext,
         scene: &Scene,
+        simulation: Option<&ParticleSimulation>,
         camera_position: &Vec3,
         camera_uniform_buffer: &wgpu::Buffer,
         color_target: &Texture,
         depth_target: &Texture,
         samples: u32,
     ) {
+        let Some(simulation) = simulation else {
+            return;
+        };
+        // Per-view state lives as long as its system in the simulation.
+        if self.simulation_scene != simulation.scene_id() {
+            self.particle_systems.clear();
+            self.simulation_scene = simulation.scene_id();
+        }
+        self.particle_systems
+            .retain(|game_object, _| simulation.system(*game_object).is_some());
+        if simulation.scene_id() != Some(scene.id()) {
+            return;
+        }
+        let Some(kernels) = self.view_kernels() else {
+            return;
+        };
         let device = render_context.device();
         let queue = render_context.queue();
-        let color_format = color_target.descriptor.format;
-        let depth_format = depth_target.descriptor.format;
+
+        let mut draws = Vec::new();
+        let mut query = <(Entity, &ComponentParticleSystem)>::query();
+        for (entity, system) in query.iter(scene.world()) {
+            let Some(game_object) = scene.game_object_from_entity(*entity) else {
+                continue;
+            };
+            let Some(simulated) = simulation.system(game_object) else {
+                continue;
+            };
+            let live_count = simulated.live_count();
+            if live_count == 0 {
+                continue;
+            }
+            let slot_count = simulated.capacity();
+            let view = self
+                .particle_systems
+                .entry(game_object)
+                .or_insert_with(|| ViewSystem::new(device, slot_count));
+            if view.slot_count != slot_count {
+                *view = ViewSystem::new(device, slot_count);
+            }
+            let color = |color: egui::Color32| color.to_srgba_unmultiplied().map(f32::from);
+            queue.write_buffer(
+                &view.params,
+                0,
+                bytemuck::bytes_of(&RenderParams {
+                    emitter: scene.world_transform(game_object).matrix().into(),
+                    camera_position: (*camera_position).into(),
+                    local_space: system.local_space as u32,
+                    color_start: color(system.color.start),
+                    color_end: color(system.color.end),
+                    size_start: system.size.start,
+                    size_end: system.size.end,
+                    slot_count,
+                    sort_count: view.sort_count,
+                }),
+            );
+            let texture = system
+                .rendering
+                .texture
+                .get_ref(&asset_context.registries)
+                .unwrap_or_else(|| self.default_texture.clone());
+            draws.push(ParticleDraw {
+                game_object,
+                texture,
+                blend_mode: system.rendering.blend_mode,
+                live_count,
+            });
+        }
+        if draws.is_empty() {
+            return;
+        }
+
+        let sort_count = draws
+            .iter()
+            .map(|draw| self.particle_systems[&draw.game_object].sort_count)
+            .max()
+            .unwrap_or(1);
+        if self
+            .sort_params
+            .as_ref()
+            .is_none_or(|params| params.count < sort_count)
+        {
+            self.sort_params = Some(SortPassParams::new(device, sort_count));
+        }
+        let sort_params = self.sort_params.as_ref().expect("just created");
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("particle_evaluate"),
+                timestamp_writes: None,
+            });
+            for draw in &draws {
+                let simulated = simulation
+                    .system(draw.game_object)
+                    .expect("drawn systems are simulated");
+                self.particle_systems
+                    .get_mut(&draw.game_object)
+                    .expect("drawn systems have view state")
+                    .record(
+                        device,
+                        &kernels,
+                        sort_params,
+                        simulated.particles(),
+                        &mut pass,
+                    );
+            }
+        }
 
         let camera_bind_group = {
             let shader = self.shader.read();
@@ -140,53 +478,14 @@ impl ParticleRenderer {
                 })
                 .clone()
         };
-        // Every system's instances go into one buffer at its own offset, so
-        // the single upload before submit holds them all and each draw reads
-        // only its own range.
-        let mut instances = Vec::new();
-        let mut draws = Vec::new();
-        let mut drawn_systems = HashSet::new();
-        let mut query = <(Entity, &ComponentParticleSystem)>::query();
-        for (entity, system) in query.iter(scene.world()) {
-            let Some(game_object) = scene.game_object_from_entity(*entity) else {
-                continue;
-            };
-            let emitter_transform = scene.world_transform(game_object);
-            let state = self.particle_systems.entry(game_object).or_default();
-            system.fill_render_buffer(
-                &emitter_transform,
-                camera_position,
-                &mut state.render_buffer,
-            );
-            if state.render_buffer.is_empty() {
-                continue;
-            }
-            drawn_systems.insert(game_object);
-            let start = instances.len() as u32;
-            instances.extend_from_slice(&state.render_buffer);
-            let texture = system
-                .rendering
-                .texture
-                .get_ref(&asset_context.registries)
-                .unwrap_or_else(|| self.default_texture.clone());
-            draws.push((
-                texture,
-                system.rendering.blend_mode,
-                start..instances.len() as u32,
-            ));
-        }
-        self.particle_systems
-            .retain(|game_object, _| drawn_systems.contains(game_object));
-        if !instances.is_empty() {
-            self.instance_buffer
-                .write_buffer(device, queue, &instances, None);
-        }
-
+        let color_format = color_target.descriptor.format;
+        let depth_format = depth_target.descriptor.format;
         let mut drawn_textures = HashSet::new();
-        for (texture, blend_mode, instance_range) in draws {
-            drawn_textures.insert(texture.id());
-            let texture_bind_group = self.texture_bind_group(device, &texture);
-            let pipeline = self.pipeline(blend_mode, samples, color_format, depth_format);
+        for draw in draws {
+            drawn_textures.insert(draw.texture.id());
+            let texture_bind_group = self.texture_bind_group(device, &draw.texture);
+            let pipeline = self.pipeline(draw.blend_mode, samples, color_format, depth_format);
+            let instances = &self.particle_systems[&draw.game_object].instances;
 
             let mut render_pass = RenderUtils::overlay_pass(
                 encoder,
@@ -198,18 +497,42 @@ impl ParticleRenderer {
             render_pass.set_bind_group(0, &camera_bind_group, &[]);
             render_pass.set_bind_group(1, &texture_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.set_vertex_buffer(1, self.instance_buffer.get_wgpu_buffer().slice(..));
+            render_pass.set_vertex_buffer(1, instances.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.draw_indexed(0..6, 0, instance_range);
+            render_pass.draw_indexed(0..6, 0, 0..draw.live_count);
         }
         self.texture_bind_groups
             .retain(|id, _| drawn_textures.contains(id));
     }
 
-    /// The game objects whose particle state the renderer keeps.
+    fn view_kernels(&self) -> Option<ViewKernels> {
+        let shader = self.kernels.read();
+        Some(ViewKernels {
+            evaluate: shader.compute_pipeline("evaluate_main")?,
+            sort: shader.compute_pipeline("sort_main")?,
+            gather: shader.compute_pipeline("gather_main")?,
+        })
+    }
+
+    /// The game objects whose per-view state the renderer keeps.
     #[cfg(test)]
     pub(crate) fn tracked_systems(&self) -> HashSet<GameObject> {
         self.particle_systems.keys().copied().collect()
+    }
+
+    /// Reads back the instances drawn for `game_object` last frame, in draw
+    /// order.
+    #[cfg(test)]
+    pub(crate) fn read_instances(
+        &self,
+        render_context: &RenderContext,
+        game_object: GameObject,
+    ) -> Vec<ParticleRenderInstance> {
+        let view = &self.particle_systems[&game_object];
+        let mut instances: Vec<ParticleRenderInstance> =
+            crate::render::read_buffer(render_context, &view.instances);
+        instances.truncate(view.slot_count as usize);
+        instances
     }
 
     /// Returns the particle shader's pipeline for `blend_mode` and the given

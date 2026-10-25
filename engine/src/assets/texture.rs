@@ -454,7 +454,7 @@ impl Texture {
             ..Default::default()
         });
         for mip_level in 1..self.descriptor.mip_level_count {
-            let Some(pipeline) = shader.get_compute_pipeline() else {
+            let Some(kernel) = shader.compute_pipeline("compute_main") else {
                 continue;
             };
             let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -487,7 +487,7 @@ impl Texture {
             let workgroup_count_y = ((self.descriptor.size.height >> mip_level) as f32
                 / Self::WORKGROUP_SIZE)
                 .ceil() as u32;
-            compute_pass.set_pipeline(pipeline);
+            compute_pass.set_pipeline(&kernel.pipeline);
             compute_pass.set_bind_group(0, &bind_group, &[]);
             compute_pass.dispatch_workgroups(workgroup_count_x, workgroup_count_y, 6);
             src_texture_view = dst_texture_view;

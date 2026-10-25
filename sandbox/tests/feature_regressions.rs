@@ -459,19 +459,20 @@ fn sandbox_campfire_emits_from_each_of_its_systems() {
         .asset_id("textures/particle_puff")
         .expect("the puff texture should be a sandbox asset");
     let systems = ["Flames", "Flame Core", "Smoke"].map(|name| object_named(&scene, name));
-    let mut runner = HeadlessSceneRunner::from_scene(scene);
+    let mut runner = HeadlessSceneRunner::from_scene(scene).with_particles();
     runner.step_many(30);
 
     for system in systems {
-        let (count, texture) = runner
+        let texture = runner
             .scene()
             .read_component::<ComponentParticleSystem, _, _>(system, |system| {
-                (
-                    system.particle_count(),
-                    serde_json::to_value(&system.rendering.texture).unwrap(),
-                )
+                serde_json::to_value(&system.rendering.texture).unwrap()
             })
             .expect("campfire child should hold a particle system");
+        let count = runner
+            .particles()
+            .and_then(|particles| particles.live_count(system))
+            .expect("the simulation should run each campfire system");
         assert!(
             count > 0,
             "{} should have live particles",

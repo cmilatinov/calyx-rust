@@ -7,6 +7,7 @@ use serde::de::DeserializeSeed;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
 
 use crate as engine;
@@ -111,6 +112,8 @@ pub struct ComponentEdit<R> {
 #[derive(TypeUuid)]
 #[uuid = "9946a2e7-e022-447e-8e60-528da548087f"]
 pub struct Scene {
+    /// This scene's identity; see [`SceneId`].
+    id: SceneId,
     /// Legion world that stores all scene components. The engine reads it
     /// directly; only this module reaches its mutable side.
     pub(crate) world: SceneWorld,
@@ -134,6 +137,24 @@ pub struct Scene {
     /// counter of the engine build that created the scene; see
     /// [`allocate_entity`].
     pub(crate) allocate_entity: fn() -> Entity,
+}
+
+/// Identity of one constructed [`Scene`], new for every scene the process
+/// builds, including a scene restored from a snapshot or a copy of another.
+///
+/// Object ids survive a snapshot, so the editor's play copy shares every
+/// object id with the scene it was copied from; the scene id tells them
+/// apart. State kept per scene outside it, such as the particle simulation,
+/// keys on it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SceneId(u64);
+
+impl SceneId {
+    /// Takes the next id from this engine build's process-wide counter.
+    fn next() -> Self {
+        static NEXT_SCENE_ID: AtomicU64 = AtomicU64::new(1);
+        Self(NEXT_SCENE_ID.fetch_add(1, Ordering::Relaxed))
+    }
 }
 
 /// Hands out an entity from this engine build's copy of Legion's process-wide
@@ -168,6 +189,7 @@ impl Scene {
         let mut store = GameObjectStore::default();
         store.insert(id, root);
         Self {
+            id: SceneId::next(),
             world: SceneWorld(world),
             physics: Default::default(),
             graph,
@@ -403,6 +425,12 @@ impl Scene {
     /// Captures a serializable clone of the current scene state.
     pub fn snapshot(&self) -> SceneSnapshot {
         SceneSnapshot { data: self.into() }
+    }
+
+    /// Returns this scene's identity, which no other scene this process
+    /// built shares.
+    pub fn id(&self) -> SceneId {
+        self.id
     }
 
     pub(crate) fn registries(&self) -> &ReadOnlyRegistryContext {

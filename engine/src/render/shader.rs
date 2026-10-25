@@ -47,8 +47,11 @@ pub struct Shader {
     pub bind_group_entries: BindGroupEntries,
     /// Pipeline layout built from `bind_group_layouts`.
     pub pipeline_layout: wgpu::PipelineLayout,
-    /// Cached compute pipeline when `ty` is [`ShaderType::Compute`].
-    pub compute_pipeline: Option<wgpu::ComputePipeline>,
+    /// Bind-group entries each compute entry point uses, by entry point
+    /// name.
+    compute_entry_points: HashMap<String, BindGroupEntries>,
+    /// Compute pipelines built so far, by entry point name.
+    compute_pipelines: Mutex<HashMap<String, ComputeKernel>>,
     /// Render pipelines built so far, keyed by pipeline options. Behind a
     /// mutex so [`Shader::pipeline`] can build through a read lock.
     pipelines: Mutex<HashMap<PipelineOptions, wgpu::RenderPipeline>>,
@@ -120,20 +123,7 @@ impl Asset for Shader {
             push_constant_ranges: &[],
         });
 
-        let compute_pipeline = if let ShaderType::Compute = ty {
-            Some(
-                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some(name.as_str()),
-                    layout: Some(&pipeline_layout),
-                    module: &shader,
-                    entry_point: Some("compute_main"),
-                    compilation_options: Default::default(),
-                    cache: None,
-                }),
-            )
-        } else {
-            None
-        };
+        let compute_entry_points = Self::compute_entry_points(&module, &bind_group_entries);
 
         Ok(LoadedAsset::new(Self {
             render_context,
@@ -144,7 +134,8 @@ impl Asset for Shader {
             bind_group_layouts,
             bind_group_entries,
             pipeline_layout,
-            compute_pipeline,
+            compute_entry_points,
+            compute_pipelines: Mutex::new(HashMap::new()),
             pipelines: Mutex::new(HashMap::new()),
             module,
         }))
@@ -396,6 +387,10 @@ impl Shader {
             .get_mut()
             .unwrap_or_else(PoisonError::into_inner)
             .clear();
+        self.compute_pipelines
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
     }
 
     /// Returns the render pipeline for `options`, building and caching it on
@@ -472,8 +467,212 @@ impl Shader {
             .len()
     }
 
-    /// Returns the cached compute pipeline, if any.
-    pub fn get_compute_pipeline(&self) -> Option<&wgpu::ComputePipeline> {
-        self.compute_pipeline.as_ref()
+    /// Returns the compute pipeline of `entry_point` with the bind-group
+    /// layouts it binds, building and caching it on first use, or `None`
+    /// when the shader has no such compute entry point.
+    ///
+    /// In a shader with several compute entry points, the pipeline's layout
+    /// holds only the bindings the entry point uses, so each kernel binds
+    /// just its own resources. A shader with one compute entry point keeps
+    /// its own layouts from [`Self::bind_group_layouts`]. A hot reload replaces the shader, which
+    /// starts with an empty cache.
+    pub fn compute_pipeline(&self, entry_point: &str) -> Option<ComputeKernel> {
+        let mut pipelines = self
+            .compute_pipelines
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(kernel) = pipelines.get(entry_point) {
+            return Some(kernel.clone());
+        }
+        let used = self.compute_entry_points.get(entry_point)?;
+        let kernel = self.build_compute_pipeline(entry_point, used);
+        pipelines.insert(entry_point.to_string(), kernel.clone());
+        Some(kernel)
+    }
+
+    /// Returns how many compute pipelines this shader has built.
+    pub fn compute_pipeline_count(&self) -> usize {
+        self.compute_pipelines
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
+    }
+
+    fn build_compute_pipeline(&self, entry_point: &str, used: &BindGroupEntries) -> ComputeKernel {
+        log::trace!(
+            "Building compute pipeline {entry_point} for shader {}",
+            self.name
+        );
+        let device = self.render_context.device();
+        let group_count = used.keys().next_back().map_or(0, |group| group + 1);
+        let bind_group_layouts: Vec<wgpu::BindGroupLayout> = (0..group_count)
+            .map(|group| {
+                let entries = used.get(&group).map(Vec::as_slice).unwrap_or_default();
+                let shader_group = self
+                    .bind_group_entries
+                    .keys()
+                    .position(|shader_group| *shader_group == group);
+                match shader_group {
+                    Some(index) if self.bind_group_entries[&group].as_slice() == entries => {
+                        self.bind_group_layouts[index].clone()
+                    }
+                    _ => device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                        label: Some(entry_point),
+                        entries,
+                    }),
+                }
+            })
+            .collect();
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some(entry_point),
+            bind_group_layouts: bind_group_layouts.iter().collect::<Vec<_>>().as_slice(),
+            push_constant_ranges: &[],
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some(entry_point),
+            layout: Some(&pipeline_layout),
+            module: &self.shader,
+            entry_point: Some(entry_point),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        ComputeKernel {
+            pipeline,
+            bind_group_layouts,
+        }
+    }
+
+    /// The bind-group entries each compute entry point of `module` binds.
+    ///
+    /// A shader with one compute entry point binds every resource it
+    /// declares, through the shader's own layouts. With several, each binds
+    /// only the resources it uses, as Naga's validation reports them; when
+    /// the module does not validate, each binds every resource.
+    fn compute_entry_points(
+        module: &naga::Module,
+        bind_group_entries: &BindGroupEntries,
+    ) -> HashMap<String, BindGroupEntries> {
+        let compute_entry_points = module
+            .entry_points
+            .iter()
+            .filter(|entry_point| entry_point.stage == naga::ShaderStage::Compute)
+            .count();
+        let info = (compute_entry_points > 1)
+            .then(|| {
+                naga::valid::Validator::new(
+                    naga::valid::ValidationFlags::all(),
+                    naga::valid::Capabilities::all(),
+                )
+                .validate(module)
+                .map_err(|error| {
+                    log::warn!("Shader validation failed, binding every resource: {error}")
+                })
+                .ok()
+            })
+            .flatten();
+        module
+            .entry_points
+            .iter()
+            .enumerate()
+            .filter(|(_, entry_point)| entry_point.stage == naga::ShaderStage::Compute)
+            .map(|(index, entry_point)| {
+                let Some(info) = &info else {
+                    return (entry_point.name.clone(), bind_group_entries.clone());
+                };
+                let function = info.get_entry_point(index);
+                let mut used = BindGroupEntries::new();
+                for (handle, variable) in module.global_variables.iter() {
+                    let Some(binding) = &variable.binding else {
+                        continue;
+                    };
+                    if function[handle].is_empty() {
+                        continue;
+                    }
+                    let entry = bind_group_entries
+                        .get(&binding.group)
+                        .and_then(|entries| {
+                            entries
+                                .iter()
+                                .find(|entry| entry.binding == binding.binding)
+                        })
+                        .cloned();
+                    if let Some(entry) = entry {
+                        used.entry(binding.group).or_default().push(entry);
+                    }
+                }
+                (entry_point.name.clone(), used)
+            })
+            .collect()
+    }
+}
+
+/// A compute pipeline with the layouts of the bind groups it binds, by group
+/// index.
+#[derive(Clone)]
+pub struct ComputeKernel {
+    /// The pipeline.
+    pub pipeline: wgpu::ComputePipeline,
+    /// Layout of each bind group the pipeline binds.
+    pub bind_group_layouts: Vec<wgpu::BindGroupLayout>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Shader;
+    use crate::render::PARTICLE_KERNELS;
+    use crate::test_support::TestAssets;
+
+    fn bindings(shader: &Shader, entry_point: &str) -> Vec<(u32, u32)> {
+        shader.compute_entry_points[entry_point]
+            .iter()
+            .flat_map(|(group, entries)| entries.iter().map(|entry| (*group, entry.binding)))
+            .collect()
+    }
+
+    #[test]
+    fn each_compute_entry_point_binds_only_what_it_uses_and_is_cached() {
+        let assets = TestAssets::engine();
+        let context = assets.asset_context().lock_read();
+        let shader = context
+            .registries
+            .assets
+            .read()
+            .load::<Shader>(PARTICLE_KERNELS)
+            .expect("the particle kernels should load");
+        let shader = shader.read();
+
+        assert_eq!(bindings(&shader, "update_main"), [(0, 0), (0, 1), (0, 3)]);
+        assert_eq!(
+            bindings(&shader, "scatter_main"),
+            [(0, 0), (0, 1), (0, 2), (0, 3)]
+        );
+        assert_eq!(bindings(&shader, "sort_main"), [(0, 4), (0, 6), (0, 9)]);
+
+        let update = shader.compute_pipeline("update_main").unwrap();
+        assert_eq!(update.bind_group_layouts.len(), 1);
+        assert_ne!(update.bind_group_layouts[0], shader.bind_group_layouts[0]);
+        assert_eq!(
+            shader.compute_pipeline("update_main").unwrap().pipeline,
+            update.pipeline
+        );
+        let sort = shader.compute_pipeline("sort_main").unwrap();
+        assert_ne!(sort.pipeline, update.pipeline);
+        assert!(shader.compute_pipeline("vs_main").is_none());
+        assert_eq!(shader.compute_pipeline_count(), 2);
+    }
+
+    #[test]
+    fn an_entry_point_using_every_binding_keeps_the_shader_layout() {
+        let assets = TestAssets::engine();
+        let context = assets.asset_context().lock_read();
+        let shader = context
+            .registries
+            .assets
+            .read()
+            .load::<Shader>("shaders/mip_generator_cube")
+            .expect("the mip generator should load");
+        let shader = shader.read();
+        let kernel = shader.compute_pipeline("compute_main").unwrap();
+        assert_eq!(kernel.bind_group_layouts, shader.bind_group_layouts);
     }
 }
