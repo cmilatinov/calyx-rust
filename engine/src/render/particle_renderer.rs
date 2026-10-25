@@ -271,7 +271,7 @@ impl ViewSystem {
 /// One system's draw this frame.
 struct ParticleDraw {
     game_object: GameObject,
-    /// The system's curve and gradient keys, refreshed for this draw.
+    /// The system's curve and gradient keys.
     keys: SystemKeys,
     texture: Ref<Texture>,
     blend_mode: ParticleBlendMode,
@@ -402,7 +402,7 @@ impl ParticleRenderer {
             if view.slot_count != slot_count {
                 *view = ViewSystem::new(device, slot_count);
             }
-            let keys = simulated.keys(device, queue, system);
+            let keys = simulated.keys().clone();
             queue.write_buffer(
                 &view.params,
                 0,

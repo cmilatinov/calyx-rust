@@ -586,10 +586,101 @@ fn gpu_instances_match_a_cpu_reference_over_120_seeded_steps() {
     }
 }
 
-/// A gradient edited while the simulation does not step, as when it is
-/// paused, reaches the particles the next time a view draws them.
+/// A gradient edited while play is paused reaches the particles once the
+/// frame prepares the simulation scene, with no simulation step.
 #[test]
-fn a_color_edit_shows_on_the_next_draw_without_a_simulation_step() {
+fn a_color_edit_while_paused_shows_after_prepare_scene() {
+    let assets = TestAssets::engine();
+    let mut game = game_with_particles(&assets);
+    let context = game.assets.lock_read();
+    let render_context = context.render_context.clone();
+    let mut renderer = renderer(&context);
+    let (camera, transform) = camera_at(vec3(0.0, 0.0, 5.0));
+    game.scenes.start_simulation();
+    update_simulation(&mut game);
+    game.scenes.pause_simulation();
+    let game_object = game.particles.systems().next().expect("a system runs");
+    let mut red = |game: &GameContext| {
+        renderer.render_scene_base(
+            &camera,
+            &transform,
+            game.scenes.simulation_scene(),
+            Some(&game.particles),
+            None,
+        );
+        renderer
+            .particle_renderer()
+            .read_instances(&render_context, game_object)
+            .iter()
+            .map(|instance| instance.color[0])
+            .collect::<Vec<f32>>()
+    };
+    assert!(red(&game).iter().all(|&red| red > 0.99));
+
+    game.scenes
+        .simulation_scene_mut()
+        .write_component::<ComponentParticleSystem, _>(game_object, |system| {
+            system.color.gradient =
+                Gradient::new(vec![GradientKey::rgba(0.0, [0.25, 1.0, 1.0, 1.0])]);
+        });
+    assert!(
+        red(&game).iter().all(|&red| red > 0.99),
+        "views read the keys prepare uploaded, not the component"
+    );
+    let frames = game.particles.frames();
+    game.prepare_scene(UpdatedScene::Simulation);
+    update_simulation(&mut game);
+    assert_eq!(
+        game.particles.frames(),
+        frames,
+        "a paused simulation does not step"
+    );
+    assert_eq!(red(&game), vec![0.25; 3]);
+}
+
+/// Preparing a scene the simulation is not bound to leaves the simulation
+/// as it was: its scene, its systems and their keys.
+#[test]
+fn preparing_another_scene_changes_nothing() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context().lock_read();
+    let render_context = context.render_context.clone();
+    let mut bound = context.scene();
+    let game_object = spawn_system(
+        &mut bound,
+        GOLDEN_SEED,
+        &Transform::default(),
+        still_burst(4),
+    );
+    let mut simulation = ParticleSimulation::new();
+    simulation.simulate(&bound, &render_context, 0.016);
+
+    // Another scene, with no system of the bound scene and an edited one of
+    // its own.
+    let mut other = context.scene();
+    let mut system = still_burst(2);
+    system.size.curve.insert(CurveKey::new(0.5, 3.0));
+    spawn_system(
+        &mut other,
+        Uuid::from_u128(7),
+        &Transform::default(),
+        system,
+    );
+    simulation.prepare(&other, &render_context);
+
+    assert_eq!(simulation.scene_id(), Some(bound.id()));
+    assert_eq!(simulation.systems().collect::<Vec<_>>(), vec![game_object]);
+    assert_eq!(simulation.frames(), 1);
+    let system = simulation.system(game_object).expect("the system is kept");
+    assert_eq!(system.key_uploads(), 1);
+    assert_eq!(system.live_count(), 4);
+}
+
+/// Through [`ParticleSimulation::prepare`], a system's size curve and color
+/// gradient upload only on a frame one of them changed, and a system whose
+/// component is gone is dropped.
+#[test]
+fn prepare_uploads_keys_only_when_they_change() {
     let assets = TestAssets::engine();
     let context = assets.asset_context().lock_read();
     let render_context = context.render_context.clone();
@@ -602,40 +693,6 @@ fn a_color_edit_shows_on_the_next_draw_without_a_simulation_step() {
     );
     let mut simulation = ParticleSimulation::new();
     simulation.simulate(&scene, &render_context, 0.016);
-    let (camera, camera_transform) = camera_at(vec3(0.0, 0.0, 10.0));
-    let mut renderer = renderer(&context);
-    let red = |renderer: &mut SceneRenderer, scene: &Scene| {
-        renderer.render_scene_base(&camera, &camera_transform, scene, Some(&simulation), None);
-        renderer
-            .particle_renderer()
-            .read_instances(&render_context, game_object)
-            .iter()
-            .map(|instance| instance.color[0])
-            .collect::<Vec<f32>>()
-    };
-    assert!(red(&mut renderer, &scene).iter().all(|&red| red > 0.99));
-
-    scene.write_component::<ComponentParticleSystem, _>(game_object, |system| {
-        system.color.gradient = Gradient::new(vec![GradientKey::rgba(0.0, [0.25, 1.0, 1.0, 1.0])]);
-    });
-    assert_eq!(red(&mut renderer, &scene), vec![0.25; 4]);
-}
-
-/// A system's size curve and color gradient reach the GPU when it is first
-/// simulated, and each again only on a frame it changed.
-#[test]
-fn curve_and_gradient_keys_upload_only_when_they_change() {
-    let assets = TestAssets::engine();
-    let context = assets.asset_context().lock_read();
-    let render_context = context.render_context.clone();
-    let mut scene = context.scene();
-    let game_object = spawn_system(
-        &mut scene,
-        GOLDEN_SEED,
-        &Transform::default(),
-        still_burst(4),
-    );
-    let mut simulation = ParticleSimulation::new();
     let uploads = |simulation: &ParticleSimulation| {
         simulation
             .system(game_object)
@@ -644,14 +701,14 @@ fn curve_and_gradient_keys_upload_only_when_they_change() {
     };
 
     for _ in 0..3 {
-        simulation.simulate(&scene, &render_context, 0.016);
+        simulation.prepare(&scene, &render_context);
     }
     assert_eq!(uploads(&simulation), 1);
 
     scene.write_component::<ComponentParticleSystem, _>(game_object, |system| {
         system.size.randomness = 0.5;
     });
-    simulation.simulate(&scene, &render_context, 0.016);
+    simulation.prepare(&scene, &render_context);
     assert_eq!(uploads(&simulation), 1, "randomness is not a curve");
 
     scene.write_component::<ComponentParticleSystem, _>(game_object, |system| {
@@ -660,8 +717,8 @@ fn curve_and_gradient_keys_upload_only_when_they_change() {
             .gradient
             .insert(GradientKey::rgba(0.5, [0.0, 1.0, 0.0, 0.5]));
     });
-    simulation.simulate(&scene, &render_context, 0.016);
-    simulation.simulate(&scene, &render_context, 0.016);
+    simulation.prepare(&scene, &render_context);
+    simulation.prepare(&scene, &render_context);
     assert_eq!(uploads(&simulation), 2);
     let (_, gradient) = simulation.system(game_object).unwrap().key_ranges();
     assert_eq!(gradient.count, 3, "the gradient's new key is uploaded");
@@ -669,8 +726,16 @@ fn curve_and_gradient_keys_upload_only_when_they_change() {
     scene.write_component::<ComponentParticleSystem, _>(game_object, |system| {
         system.size.curve.insert(CurveKey::new(0.5, 2.0));
     });
-    simulation.simulate(&scene, &render_context, 0.016);
+    simulation.prepare(&scene, &render_context);
     assert_eq!(uploads(&simulation), 3);
+    assert_eq!(simulation.frames(), 1, "prepare advances no time");
+
+    scene.remove_component::<ComponentParticleSystem>(game_object);
+    simulation.prepare(&scene, &render_context);
+    assert!(
+        simulation.system(game_object).is_none(),
+        "the system is dropped"
+    );
 }
 
 #[test]

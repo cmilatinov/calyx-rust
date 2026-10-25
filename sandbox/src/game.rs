@@ -136,7 +136,7 @@ impl eframe::App for GameApp {
                     self.game.resources.input_mut(),
                     true,
                 );
-                self.game.scenes.current_scene_mut().prepare();
+                self.game.prepare_scene(UpdatedScene::Current);
                 self.game.update_scene(UpdatedScene::Current, &input);
                 self.hud.paint(
                     self.game.scenes.current_scene_mut(),

@@ -13,7 +13,6 @@ use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use legion::{Entity, IntoQuery};
 use std::collections::{HashMap, HashSet};
-use std::sync::{Mutex, MutexGuard, PoisonError};
 
 /// Registry name of the shader holding every particle kernel.
 pub(crate) const PARTICLE_KERNELS: &str = "shaders/particles_simulate";
@@ -156,9 +155,9 @@ pub(crate) struct SimulatedSystem {
     reset_count: u32,
     /// One [`Particle`] per slot; an empty slot holds [`Particle::DEAD`].
     particles: wgpu::Buffer,
-    /// Behind a mutex so a view can refresh the curve and gradient of a
-    /// simulation that does not step, as when it is paused.
-    keys: Mutex<SystemKeyBuffer>,
+    /// The size curve and color gradient, kept current by
+    /// [`ParticleSimulation::prepare`] and [`ParticleSimulation::simulate`].
+    keys: SystemKeyBuffer,
     params: wgpu::Buffer,
     steps: ResizableBuffer,
     spawns: ResizableBuffer,
@@ -182,7 +181,7 @@ impl SimulatedSystem {
             emitter,
             reset_count: component.reset_count(),
             particles,
-            keys: Mutex::new(SystemKeyBuffer::new(device, component)),
+            keys: SystemKeyBuffer::new(device, component),
             params: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("particle_simulation_params"),
                 size: size_of::<SimulationParams>() as u64,
@@ -238,37 +237,22 @@ impl SimulatedSystem {
         &self.particles
     }
 
-    fn lock_keys(&self) -> MutexGuard<'_, SystemKeyBuffer> {
-        self.keys.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// Uploads `component`'s size curve and color gradient when they changed
-    /// since the last upload, then returns their keys.
-    ///
-    /// Views call it before they draw, so a curve or gradient edited while
-    /// the simulation does not step still shows.
-    pub(crate) fn keys(
-        &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        component: &ComponentParticleSystem,
-    ) -> SystemKeys {
-        let mut keys = self.lock_keys();
-        keys.update(device, queue, component);
-        keys.keys.clone()
+    /// The size curve and color gradient last uploaded, as the evaluate
+    /// kernel reads them.
+    pub(crate) fn keys(&self) -> &SystemKeys {
+        &self.keys.keys
     }
 
     /// The size curve and color gradient ranges last uploaded.
     #[cfg(test)]
     pub(crate) fn key_ranges(&self) -> (GpuCurveRange, GpuGradientRange) {
-        let keys = self.lock_keys();
-        (keys.keys.size_curve, keys.keys.color_gradient)
+        (self.keys.keys.size_curve, self.keys.keys.color_gradient)
     }
 
     /// Times the size curve and color gradient were uploaded.
     #[cfg(test)]
     pub(crate) fn key_uploads(&self) -> u32 {
-        self.lock_keys().uploads
+        self.keys.uploads
     }
 
     /// Number of slots.
@@ -481,11 +465,7 @@ impl ParticleSimulation {
             if system.capacity() != component.emission.max_particles {
                 system.set_capacity(device, &mut encoder, component.emission.max_particles);
             }
-            system
-                .keys
-                .get_mut()
-                .unwrap_or_else(PoisonError::into_inner)
-                .update(device, queue, component);
+            system.keys.update(device, queue, component);
             let emitter_transform = scene.world_transform(game_object);
             for delta_time in steps {
                 system
@@ -507,6 +487,35 @@ impl ParticleSimulation {
             }
         }
         queue.submit(Some(encoder.finish()));
+    }
+
+    /// Brings the bound scene's systems up to date with their components
+    /// without advancing time: uploads each size curve and color gradient
+    /// that changed, and drops the systems whose component is gone. Views
+    /// then draw a paused simulation with its latest curves and gradients.
+    ///
+    /// Does nothing for a scene the simulation is not bound to, so preparing
+    /// another scene never releases a simulation's state. Binding happens
+    /// in [`Self::simulate`].
+    pub fn prepare(&mut self, scene: &Scene, render_context: &RenderContext) {
+        if self.scene != Some(scene.id()) {
+            return;
+        }
+        let device = render_context.device();
+        let queue = render_context.queue();
+        let mut seen = HashSet::new();
+        let mut query = <(Entity, &ComponentParticleSystem)>::query();
+        for (entity, component) in query.iter(scene.world()) {
+            let Some(game_object) = scene.game_object_from_entity(*entity) else {
+                continue;
+            };
+            seen.insert(game_object);
+            if let Some(system) = self.systems.get_mut(&game_object) {
+                system.keys.update(device, queue, component);
+            }
+        }
+        self.systems
+            .retain(|game_object, _| seen.contains(game_object));
     }
 
     /// Releases every system when `scene` is not the bound scene, and binds

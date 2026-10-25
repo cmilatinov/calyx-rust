@@ -479,7 +479,7 @@ impl EditorApp {
     }
 
     fn update_game(&mut self, ctx: &egui::Context) {
-        self.state.game.scenes.prepare();
+        self.state.game.prepare_scene(UpdatedScene::Simulation);
         let is_active = self.is_game_focused() && self.state.game_response.is_some();
         let input = Input::from_ctx(
             ctx,
