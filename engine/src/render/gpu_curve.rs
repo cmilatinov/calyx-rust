@@ -107,11 +107,7 @@ static EMPTY_KEY: GpuCurveKey = GpuCurveKey {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assets::Asset;
-    use crate::render::{buffer_entry, read_buffer, Shader};
-    use crate::test_support::TestAssets;
-    use egui_wgpu::wgpu;
-    use egui_wgpu::wgpu::util::DeviceExt;
+    use crate::render::test_kernel::{run_kernel, shader_source, wgsl_layout};
     use std::mem::offset_of;
 
     /// A kernel that evaluates one query per thread through `curve.wgsl`.
@@ -151,29 +147,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         time: f32,
     }
 
-    /// Size and member offsets of the struct `name` in `module`.
-    fn wgsl_layout(module: &naga::Module, name: &str) -> (u32, Vec<(String, u32)>) {
-        let (_, ty) = module
-            .types
-            .iter()
-            .find(|(_, ty)| ty.name.as_deref() == Some(name))
-            .unwrap_or_else(|| panic!("curve.wgsl defines {name}"));
-        let naga::TypeInner::Struct { members, span } = &ty.inner else {
-            panic!("{name} is a struct");
-        };
-        let members = members
-            .iter()
-            .map(|member| (member.name.clone().unwrap_or_default(), member.offset))
-            .collect();
-        (*span, members)
-    }
-
     #[test]
     fn gpu_curve_types_match_the_layout_of_curve_wgsl() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/shaders/curve.wgsl"),
-        )
-        .expect("curve.wgsl is readable");
+        let source = shader_source("curve");
         let stub = "fn curve_key(index: u32) -> CurveKey { return CurveKey(); }";
         let module =
             naga::front::wgsl::parse_str(&format!("{source}\n{stub}")).expect("curve.wgsl parses");
@@ -276,15 +252,6 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     /// the GPU's division may round differently (WGSL allows 2.5 ulp).
     #[test]
     fn curve_wgsl_evaluates_curves_as_the_cpu_does() {
-        let assets = TestAssets::engine();
-        let kernel_path = assets.engine_root().join("curve_test_kernel.wgsl");
-        std::fs::write(&kernel_path, KERNEL).expect("the test kernel is writable");
-        let context = assets.asset_context().lock_read();
-        let shader = Shader::from_file(&context, &kernel_path)
-            .expect("the test kernel compiles")
-            .asset;
-        let kernel = shader.compute_pipeline("main").expect("main is a kernel");
-
         let curves = curves();
         let times = times(&curves);
         let (keys, ranges) = GpuCurveKeys::pack(&curves);
@@ -296,42 +263,15 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
                 })
             })
             .collect();
-
-        let device = context.render_context.device();
-        let queue = context.render_context.queue();
-        let storage = |contents: &[u8], usage| {
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("curve_test"),
-                contents,
-                usage: wgpu::BufferUsages::STORAGE | usage,
-            })
-        };
-        let key_buffer = storage(keys.contents(), wgpu::BufferUsages::empty());
-        let range_buffer = storage(bytemuck::cast_slice(&ranges), wgpu::BufferUsages::empty());
-        let query_buffer = storage(bytemuck::cast_slice(&queries), wgpu::BufferUsages::empty());
-        let value_buffer = storage(
-            bytemuck::cast_slice(&vec![0.0f32; queries.len()]),
-            wgpu::BufferUsages::COPY_SRC,
-        );
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("curve_test"),
-            layout: &kernel.bind_group_layouts[0],
-            entries: &[
-                buffer_entry(0, &key_buffer),
-                buffer_entry(1, &range_buffer),
-                buffer_entry(2, &query_buffer),
-                buffer_entry(3, &value_buffer),
+        let values: Vec<f32> = run_kernel(
+            KERNEL,
+            &[
+                keys.contents(),
+                bytemuck::cast_slice(&ranges),
+                bytemuck::cast_slice(&queries),
             ],
-        });
-        let mut encoder = device.create_command_encoder(&Default::default());
-        {
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.set_pipeline(&kernel.pipeline);
-            pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups((queries.len() as u32).div_ceil(64), 1, 1);
-        }
-        queue.submit(Some(encoder.finish()));
-        let values: Vec<f32> = read_buffer(&context.render_context, &value_buffer);
+            queries.len(),
+        );
 
         let mut interpolated = 0;
         for (query, gpu) in queries.iter().zip(values) {
