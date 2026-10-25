@@ -1,7 +1,7 @@
 use crate as engine;
 use crate::reflect::{Reflect, ReflectDefault};
 use crate::utils::TypeUuid;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 /// How a [`Curve`] moves from one key to the next.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TypeUuid, Reflect)]
@@ -61,10 +61,12 @@ impl CurveKey {
 ///
 /// `keys` stay sorted by time: [`Curve::new`], deserialization and the
 /// editing methods sort them, and code that writes `keys` directly calls
-/// [`Curve::sort`] afterwards.
-#[derive(Clone, Debug, PartialEq, Serialize, TypeUuid, Reflect)]
+/// [`Curve::sort`] afterwards. A serialized curve with no `keys` loads as
+/// [`Curve::default`]; one with empty `keys` loads as an empty curve.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "5ec3b58f-4ea5-4ecb-9a22-ba19772a6331"]
 #[reflect(Default)]
+#[serde(from = "CurveData")]
 #[repr(C)]
 pub struct Curve {
     /// The curve's keys, sorted by time.
@@ -78,14 +80,25 @@ impl Default for Curve {
     }
 }
 
-impl<'de> Deserialize<'de> for Curve {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        struct CurveData {
-            #[serde(default)]
-            keys: Vec<CurveKey>,
+/// A [`Curve`] as it is serialized, before its keys are sorted.
+#[derive(Deserialize)]
+#[serde(default)]
+struct CurveData {
+    keys: Vec<CurveKey>,
+}
+
+impl Default for CurveData {
+    /// The keys of [`Curve::default`], for a curve serialized without `keys`.
+    fn default() -> Self {
+        Self {
+            keys: Curve::default().keys,
         }
-        Ok(Self::new(CurveData::deserialize(deserializer)?.keys))
+    }
+}
+
+impl From<CurveData> for Curve {
+    fn from(data: CurveData) -> Self {
+        Self::new(data.keys)
     }
 }
 
@@ -265,6 +278,26 @@ mod tests {
     }
 
     #[test]
+    fn default_curve_round_trips_through_json() {
+        let curve = Curve::default();
+        let json = serde_json::to_string(&curve).unwrap();
+        let back: Curve = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, curve);
+    }
+
+    #[test]
+    fn curve_without_keys_deserializes_to_the_default_curve() {
+        let curve: Curve = serde_json::from_str("{}").unwrap();
+        assert_eq!(curve, Curve::default());
+    }
+
+    #[test]
+    fn curve_with_explicit_empty_keys_deserializes_empty() {
+        let curve: Curve = serde_json::from_str(r#"{"keys":[]}"#).unwrap();
+        assert!(curve.keys.is_empty());
+    }
+
+    #[test]
     fn deserialization_sorts_keys_and_fills_defaults() {
         let curve: Curve = serde_json::from_str(
             r#"{"keys":[{"time":1.0,"value":2.0},{"time":0.0,"value":1.0,"interpolation":"Smooth"}]}"#,
@@ -277,7 +310,5 @@ mod tests {
                 CurveKey::new(1.0, 2.0),
             ]
         );
-        let empty: Curve = serde_json::from_str("{}").unwrap();
-        assert!(empty.keys.is_empty());
     }
 }
