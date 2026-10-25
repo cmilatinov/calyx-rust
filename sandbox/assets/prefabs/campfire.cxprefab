@@ -10,18 +10,67 @@
         "5214cd04-62ac-48e0-8f0b-4030d2102931": {
           "active": true,
           "color": {
-            "end": [
-              90,
-              42,
-              0,
-              90
-            ],
-            "start": [
-              255,
-              215,
-              30,
-              255
-            ]
+            "alpha": {
+              "keys": [
+                {
+                  "interpolation": "Linear",
+                  "time": 0.0,
+                  "value": 1.0
+                },
+                {
+                  "interpolation": "Smooth",
+                  "time": 0.55,
+                  "value": 1.0
+                },
+                {
+                  "interpolation": "Linear",
+                  "time": 1.0,
+                  "value": 0.3529412
+                }
+              ]
+            },
+            "blue": {
+              "keys": [
+                {
+                  "interpolation": "Linear",
+                  "time": 0.0,
+                  "value": 0.11764706
+                },
+                {
+                  "interpolation": "Linear",
+                  "time": 0.4,
+                  "value": 0.0
+                }
+              ]
+            },
+            "green": {
+              "keys": [
+                {
+                  "interpolation": "Smooth",
+                  "time": 0.0,
+                  "value": 0.84313726
+                },
+                {
+                  "interpolation": "Linear",
+                  "time": 1.0,
+                  "value": 0.28235295
+                }
+              ]
+            },
+            "red": {
+              "keys": [
+                {
+                  "interpolation": "Linear",
+                  "time": 0.0,
+                  "value": 1.0
+                },
+                {
+                  "interpolation": "Linear",
+                  "time": 1.0,
+                  "value": 0.5764706
+                }
+              ]
+            }
           },
           "emission": {
             "burst_count": 8,
@@ -52,9 +101,26 @@
             }
           },
           "size": {
-            "end": 0.35,
-            "randomness": 0.15,
-            "start": 1.1
+            "curve": {
+              "keys": [
+                {
+                  "interpolation": "Smooth",
+                  "time": 0.0,
+                  "value": 0.8
+                },
+                {
+                  "interpolation": "Smooth",
+                  "time": 0.3,
+                  "value": 1.2
+                },
+                {
+                  "interpolation": "Linear",
+                  "time": 1.0,
+                  "value": 0.3
+                }
+              ]
+            },
+            "randomness": 0.15
           },
           "velocity": {
             "initial": [
@@ -99,18 +165,67 @@
         "5214cd04-62ac-48e0-8f0b-4030d2102931": {
           "active": true,
           "color": {
-            "end": [
-              124,
-              12,
-              6,
-              150
-            ],
-            "start": [
-              255,
-              130,
-              0,
-              255
-            ]
+            "alpha": {
+              "keys": [
+                {
+                  "interpolation": "Linear",
+                  "time": 0.0,
+                  "value": 1.0
+                },
+                {
+                  "interpolation": "Smooth",
+                  "time": 0.5,
+                  "value": 1.0
+                },
+                {
+                  "interpolation": "Linear",
+                  "time": 1.0,
+                  "value": 0.5882353
+                }
+              ]
+            },
+            "blue": {
+              "keys": [
+                {
+                  "interpolation": "Linear",
+                  "time": 0.0,
+                  "value": 0.0
+                },
+                {
+                  "interpolation": "Linear",
+                  "time": 1.0,
+                  "value": 0.039215688
+                }
+              ]
+            },
+            "green": {
+              "keys": [
+                {
+                  "interpolation": "Smooth",
+                  "time": 0.0,
+                  "value": 0.50980395
+                },
+                {
+                  "interpolation": "Linear",
+                  "time": 0.7,
+                  "value": 0.07058824
+                }
+              ]
+            },
+            "red": {
+              "keys": [
+                {
+                  "interpolation": "Linear",
+                  "time": 0.0,
+                  "value": 1.0
+                },
+                {
+                  "interpolation": "Linear",
+                  "time": 1.0,
+                  "value": 0.61960787
+                }
+              ]
+            }
           },
           "emission": {
             "burst_count": 16,
@@ -141,9 +256,26 @@
             }
           },
           "size": {
-            "end": 0.3,
-            "randomness": 0.3,
-            "start": 1.5
+            "curve": {
+              "keys": [
+                {
+                  "interpolation": "Smooth",
+                  "time": 0.0,
+                  "value": 0.9
+                },
+                {
+                  "interpolation": "Smooth",
+                  "time": 0.35,
+                  "value": 1.6
+                },
+                {
+                  "interpolation": "Linear",
+                  "time": 1.0,
+                  "value": 0.25
+                }
+              ]
+            },
+            "randomness": 0.3
           },
           "velocity": {
             "initial": [
@@ -215,18 +347,67 @@
         "5214cd04-62ac-48e0-8f0b-4030d2102931": {
           "active": true,
           "color": {
-            "end": [
-              0,
-              0,
-              0,
-              0
-            ],
-            "start": [
-              65,
-              48,
-              42,
-              235
-            ]
+            "alpha": {
+              "keys": [
+                {
+                  "interpolation": "Smooth",
+                  "time": 0.0,
+                  "value": 0.0
+                },
+                {
+                  "interpolation": "Smooth",
+                  "time": 0.15,
+                  "value": 0.92156863
+                },
+                {
+                  "interpolation": "Linear",
+                  "time": 1.0,
+                  "value": 0.0
+                }
+              ]
+            },
+            "blue": {
+              "keys": [
+                {
+                  "interpolation": "Linear",
+                  "time": 0.0,
+                  "value": 0.17254902
+                },
+                {
+                  "interpolation": "Linear",
+                  "time": 1.0,
+                  "value": 0.0
+                }
+              ]
+            },
+            "green": {
+              "keys": [
+                {
+                  "interpolation": "Linear",
+                  "time": 0.0,
+                  "value": 0.19607843
+                },
+                {
+                  "interpolation": "Linear",
+                  "time": 1.0,
+                  "value": 0.0
+                }
+              ]
+            },
+            "red": {
+              "keys": [
+                {
+                  "interpolation": "Linear",
+                  "time": 0.0,
+                  "value": 0.26666668
+                },
+                {
+                  "interpolation": "Linear",
+                  "time": 1.0,
+                  "value": 0.0
+                }
+              ]
+            }
           },
           "emission": {
             "burst_count": 3,
@@ -257,9 +438,21 @@
             }
           },
           "size": {
-            "end": 2.0,
-            "randomness": 0.2,
-            "start": 0.8
+            "curve": {
+              "keys": [
+                {
+                  "interpolation": "Smooth",
+                  "time": 0.0,
+                  "value": 0.6
+                },
+                {
+                  "interpolation": "Linear",
+                  "time": 1.0,
+                  "value": 2.2
+                }
+              ]
+            },
+            "randomness": 0.2
           },
           "velocity": {
             "initial": [

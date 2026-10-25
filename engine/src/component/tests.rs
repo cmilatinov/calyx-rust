@@ -229,15 +229,11 @@ mod tests {
         particle_system.forces = ParticleForces {
             acceleration: Vec3::new(0.0, -9.8, 0.0),
         };
-        particle_system.size = ParticleSizeOverLifetime {
-            start: 0.5,
-            end: 0.0,
-            randomness: 0.1,
-        };
-        particle_system.color = ParticleColorOverLifetime {
-            start: Color32::RED,
-            end: Color32::from_rgba_unmultiplied(255, 255, 0, 0),
-        };
+        particle_system.size = ParticleSizeOverLifetime::linear(0.5, 0.0, 0.1);
+        particle_system.color = ParticleColorOverLifetime::linear(
+            Color32::RED,
+            Color32::from_rgba_unmultiplied(255, 255, 0, 0),
+        );
         particle_system.rendering = ParticleRendering {
             blend_mode: ParticleBlendMode::Alpha,
             texture: AssetRef::from_id(particle_texture_id),
@@ -313,8 +309,8 @@ mod tests {
                     c.shape,
                     c.velocity,
                     c.forces,
-                    c.size,
-                    c.color,
+                    c.size.clone(),
+                    c.color.clone(),
                     c.rendering.blend_mode,
                     c.rendering.texture.id(),
                 )
@@ -341,15 +337,11 @@ mod tests {
                 ParticleForces {
                     acceleration: Vec3::new(0.0, -9.8, 0.0),
                 },
-                ParticleSizeOverLifetime {
-                    start: 0.5,
-                    end: 0.0,
-                    randomness: 0.1,
-                },
-                ParticleColorOverLifetime {
-                    start: Color32::RED,
-                    end: Color32::from_rgba_unmultiplied(255, 255, 0, 0),
-                },
+                ParticleSizeOverLifetime::linear(0.5, 0.0, 0.1),
+                ParticleColorOverLifetime::linear(
+                    Color32::RED,
+                    Color32::from_rgba_unmultiplied(255, 255, 0, 0)
+                ),
                 ParticleBlendMode::Alpha,
                 particle_texture_id,
             )

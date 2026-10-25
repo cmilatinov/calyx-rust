@@ -2,8 +2,11 @@
 
 use crate::component::{ComponentParticleSystem, EmitterState, Particle, ParticleSpawn};
 use crate::core::Ref;
+use crate::math::Curve;
 use crate::render::buffer::ResizableBuffer;
-use crate::render::{CachedBindGroup, ComputeKernel, RenderContext, Shader};
+use crate::render::{
+    CachedBindGroup, ComputeKernel, GpuCurveKeys, GpuCurveRange, RenderContext, Shader,
+};
 use crate::scene::{GameObject, Scene, SceneId};
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
@@ -47,14 +50,82 @@ struct SimulationKernels {
     scatter: ComputeKernel,
 }
 
+/// The curves of a system the evaluate kernel reads, in the order their
+/// ranges are packed: the size curve, then the red, green, blue and alpha
+/// curves.
+fn system_curves(component: &ComponentParticleSystem) -> [&Curve; 5] {
+    let [red, green, blue, alpha] = component.color.channels();
+    [&component.size.curve, red, green, blue, alpha]
+}
+
+/// The GPU copy of a system's size and color curves.
+struct SystemCurves {
+    /// The curves the buffer holds, to upload again only when they change.
+    curves: Vec<Curve>,
+    ranges: [GpuCurveRange; 5],
+    keys: wgpu::Buffer,
+    /// Times the keys were uploaded.
+    #[cfg(test)]
+    uploads: u32,
+}
+
+impl SystemCurves {
+    fn new(device: &wgpu::Device, component: &ComponentParticleSystem) -> Self {
+        let curves = system_curves(component);
+        let (keys, ranges) = GpuCurveKeys::pack(curves);
+        Self {
+            curves: curves.into_iter().cloned().collect(),
+            ranges: ranges.try_into().expect("one range per curve"),
+            keys: Self::key_buffer(device, &keys),
+            #[cfg(test)]
+            uploads: 1,
+        }
+    }
+
+    fn key_buffer(device: &wgpu::Device, keys: &GpuCurveKeys) -> wgpu::Buffer {
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("particle_curve_keys"),
+            contents: keys.contents(),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        })
+    }
+
+    /// Uploads `component`'s curves when they differ from the ones held.
+    fn update(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        component: &ComponentParticleSystem,
+    ) {
+        let curves = system_curves(component);
+        if self.curves.iter().eq(curves) {
+            return;
+        }
+        let (keys, ranges) = GpuCurveKeys::pack(curves);
+        let contents = keys.contents();
+        if contents.len() as u64 <= self.keys.size() {
+            queue.write_buffer(&self.keys, 0, contents);
+        } else {
+            self.keys = Self::key_buffer(device, &keys);
+        }
+        self.ranges = ranges.try_into().expect("one range per curve");
+        self.curves = curves.into_iter().cloned().collect();
+        #[cfg(test)]
+        {
+            self.uploads += 1;
+        }
+    }
+}
+
 /// One particle system as the simulation runs it: its CPU emitter state and
-/// the GPU buffer of its particle slots.
+/// the GPU buffers of its particle slots and curves.
 pub(crate) struct SimulatedSystem {
     emitter: EmitterState,
     /// [`ComponentParticleSystem::reset_count`] the system was seeded at.
     reset_count: u32,
     /// One [`Particle`] per slot; an empty slot holds [`Particle::DEAD`].
     particles: wgpu::Buffer,
+    curves: SystemCurves,
     params: wgpu::Buffer,
     steps: ResizableBuffer,
     spawns: ResizableBuffer,
@@ -68,12 +139,17 @@ pub(crate) struct SimulatedSystem {
 }
 
 impl SimulatedSystem {
-    fn new(device: &wgpu::Device, emitter: EmitterState, reset_count: u32) -> Self {
+    fn new(
+        device: &wgpu::Device,
+        emitter: EmitterState,
+        component: &ComponentParticleSystem,
+    ) -> Self {
         let particles = Self::particle_buffer(device, emitter.capacity());
         Self {
             emitter,
-            reset_count,
+            reset_count: component.reset_count(),
             particles,
+            curves: SystemCurves::new(device, component),
             params: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("particle_simulation_params"),
                 size: size_of::<SimulationParams>() as u64,
@@ -127,6 +203,23 @@ impl SimulatedSystem {
     /// The buffer of this system's particle slots.
     pub(crate) fn particles(&self) -> &wgpu::Buffer {
         &self.particles
+    }
+
+    /// The buffer of this system's curve keys, as `curve.wgsl` reads them.
+    pub(crate) fn curve_keys(&self) -> &wgpu::Buffer {
+        &self.curves.keys
+    }
+
+    /// The ranges of the size curve, then of the red, green, blue and alpha
+    /// curves, in [`Self::curve_keys`].
+    pub(crate) fn curve_ranges(&self) -> [GpuCurveRange; 5] {
+        self.curves.ranges
+    }
+
+    /// Times the system's curve keys were uploaded.
+    #[cfg(test)]
+    pub(crate) fn curve_uploads(&self) -> u32 {
+        self.curves.uploads
     }
 
     /// Number of slots.
@@ -329,7 +422,7 @@ impl ParticleSimulation {
                     EmitterState::new(scene.uuid(game_object), component.emission.max_particles);
                 self.systems.insert(
                     game_object,
-                    SimulatedSystem::new(device, emitter, component.reset_count()),
+                    SimulatedSystem::new(device, emitter, component),
                 );
             }
             let system = self
@@ -339,6 +432,7 @@ impl ParticleSimulation {
             if system.capacity() != component.emission.max_particles {
                 system.set_capacity(device, &mut encoder, component.emission.max_particles);
             }
+            system.curves.update(device, queue, component);
             let emitter_transform = scene.world_transform(game_object);
             for delta_time in steps {
                 system

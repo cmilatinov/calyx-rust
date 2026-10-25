@@ -4,7 +4,7 @@ use crate::component::ComponentID;
 use crate::context::{GameContext, ReadOnlyAssetContext, UpdatedScene};
 use crate::core::Ref;
 use crate::input::Input;
-use crate::math::Transform;
+use crate::math::{Curve, CurveInterpolation, CurveKey, Transform};
 use crate::render::{
     Camera, ParticleSimulation, RenderContext, SceneRenderer, SceneRendererOptions,
 };
@@ -156,15 +156,11 @@ fn golden_world_looping() -> ComponentParticleSystem {
         forces: ParticleForces {
             acceleration: vec3(0.0, -4.0, 1.0),
         },
-        size: ParticleSizeOverLifetime {
-            start: 0.7,
-            end: 0.1,
-            randomness: 0.2,
-        },
-        color: ParticleColorOverLifetime {
-            start: Color32::from_rgba_unmultiplied(255, 120, 10, 255),
-            end: Color32::from_rgba_unmultiplied(90, 20, 200, 40),
-        },
+        size: ParticleSizeOverLifetime::linear(0.7, 0.1, 0.2),
+        color: ParticleColorOverLifetime::linear(
+            Color32::from_rgba_unmultiplied(255, 120, 10, 255),
+            Color32::from_rgba_unmultiplied(90, 20, 200, 40),
+        ),
         ..Default::default()
     }
 }
@@ -190,11 +186,7 @@ fn golden_local_one_shot() -> ComponentParticleSystem {
         forces: ParticleForces {
             acceleration: vec3(0.0, 2.0, 0.0),
         },
-        size: ParticleSizeOverLifetime {
-            start: 0.2,
-            end: 0.9,
-            randomness: 0.05,
-        },
+        size: ParticleSizeOverLifetime::linear(0.2, 0.9, 0.05),
         ..Default::default()
     }
 }
@@ -456,14 +448,28 @@ fn gpu_instances_match_a_cpu_reference_over_120_seeded_steps() {
         forces: ParticleForces {
             acceleration: vec3(0.0, -6.0, 1.5),
         },
-        size: ParticleSizeOverLifetime {
-            start: 0.5,
-            end: 0.05,
-            randomness: 0.1,
-        },
+        size: ParticleSizeOverLifetime::linear(0.5, 0.05, 0.1),
+        // Non-linear color: green eases down, blue steps up, alpha holds then
+        // fades.
         color: ParticleColorOverLifetime {
-            start: Color32::from_rgba_unmultiplied(255, 200, 40, 255),
-            end: Color32::from_rgba_unmultiplied(40, 10, 220, 30),
+            green: Curve::new(vec![
+                CurveKey::new(0.0, 0.8).with_interpolation(CurveInterpolation::Smooth),
+                CurveKey::new(0.6, 0.1),
+                CurveKey::new(1.0, 0.0),
+            ]),
+            blue: Curve::new(vec![
+                CurveKey::new(0.0, 0.1).with_interpolation(CurveInterpolation::Constant),
+                CurveKey::new(0.5, 0.9),
+            ]),
+            alpha: Curve::new(vec![
+                CurveKey::new(0.0, 1.0),
+                CurveKey::new(0.3, 1.0).with_interpolation(CurveInterpolation::Smooth),
+                CurveKey::new(1.0, 0.1),
+            ]),
+            ..ParticleColorOverLifetime::linear(
+                Color32::from_rgba_unmultiplied(255, 200, 40, 255),
+                Color32::from_rgba_unmultiplied(40, 10, 220, 30),
+            )
         },
         ..Default::default()
     };
@@ -487,10 +493,15 @@ fn gpu_instances_match_a_cpu_reference_over_120_seeded_steps() {
         forces: ParticleForces {
             acceleration: vec3(1.0, 2.0, 0.0),
         },
+        // Non-linear size: swells smoothly, then shrinks to nothing, with
+        // offsets that push the ends below zero.
         size: ParticleSizeOverLifetime {
-            start: 0.2,
-            end: 0.6,
-            randomness: 0.05,
+            curve: Curve::new(vec![
+                CurveKey::new(0.0, 0.05).with_interpolation(CurveInterpolation::Smooth),
+                CurveKey::new(0.35, 0.8).with_interpolation(CurveInterpolation::Smooth),
+                CurveKey::new(1.0, 0.0),
+            ]),
+            randomness: 0.1,
         },
         ..Default::default()
     };
@@ -585,6 +596,49 @@ fn gpu_instances_match_a_cpu_reference_over_120_seeded_steps() {
             "system {index} should refill freed slots, spawned {spawned}"
         );
     }
+}
+
+/// A system's curve keys reach the GPU when it is first simulated and again
+/// only on a frame its curves changed.
+#[test]
+fn curve_keys_upload_only_when_the_curves_change() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context().lock_read();
+    let render_context = context.render_context.clone();
+    let mut scene = context.scene();
+    let game_object = spawn_system(
+        &mut scene,
+        GOLDEN_SEED,
+        &Transform::default(),
+        still_burst(4),
+    );
+    let mut simulation = ParticleSimulation::new();
+    let uploads = |simulation: &ParticleSimulation| {
+        simulation
+            .system(game_object)
+            .expect("the system is simulated")
+            .curve_uploads()
+    };
+
+    for _ in 0..3 {
+        simulation.simulate(&scene, &render_context, 0.016);
+    }
+    assert_eq!(uploads(&simulation), 1);
+
+    scene.write_component::<ComponentParticleSystem, _>(game_object, |system| {
+        system.size.randomness = 0.5;
+    });
+    simulation.simulate(&scene, &render_context, 0.016);
+    assert_eq!(uploads(&simulation), 1, "randomness is not a curve");
+
+    scene.write_component::<ComponentParticleSystem, _>(game_object, |system| {
+        system.color.alpha.insert(CurveKey::new(0.5, 0.25));
+    });
+    simulation.simulate(&scene, &render_context, 0.016);
+    simulation.simulate(&scene, &render_context, 0.016);
+    assert_eq!(uploads(&simulation), 2);
+    let ranges = simulation.system(game_object).unwrap().curve_ranges();
+    assert_eq!(ranges[4].count, 3, "the alpha curve's new key is uploaded");
 }
 
 #[test]
@@ -797,15 +851,8 @@ fn two_views_of_one_scene_share_one_simulation_step_per_frame() {
     let mut scene = context.scene();
     let mut system = still_burst(1);
     system.shape = ParticleSpawnShape::Sphere { radius: 0.0 };
-    system.size = ParticleSizeOverLifetime {
-        start: 1.0,
-        end: 1.0,
-        randomness: 0.0,
-    };
-    system.color = ParticleColorOverLifetime {
-        start: Color32::RED,
-        end: Color32::RED,
-    };
+    system.size = ParticleSizeOverLifetime::linear(1.0, 1.0, 0.0);
+    system.color = ParticleColorOverLifetime::linear(Color32::RED, Color32::RED);
     let game_object = spawn_system(&mut scene, Uuid::new_v4(), &Transform::default(), system);
     let mut runner = HeadlessSceneRunner::from_scene(scene).with_particles();
     let (camera, transform) = camera_at(vec3(0.0, 0.0, 5.0));
@@ -857,10 +904,7 @@ fn a_view_draws_particles_only_for_the_simulated_scene() {
     let mut scene = context.scene();
     let mut system = still_burst(1);
     system.shape = ParticleSpawnShape::Sphere { radius: 0.0 };
-    system.color = ParticleColorOverLifetime {
-        start: Color32::RED,
-        end: Color32::RED,
-    };
+    system.color = ParticleColorOverLifetime::linear(Color32::RED, Color32::RED);
     spawn_system(&mut scene, Uuid::new_v4(), &Transform::default(), system);
     // Same objects and ids, but another scene, as a thumbnail or the edit
     // scene beside the play copy.

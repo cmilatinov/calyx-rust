@@ -6,6 +6,8 @@
 // Each kernel binds only its own resources from group 0, so every binding
 // number is used by one role.
 
+//#include "shaders/curve.wgsl"
+
 const WORKGROUP_SIZE: u32 = 64u;
 // Shortest lifetime a particle can have, as on the CPU.
 const MIN_PARTICLE_LIFETIME: f32 = 0.01;
@@ -41,14 +43,13 @@ struct RenderParams {
     emitter: mat4x4f,
     camera_position: vec3f,
     local_space: u32,
-    // Color endpoints as unmultiplied sRGB bytes, interpolated before the
-    // division by 255 as on the CPU.
-    color_start: vec4f,
-    color_end: vec4f,
-    size_start: f32,
-    size_end: f32,
     slot_count: u32,
     sort_count: u32,
+    _padding: vec2u,
+    // The size module's curve, and the color module's red, green, blue and
+    // alpha curves, in `curve_keys`.
+    size_curve: CurveRange,
+    color_curves: array<CurveRange, 4>,
 };
 
 struct SortParams {
@@ -82,6 +83,12 @@ struct Instance {
 @group(0) @binding(7) var<storage, read_write> evaluated: array<Instance>;
 @group(0) @binding(8) var<storage, read_write> instances: array<Instance>;
 @group(0) @binding(9) var<uniform> sort: SortParams;
+@group(0) @binding(10) var<storage, read> curve_keys: array<CurveKey>;
+
+// The key source of `curve.wgsl`.
+fn curve_key(index: u32) -> CurveKey {
+    return curve_keys[index];
+}
 
 fn thread_index(gid: vec3u, workgroups: vec3u) -> u32 {
     return gid.y * workgroups.x * WORKGROUP_SIZE + gid.x;
@@ -165,14 +172,21 @@ fn evaluate_main(
     }
     let particle = source_particles[index];
     let t = clamp(particle.age / max(particle.lifetime, MIN_PARTICLE_LIFETIME), 0.0, 1.0);
-    let start = max(view.size_start + particle.size_offset, 0.0);
-    let end = max(view.size_end + particle.size_offset, 0.0);
-    let size = start + (end - start) * t;
+    // The particle's offset shifts each key of the size curve, clamped at zero.
+    var size_segment = curve_segment(view.size_curve, t);
+    size_segment.start = max(size_segment.start + particle.size_offset, 0.0);
+    size_segment.end = max(size_segment.end + particle.size_offset, 0.0);
+    let size = curve_segment_value(size_segment);
     var position = particle.position;
     if view.local_space != 0u {
         position = (view.emitter * vec4f(position, 1.0)).xyz;
     }
-    let color = (view.color_start + (view.color_end - view.color_start) * t) / 255.0;
+    let color = vec4f(
+        curve_evaluate(view.color_curves[0], t),
+        curve_evaluate(view.color_curves[1], t),
+        curve_evaluate(view.color_curves[2], t),
+        curve_evaluate(view.color_curves[3], t),
+    );
     let offset = position - view.camera_position;
     keys[index] = SortKey(-dot(offset, offset), index);
     evaluated[index] = Instance(vec4f(position, size), color);

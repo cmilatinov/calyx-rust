@@ -676,7 +676,7 @@ mod tests {
     use crate::widgets::ListContainer;
     use egui::accesskit::Role;
     use egui::{Id, Ui, Vec2};
-    use engine::component::ComponentCamera;
+    use engine::component::{ComponentCamera, ComponentParticleSystem};
     use engine::reflect::type_registry::TypeRegistry;
     use engine::reflect::{ListInfo, Reflect, TypeInfo};
     use engine::utils::TypeUuid;
@@ -1033,5 +1033,42 @@ mod tests {
             .filter(|field| before[**field] != after[**field])
             .count();
         assert_eq!(numbers_changed, 1, "{before} -> {after}");
+    }
+
+    /// The particle system's size and color modules show a curve editor per
+    /// curve, and dragging a size key edits the size curve.
+    #[test]
+    fn particle_size_and_color_curves_edit_in_the_curve_editor() {
+        let mut h = InspectorHarness::new();
+        h.type_info = ComponentParticleSystem::type_uuid();
+        let registry = h.inspector_registry();
+        let inspector = ComponentInspector::new(&registry);
+        let mut system = ComponentParticleSystem::default();
+        let before = system.size.curve.clone();
+        let mut draw = |ui: &mut Ui, ctx: &InspectorContext| {
+            inspector.show_fields(
+                ui,
+                ctx,
+                system.as_reflect_mut(),
+                &FieldTrail::root(Id::new("particle_system")),
+            )
+        };
+
+        h.idle(3, &mut draw);
+        let graphs = h
+            .labels()
+            .iter()
+            .filter(|label| **label == "Curve graph")
+            .count();
+        assert_eq!(graphs, 5, "{:?}", h.labels());
+        // The size curve is the first one drawn.
+        let key = h.labelled_any("Curve key 1");
+        let drag = combined(&h.drag(key, Vec2::new(-200.0, -20.0), &mut draw));
+        assert!(
+            drag.changed && drag.drag_started && drag.drag_stopped,
+            "{drag:?}"
+        );
+        assert_ne!(system.size.curve, before);
+        assert_eq!(system.color, ComponentParticleSystem::default().color);
     }
 }
