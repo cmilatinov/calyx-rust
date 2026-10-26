@@ -174,6 +174,24 @@ impl GameContext {
         }
     }
 
+    /// Prepares `target` for this frame, whether or not it advances:
+    /// [`Scene::prepare`], then [`ParticleSimulation::prepare`], which
+    /// uploads the curves and gradients edited since the last frame, so a
+    /// paused simulation draws them.
+    ///
+    /// [`UpdatedScene::Simulation`] prepares the simulation copy whenever one
+    /// exists, paused included, and the current scene otherwise, as the
+    /// editor shows it.
+    pub fn prepare_scene(&mut self, target: UpdatedScene) {
+        let assets = self.assets.lock_read();
+        let scene = match target {
+            UpdatedScene::Simulation => self.scenes.simulation_scene_mut(),
+            UpdatedScene::Current => self.scenes.current_scene_mut(),
+        };
+        scene.prepare();
+        self.particles.prepare(scene, &assets.render_context);
+    }
+
     /// Advances time, networking, and the current scene's network sync.
     pub fn update(&mut self) {
         let Some((network, time)) = self.resources.resource_pair_mut::<Network, Time>() else {

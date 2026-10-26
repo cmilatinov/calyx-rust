@@ -4,7 +4,7 @@ use crate::component::ComponentID;
 use crate::context::{GameContext, ReadOnlyAssetContext, UpdatedScene};
 use crate::core::Ref;
 use crate::input::Input;
-use crate::math::Transform;
+use crate::math::{Curve, CurveInterpolation, CurveKey, Gradient, GradientKey, Transform};
 use crate::render::{
     Camera, ParticleSimulation, RenderContext, SceneRenderer, SceneRendererOptions,
 };
@@ -156,15 +156,11 @@ fn golden_world_looping() -> ComponentParticleSystem {
         forces: ParticleForces {
             acceleration: vec3(0.0, -4.0, 1.0),
         },
-        size: ParticleSizeOverLifetime {
-            start: 0.7,
-            end: 0.1,
-            randomness: 0.2,
-        },
-        color: ParticleColorOverLifetime {
-            start: Color32::from_rgba_unmultiplied(255, 120, 10, 255),
-            end: Color32::from_rgba_unmultiplied(90, 20, 200, 40),
-        },
+        size: ParticleSizeOverLifetime::linear(0.7, 0.1, 0.2),
+        color: ParticleColorOverLifetime::linear(
+            Color32::from_rgba_unmultiplied(255, 120, 10, 255),
+            Color32::from_rgba_unmultiplied(90, 20, 200, 40),
+        ),
         ..Default::default()
     }
 }
@@ -190,11 +186,7 @@ fn golden_local_one_shot() -> ComponentParticleSystem {
         forces: ParticleForces {
             acceleration: vec3(0.0, 2.0, 0.0),
         },
-        size: ParticleSizeOverLifetime {
-            start: 0.2,
-            end: 0.9,
-            randomness: 0.05,
-        },
+        size: ParticleSizeOverLifetime::linear(0.2, 0.9, 0.05),
         ..Default::default()
     }
 }
@@ -456,14 +448,16 @@ fn gpu_instances_match_a_cpu_reference_over_120_seeded_steps() {
         forces: ParticleForces {
             acceleration: vec3(0.0, -6.0, 1.5),
         },
-        size: ParticleSizeOverLifetime {
-            start: 0.5,
-            end: 0.05,
-            randomness: 0.1,
-        },
+        size: ParticleSizeOverLifetime::linear(0.5, 0.05, 0.1),
+        // A non-linear color: four keys at uneven times, yellow to orange
+        // to a dim red, holding opaque before fading out.
         color: ParticleColorOverLifetime {
-            start: Color32::from_rgba_unmultiplied(255, 200, 40, 255),
-            end: Color32::from_rgba_unmultiplied(40, 10, 220, 30),
+            gradient: Gradient::new(vec![
+                GradientKey::rgba(0.0, [1.0, 0.85, 0.2, 1.0]),
+                GradientKey::rgba(0.2, [1.0, 0.45, 0.05, 1.0]),
+                GradientKey::rgba(0.55, [0.8, 0.1, 0.05, 0.9]),
+                GradientKey::rgba(1.0, [0.2, 0.05, 0.1, 0.0]),
+            ]),
         },
         ..Default::default()
     };
@@ -487,10 +481,15 @@ fn gpu_instances_match_a_cpu_reference_over_120_seeded_steps() {
         forces: ParticleForces {
             acceleration: vec3(1.0, 2.0, 0.0),
         },
+        // Non-linear size: swells smoothly, then shrinks to nothing, with
+        // offsets that push the ends below zero.
         size: ParticleSizeOverLifetime {
-            start: 0.2,
-            end: 0.6,
-            randomness: 0.05,
+            curve: Curve::new(vec![
+                CurveKey::new(0.0, 0.05).with_interpolation(CurveInterpolation::Smooth),
+                CurveKey::new(0.35, 0.8).with_interpolation(CurveInterpolation::Smooth),
+                CurveKey::new(1.0, 0.0),
+            ]),
+            randomness: 0.1,
         },
         ..Default::default()
     };
@@ -585,6 +584,158 @@ fn gpu_instances_match_a_cpu_reference_over_120_seeded_steps() {
             "system {index} should refill freed slots, spawned {spawned}"
         );
     }
+}
+
+/// A gradient edited while play is paused reaches the particles once the
+/// frame prepares the simulation scene, with no simulation step.
+#[test]
+fn a_color_edit_while_paused_shows_after_prepare_scene() {
+    let assets = TestAssets::engine();
+    let mut game = game_with_particles(&assets);
+    let context = game.assets.lock_read();
+    let render_context = context.render_context.clone();
+    let mut renderer = renderer(&context);
+    let (camera, transform) = camera_at(vec3(0.0, 0.0, 5.0));
+    game.scenes.start_simulation();
+    update_simulation(&mut game);
+    game.scenes.pause_simulation();
+    let game_object = game.particles.systems().next().expect("a system runs");
+    let mut red = |game: &GameContext| {
+        renderer.render_scene_base(
+            &camera,
+            &transform,
+            game.scenes.simulation_scene(),
+            Some(&game.particles),
+            None,
+        );
+        renderer
+            .particle_renderer()
+            .read_instances(&render_context, game_object)
+            .iter()
+            .map(|instance| instance.color[0])
+            .collect::<Vec<f32>>()
+    };
+    assert!(red(&game).iter().all(|&red| red > 0.99));
+
+    game.scenes
+        .simulation_scene_mut()
+        .write_component::<ComponentParticleSystem, _>(game_object, |system| {
+            system.color.gradient =
+                Gradient::new(vec![GradientKey::rgba(0.0, [0.25, 1.0, 1.0, 1.0])]);
+        });
+    assert!(
+        red(&game).iter().all(|&red| red > 0.99),
+        "views read the keys prepare uploaded, not the component"
+    );
+    let frames = game.particles.frames();
+    game.prepare_scene(UpdatedScene::Simulation);
+    update_simulation(&mut game);
+    assert_eq!(
+        game.particles.frames(),
+        frames,
+        "a paused simulation does not step"
+    );
+    assert_eq!(red(&game), vec![0.25; 3]);
+}
+
+/// Preparing a scene the simulation is not bound to leaves the simulation
+/// as it was: its scene, its systems and their keys.
+#[test]
+fn preparing_another_scene_changes_nothing() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context().lock_read();
+    let render_context = context.render_context.clone();
+    let mut bound = context.scene();
+    let game_object = spawn_system(
+        &mut bound,
+        GOLDEN_SEED,
+        &Transform::default(),
+        still_burst(4),
+    );
+    let mut simulation = ParticleSimulation::new();
+    simulation.simulate(&bound, &render_context, 0.016);
+
+    // Another scene, with no system of the bound scene and an edited one of
+    // its own.
+    let mut other = context.scene();
+    let mut system = still_burst(2);
+    system.size.curve.insert(CurveKey::new(0.5, 3.0));
+    spawn_system(
+        &mut other,
+        Uuid::from_u128(7),
+        &Transform::default(),
+        system,
+    );
+    simulation.prepare(&other, &render_context);
+
+    assert_eq!(simulation.scene_id(), Some(bound.id()));
+    assert_eq!(simulation.systems().collect::<Vec<_>>(), vec![game_object]);
+    assert_eq!(simulation.frames(), 1);
+    let system = simulation.system(game_object).expect("the system is kept");
+    assert_eq!(system.key_uploads(), 1);
+    assert_eq!(system.live_count(), 4);
+}
+
+/// Through [`ParticleSimulation::prepare`], a system's size curve and color
+/// gradient upload only on a frame one of them changed, and a system whose
+/// component is gone is dropped.
+#[test]
+fn prepare_uploads_keys_only_when_they_change() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context().lock_read();
+    let render_context = context.render_context.clone();
+    let mut scene = context.scene();
+    let game_object = spawn_system(
+        &mut scene,
+        GOLDEN_SEED,
+        &Transform::default(),
+        still_burst(4),
+    );
+    let mut simulation = ParticleSimulation::new();
+    simulation.simulate(&scene, &render_context, 0.016);
+    let uploads = |simulation: &ParticleSimulation| {
+        simulation
+            .system(game_object)
+            .expect("the system is simulated")
+            .key_uploads()
+    };
+
+    for _ in 0..3 {
+        simulation.prepare(&scene, &render_context);
+    }
+    assert_eq!(uploads(&simulation), 1);
+
+    scene.write_component::<ComponentParticleSystem, _>(game_object, |system| {
+        system.size.randomness = 0.5;
+    });
+    simulation.prepare(&scene, &render_context);
+    assert_eq!(uploads(&simulation), 1, "randomness is not a curve");
+
+    scene.write_component::<ComponentParticleSystem, _>(game_object, |system| {
+        system
+            .color
+            .gradient
+            .insert(GradientKey::rgba(0.5, [0.0, 1.0, 0.0, 0.5]));
+    });
+    simulation.prepare(&scene, &render_context);
+    simulation.prepare(&scene, &render_context);
+    assert_eq!(uploads(&simulation), 2);
+    let (_, gradient) = simulation.system(game_object).unwrap().key_ranges();
+    assert_eq!(gradient.count, 3, "the gradient's new key is uploaded");
+
+    scene.write_component::<ComponentParticleSystem, _>(game_object, |system| {
+        system.size.curve.insert(CurveKey::new(0.5, 2.0));
+    });
+    simulation.prepare(&scene, &render_context);
+    assert_eq!(uploads(&simulation), 3);
+    assert_eq!(simulation.frames(), 1, "prepare advances no time");
+
+    scene.remove_component::<ComponentParticleSystem>(game_object);
+    simulation.prepare(&scene, &render_context);
+    assert!(
+        simulation.system(game_object).is_none(),
+        "the system is dropped"
+    );
 }
 
 #[test]
@@ -797,15 +948,8 @@ fn two_views_of_one_scene_share_one_simulation_step_per_frame() {
     let mut scene = context.scene();
     let mut system = still_burst(1);
     system.shape = ParticleSpawnShape::Sphere { radius: 0.0 };
-    system.size = ParticleSizeOverLifetime {
-        start: 1.0,
-        end: 1.0,
-        randomness: 0.0,
-    };
-    system.color = ParticleColorOverLifetime {
-        start: Color32::RED,
-        end: Color32::RED,
-    };
+    system.size = ParticleSizeOverLifetime::linear(1.0, 1.0, 0.0);
+    system.color = ParticleColorOverLifetime::linear(Color32::RED, Color32::RED);
     let game_object = spawn_system(&mut scene, Uuid::new_v4(), &Transform::default(), system);
     let mut runner = HeadlessSceneRunner::from_scene(scene).with_particles();
     let (camera, transform) = camera_at(vec3(0.0, 0.0, 5.0));
@@ -857,10 +1001,7 @@ fn a_view_draws_particles_only_for_the_simulated_scene() {
     let mut scene = context.scene();
     let mut system = still_burst(1);
     system.shape = ParticleSpawnShape::Sphere { radius: 0.0 };
-    system.color = ParticleColorOverLifetime {
-        start: Color32::RED,
-        end: Color32::RED,
-    };
+    system.color = ParticleColorOverLifetime::linear(Color32::RED, Color32::RED);
     spawn_system(&mut scene, Uuid::new_v4(), &Transform::default(), system);
     // Same objects and ids, but another scene, as a thumbnail or the edit
     // scene beside the play copy.

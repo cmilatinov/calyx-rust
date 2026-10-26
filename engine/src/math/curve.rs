@@ -51,6 +51,45 @@ impl CurveKey {
     }
 }
 
+/// Where a time falls on a [`Curve`]: the values of the keys on either side
+/// and how far it is from `start` to `end`, already eased by the
+/// interpolation. See [`Curve::segment`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CurveSegment {
+    /// Value of the key at or before the time.
+    pub start: f32,
+    /// Value of the key after it.
+    pub end: f32,
+    /// How far from `start` to `end` the value is, in `0..=1`.
+    pub weight: f32,
+}
+
+impl CurveSegment {
+    /// The segment of a curve that is `value` at the time.
+    fn at(value: f32) -> Self {
+        Self {
+            start: value,
+            end: value,
+            weight: 0.0,
+        }
+    }
+
+    /// The value the segment stands for.
+    pub fn value(&self) -> f32 {
+        self.start + (self.end - self.start) * self.weight
+    }
+
+    /// This segment with `f` applied to both key values, as if each key of
+    /// the curve held `f` of its value.
+    pub fn map(self, f: impl Fn(f32) -> f32) -> Self {
+        Self {
+            start: f(self.start),
+            end: f(self.end),
+            weight: self.weight,
+        }
+    }
+}
+
 /// A scalar value over time, authored as keys and evaluated between them.
 ///
 /// Curves are meant for values that vary over a normalized timeline, such as
@@ -134,29 +173,43 @@ impl Curve {
 
     /// The curve's value at `time`.
     pub fn evaluate(&self, time: f32) -> f32 {
+        self.segment(time).value()
+    }
+
+    /// The segment `time` falls in: the values of the keys around it and how
+    /// far along it is, eased by the interpolation. Outside the keys, on a
+    /// key and between keys at the same time, both values are the curve's
+    /// value there and the weight is `0.0`; an empty curve gives zeros.
+    ///
+    /// `assets/shaders/curve.wgsl` finds segments the same way on the GPU.
+    pub fn segment(&self, time: f32) -> CurveSegment {
         let (Some(first), Some(last)) = (self.keys.first(), self.keys.last()) else {
-            return 0.0;
+            return CurveSegment::at(0.0);
         };
         if time.is_nan() || time < first.time {
-            return first.value;
+            return CurveSegment::at(first.value);
         }
         if time >= last.time {
-            return last.value;
+            return CurveSegment::at(last.value);
         }
         let next = self.keys.partition_point(|key| key.time <= time);
         let from = &self.keys[next - 1];
         let to = &self.keys[next];
         let span = to.time - from.time;
         if span <= 0.0 {
-            return to.value;
+            return CurveSegment::at(to.value);
         }
         let t = (time - from.time) / span;
-        let t = match from.interpolation {
+        let weight = match from.interpolation {
             CurveInterpolation::Constant => 0.0,
             CurveInterpolation::Linear => t,
             CurveInterpolation::Smooth => t * t * (3.0 - 2.0 * t),
         };
-        from.value + (to.value - from.value) * t
+        CurveSegment {
+            start: from.value,
+            end: to.value,
+            weight,
+        }
     }
 
     /// The smallest and largest key values, or `None` for an empty curve.
@@ -257,6 +310,21 @@ mod tests {
         let all = Curve::new(vec![CurveKey::new(0.5, 1.0), CurveKey::new(0.5, 2.0)]);
         assert_abs_diff_eq!(all.evaluate(0.5), 2.0);
         assert_abs_diff_eq!(all.evaluate(0.0), 1.0);
+    }
+
+    #[test]
+    fn a_segment_maps_its_keys_values_before_interpolating() {
+        let curve = Curve::linear(1.0, -1.0);
+        let segment = curve.segment(0.75);
+        assert_eq!(
+            (segment.start, segment.end, segment.weight),
+            (1.0, -1.0, 0.75)
+        );
+        // Clamping each key, then interpolating, is not clamping the value.
+        assert_abs_diff_eq!(segment.map(|value| value.max(0.0)).value(), 0.25);
+        assert_eq!(curve.segment(2.0), curve.segment(1.0));
+        assert_eq!(curve.segment(2.0).weight, 0.0);
+        assert_eq!(Curve::new(Vec::new()).segment(0.5).value(), 0.0);
     }
 
     #[test]

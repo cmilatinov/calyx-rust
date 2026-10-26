@@ -41,7 +41,9 @@ pub struct Shader {
     pub source: String,
     /// Backing wgpu shader module.
     pub shader: wgpu::ShaderModule,
-    /// Bind-group layouts derived from reflection.
+    /// Bind-group layouts derived from reflection. Empty for a shader with
+    /// several compute entry points, whose kernels each use the layouts of
+    /// [`Shader::compute_pipeline`].
     pub bind_group_layouts: BindGroupLayouts,
     /// Raw bind-group entries derived from reflection.
     pub bind_group_entries: BindGroupEntries,
@@ -109,7 +111,20 @@ impl Asset for Shader {
 
         let ty = Self::shader_type(&module);
         let bind_group_entries = Self::bind_group_entries(&module);
-        let bind_group_layouts = Self::bind_group_layouts(device, &bind_group_entries);
+        // The kernels of a shader with several each bind only what they use,
+        // through layouts of their own. All of the shader's bindings in one
+        // layout could exceed a per-stage limit, such as eight storage
+        // buffers, that no single kernel reaches, so such a shader keeps none.
+        let kernels = module
+            .entry_points
+            .iter()
+            .filter(|entry_point| entry_point.stage == naga::ShaderStage::Compute)
+            .count();
+        let bind_group_layouts = if kernels > 1 {
+            BindGroupLayouts::new()
+        } else {
+            Self::bind_group_layouts(device, &bind_group_entries)
+        };
         log::info!(
             "Loaded shader {} from {} with {} bind groups",
             name,
@@ -513,7 +528,10 @@ impl Shader {
                     .keys()
                     .position(|shader_group| *shader_group == group);
                 match shader_group {
-                    Some(index) if self.bind_group_entries[&group].as_slice() == entries => {
+                    Some(index)
+                        if index < self.bind_group_layouts.len()
+                            && self.bind_group_entries[&group].as_slice() == entries =>
+                    {
                         self.bind_group_layouts[index].clone()
                     }
                     _ => device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -650,7 +668,7 @@ mod tests {
 
         let update = shader.compute_pipeline("update_main").unwrap();
         assert_eq!(update.bind_group_layouts.len(), 1);
-        assert_ne!(update.bind_group_layouts[0], shader.bind_group_layouts[0]);
+        assert!(shader.bind_group_layouts.is_empty());
         assert_eq!(
             shader.compute_pipeline("update_main").unwrap().pipeline,
             update.pipeline
@@ -674,5 +692,56 @@ mod tests {
         let shader = shader.read();
         let kernel = shader.compute_pipeline("compute_main").unwrap();
         assert_eq!(kernel.bind_group_layouts, shader.bind_group_layouts);
+    }
+}
+
+#[cfg(test)]
+mod kernel_limit_tests {
+    use super::Shader;
+    use crate::assets::Asset;
+    use crate::test_support::TestAssets;
+
+    /// Two kernels that use five storage buffers each, nine between them:
+    /// within the per-stage limit of eight for each kernel, over it for the
+    /// shader as a whole.
+    const KERNELS: &str = r#"
+@group(0) @binding(0) var<storage, read_write> a: array<f32>;
+@group(0) @binding(1) var<storage, read> b: array<f32>;
+@group(0) @binding(2) var<storage, read> c: array<f32>;
+@group(0) @binding(3) var<storage, read> d: array<f32>;
+@group(0) @binding(4) var<storage, read> e: array<f32>;
+@group(0) @binding(5) var<storage, read> f: array<f32>;
+@group(0) @binding(6) var<storage, read> g: array<f32>;
+@group(0) @binding(7) var<storage, read> h: array<f32>;
+@group(0) @binding(8) var<storage, read> i: array<f32>;
+
+@compute @workgroup_size(1)
+fn first(@builtin(global_invocation_id) gid: vec3u) {
+    a[gid.x] = b[gid.x] + c[gid.x] + d[gid.x] + e[gid.x];
+}
+
+@compute @workgroup_size(1)
+fn second(@builtin(global_invocation_id) gid: vec3u) {
+    a[gid.x] = f[gid.x] + g[gid.x] + h[gid.x] + i[gid.x];
+}
+"#;
+
+    #[test]
+    fn kernels_within_the_storage_limit_load_whatever_the_shader_declares() {
+        let assets = TestAssets::engine();
+        let path = assets.engine_root().join("nine_buffers.wgsl");
+        std::fs::write(&path, KERNELS).expect("the shader is writable");
+        let context = assets.asset_context().lock_read();
+        let shader = Shader::from_file(&context, &path)
+            .expect("the shader loads")
+            .asset;
+        for kernel in ["first", "second"] {
+            let kernel = shader.compute_pipeline(kernel).expect("a kernel");
+            assert_eq!(kernel.bind_group_layouts.len(), 1);
+        }
+        assert!(
+            shader.bind_group_layouts.is_empty(),
+            "a shader of several kernels keeps no layout of its own"
+        );
     }
 }

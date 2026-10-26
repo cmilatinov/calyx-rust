@@ -1482,15 +1482,8 @@ mod tests {
         system.forces = ParticleForces {
             acceleration: Vec3::zeros(),
         };
-        system.size = ParticleSizeOverLifetime {
-            start: size,
-            end: size,
-            randomness: 0.0,
-        };
-        system.color = ParticleColorOverLifetime {
-            start: color,
-            end: color,
-        };
+        system.size = ParticleSizeOverLifetime::linear(size, size, 0.0);
+        system.color = ParticleColorOverLifetime::linear(color, color);
         builder.add_component(game_object, system);
         builder.set_transform(game_object, glm::translation(&position));
         game_object
