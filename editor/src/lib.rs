@@ -74,6 +74,24 @@ const PLAY_IN_PREFAB_MODE: &str =
     "Play is not available in prefab mode; close the prefab to play the scene";
 /// The fill of the banner that marks prefab mode.
 const PREFAB_MODE_COLOR: Color32 = Color32::from_rgb(28, 74, 120);
+/// The scene view's clear color, behind the grid where nothing is drawn. The
+/// renderer takes it as linear color, so this near-black shows as dark gray.
+const SCENE_VIEW_BACKDROP: Color32 = Color32::from_rgb(8, 8, 8);
+/// The scene view's clear color in prefab mode: a muted blue-gray in the
+/// banner's hue, so prefab mode reads at a glance while the grid, gizmos and
+/// objects stay legible. Linear, like [`SCENE_VIEW_BACKDROP`], so it shows
+/// as a lighter slate blue.
+const PREFAB_MODE_BACKDROP: Color32 = Color32::from_rgb(6, 12, 26);
+
+/// The scene view's clear color: blue-gray in prefab mode, else the normal
+/// backdrop.
+fn scene_view_backdrop(prefab_mode: bool) -> Color32 {
+    if prefab_mode {
+        PREFAB_MODE_BACKDROP
+    } else {
+        SCENE_VIEW_BACKDROP
+    }
+}
 
 pub struct EditorApp {
     frame_counter: FrameCounter,
@@ -182,7 +200,7 @@ impl EditorAppState {
                 grid: true,
                 gizmos: true,
                 samples: 1,
-                clear_color: Color32::from_rgb(8, 8, 8),
+                clear_color: SCENE_VIEW_BACKDROP,
                 ..Default::default()
             },
             initial_render_size,
@@ -687,6 +705,7 @@ impl EditorApp {
                     scene_renderer,
                     game_renderer,
                     game_size,
+                    prefab,
                     camera:
                         EditorCamera {
                             camera, transform, ..
@@ -703,6 +722,7 @@ impl EditorApp {
             camera.aspect = width as f32 / height as f32;
         }
         camera.update_projection();
+        scene_renderer.options_mut().clear_color = scene_view_backdrop(prefab.is_some());
         scene_renderer.set_hovered_game_object(None);
         scene_renderer.set_selected_game_object(None);
 
@@ -1260,7 +1280,10 @@ impl EditorApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{press_ends_inspector_edits, ActiveSceneState, EditorApp};
+    use super::{
+        press_ends_inspector_edits, scene_view_backdrop, ActiveSceneState, EditorApp,
+        PREFAB_MODE_BACKDROP, SCENE_VIEW_BACKDROP,
+    };
     use std::path::PathBuf;
 
     #[test]
@@ -1318,6 +1341,14 @@ mod tests {
             state.title("Sandbox", Some("prefabs/crate.cxprefab"), true),
             "Calyx - Sandbox - Prefab: prefabs/crate.cxprefab *"
         );
+    }
+
+    #[test]
+    fn only_prefab_mode_turns_the_scene_view_backdrop_blue() {
+        assert_eq!(scene_view_backdrop(true), PREFAB_MODE_BACKDROP);
+        assert_eq!(scene_view_backdrop(false), SCENE_VIEW_BACKDROP);
+        let [r, g, b, _] = PREFAB_MODE_BACKDROP.to_array();
+        assert!(b > g && g > r, "the prefab backdrop is blue");
     }
 
     #[test]
