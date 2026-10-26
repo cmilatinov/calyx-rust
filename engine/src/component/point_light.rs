@@ -14,7 +14,6 @@ use serde::{Deserialize, Serialize};
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Point Light")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentPointLight {
     /// Whether the light contributes to scene lighting.
     pub active: bool,

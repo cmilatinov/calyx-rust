@@ -56,7 +56,6 @@ pub enum ColliderShape {
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Collider")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentCollider {
     /// Whether the collider participates in physics.
     pub enabled: bool,

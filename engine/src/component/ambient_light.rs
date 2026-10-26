@@ -14,7 +14,6 @@ use super::{Component, ReflectComponent};
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Ambient Light")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentAmbientLight {
     /// Whether the light contributes to scene lighting.
     pub active: bool,

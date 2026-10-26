@@ -4,7 +4,6 @@ use crate::fq::FQAttributeValue;
 use crate::reflect_impl::{
     reflected_type_impl, register_trait_meta_impls, type_name_and_reflect_impls,
 };
-use crate::repr::require_repr_c;
 use darling::ast::NestedMeta;
 use proc_macro2::{Ident, Span};
 use quote::quote;
@@ -100,10 +99,7 @@ fn expand(ast: &DeriveInput) -> darling::Result<proc_macro2::TokenStream> {
     let reflect_impls = type_name_and_reflect_impls(name);
     let register_traits_impl = register_trait_meta_impls(name, trait_paths)?;
     let register_type_info = match &ast.data {
-        Data::Struct(s) => {
-            require_repr_c(ast, "Reflect")?;
-            struct_type_info(name, &s.fields, &reflect_attrs)?
-        }
+        Data::Struct(s) => struct_type_info(name, &s.fields, &reflect_attrs)?,
         Data::Enum(e) => enum_type_info(name, e.variants.iter(), &reflect_attrs),
         Data::Union(u) => {
             return Err(

@@ -19,7 +19,6 @@ pub const PROJECT_ACTION_MAP_NAME: &str = "input";
 /// Persistent input state that carries the action map and pointer history across frames.
 #[derive(Clone, Resource, TypeUuid)]
 #[uuid = "5b0a8e0f-3c1d-4a59-9d52-7f6b2a1c8e47"]
-#[repr(C)]
 pub struct InputState {
     /// Pass and pointer position of the last cursor sample, used for cursor deltas.
     last_cursor_sample: Option<CursorSample>,

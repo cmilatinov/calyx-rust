@@ -9,7 +9,7 @@ use crate::reflect::{
 use crate::utils::TypeUuid;
 use indexmap::IndexMap;
 use inventory::collect;
-use std::any::TypeId;
+use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -30,7 +30,6 @@ pub struct ReflectRegistrationFn {
 collect!(ReflectRegistrationFn);
 
 /// Stored metadata for one reflected type.
-#[repr(C)]
 pub struct TypeRegistration {
     /// Trait metadata keyed by reflected trait UUID.
     pub trait_meta: HashMap<Uuid, Box<dyn TraitMeta>>,
@@ -39,14 +38,10 @@ pub struct TypeRegistration {
 }
 
 /// Central registry of reflected types and trait metadata.
-#[repr(C)]
 pub struct TypeRegistry {
     /// Registered types keyed by stable type UUID.
     pub types: HashMap<Uuid, TypeRegistration>,
     /// Rust type identities behind registered UUIDs, used to detect collisions.
-    ///
-    /// Kept outside [`TypeRegistration`] and appended after `types` so the layout
-    /// of `types` stays stable for already-built plugin assemblies.
     pub identities: RegistryIdentities,
 }
 
@@ -73,7 +68,6 @@ pub enum PluginEngineBuild {
 }
 
 /// Registry-wide record of which Rust type owns each registered UUID.
-#[repr(C)]
 #[derive(Default)]
 pub struct RegistryIdentities {
     /// Reflected types keyed by type UUID.
@@ -84,8 +78,7 @@ pub struct RegistryIdentities {
     pub generation: u64,
     /// `TypeId` of [`TypeRegistry`] in the engine build that ran the latest
     /// [`TypeRegistry::register_crate`], so the host can tell whether a plugin
-    /// assembly links the same engine build. Appended last to keep the layout
-    /// of the fields above.
+    /// assembly links the same engine build.
     pub registering_engine: Option<TypeId>,
     /// The host's logger, recorded by [`TypeRegistry::begin_plugin_load`] so
     /// that [`TypeRegistry::register_crate`] can install it in the plugin
@@ -398,10 +391,15 @@ impl TypeRegistry {
     }
 
     /// Looks up attached trait metadata `T` for the given reflected type UUID.
+    ///
+    /// Metadata stored under `T`'s UUID that is not a `T` is not returned.
     pub fn trait_meta<T: TraitMeta + TypeUuid>(&self, type_uuid: Uuid) -> Option<&T> {
         self.type_registration_by_id(type_uuid)
             .and_then(|registration| registration.trait_meta.get(&T::type_uuid()))
-            .map(|meta| unsafe { &*(meta.as_ref() as *const dyn TraitMeta as *const T) })
+            .and_then(|meta| {
+                let meta: &dyn Any = meta.as_ref();
+                meta.downcast_ref()
+            })
     }
 
     /// Lists types that implement reflected trait metadata `T`.
@@ -522,7 +520,6 @@ mod tests {
     #[derive(Default, TypeUuid, Reflect)]
     #[reflect(Default)]
     #[allow(unused)]
-    #[repr(C)]
     struct Foo {
         data: f32,
     }
@@ -553,6 +550,53 @@ mod tests {
         };
         Foo::register(&mut registry);
         registry
+    }
+
+    // Two trait metadata types named `ProbeMeta`, which the `TypeUuid` derive
+    // gives the same type UUID since neither has a `#[uuid]` attribute.
+    mod first {
+        use crate as engine;
+        use crate::reflect::TraitMeta;
+        use crate::utils::TypeUuid;
+
+        #[derive(TypeUuid)]
+        pub struct ProbeMeta(pub u32);
+
+        impl TraitMeta for ProbeMeta {}
+    }
+
+    mod second {
+        use crate as engine;
+        use crate::reflect::TraitMeta;
+        use crate::utils::TypeUuid;
+
+        #[derive(TypeUuid)]
+        pub struct ProbeMeta;
+
+        impl TraitMeta for ProbeMeta {}
+    }
+
+    #[test]
+    fn trait_meta_tells_same_named_metadata_apart() {
+        let shared = first::ProbeMeta::type_uuid();
+        assert_eq!(shared, second::ProbeMeta::type_uuid());
+        let mut registry = foo_registry();
+        registry
+            .types
+            .get_mut(&Foo::type_uuid())
+            .unwrap()
+            .trait_meta
+            .insert(shared, Box::new(first::ProbeMeta(9)));
+
+        assert!(registry
+            .trait_meta::<second::ProbeMeta>(Foo::type_uuid())
+            .is_none());
+        assert_eq!(
+            registry
+                .trait_meta::<first::ProbeMeta>(Foo::type_uuid())
+                .map(|meta| meta.0),
+            Some(9)
+        );
     }
 
     #[test]
@@ -691,7 +735,6 @@ mod tests {
     #[derive(Default, TypeUuid, Reflect)]
     #[uuid = "c41d7a2e-58b3-4f19-9e06-2d8a6b3f7c15"]
     #[allow(unused)]
-    #[repr(C)]
     struct WithLists {
         direct: Vec<f32>,
         aliased: AliasedList,
@@ -817,7 +860,6 @@ mod tests {
 
     #[derive(Default, TypeUuid, Reflect)]
     #[allow(unused)]
-    #[repr(C)]
     struct Bar {
         data: f32,
     }

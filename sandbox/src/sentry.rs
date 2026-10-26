@@ -18,7 +18,6 @@ use serde::{Deserialize, Serialize};
 #[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate)]
 #[reflect_attr(name = "Sentry")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentSentry {
     pub target: GameObjectRef,
     pub range: f32,

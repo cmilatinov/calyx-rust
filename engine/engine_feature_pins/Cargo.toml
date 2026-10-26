@@ -38,6 +38,14 @@ quote = { version = "1.0.45" }
 syn = { version = "2.0.117", features = ["extra-traits", "full", "visit-mut"] }
 zeroize = { version = "1.8.2", features = ["alloc"] }
 
+# Pins for crates the build compiles for the host, for proc macros and build
+# scripts: engine_derive's `uuid` reaches `serde_core`, and the dev-dependencies
+# of a `cargo test --workspace` enable these features on it. They are build
+# dependencies so they join the host's feature resolution; `build.rs` exists
+# only to give them a build script to belong to.
+[build-dependencies]
+serde_core = { version = "1.0.228", features = ["alloc", "result", "std"] }
+
 [target.'cfg(windows)'.dependencies]
 bytemuck = { version = "1.25.0", features = ["aarch64_simd"] }
 futures-core = { version = "0.3.32" }

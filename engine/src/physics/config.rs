@@ -5,7 +5,6 @@ use nalgebra_glm::Vec3;
 
 #[derive(Resource, TypeUuid)]
 #[uuid = "290b91ee-503b-4609-a41c-e1570fbd6664"]
-#[repr(C)]
 pub struct PhysicsConfiguration {
     pub gravity: Vec3,
     pub physics_pipeline_active: bool,

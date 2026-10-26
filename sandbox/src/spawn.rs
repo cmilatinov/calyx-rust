@@ -17,7 +17,6 @@ pub const SPAWN_TEAM_ANY: u32 = u32::MAX;
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Spawn Point")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentSpawnPoint {
     pub team: u32,
     pub order: u32,
@@ -43,7 +42,6 @@ impl Component for ComponentSpawnPoint {}
 #[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate)]
 #[reflect_attr(name = "Respawn State")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentRespawnState {
     pub team: u32,
     pub respawn_delay: f32,

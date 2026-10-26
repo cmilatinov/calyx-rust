@@ -12,7 +12,6 @@ use crate::scene_edit::SceneEdit;
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, AssetInspector)]
-#[repr(C)]
 pub struct PrefabInspector;
 
 impl AssetInspector for PrefabInspector {

@@ -10,7 +10,6 @@ use crate::inspector::type_inspector::{
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, TypeInspector)]
-#[repr(C)]
 pub struct UuidInspector;
 
 impl TypeInspector for UuidInspector {

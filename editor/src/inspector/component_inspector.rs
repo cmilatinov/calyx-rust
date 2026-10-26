@@ -685,14 +685,12 @@ mod tests {
 
     #[derive(Default, Debug, PartialEq, TypeUuid, Reflect, Serialize, Deserialize)]
     #[uuid = "0d6f3b2a-9c4e-4a71-b58d-3e2f7a1c9d64"]
-    #[repr(C)]
     struct ListHolder {
         values: Vec<f32>,
     }
 
     #[derive(Default, TypeUuid, Reflect)]
     #[uuid = "4b0c8e1d-2f7a-4c39-9e65-a1d3b7f02c58"]
-    #[repr(C)]
     struct GroupedHolder {
         first: bool,
         #[reflect_attr(group = "Physics")]
@@ -707,7 +705,6 @@ mod tests {
 
     #[derive(Default, TypeUuid, Reflect)]
     #[uuid = "9e2d5c47-0a6b-4f18-b3c2-6d84e1f7a093"]
-    #[repr(C)]
     struct NestedGroups {
         inner: GroupedHolder,
     }

@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 #[uuid = "0e2f0a41-7c1b-4b2e-9f51-3d6a8c0b5e27"]
 #[reflect(Default)]
 #[serde(default)]
-#[repr(C)]
 pub struct GradientKey {
     /// Where the key sits on the gradient's timeline, from `0.0` to `1.0`.
     pub time: f32,
@@ -53,7 +52,6 @@ impl GradientKey {
 #[uuid = "7c0d6f1e-2a59-4f83-b8e4-91c5a2d3f640"]
 #[reflect(Default)]
 #[serde(from = "GradientData")]
-#[repr(C)]
 pub struct Gradient {
     /// The gradient's keys, sorted by time.
     pub keys: Vec<GradientKey>,

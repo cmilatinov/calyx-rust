@@ -19,7 +19,6 @@ use uuid::Uuid;
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, TypeInspector)]
-#[repr(C)]
 pub struct AssetRefInspector;
 
 impl TypeInspector for AssetRefInspector {

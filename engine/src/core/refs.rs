@@ -1,6 +1,6 @@
 use crate::reflect::TypeName;
 use crate::resource::Resource;
-use crate::utils::{TypeUuid, TypeUuidDynamic};
+use crate::utils::TypeUuid;
 use sha1::Digest;
 use std::fmt::{Debug, Formatter};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak};
@@ -25,7 +25,6 @@ pub(crate) fn wrapper_type_uuid(wrapper_uuid: &[u8; 16], inner_uuid: Uuid) -> Uu
 }
 
 /// Reference-counted, lock-protected shared pointer used throughout the engine.
-#[repr(C)]
 pub struct Ref<T: ?Sized> {
     pub(crate) id: Uuid,
     pub(crate) inner: Arc<RwLock<T>>,
@@ -138,10 +137,9 @@ impl<T: TypeUuid> TypeUuid for Ref<T> {
     }
 }
 
-impl<T: Resource> Resource for Ref<T> where Ref<T>: TypeUuidDynamic {}
+impl<T: Resource> Resource for Ref<T> {}
 
 /// Read-only wrapper around a [`Ref`] that exposes only shared access.
-#[repr(C)]
 pub struct ReadOnlyRef<T: ?Sized> {
     inner: Ref<T>,
 }
@@ -198,10 +196,9 @@ impl<T: TypeUuid> TypeUuid for ReadOnlyRef<T> {
     }
 }
 
-impl<T: Resource> Resource for ReadOnlyRef<T> where ReadOnlyRef<T>: TypeUuidDynamic {}
+impl<T: Resource> Resource for ReadOnlyRef<T> {}
 
 /// Non-owning weak handle produced from a [`Ref`].
-#[repr(C)]
 pub struct WeakRef<T: ?Sized> {
     id: Uuid,
     inner: Weak<RwLock<T>>,
@@ -234,8 +231,7 @@ mod tests {
 
     #[derive(Default, Resource, TypeUuid)]
     #[uuid = "f13a97c5-8d80-42d0-ae95-f4f0bd42d390"]
-    #[repr(C)]
-    struct DummyResource(u32);
+    struct DummyResource;
 
     #[test]
     fn read_write() {
@@ -294,14 +290,13 @@ mod tests {
 
     #[derive(Default, Resource, TypeUuid)]
     #[uuid = "0b4c0c1e-6a52-4a53-9d2b-3d5fd6f8c7a1"]
-    #[repr(C)]
-    struct OtherResource(u32);
+    struct OtherResource;
 
     #[test]
     fn wrapper_uuids_derive_from_pointee() {
         use crate::utils::TypeUuidDynamic;
-        let a = Ref::new(DummyResource(1));
-        let b = Ref::new(OtherResource(1));
+        let a = Ref::new(DummyResource);
+        let b = Ref::new(OtherResource);
         assert_eq!(TypeUuidDynamic::uuid(&a), Ref::<DummyResource>::type_uuid());
         assert_ne!(TypeUuidDynamic::uuid(&a), TypeUuidDynamic::uuid(&b));
         let (ra, rb) = (a.readonly(), b.readonly());

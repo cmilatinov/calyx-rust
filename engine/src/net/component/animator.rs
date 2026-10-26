@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 #[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate)]
 #[reflect_attr(name = "Network Animator")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentNetworkAnimator {
     #[serde(skip)]
     #[reflect_skip]

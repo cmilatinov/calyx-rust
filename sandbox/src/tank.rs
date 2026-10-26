@@ -29,7 +29,6 @@ const COLLISION_SKIN: f32 = 0.01;
 #[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate)]
 #[reflect_attr(name = "Tank Controller")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentTankController {
     pub turret: GameObjectRef,
     pub barrel: GameObjectRef,
@@ -117,7 +116,6 @@ impl Component for ComponentTankController {}
 #[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate)]
 #[reflect_attr(name = "Projectile")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentProjectile {
     pub direction: Vec3,
     pub speed: f32,
@@ -158,7 +156,6 @@ impl ComponentUpdate for ComponentProjectile {
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Projectile Target")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentProjectileTarget {
     pub hit_radius: f32,
     pub hit_count: u32,
@@ -180,7 +177,6 @@ impl Component for ComponentProjectileTarget {}
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Health")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentHealth {
     pub max_health: f32,
     pub current_health: f32,

@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 #[uuid = "001d044d-f5cb-49f1-b89b-b2d9265e2567"]
 #[reflect(Default)]
 #[serde(default)]
-#[repr(C)]
 pub struct ParticleEmission {
     /// Whether timed emission loops after `duration`.
     pub looping: bool,

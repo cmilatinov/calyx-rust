@@ -11,7 +11,6 @@
     engine::Reflect,
 )]
 #[uuid = "5d0f3a51-2b8e-4c0e-9a57-1f6a0f9e2c41"]
-#[repr(C)]
 struct ComponentProbe {
     value: f32,
 }

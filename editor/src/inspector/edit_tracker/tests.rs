@@ -36,7 +36,6 @@ fn serializations() -> usize {
 #[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "5d1c3f7e-2a8b-4e6f-9c0d-7b3a1e5f8c24"]
 #[reflect(Default, TypeUuidDynamic, Component)]
-#[repr(C)]
 struct CountedComponent {
     #[serde(serialize_with = "counted")]
     value: f32,

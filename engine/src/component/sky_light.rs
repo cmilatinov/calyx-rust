@@ -12,7 +12,6 @@ use serde::{Deserialize, Serialize};
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Sky Light")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentSkyLight {
     /// Whether the sky light contributes to scene lighting.
     pub active: bool,

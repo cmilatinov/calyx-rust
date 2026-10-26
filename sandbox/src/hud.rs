@@ -16,7 +16,6 @@ use serde::{Deserialize, Serialize};
 #[reflect(Default, TypeUuidDynamic, Component, ComponentHud)]
 #[reflect_attr(name = "Tank HUD")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentTankHud {
     pub screen_margin: f32,
 }

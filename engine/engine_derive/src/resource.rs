@@ -1,5 +1,4 @@
 use crate::fq::FQResource;
-use crate::repr::require_repr_c;
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, Data, DeriveInput};
@@ -27,7 +26,6 @@ fn expand(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
             ))
         }
     }
-    require_repr_c(input, "Resource")?;
     let struct_name = &input.ident;
     Ok(quote! {
         impl #FQResource for #struct_name {}

@@ -16,8 +16,8 @@ use std::process::Command;
 
 /// Lists every compilation unit in engine's dependency graph, engine
 /// included, when `cargo build <selection>` runs in `dir`. Each unit is its
-/// `--unit-graph` entry without its dependency edges, so units that differ in
-/// package, features, profile or platform differ.
+/// `--unit-graph` entry without its dependency edges or profile name, so units
+/// that differ in package, features, profile settings or platform differ.
 fn engine_units(dir: &Path, selection: &[&str]) -> BTreeSet<String> {
     let output = Command::new(env!("CARGO"))
         .current_dir(dir)
@@ -54,6 +54,11 @@ fn engine_units(dir: &Path, selection: &[&str]) -> BTreeSet<String> {
             .as_object_mut()
             .and_then(|unit| unit.remove("dependencies"))
             .unwrap_or_default();
+        // A test build names its profile `test`, but builds engine with the
+        // same settings, and the name does not reach the metadata hash.
+        if let Some(profile) = unit["profile"].as_object_mut() {
+            profile.remove("name");
+        }
         pending.extend(
             dependencies
                 .as_array()
@@ -140,6 +145,13 @@ fn project_assembly_links_the_editors_engine_build() {
         (
             "cargo build --workspace",
             engine_units(root, &["--workspace"]),
+        ),
+        // `cargo test --workspace`, which builds dev-dependencies too. The
+        // editor's own tests load the sandbox assembly, and reflection
+        // downcasts engine types by `TypeId`, so they need its engine build.
+        (
+            "cargo test --workspace",
+            engine_units(root, &["--workspace", "--tests"]),
         ),
         // What the editor runs in the project to build its assembly.
         (

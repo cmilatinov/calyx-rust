@@ -20,7 +20,6 @@ use std::time::Duration;
 /// server, protocol queue, and replication tick state.
 #[derive(Resource, TypeUuid)]
 #[uuid = "657869ba-a509-4340-89ae-f07d1eddf0db"]
-#[repr(C)]
 pub struct Network {
     /// Local client connection and transport state.
     pub client: Client,

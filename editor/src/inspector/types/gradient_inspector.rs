@@ -20,7 +20,6 @@ const STRIP_HEIGHT: f32 = 20.0;
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[uuid = "4b9e2c71-0d3a-4f6e-8a15-c27d9e6b3f08"]
 #[reflect(Default, TypeInspector)]
-#[repr(C)]
 pub struct GradientInspector;
 
 impl TypeInspector for GradientInspector {

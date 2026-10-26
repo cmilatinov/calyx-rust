@@ -43,7 +43,6 @@ impl GamePhase {
 #[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate)]
 #[reflect_attr(name = "Game State")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentGameState {
     pub phase: u32,
     pub previous_phase: u32,

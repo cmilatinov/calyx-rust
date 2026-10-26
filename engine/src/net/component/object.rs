@@ -15,7 +15,6 @@ pub type NetworkObjectId = u64;
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Network Object")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentNetworkObject {
     /// Replication identifier shared across peers.
     pub id: NetworkObjectId,

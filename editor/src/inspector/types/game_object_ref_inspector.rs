@@ -11,7 +11,6 @@ use uuid::Uuid;
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, TypeInspector)]
-#[repr(C)]
 pub struct GameObjectRefInspector;
 
 impl TypeInspector for GameObjectRefInspector {

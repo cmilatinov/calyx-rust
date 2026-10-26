@@ -13,7 +13,6 @@ use serde::{Deserialize, Serialize};
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Mesh Renderer")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentMesh {
     /// Mesh asset to draw.
     pub mesh: AssetRef<Mesh>,

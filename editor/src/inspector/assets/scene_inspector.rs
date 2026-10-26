@@ -12,7 +12,6 @@ use crate::project_manager::ProjectAssemblyStatus;
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, AssetInspector)]
-#[repr(C)]
 pub struct SceneInspector;
 
 impl AssetInspector for SceneInspector {

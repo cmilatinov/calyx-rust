@@ -17,7 +17,6 @@ use serde::{Deserialize, Serialize};
 #[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate)]
 #[reflect_attr(name = "Network Transform")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentNetworkTransform {
     #[reflect_skip]
     #[serde(skip)]

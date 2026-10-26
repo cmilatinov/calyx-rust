@@ -1,8 +1,12 @@
 use crate::utils::TypeUuidDynamic;
+use std::any::Any;
 
 /// Allows you to cast structs implementing the Reflect trait
 /// into a specific trait if they implement such a trait
-pub trait TraitMeta: TypeUuidDynamic + Send + Sync {}
+///
+/// The registry keys trait metadata by type UUID, and downcasts it through
+/// [`Any`].
+pub trait TraitMeta: Any + TypeUuidDynamic + Send + Sync {}
 
 /// Allows creation of a TraitMeta object (ex: ReflectDefault)
 /// from its original struct type
