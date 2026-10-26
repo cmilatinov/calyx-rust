@@ -31,7 +31,7 @@ use crate::error::BoxedError;
 use crate::input::ActionMap;
 use crate::reflect::type_registry::TypeRegistry;
 use crate::reflect::{AttributeValue, TypeInfo};
-use crate::render::{RenderContext, Shader, ShaderPreprocessor};
+use crate::render::{AssetShaderLoader, RenderContext, Shader};
 use crate::scene::{Prefab, Scene};
 use crate::utils;
 use crate::utils::TypeUuid;
@@ -1570,7 +1570,7 @@ impl AssetRegistry {
             return;
         }
 
-        match ShaderPreprocessor::shader_dependencies(self, path) {
+        match AssetShaderLoader::new(self).dependencies(path) {
             Ok(dependencies) => {
                 let mut data = self.asset_data_mut();
                 for dependency in dependencies {

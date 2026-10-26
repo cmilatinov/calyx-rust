@@ -13,6 +13,7 @@ crate-type = ["rlib"]
 engine_derive = { path = "./engine_derive" }
 # Keeps project assemblies on the editor's engine build; see its Cargo.toml.
 engine_feature_pins = { path = "./engine_feature_pins" }
+calyx_shader = { path = "../calyx_shader" }
 bimap.workspace = true
 bytemuck.workspace = true
 chrono.workspace = true

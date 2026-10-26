@@ -2,7 +2,7 @@
 //! modules.
 
 use crate::assets::Asset;
-use crate::render::{buffer_entry, read_buffer, Shader, ShaderPreprocessor};
+use crate::render::{buffer_entry, read_buffer, AssetShaderLoader, Shader};
 use crate::test_support::TestAssets;
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
@@ -85,11 +85,11 @@ pub(crate) fn wgsl_layout(module: &naga::Module, name: &str) -> (u32, Vec<(Strin
 
 /// `source` preprocessed as a shader of the engine's assets: includes
 /// expanded and parameters bound.
-pub(crate) fn preprocess(source: &str) -> std::io::Result<String> {
+pub(crate) fn preprocess(source: &str) -> Result<String, calyx_shader::ShaderError> {
     let assets = TestAssets::engine();
     let path = assets.engine_root().join("test_shader.wgsl");
     std::fs::write(&path, source).expect("the test shader is writable");
     let registries = assets.registries();
     let registry = registries.assets.read();
-    ShaderPreprocessor::load_shader_source(&registry, &path)
+    Ok(AssetShaderLoader::new(&registry).preprocess(&path)?.source)
 }
