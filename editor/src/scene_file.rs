@@ -3,7 +3,7 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
-use engine::scene::{Scene, SceneSnapshot};
+use engine::scene::{Prefab, Scene, SceneSnapshot};
 use serde::Serialize;
 use sha1::{Digest, Sha1};
 use uuid::Uuid;
@@ -194,6 +194,14 @@ impl SceneAutosave {
 
 pub fn write_scene_file(path: &Path, scene: &Scene) -> Result<(), String> {
     prepare_json_file(path, scene, "scene file")?
+        .commit()
+        .map(|_| ())
+}
+
+/// Writes `prefab` to `path` the way scenes are written: the whole file
+/// replaced at once, in the scene data's deterministic order.
+pub fn write_prefab_file(path: &Path, prefab: &Prefab) -> Result<(), String> {
+    prepare_json_file(path, prefab, "prefab file")?
         .commit()
         .map(|_| ())
 }

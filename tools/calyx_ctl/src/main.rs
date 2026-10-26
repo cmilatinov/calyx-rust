@@ -86,6 +86,9 @@ enum Action {
     /// Scene file operations.
     #[command(subcommand)]
     Scene(SceneAction),
+    /// Prefab mode: edit a prefab asset in isolation from the scene.
+    #[command(subcommand)]
+    Prefab(PrefabAction),
     /// List all game objects.
     Objects,
     /// Game object operations.
@@ -156,6 +159,20 @@ enum SceneAction {
     Save { path: Option<PathBuf> },
     /// Dump the full active scene as scene-file JSON.
     State,
+}
+
+#[derive(Subcommand)]
+enum PrefabAction {
+    /// Open a .cxprefab asset in prefab mode, setting the scene aside.
+    Open { path: PathBuf },
+    /// Save the open prefab to its asset file.
+    Save,
+    /// Close the open prefab and return to the scene.
+    Close {
+        /// Drop unsaved prefab changes instead of refusing to close.
+        #[arg(long)]
+        discard: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -412,6 +429,11 @@ fn build_command(action: &Action, base: Duration) -> Result<(Command, Duration),
             SceneAction::Load { path } => simple(Command::LoadScene { path: path.clone() }),
             SceneAction::Save { path } => simple(Command::SaveScene { path: path.clone() }),
             SceneAction::State => simple(Command::GetSceneState),
+        },
+        Action::Prefab(prefab) => match prefab {
+            PrefabAction::Open { path } => simple(Command::OpenPrefab { path: path.clone() }),
+            PrefabAction::Save => simple(Command::SavePrefab),
+            PrefabAction::Close { discard } => simple(Command::ClosePrefab { discard: *discard }),
         },
         Action::Objects => simple(Command::ListObjects),
         Action::Object(object) => match object {

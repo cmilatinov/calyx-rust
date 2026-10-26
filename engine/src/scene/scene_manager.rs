@@ -7,7 +7,7 @@ use crate::scene::{Scene, SceneSnapshot};
 use std::path::PathBuf;
 
 /// Metadata tracked alongside the current authoring scene.
-#[derive(Default)]
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
 pub struct SceneMeta {
     /// Source file for the loaded scene asset, when the scene originated from
     /// disk.
@@ -92,6 +92,12 @@ impl SceneManager {
     pub fn set_current_scene_file(&mut self, file: Option<PathBuf>) {
         self.current_scene_meta.file = file;
         self.current_scene_meta.asset_name = None;
+    }
+
+    /// Replaces the current scene's metadata, such as when an editor workflow
+    /// puts back a scene it set aside.
+    pub fn set_current_scene_meta(&mut self, meta: SceneMeta) {
+        self.current_scene_meta = meta;
     }
 
     /// Drops the simulation copy without modifying the authoring scene.

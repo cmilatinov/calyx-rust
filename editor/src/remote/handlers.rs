@@ -169,6 +169,9 @@ impl EditorApp {
             Command::Ping => Ok(Some(serde_json::Value::Null)),
             Command::Info => self.remote_info(ctx, runtime),
             Command::Shutdown => {
+                // A scripted shutdown does not wait on the unsaved-prefab
+                // prompt.
+                self.close_confirmed = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 Ok(Some(serde_json::Value::Null))
             }
@@ -214,6 +217,26 @@ impl EditorApp {
                 Ok(loaded)
             }
             Command::SaveScene { path } => self.remote_save_scene(path),
+            Command::OpenPrefab { path } => self.remote_open_prefab(path),
+            Command::SavePrefab => {
+                self.state
+                    .save_prefab()
+                    .map_err(|error| (ErrorKind::BadRequest, error))?;
+                Ok(Some(self.remote_prefab_state()))
+            }
+            Command::ClosePrefab { discard } => {
+                if self.state.prefab().is_none() {
+                    return Err((ErrorKind::BadRequest, "no prefab is open".into()));
+                }
+                if !discard && self.state.is_scene_dirty() {
+                    return Err((
+                        ErrorKind::BadRequest,
+                        "the prefab has unsaved changes; save_prefab first or pass discard".into(),
+                    ));
+                }
+                self.state.close_prefab();
+                Ok(Some(self.remote_prefab_state()))
+            }
 
             Command::GetSceneState => {
                 let scene = self.state.game.scenes.simulation_scene();
@@ -386,11 +409,58 @@ impl EditorApp {
             "scene_file": scenes.current_scene_meta().file.as_ref().map(|f| f.display().to_string()),
             "scene_name": scenes.current_scene_meta().asset_name,
             "object_count": scenes.simulation_scene().objects().count(),
+            "prefab": self.remote_prefab_state(),
             "port": runtime.server.bound_port(),
         })))
     }
 
+    /// The open prefab's asset path, file and dirty state, or `null` outside
+    /// prefab mode.
+    fn remote_prefab_state(&self) -> serde_json::Value {
+        match self.state.prefab() {
+            Some(prefab) => serde_json::json!({
+                "asset_path": prefab.label(),
+                "file": prefab.file().display().to_string(),
+                "dirty": self.state.is_scene_dirty(),
+            }),
+            None => serde_json::Value::Null,
+        }
+    }
+
+    fn remote_open_prefab(&mut self, path: PathBuf) -> CommandResult {
+        let path = dunce::canonicalize(&path).map_err(|error| {
+            (
+                ErrorKind::NotFound,
+                format!("prefab file {}: {error}", path.display()),
+            )
+        })?;
+        let asset_id = self
+            .state
+            .game
+            .assets
+            .registries
+            .assets
+            .read()
+            .asset_id_from_path(&path)
+            .ok_or_else(|| {
+                (
+                    ErrorKind::NotFound,
+                    format!("{} is not a registered asset", path.display()),
+                )
+            })?;
+        self.state
+            .open_prefab(asset_id)
+            .map_err(|error| (ErrorKind::BadRequest, error))?;
+        Ok(Some(self.remote_prefab_state()))
+    }
+
     fn remote_load_scene(&mut self, path: PathBuf) -> CommandResult {
+        if self.state.prefab().is_some() {
+            return Err((
+                ErrorKind::BadRequest,
+                "a prefab is open; close_prefab before loading a scene".into(),
+            ));
+        }
         // The asset registry keys assets by canonical path, so normalize
         // whatever form the client sent.
         let path = dunce::canonicalize(&path).map_err(|error| {
@@ -413,6 +483,12 @@ impl EditorApp {
     }
 
     fn remote_save_scene(&mut self, path: Option<PathBuf>) -> CommandResult {
+        if self.state.prefab().is_some() {
+            return Err((
+                ErrorKind::BadRequest,
+                "a prefab is open; use save_prefab, or close_prefab to return to the scene".into(),
+            ));
+        }
         let file = match path.or_else(|| self.state.game.scenes.current_scene_meta().file.clone()) {
             Some(file) => file,
             None => {

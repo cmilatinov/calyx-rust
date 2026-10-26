@@ -29,6 +29,7 @@ egui + eframe editor application.
 - `camera.rs` — EditorCamera (orbit/fly).
 - `selection.rs` — Selection state (GameObject or Asset).
 - `scene_document.rs` — SceneDocument: the authoring scene's undo history, dirty state, recovery autosave and file. Panels write the scene through a `SceneEdit` (`scene_edit.rs`), which captures the scene at its first write, commits everything written as one undo step, and records nothing while a simulation copy of the scene exists.
+- `prefab_editing.rs` — Prefab mode: a `.cxprefab` asset opened as the authoring scene under its own `SceneDocument`, opened by double-clicking it in the content browser or from its Open Prefab context action. The open scene is set aside as a snapshot with its document, file and selection, and comes back unchanged when the prefab closes. Save writes the prefab asset only (one top-level object, the prefab root); scene instances are independent copies and are not updated. Play, and opening or saving scenes, are refused while a prefab is open; closing or quitting with unsaved prefab changes prompts.
 - `project_manager.rs` — Project loading, assembly building, background tasks.
 
 ### `engine_derive` (proc-macro)

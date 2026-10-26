@@ -50,6 +50,12 @@ impl Panel for PanelSceneHierarchy {
                     ..Default::default()
                 }
                 .show(ui, |ui| {
+                    // The tree's top item names what is open: the scene, or
+                    // the prefab asset in prefab mode.
+                    let root_label = state
+                        .prefab()
+                        .map(|prefab| format!("Prefab: {}", prefab.label()))
+                        .unwrap_or_else(|| "Scene".to_owned());
                     let EditorAppState {
                         game, selection, ..
                     } = state;
@@ -64,7 +70,7 @@ impl Panel for PanelSceneHierarchy {
                         }
                         let response = list_item.show_flat(
                             ui,
-                            re_ui::list_item::LabelContent::new("Scene")
+                            re_ui::list_item::LabelContent::new(root_label)
                                 .truncate(true)
                                 .always_show_buttons(true)
                                 .with_icon(&icons::OBJECT_TREE)
