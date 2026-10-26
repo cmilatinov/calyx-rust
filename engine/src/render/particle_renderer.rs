@@ -5,8 +5,9 @@ use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::buffer::{wgpu_buffer_init_desc, BufferLayout};
 use crate::render::{
-    buffer_entry, workgroups, CachedBindGroup, ComputeKernel, ParticleSimulation, PipelineOptions,
-    RenderContext, RenderUtils, SceneRendererError, Shader, VertexLayout, PARTICLE_KERNELS,
+    buffer_entry, workgroups, CachedBindGroup, ComputeKernel, GpuCurveRange, GpuGradientRange,
+    ParticleSimulation, PipelineOptions, RenderContext, RenderUtils, SceneRendererError, Shader,
+    SystemKeys, VertexLayout, PARTICLE_KERNELS,
 };
 use crate::scene::{GameObject, Scene, SceneId};
 use egui_wgpu::wgpu;
@@ -47,12 +48,11 @@ struct RenderParams {
     emitter: [[f32; 4]; 4],
     camera_position: [f32; 3],
     local_space: u32,
-    color_start: [f32; 4],
-    color_end: [f32; 4],
-    size_start: f32,
-    size_end: f32,
     slot_count: u32,
     sort_count: u32,
+    _padding: [u32; 2],
+    size_curve: GpuCurveRange,
+    color_gradient: GpuGradientRange,
 }
 
 /// `SortParams` of `particles_simulate.wgsl`.
@@ -126,6 +126,12 @@ impl SortPassParams {
 }
 
 type ViewBindGroup = CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer)>;
+type EvaluateBindGroup = CachedBindGroup<(
+    wgpu::BindGroupLayout,
+    wgpu::Buffer,
+    wgpu::Buffer,
+    wgpu::Buffer,
+)>;
 
 /// What one view keeps for one simulated system: the buffers its particles
 /// are evaluated, sorted and gathered through, and the bind groups over
@@ -139,7 +145,7 @@ struct ViewSystem {
     evaluated: wgpu::Buffer,
     /// The sorted instances the draw reads.
     instances: wgpu::Buffer,
-    evaluate_group: ViewBindGroup,
+    evaluate_group: EvaluateBindGroup,
     /// One bind group per sort pass.
     sort_groups: Vec<ViewBindGroup>,
     gather_group: CachedBindGroup<wgpu::BindGroupLayout>,
@@ -194,12 +200,18 @@ impl ViewSystem {
         kernels: &ViewKernels,
         sort_params: &SortPassParams,
         particles: &wgpu::Buffer,
+        keys: &SystemKeys,
         pass: &mut wgpu::ComputePass,
     ) {
         let layout = &kernels.evaluate.bind_group_layouts[0];
-        let group = self
-            .evaluate_group
-            .get_or_create((layout.clone(), particles.clone()), || {
+        let group = self.evaluate_group.get_or_create(
+            (
+                layout.clone(),
+                particles.clone(),
+                keys.curve_keys.clone(),
+                keys.gradient_keys.clone(),
+            ),
+            || {
                 device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("particle_evaluate_bind_group"),
                     layout,
@@ -208,9 +220,12 @@ impl ViewSystem {
                         buffer_entry(5, particles),
                         buffer_entry(6, &self.keys),
                         buffer_entry(7, &self.evaluated),
+                        buffer_entry(10, &keys.curve_keys),
+                        buffer_entry(11, &keys.gradient_keys),
                     ],
                 })
-            });
+            },
+        );
         let (x, y) = workgroups(self.sort_count);
         pass.set_pipeline(&kernels.evaluate.pipeline);
         pass.set_bind_group(0, group, &[]);
@@ -266,6 +281,8 @@ impl ViewSystem {
 /// One system's draw this frame.
 struct ParticleDraw {
     game_object: GameObject,
+    /// The system's curve and gradient keys.
+    keys: SystemKeys,
     texture: Ref<Texture>,
     blend_mode: ParticleBlendMode,
     live_count: u32,
@@ -395,7 +412,7 @@ impl ParticleRenderer {
             if view.slot_count != slot_count {
                 *view = ViewSystem::new(device, slot_count);
             }
-            let color = |color: egui::Color32| color.to_srgba_unmultiplied().map(f32::from);
+            let keys = simulated.keys().clone();
             queue.write_buffer(
                 &view.params,
                 0,
@@ -403,12 +420,11 @@ impl ParticleRenderer {
                     emitter: scene.world_transform(game_object).matrix().into(),
                     camera_position: (*camera_position).into(),
                     local_space: system.local_space as u32,
-                    color_start: color(system.color.start),
-                    color_end: color(system.color.end),
-                    size_start: system.size.start,
-                    size_end: system.size.end,
                     slot_count,
                     sort_count: view.sort_count,
+                    _padding: [0; 2],
+                    size_curve: keys.size_curve,
+                    color_gradient: keys.color_gradient,
                 }),
             );
             let texture = system
@@ -418,6 +434,7 @@ impl ParticleRenderer {
                 .unwrap_or_else(|| self.default_texture.clone());
             draws.push(ParticleDraw {
                 game_object,
+                keys,
                 texture,
                 blend_mode: system.rendering.blend_mode,
                 live_count,
@@ -457,6 +474,7 @@ impl ParticleRenderer {
                         &kernels,
                         sort_params,
                         simulated.particles(),
+                        &draw.keys,
                         &mut pass,
                     );
             }

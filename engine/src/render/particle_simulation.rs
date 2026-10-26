@@ -2,8 +2,12 @@
 
 use crate::component::{ComponentParticleSystem, EmitterState, Particle, ParticleSpawn};
 use crate::core::Ref;
+use crate::math::{Curve, Gradient};
 use crate::render::buffer::ResizableBuffer;
-use crate::render::{CachedBindGroup, ComputeKernel, RenderContext, Shader};
+use crate::render::{
+    CachedBindGroup, ComputeKernel, GpuCurveKeys, GpuCurveRange, GpuGradientKeys, GpuGradientRange,
+    RenderContext, Shader,
+};
 use crate::scene::{GameObject, Scene, SceneId};
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
@@ -47,14 +51,135 @@ struct SimulationKernels {
     scatter: ComputeKernel,
 }
 
+/// What the evaluate kernel reads of a system's size curve and color
+/// gradient: their key buffers, as `curve.wgsl` and `gradient.wgsl` read
+/// them, and their ranges in them.
+#[derive(Clone)]
+pub(crate) struct SystemKeys {
+    pub curve_keys: wgpu::Buffer,
+    pub gradient_keys: wgpu::Buffer,
+    pub size_curve: GpuCurveRange,
+    pub color_gradient: GpuGradientRange,
+}
+
+/// A system's size curve and color gradient on the GPU, each uploaded again
+/// only when it changes.
+struct SystemKeyBuffer {
+    /// The curve and gradient the buffers hold.
+    curve: Curve,
+    gradient: Gradient,
+    keys: SystemKeys,
+    /// Times a key buffer was uploaded.
+    #[cfg(test)]
+    uploads: u32,
+}
+
+impl SystemKeyBuffer {
+    fn new(device: &wgpu::Device, component: &ComponentParticleSystem) -> Self {
+        let curve = &component.size.curve;
+        let gradient = &component.color.gradient;
+        let (curve_keys, curve_ranges) = GpuCurveKeys::pack([curve]);
+        let (gradient_keys, gradient_ranges) = GpuGradientKeys::pack([gradient]);
+        Self {
+            curve: curve.clone(),
+            gradient: gradient.clone(),
+            keys: SystemKeys {
+                curve_keys: Self::create(device, "particle_curve_keys", curve_keys.contents()),
+                gradient_keys: Self::create(
+                    device,
+                    "particle_gradient_keys",
+                    gradient_keys.contents(),
+                ),
+                size_curve: curve_ranges[0],
+                color_gradient: gradient_ranges[0],
+            },
+            #[cfg(test)]
+            uploads: 1,
+        }
+    }
+
+    fn create(device: &wgpu::Device, label: &str, contents: &[u8]) -> wgpu::Buffer {
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(label),
+            contents,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        })
+    }
+
+    /// Writes `contents` into `buffer`, or into a new buffer when they do not
+    /// fit.
+    fn write(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        buffer: &mut wgpu::Buffer,
+        label: &str,
+        contents: &[u8],
+    ) {
+        if contents.len() as u64 <= buffer.size() {
+            queue.write_buffer(buffer, 0, contents);
+        } else {
+            *buffer = Self::create(device, label, contents);
+        }
+    }
+
+    /// Uploads `component`'s size curve and color gradient, each when it
+    /// changed.
+    fn update(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        component: &ComponentParticleSystem,
+    ) {
+        let curve = &component.size.curve;
+        if self.curve != *curve {
+            let (keys, ranges) = GpuCurveKeys::pack([curve]);
+            let buffer = &mut self.keys.curve_keys;
+            Self::write(
+                device,
+                queue,
+                buffer,
+                "particle_curve_keys",
+                keys.contents(),
+            );
+            self.keys.size_curve = ranges[0];
+            self.curve = curve.clone();
+            #[cfg(test)]
+            {
+                self.uploads += 1;
+            }
+        }
+        let gradient = &component.color.gradient;
+        if self.gradient != *gradient {
+            let (keys, ranges) = GpuGradientKeys::pack([gradient]);
+            let buffer = &mut self.keys.gradient_keys;
+            Self::write(
+                device,
+                queue,
+                buffer,
+                "particle_gradient_keys",
+                keys.contents(),
+            );
+            self.keys.color_gradient = ranges[0];
+            self.gradient = gradient.clone();
+            #[cfg(test)]
+            {
+                self.uploads += 1;
+            }
+        }
+    }
+}
+
 /// One particle system as the simulation runs it: its CPU emitter state and
-/// the GPU buffer of its particle slots.
+/// the GPU buffers of its particle slots and curves.
 pub(crate) struct SimulatedSystem {
     emitter: EmitterState,
     /// [`ComponentParticleSystem::reset_count`] the system was seeded at.
     reset_count: u32,
     /// One [`Particle`] per slot; an empty slot holds [`Particle::DEAD`].
     particles: wgpu::Buffer,
+    /// The size curve and color gradient, kept current by
+    /// [`ParticleSimulation::prepare`] and [`ParticleSimulation::simulate`].
+    keys: SystemKeyBuffer,
     params: wgpu::Buffer,
     steps: ResizableBuffer,
     spawns: ResizableBuffer,
@@ -68,12 +193,17 @@ pub(crate) struct SimulatedSystem {
 }
 
 impl SimulatedSystem {
-    fn new(device: &wgpu::Device, emitter: EmitterState, reset_count: u32) -> Self {
+    fn new(
+        device: &wgpu::Device,
+        emitter: EmitterState,
+        component: &ComponentParticleSystem,
+    ) -> Self {
         let particles = Self::particle_buffer(device, emitter.capacity());
         Self {
             emitter,
-            reset_count,
+            reset_count: component.reset_count(),
             particles,
+            keys: SystemKeyBuffer::new(device, component),
             params: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("particle_simulation_params"),
                 size: size_of::<SimulationParams>() as u64,
@@ -127,6 +257,24 @@ impl SimulatedSystem {
     /// The buffer of this system's particle slots.
     pub(crate) fn particles(&self) -> &wgpu::Buffer {
         &self.particles
+    }
+
+    /// The size curve and color gradient last uploaded, as the evaluate
+    /// kernel reads them.
+    pub(crate) fn keys(&self) -> &SystemKeys {
+        &self.keys.keys
+    }
+
+    /// The size curve and color gradient ranges last uploaded.
+    #[cfg(test)]
+    pub(crate) fn key_ranges(&self) -> (GpuCurveRange, GpuGradientRange) {
+        (self.keys.keys.size_curve, self.keys.keys.color_gradient)
+    }
+
+    /// Times the size curve and color gradient were uploaded.
+    #[cfg(test)]
+    pub(crate) fn key_uploads(&self) -> u32 {
+        self.keys.uploads
     }
 
     /// Number of slots.
@@ -329,7 +477,7 @@ impl ParticleSimulation {
                     EmitterState::new(scene.uuid(game_object), component.emission.max_particles);
                 self.systems.insert(
                     game_object,
-                    SimulatedSystem::new(device, emitter, component.reset_count()),
+                    SimulatedSystem::new(device, emitter, component),
                 );
             }
             let system = self
@@ -339,6 +487,7 @@ impl ParticleSimulation {
             if system.capacity() != component.emission.max_particles {
                 system.set_capacity(device, &mut encoder, component.emission.max_particles);
             }
+            system.keys.update(device, queue, component);
             let emitter_transform = scene.world_transform(game_object);
             for delta_time in steps {
                 system
@@ -360,6 +509,35 @@ impl ParticleSimulation {
             }
         }
         queue.submit(Some(encoder.finish()));
+    }
+
+    /// Brings the bound scene's systems up to date with their components
+    /// without advancing time: uploads each size curve and color gradient
+    /// that changed, and drops the systems whose component is gone. Views
+    /// then draw a paused simulation with its latest curves and gradients.
+    ///
+    /// Does nothing for a scene the simulation is not bound to, so preparing
+    /// another scene never releases a simulation's state. Binding happens
+    /// in [`Self::simulate`].
+    pub fn prepare(&mut self, scene: &Scene, render_context: &RenderContext) {
+        if self.scene != Some(scene.id()) {
+            return;
+        }
+        let device = render_context.device();
+        let queue = render_context.queue();
+        let mut seen = HashSet::new();
+        let mut query = <(Entity, &ComponentParticleSystem)>::query();
+        for (entity, component) in query.iter(scene.world()) {
+            let Some(game_object) = scene.game_object_from_entity(*entity) else {
+                continue;
+            };
+            seen.insert(game_object);
+            if let Some(system) = self.systems.get_mut(&game_object) {
+                system.keys.update(device, queue, component);
+            }
+        }
+        self.systems
+            .retain(|game_object, _| seen.contains(game_object));
     }
 
     /// Releases every system when `scene` is not the bound scene, and binds

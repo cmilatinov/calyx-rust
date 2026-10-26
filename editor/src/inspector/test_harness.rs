@@ -139,6 +139,11 @@ impl InspectorHarness {
             .collect()
     }
 
+    /// Every widget of the last frame, top to bottom, left to right.
+    pub fn nodes(&self) -> &[WidgetNode] {
+        &self.nodes
+    }
+
     /// The non-empty labels of the last frame's widgets, trimmed, top to
     /// bottom, left to right.
     pub fn labels(&self) -> Vec<&str> {

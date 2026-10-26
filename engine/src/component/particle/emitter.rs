@@ -243,11 +243,7 @@ mod tests {
                 min: lifetime,
                 max: lifetime,
             },
-            size: ParticleSizeOverLifetime {
-                start: 1.0,
-                end: 1.0,
-                randomness: 0.0,
-            },
+            size: ParticleSizeOverLifetime::linear(1.0, 1.0, 0.0),
             velocity: ParticleVelocity {
                 initial: Vec3::zeros(),
                 randomness: Vec3::zeros(),

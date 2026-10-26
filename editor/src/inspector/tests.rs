@@ -9,7 +9,7 @@ use engine::component::{
     ComponentCollider, ComponentID, ComponentRigidBody, ComponentTransform, ParticleBlendMode,
     ParticleSpawnShape,
 };
-use engine::math::{Curve, CurveInterpolation};
+use engine::math::{Curve, CurveInterpolation, Gradient};
 use engine::reflect::Reflect;
 use engine::scene::GameObjectRef;
 use engine::utils::TypeUuid;
@@ -418,4 +418,35 @@ fn curve_inspector_menu_sets_interpolation_and_deletes_a_key() {
     assert_discrete(&h.click(delete, draw!(inspector, &mut value)));
     assert_eq!(value.keys.len(), 1);
     assert_eq!(value.keys[0].value, 1.0);
+}
+
+#[test]
+fn gradient_inspector_reports_a_key_drag() {
+    let mut h = InspectorHarness::new();
+    let registry = h.inspector_registry();
+    let inspector = lookup(&registry, Gradient::type_uuid());
+    let mut value = Gradient::default();
+
+    assert_idle(&h.idle(3, draw!(inspector, &mut value)));
+    let key = h.labelled_any("Gradient key 1");
+    let responses = h.drag(key, Vec2::new(-200.0, 0.0), draw!(inspector, &mut value));
+    assert_drag(&responses);
+    assert_eq!(value.keys.len(), 2);
+    assert!(value.keys[1].time < 1.0, "{value:?}");
+}
+
+#[test]
+fn gradient_inspector_adds_a_key_on_a_strip_click() {
+    let mut h = InspectorHarness::new();
+    let registry = h.inspector_registry();
+    let inspector = lookup(&registry, Gradient::type_uuid());
+    let mut value = Gradient::default();
+
+    assert_idle(&h.idle(3, draw!(inspector, &mut value)));
+    let strip = h.labelled_any("Gradient strip");
+    // The strip's middle is above its markers.
+    let point = strip - Vec2::new(0.0, 6.0);
+    assert_discrete(&h.click(point, draw!(inspector, &mut value)));
+    assert_eq!(value.keys.len(), 3);
+    assert!((value.keys[1].color.w - 0.5).abs() < 0.05, "{value:?}");
 }

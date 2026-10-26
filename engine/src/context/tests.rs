@@ -4,7 +4,7 @@ use crate::component::{
     ParticleVelocity,
 };
 use crate::input::Input;
-use crate::math::Transform;
+use crate::math::{CurveKey, GradientKey, Transform};
 use crate::render::{Camera, SceneRenderer, SceneRendererOptions};
 use crate::scene::GameObject;
 use crate::test_support::TestAssets;
@@ -207,4 +207,39 @@ fn editing_the_edit_scene_in_place_keeps_the_preview_running() {
     assert_eq!(game.particles.frames(), 3);
     // Ten from before the edits, then ten in half a second at twice the rate.
     assert_eq!(game.particles.live_count(emitter), Some(20));
+}
+
+#[test]
+fn preparing_the_editor_uploads_edit_scene_curve_and_gradient_edits_to_the_preview() {
+    let assets = TestAssets::engine();
+    let (mut game, emitter) = game_with_emitter(&assets);
+    editor_frame(&mut game, true, 0.5);
+    assert_eq!(game.particles.system(emitter).unwrap().key_uploads(), 1);
+
+    // An inspector edit of the edit scene's color gradient and size curve.
+    let (gradient, curve) = game
+        .scenes
+        .current_scene_mut()
+        .write_component::<ComponentParticleSystem, _>(emitter, |system| {
+            system
+                .color
+                .gradient
+                .insert(GradientKey::rgba(0.5, [0.0, 1.0, 0.0, 0.5]));
+            system.size.curve.insert(CurveKey::new(0.5, 3.0));
+            (system.color.gradient.clone(), system.size.curve.clone())
+        })
+        .expect("the emitter has a particle system");
+
+    // The editor prepares before it steps, so the preview's views draw the
+    // edit even on a frame that advances no particles.
+    game.prepare_scene(UpdatedScene::Editor {
+        preview_particles: true,
+    });
+
+    assert_eq!(game.particles.frames(), 1, "prepare advances no time");
+    let system = game.particles.system(emitter).unwrap();
+    assert_eq!(system.key_uploads(), 3, "both edits are uploaded");
+    let (curve_range, gradient_range) = system.key_ranges();
+    assert_eq!(gradient_range.count, gradient.keys.len() as u32);
+    assert_eq!(curve_range.count, curve.keys.len() as u32);
 }

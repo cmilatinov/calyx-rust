@@ -8,11 +8,14 @@ use nalgebra_glm::{vec3, Mat4, Vec3};
 pub use curve::*;
 /// Distance traits and helper implementations for common math types.
 pub use dist::*;
+/// Color gradients evaluated over time.
+pub use gradient::*;
 /// Transform type and helpers for local and world-space math.
 pub use transform::*;
 
 mod curve;
 mod dist;
+mod gradient;
 mod transform;
 
 /// Composes a transform matrix from translation, rotation, and scale.

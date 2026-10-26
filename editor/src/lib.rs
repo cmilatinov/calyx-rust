@@ -484,7 +484,9 @@ impl EditorApp {
     }
 
     fn update_game(&mut self, ctx: &egui::Context) {
-        self.state.game.scenes.prepare();
+        let preview_particles = self.state.preview_particles;
+        let target = UpdatedScene::Editor { preview_particles };
+        self.state.game.prepare_scene(target);
         let is_active = self.is_game_focused() && self.state.game_response.is_some();
         let input = Input::from_ctx(
             ctx,
@@ -492,10 +494,7 @@ impl EditorApp {
             self.state.game.resources.input_mut(),
             is_active,
         );
-        let preview_particles = self.state.preview_particles;
-        self.state
-            .game
-            .update_scene(UpdatedScene::Editor { preview_particles }, &input);
+        self.state.game.update_scene(target, &input);
     }
 
     fn update_window_title(&mut self, ctx: &egui::Context) {

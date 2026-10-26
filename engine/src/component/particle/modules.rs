@@ -15,6 +15,7 @@ use super::data::{Particle, ParticleRng, SimulationSpace, MIN_PARTICLE_LIFETIME}
 use crate as engine;
 use crate::assets::texture::Texture;
 use crate::assets::AssetRef;
+use crate::math::{Curve, Gradient};
 use crate::reflect::{Reflect, ReflectDefault};
 use crate::utils::TypeUuid;
 use egui::Color32;
@@ -158,33 +159,70 @@ impl ParticleForces {
 /// Size over lifetime module. Init: a random size offset. Evaluate: the size
 /// at a normalized age.
 ///
-/// `evaluate` is the module's only reader of `start` and `end`, so a curve can
-/// replace them without touching the rest of the system.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
+/// The size follows `curve`, in world units, over the particle's normalized
+/// age. Each particle's random offset shifts every key of the curve, and
+/// each shifted key is clamped at zero before the curve interpolates between
+/// them, so a straight line from `start` to `end` sizes particles exactly as
+/// the former start/end module did.
+///
+/// A module serialized with `start` and `end` instead of a curve, as before
+/// curves, loads as the straight line between them.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "5af8ac8a-9652-477b-9487-68a077b3a6b3"]
 #[reflect(Default)]
-#[serde(default)]
+#[serde(from = "ParticleSizeData")]
 #[repr(C)]
 pub struct ParticleSizeOverLifetime {
-    /// Size at the start of particle life.
-    pub start: f32,
-    /// Size at the end of particle life.
-    pub end: f32,
-    /// Random offset applied to both endpoints.
+    /// Size over normalized particle lifetime.
+    pub curve: Curve,
+    /// Random offset applied to every key of the curve.
     pub randomness: f32,
 }
 
 impl Default for ParticleSizeOverLifetime {
     fn default() -> Self {
+        Self::linear(0.6, 0.0, 0.3)
+    }
+}
+
+/// A [`ParticleSizeOverLifetime`] as it is serialized, curve or start/end.
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct ParticleSizeData {
+    curve: Option<Curve>,
+    start: Option<f32>,
+    end: Option<f32>,
+    randomness: Option<f32>,
+}
+
+impl From<ParticleSizeData> for ParticleSizeOverLifetime {
+    fn from(data: ParticleSizeData) -> Self {
+        let default = Self::default();
+        let curve = match (data.curve, data.start, data.end) {
+            (Some(curve), _, _) => curve,
+            (None, None, None) => default.curve,
+            (None, start, end) => Curve::linear(
+                start.unwrap_or_else(|| default.curve.evaluate(0.0)),
+                end.unwrap_or_else(|| default.curve.evaluate(1.0)),
+            ),
+        };
         Self {
-            start: 0.6,
-            end: 0.0,
-            randomness: 0.3,
+            curve,
+            randomness: data.randomness.unwrap_or(default.randomness),
         }
     }
 }
 
 impl ParticleSizeOverLifetime {
+    /// A straight line from `start` to `end` over the lifetime, with
+    /// `randomness`.
+    pub fn linear(start: f32, end: f32, randomness: f32) -> Self {
+        Self {
+            curve: Curve::linear(start, end),
+            randomness,
+        }
+    }
+
     pub(crate) fn init(&self, particle: &mut Particle, rng: &mut ParticleRng) {
         particle.size_offset = rng.signed() * self.randomness.max(0.0);
     }
@@ -192,47 +230,84 @@ impl ParticleSizeOverLifetime {
     /// The particle's size at normalized age `t`. Never negative.
     #[cfg(test)]
     pub(crate) fn evaluate(&self, particle: &Particle, t: f32) -> f32 {
-        let start = (self.start + particle.size_offset).max(0.0);
-        let end = (self.end + particle.size_offset).max(0.0);
-        start + (end - start) * t
+        self.curve
+            .segment(t)
+            .map(|size| (size + particle.size_offset).max(0.0))
+            .value()
     }
 }
 
 /// Color over lifetime module. Evaluate: the unpremultiplied color at a
 /// normalized age.
 ///
-/// `evaluate` is the module's only reader of `start` and `end`, so a gradient
-/// can replace them without touching the rest of the system.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
+/// The color follows `gradient` over the particle's normalized age, blended
+/// in unmultiplied sRGB from `0.0` to `1.0`, as the renderer reads it.
+///
+/// A module serialized with `start` and `end` colors instead of a gradient,
+/// as before gradients, loads as a two-key gradient between them.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "dda37e30-d5de-4c77-a4b2-b273797bc2d5"]
 #[reflect(Default)]
-#[serde(default)]
+#[serde(from = "ParticleColorData")]
 #[repr(C)]
 pub struct ParticleColorOverLifetime {
-    /// Color at birth.
-    pub start: Color32,
-    /// Color at death.
-    pub end: Color32,
+    /// Color over normalized particle lifetime.
+    pub gradient: Gradient,
+}
+
+/// Start and end colors of the default gradient.
+fn default_colors() -> (Color32, Color32) {
+    (
+        Color32::from_rgba_unmultiplied(255, 4, 0, 255),
+        Color32::from_rgba_unmultiplied(255, 169, 0, 84),
+    )
 }
 
 impl Default for ParticleColorOverLifetime {
     fn default() -> Self {
-        Self {
-            start: Color32::from_rgba_unmultiplied(255, 4, 0, 255),
-            end: Color32::from_rgba_unmultiplied(255, 169, 0, 84),
+        let (start, end) = default_colors();
+        Self::linear(start, end)
+    }
+}
+
+/// A [`ParticleColorOverLifetime`] as it is serialized, gradient or
+/// start/end.
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct ParticleColorData {
+    gradient: Option<Gradient>,
+    start: Option<Color32>,
+    end: Option<Color32>,
+}
+
+impl From<ParticleColorData> for ParticleColorOverLifetime {
+    fn from(data: ParticleColorData) -> Self {
+        if let Some(gradient) = data.gradient {
+            return Self { gradient };
         }
+        let (start, end) = default_colors();
+        Self::linear(data.start.unwrap_or(start), data.end.unwrap_or(end))
     }
 }
 
 impl ParticleColorOverLifetime {
-    /// Linear RGBA in `0..=1`, interpolated in unmultiplied sRGB bytes.
+    /// A two-key gradient from `start` to `end` over the lifetime, keyed by
+    /// their unmultiplied sRGB bytes, as the start/end module rendered them.
+    pub fn linear(start: Color32, end: Color32) -> Self {
+        let unmultiplied = |color: Color32| {
+            color
+                .to_srgba_unmultiplied()
+                .map(|byte| byte as f32 / 255.0)
+        };
+        Self {
+            gradient: Gradient::linear(unmultiplied(start), unmultiplied(end)),
+        }
+    }
+
+    /// Unmultiplied sRGB RGBA in `0..=1`.
     #[cfg(test)]
     pub(crate) fn evaluate(&self, t: f32) -> [f32; 4] {
-        let start = self.start.to_srgba_unmultiplied();
-        let end = self.end.to_srgba_unmultiplied();
-        std::array::from_fn(|channel| {
-            (start[channel] as f32 + (end[channel] as f32 - start[channel] as f32) * t) / 255.0
-        })
+        self.gradient.evaluate(t).into()
     }
 }
 
@@ -264,7 +339,8 @@ pub struct ParticleRendering {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::math::Transform;
+    use crate::math::{CurveInterpolation, CurveKey, GradientKey, Transform};
+    use approx::assert_abs_diff_eq;
 
     fn particle() -> Particle {
         Particle {
@@ -343,13 +419,17 @@ mod tests {
         assert_eq!(particle.lifetime, MIN_PARTICLE_LIFETIME);
     }
 
+    /// Size at normalized age `t` as the start/end size module computed it
+    /// before curves: each end offset and clamped, then interpolated.
+    fn start_end_size(start: f32, end: f32, offset: f32, t: f32) -> f32 {
+        let start = (start + offset).max(0.0);
+        let end = (end + offset).max(0.0);
+        start + (end - start) * t
+    }
+
     #[test]
     fn size_interpolates_and_clamps_at_zero() {
-        let size = ParticleSizeOverLifetime {
-            start: 1.0,
-            end: 0.25,
-            randomness: 0.0,
-        };
+        let size = ParticleSizeOverLifetime::linear(1.0, 0.25, 0.0);
         let mut particle = particle();
         assert_eq!(size.evaluate(&particle, 0.5), 0.625);
         particle.size_offset = -0.5;
@@ -357,16 +437,146 @@ mod tests {
     }
 
     #[test]
-    fn color_lerp_uses_unmultiplied_alpha() {
-        let color = ParticleColorOverLifetime {
-            start: Color32::from_rgba_unmultiplied(255, 169, 0, 84),
-            end: Color32::from_rgba_unmultiplied(255, 169, 0, 84),
+    fn default_size_curve_reproduces_the_start_end_sizes() {
+        let size = ParticleSizeOverLifetime::default();
+        let mut particle = particle();
+        for offset in [-0.3, -0.1, 0.0, 0.2, 0.3] {
+            particle.size_offset = offset;
+            for t in [0.0, 0.25, 0.5, 0.9, 1.0] {
+                assert_abs_diff_eq!(
+                    size.evaluate(&particle, t),
+                    start_end_size(0.6, 0.0, offset, t),
+                    epsilon = 1e-6
+                );
+            }
         }
+    }
+
+    #[test]
+    fn size_offset_shifts_every_key_of_the_curve() {
+        let size = ParticleSizeOverLifetime {
+            curve: Curve::new(vec![
+                CurveKey::new(0.0, 0.0).with_interpolation(CurveInterpolation::Smooth),
+                CurveKey::new(0.5, 1.0),
+                CurveKey::new(1.0, 0.2),
+            ]),
+            randomness: 0.0,
+        };
+        let mut particle = particle();
+        particle.size_offset = 0.25;
+        // Smoothstep halfway between 0.25 and 1.25.
+        assert_abs_diff_eq!(size.evaluate(&particle, 0.25), 0.75);
+        assert_abs_diff_eq!(size.evaluate(&particle, 1.0), 0.45);
+        particle.size_offset = -0.5;
+        // Keys 0.0 and 0.2 clamp to zero, 1.0 becomes 0.5.
+        assert_eq!(size.evaluate(&particle, 0.0), 0.0);
+        assert_abs_diff_eq!(size.evaluate(&particle, 0.75), 0.25);
+        assert_eq!(size.evaluate(&particle, 1.0), 0.0);
+    }
+
+    #[test]
+    fn color_lerp_uses_unmultiplied_alpha() {
+        let color = ParticleColorOverLifetime::linear(
+            Color32::from_rgba_unmultiplied(255, 169, 0, 84),
+            Color32::from_rgba_unmultiplied(255, 169, 0, 84),
+        )
         .evaluate(0.5);
 
         assert!(color[0] > 0.9, "expected red to stay unpremultiplied");
         assert!(color[1] > 0.55, "expected green to stay unpremultiplied");
         assert!(color[2] < 0.05, "expected blue to stay near zero");
         assert!((color[3] - (84.0 / 255.0)).abs() < 0.02);
+    }
+
+    #[test]
+    fn default_color_gradient_reproduces_the_start_end_colors() {
+        let color = ParticleColorOverLifetime::default();
+        // The start/end module stored premultiplied `Color32`s and the
+        // renderer interpolated their unmultiplied bytes.
+        let bytes = |color: Color32| color.to_srgba_unmultiplied().map(f32::from);
+        let start = bytes(Color32::from_rgba_unmultiplied(255, 4, 0, 255));
+        let end = bytes(Color32::from_rgba_unmultiplied(255, 169, 0, 84));
+        assert_eq!(color.gradient.keys.len(), 2);
+        for t in [0.0, 0.3, 0.5, 1.0] {
+            let expected: [f32; 4] =
+                std::array::from_fn(|i| (start[i] + (end[i] - start[i]) * t) / 255.0);
+            let actual = color.evaluate(t);
+            for channel in 0..4 {
+                assert_abs_diff_eq!(actual[channel], expected[channel], epsilon = 1e-6);
+            }
+        }
+    }
+
+    #[test]
+    fn color_follows_its_gradient_keys() {
+        let color = ParticleColorOverLifetime {
+            gradient: Gradient::new(vec![
+                GradientKey::rgba(0.0, [1.0, 1.0, 0.0, 1.0]),
+                GradientKey::rgba(0.5, [1.0, 0.0, 0.0, 1.0]),
+                GradientKey::rgba(1.0, [0.0, 0.0, 0.0, 0.0]),
+            ]),
+        };
+        assert_eq!(color.evaluate(0.25), [1.0, 0.5, 0.0, 1.0]);
+        assert_eq!(color.evaluate(0.75), [0.5, 0.0, 0.0, 0.5]);
+    }
+
+    #[test]
+    fn start_end_size_loads_as_a_linear_curve() {
+        let size: ParticleSizeOverLifetime =
+            serde_json::from_str(r#"{"end":0.35,"randomness":0.15,"start":1.1}"#).unwrap();
+        assert_eq!(size, ParticleSizeOverLifetime::linear(1.1, 0.35, 0.15));
+        let partial: ParticleSizeOverLifetime = serde_json::from_str(r#"{"end":2.0}"#).unwrap();
+        assert_eq!(partial, ParticleSizeOverLifetime::linear(0.6, 2.0, 0.3));
+        let empty: ParticleSizeOverLifetime = serde_json::from_str("{}").unwrap();
+        assert_eq!(empty, ParticleSizeOverLifetime::default());
+    }
+
+    #[test]
+    fn start_end_color_loads_as_a_two_key_gradient() {
+        // Color32 serializes its premultiplied bytes.
+        let color: ParticleColorOverLifetime =
+            serde_json::from_str(r#"{"end":[90,42,0,90],"start":[255,215,30,255]}"#).unwrap();
+        let start = Color32::from_rgba_premultiplied(255, 215, 30, 255);
+        let end = Color32::from_rgba_premultiplied(90, 42, 0, 90);
+        assert_eq!(color, ParticleColorOverLifetime::linear(start, end));
+        let keys = &color.gradient.keys;
+        assert_eq!((keys.len(), keys[0].time, keys[1].time), (2, 0.0, 1.0));
+        let unmultiplied = end.to_srgba_unmultiplied();
+        assert!(unmultiplied[0] > 90, "the end red is unmultiplied");
+        assert_eq!(keys[1].color.x, unmultiplied[0] as f32 / 255.0);
+        assert_eq!(keys[1].color.w, 90.0 / 255.0);
+        let empty: ParticleColorOverLifetime = serde_json::from_str("{}").unwrap();
+        assert_eq!(empty, ParticleColorOverLifetime::default());
+    }
+
+    #[test]
+    fn curve_modules_round_trip_through_json() {
+        let size = ParticleSizeOverLifetime {
+            curve: Curve::new(vec![
+                CurveKey::new(0.0, 0.2).with_interpolation(CurveInterpolation::Smooth),
+                CurveKey::new(0.3, 1.0),
+                CurveKey::new(1.0, 0.0),
+            ]),
+            randomness: 0.1,
+        };
+        let json = serde_json::to_value(&size).unwrap();
+        assert!(json.get("start").is_none());
+        assert_eq!(
+            serde_json::from_value::<ParticleSizeOverLifetime>(json).unwrap(),
+            size
+        );
+        let color = ParticleColorOverLifetime {
+            gradient: Gradient::new(vec![
+                GradientKey::rgba(0.0, [1.0, 0.9, 0.1, 0.0]),
+                GradientKey::rgba(0.2, [1.0, 0.5, 0.0, 1.0]),
+                GradientKey::rgba(1.0, [0.3, 0.0, 0.0, 0.0]),
+            ]),
+        };
+        let json = serde_json::to_value(&color).unwrap();
+        assert!(json.get("start").is_none());
+        assert_eq!(
+            serde_json::from_value::<ParticleColorOverLifetime>(json).unwrap(),
+            color
+        );
     }
 }
