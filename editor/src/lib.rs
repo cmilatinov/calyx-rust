@@ -27,6 +27,7 @@ use egui::{include_image, Button, CornerRadius, ImageSource, Response, Sense, Ui
 use egui::{Align, Layout};
 use egui::{Color32, Frame, Margin, Shadow};
 use egui_tiles::{Container, Linear, LinearDir, Tiles, Tree};
+use engine::assets::skybox::Skybox;
 use engine::context::{AssetContext, GameContext, UpdatedScene};
 use engine::core::Ref;
 use engine::error::BoxedError;
@@ -54,6 +55,7 @@ mod icons;
 mod inspector;
 mod panel;
 mod prefab_editing;
+mod prefab_environment;
 mod project_manager;
 mod remote;
 mod scene_autosave;
@@ -82,6 +84,22 @@ const SCENE_VIEW_BACKDROP: Color32 = Color32::from_rgb(8, 8, 8);
 /// objects stay legible. Linear, like [`SCENE_VIEW_BACKDROP`], so it shows
 /// as a lighter slate blue.
 const PREFAB_MODE_BACKDROP: Color32 = Color32::from_rgb(6, 12, 26);
+/// The built-in studio HDRI that lights prefab mode, as an asset name; see
+/// `prefab_environment.rs`, which generates it. It lights the prefab without
+/// being drawn, so [`PREFAB_MODE_BACKDROP`] stays the background.
+const PREFAB_ENVIRONMENT_ASSET: &str = "skyboxes/prefab_studio";
+/// How strongly the studio HDRI lights the prefab, as a sky light's intensity.
+const PREFAB_ENVIRONMENT_INTENSITY: f32 = 1.0;
+/// Elevation of the prefab key light and of the HDRI's bright spot.
+const PREFAB_KEY_LIGHT_ELEVATION_DEG: f32 = 45.0;
+/// Azimuth of the prefab key light and of the HDRI's bright spot, from +X
+/// towards +Z.
+const PREFAB_KEY_LIGHT_AZIMUTH_DEG: f32 = 45.0;
+/// Linear color of the prefab key light: a slightly warm white.
+const PREFAB_KEY_LIGHT_COLOR: [f32; 3] = [1.0, 0.96, 0.9];
+/// Intensity of the prefab key light, a directional light that gives the
+/// prefab a clear shading direction on top of the HDRI's soft light.
+const PREFAB_KEY_LIGHT_INTENSITY: f32 = 1.5;
 
 /// The scene view's clear color: blue-gray in prefab mode, else the normal
 /// backdrop.
@@ -138,6 +156,9 @@ pub struct EditorAppState {
     prefab: Option<PrefabEditing>,
     /// What waits on the user's answer to the unsaved-prefab prompt.
     prefab_prompt: Option<PrefabPrompt>,
+    /// The studio HDRI that lights prefab mode, loaded when a prefab first
+    /// opens.
+    prefab_environment: Option<Ref<Skybox>>,
 }
 
 /// What the editor does once the user answers the prompt about an open
@@ -235,6 +256,7 @@ impl EditorAppState {
             project_path,
             prefab: None,
             prefab_prompt: None,
+            prefab_environment: None,
             scene_renderer,
             game_renderer,
             inspector_registry,
@@ -362,7 +384,27 @@ impl EditorAppState {
             asset_id,
         )?;
         self.prefab = Some(prefab);
+        self.load_prefab_environment();
         Ok(())
+    }
+
+    /// Loads the studio HDRI that lights prefab mode, once. Without it the
+    /// prefab renders with its own lights only.
+    fn load_prefab_environment(&mut self) {
+        if self.prefab_environment.is_some() {
+            return;
+        }
+        match self
+            .game
+            .assets
+            .registries
+            .assets
+            .read()
+            .load::<Skybox>(PREFAB_ENVIRONMENT_ASSET)
+        {
+            Ok(skybox) => self.prefab_environment = Some(skybox),
+            Err(error) => log::warn!("Prefab mode lighting is unavailable: {error}"),
+        }
     }
 
     /// Saves the open prefab to its asset file.
@@ -706,6 +748,7 @@ impl EditorApp {
                     game_renderer,
                     game_size,
                     prefab,
+                    prefab_environment,
                     camera:
                         EditorCamera {
                             camera, transform, ..
@@ -722,7 +765,12 @@ impl EditorApp {
             camera.aspect = width as f32 / height as f32;
         }
         camera.update_projection();
-        scene_renderer.options_mut().clear_color = scene_view_backdrop(prefab.is_some());
+        let options = scene_renderer.options_mut();
+        options.clear_color = scene_view_backdrop(prefab.is_some());
+        options.environment = prefab_environment::scene_view_environment(
+            prefab.is_some(),
+            prefab_environment.as_ref(),
+        );
         scene_renderer.set_hovered_game_object(None);
         scene_renderer.set_selected_game_object(None);
 

@@ -1,6 +1,6 @@
 use crate::component::{ComponentAmbientLight, ComponentDirectionalLight, ComponentPointLight};
 use crate::render::buffer::ResizableBuffer;
-use crate::render::{RenderContext, Shader};
+use crate::render::{EnvironmentLight, RenderContext, Shader};
 use crate::scene::Scene;
 use egui_wgpu::wgpu;
 use legion::{Entity, IntoQuery};
@@ -25,6 +25,17 @@ struct DirectionalLight {
     intensity: f32,
 }
 
+impl From<&EnvironmentLight> for DirectionalLight {
+    fn from(light: &EnvironmentLight) -> Self {
+        Self {
+            direction: light.direction.normalize().into(),
+            _padding: 0.0,
+            color: light.color,
+            intensity: light.intensity.max(0.0),
+        }
+    }
+}
+
 pub struct LightManager {
     point_light_storage_buffer: ResizableBuffer,
     directional_light_storage_buffer: ResizableBuffer,
@@ -46,7 +57,14 @@ impl Default for LightManager {
 }
 
 impl LightManager {
-    pub fn build_data(&mut self, render_context: &RenderContext, scene: &Scene) {
+    /// Uploads the lights of `scene`, with `environment_lights` added to its
+    /// directional lights.
+    pub fn build_data(
+        &mut self,
+        render_context: &RenderContext,
+        scene: &Scene,
+        environment_lights: &[EnvironmentLight],
+    ) {
         let device = render_context.device();
         let queue = render_context.queue();
 
@@ -68,7 +86,8 @@ impl LightManager {
             );
         }
 
-        let directional_lights = Self::collect_directional_lights(scene);
+        let mut directional_lights = Self::collect_directional_lights(scene);
+        directional_lights.extend(environment_lights.iter().map(DirectionalLight::from));
         let size = (16 + std::cmp::max(directional_lights.len(), 1) * size_of::<DirectionalLight>())
             as u64;
         self.directional_light_storage_buffer.resize(device, size);

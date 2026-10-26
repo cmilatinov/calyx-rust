@@ -548,4 +548,38 @@ mod tests {
             "the scene stays open"
         );
     }
+    #[test]
+    fn a_saved_prefab_holds_no_lighting_of_prefab_mode() {
+        use engine::component::{ComponentDirectionalLight, ComponentSkyLight};
+        use engine::utils::TypeUuid;
+
+        let root = AssetRoot::new();
+        let mut editor = Editor::open_level(&root);
+        let saved = read_prefab(&root.prefab_file());
+        let prefab = editor.open_prefab(&root);
+        editor.add_object("Handle", "Crate");
+        prefab
+            .save(&editor.game, &mut editor.document)
+            .expect("prefab should save");
+
+        // Prefab mode lights the view, not the prefab: the save holds the
+        // prefab's objects and no light of the editor's.
+        let written = read_prefab(&root.prefab_file());
+        assert_eq!(
+            written.data.components.len(),
+            saved.data.components.len() + 1
+        );
+        let lights = [
+            ComponentSkyLight::type_uuid(),
+            ComponentDirectionalLight::type_uuid(),
+        ];
+        for components in written.data.components.values() {
+            assert!(
+                components
+                    .keys()
+                    .all(|component| !lights.contains(component)),
+                "a saved object holds a light: {components:?}"
+            );
+        }
+    }
 }

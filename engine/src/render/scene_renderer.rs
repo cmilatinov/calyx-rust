@@ -2,6 +2,7 @@ use super::RenderContext;
 use crate::assets::error::AssetError;
 use crate::assets::material::Material;
 use crate::assets::mesh::{Instance, Mesh};
+use crate::assets::skybox::Skybox;
 use crate::assets::texture::Texture;
 use crate::assets::{Asset, AssetId, AssetRegistry, BackgroundLoad};
 use crate::component::{ComponentMesh, ComponentSkinnedMesh, ComponentSkyLight};
@@ -22,7 +23,7 @@ use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use legion::{Entity, IntoQuery};
 use nalgebra_glm as glm;
-use nalgebra_glm::Mat4;
+use nalgebra_glm::{Mat4, Vec3};
 use rapier3d::pipeline::DebugRenderPipeline;
 use std::collections::{HashMap, HashSet};
 use std::default::Default;
@@ -71,6 +72,36 @@ pub struct SceneRendererOptions {
     /// Values above one must be supported by the adapter for `Rgba16Float`
     /// color and `Depth32Float` depth; WebGPU guarantees four.
     pub samples: u32,
+    /// Lighting this view uses in place of the scene's sky lights, such as
+    /// the editor's prefab mode. It belongs to the view, never to the scene.
+    pub environment: Option<SceneEnvironment>,
+}
+
+/// Lighting a view supplies itself instead of taking it from the scene: an
+/// environment map for image-based lighting, whether to draw it as the sky,
+/// and directional lights added to the scene's own.
+#[derive(Clone)]
+pub struct SceneEnvironment {
+    /// The environment map that lights the scene.
+    pub skybox: Ref<Skybox>,
+    /// Multiplier on the environment map's light, as a sky light's intensity.
+    pub intensity: f32,
+    /// Whether to draw the environment map behind the scene. When `false`
+    /// the clear color shows where nothing is drawn.
+    pub draw_sky: bool,
+    /// Directional lights added to the scene's own.
+    pub directional_lights: Vec<EnvironmentLight>,
+}
+
+/// A directional light a [`SceneEnvironment`] adds to a view.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EnvironmentLight {
+    /// World-space direction the light travels in.
+    pub direction: Vec3,
+    /// Linear light color.
+    pub color: [f32; 3],
+    /// Light intensity.
+    pub intensity: f32,
 }
 
 impl Default for SceneRendererOptions {
@@ -81,6 +112,7 @@ impl Default for SceneRendererOptions {
             clear_color: Color32::TRANSPARENT,
             mesh_cull_mode: Some(wgpu::Face::Back),
             samples: 0,
+            environment: None,
         }
     }
 }
@@ -407,7 +439,14 @@ impl SceneRenderer {
         self.finish_object_ids();
         let draw_list = self.build_draw_list();
         self.build_mesh_data(&render_context);
-        self.light_manager.build_data(&render_context, scene);
+        let environment_lights = self
+            .options
+            .environment
+            .as_ref()
+            .map(|environment| environment.directional_lights.as_slice())
+            .unwrap_or_default();
+        self.light_manager
+            .build_data(&render_context, scene, environment_lights);
         // Compute the skybox's environment maps before the meshes that are lit
         // by them and the skybox pass that draws its cubemap.
         self.skybox_renderer
@@ -721,7 +760,35 @@ impl SceneRenderer {
         let mut query = <&ComponentSkyLight>::query();
         let mut skybox = None;
         let mut sky_light_intensity = 0.0;
-        for c_sky_light in query.iter(world).filter(|s| s.active) {
+        // A view's own environment replaces the scene's sky lights.
+        let view_environment = self.options.environment.as_ref().map(|environment| {
+            (
+                environment.skybox.clone(),
+                environment.intensity,
+                environment.draw_sky,
+            )
+        });
+        let scene_sky_lights = query
+            .iter(world)
+            .filter(|s| s.active && view_environment.is_none());
+        if let Some((skybox_ref, intensity, _)) = &view_environment {
+            let skybox_id = skybox_ref.id();
+            self.assets
+                .skyboxes
+                .entry(skybox_id)
+                .or_insert(skybox_ref.clone());
+            self.assets
+                .meshes
+                .entry(self.default_assets.cube.id())
+                .or_insert(self.default_assets.cube.clone());
+            self.assets
+                .meshes
+                .entry(self.default_assets.screen_space_quad.id())
+                .or_insert(self.default_assets.screen_space_quad.clone());
+            skybox = Some(skybox_id);
+            sky_light_intensity = intensity.max(0.0);
+        }
+        for c_sky_light in scene_sky_lights {
             // Decoding a large HDR skybox takes far longer than a frame, so it
             // loads in the background and the sky appears once it is ready.
             let BackgroundLoad::Loaded(skybox_ref) = c_sky_light
@@ -747,6 +814,11 @@ impl SceneRenderer {
             sky_light_intensity = c_sky_light.intensity.max(0.0);
         }
         self.skybox_renderer.set_skybox(skybox);
+        self.skybox_renderer.set_visible(
+            view_environment
+                .as_ref()
+                .is_none_or(|(_, _, draw_sky)| *draw_sky),
+        );
         self.sky_light_intensity = sky_light_intensity;
         for mesh in self.assets.meshes.values() {
             mesh.write().instances.clear();

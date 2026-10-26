@@ -236,6 +236,7 @@ impl ThumbnailGenerator {
                             samples: 1,
                             clear_color: Color32::TRANSPARENT,
                             mesh_cull_mode: None,
+                            environment: None,
                         },
                         (size_px, size_px),
                     )
