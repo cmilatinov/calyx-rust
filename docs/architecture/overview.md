@@ -50,6 +50,8 @@ Example game project. Compiles as dynamic library (plugin) with `plugin_main` en
 - `player.rs` — ComponentPlayerController (WASD movement, camera-relative, network ownership check).
 - `network.rs` — Game-specific network handlers.
 - `game.rs` — Standalone game binary.
+- `combat.rs` — Kill events. A projectile records its shooter, and a lethal hit becomes a `KillEvent` passed to `record_kill`, which counts kills and deaths on `ComponentCombatStats` and adds the kill to every `ComponentKillFeed`. Networked kills are meant to enter through the same `record_kill`.
+- `hud.rs` and `hud/` — The tank HUD (`ComponentTankHud`): health, weapon, a minimap drawn from world positions, the kill feed, and a scoreboard while the `scoreboard` action (Tab) is held.
 
 ## Key Patterns
 - `Ref<T>` everywhere for shared ownership with UUID tracking.

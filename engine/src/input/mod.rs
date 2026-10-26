@@ -249,6 +249,7 @@ impl Default for ActionMap {
         map.bind_action("shoot", InputBinding::PointerButton(PointerButton::Primary));
         map.bind_action("shoot", InputBinding::Key(Key::Space));
         map.bind_action("jump", InputBinding::Key(Key::Space));
+        map.bind_action("scoreboard", InputBinding::Key(Key::Tab));
         map.bind_axis(
             "move_forward",
             InputBinding::Key(Key::W),

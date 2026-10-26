@@ -43,6 +43,35 @@ impl Default for ComponentArena {
 
 impl Component for ComponentArena {}
 
+impl ComponentArena {
+    /// Whether the arena is large enough to generate anything.
+    fn is_valid(&self) -> bool {
+        self.columns >= 3 && self.rows >= 3 && self.cell_size > 0.0
+    }
+
+    /// Width along X and depth along Z of the generated floor, walls
+    /// included, centred on the arena object.
+    pub(crate) fn extent(&self) -> Option<(f32, f32)> {
+        self.is_valid().then_some((
+            self.columns as f32 * self.cell_size,
+            self.rows as f32 * self.cell_size,
+        ))
+    }
+
+    /// Centres of the generated cover blocks, relative to the arena object.
+    pub(crate) fn cover_positions(&self) -> Vec<nalgebra_glm::Vec3> {
+        if !self.is_valid() {
+            return Vec::new();
+        }
+        cover_cells(self.columns, self.rows)
+            .into_iter()
+            .map(|(column, row)| {
+                grid_position(column, row, self.columns, self.rows, self.cell_size)
+            })
+            .collect()
+    }
+}
+
 impl ComponentStart for ComponentArena {
     fn start(
         &self,
@@ -60,7 +89,7 @@ impl ComponentStart for ComponentArena {
 }
 
 fn generate_arena(scene: &mut Scene, parent: GameObject, arena: &ComponentArena) {
-    if arena.columns < 3 || arena.rows < 3 || arena.cell_size <= 0.0 {
+    if !arena.is_valid() {
         return;
     }
 

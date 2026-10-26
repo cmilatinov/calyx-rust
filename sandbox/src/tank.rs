@@ -1,3 +1,4 @@
+use crate::combat::{record_kill, KillEvent};
 use crate::spawn::ComponentRespawnState;
 use engine::component::{
     ColliderShape, Component, ComponentCamera, ComponentCollider, ComponentEventContext,
@@ -124,6 +125,9 @@ pub struct ComponentProjectile {
     pub damage: f32,
     pub lifetime_remaining: f32,
     pub radius: f32,
+    /// The object that fired the round, credited with the kill when the
+    /// round destroys its target.
+    pub shooter: GameObjectRef,
 }
 
 impl Default for ComponentProjectile {
@@ -134,6 +138,7 @@ impl Default for ComponentProjectile {
             damage: 35.0,
             lifetime_remaining: 2.0,
             radius: 0.18,
+            shooter: Default::default(),
         }
     }
 }
@@ -269,7 +274,7 @@ impl ComponentUpdate for ComponentTankController {
             &tank_transform,
             aim_point,
         );
-        update_shooting(scene, input, dt, &mut controller);
+        update_shooting(scene, game_object, input, dt, &mut controller);
         let _ = scene.write_component::<ComponentTankController, _>(game_object, |component| {
             component.fire_cooldown_remaining = controller.fire_cooldown_remaining;
             component.reload_remaining = controller.reload_remaining;
@@ -618,6 +623,7 @@ fn update_camera(
 
 fn update_shooting(
     scene: &mut engine::scene::Scene,
+    tank: engine::scene::GameObject,
     input: &Input,
     dt: TimeType,
     controller: &mut ComponentTankController,
@@ -636,7 +642,7 @@ fn update_shooting(
         return;
     }
 
-    if spawn_projectile(scene, controller) {
+    if spawn_projectile(scene, tank, controller) {
         controller.ammo = controller.ammo.saturating_sub(1);
         controller.fire_cooldown_remaining = controller.fire_cooldown;
         if controller.ammo == 0 {
@@ -683,6 +689,7 @@ fn can_fire(shoot_pressed: bool, cooldown_remaining: f32, ammo: u32) -> bool {
 
 fn spawn_projectile(
     scene: &mut engine::scene::Scene,
+    tank: engine::scene::GameObject,
     controller: &ComponentTankController,
 ) -> bool {
     let Some(barrel_object) = controller.barrel.game_object(scene) else {
@@ -709,6 +716,7 @@ fn spawn_projectile(
             damage: controller.projectile_damage,
             lifetime_remaining: controller.projectile_lifetime,
             radius: controller.projectile_radius,
+            shooter: GameObjectRef::new(scene.uuid(tank)),
         },
         visual,
     );
@@ -792,7 +800,8 @@ fn update_projectile(
     let reach = obstacle_time.map_or(end, |time| start + (end - start) * time);
     if let Some(target) = first_projectile_hit(scene, game_object, start, reach, projectile.radius)
     {
-        apply_projectile_damage(scene, target, projectile.damage);
+        let shooter = projectile.shooter.game_object(scene);
+        apply_projectile_damage(scene, target, projectile.damage, shooter);
         scene.delete(game_object);
         return;
     }
@@ -839,10 +848,13 @@ fn first_obstacle_time(scene: &Scene, start: Vec3, end: Vec3, radius: f32) -> Op
         .map(|hit| hit.hit.time_of_impact.clamp(0.0, 1.0))
 }
 
+/// Damages `target` by `damage` and, when the hit kills it, records the kill
+/// for `shooter`.
 fn apply_projectile_damage(
     scene: &mut engine::scene::Scene,
     target: engine::scene::GameObject,
     damage: f32,
+    shooter: Option<engine::scene::GameObject>,
 ) {
     if scene
         .read_component::<ComponentRespawnState, _, _>(target, |state| state.is_gameplay_locked())
@@ -852,13 +864,20 @@ fn apply_projectile_damage(
     }
 
     let mut died = false;
+    let mut killed = false;
     let mut should_destroy = false;
     let damaged_health = scene
         .write_component::<ComponentHealth, _>(target, |health| {
+            let was_dead = health.dead;
             died = health.apply_damage(damage);
+            killed = died && !was_dead;
             should_destroy = died && health.destroy_on_death;
         })
         .is_some();
+    if killed {
+        let event = KillEvent::new(scene, shooter, target);
+        record_kill(scene, &event);
+    }
 
     if !damaged_health {
         let _ = scene.write_component::<ComponentProjectileTarget, _>(target, |target| {
@@ -982,6 +1001,7 @@ mod tests {
         yaw_rotation, ComponentHealth, ComponentProjectile, ComponentProjectileTarget,
         ComponentTankController,
     };
+    use crate::combat::{ComponentCombatStats, ComponentKillFeed};
     use crate::spawn::{update_respawn_state, ComponentRespawnState, ComponentSpawnPoint};
     use engine::component::{
         ColliderShape, ComponentCollider, ComponentID, ComponentRigidBody, ComponentTransform,
@@ -1594,7 +1614,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(spawn_projectile(&mut scene, &controller));
+        assert!(spawn_projectile(&mut scene, barrel, &controller));
 
         let projectile = scene
             .objects()
@@ -1670,6 +1690,7 @@ mod tests {
                 damage: 25.0,
                 lifetime_remaining: 1.0,
                 radius: 0.1,
+                ..Default::default()
             },
         );
 
@@ -1717,6 +1738,7 @@ mod tests {
                 damage: 25.0,
                 lifetime_remaining: 1.0,
                 radius: 0.1,
+                ..Default::default()
             },
         );
         let target = scene.create(None, None);
@@ -1758,6 +1780,7 @@ mod tests {
                 damage: 25.0,
                 lifetime_remaining: 1.0,
                 radius: 0.1,
+                ..Default::default()
             },
         );
         scene.prepare();
@@ -1786,6 +1809,7 @@ mod tests {
                 damage: 25.0,
                 lifetime_remaining: 0.5,
                 radius: 0.1,
+                ..Default::default()
             },
         );
         scene.prepare();
@@ -1812,6 +1836,75 @@ mod tests {
     }
 
     #[test]
+    fn lethal_projectile_hit_records_the_kill_for_its_shooter() {
+        let mut scene = engine::test_support::test_scene();
+        let tank = scene.create(
+            Some(ComponentID {
+                name: "Tank".to_string(),
+                ..Default::default()
+            }),
+            None,
+        );
+        scene.add_component(tank, ComponentCombatStats::default());
+        scene.add_component(tank, ComponentKillFeed::default());
+        let target = scene.create(
+            Some(ComponentID {
+                name: "Target A".to_string(),
+                ..Default::default()
+            }),
+            None,
+        );
+        scene.set_world_transform(target, Transform::from_xyz(0.0, 0.0, 5.0).matrix());
+        scene.add_component(target, ComponentProjectileTarget::default());
+        scene.add_component(
+            target,
+            ComponentHealth {
+                current_health: 40.0,
+                max_health: 40.0,
+                destroy_on_death: true,
+                ..Default::default()
+            },
+        );
+        let fire = |scene: &mut engine::scene::Scene, damage: f32| {
+            let projectile = scene.create(None, None);
+            scene.add_component(
+                projectile,
+                ComponentProjectile {
+                    direction: vec3(0.0, 0.0, 1.0),
+                    speed: 10.0,
+                    damage,
+                    lifetime_remaining: 1.0,
+                    radius: 0.1,
+                    shooter: GameObjectRef::new(scene.uuid(tank)),
+                },
+            );
+            update_projectile(scene, projectile, 0.5);
+        };
+        let kills = |scene: &engine::scene::Scene| {
+            scene
+                .read_component::<ComponentCombatStats, _, _>(tank, |stats| stats.kills)
+                .unwrap()
+        };
+
+        fire(&mut scene, 25.0);
+        assert_eq!(kills(&scene), 0, "a hit that does not kill is no kill");
+
+        fire(&mut scene, 25.0);
+        assert_eq!(kills(&scene), 1);
+        let feed: Vec<(Option<String>, String)> = scene
+            .read_component::<ComponentKillFeed, _, _>(tank, |feed| {
+                feed.entries()
+                    .map(|entry| (entry.killer.clone(), entry.victim.clone()))
+                    .collect()
+            })
+            .unwrap();
+        assert_eq!(
+            feed,
+            vec![(Some("Tank".to_string()), "Target A".to_string())]
+        );
+    }
+
+    #[test]
     fn lethal_projectile_hit_marks_health_dead_and_can_destroy_target() {
         let mut scene = engine::test_support::test_scene();
         let projectile = scene.create(None, None);
@@ -1823,6 +1916,7 @@ mod tests {
                 damage: 100.0,
                 lifetime_remaining: 1.0,
                 radius: 0.1,
+                ..Default::default()
             },
         );
 
@@ -1872,7 +1966,7 @@ mod tests {
             },
         );
 
-        apply_projectile_damage(&mut scene, player, 40.0);
+        apply_projectile_damage(&mut scene, player, 40.0, None);
 
         assert!(scene
             .read_component::<ComponentHealth, _, _>(player, |health| health.dead)
@@ -1905,7 +1999,7 @@ mod tests {
             },
         );
 
-        apply_projectile_damage(&mut scene, player, 25.0);
+        apply_projectile_damage(&mut scene, player, 25.0, None);
 
         let health = scene
             .read_component::<ComponentHealth, _, _>(player, |health| *health)
@@ -1928,7 +2022,7 @@ mod tests {
             },
         );
 
-        apply_projectile_damage(&mut scene, player, 25.0);
+        apply_projectile_damage(&mut scene, player, 25.0, None);
 
         let health = scene
             .read_component::<ComponentHealth, _, _>(player, |health| *health)
