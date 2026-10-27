@@ -10,6 +10,9 @@ use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::math::Transform;
 use crate::render::asset_render_state::AssetRenderState;
+use crate::render::postprocess::{
+    ChainPlan, ChainTargets, PostProcessChain, PostProcessSettings, TonemapPass,
+};
 use crate::render::render_utils::RenderUtils;
 use crate::render::{
     Camera, GizmoRenderer, GridRenderer, LightManager, MeshRenderDefaults, MeshRenderTargets,
@@ -187,7 +190,6 @@ struct CompletedObjectPick {
 
 struct SceneRendererAssets {
     cube: Ref<Mesh>,
-    screen_space_quad: Ref<Mesh>,
     black_texture_2d: Ref<Texture>,
     black_texture_cube: Ref<Texture>,
     white_texture: Ref<Texture>,
@@ -202,6 +204,10 @@ pub struct SceneRenderer {
     scene_texture: Texture,
     scene_depth_texture: Texture,
     scene_texture_msaa: Texture,
+    /// Single-sample resolve of `scene_texture_msaa`, the post-processing
+    /// chain's input. `None` at one sample, where the scene target is
+    /// single-sample and is the input itself.
+    hdr_resolved: Option<Texture>,
     scene_object_id_texture: Texture,
     scene_object_id_depth_texture: Texture,
     scene_object_id_readback: wgpu::Buffer,
@@ -223,6 +229,9 @@ pub struct SceneRenderer {
     selected_game_object: Option<Uuid>,
     hovered_game_object: Option<Uuid>,
     sky_light_intensity: f32,
+    post_process: PostProcessChain,
+    post_process_settings: PostProcessSettings,
+    last_post_process_plan: ChainPlan,
 }
 
 /// Instance index of the next skinned draw in a mesh's shared bone buffer, or `None` for a mesh without bones.
@@ -286,6 +295,12 @@ impl SceneRenderer {
             height,
             options.samples,
         );
+        let hdr_resolved = Self::create_hdr_resolved(
+            context.render_context.clone(),
+            width,
+            height,
+            options.samples,
+        );
         let scene_object_id_readback = Self::create_object_id_readback_buffer(device);
 
         let mesh_renderer = MeshRenderer::new(context)?;
@@ -302,15 +317,13 @@ impl SceneRenderer {
         let gizmo_renderer = GizmoRenderer::new(context, &camera_uniform_buffer, options.samples)?;
         let outline_renderer = OutlineRenderer::new(context)?;
         let particle_renderer = ParticleRenderer::new(context)?;
+        let mut post_process = PostProcessChain::new(context)?;
+        post_process.push(Box::new(TonemapPass::new(context)?));
 
         // Default assets
         let cube = SceneRendererError::load::<Mesh>(context, "meshes/cube")?;
         let white_texture = SceneRendererError::load::<Texture>(context, "textures/white")?;
         let asset_registry = context.registries.assets.read();
-        let screen_space_quad = SceneRendererError::require(
-            asset_registry.screen_space_quad(),
-            AssetRegistry::SCREEN_SPACE_QUAD,
-        )?;
         let black_texture_2d = SceneRendererError::require(
             asset_registry.black_texture_2d(),
             AssetRegistry::BLACK_TEXTURE_2D,
@@ -325,13 +338,13 @@ impl SceneRenderer {
             asset_context: context.clone(),
             default_assets: SceneRendererAssets {
                 cube,
-                screen_space_quad,
                 black_texture_2d,
                 black_texture_cube,
                 white_texture,
             },
             options,
             scene_texture_msaa,
+            hdr_resolved,
             scene_texture,
             scene_depth_texture,
             scene_object_id_texture,
@@ -355,6 +368,9 @@ impl SceneRenderer {
             selected_game_object: None,
             hovered_game_object: None,
             sky_light_intensity: 0.0,
+            post_process,
+            post_process_settings: Default::default(),
+            last_post_process_plan: Default::default(),
         })
     }
 
@@ -417,6 +433,7 @@ impl SceneRenderer {
             })])
             .build();
         self.build_asset_data(&render_context, scene);
+        self.post_process_settings = PostProcessSettings::resolve(scene);
         if self.options.gizmos {
             let object_id_lookup = &mut self.object_id_lookup;
             let object_ids_build = &mut self.object_ids_build;
@@ -506,9 +523,7 @@ impl SceneRenderer {
         );
         if self.options.grid {
             self.grid_renderer.render(
-                &render_context,
                 &mut encoder,
-                &self.default_assets.screen_space_quad,
                 &self.scene_texture_msaa,
                 &self.scene_depth_texture,
                 self.options.samples,
@@ -539,20 +554,54 @@ impl SceneRenderer {
         queue.submit(Some(encoder.finish()));
     }
 
-    /// Applies the current outline state and resolves the scene texture for presentation.
+    /// Applies the current outline state, resolves the scene and runs the
+    /// post-processing chain into the scene texture for presentation.
     ///
-    /// Call it once after each [`Self::render_scene_base`]: above one sample the
-    /// resolve discards the multisampled surface.
+    /// The chain uses the settings [`Self::render_scene_base`] resolved from
+    /// its scene. Call it once after each [`Self::render_scene_base`]: above
+    /// one sample the resolve discards the multisampled surface.
     pub fn finalize_scene(&mut self) {
         let render_context = self.asset_context.render_context.clone();
         let device = render_context.device();
         let queue = render_context.queue();
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("scene_outline_encoder"),
+            label: Some("scene_finalize_encoder"),
         });
         self.render_outline_to_scene(&render_context, &mut encoder);
-        Self::resolve_scene_texture(&self.scene_texture_msaa, &self.scene_texture, &mut encoder);
+        let source = match &self.hdr_resolved {
+            Some(hdr_resolved) => {
+                Self::resolve_scene_texture(&self.scene_texture_msaa, hdr_resolved, &mut encoder);
+                hdr_resolved
+            }
+            None => &self.scene_texture_msaa,
+        };
+        self.last_post_process_plan = self.post_process.run(
+            &render_context,
+            &mut encoder,
+            &self.post_process_settings,
+            ChainTargets {
+                source,
+                output: &self.scene_texture,
+                depth: &self.scene_depth_texture,
+            },
+        );
         queue.submit(Some(encoder.finish()));
+    }
+
+    /// The post-processing settings the last [`Self::render_scene_base`]
+    /// resolved from its scene.
+    pub fn post_process_settings(&self) -> &PostProcessSettings {
+        &self.post_process_settings
+    }
+
+    /// The post-processing chain this renderer runs.
+    pub fn post_process(&self) -> &PostProcessChain {
+        &self.post_process
+    }
+
+    /// The plan the last [`Self::finalize_scene`] ran.
+    pub fn last_post_process_plan(&self) -> &ChainPlan {
+        &self.last_post_process_plan
     }
 
     fn build_draw_list(&mut self) -> Vec<(AssetId, AssetId, AssetId, Range<u32>)> {
@@ -674,7 +723,6 @@ impl SceneRenderer {
         self.outline_renderer.render(
             render_context,
             encoder,
-            &self.default_assets.screen_space_quad,
             &self.scene_texture_msaa,
             &self.scene_object_id_texture,
             self.options.samples,
@@ -781,10 +829,6 @@ impl SceneRenderer {
                 .meshes
                 .entry(self.default_assets.cube.id())
                 .or_insert(self.default_assets.cube.clone());
-            self.assets
-                .meshes
-                .entry(self.default_assets.screen_space_quad.id())
-                .or_insert(self.default_assets.screen_space_quad.clone());
             skybox = Some(skybox_id);
             sky_light_intensity = intensity.max(0.0);
         }
@@ -806,10 +850,6 @@ impl SceneRenderer {
                 .meshes
                 .entry(self.default_assets.cube.id())
                 .or_insert(self.default_assets.cube.clone());
-            self.assets
-                .meshes
-                .entry(self.default_assets.screen_space_quad.id())
-                .or_insert(self.default_assets.screen_space_quad.clone());
             skybox = Some(skybox_id);
             sky_light_intensity = c_sky_light.intensity.max(0.0);
         }
@@ -1144,7 +1184,9 @@ impl SceneRenderer {
                 sample_count: samples,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Depth32Float,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                // Post-processing passes that read depth bind it.
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             },
             None,
@@ -1243,50 +1285,64 @@ impl SceneRenderer {
         );
     }
 
-    /// Resolves the scene color into the single-sample `scene_texture`.
-    ///
-    /// A multisampled texture cannot be the source of a texture copy, so above
-    /// one sample the resolve runs as a render pass whose resolve target is the
-    /// scene texture. At one sample the two textures match and a copy suffices.
+    /// Resolves the multisampled scene color into the single-sample
+    /// `hdr_resolved`, through a render pass whose resolve target it is: a
+    /// multisampled texture cannot be the source of a texture copy.
     fn resolve_scene_texture(
         scene_texture_msaa: &Texture,
-        scene_texture: &Texture,
+        hdr_resolved: &Texture,
         encoder: &mut wgpu::CommandEncoder,
     ) {
-        if scene_texture_msaa.descriptor.sample_count > 1 {
-            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Scene Resolve"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &scene_texture_msaa.view,
-                    resolve_target: Some(&scene_texture.view),
-                    // This is the multisampled surface's last use: the next
-                    // `render_scene_base` clears it, so only the resolve is kept.
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Discard,
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Scene Resolve"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &scene_texture_msaa.view,
+                resolve_target: Some(&hdr_resolved.view),
+                // This is the multisampled surface's last use: the next
+                // `render_scene_base` clears it, so only the resolve is kept.
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Discard,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+    }
+
+    /// The single-sample resolve target of a `samples`-sample scene, or
+    /// `None` at one sample, where the scene target is single-sample already.
+    fn create_hdr_resolved(
+        render_context: Arc<RenderContext>,
+        width: u32,
+        height: u32,
+        samples: u32,
+    ) -> Option<Texture> {
+        (samples > 1).then(|| {
+            Texture::new(
+                render_context,
+                &wgpu::TextureDescriptor {
+                    label: Some("scene_hdr_resolved"),
+                    size: wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
                     },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            return;
-        }
-        encoder.copy_texture_to_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &scene_texture_msaa.texture,
-                mip_level: 0,
-                origin: Default::default(),
-                aspect: Default::default(),
-            },
-            wgpu::TexelCopyTextureInfo {
-                texture: &scene_texture.texture,
-                mip_level: 0,
-                origin: Default::default(),
-                aspect: Default::default(),
-            },
-            scene_texture.descriptor.size,
-        );
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    usage: wgpu::TextureUsages::COPY_SRC
+                        | wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                },
+                None,
+                None,
+                false,
+            )
+        })
     }
 
     /// Resizes the internal scene color and depth textures.
@@ -1316,6 +1372,13 @@ impl SceneRenderer {
             height,
             self.options.samples,
         );
+        self.hdr_resolved = Self::create_hdr_resolved(
+            self.asset_context.render_context.clone(),
+            width,
+            height,
+            self.options.samples,
+        );
+        self.post_process.clear_targets();
     }
 }
 
@@ -1388,7 +1451,7 @@ impl TextureReadback {
     }
 }
 
-fn half_to_f32(half: u16) -> f32 {
+pub(crate) fn half_to_f32(half: u16) -> f32 {
     let sign = (half >> 15) as u32;
     let exponent = ((half >> 10) & 0x1f) as u32;
     let fraction = (half & 0x3ff) as u32;
@@ -1409,7 +1472,7 @@ fn half_to_f32(half: u16) -> f32 {
     f32::from_bits(bits)
 }
 
-fn linear_to_srgb(value: f32) -> u8 {
+pub(crate) fn linear_to_srgb(value: f32) -> u8 {
     let value = value.clamp(0.0, 1.0);
     let encoded = if value <= 0.003_130_8 {
         value * 12.92
@@ -1611,14 +1674,16 @@ mod tests {
 
         let (x, y) = project(&camera, &transform, left, SIZE);
         let pixel = image.get_pixel(x, y);
+        // ACES desaturates pure primaries a little, so only the dominant
+        // channel tells the two systems apart.
         assert!(
-            pixel[0] > 200 && pixel[1] < 50,
+            pixel[0] > 200 && pixel[0] > pixel[1] + 100,
             "the red system should draw its particle on the left, got {pixel:?}"
         );
         let (x, y) = project(&camera, &transform, right, SIZE);
         let pixel = image.get_pixel(x, y);
         assert!(
-            pixel[1] > 200 && pixel[0] < 50,
+            pixel[1] > 200 && pixel[1] > pixel[0] + 100,
             "the green system should draw its particle on the right, got {pixel:?}"
         );
     }
@@ -2220,7 +2285,12 @@ mod tests {
         // a grey; a copy keeps a single sample's black or white.
         let background = image.get_pixel(0, 0)[0];
         let cube = image.get_pixel(SIZE / 2, SIZE / 2)[0];
-        assert_eq!(background, 255, "the corner should keep the clear color");
+        // White through the default ACES curve, which maps 1.0 to about 0.619.
+        let white = linear_to_srgb(0.619);
+        assert!(
+            background.abs_diff(white) <= 1,
+            "the corner should keep the tone-mapped clear color {white}, got {background}"
+        );
         assert!(cube < 128, "the cube should cover the center, got {cube}");
         let edge_pixels = image
             .pixels()

@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "91ccac37-2898-4e29-9a46-e38ab196e4e3",
+    "name": "shaders/postprocess/tonemap",
+    "display_name": "tonemap",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

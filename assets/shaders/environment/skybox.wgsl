@@ -34,19 +34,13 @@ fn vs_main(in: VertexIn) -> VertexOut {
     return out;
 }
 
-fn tone_map_exposure(color: vec3f, exposure: f32) -> vec3f {
-    let gamma = 0.9;
-    var result = vec3f(1.0) - exp(-color * exposure);
-    result = pow(result, vec3f(1.0 / gamma));
-    return result;
-}
-
 @fragment
 fn fs_main(in: VertexOut) -> FragmentOut {
     var out: FragmentOut;
     let uvw = normalize(in.uvw);
     let color = textureSample(skybox_texture, skybox_sampler, uvw).rgb;
-    out.color = vec4f(tone_map_exposure(color, 0.5), 1.0);
+    // Linear HDR radiance: the post-processing chain tone maps it.
+    out.color = vec4f(color, 1.0);
     out.depth = 0.9999999;
     return out;
 }
