@@ -53,17 +53,16 @@ impl GridRenderer {
             "Scene Grid",
         );
 
-        let options = PipelineOptions {
-            samples,
-            depth_stencil: Some(wgpu::DepthStencilState {
+        let options = PipelineOptions::fullscreen_builder()
+            .samples(samples)
+            .target(RenderUtils::color_alpha_blending(
+                scene_texture_msaa.descriptor.format,
+            ))
+            .depth_stencil(wgpu::DepthStencilState {
                 depth_write_enabled: false,
                 ..RenderUtils::depth_default(wgpu::TextureFormat::Depth32Float)
-            }),
-            fragment_targets: vec![Some(RenderUtils::color_alpha_blending(
-                scene_texture_msaa.descriptor.format,
-            ))],
-            ..PipelineOptions::fullscreen()
-        };
+            })
+            .build();
         render_pass.set_pipeline(&shader.pipeline(&options));
         render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
         RenderUtils::draw_fullscreen(&mut render_pass);

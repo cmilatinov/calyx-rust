@@ -75,12 +75,11 @@ impl PostProcessPass for TonemapPass {
 
     fn record(&mut self, context: &PassContext, encoder: &mut wgpu::CommandEncoder, io: PassIo) {
         let shader = self.shader.read();
-        let pipeline = shader.pipeline(&PipelineOptions {
-            fragment_targets: vec![Some(RenderUtils::color_default(
-                io.output.descriptor.format,
-            ))],
-            ..PipelineOptions::fullscreen()
-        });
+        let pipeline = shader.pipeline(
+            &PipelineOptions::fullscreen_builder()
+                .target(RenderUtils::color_default(io.output.descriptor.format))
+                .build(),
+        );
         let layout = shader.bind_group_layouts[0].clone();
         drop(shader);
         let device = context.render_context.device();

@@ -80,18 +80,82 @@ pub struct PipelineOptions {
     pub(crate) vertex_layouts: Vec<VertexLayout>,
 }
 
-impl PipelineOptions {
-    /// Base options of a full-screen draw: the triangle of
-    /// `shaders/fullscreen.wgsl`, drawn by
-    /// [`RenderUtils::draw_fullscreen`] from no vertex buffers. Culling is
-    /// off since the triangle winds clockwise. It has no color targets and
-    /// no depth; callers add theirs with struct update syntax.
-    pub fn fullscreen() -> Self {
+/// Pipeline options of a draw of `shaders/fullscreen.wgsl`'s triangle, which
+/// [`RenderUtils::draw_fullscreen`] draws from no vertex buffers.
+///
+/// Only what a full-screen draw varies is settable: there are no vertex
+/// buffers, culling is off since the triangle winds clockwise, and there is
+/// no depth unless set. It builds into [`PipelineOptions`]; start one with
+/// [`PipelineOptions::fullscreen_builder`].
+#[derive(TypedBuilder)]
+#[builder(build_method(into = PipelineOptions))]
+pub struct FullscreenPipelineOptions {
+    /// The one color target, if any: its format, blending and write mask.
+    /// Without one the draw writes no color.
+    #[builder(default, setter(strip_option))]
+    target: Option<wgpu::ColorTargetState>,
+    /// Depth attachment format and how fragments test against and write
+    /// depth. Defaults to `None`, for a pass without a depth attachment.
+    #[builder(default, setter(strip_option))]
+    depth_stencil: Option<wgpu::DepthStencilState>,
+    /// MSAA sample count, as [`PipelineOptions`]' `samples`.
+    #[builder(default = 1)]
+    samples: u32,
+}
+
+impl From<FullscreenPipelineOptions> for PipelineOptions {
+    fn from(options: FullscreenPipelineOptions) -> Self {
         Self::builder()
             .cull_mode(None)
             .vertex_layouts(vec![])
-            .depth_stencil(None)
-            .fragment_targets(vec![])
+            .fragment_targets(options.target.into_iter().map(Some).collect())
+            .depth_stencil(options.depth_stencil)
+            .samples(options.samples)
             .build()
+    }
+}
+
+impl PipelineOptions {
+    /// Starts the options of a full-screen draw, which can set only its color
+    /// target, depth and sample count. See [`FullscreenPipelineOptions`].
+    pub fn fullscreen_builder() -> FullscreenPipelineOptionsBuilder {
+        FullscreenPipelineOptions::builder()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fullscreen_builder_matches_the_equivalent_pipeline_options() {
+        let target = RenderUtils::color_alpha_blending(wgpu::TextureFormat::Rgba16Float);
+        let depth = wgpu::DepthStencilState {
+            depth_write_enabled: false,
+            ..RenderUtils::depth_default(wgpu::TextureFormat::Depth32Float)
+        };
+        let built = PipelineOptions::fullscreen_builder()
+            .samples(4)
+            .target(target.clone())
+            .depth_stencil(depth.clone())
+            .build();
+        let expected = PipelineOptions::builder()
+            .cull_mode(None)
+            .vertex_layouts(vec![])
+            .fragment_targets(vec![Some(target)])
+            .depth_stencil(Some(depth))
+            .samples(4)
+            .build();
+        assert_eq!(built, expected);
+    }
+
+    #[test]
+    fn fullscreen_builder_defaults_to_no_depth_culling_or_vertex_layouts() {
+        let options = PipelineOptions::fullscreen_builder().build();
+        assert_eq!(options.depth_stencil, None);
+        assert_eq!(options.cull_mode, None);
+        assert!(options.vertex_layouts.is_empty());
+        assert!(options.fragment_targets.is_empty());
+        assert_eq!(options.samples, 1);
     }
 }

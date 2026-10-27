@@ -99,13 +99,12 @@ impl OutlineRenderer {
         }
 
         let shader = self.shader.read();
-        let options = PipelineOptions {
-            samples,
-            fragment_targets: vec![Some(RenderUtils::color_alpha_blending(
+        let options = PipelineOptions::fullscreen_builder()
+            .samples(samples)
+            .target(RenderUtils::color_alpha_blending(
                 scene_texture_msaa.descriptor.format,
-            ))],
-            ..PipelineOptions::fullscreen()
-        };
+            ))
+            .build();
         let pipeline = shader.pipeline(&options);
         let bind_group_layout = shader.bind_group_layouts[0].clone();
         drop(shader);
@@ -226,12 +225,11 @@ mod tests {
         let renderer =
             OutlineRenderer::new(&read_only_context).expect("outline renderer should load");
         let shader = renderer.shader.read();
-        let options = crate::render::PipelineOptions {
-            fragment_targets: vec![Some(RenderUtils::color_alpha_blending(
+        let options = crate::render::PipelineOptions::fullscreen_builder()
+            .target(RenderUtils::color_alpha_blending(
                 TextureFormat::Rgba16Float,
-            ))],
-            ..crate::render::PipelineOptions::fullscreen()
-        };
+            ))
+            .build();
         let pipeline = shader.pipeline(&options);
         assert_eq!(shader.pipeline(&options), pipeline);
     }

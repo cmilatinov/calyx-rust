@@ -304,10 +304,11 @@ impl Texture {
         let device = context.render_context.device();
         let queue = context.render_context.queue();
         let mip_shader = mip_shader_ref.read();
-        let pipeline = mip_shader.pipeline(&PipelineOptions {
-            fragment_targets: vec![Some(RenderUtils::color_default(self.descriptor.format))],
-            ..PipelineOptions::fullscreen()
-        });
+        let pipeline = mip_shader.pipeline(
+            &PipelineOptions::fullscreen_builder()
+                .target(RenderUtils::color_default(self.descriptor.format))
+                .build(),
+        );
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("texture_mip_encoder"),
         });
