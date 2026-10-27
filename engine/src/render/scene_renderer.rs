@@ -26,7 +26,7 @@ use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use legion::{Entity, IntoQuery};
 use nalgebra_glm as glm;
-use nalgebra_glm::{Mat4, Vec3};
+use nalgebra_glm::Mat4;
 use rapier3d::pipeline::DebugRenderPipeline;
 use std::collections::{HashMap, HashSet};
 use std::default::Default;
@@ -81,8 +81,8 @@ pub struct SceneRendererOptions {
 }
 
 /// Lighting a view supplies itself instead of taking it from the scene: an
-/// environment map for image-based lighting, whether to draw it as the sky,
-/// and directional lights added to the scene's own.
+/// environment map for image-based lighting, and whether to draw it as the
+/// sky.
 #[derive(Clone)]
 pub struct SceneEnvironment {
     /// The environment map that lights the scene.
@@ -92,19 +92,6 @@ pub struct SceneEnvironment {
     /// Whether to draw the environment map behind the scene. When `false`
     /// the clear color shows where nothing is drawn.
     pub draw_sky: bool,
-    /// Directional lights added to the scene's own.
-    pub directional_lights: Vec<EnvironmentLight>,
-}
-
-/// A directional light a [`SceneEnvironment`] adds to a view.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct EnvironmentLight {
-    /// World-space direction the light travels in.
-    pub direction: Vec3,
-    /// Linear light color.
-    pub color: [f32; 3],
-    /// Light intensity.
-    pub intensity: f32,
 }
 
 impl Default for SceneRendererOptions {
@@ -456,14 +443,7 @@ impl SceneRenderer {
         self.finish_object_ids();
         let draw_list = self.build_draw_list();
         self.build_mesh_data(&render_context);
-        let environment_lights = self
-            .options
-            .environment
-            .as_ref()
-            .map(|environment| environment.directional_lights.as_slice())
-            .unwrap_or_default();
-        self.light_manager
-            .build_data(&render_context, scene, environment_lights);
+        self.light_manager.build_data(&render_context, scene);
         // Compute the skybox's environment maps before the meshes that are lit
         // by them and the skybox pass that draws its cubemap.
         self.skybox_renderer
