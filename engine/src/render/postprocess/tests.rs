@@ -52,7 +52,7 @@ impl StubPass {
             name,
             stage,
             enabled: true,
-            inputs: PassInputs::NONE,
+            inputs: PassInputs::empty(),
         })
     }
 }
@@ -136,34 +136,25 @@ fn disabled_passes_and_passes_without_their_inputs_are_left_out() {
         name: "disabled",
         stage: PostProcessStage::Hdr,
         enabled: false,
-        inputs: PassInputs::NONE,
+        inputs: PassInputs::empty(),
     });
     let normals = Box::new(StubPass {
         name: "ssao",
         stage: PostProcessStage::Hdr,
         enabled: true,
-        inputs: PassInputs {
-            normals: true,
-            ..PassInputs::NONE
-        },
+        inputs: SceneInput::Normals.into(),
     });
     let velocity = Box::new(StubPass {
         name: "motion_blur",
         stage: PostProcessStage::Hdr,
         enabled: true,
-        inputs: PassInputs {
-            velocity: true,
-            ..PassInputs::NONE
-        },
+        inputs: SceneInput::Velocity.into(),
     });
     let depth = Box::new(StubPass {
         name: "fog",
         stage: PostProcessStage::Hdr,
         enabled: true,
-        inputs: PassInputs {
-            depth: true,
-            ..PassInputs::NONE
-        },
+        inputs: SceneInput::Depth.into(),
     });
     let passes: Vec<Box<dyn PostProcessPass>> = vec![
         disabled,
@@ -447,7 +438,7 @@ impl AffinePass {
         Box::new(Self {
             name,
             stage,
-            inputs: PassInputs::NONE,
+            inputs: PassInputs::empty(),
             scale,
             offset,
             pipeline,
@@ -457,7 +448,7 @@ impl AffinePass {
     }
 
     fn reading_depth(mut self: Box<Self>) -> Box<Self> {
-        self.inputs.depth = true;
+        self.inputs |= SceneInput::Depth;
         self
     }
 }

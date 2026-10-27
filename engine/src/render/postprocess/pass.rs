@@ -4,6 +4,7 @@ use super::PostProcessSettings;
 use crate::assets::texture::Texture;
 use crate::render::RenderContext;
 use egui_wgpu::wgpu;
+use enumflags2::{bitflags, make_bitflags, BitFlags};
 use std::fmt;
 
 /// Where a pass runs in the chain. Passes run in stage order, then in the
@@ -19,14 +20,16 @@ pub enum PostProcessStage {
 }
 
 /// A scene input besides the color a pass reads.
+#[bitflags]
+#[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SceneInput {
     /// Scene depth, single-sample.
-    Depth,
-    /// View-space normals.
-    Normals,
-    /// Screen-space motion vectors.
-    Velocity,
+    Depth = 0b001,
+    /// View-space normals. Not produced yet.
+    Normals = 0b010,
+    /// Screen-space motion vectors. Not produced yet.
+    Velocity = 0b100,
 }
 
 impl fmt::Display for SceneInput {
@@ -41,41 +44,20 @@ impl fmt::Display for SceneInput {
 
 /// The scene inputs a pass reads besides color. The chain builds each one
 /// only when an enabled pass asks for it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct PassInputs {
-    /// Single-sample scene depth.
-    pub depth: bool,
-    /// View-space normals. Not produced yet.
-    pub normals: bool,
-    /// Screen-space motion vectors. Not produced yet.
-    pub velocity: bool,
-}
+pub type PassInputs = BitFlags<SceneInput>;
 
-impl PassInputs {
-    /// No input besides color.
-    pub const NONE: Self = Self {
-        depth: false,
-        normals: false,
-        velocity: false,
-    };
+/// The scene inputs the renderer produces.
+pub const PRODUCED_INPUTS: PassInputs = make_bitflags!(SceneInput::{Depth});
 
-    /// Checks these inputs against what the renderer produces, and reports
-    /// the first one it does not.
-    pub fn check(&self, pass: &str) -> Result<(), PostProcessError> {
-        let unavailable = if self.normals {
-            Some(SceneInput::Normals)
-        } else if self.velocity {
-            Some(SceneInput::Velocity)
-        } else {
-            None
-        };
-        match unavailable {
-            Some(input) => Err(PostProcessError::InputUnavailable {
-                pass: pass.to_string(),
-                input,
-            }),
-            None => Ok(()),
-        }
+/// Checks the inputs `pass` reads against what the renderer produces, and
+/// reports the first one it does not.
+pub fn check_inputs(pass: &str, inputs: PassInputs) -> Result<(), PostProcessError> {
+    match (inputs & !PRODUCED_INPUTS).iter().next() {
+        Some(input) => Err(PostProcessError::InputUnavailable {
+            pass: pass.to_string(),
+            input,
+        }),
+        None => Ok(()),
     }
 }
 
@@ -122,7 +104,7 @@ pub trait PostProcessPass: Send + Sync {
 
     /// The scene inputs the pass reads besides color.
     fn inputs(&self) -> PassInputs {
-        PassInputs::NONE
+        PassInputs::empty()
     }
 
     /// Whether the pass runs this frame.

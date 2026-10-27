@@ -1,8 +1,8 @@
 //! The ordered chain of post-processing passes.
 
 use super::{
-    DepthResolve, PassContext, PassIo, PostProcessError, PostProcessPass, PostProcessSettings,
-    TargetKey, TargetPool,
+    check_inputs, DepthResolve, PassContext, PassIo, PostProcessError, PostProcessPass,
+    PostProcessSettings, SceneInput, TargetKey, TargetPool,
 };
 use crate::assets::texture::Texture;
 use crate::context::ReadOnlyAssetContext;
@@ -59,9 +59,9 @@ impl ChainPlan {
                 continue;
             }
             let inputs = pass.inputs();
-            match inputs.check(pass.name()) {
+            match check_inputs(pass.name(), inputs) {
                 Ok(()) => {
-                    plan.depth |= inputs.depth;
+                    plan.depth |= inputs.contains(SceneInput::Depth);
                     running.push(index);
                 }
                 Err(error) => plan.skipped.push(error),
@@ -206,7 +206,11 @@ impl PostProcessChain {
             let io = PassIo {
                 input: texture(planned.input),
                 output: texture(planned.output),
-                depth: pass.inputs().depth.then_some(depth).flatten(),
+                depth: pass
+                    .inputs()
+                    .contains(SceneInput::Depth)
+                    .then_some(depth)
+                    .flatten(),
             };
             pass.record(&context, encoder, io);
         }

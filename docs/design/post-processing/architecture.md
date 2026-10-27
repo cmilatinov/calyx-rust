@@ -64,7 +64,10 @@ Textures are still uploaded as `Rgba8Unorm`, so albedo maps are sampled without 
 ```rust
 pub enum PostProcessStage { Hdr, Tonemap, Ldr }
 
-pub struct PassInputs { pub depth: bool, pub normals: bool, pub velocity: bool }
+#[bitflags]
+#[repr(u8)]
+pub enum SceneInput { Depth = 0b001, Normals = 0b010, Velocity = 0b100 }
+pub type PassInputs = BitFlags<SceneInput>;                  // enumflags2
 
 pub trait PostProcessPass {
     fn name(&self) -> &str;
