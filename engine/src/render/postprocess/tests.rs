@@ -777,7 +777,7 @@ fn the_enabled_volume_with_the_highest_priority_is_selected() {
     ];
     let selection = select_volume(&volumes);
     assert_eq!(selection.settings.tonemapping.exposure_ev, 3.0);
-    assert!(!selection.tied);
+    assert_eq!(selection.tie, None);
 }
 
 #[test]
@@ -789,7 +789,7 @@ fn a_priority_tie_selects_the_first_found_and_reports_it() {
     ];
     let selection = select_volume(&volumes);
     assert_eq!(selection.settings.tonemapping.exposure_ev, 1.0);
-    assert!(selection.tied);
+    assert_eq!(selection.tie, Some(2));
 
     // A higher priority after a tie wins outright.
     let volumes = [
@@ -799,7 +799,7 @@ fn a_priority_tie_selects_the_first_found_and_reports_it() {
     ];
     let selection = select_volume(&volumes);
     assert_eq!(selection.settings.tonemapping.exposure_ev, 3.0);
-    assert!(!selection.tied);
+    assert_eq!(selection.tie, None);
 }
 
 #[test]
@@ -810,6 +810,7 @@ fn no_enabled_volume_selects_the_default_settings() {
     );
     let selection = select_volume(&[volume(false, 5, 4.0)]);
     assert_eq!(selection.settings, PostProcessSettings::default());
+    assert_eq!(selection.tie, None);
     let default = PostProcessSettings::default().tonemapping;
     assert_eq!(default.preset, TonemappingPreset::Aces);
     assert_eq!(default.exposure_ev, 0.0);

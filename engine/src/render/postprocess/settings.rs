@@ -73,12 +73,12 @@ impl TonemappingPreset {
     }
 }
 
-/// The settings [`select_volume`] picked, and whether a priority tie made it
-/// pick the first of several.
+/// The settings [`select_volume`] picked, and the priority several enabled
+/// volumes tied at when it had to pick the first of them.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct VolumeSelection {
     pub settings: PostProcessSettings,
-    pub tied: bool,
+    pub tie: Option<i32>,
 }
 
 /// Picks the enabled volume with the highest priority, the first found on a
@@ -87,20 +87,20 @@ pub(crate) fn select_volume<'a>(
     volumes: impl IntoIterator<Item = &'a ComponentGlobalPostProcessVolume>,
 ) -> VolumeSelection {
     let mut selected: Option<&ComponentGlobalPostProcessVolume> = None;
-    let mut tied = false;
+    let mut tie = None;
     for volume in volumes.into_iter().filter(|volume| volume.enabled) {
         match selected {
             Some(best) if volume.priority < best.priority => {}
-            Some(best) if volume.priority == best.priority => tied = true,
+            Some(best) if volume.priority == best.priority => tie = Some(best.priority),
             _ => {
                 selected = Some(volume);
-                tied = false;
+                tie = None;
             }
         }
     }
     VolumeSelection {
         settings: selected.map(|volume| volume.settings).unwrap_or_default(),
-        tied,
+        tie,
     }
 }
 
@@ -109,15 +109,8 @@ impl PostProcessSettings {
     /// picks them. Warns once per priority on a tie.
     pub fn resolve(scene: &Scene) -> Self {
         let mut query = <&ComponentGlobalPostProcessVolume>::query();
-        let volumes: Vec<_> = query.iter(scene.world()).collect();
-        let selection = select_volume(volumes.iter().copied());
-        if selection.tied {
-            let priority = volumes
-                .iter()
-                .filter(|volume| volume.enabled)
-                .map(|volume| volume.priority)
-                .max()
-                .unwrap_or_default();
+        let selection = select_volume(query.iter(scene.world()));
+        if let Some(priority) = selection.tie {
             crate::logging::warn_once(format!("post-process-volume-tie:{priority}"), || {
                 format!(
                     "Several enabled global post-process volumes share priority {priority}; \
