@@ -96,6 +96,7 @@ fn a_single_pass_reads_the_source_and_writes_the_output() {
 
 #[test]
 fn passes_between_source_and_output_ping_pong_two_pool_targets() {
+    use IntermediateSlot::*;
     use PassTarget::*;
     let passes: Vec<_> = (0..4)
         .map(|_| StubPass::boxed("pass", PostProcessStage::Hdr))
@@ -104,7 +105,7 @@ fn passes_between_source_and_output_ping_pong_two_pool_targets() {
     let plan = ChainPlan::build(&passes[..2], &Default::default());
     assert_eq!(
         targets(&plan),
-        vec![(Source, Intermediate(0)), (Intermediate(0), Output)]
+        vec![(Source, Intermediate(A)), (Intermediate(A), Output)]
     );
     assert_eq!(plan.intermediates, 1);
 
@@ -112,10 +113,10 @@ fn passes_between_source_and_output_ping_pong_two_pool_targets() {
     assert_eq!(
         targets(&plan),
         vec![
-            (Source, Intermediate(0)),
-            (Intermediate(0), Intermediate(1)),
-            (Intermediate(1), Intermediate(0)),
-            (Intermediate(0), Output),
+            (Source, Intermediate(A)),
+            (Intermediate(A), Intermediate(B)),
+            (Intermediate(B), Intermediate(A)),
+            (Intermediate(A), Output),
         ]
     );
     assert_eq!(

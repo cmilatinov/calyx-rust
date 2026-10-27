@@ -10,13 +10,42 @@ use crate::render::{RenderContext, SceneRendererError};
 use egui_wgpu::wgpu;
 use std::sync::Arc;
 
+/// One of the two pool targets the chain alternates between.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IntermediateSlot {
+    /// The first pool target.
+    A,
+    /// The second pool target.
+    B,
+}
+
+impl IntermediateSlot {
+    /// The slot the pass at `position` in the plan writes: A for even
+    /// positions, B for odd ones.
+    fn written_by(position: usize) -> Self {
+        if position % 2 == 0 {
+            Self::A
+        } else {
+            Self::B
+        }
+    }
+
+    /// The slot's index among the acquired pool targets.
+    fn index(self) -> usize {
+        match self {
+            Self::A => 0,
+            Self::B => 1,
+        }
+    }
+}
+
 /// A texture a planned pass reads or writes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PassTarget {
     /// The chain's input: the resolved HDR scene color.
     Source,
-    /// Pool target A (`0`) or B (`1`).
-    Intermediate(usize),
+    /// One of the two pool targets.
+    Intermediate(IntermediateSlot),
     /// The chain's output: the presented scene texture.
     Output,
 }
@@ -77,12 +106,12 @@ impl ChainPlan {
                 input: if position == 0 {
                     PassTarget::Source
                 } else {
-                    PassTarget::Intermediate((position - 1) % 2)
+                    PassTarget::Intermediate(IntermediateSlot::written_by(position - 1))
                 },
                 output: if position + 1 == count {
                     PassTarget::Output
                 } else {
-                    PassTarget::Intermediate(position % 2)
+                    PassTarget::Intermediate(IntermediateSlot::written_by(position))
                 },
             })
             .collect();
@@ -198,7 +227,7 @@ impl PostProcessChain {
         }
         let texture = |target: PassTarget| match target {
             PassTarget::Source => targets.source,
-            PassTarget::Intermediate(slot) => pool.texture(intermediates[slot]),
+            PassTarget::Intermediate(slot) => pool.texture(intermediates[slot.index()]),
             PassTarget::Output => targets.output,
         };
         for planned in &plan.passes {
