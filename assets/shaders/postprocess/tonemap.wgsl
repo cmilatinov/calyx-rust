@@ -1,4 +1,4 @@
-//#include "shaders/postprocess/fullscreen.wgsl"
+//#include "shaders/fullscreen.wgsl"
 
 // Maps linear HDR scene color to display-linear color in [0, 1]. The scene
 // texture holds display-linear color: egui and the readback sRGB-encode it
@@ -43,6 +43,11 @@ fn rrt_and_odt_fit(v: vec3f) -> vec3f {
 fn aces_fitted(color: vec3f) -> vec3f {
     let fitted = ACES_OUTPUT * rrt_and_odt_fit(ACES_INPUT * color);
     return clamp(fitted, vec3f(0.0), vec3f(1.0));
+}
+
+@vertex
+fn vs_main(@builtin(vertex_index) index: u32) -> FullscreenVertexOut {
+    return fullscreen_vertex(index);
 }
 
 @fragment

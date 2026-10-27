@@ -296,28 +296,18 @@ impl Texture {
             return Ok(());
         }
 
-        let (mip_shader_ref, screen_space_quad_ref) = {
-            let asset_registry = context.registries.assets.read();
-            (
-                asset_registry.load::<Shader>("shaders/mip_generator_2d")?,
-                asset_registry
-                    .screen_space_quad()
-                    .ok_or_else(|| AssetError::NotFound.with_source("screen_space_quad"))?,
-            )
-        };
+        let mip_shader_ref = context
+            .registries
+            .assets
+            .read()
+            .load::<Shader>("shaders/mip_generator_2d")?;
         let device = context.render_context.device();
         let queue = context.render_context.queue();
         let mip_shader = mip_shader_ref.read();
-        let mut screen_space_quad = screen_space_quad_ref.write();
-        let options = PipelineOptions::builder()
-            .fragment_targets(vec![Some(wgpu::ColorTargetState {
-                format: self.descriptor.format,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })])
-            .depth_stencil(None)
-            .build();
-        let pipeline = mip_shader.pipeline(&options);
+        let pipeline = mip_shader.pipeline(&PipelineOptions {
+            fragment_targets: vec![Some(RenderUtils::color_default(self.descriptor.format))],
+            ..PipelineOptions::fullscreen()
+        });
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("texture_mip_encoder"),
         });
@@ -345,23 +335,14 @@ impl Texture {
                 ],
             });
             {
-                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("Texture 2D Mip Generation"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &dst_view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
+                let mut render_pass = RenderUtils::fullscreen_pass(
+                    &mut encoder,
+                    &dst_view,
+                    "Texture 2D Mip Generation",
+                );
                 render_pass.set_pipeline(&pipeline);
                 render_pass.set_bind_group(0, &bind_group, &[]);
-                RenderUtils::render_mesh(device, queue, &mut render_pass, &mut screen_space_quad);
+                RenderUtils::draw_fullscreen(&mut render_pass);
             }
             src_view = dst_view;
         }
@@ -507,6 +488,121 @@ impl Drop for Texture {
 #[cfg(test)]
 mod tests {
     use super::Texture;
+    use crate::test_support::TestAssets;
+    use egui_wgpu::wgpu;
+
+    const TOP: [u8; 4] = [255, 0, 0, 255];
+    const BOTTOM: [u8; 4] = [0, 0, 255, 255];
+
+    /// Reads the first texel of each row of `mip` of an `Rgba8Unorm` texture.
+    fn read_mip_rows(texture: &Texture, mip: u32) -> Vec<[u8; 4]> {
+        let device = texture.render_context.device();
+        let queue = texture.render_context.queue();
+        let size = texture
+            .descriptor
+            .size
+            .mip_level_size(mip, texture.descriptor.dimension);
+        let bytes_per_row = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("mip_test_readback"),
+            size: (bytes_per_row * size.height) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture.texture,
+                mip_level: mip,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_row),
+                    rows_per_image: Some(size.height),
+                },
+            },
+            size,
+        );
+        queue.submit(Some(encoder.finish()));
+        let slice = buffer.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |result| result.expect("map failed"));
+        let _ = device.poll(wgpu::Maintain::Wait);
+        let bytes = slice.get_mapped_range().to_vec();
+        buffer.unmap();
+        (0..size.height as usize)
+            .map(|row| {
+                let start = row * bytes_per_row as usize;
+                bytes[start..start + 4].try_into().unwrap()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn generated_2d_mips_keep_the_image_upright() {
+        const SIZE: u32 = 8;
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let extent = wgpu::Extent3d {
+            width: SIZE,
+            height: SIZE,
+            depth_or_array_layers: 1,
+        };
+        let texture = Texture::new(
+            context.render_context.clone(),
+            &wgpu::TextureDescriptor {
+                label: Some("mip_test_texture"),
+                size: extent,
+                mip_level_count: Texture::mip_level_count(SIZE, SIZE),
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            },
+            None,
+            None,
+            false,
+        );
+        // Top half one color, bottom half another.
+        let texels = (0..SIZE * SIZE)
+            .flat_map(|index| if index / SIZE < SIZE / 2 { TOP } else { BOTTOM })
+            .collect::<Vec<_>>();
+        context.render_context.queue().write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &texels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * SIZE),
+                rows_per_image: Some(SIZE),
+            },
+            extent,
+        );
+
+        texture
+            .generate_2d_mips(&context)
+            .expect("mip generation runs");
+
+        let rows = read_mip_rows(&texture, 1);
+        assert_eq!(rows.first(), Some(&TOP), "mip 1's top row must stay on top");
+        assert_eq!(
+            rows.last(),
+            Some(&BOTTOM),
+            "mip 1's bottom row must stay below"
+        );
+    }
 
     #[test]
     fn mip_level_count_includes_base_level() {

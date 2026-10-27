@@ -82,7 +82,7 @@ pub struct PipelineOptions {
 
 impl PipelineOptions {
     /// Base options of a full-screen draw: the triangle of
-    /// `shaders/postprocess/fullscreen.wgsl`, drawn by
+    /// `shaders/fullscreen.wgsl`, drawn by
     /// [`RenderUtils::draw_fullscreen`] from no vertex buffers. Culling is
     /// off since the triangle winds clockwise. It has no color targets and
     /// no depth; callers add theirs with struct update syntax.

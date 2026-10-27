@@ -97,7 +97,7 @@ impl RenderUtils {
         })
     }
 
-    /// Draws the full-screen triangle of `shaders/postprocess/fullscreen.wgsl`:
+    /// Draws the full-screen triangle of `shaders/fullscreen.wgsl`:
     /// three vertices, no vertex buffers, one instance. The pipeline must
     /// come from [`crate::render::PipelineOptions::fullscreen`].
     pub fn draw_fullscreen(render_pass: &mut wgpu::RenderPass<'_>) {

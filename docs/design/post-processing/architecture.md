@@ -112,7 +112,7 @@ Tone mapping asks for nothing.
 `TonemapPass` is the `Tonemap` stage. It always runs: a missing or disabled volume selects `PostProcessSettings::default()`, never untone-mapped output.
 
 - Its uniform holds the exposure scale `2^EV` and the preset.
-- It draws one full-screen triangle (`shaders/postprocess/fullscreen.wgsl`, no vertex buffers).
+- It draws one full-screen triangle (`shaders/fullscreen.wgsl`, no vertex buffers).
 - `TonemappingPreset::Aces` is Stephen Hill's fit of the ACES RRT and ODT (BakingLab, MIT): the ACES input matrix, the rational RRT/ODT curve, then the output matrix, clamped to `[0, 1]`. It maps linear 0.18 to about 0.106 and 1.0 to about 0.619.
 - Alpha passes through unchanged, so views cleared to transparent, such as thumbnails, keep their transparency.
 
@@ -138,7 +138,7 @@ pub struct ComponentGlobalPostProcessVolume {
 
 ## Shaders
 
-- `assets/shaders/postprocess/fullscreen.wgsl`: shared full-screen-triangle vertex module.
+- `assets/shaders/fullscreen.wgsl`: shared full-screen-triangle vertex module.
 - `assets/shaders/postprocess/tonemap.wgsl`: the tone-map pass.
 - `assets/shaders/postprocess/depth_resolve.wgsl`: copies sample 0 of the multisampled depth.
 - `pbr.wgsl` drops Reinhard, gamma 1.4 and the `* 5.0` on albedo.
