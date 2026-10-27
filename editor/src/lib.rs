@@ -12,7 +12,7 @@ use num_traits::FromPrimitive;
 use transform_gizmo_egui::{GizmoMode, GizmoOrientation};
 
 use self::panel::*;
-use self::prefab_editing::PrefabEditing;
+use self::prefab_mode::PrefabMode;
 pub use self::project_manager::*;
 use self::scene_document::SceneDocument;
 // The inspector's list-edit tests patch values the way undo does.
@@ -27,7 +27,6 @@ use egui::{include_image, Button, CornerRadius, ImageSource, Response, Sense, Ui
 use egui::{Align, Layout};
 use egui::{Color32, Frame, Margin, Shadow};
 use egui_tiles::{Container, Linear, LinearDir, Tiles, Tree};
-use engine::assets::skybox::Skybox;
 use engine::context::{AssetContext, GameContext, UpdatedScene};
 use engine::core::Ref;
 use engine::error::BoxedError;
@@ -54,8 +53,7 @@ mod camera;
 mod icons;
 mod inspector;
 mod panel;
-mod prefab_editing;
-mod prefab_environment;
+mod prefab_mode;
 mod project_manager;
 mod remote;
 mod scene_autosave;
@@ -71,55 +69,12 @@ pub use project_manager::cargo_build_args as project_assembly_build_args;
 
 pub const BASE_FONT_SIZE: f32 = 16.0;
 
-const CLOSE_PREFAB_FIRST: &str = "Close the prefab to return to the scene first";
-const PLAY_IN_PREFAB_MODE: &str =
-    "Play is not available in prefab mode; close the prefab to play the scene";
-/// The fill of the banner that marks prefab mode.
-const PREFAB_MODE_COLOR: Color32 = Color32::from_rgb(28, 74, 120);
-/// The scene view's clear color, behind the grid where nothing is drawn. The
-/// renderer takes it as linear color, so this near-black shows as dark gray.
-const SCENE_VIEW_BACKDROP: Color32 = Color32::from_rgb(8, 8, 8);
-/// The scene view's clear color in prefab mode: a muted blue-gray in the
-/// banner's hue, so prefab mode reads at a glance while the grid, gizmos and
-/// objects stay legible. Linear, like [`SCENE_VIEW_BACKDROP`], so it shows
-/// as a lighter slate blue.
-const PREFAB_MODE_BACKDROP: Color32 = Color32::from_rgb(6, 12, 26);
-/// The built-in studio HDRI that lights prefab mode, as an asset name; see
-/// `prefab_environment.rs`, which generates it. It lights the prefab without
-/// being drawn, so [`PREFAB_MODE_BACKDROP`] stays the background.
-const PREFAB_ENVIRONMENT_ASSET: &str = "skyboxes/prefab_studio";
-/// How strongly the studio HDRI lights the prefab, as a sky light's intensity.
-const PREFAB_ENVIRONMENT_INTENSITY: f32 = 1.0;
-/// Elevation of the prefab key light and of the HDRI's bright spot.
-const PREFAB_KEY_LIGHT_ELEVATION_DEG: f32 = 45.0;
-/// Azimuth of the prefab key light and of the HDRI's bright spot, from +X
-/// towards +Z.
-const PREFAB_KEY_LIGHT_AZIMUTH_DEG: f32 = 45.0;
-/// Linear color of the prefab key light: a slightly warm white.
-const PREFAB_KEY_LIGHT_COLOR: [f32; 3] = [1.0, 0.96, 0.9];
-/// Intensity of the prefab key light, a directional light that gives the
-/// prefab a clear shading direction on top of the HDRI's soft light.
-const PREFAB_KEY_LIGHT_INTENSITY: f32 = 1.5;
-
-/// The scene view's clear color: blue-gray in prefab mode, else the normal
-/// backdrop.
-fn scene_view_backdrop(prefab_mode: bool) -> Color32 {
-    if prefab_mode {
-        PREFAB_MODE_BACKDROP
-    } else {
-        SCENE_VIEW_BACKDROP
-    }
-}
-
 pub struct EditorApp {
     frame_counter: FrameCounter,
     tree: Tree<&'static str>,
     panels: Panels,
     physics_debug_pipeline: DebugRenderPipeline,
     remote: Option<remote::RemoteRuntime>,
-    /// Set once closing the window no longer waits on the unsaved-prefab
-    /// prompt: the user answered it, or a remote client asked to shut down.
-    close_confirmed: bool,
     // Drop runtime/editor state before the project manager so assembly-backed
     // scene components and registry trait objects are destroyed while the
     // project assembly is still loaded.
@@ -152,25 +107,7 @@ pub struct EditorAppState {
     active_scene: ActiveSceneState,
     window_title: String,
     project_path: PathBuf,
-    /// The prefab open in prefab mode, if one is.
-    prefab: Option<PrefabEditing>,
-    /// What waits on the user's answer to the unsaved-prefab prompt.
-    prefab_prompt: Option<PrefabPrompt>,
-    /// The studio HDRI that lights prefab mode, loaded when a prefab first
-    /// opens.
-    prefab_environment: Option<Ref<Skybox>>,
-}
-
-/// What the editor does once the user answers the prompt about an open
-/// prefab's unsaved changes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PrefabPrompt {
-    /// Return to the scene.
-    Close,
-    /// Open another prefab asset.
-    Open(uuid::Uuid),
-    /// Close the editor window.
-    Quit,
+    prefab_mode: PrefabMode,
 }
 
 #[derive(Debug, Default)]
@@ -195,10 +132,12 @@ impl ActiveSceneState {
             .unwrap_or_else(|| "Untitled Scene".into())
     }
 
-    fn title(&self, project_name: &str, prefab: Option<&str>, dirty: bool) -> String {
+    /// The window title, naming `document_label` instead of the scene when
+    /// another document, such as a prefab, is open.
+    fn title(&self, project_name: &str, document_label: Option<&str>, dirty: bool) -> String {
         let dirty_marker = if dirty { " *" } else { "" };
-        match prefab {
-            Some(prefab) => format!("Calyx - {project_name} - Prefab: {prefab}{dirty_marker}"),
+        match document_label {
+            Some(label) => format!("Calyx - {project_name} - {label}{dirty_marker}"),
             None => format!(
                 "Calyx - {project_name} - {}{dirty_marker}",
                 self.scene_label()
@@ -221,7 +160,7 @@ impl EditorAppState {
                 grid: true,
                 gizmos: true,
                 samples: 1,
-                clear_color: SCENE_VIEW_BACKDROP,
+                clear_color: prefab_mode::SCENE_VIEW_BACKDROP,
                 ..Default::default()
             },
             initial_render_size,
@@ -254,9 +193,7 @@ impl EditorAppState {
             active_scene: Default::default(),
             window_title: String::new(),
             project_path,
-            prefab: None,
-            prefab_prompt: None,
-            prefab_environment: None,
+            prefab_mode: Default::default(),
             scene_renderer,
             game_renderer,
             inspector_registry,
@@ -306,153 +243,31 @@ impl EditorAppState {
     }
 
     pub fn open_scene_file(&mut self, file: PathBuf) -> bool {
-        if self.refuse_scene_change_in_prefab_mode() {
+        if self.prefab_mode.refuse_scene_change() {
             return false;
         }
         self.scene_document.open_file(&mut self.game, file)
     }
 
     pub fn open_scene_asset(&mut self, asset_id: uuid::Uuid) {
-        if self.refuse_scene_change_in_prefab_mode() {
+        if self.prefab_mode.refuse_scene_change() {
             return;
         }
         self.scene_document.open_asset(&mut self.game, asset_id);
     }
 
     fn new_scene_from_default(&mut self) {
-        if self.refuse_scene_change_in_prefab_mode() {
+        if self.prefab_mode.refuse_scene_change() {
             return;
         }
         self.scene_document.open_default(&mut self.game);
     }
 
     fn save_current_scene(&mut self, file: PathBuf) -> bool {
-        if self.refuse_scene_change_in_prefab_mode() {
+        if self.prefab_mode.refuse_scene_change() {
             return false;
         }
         self.scene_document.save(&mut self.game, file)
-    }
-
-    /// Logs and returns `true` while a prefab is open, which keeps the scene
-    /// set aside until the prefab closes.
-    fn refuse_scene_change_in_prefab_mode(&self) -> bool {
-        let Some(prefab) = &self.prefab else {
-            return false;
-        };
-        log::warn!(
-            "Close the prefab {} before opening or saving a scene",
-            prefab.label()
-        );
-        true
-    }
-
-    /// The prefab open in prefab mode, if one is.
-    pub(crate) fn prefab(&self) -> Option<&PrefabEditing> {
-        self.prefab.as_ref()
-    }
-
-    /// Opens the prefab asset `asset_id` in prefab mode, closing the open
-    /// prefab first. Refuses while project assemblies are not loaded, since
-    /// the prefab's project components would be dropped and lost on save,
-    /// and while the open prefab has unsaved changes.
-    pub(crate) fn open_prefab(&mut self, asset_id: uuid::Uuid) -> Result<(), String> {
-        let assemblies_loaded = self
-            .game
-            .resources
-            .resource::<Ref<ProjectAssemblyStatus>>()
-            .is_some_and(|status| status.read().is_loaded());
-        if !assemblies_loaded {
-            return Err("build project assemblies before opening a prefab".into());
-        }
-        if let Some(prefab) = &self.prefab {
-            if prefab.asset_id() == asset_id {
-                return Ok(());
-            }
-            if self.is_scene_dirty() {
-                return Err(format!(
-                    "the open prefab {} has unsaved changes; save or close it first",
-                    prefab.label()
-                ));
-            }
-            self.close_prefab();
-        }
-        let prefab = PrefabEditing::open(
-            &mut self.game,
-            &mut self.scene_document,
-            &mut self.selection,
-            &self.project_path,
-            asset_id,
-        )?;
-        self.prefab = Some(prefab);
-        self.load_prefab_environment();
-        Ok(())
-    }
-
-    /// Loads the studio HDRI that lights prefab mode, once. Without it the
-    /// prefab renders with its own lights only.
-    fn load_prefab_environment(&mut self) {
-        if self.prefab_environment.is_some() {
-            return;
-        }
-        match self
-            .game
-            .assets
-            .registries
-            .assets
-            .read()
-            .load::<Skybox>(PREFAB_ENVIRONMENT_ASSET)
-        {
-            Ok(skybox) => self.prefab_environment = Some(skybox),
-            Err(error) => log::warn!("Prefab mode lighting is unavailable: {error}"),
-        }
-    }
-
-    /// Saves the open prefab to its asset file.
-    pub(crate) fn save_prefab(&mut self) -> Result<(), String> {
-        let prefab = self.prefab.as_ref().ok_or("no prefab is open")?;
-        prefab.save(&self.game, &mut self.scene_document)
-    }
-
-    /// Closes the open prefab, dropping its unsaved changes, and returns to
-    /// the scene. `false` when no prefab is open.
-    pub(crate) fn close_prefab(&mut self) -> bool {
-        let Some(prefab) = self.prefab.take() else {
-            return false;
-        };
-        self.prefab_prompt = None;
-        prefab.close(
-            &mut self.game,
-            &mut self.scene_document,
-            &mut self.selection,
-        );
-        true
-    }
-
-    /// Opens the prefab asset `asset_id`, first asking what to do with the
-    /// open prefab's unsaved changes, if it has any.
-    pub(crate) fn request_open_prefab(&mut self, asset_id: uuid::Uuid) {
-        let open_prefab_is_dirty = self
-            .prefab
-            .as_ref()
-            .is_some_and(|prefab| prefab.asset_id() != asset_id && self.is_scene_dirty());
-        if open_prefab_is_dirty {
-            self.prefab_prompt = Some(PrefabPrompt::Open(asset_id));
-        } else if let Err(error) = self.open_prefab(asset_id) {
-            log::error!("Failed to open prefab: {error}");
-        }
-    }
-
-    /// Closes the open prefab, first asking what to do with its unsaved
-    /// changes, if it has any.
-    pub(crate) fn request_close_prefab(&mut self) {
-        if self.prefab.is_none() {
-            return;
-        }
-        if self.is_scene_dirty() {
-            self.prefab_prompt = Some(PrefabPrompt::Close);
-        } else {
-            self.close_prefab();
-        }
     }
 
     fn update_scene_document(&mut self) {
@@ -467,7 +282,7 @@ impl EditorAppState {
     fn shutdown_scene_document(&mut self) {
         // The prompt has had its say about the prefab's changes by now; the
         // scene set aside gets its final recovery autosave.
-        self.close_prefab();
+        self.prefab_mode_mut().close();
         self.scene_document.shutdown(&self.game);
     }
 }
@@ -534,7 +349,6 @@ impl EditorApp {
             tree,
             panels,
             remote,
-            close_confirmed: false,
             physics_debug_pipeline: DebugRenderPipeline::new(
                 Default::default(),
                 Default::default(),
@@ -618,7 +432,7 @@ impl eframe::App for EditorApp {
         self.state.thumbnails.handle().install(ctx);
 
         self.menu_bar(ctx);
-        self.prefab_banner(ctx);
+        prefab_mode::show_banner(ctx, &mut self.state);
 
         egui::CentralPanel::default()
             .frame(Frame {
@@ -643,8 +457,7 @@ impl eframe::App for EditorApp {
         self.render_view_outline();
         self.update_window_title(ctx);
         self.state.show_scene_recovery_prompt(ctx);
-        self.intercept_close_with_unsaved_prefab(ctx);
-        self.show_prefab_prompt(ctx);
+        prefab_mode::show_unsaved_changes_prompt(ctx, &mut self.state);
 
         self.frame_counter.tick(self.state.game.resources.time());
 
@@ -716,7 +529,7 @@ impl EditorApp {
         let project_name = self.project_manager.read().current_project().name().clone();
         let title = self.state.active_scene.title(
             project_name.as_str(),
-            self.state.prefab().map(PrefabEditing::label),
+            self.state.prefab_mode.document_label().as_deref(),
             self.state.is_scene_dirty(),
         );
         if self.state.window_title != title {
@@ -747,8 +560,7 @@ impl EditorApp {
                     scene_renderer,
                     game_renderer,
                     game_size,
-                    prefab,
-                    prefab_environment,
+                    prefab_mode,
                     camera:
                         EditorCamera {
                             camera, transform, ..
@@ -765,12 +577,7 @@ impl EditorApp {
             camera.aspect = width as f32 / height as f32;
         }
         camera.update_projection();
-        let options = scene_renderer.options_mut();
-        options.clear_color = scene_view_backdrop(prefab.is_some());
-        options.environment = prefab_environment::scene_view_environment(
-            prefab.is_some(),
-            prefab_environment.as_ref(),
-        );
+        prefab_mode.dress_scene_view(scene_renderer.options_mut());
         scene_renderer.set_hovered_game_object(None);
         scene_renderer.set_selected_game_object(None);
 
@@ -851,21 +658,21 @@ impl EditorApp {
 impl EditorApp {
     fn file_menu(&mut self, ui: &mut Ui) {
         ui.menu_button("File", |ui| {
-            let prefab_mode = self.state.prefab().is_some();
+            let prefab_open = self.state.prefab_mode.is_open();
             let new_response = ui
-                .add_enabled(!prefab_mode, Button::new("New"))
-                .on_disabled_hover_text(CLOSE_PREFAB_FIRST);
+                .add_enabled(!prefab_open, Button::new("New"))
+                .on_disabled_hover_text(prefab_mode::CLOSE_PREFAB_FIRST);
             if new_response.clicked() {
                 self.new_interaction();
                 ui.close_menu();
             }
             let open_response = ui
                 .add_enabled(
-                    !prefab_mode && self.project_manager.read().assemblies_loaded(),
+                    !prefab_open && self.project_manager.read().assemblies_loaded(),
                     Button::new("Open"),
                 )
-                .on_disabled_hover_text(if prefab_mode {
-                    CLOSE_PREFAB_FIRST
+                .on_disabled_hover_text(if prefab_open {
+                    prefab_mode::CLOSE_PREFAB_FIRST
                 } else {
                     "Build project assemblies before opening scenes"
                 });
@@ -878,16 +685,16 @@ impl EditorApp {
                 ui.close_menu();
             }
             let save_as_response = ui
-                .add_enabled(!prefab_mode, Button::new("Save As"))
+                .add_enabled(!prefab_open, Button::new("Save As"))
                 .on_disabled_hover_text("A prefab saves to its own asset file");
             if save_as_response.clicked() {
                 self.save_interaction(true);
                 ui.close_menu();
             }
-            if prefab_mode {
+            if prefab_open {
                 ui.separator();
                 if ui.button("Close Prefab").clicked() {
-                    self.state.request_close_prefab();
+                    self.state.prefab_mode_mut().request_close();
                     ui.close_menu();
                 }
             }
@@ -935,8 +742,8 @@ impl EditorApp {
     }
 
     fn save_interaction(&mut self, save_as: bool) {
-        if self.state.prefab().is_some() {
-            if let Err(error) = self.state.save_prefab() {
+        if self.state.prefab_mode.is_open() {
+            if let Err(error) = self.state.prefab_mode_mut().save() {
                 log::error!("{error}");
             }
             return;
@@ -996,9 +803,9 @@ impl EditorApp {
                 }
 
                 let is_simulating = self.is_simulating();
-                let prefab_mode = self.state.prefab().is_some();
+                let prefab_open = self.state.prefab_mode.is_open();
                 let play_response = ui
-                    .add_enabled_ui(!prefab_mode, |ui| {
+                    .add_enabled_ui(!prefab_open, |ui| {
                         Self::icon_button(
                             ui,
                             if is_simulating {
@@ -1009,7 +816,7 @@ impl EditorApp {
                         )
                     })
                     .inner
-                    .on_disabled_hover_text(PLAY_IN_PREFAB_MODE);
+                    .on_disabled_hover_text(prefab_mode::PLAY_IN_PREFAB_MODE);
                 if play_response.clicked() {
                     if is_simulating {
                         log::info!(
@@ -1038,157 +845,6 @@ impl EditorApp {
                 }
             });
         });
-    }
-
-    /// Shows, while a prefab is open, the banner naming the prefab asset with
-    /// its save and close actions.
-    fn prefab_banner(&mut self, ctx: &egui::Context) {
-        let Some(prefab) = self.state.prefab() else {
-            return;
-        };
-        let label = prefab.label().to_owned();
-        let dirty = self.state.is_scene_dirty();
-        let root_count = self
-            .state
-            .game
-            .scenes
-            .current_scene()
-            .root_objects()
-            .count();
-        let mut save = false;
-        let mut close = false;
-        egui::TopBottomPanel::top("prefab_mode_banner")
-            .frame(Frame {
-                inner_margin: Margin::symmetric(8, 4),
-                fill: PREFAB_MODE_COLOR,
-                ..Default::default()
-            })
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new("PREFAB MODE")
-                            .strong()
-                            .color(Color32::WHITE),
-                    );
-                    ui.separator();
-                    let dirty_marker = if dirty { " *" } else { "" };
-                    ui.label(
-                        egui::RichText::new(format!("{label}{dirty_marker}"))
-                            .monospace()
-                            .color(Color32::WHITE),
-                    );
-                    if root_count != 1 {
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "A prefab needs exactly one root object ({root_count} now)"
-                            ))
-                            .color(Color32::from_rgb(255, 200, 80)),
-                        );
-                    }
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        close = ui
-                            .button("Close Prefab")
-                            .on_hover_text("Return to the scene")
-                            .clicked();
-                        save = ui
-                            .add_enabled(dirty, Button::new("Save Prefab"))
-                            .on_hover_text(
-                                "Write the prefab asset; scene instances stay as they are",
-                            )
-                            .clicked();
-                        ui.label(
-                            egui::RichText::new("Scene instances are not updated")
-                                .italics()
-                                .color(Color32::from_gray(200)),
-                        );
-                    });
-                });
-            });
-        if save {
-            if let Err(error) = self.state.save_prefab() {
-                log::error!("{error}");
-            }
-        }
-        if close {
-            self.state.request_close_prefab();
-        }
-    }
-
-    /// Keeps the window open while the open prefab has unsaved changes, and
-    /// asks the user about them instead.
-    fn intercept_close_with_unsaved_prefab(&mut self, ctx: &egui::Context) {
-        let close_requested = ctx.input(|input| input.viewport().close_requested());
-        if !close_requested
-            || self.close_confirmed
-            || self.state.prefab().is_none()
-            || !self.state.is_scene_dirty()
-        {
-            return;
-        }
-        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-        self.state.prefab_prompt = Some(PrefabPrompt::Quit);
-    }
-
-    /// Asks what to do with the open prefab's unsaved changes before the
-    /// action waiting on the answer: save them, discard them, or cancel.
-    fn show_prefab_prompt(&mut self, ctx: &egui::Context) {
-        let (Some(action), Some(prefab)) = (self.state.prefab_prompt, self.state.prefab()) else {
-            self.state.prefab_prompt = None;
-            return;
-        };
-        let label = prefab.label().to_owned();
-        enum Answer {
-            Save,
-            Discard,
-            Cancel,
-        }
-        let mut answer = None;
-        egui::Modal::new(egui::Id::new("prefab_unsaved_changes")).show(ctx, |ui| {
-            ui.heading("Unsaved Prefab Changes");
-            ui.separator();
-            ui.label(format!("{label} has unsaved changes."));
-            ui.label("Save them to the prefab asset before closing it?");
-            ui.horizontal(|ui| {
-                if ui.button("Save").clicked() {
-                    answer = Some(Answer::Save);
-                }
-                if ui.button("Don't Save").clicked() {
-                    answer = Some(Answer::Discard);
-                }
-                if ui.button("Cancel").clicked() {
-                    answer = Some(Answer::Cancel);
-                }
-            });
-        });
-        let Some(answer) = answer else {
-            return;
-        };
-        self.state.prefab_prompt = None;
-        match answer {
-            Answer::Cancel => return,
-            Answer::Save => {
-                if let Err(error) = self.state.save_prefab() {
-                    log::error!("{error}");
-                    return;
-                }
-            }
-            Answer::Discard => {}
-        }
-        match action {
-            PrefabPrompt::Close => {
-                self.state.close_prefab();
-            }
-            PrefabPrompt::Open(asset_id) => {
-                self.state.close_prefab();
-                if let Err(error) = self.state.open_prefab(asset_id) {
-                    log::error!("Failed to open prefab: {error}");
-                }
-            }
-            PrefabPrompt::Quit => {
-                self.close_confirmed = true;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
-        }
     }
 
     fn status_bar(&mut self, ctx: &egui::Context) {
@@ -1253,8 +909,8 @@ impl EditorApp {
     /// project's runtime window sets the game aspect, and a fresh simulation
     /// runs the configured startup scene when the project has one.
     pub(crate) fn start_simulation(&mut self) -> Result<(), String> {
-        if self.state.prefab().is_some() {
-            return Err(PLAY_IN_PREFAB_MODE.into());
+        if self.state.prefab_mode.is_open() {
+            return Err(prefab_mode::PLAY_IN_PREFAB_MODE.into());
         }
         self.state.refresh_inspector_baselines();
         let window_size = self
@@ -1328,10 +984,7 @@ impl EditorApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        press_ends_inspector_edits, scene_view_backdrop, ActiveSceneState, EditorApp,
-        PREFAB_MODE_BACKDROP, SCENE_VIEW_BACKDROP,
-    };
+    use super::{press_ends_inspector_edits, ActiveSceneState, EditorApp};
     use std::path::PathBuf;
 
     #[test]
@@ -1378,25 +1031,6 @@ mod tests {
             state.title("Sandbox", None, true),
             "Calyx - Sandbox - scene *"
         );
-    }
-
-    #[test]
-    fn prefab_mode_title_names_the_prefab_asset() {
-        let mut state = ActiveSceneState::default();
-
-        state.set_scene(Some("scene".into()), None);
-        assert_eq!(
-            state.title("Sandbox", Some("prefabs/crate.cxprefab"), true),
-            "Calyx - Sandbox - Prefab: prefabs/crate.cxprefab *"
-        );
-    }
-
-    #[test]
-    fn only_prefab_mode_turns_the_scene_view_backdrop_blue() {
-        assert_eq!(scene_view_backdrop(true), PREFAB_MODE_BACKDROP);
-        assert_eq!(scene_view_backdrop(false), SCENE_VIEW_BACKDROP);
-        let [r, g, b, _] = PREFAB_MODE_BACKDROP.to_array();
-        assert!(b > g && g > r, "the prefab backdrop is blue");
     }
 
     #[test]

@@ -8,7 +8,7 @@
 //! To regenerate it, and write a tone-mapped PNG preview, run
 //!
 //! ```text
-//! CALYX_WRITE_PREFAB_ENVIRONMENT=1 cargo test -p editor prefab_environment
+//! CALYX_WRITE_PREFAB_ENVIRONMENT=1 cargo test -p editor prefab_mode::environment
 //! ```
 //!
 //! with `CALYX_PREFAB_ENVIRONMENT_PREVIEW=<file.png>` set for the preview.
@@ -18,14 +18,27 @@ use engine::core::Ref;
 use engine::render::{EnvironmentLight, SceneEnvironment};
 use nalgebra_glm::Vec3;
 
-use crate::{
-    PREFAB_ENVIRONMENT_INTENSITY, PREFAB_KEY_LIGHT_AZIMUTH_DEG, PREFAB_KEY_LIGHT_COLOR,
-    PREFAB_KEY_LIGHT_ELEVATION_DEG, PREFAB_KEY_LIGHT_INTENSITY,
-};
+/// The built-in studio HDRI that lights prefab mode, as an asset name; the
+/// `generator` module below generates it. It lights the prefab without being
+/// drawn, so [`PREFAB_MODE_BACKDROP`](super::PREFAB_MODE_BACKDROP) stays the
+/// background.
+pub(super) const PREFAB_ENVIRONMENT_ASSET: &str = "skyboxes/prefab_studio";
+/// How strongly the studio HDRI lights the prefab, as a sky light's intensity.
+const PREFAB_ENVIRONMENT_INTENSITY: f32 = 1.0;
+/// Elevation of the prefab key light and of the HDRI's bright spot.
+const PREFAB_KEY_LIGHT_ELEVATION_DEG: f32 = 45.0;
+/// Azimuth of the prefab key light and of the HDRI's bright spot, from +X
+/// towards +Z.
+const PREFAB_KEY_LIGHT_AZIMUTH_DEG: f32 = 45.0;
+/// Linear color of the prefab key light: a slightly warm white.
+const PREFAB_KEY_LIGHT_COLOR: [f32; 3] = [1.0, 0.96, 0.9];
+/// Intensity of the prefab key light, a directional light that gives the
+/// prefab a clear shading direction on top of the HDRI's soft light.
+const PREFAB_KEY_LIGHT_INTENSITY: f32 = 1.5;
 
 /// The direction towards the key light, from the prefab: up and to the side
 /// at [`PREFAB_KEY_LIGHT_ELEVATION_DEG`] and [`PREFAB_KEY_LIGHT_AZIMUTH_DEG`].
-pub(crate) fn key_direction() -> Vec3 {
+pub(super) fn key_direction() -> Vec3 {
     direction(
         PREFAB_KEY_LIGHT_ELEVATION_DEG.to_radians(),
         PREFAB_KEY_LIGHT_AZIMUTH_DEG.to_radians(),
@@ -46,7 +59,7 @@ fn direction(elevation: f32, azimuth: f32) -> Vec3 {
 /// The scene view's lighting in prefab mode, lighting with `skybox`, the
 /// loaded studio HDRI, without drawing it, so the prefab backdrop shows.
 /// `None` outside prefab mode, so the scene's own lights apply.
-pub(crate) fn scene_view_environment(
+pub(super) fn scene_view_environment(
     prefab_mode: bool,
     skybox: Option<&Ref<Skybox>>,
 ) -> Option<SceneEnvironment> {
@@ -125,8 +138,10 @@ mod generator {
 #[cfg(test)]
 mod tests {
     use super::generator::{studio_hdri, studio_radiance, PREFAB_ENVIRONMENT_FILE};
-    use super::{key_direction, scene_view_environment};
-    use crate::{PREFAB_ENVIRONMENT_INTENSITY, PREFAB_KEY_LIGHT_INTENSITY};
+    use super::{
+        key_direction, scene_view_environment, PREFAB_ENVIRONMENT_INTENSITY,
+        PREFAB_KEY_LIGHT_INTENSITY,
+    };
     use engine::assets::skybox::Skybox;
     use engine::test_support::TestAssets;
     use image::codecs::hdr::HdrEncoder;

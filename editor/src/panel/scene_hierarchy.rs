@@ -53,8 +53,8 @@ impl Panel for PanelSceneHierarchy {
                     // The tree's top item names what is open: the scene, or
                     // the prefab asset in prefab mode.
                     let root_label = state
-                        .prefab()
-                        .map(|prefab| format!("Prefab: {}", prefab.label()))
+                        .prefab_mode
+                        .document_label()
                         .unwrap_or_else(|| "Scene".to_owned());
                     let EditorAppState {
                         game, selection, ..

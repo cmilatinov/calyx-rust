@@ -171,7 +171,7 @@ impl EditorApp {
             Command::Shutdown => {
                 // A scripted shutdown does not wait on the unsaved-prefab
                 // prompt.
-                self.close_confirmed = true;
+                self.state.prefab_mode.confirm_close();
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 Ok(Some(serde_json::Value::Null))
             }
@@ -220,12 +220,13 @@ impl EditorApp {
             Command::OpenPrefab { path } => self.remote_open_prefab(path),
             Command::SavePrefab => {
                 self.state
-                    .save_prefab()
+                    .prefab_mode_mut()
+                    .save()
                     .map_err(|error| (ErrorKind::BadRequest, error))?;
                 Ok(Some(self.remote_prefab_state()))
             }
             Command::ClosePrefab { discard } => {
-                if self.state.prefab().is_none() {
+                if !self.state.prefab_mode.is_open() {
                     return Err((ErrorKind::BadRequest, "no prefab is open".into()));
                 }
                 if !discard && self.state.is_scene_dirty() {
@@ -234,7 +235,7 @@ impl EditorApp {
                         "the prefab has unsaved changes; save_prefab first or pass discard".into(),
                     ));
                 }
-                self.state.close_prefab();
+                self.state.prefab_mode_mut().close();
                 Ok(Some(self.remote_prefab_state()))
             }
 
@@ -417,7 +418,7 @@ impl EditorApp {
     /// The open prefab's asset path, file and dirty state, or `null` outside
     /// prefab mode.
     fn remote_prefab_state(&self) -> serde_json::Value {
-        match self.state.prefab() {
+        match self.state.prefab_mode.prefab() {
             Some(prefab) => serde_json::json!({
                 "asset_path": prefab.label(),
                 "file": prefab.file().display().to_string(),
@@ -449,13 +450,14 @@ impl EditorApp {
                 )
             })?;
         self.state
-            .open_prefab(asset_id)
+            .prefab_mode_mut()
+            .open(asset_id)
             .map_err(|error| (ErrorKind::BadRequest, error))?;
         Ok(Some(self.remote_prefab_state()))
     }
 
     fn remote_load_scene(&mut self, path: PathBuf) -> CommandResult {
-        if self.state.prefab().is_some() {
+        if self.state.prefab_mode.is_open() {
             return Err((
                 ErrorKind::BadRequest,
                 "a prefab is open; close_prefab before loading a scene".into(),
@@ -483,7 +485,7 @@ impl EditorApp {
     }
 
     fn remote_save_scene(&mut self, path: Option<PathBuf>) -> CommandResult {
-        if self.state.prefab().is_some() {
+        if self.state.prefab_mode.is_open() {
             return Err((
                 ErrorKind::BadRequest,
                 "a prefab is open; use save_prefab, or close_prefab to return to the scene".into(),

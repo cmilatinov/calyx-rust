@@ -349,7 +349,9 @@ impl PanelContentBrowser {
                 state.commit_scene_edit(edit);
             }
             AssetInspectorAction::OpenScene(asset_id) => state.open_scene_asset(asset_id),
-            AssetInspectorAction::OpenPrefab(asset_id) => state.request_open_prefab(asset_id),
+            AssetInspectorAction::OpenPrefab(asset_id) => {
+                state.prefab_mode_mut().request_open(asset_id)
+            }
         }
     }
 
@@ -363,7 +365,7 @@ impl PanelContentBrowser {
                 .map(|meta| meta.id)
         };
         if let Some(asset_id) = prefab {
-            state.request_open_prefab(asset_id);
+            state.prefab_mode_mut().request_open(asset_id);
         }
     }
 

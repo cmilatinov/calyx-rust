@@ -1,16 +1,10 @@
-//! Prefab mode: a `.cxprefab` asset opened as the editor's authoring scene,
-//! isolated from the scene that was open.
+//! The prefab open in prefab mode, and the scene set aside until it closes.
 //!
 //! Opening a prefab sets the open scene aside, with its unsaved edits, undo
 //! history, file and selection, and puts a scene built from the prefab's data
-//! in the authoring slot under a document of its own. The panels, the undo
-//! history and the remote commands then edit the prefab like any scene.
-//! Saving writes the prefab asset only. Closing the prefab puts the scene that
-//! was set aside back as it was.
-//!
-//! Scene instances of the prefab are copies made when they were instantiated,
-//! so editing or saving the prefab never changes them. Applying prefab edits
-//! to existing instances is a separate workflow.
+//! in the authoring slot under a document of its own. Saving writes the prefab
+//! asset only. Closing the prefab puts the scene that was set aside back as it
+//! was.
 
 use std::mem;
 use std::path::{Path, PathBuf};
