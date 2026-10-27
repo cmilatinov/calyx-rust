@@ -79,3 +79,19 @@ pub struct PipelineOptions {
     #[builder(default = vec![VertexLayout::of::<mesh::Vertex>(wgpu::VertexStepMode::Vertex)])]
     pub(crate) vertex_layouts: Vec<VertexLayout>,
 }
+
+impl PipelineOptions {
+    /// Base options of a full-screen draw: the triangle of
+    /// `shaders/postprocess/fullscreen.wgsl`, drawn by
+    /// [`RenderUtils::draw_fullscreen`] from no vertex buffers. Culling is
+    /// off since the triangle winds clockwise. It has no color targets and
+    /// no depth; callers add theirs with struct update syntax.
+    pub fn fullscreen() -> Self {
+        Self::builder()
+            .cull_mode(None)
+            .vertex_layouts(vec![])
+            .depth_stencil(None)
+            .fragment_targets(vec![])
+            .build()
+    }
+}

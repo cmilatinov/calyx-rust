@@ -79,6 +79,31 @@ impl RenderUtils {
         })
     }
 
+    /// Begins a pass that overwrites every pixel of `output`, with no depth.
+    ///
+    /// It clears rather than loads, since a full-screen draw never reads the
+    /// old contents.
+    pub fn fullscreen_pass<'e>(
+        encoder: &'e mut wgpu::CommandEncoder,
+        output: &wgpu::TextureView,
+        label: &str,
+    ) -> wgpu::RenderPass<'e> {
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some(label),
+            color_attachments: &[Some(Self::color_attachment(output, Color32::TRANSPARENT))],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        })
+    }
+
+    /// Draws the full-screen triangle of `shaders/postprocess/fullscreen.wgsl`:
+    /// three vertices, no vertex buffers, one instance. The pipeline must
+    /// come from [`crate::render::PipelineOptions::fullscreen`].
+    pub fn draw_fullscreen(render_pass: &mut wgpu::RenderPass<'_>) {
+        render_pass.draw(0..3, 0..1);
+    }
+
     /// Returns a color target state configured for alpha blending.
     pub fn color_alpha_blending(format: wgpu::TextureFormat) -> wgpu::ColorTargetState {
         wgpu::ColorTargetState {

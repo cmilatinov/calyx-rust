@@ -3,7 +3,9 @@
 use crate::assets::texture::Texture;
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
-use crate::render::{CachedBindGroup, PipelineOptions, RenderContext, SceneRendererError, Shader};
+use crate::render::{
+    CachedBindGroup, PipelineOptions, RenderContext, RenderUtils, SceneRendererError, Shader,
+};
 use egui_wgpu::wgpu;
 use std::sync::Arc;
 
@@ -67,19 +69,13 @@ impl DepthResolve {
         let target = self.target.as_ref().expect("the target was just created");
 
         let shader = self.shader.read();
-        let pipeline = shader.pipeline(
-            &PipelineOptions::builder()
-                .cull_mode(None)
-                .depth_stencil(Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Always,
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }))
-                .vertex_layouts(vec![])
-                .build(),
-        );
+        let pipeline = shader.pipeline(&PipelineOptions {
+            depth_stencil: Some(wgpu::DepthStencilState {
+                depth_compare: wgpu::CompareFunction::Always,
+                ..RenderUtils::depth_default(wgpu::TextureFormat::Depth32Float)
+            }),
+            ..PipelineOptions::fullscreen()
+        });
         let layout = shader.bind_group_layouts[0].clone();
         drop(shader);
         let device = render_context.device();
@@ -98,20 +94,17 @@ impl DepthResolve {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Post Process Depth"),
             color_attachments: &[],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &target.view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: None,
-            }),
+            depth_stencil_attachment: Some(RenderUtils::depth_stencil_attachment(
+                &target.view,
+                1.0,
+                None,
+            )),
             timestamp_writes: None,
             occlusion_query_set: None,
         });
         render_pass.set_pipeline(&pipeline);
         render_pass.set_bind_group(0, bind_group, &[]);
-        render_pass.draw(0..3, 0..1);
+        RenderUtils::draw_fullscreen(&mut render_pass);
         drop(render_pass);
         target
     }

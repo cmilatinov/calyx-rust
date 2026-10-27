@@ -2,7 +2,9 @@ use super::*;
 use crate::assets::texture::Texture;
 use crate::component::ComponentGlobalPostProcessVolume;
 use crate::render::scene_renderer::{half_to_f32, linear_to_srgb};
-use crate::render::{Camera, ReadbackPoll, RenderContext, SceneRenderer, SceneRendererOptions};
+use crate::render::{
+    Camera, ReadbackPoll, RenderContext, RenderUtils, SceneRenderer, SceneRendererOptions,
+};
 use crate::test_support::{test_adapter, SceneBuilder, TestAssets};
 use egui::Color32;
 use egui_wgpu::wgpu;
@@ -501,10 +503,10 @@ impl PostProcessPass for AffinePass {
                         },
                     ],
                 });
-        let mut pass = begin_fullscreen_pass(encoder, &io.output.view, self.name);
+        let mut pass = RenderUtils::fullscreen_pass(encoder, &io.output.view, self.name);
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
-        pass.draw(0..3, 0..1);
+        RenderUtils::draw_fullscreen(&mut pass);
     }
 }
 

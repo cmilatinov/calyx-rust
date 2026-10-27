@@ -3,7 +3,7 @@
 use super::{PassContext, PassIo, PostProcessPass, PostProcessSettings, PostProcessStage};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
-use crate::render::{CachedBindGroup, PipelineOptions, SceneRendererError, Shader};
+use crate::render::{CachedBindGroup, PipelineOptions, RenderUtils, SceneRendererError, Shader};
 use egui_wgpu::wgpu;
 
 #[repr(C)]
@@ -75,7 +75,12 @@ impl PostProcessPass for TonemapPass {
 
     fn record(&mut self, context: &PassContext, encoder: &mut wgpu::CommandEncoder, io: PassIo) {
         let shader = self.shader.read();
-        let pipeline = shader.pipeline(&fullscreen_pipeline_options(io.output.descriptor.format));
+        let pipeline = shader.pipeline(&PipelineOptions {
+            fragment_targets: vec![Some(RenderUtils::color_default(
+                io.output.descriptor.format,
+            ))],
+            ..PipelineOptions::fullscreen()
+        });
         let layout = shader.bind_group_layouts[0].clone();
         drop(shader);
         let device = context.render_context.device();
@@ -98,47 +103,9 @@ impl PostProcessPass for TonemapPass {
                         ],
                     })
                 });
-        let mut render_pass = begin_fullscreen_pass(encoder, &io.output.view, "Tonemap");
+        let mut render_pass = RenderUtils::fullscreen_pass(encoder, &io.output.view, "Tonemap");
         render_pass.set_pipeline(&pipeline);
         render_pass.set_bind_group(0, bind_group, &[]);
-        render_pass.draw(0..3, 0..1);
+        RenderUtils::draw_fullscreen(&mut render_pass);
     }
-}
-
-/// Pipeline options of a full-screen pass writing one `format` target:
-/// no vertex buffers, no depth, no blending, no culling.
-pub fn fullscreen_pipeline_options(format: wgpu::TextureFormat) -> PipelineOptions {
-    PipelineOptions::builder()
-        .cull_mode(None)
-        .fragment_targets(vec![Some(wgpu::ColorTargetState {
-            format,
-            blend: None,
-            write_mask: wgpu::ColorWrites::ALL,
-        })])
-        .depth_stencil(None)
-        .vertex_layouts(vec![])
-        .build()
-}
-
-/// Begins a pass that overwrites every pixel of `output`. It clears rather
-/// than loads, since the old contents are never read.
-pub fn begin_fullscreen_pass<'e>(
-    encoder: &'e mut wgpu::CommandEncoder,
-    output: &wgpu::TextureView,
-    label: &str,
-) -> wgpu::RenderPass<'e> {
-    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some(label),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view: output,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                store: wgpu::StoreOp::Store,
-            },
-        })],
-        depth_stencil_attachment: None,
-        timestamp_writes: None,
-        occlusion_query_set: None,
-    })
 }
