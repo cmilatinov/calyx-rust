@@ -150,9 +150,12 @@ The editor viewport, the Game tab, the thumbnail generator and the standalone pl
 
 ## Calibration
 
-Removing the per-shader curves and the `* 5.0` changes every scene's brightness. Scenes are recalibrated through data, never a shader constant: a global volume's exposure and the scene's light intensities. The sandbox scene carries a `ComponentGlobalPostProcessVolume` for this.
+Removing the per-shader curves and the `* 5.0` changes every scene's brightness. Scenes are recalibrated through data, never a shader constant: a global volume's exposure and the scene's light intensities.
 
-The grid, gizmos, outline and editor clear colors stay in the HDR scene pass until #379 composites them after post, so tone mapping applies to them in the meantime and they are retuned by eye.
+- **Sandbox scene**: lit only by its sky before, with dark materials (the arena floor's albedo is 0.13 with ambient occlusion 0.3) that the old curve lifted to mid grey. Exposure alone cannot bring them back: the sky and the image-based light it casts scale together, so any EV that lifts the floor blows out the sky. The scene gains a `Sun` directional light (intensity 5, pitched 60 degrees down), which lights the floor without brightening the sky, and a `Post Process` global volume at 0 EV, the knob for later tuning.
+- **Thumbnails**: the preview lights rise to 6 (directional), 0.8 (ambient) and 0.8 (point) so prefab thumbnails read as before at the default 0 EV. The thumbnail disk cache key gains a render version, so thumbnails cached under the old curve render again.
+
+The grid, gizmos, outline and editor clear colors stay in the HDR scene pass until #379 composites them after post, so tone mapping applies to them in the meantime. They keep their colors: ACES darkens and desaturates them a little, and they still read clearly.
 
 ## Testing
 
