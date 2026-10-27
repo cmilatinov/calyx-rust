@@ -94,7 +94,7 @@ pub struct PassIo<'a> {
 - Passes run in stage order (`Hdr`, `Tonemap`, `Ldr`), then insertion order within a stage.
 - Each frame the chain keeps the passes whose `enabled` returns true and whose inputs are available, then wires them: the first reads the chain's source, the last writes the chain's output, and each pass between writes the pool target the next one reads. Intermediates alternate between two pool targets (A, B), so a pass never reads the texture it writes.
 - The pool is fetched from only when two or more passes run. The tone-map-only chain never touches it.
-- `TargetPool` keys targets by size, format and usage, reuses them across frames and frees them all when the renderer resizes.
+- `TargetPool` holds at most the two slots, A and B. It creates each on first use at the chain's size and format, recreates one whose size or format differ, reuses them across frames and frees both when the renderer resizes.
 
 The wiring is a pure plan (`ChainPlan`) built before any GPU work, which keeps ordering and ping-pong testable without a device.
 

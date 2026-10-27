@@ -1,95 +1,105 @@
-//! Intermediate targets shared by the passes of one chain.
+//! The two intermediate targets the passes of one chain alternate between.
 
 use crate::assets::texture::Texture;
 use crate::render::RenderContext;
 use egui_wgpu::wgpu;
 use std::sync::Arc;
 
-/// What makes two intermediate targets interchangeable.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct TargetKey {
-    /// Width and height in pixels.
-    pub size: (u32, u32),
-    /// Texel format.
-    pub format: wgpu::TextureFormat,
-    /// How the target is used.
-    pub usage: wgpu::TextureUsages,
+/// One of the two pool targets the chain alternates between.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IntermediateSlot {
+    /// The first pool target.
+    A,
+    /// The second pool target.
+    B,
 }
 
-impl TargetKey {
-    /// A color target a pass renders into and the next pass reads.
-    pub fn color(size: (u32, u32), format: wgpu::TextureFormat) -> Self {
-        Self {
-            size,
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+impl IntermediateSlot {
+    /// The slot the pass at `position` in the plan writes: A for even
+    /// positions, B for odd ones.
+    pub(super) fn written_by(position: usize) -> Self {
+        if position % 2 == 0 {
+            Self::A
+        } else {
+            Self::B
+        }
+    }
+
+    fn index(self) -> usize {
+        match self {
+            Self::A => 0,
+            Self::B => 1,
         }
     }
 }
 
-/// Intermediate targets keyed by [`TargetKey`], kept across frames and
-/// freed together when the renderer resizes.
+/// At most two intermediate targets, created on first use, kept across
+/// frames and freed when the renderer resizes.
 #[derive(Default)]
 pub struct TargetPool {
-    targets: Vec<(TargetKey, Texture)>,
+    targets: [Option<Texture>; 2],
 }
 
 impl TargetPool {
-    /// Makes sure `count` targets of `key` exist and returns their indices,
-    /// for [`Self::texture`]. The same call returns the same targets every
-    /// frame.
+    /// Makes sure the first `count` slots, at most two, hold a `format`
+    /// target of `size`, recreating any whose size or format differ.
     pub fn acquire(
         &mut self,
         render_context: &Arc<RenderContext>,
-        key: TargetKey,
+        size: (u32, u32),
+        format: wgpu::TextureFormat,
         count: usize,
-    ) -> Vec<usize> {
-        let mut indices: Vec<usize> = self
-            .targets
-            .iter()
-            .enumerate()
-            .filter(|(_, (target_key, _))| *target_key == key)
-            .map(|(index, _)| index)
-            .take(count)
-            .collect();
-        while indices.len() < count {
-            indices.push(self.targets.len());
-            self.targets
-                .push((key, Self::create(render_context.clone(), key)));
+    ) {
+        for target in self.targets.iter_mut().take(count) {
+            let matches = target.as_ref().is_some_and(|texture| {
+                let descriptor = &texture.descriptor;
+                (descriptor.size.width, descriptor.size.height) == size
+                    && descriptor.format == format
+            });
+            if !matches {
+                *target = Some(Self::create(render_context.clone(), size, format));
+            }
         }
-        indices
     }
 
-    /// The target at `index`, from [`Self::acquire`].
-    pub fn texture(&self, index: usize) -> &Texture {
-        &self.targets[index].1
+    /// The target in `slot`, which [`Self::acquire`] created.
+    pub fn texture(&self, slot: IntermediateSlot) -> &Texture {
+        self.targets[slot.index()]
+            .as_ref()
+            .expect("the slot was acquired before it was read")
     }
 
     /// How many targets the pool holds.
     pub fn allocated(&self) -> usize {
-        self.targets.len()
+        self.targets.iter().flatten().count()
     }
 
     /// Frees every target.
     pub fn clear(&mut self) {
-        self.targets.clear();
+        self.targets = Default::default();
     }
 
-    fn create(render_context: Arc<RenderContext>, key: TargetKey) -> Texture {
+    fn create(
+        render_context: Arc<RenderContext>,
+        size: (u32, u32),
+        format: wgpu::TextureFormat,
+    ) -> Texture {
         Texture::new(
             render_context,
             &wgpu::TextureDescriptor {
                 label: Some("post_process_target"),
                 size: wgpu::Extent3d {
-                    width: key.size.0,
-                    height: key.size.1,
+                    width: size.0,
+                    height: size.1,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: key.format,
-                usage: key.usage,
+                format,
+                // A pass renders into it and the next pass reads it.
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             },
             None,
