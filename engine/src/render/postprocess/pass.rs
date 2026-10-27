@@ -1,0 +1,137 @@
+//! The interface every post-processing pass implements.
+
+use super::PostProcessSettings;
+use crate::assets::texture::Texture;
+use crate::render::RenderContext;
+use egui_wgpu::wgpu;
+use std::fmt;
+
+/// Where a pass runs in the chain. Passes run in stage order, then in the
+/// order they were added within a stage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PostProcessStage {
+    /// Linear HDR color in, linear HDR color out: bloom, depth of field.
+    Hdr,
+    /// The display transform, from linear HDR to display-linear color.
+    Tonemap,
+    /// Display-linear color in and out: color grading, vignette, film grain.
+    Ldr,
+}
+
+/// A scene input besides the color a pass reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SceneInput {
+    /// Scene depth, single-sample.
+    Depth,
+    /// View-space normals.
+    Normals,
+    /// Screen-space motion vectors.
+    Velocity,
+}
+
+impl fmt::Display for SceneInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Depth => "depth",
+            Self::Normals => "normals",
+            Self::Velocity => "velocity",
+        })
+    }
+}
+
+/// The scene inputs a pass reads besides color. The chain builds each one
+/// only when an enabled pass asks for it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct PassInputs {
+    /// Single-sample scene depth.
+    pub depth: bool,
+    /// View-space normals. Not produced yet.
+    pub normals: bool,
+    /// Screen-space motion vectors. Not produced yet.
+    pub velocity: bool,
+}
+
+impl PassInputs {
+    /// No input besides color.
+    pub const NONE: Self = Self {
+        depth: false,
+        normals: false,
+        velocity: false,
+    };
+
+    /// Checks these inputs against what the renderer produces, and reports
+    /// the first one it does not.
+    pub fn check(&self, pass: &str) -> Result<(), PostProcessError> {
+        let unavailable = if self.normals {
+            Some(SceneInput::Normals)
+        } else if self.velocity {
+            Some(SceneInput::Velocity)
+        } else {
+            None
+        };
+        match unavailable {
+            Some(input) => Err(PostProcessError::InputUnavailable {
+                pass: pass.to_string(),
+                input,
+            }),
+            None => Ok(()),
+        }
+    }
+}
+
+/// Why the chain skipped a pass.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum PostProcessError {
+    /// The pass reads a scene input the renderer does not produce yet.
+    #[error("post-process pass `{pass}` needs {input}, which the renderer does not produce yet")]
+    InputUnavailable {
+        /// The pass's name.
+        pass: String,
+        /// The input it asked for.
+        input: SceneInput,
+    },
+}
+
+/// What a pass may use while preparing and recording.
+pub struct PassContext<'a> {
+    /// The render context the chain renders on.
+    pub render_context: &'a RenderContext,
+    /// Size in pixels of every texture the chain reads and writes.
+    pub size: (u32, u32),
+}
+
+/// The textures one pass reads and writes. `input` and `output` are never the
+/// same texture.
+pub struct PassIo<'a> {
+    /// The color the pass reads.
+    pub input: &'a Texture,
+    /// The color target the pass writes. It is not cleared first: the pass
+    /// writes every pixel.
+    pub output: &'a Texture,
+    /// Single-sample scene depth, when the pass asked for it.
+    pub depth: Option<&'a Texture>,
+}
+
+/// One full-screen pass of the post-processing chain.
+pub trait PostProcessPass: Send + Sync {
+    /// Name used in logs and errors.
+    fn name(&self) -> &str;
+
+    /// The stage the pass runs in.
+    fn stage(&self) -> PostProcessStage;
+
+    /// The scene inputs the pass reads besides color.
+    fn inputs(&self) -> PassInputs {
+        PassInputs::NONE
+    }
+
+    /// Whether the pass runs this frame.
+    fn enabled(&self, settings: &PostProcessSettings) -> bool;
+
+    /// Uploads the pass's uniforms from `settings`. Runs before any pass
+    /// records.
+    fn prepare(&mut self, context: &PassContext, settings: &PostProcessSettings);
+
+    /// Records the pass: reads `io.input`, writes `io.output`.
+    fn record(&mut self, context: &PassContext, encoder: &mut wgpu::CommandEncoder, io: PassIo);
+}

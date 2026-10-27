@@ -38,7 +38,7 @@ mod outline_renderer;
 mod particle_renderer;
 mod particle_simulation;
 mod pipeline_options;
-/// Post-processing rendering modules.
+/// The post-processing chain between the scene pass and the presented texture.
 pub mod postprocess;
 mod render_context;
 mod render_utils;
