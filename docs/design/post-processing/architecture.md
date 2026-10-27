@@ -138,7 +138,7 @@ pub struct ComponentGlobalPostProcessVolume {
 
 ## Shaders
 
-- `assets/shaders/fullscreen.wgsl`: shared full-screen-triangle vertex module.
+- `assets/shaders/fullscreen.wgsl`: the shared full-screen triangle, `fullscreen_vertex(index)`, which each including shader calls from its own vertex entry point. The post passes, the editor grid, the selection outline and 2D mip generation all draw it; the engine has no full-screen quad mesh.
 - `assets/shaders/postprocess/tonemap.wgsl`: the tone-map pass.
 - `assets/shaders/postprocess/depth_resolve.wgsl`: copies sample 0 of the multisampled depth.
 - `pbr.wgsl` drops Reinhard, gamma 1.4 and the `* 5.0` on albedo.

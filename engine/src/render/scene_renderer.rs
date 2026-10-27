@@ -158,7 +158,6 @@ struct CompletedObjectPick {
 
 struct SceneRendererAssets {
     cube: Ref<Mesh>,
-    screen_space_quad: Ref<Mesh>,
     black_texture_2d: Ref<Texture>,
     black_texture_cube: Ref<Texture>,
     white_texture: Ref<Texture>,
@@ -293,10 +292,6 @@ impl SceneRenderer {
         let cube = SceneRendererError::load::<Mesh>(context, "meshes/cube")?;
         let white_texture = SceneRendererError::load::<Texture>(context, "textures/white")?;
         let asset_registry = context.registries.assets.read();
-        let screen_space_quad = SceneRendererError::require(
-            asset_registry.screen_space_quad(),
-            AssetRegistry::SCREEN_SPACE_QUAD,
-        )?;
         let black_texture_2d = SceneRendererError::require(
             asset_registry.black_texture_2d(),
             AssetRegistry::BLACK_TEXTURE_2D,
@@ -311,7 +306,6 @@ impl SceneRenderer {
             asset_context: context.clone(),
             default_assets: SceneRendererAssets {
                 cube,
-                screen_space_quad,
                 black_texture_2d,
                 black_texture_cube,
                 white_texture,
@@ -490,9 +484,7 @@ impl SceneRenderer {
         );
         if self.options.grid {
             self.grid_renderer.render(
-                &render_context,
                 &mut encoder,
-                &self.default_assets.screen_space_quad,
                 &self.scene_texture_msaa,
                 &self.scene_depth_texture,
                 self.options.samples,
@@ -692,7 +684,6 @@ impl SceneRenderer {
         self.outline_renderer.render(
             render_context,
             encoder,
-            &self.default_assets.screen_space_quad,
             &self.scene_texture_msaa,
             &self.scene_object_id_texture,
             self.options.samples,
@@ -796,10 +787,6 @@ impl SceneRenderer {
                 .meshes
                 .entry(self.default_assets.cube.id())
                 .or_insert(self.default_assets.cube.clone());
-            self.assets
-                .meshes
-                .entry(self.default_assets.screen_space_quad.id())
-                .or_insert(self.default_assets.screen_space_quad.clone());
             skybox = Some(skybox_id);
             sky_light_intensity = c_sky_light.intensity.max(0.0);
         }

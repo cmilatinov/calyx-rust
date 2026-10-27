@@ -1,4 +1,3 @@
-use crate::assets::mesh::{Instance, Mesh};
 use crate::assets::texture::Texture;
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
@@ -6,7 +5,6 @@ use crate::render::render_utils::RenderUtils;
 use crate::render::{CachedBindGroup, PipelineOptions, RenderContext, SceneRendererError, Shader};
 use egui::Color32;
 use egui_wgpu::wgpu;
-use nalgebra_glm::Mat4;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -84,7 +82,6 @@ impl OutlineRenderer {
         &mut self,
         render_context: &RenderContext,
         encoder: &mut wgpu::CommandEncoder,
-        screen_space_quad: &Ref<Mesh>,
         scene_texture_msaa: &Texture,
         scene_object_id_texture: &Texture,
         samples: u32,
@@ -101,30 +98,17 @@ impl OutlineRenderer {
             return;
         }
 
-        let device = render_context.device();
-        let mut quad_mesh = screen_space_quad.write();
         let shader = self.shader.read();
-        let options = PipelineOptions::builder()
-            .samples(samples)
-            .fragment_targets(vec![Some(RenderUtils::color_alpha_blending(
+        let options = PipelineOptions {
+            samples,
+            fragment_targets: vec![Some(RenderUtils::color_alpha_blending(
                 scene_texture_msaa.descriptor.format,
-            ))])
-            .depth_stencil(None)
-            .build();
+            ))],
+            ..PipelineOptions::fullscreen()
+        };
         let pipeline = shader.pipeline(&options);
         let bind_group_layout = shader.bind_group_layouts[0].clone();
         drop(shader);
-
-        quad_mesh.instances.resize(
-            1,
-            Instance {
-                bone_transform_index: -1,
-                object_id: 0,
-                _padding: Default::default(),
-                transform: Mat4::identity().into(),
-            },
-        );
-        RenderUtils::rebuild_mesh_data(device, render_context.queue(), &mut quad_mesh);
 
         if self.hovered_object_id != 0 {
             Self::render_pass(
@@ -135,7 +119,6 @@ impl OutlineRenderer {
                 &scene_object_id_texture.view,
                 &pipeline,
                 &bind_group_layout,
-                &quad_mesh,
                 self.hovered_object_id,
                 self.hovered_color,
                 Self::HOVERED_OUTLINE_RADIUS,
@@ -151,7 +134,6 @@ impl OutlineRenderer {
                 &scene_object_id_texture.view,
                 &pipeline,
                 &bind_group_layout,
-                &quad_mesh,
                 self.selected_object_id,
                 self.selected_color,
                 Self::SELECTED_OUTLINE_RADIUS,
@@ -168,7 +150,6 @@ impl OutlineRenderer {
         object_id_texture_view: &wgpu::TextureView,
         pipeline: &wgpu::RenderPipeline,
         bind_group_layout: &wgpu::BindGroupLayout,
-        quad_mesh: &Mesh,
         target_object_id: u32,
         outline_color: Color32,
         outline_radius: u32,
@@ -208,8 +189,7 @@ impl OutlineRenderer {
             RenderUtils::overlay_pass(encoder, scene_texture_view, None, "Scene Outline");
         render_pass.set_pipeline(pipeline);
         render_pass.set_bind_group(0, bind_group, &[]);
-        RenderUtils::bind_mesh_buffers(&mut render_pass, quad_mesh);
-        RenderUtils::draw_mesh_instanced(&mut render_pass, quad_mesh, 0..1);
+        RenderUtils::draw_fullscreen(&mut render_pass);
     }
 }
 
@@ -246,13 +226,12 @@ mod tests {
         let renderer =
             OutlineRenderer::new(&read_only_context).expect("outline renderer should load");
         let shader = renderer.shader.read();
-        let options = crate::render::PipelineOptions::builder()
-            .samples(1)
-            .fragment_targets(vec![Some(RenderUtils::color_alpha_blending(
+        let options = crate::render::PipelineOptions {
+            fragment_targets: vec![Some(RenderUtils::color_alpha_blending(
                 TextureFormat::Rgba16Float,
-            ))])
-            .depth_stencil(None)
-            .build();
+            ))],
+            ..crate::render::PipelineOptions::fullscreen()
+        };
         let pipeline = shader.pipeline(&options);
         assert_eq!(shader.pipeline(&options), pipeline);
     }
