@@ -1,0 +1,10 @@
+[package]
+name = "calyx_shader"
+version = "0.1.0"
+edition = "2021"
+description = "The WGSL preprocessor of the Calyx engine: includes and module parameters."
+publish = false
+
+[dependencies]
+regex.workspace = true
+thiserror.workspace = true

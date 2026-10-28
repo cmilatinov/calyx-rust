@@ -1,4 +1,4 @@
-use super::shader_preprocessor::ShaderPreprocessor;
+use super::shader_loader::AssetShaderLoader;
 use crate as engine;
 use crate::assets::error::AssetError;
 use crate::assets::{Asset, LoadedAsset};
@@ -6,9 +6,11 @@ use crate::context::ReadOnlyAssetContext;
 use crate::render::render_utils::RenderUtils;
 use crate::render::{PipelineOptions, RenderContext};
 use crate::utils::TypeUuid;
+use calyx_shader::Preprocessed;
 use eframe::wgpu::ShaderSource;
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::PipelineCompilationOptions;
+use naga::front::wgsl::ParseError;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -84,13 +86,23 @@ impl Asset for Shader {
             .and_then(|s| s.to_str())
             .unwrap_or("shader")
             .to_string();
-        let source = ShaderPreprocessor::load_shader_source(&game.registries.assets.read(), path)
+        let preprocessed = AssetShaderLoader::new(&game.registries.assets.read())
+            .preprocess(path)
             .map_err(|err| {
+                AssetError::LoadError
+                    .with_path(path)
+                    .with_type(Self::asset_name())
+                    .with_source(err)
+            })?;
+        // Parsed first, so a shader naga rejects reports where in its files
+        // and never reaches wgpu.
+        let module = naga::front::wgsl::parse_str(&preprocessed.source).map_err(|err| {
             AssetError::LoadError
                 .with_path(path)
                 .with_type(Self::asset_name())
-                .with_source(err)
+                .with_source(Self::describe_parse_error(&err, &preprocessed))
         })?;
+        let source = preprocessed.source;
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(
                 path.file_stem().and_then(|f| f.to_str()).ok_or(
@@ -101,13 +113,6 @@ impl Asset for Shader {
             ),
             source: ShaderSource::Wgsl(Cow::Borrowed(source.as_str())),
         });
-
-        let module = naga::front::wgsl::parse_str(source.as_str()).map_err(|err| {
-            AssetError::LoadError
-                .with_path(path)
-                .with_type(Self::asset_name())
-                .with_source(err.emit_to_string(source.as_str()))
-        })?;
 
         let ty = Self::shader_type(&module);
         let bind_group_entries = Self::bind_group_entries(&module);
@@ -158,6 +163,55 @@ impl Asset for Shader {
 }
 
 impl Shader {
+    /// Describes naga's `error` in `shader`'s source at the files and lines
+    /// it came from, rather than the lines of the expanded source. A column
+    /// is the expanded line's, which a parameter's replacement can shift.
+    fn describe_parse_error(error: &ParseError, shader: &Preprocessed) -> String {
+        let source = shader.source.as_str();
+        let mut lines = Vec::new();
+        for (span, label) in error.labels() {
+            if !span.is_defined() {
+                continue;
+            }
+            let location = span.location(source);
+            let line = location.line_number as usize;
+            let place = match shader.source_map.location(line) {
+                Some(original) => format!("{}:{}", original.file.display(), original.line),
+                None => format!("line {line} of the preprocessed source"),
+            };
+            let place = format!("{place}:{}", location.line_position);
+            if lines.is_empty() {
+                lines.push(format!("{place}: {}", error.message()));
+            } else {
+                lines.push(place);
+            }
+            let code = source.lines().nth(line - 1).unwrap_or_default();
+            let column = location.line_position as usize - 1;
+            let indent = code
+                .get(..column)
+                .map_or(column, |prefix| prefix.chars().count());
+            let width = (location.length as usize).max(1);
+            lines.push(format!("    {code}"));
+            lines.push(format!(
+                "    {}{} {label}",
+                " ".repeat(indent),
+                "^".repeat(width)
+            ));
+        }
+        if lines.is_empty() {
+            lines.push(error.message().to_owned());
+        }
+        // naga keeps an error's notes private; they end its own rendering.
+        for note in error
+            .emit_to_string(source)
+            .lines()
+            .filter_map(|line| line.trim_start().strip_prefix("= "))
+        {
+            lines.push(format!("  = {note}"));
+        }
+        lines.join("\n")
+    }
+
     fn shader_type(module: &naga::Module) -> ShaderType {
         if module
             .entry_points
@@ -637,14 +691,109 @@ pub struct ComputeKernel {
 #[cfg(test)]
 mod tests {
     use super::Shader;
+    use crate::assets::Asset;
+    use crate::render::AssetShaderLoader;
     use crate::render::PARTICLE_KERNELS;
     use crate::test_support::TestAssets;
+    use calyx_shader::MemoryLoader;
+    use std::collections::HashSet;
+    use std::path::Path;
+
+    /// naga reports a parse error in the expanded source; the shader's
+    /// error names the included module's file and line instead.
+    #[test]
+    fn a_parse_error_in_an_included_module_names_its_file_and_line() {
+        let loader = MemoryLoader::new()
+            .with(
+                "shaders/module.wgsl",
+                "// A module.\n//#param keys: storage<array<f32>>\n\n\
+                 fn key(index: u32) -> f32 {\n    return #keys[index] +;\n}\n",
+            )
+            .with(
+                "main.wgsl",
+                "// The shader.\n//#include \"shaders/module.wgsl\"\n\
+                 //#binding keys\n\
+                 @group(0) @binding(0) var<storage> particle_keys: array<f32>;\n",
+            );
+        let shader = calyx_shader::preprocess(&loader, Path::new("main.wgsl"))
+            .expect("the shader preprocesses");
+        let error = naga::front::wgsl::parse_str(&shader.source).expect_err("naga rejects it");
+        let expanded = error
+            .location(&shader.source)
+            .expect("the error has a location")
+            .line_number;
+        assert_eq!(expanded, 6, "{}", shader.source);
+
+        let description = Shader::describe_parse_error(&error, &shader);
+        let first = description.lines().next().unwrap_or_default();
+        assert!(first.starts_with("shaders/module.wgsl:5:"), "{description}");
+        assert!(first.contains(error.message()), "{description}");
+        assert!(
+            description.contains("return particle_keys[index] +;"),
+            "{description}"
+        );
+        assert!(!description.contains("main.wgsl"), "{description}");
+    }
 
     fn bindings(shader: &Shader, entry_point: &str) -> Vec<(u32, u32)> {
         shader.compute_entry_points[entry_point]
             .iter()
             .flat_map(|(group, entries)| entries.iter().map(|entry| (*group, entry.binding)))
             .collect()
+    }
+
+    fn wgsl_files(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).expect("the asset dir is readable") {
+            let path = entry.expect("the asset dir lists").path();
+            if path.is_dir() {
+                wgsl_files(&path, files);
+            } else if path.extension().is_some_and(|ext| ext == "wgsl") {
+                files.push(path);
+            }
+        }
+    }
+
+    /// Every shader of the engine's and the sandbox's assets loads. A file
+    /// another file includes is a module, such as `curve.wgsl` with its
+    /// parameters or `pbr_utils.wgsl` with the constants of the shader
+    /// that includes it, and loads through the shaders that include it.
+    #[test]
+    fn every_shader_of_the_assets_loads() {
+        let assets = TestAssets::game();
+        let context = assets.asset_context().lock_read();
+        let mut files = Vec::new();
+        for root in assets.roots() {
+            wgsl_files(&root, &mut files);
+        }
+        let files: Vec<_> = files
+            .iter()
+            .map(|path| std::fs::canonicalize(path).expect("the shader exists"))
+            .collect();
+        let mut modules = HashSet::new();
+        {
+            let registry = context.registries.assets.read();
+            let loader = AssetShaderLoader::new(&registry);
+            for path in &files {
+                let dependencies = loader
+                    .dependencies(path)
+                    .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+                modules.extend(dependencies);
+            }
+        }
+        let shaders: Vec<_> = files
+            .iter()
+            .filter(|path| !modules.contains(*path))
+            .collect();
+        for path in &shaders {
+            if let Err(error) = Shader::from_file(&context, path) {
+                panic!("{} does not load: {error}", path.display());
+            }
+        }
+        assert!(
+            modules.iter().any(|path| path.ends_with("curve.wgsl")),
+            "{modules:?}"
+        );
+        assert!(shaders.len() > 10, "only {} shaders", shaders.len());
     }
 
     #[test]

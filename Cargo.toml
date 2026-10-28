@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "calyx_shader",
     "engine",
     "editor",
     "project",
