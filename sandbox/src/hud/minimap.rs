@@ -8,8 +8,8 @@ use crate::tank::{ComponentHealth, ComponentProjectileTarget, ComponentTankContr
 use engine::math::Transform;
 use engine::scene::{GameObject, Scene};
 use engine::ui::{
-    CornerRadius, EdgeInsets, LayoutNode, PaintCommand, PointerEvents, Style, UiArena, UiColor,
-    UiLength, UiNodeHandle, UiPoint, UiRect, UiSize, UiTransform, UiWidget, Widget,
+    CornerRadius, EdgeInsets, LayoutNode, PaintCommand, PointerEvents, Style, StylePatch, UiArena,
+    UiColor, UiLength, UiNodeHandle, UiPoint, UiRect, UiSize, UiTransform, UiWidget, Widget,
 };
 use nalgebra_glm::{vec2, vec3, Vec2, Vec3};
 
@@ -291,7 +291,9 @@ impl Widget for MinimapHud {
             .radius(ui, CornerRadius::all(2.0))
             .width(ui, UiLength::Fill)
             .flex_grow(ui, 1.0)
-            .pointer_events(ui, PointerEvents::None);
+            .pointer_events(ui, PointerEvents::None)
+            // Blips past the view's reach stay inside the panel.
+            .style(ui, StylePatch::default().clip(true));
         ui.column()
             .id(ui, "hud-minimap")
             .style(ui, self.style.panel_style())

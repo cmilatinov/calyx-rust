@@ -498,8 +498,9 @@ mod tests {
     use super::{tank_hud_state, weapon_status_label, ComponentTankHud, TankHudState};
     use crate::combat::{record_kill, ComponentCombatStats, ComponentKillFeed, KillEvent};
     use crate::spawn::ComponentRespawnState;
-    use crate::tank::{ComponentHealth, ComponentTankController};
+    use crate::tank::{ComponentHealth, ComponentProjectileTarget, ComponentTankController};
     use engine::component::ComponentID;
+    use engine::math::Transform;
     use engine::scene::{Scene, SceneHud};
     use engine::ui::{PaintCommand, UiInput, UiPoint, UiRect, UiSize};
 
@@ -716,6 +717,63 @@ mod tests {
                 .iter()
                 .any(|command| matches!(command, PaintCommand::Line { .. })),
             "the player's heading is drawn"
+        );
+    }
+
+    #[test]
+    fn tank_hud_clips_the_minimap_to_its_panel() {
+        let (mut scene, tank) = tank_scene(ComponentRespawnState::default());
+        scene.add_component(tank, ComponentTankHud::default());
+        // No arena, so the map shows 25 m around the tank: this target is
+        // far off the map.
+        let target = scene.create(None, None);
+        scene.set_world_transform(target, Transform::from_xyz(1000.0, 0.0, 0.0).matrix());
+        scene.add_component(target, ComponentProjectileTarget::default());
+        let viewport = UiRect::from_min_size(UiPoint::ZERO, UiSize::new(1280.0, 720.0));
+        let commands = SceneHud::default()
+            .frame(&scene, viewport, UiInput::default())
+            .expect("the tank should draw a HUD")
+            .paint_commands;
+
+        let label = commands
+            .iter()
+            .position(|command| {
+                matches!(command, PaintCommand::Text { text, .. } if text == "TACTICAL MAP")
+            })
+            .expect("the minimap is drawn");
+        let (start, clip) = commands
+            .iter()
+            .enumerate()
+            .skip(label)
+            .find_map(|(index, command)| match command {
+                PaintCommand::PushClip(rect) => Some((index, *rect)),
+                _ => None,
+            })
+            .expect("the map clips what it paints");
+        let end = start
+            + commands[start..]
+                .iter()
+                .position(|command| matches!(command, PaintCommand::PopClip))
+                .expect("the map's clip ends");
+        let outside = |rect: &UiRect| {
+            rect.max.x < clip.min.x
+                || rect.min.x > clip.max.x
+                || rect.max.y < clip.min.y
+                || rect.min.y > clip.max.y
+        };
+        let off_map: Vec<usize> = commands
+            .iter()
+            .enumerate()
+            .skip(label)
+            .filter(|(_, command)| {
+                matches!(command, PaintCommand::FillRect { rect, .. } if outside(rect))
+            })
+            .map(|(index, _)| index)
+            .collect();
+        assert!(!off_map.is_empty(), "the far target is painted off the map");
+        assert!(
+            off_map.iter().all(|index| (start..end).contains(index)),
+            "off-map blips at {off_map:?} paint outside the clip {start}..{end}"
         );
     }
 
