@@ -1,0 +1,40 @@
+{
+  "actions": {
+    "jump": [
+      {
+        "Key": "Space"
+      }
+    ],
+    "scoreboard": [
+      {
+        "Key": "Tab"
+      }
+    ],
+    "shoot": [
+      {
+        "PointerButton": "Primary"
+      },
+      {
+        "Key": "Space"
+      }
+    ]
+  },
+  "axes": {
+    "move_forward": {
+      "positive": {
+        "Key": "W"
+      },
+      "negative": {
+        "Key": "S"
+      }
+    },
+    "move_right": {
+      "positive": {
+        "Key": "D"
+      },
+      "negative": {
+        "Key": "A"
+      }
+    }
+  }
+}

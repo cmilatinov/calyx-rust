@@ -1,35 +1,71 @@
+mod kill_feed;
+mod minimap;
+mod scoreboard;
+
 use crate::spawn::ComponentRespawnState;
 use crate::tank::{ComponentHealth, ComponentTankController};
-use engine::component::{Component, ComponentHud, ReflectComponent, ReflectComponentHud};
+use engine::component::{
+    Component, ComponentEventContext, ComponentHud, ComponentUpdate, ReflectComponent,
+    ReflectComponentHud, ReflectComponentUpdate,
+};
+use engine::input::Input;
 use engine::reflect::{Reflect, ReflectDefault};
+use engine::resource::ResourceMap;
 use engine::scene::{GameObject, Scene};
 use engine::ui::{
     Border, CornerRadius, EdgeInsets, JustifyContent, PointerEvents, StylePatch, UiArena, UiColor,
     UiLength, UiNodeHandle, UiRect, UiSize, Widget,
 };
 use engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
+use kill_feed::{kill_feed_lines, KillFeedHud, KillFeedLine};
+use minimap::{minimap_state, MinimapHud, MinimapState};
+use scoreboard::{scoreboard_height, scoreboard_rows, ScoreboardHud, ScoreboardRow};
 use serde::{Deserialize, Serialize};
 
-/// Draws the health and weapon HUD of the tank on the same game object.
+/// Draws the HUD of the tank on the same game object: health, weapon, a
+/// minimap, the kill feed of a [`ComponentKillFeed`](crate::combat::ComponentKillFeed)
+/// on the same object, and, while the `scoreboard` action is held, the
+/// scoreboard.
 #[derive(Clone, Copy, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "b7f3a8d2-5c41-4e8b-9a6f-0d2e7c1b4f93"]
-#[reflect(Default, TypeUuidDynamic, Component, ComponentHud)]
+#[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate, ComponentHud)]
 #[reflect_attr(name = "Tank HUD")]
 #[serde(default)]
 #[repr(C)]
 pub struct ComponentTankHud {
     pub screen_margin: f32,
+    /// Whether the scoreboard action was held on the last update.
+    #[serde(skip)]
+    #[reflect_skip]
+    pub scoreboard_open: bool,
 }
 
 impl Default for ComponentTankHud {
     fn default() -> Self {
         Self {
             screen_margin: HudStyle::default().screen_margin,
+            scoreboard_open: false,
         }
     }
 }
 
 impl Component for ComponentTankHud {}
+
+impl ComponentUpdate for ComponentTankHud {
+    fn update(
+        &self,
+        ComponentEventContext {
+            scene, game_object, ..
+        }: ComponentEventContext,
+        _resources: &mut ResourceMap,
+        input: &Input,
+    ) {
+        let open = input.action("scoreboard").pressed();
+        let _ = scene.write_component::<ComponentTankHud, _>(game_object, |hud| {
+            hud.scoreboard_open = open;
+        });
+    }
+}
 
 impl ComponentHud for ComponentTankHud {
     fn build_hud(
@@ -57,6 +93,11 @@ impl ComponentHud for ComponentTankHud {
                 fire_cooldown_remaining: state.fire_cooldown_remaining,
                 gameplay_locked: state.gameplay_locked,
                 respawn_remaining: state.respawn_remaining,
+                minimap: minimap_state(scene, game_object),
+                kill_feed: kill_feed_lines(scene, game_object),
+                scoreboard: hud
+                    .scoreboard_open
+                    .then(|| scoreboard_rows(scene, game_object)),
             }
             .build(ui),
         )
@@ -168,6 +209,10 @@ struct SandboxHud<'a> {
     fire_cooldown_remaining: f32,
     gameplay_locked: bool,
     respawn_remaining: Option<f32>,
+    minimap: MinimapState,
+    kill_feed: Vec<KillFeedLine>,
+    /// The scoreboard's rows while it is open.
+    scoreboard: Option<Vec<ScoreboardRow>>,
 }
 
 impl Widget for SandboxHud<'_> {
@@ -209,12 +254,60 @@ impl Widget for SandboxHud<'_> {
             },
         }
         .build(ui);
+
+        let minimap_side = (self.viewport.width() * 0.17).clamp(170.0, 230.0);
+        let minimap = MinimapHud {
+            style: self.style,
+            state: self.minimap.clone(),
+            // The label sits over a square map.
+            size: UiSize::new(minimap_side, minimap_side + 24.0),
+            margin: EdgeInsets {
+                top: margin,
+                right: 0.0,
+                bottom: 0.0,
+                left: margin,
+            },
+        }
+        .build(ui);
+
+        let kill_feed_width = (self.viewport.width() * 0.26).clamp(240.0, 340.0);
+        let kill_feed = KillFeedHud {
+            style: self.style,
+            lines: &self.kill_feed,
+            width: kill_feed_width,
+            margin: EdgeInsets {
+                top: margin,
+                right: 0.0,
+                bottom: 0.0,
+                left: (self.viewport.width() - kill_feed_width - margin).max(margin),
+            },
+        }
+        .build(ui);
+
+        let mut layers = vec![health, ammo, minimap, kill_feed];
+        if let Some(rows) = &self.scoreboard {
+            let width = (self.viewport.width() * 0.4).clamp(320.0, 460.0);
+            let height = scoreboard_height(rows.len());
+            let scoreboard = ScoreboardHud {
+                style: self.style,
+                rows,
+                width,
+                margin: EdgeInsets {
+                    top: ((self.viewport.height() - height) * 0.35).max(margin),
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: ((self.viewport.width() - width) * 0.5).max(margin),
+                },
+            };
+            layers.push(scoreboard.build(ui));
+        }
+
         ui.stack()
             .id(ui, "sandbox-ui")
             .width(ui, UiLength::Px(self.viewport.width()))
             .height(ui, UiLength::Px(self.viewport.height()))
             .pointer_events(ui, PointerEvents::None)
-            .children(ui, [health, ammo])
+            .children(ui, layers)
     }
 }
 
@@ -403,8 +496,11 @@ fn weapon_status_label(
 #[cfg(test)]
 mod tests {
     use super::{tank_hud_state, weapon_status_label, ComponentTankHud, TankHudState};
+    use crate::combat::{record_kill, ComponentCombatStats, ComponentKillFeed, KillEvent};
     use crate::spawn::ComponentRespawnState;
-    use crate::tank::{ComponentHealth, ComponentTankController};
+    use crate::tank::{ComponentHealth, ComponentProjectileTarget, ComponentTankController};
+    use engine::component::ComponentID;
+    use engine::math::Transform;
     use engine::scene::{Scene, SceneHud};
     use engine::ui::{PaintCommand, UiInput, UiPoint, UiRect, UiSize};
 
@@ -548,6 +644,137 @@ mod tests {
         scene.add_component(tank, ComponentTankHud::default());
 
         assert!(painted_text(&scene).contains(&"RESPAWN IN 2.5s".to_string()));
+    }
+
+    #[test]
+    fn tank_hud_paints_the_kill_feed_newest_first() {
+        let (mut scene, tank) = tank_scene(ComponentRespawnState::default());
+        scene.add_component(tank, ComponentTankHud::default());
+        scene.add_component(tank, ComponentKillFeed::default());
+        for victim in ["Target A", "Target B"] {
+            let target = scene.create(
+                Some(ComponentID {
+                    name: victim.to_string(),
+                    ..Default::default()
+                }),
+                None,
+            );
+            let event = KillEvent::new(&scene, Some(tank), target);
+            record_kill(&mut scene, &event);
+        }
+
+        let text = painted_text(&scene);
+        let victims: Vec<&String> = text
+            .iter()
+            .filter(|text| text.starts_with("TARGET"))
+            .collect();
+        assert_eq!(victims, vec!["TARGET B", "TARGET A"]);
+        assert_eq!(
+            text.iter().filter(|text| *text == "destroyed").count(),
+            2,
+            "{text:?}"
+        );
+    }
+
+    #[test]
+    fn tank_hud_shows_the_scoreboard_only_while_open() {
+        let (mut scene, tank) = tank_scene(ComponentRespawnState::default());
+        scene.add_component(tank, ComponentTankHud::default());
+        scene.add_component(
+            tank,
+            ComponentCombatStats {
+                kills: 3,
+                deaths: 1,
+            },
+        );
+
+        assert!(!painted_text(&scene).contains(&"SCOREBOARD".to_string()));
+
+        let _ = scene.write_component::<ComponentTankHud, _>(tank, |hud| {
+            hud.scoreboard_open = true;
+        });
+        let text = painted_text(&scene);
+        for expected in ["SCOREBOARD", "KILLS", "DEATHS", "3", "1"] {
+            assert!(text.iter().any(|t| t == expected), "{expected} in {text:?}");
+        }
+    }
+
+    #[test]
+    fn tank_hud_draws_the_minimap() {
+        let (mut scene, tank) = tank_scene(ComponentRespawnState::default());
+        scene.add_component(tank, ComponentTankHud::default());
+        let viewport = UiRect::from_min_size(UiPoint::ZERO, UiSize::new(1280.0, 720.0));
+        let frame = SceneHud::default()
+            .frame(&scene, viewport, UiInput::default())
+            .expect("the tank should draw a HUD");
+
+        assert!(frame.paint_commands.iter().any(
+            |command| matches!(command, PaintCommand::Text { text, .. } if text == "TACTICAL MAP")
+        ));
+        assert!(
+            frame
+                .paint_commands
+                .iter()
+                .any(|command| matches!(command, PaintCommand::Line { .. })),
+            "the player's heading is drawn"
+        );
+    }
+
+    #[test]
+    fn tank_hud_clips_the_minimap_to_its_panel() {
+        let (mut scene, tank) = tank_scene(ComponentRespawnState::default());
+        scene.add_component(tank, ComponentTankHud::default());
+        // No arena, so the map shows 25 m around the tank: this target is
+        // far off the map.
+        let target = scene.create(None, None);
+        scene.set_world_transform(target, Transform::from_xyz(1000.0, 0.0, 0.0).matrix());
+        scene.add_component(target, ComponentProjectileTarget::default());
+        let viewport = UiRect::from_min_size(UiPoint::ZERO, UiSize::new(1280.0, 720.0));
+        let commands = SceneHud::default()
+            .frame(&scene, viewport, UiInput::default())
+            .expect("the tank should draw a HUD")
+            .paint_commands;
+
+        let label = commands
+            .iter()
+            .position(|command| {
+                matches!(command, PaintCommand::Text { text, .. } if text == "TACTICAL MAP")
+            })
+            .expect("the minimap is drawn");
+        let (start, clip) = commands
+            .iter()
+            .enumerate()
+            .skip(label)
+            .find_map(|(index, command)| match command {
+                PaintCommand::PushClip(rect) => Some((index, *rect)),
+                _ => None,
+            })
+            .expect("the map clips what it paints");
+        let end = start
+            + commands[start..]
+                .iter()
+                .position(|command| matches!(command, PaintCommand::PopClip))
+                .expect("the map's clip ends");
+        let outside = |rect: &UiRect| {
+            rect.max.x < clip.min.x
+                || rect.min.x > clip.max.x
+                || rect.max.y < clip.min.y
+                || rect.min.y > clip.max.y
+        };
+        let off_map: Vec<usize> = commands
+            .iter()
+            .enumerate()
+            .skip(label)
+            .filter(|(_, command)| {
+                matches!(command, PaintCommand::FillRect { rect, .. } if outside(rect))
+            })
+            .map(|(index, _)| index)
+            .collect();
+        assert!(!off_map.is_empty(), "the far target is painted off the map");
+        assert!(
+            off_map.iter().all(|index| (start..end).contains(index)),
+            "off-map blips at {off_map:?} paint outside the clip {start}..{end}"
+        );
     }
 
     #[test]

@@ -404,12 +404,20 @@ impl HeadlessSceneRunner {
         Self::from_scene(test_scene())
     }
 
-    /// Creates a runner for an existing scene.
+    /// Creates a runner for an existing scene. Input follows the project action
+    /// map (`input.cxinput`) of the scene's asset registry, as the player does;
+    /// without one no actions are bound. Panics when that map fails to load.
     pub fn from_scene(mut scene: Scene) -> Self {
         scene.start();
+        let registries = scene.registries().clone();
+        let mut resources = ResourceMap::new();
+        resources
+            .input_mut()
+            .load_project_action_map(&registries.assets.read())
+            .unwrap_or_else(|error| panic!("the project action map should load: {error}"));
         Self {
-            registries: scene.registries().clone(),
-            resources: ResourceMap::new(),
+            registries,
+            resources,
             scene,
             input_context: egui::Context::default(),
             input_active: true,
@@ -788,6 +796,14 @@ mod tests {
 
         let mut runner = HeadlessSceneRunner::from_scene(builder.finish());
         runner.resources_mut().insert(InputProbe::default());
+        let mut map = ActionMap::new();
+        map.bind_action("shoot", InputBinding::Key(Key::Space));
+        map.bind_axis(
+            "move_forward",
+            InputBinding::Key(Key::W),
+            InputBinding::Key(Key::S),
+        );
+        runner.resources_mut().input_mut().set_action_map(map);
 
         runner.press_key(Key::W);
         runner.press_key(Key::Space);

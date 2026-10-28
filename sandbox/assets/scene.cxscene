@@ -745,6 +745,11 @@
         "respawn_requested": false,
         "team": 4294967295
       },
+      "867c33b3-9ee1-42d3-bffa-e5fa56b3bc40": {
+        "entry_lifetime": 6.0,
+        "fade_duration": 1.5,
+        "max_entries": 5
+      },
       "8f0175f4-1a76-4c43-8932-6462f9005ab4": {
         "current_health": 100.0,
         "dead": false,
@@ -777,6 +782,10 @@
       "f2c31eb5-c999-4125-9cb0-a72a238eca2e": {
         "hit_count": 0,
         "hit_radius": 1.25
+      },
+      "f651c577-ddb4-40b5-8d7a-ac2b5ad663f0": {
+        "deaths": 0,
+        "kills": 0
       }
     },
     "a33bc813-1f8f-475d-967d-d9a309dad8bd": {
@@ -1105,6 +1114,10 @@
             1.0
           ]
         }
+      },
+      "f651c577-ddb4-40b5-8d7a-ac2b5ad663f0": {
+        "deaths": 0,
+        "kills": 0
       }
     },
     "f80c0819-9a7f-5a24-9a56-64f32933b336": {

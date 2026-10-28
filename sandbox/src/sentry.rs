@@ -116,6 +116,7 @@ fn fire_at_target(scene: &mut Scene, game_object: GameObject, sentry: &mut Compo
             damage: sentry.projectile_damage,
             lifetime_remaining: sentry.projectile_lifetime,
             radius: sentry.projectile_radius,
+            shooter: GameObjectRef::new(scene.uuid(game_object)),
         },
         visual,
     );

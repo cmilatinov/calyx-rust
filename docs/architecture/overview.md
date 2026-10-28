@@ -20,7 +20,7 @@ Core runtime. Modules:
 - `context.rs` — RegistryContext, AssetContext, GameContext. Layered read-only wrappers.
 - `class_registry.rs` — ComponentRegistry for type-erased component construction from reflection.
 - `math/` — Transform (position/rotation/scale), matrix decomposition, inverse. Curve: a scalar over time as sorted keys (time, value, interpolation: constant, linear or smooth), evaluated with `Curve::evaluate`, holding the end keys' values outside them; its inspector edits keys on a normalized 0..1 timeline.
-- `input/` — Thin wrapper over egui::InputState.
+- `input/` — Thin wrapper over egui::InputState. `ActionMap` names actions and axes over key and pointer bindings; the default map binds nothing. A project ships its bindings as the `input.cxinput` asset (`PROJECT_ACTION_MAP_NAME`), which `GameContext::new` and `HeadlessSceneRunner::from_scene` follow, hot reloads included. A project without one has no bindings.
 
 ### `calyx_shader` (library)
 The WGSL preprocessor, a pure source-to-source pass with no engine dependency; its crate rustdoc documents the directive language. `//#include` expands each file once per shader, `//#param` declares a module parameter that the module names as `#name`, and `//#binding` marks the `var` of the including shader that fulfills it. A `ShaderLoader` resolves and reads files, every failure is a `ShaderError` variant naming the file and line, and `preprocess` returns a `SourceMap` from each expanded line to its file and line. Its tests use the in-memory `MemoryLoader` and run with `cargo test -p calyx_shader`.
@@ -30,7 +30,7 @@ egui + eframe editor application.
 - `panel/` — Modular panels: Viewport, Inspector, SceneHierarchy, ContentBrowser, Terminal, Game, Animator. Panel trait with name/icon/ui.
 - `inspector/` — InspectorRegistry with type-specific inspectors (bool, float, int, string, color, transform, vec, curve, asset ref, game object ref, collider, rigid body, UUID). Asset inspectors for Material, Shader, Prefab, AnimationGraph.
 - `widgets/` — Tab system, file button, list widget.
-- `camera.rs` — EditorCamera (orbit/fly).
+- `camera.rs` — EditorCamera (orbit/fly), with its own `ActionMap` (`EditorCamera::action_map`); the scene view never reads the project map, and the Game tab reads only the project map.
 - `selection.rs` — Selection state (GameObject or Asset).
 - `scene_document.rs` — SceneDocument: the authoring scene's undo history, dirty state, recovery autosave and file. Panels write the scene through a `SceneEdit` (`scene_edit.rs`), which captures the scene at its first write, commits everything written as one undo step, and records nothing while a simulation copy of the scene exists.
 - `prefab_mode/` — Prefab mode: a `.cxprefab` asset opened as the authoring scene under its own `SceneDocument`, opened by double-clicking it in the content browser or from its Open Prefab context action. The open scene is set aside as a snapshot with its document, file and selection, and comes back unchanged when the prefab closes. Save writes the prefab asset only (one top-level object, the prefab root); scene instances are independent copies and are not updated. Play, and opening or saving scenes, are refused while a prefab is open; closing or quitting with unsaved prefab changes prompts. The scene view shows a blue backdrop in prefab mode (`PREFAB_MODE_BACKDROP` in `prefab_mode/mod.rs`) and lights the prefab with a view-only environment (`prefab_mode/environment.rs`): the built-in studio HDRI `assets/skyboxes/prefab_studio.hdr`, used for image-based lighting without being drawn and passed to the renderer as `SceneRendererOptions::environment`; its bright spot at 45 degrees gives the prefab a shading direction, with no separate key light. Nothing of it is saved into the prefab. `PrefabMode` (`prefab_mode/mod.rs`) is the one `EditorAppState` field holding the open prefab, the pending unsaved-changes prompt and the loaded studio HDRI; `EditorAppState::prefab_mode_mut` pairs it with the game, scene document, selection and project path to open, save and close prefabs. `prefab_mode/editing.rs` swaps the prefab in and the set-aside scene back, and `prefab_mode/ui.rs` holds the banner and the unsaved-changes prompt.
@@ -55,6 +55,9 @@ Example game project. Compiles as dynamic library (plugin) with `plugin_main` en
 - `player.rs` — ComponentPlayerController (WASD movement, camera-relative, network ownership check).
 - `network.rs` — Game-specific network handlers.
 - `game.rs` — Standalone game binary.
+- `assets/input.cxinput` — The sandbox's action map: `shoot` (primary button, Space), `jump` (Space), `scoreboard` (Tab), and the `move_forward` (W/S) and `move_right` (D/A) axes.
+- `combat.rs` — Kill events. A projectile records its shooter, and a lethal hit becomes a `KillEvent` passed to `record_kill`, which counts kills and deaths on `ComponentCombatStats` and adds the kill to every `ComponentKillFeed`. Networked kills are meant to enter through the same `record_kill`.
+- `hud.rs` and `hud/` — The tank HUD (`ComponentTankHud`): health, weapon, a minimap drawn from world positions, the kill feed, and a scoreboard while the `scoreboard` action (Tab in the sandbox's `input.cxinput`) is held.
 
 ## Key Patterns
 - `Ref<T>` everywhere for shared ownership with UUID tracking.

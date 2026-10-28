@@ -205,8 +205,9 @@ impl<'a> Input<'a> {
     }
 }
 
-/// Asset-backed mapping from action names to bindings and axes.
-#[derive(Clone, Debug, Serialize, Deserialize, TypeUuid)]
+/// Asset-backed mapping from action names to bindings and axes. The default map
+/// binds nothing: a project ships its bindings as the `input.cxinput` asset.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TypeUuid)]
 #[uuid = "ff8bf335-7c0b-4e70-a2f9-4d64d2c2d12d"]
 pub struct ActionMap {
     actions: HashMap<String, Vec<InputBinding>>,
@@ -243,33 +244,10 @@ impl Asset for ActionMap {
     }
 }
 
-impl Default for ActionMap {
-    fn default() -> Self {
-        let mut map = Self::new();
-        map.bind_action("shoot", InputBinding::PointerButton(PointerButton::Primary));
-        map.bind_action("shoot", InputBinding::Key(Key::Space));
-        map.bind_action("jump", InputBinding::Key(Key::Space));
-        map.bind_axis(
-            "move_forward",
-            InputBinding::Key(Key::W),
-            InputBinding::Key(Key::S),
-        );
-        map.bind_axis(
-            "move_right",
-            InputBinding::Key(Key::D),
-            InputBinding::Key(Key::A),
-        );
-        map
-    }
-}
-
 impl ActionMap {
     /// Creates an empty action map.
     pub fn new() -> Self {
-        Self {
-            actions: HashMap::new(),
-            axes: HashMap::new(),
-        }
+        Self::default()
     }
 
     /// Adds `binding` to the named action.
@@ -538,8 +516,34 @@ impl std::ops::BitOr for ActionState {
 mod tests {
     use super::{ActionMap, Input, InputBinding, InputState, ModifierBinding};
     use crate::assets::{Asset, LoadedAsset};
+    use crate::context::GameContext;
+    use crate::test_support::test_asset_context_with_assets;
     use egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput, Rect, Sense, Vec2};
     use uuid::Uuid;
+
+    fn binds_nothing(state: &InputState) -> bool {
+        state
+            .action_map
+            .with(|map| map.actions.is_empty() && map.axes.is_empty())
+    }
+
+    #[test]
+    fn default_action_map_binds_nothing() {
+        let map = ActionMap::default();
+        assert!(map.actions.is_empty());
+        assert!(map.axes.is_empty());
+        assert!(binds_nothing(&InputState::default()));
+    }
+
+    #[test]
+    fn project_without_an_action_map_binds_nothing() {
+        let dir = std::env::temp_dir().join(format!("calyx-input-empty-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let game = GameContext::new(test_asset_context_with_assets(vec![dir.clone()]));
+        assert!(binds_nothing(game.resources.input()));
+        drop(game);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn action_bindings_are_configurable() {
