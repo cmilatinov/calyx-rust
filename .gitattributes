@@ -1,0 +1,3 @@
+# Environment maps are binary; keep line-ending conversion away from them.
+*.hdr binary
+*.exr binary

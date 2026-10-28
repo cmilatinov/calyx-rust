@@ -19,7 +19,7 @@ fn render_settings_sanitize_size_margin_and_cache_key() {
     let settings = ThumbnailRenderSettings::with_size_and_frame_margin(1, f32::NAN);
     assert_eq!(settings.size_px, THUMBNAIL_MIN_SIZE);
     assert_eq!(settings.frame_margin, THUMBNAIL_DEFAULT_FRAME_MARGIN);
-    assert_eq!(settings.cache_key(), "frame-margin-25");
+    assert_eq!(settings.cache_key(), "render-2-frame-margin-25");
 
     let settings = ThumbnailRenderSettings::with_size_and_frame_margin(u32::MAX, f32::INFINITY);
     assert_eq!(settings.size_px, THUMBNAIL_MAX_SIZE);
@@ -28,11 +28,11 @@ fn render_settings_sanitize_size_margin_and_cache_key() {
     let settings = ThumbnailRenderSettings::with_size_and_frame_margin(256, -1.0);
     assert_eq!(settings.size_px, 256);
     assert_eq!(settings.frame_margin, THUMBNAIL_MIN_FRAME_MARGIN);
-    assert_eq!(settings.cache_key(), "frame-margin-0");
+    assert_eq!(settings.cache_key(), "render-2-frame-margin-0");
 
     let settings = ThumbnailRenderSettings::with_size_and_frame_margin(256, 1.0);
     assert_eq!(settings.frame_margin, THUMBNAIL_MAX_FRAME_MARGIN);
-    assert_eq!(settings.cache_key(), "frame-margin-450");
+    assert_eq!(settings.cache_key(), "render-2-frame-margin-450");
 }
 
 #[test]
@@ -165,7 +165,7 @@ fn thumbnail_cache_path_includes_size_settings_type_and_request_identity() {
     let path = cache.path(&request);
     let path_text = path.to_string_lossy().replace('\\', "/");
     assert!(path_text.contains("/Calyx/Editor/thumbnails/"));
-    assert!(path_text.contains("/256px/frame-margin-123/prefab/"));
+    assert!(path_text.contains("/256px/render-2-frame-margin-123/prefab/"));
     assert!(path_text.ends_with("/00000000-0000-0000-0000-000000001234-00000000feedbeef.png"));
 }
 

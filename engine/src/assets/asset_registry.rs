@@ -1,6 +1,6 @@
 use eframe::wgpu;
 use glob::glob;
-use nalgebra_glm::{vec2, vec3};
+use nalgebra_glm::vec3;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use path_absolutize::Absolutize;
 use relative_path::{PathExt, RelativePathBuf};
@@ -31,7 +31,7 @@ use crate::error::BoxedError;
 use crate::input::ActionMap;
 use crate::reflect::type_registry::TypeRegistry;
 use crate::reflect::{AttributeValue, TypeInfo};
-use crate::render::{RenderContext, Shader, ShaderPreprocessor};
+use crate::render::{AssetShaderLoader, RenderContext, Shader};
 use crate::scene::{Prefab, Scene};
 use crate::utils;
 use crate::utils::TypeUuid;
@@ -1570,7 +1570,7 @@ impl AssetRegistry {
             return;
         }
 
-        match ShaderPreprocessor::shader_dependencies(self, path) {
+        match AssetShaderLoader::new(self).dependencies(path) {
             Ok(dependencies) => {
                 let mut data = self.asset_data_mut();
                 for dependency in dependencies {
@@ -1800,7 +1800,6 @@ impl AssetRegistry {
 }
 
 impl AssetRegistry {
-    pub(crate) const SCREEN_SPACE_QUAD: &'static str = "screen_space_quad";
     pub(crate) const BLACK_TEXTURE_2D: &'static str = "black_texture_2d";
     pub(crate) const BLACK_TEXTURE_CUBE: &'static str = "black_texture_cube";
     const DEFAULT_SCENE: &'static str = "default_scene";
@@ -1906,41 +1905,6 @@ impl AssetRegistry {
     /// Returns the built-in cylinder mesh.
     pub fn cylinder(&self) -> Option<Ref<Mesh>> {
         self.load::<Mesh>("meshes/cylinder").ok()
-    }
-
-    /// Returns or creates a fullscreen quad mesh.
-    pub fn screen_space_quad(&self) -> Option<Ref<Mesh>> {
-        self.load_or_create(Self::SCREEN_SPACE_QUAD, || {
-            let mut quad = Mesh {
-                indices: vec![0, 1, 2, 1, 0, 3],
-                vertices: vec![
-                    vec3(-1.0, -1.0, 0.0),
-                    vec3(1.0, 1.0, 0.0),
-                    vec3(-1.0, 1.0, 0.0),
-                    vec3(1.0, -1.0, 0.0),
-                ],
-                normals: vec![
-                    vec3(0.0, 0.0, -1.0),
-                    vec3(0.0, 0.0, -1.0),
-                    vec3(0.0, 0.0, -1.0),
-                    vec3(0.0, 0.0, -1.0),
-                ],
-                uvs: [
-                    vec![
-                        vec2(0.0, 0.0),
-                        vec2(1.0, 1.0),
-                        vec2(0.0, 1.0),
-                        vec2(1.0, 0.0),
-                    ],
-                    vec![],
-                    vec![],
-                    vec![],
-                ],
-                ..Mesh::new(&self.render_context)
-            };
-            quad.mark_dirty();
-            quad
-        })
     }
 
     /// Builds a wireframe circle mesh used by gizmo rendering.

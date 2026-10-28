@@ -286,6 +286,38 @@ impl SceneDocument {
         true
     }
 
+    /// Commits pending inspector edits and writes the scene's recovery
+    /// autosave now, before the editor sets the scene aside. `false` when the
+    /// autosave failed.
+    pub(crate) fn set_aside(&mut self, game: &GameContext) -> bool {
+        self.flush_pending_values(game);
+        self.inspector_edits.clear();
+        self.autosave.prepare_scene_change(game)
+    }
+
+    /// Takes the scene the editor put back in the authoring slot after
+    /// [`Self::set_aside`]: its history, dirty state and file are as they
+    /// were, but every object was rebuilt.
+    pub(crate) fn resumed(&mut self) {
+        self.revision += 1;
+        self.inspector_edits.reset(None);
+    }
+
+    /// Takes the authoring scene as opened from a file the document does not
+    /// own, such as a prefab: clean, with no history and no recovery
+    /// autosave.
+    pub(crate) fn opened_detached(&mut self, game: &GameContext) {
+        self.autosave.new_scene_loaded(game.scenes.current_scene());
+        self.clear_history();
+    }
+
+    /// Marks the authoring scene clean after the caller wrote it to a file
+    /// the document does not own. The undo history stays.
+    pub(crate) fn saved_detached(&mut self, game: &GameContext) {
+        self.autosave.new_scene_loaded(game.scenes.current_scene());
+        self.revision += 1;
+    }
+
     /// Runs once per frame: starts or finishes a background recovery
     /// autosave when one is due.
     pub fn update(&mut self, game: &GameContext) {
