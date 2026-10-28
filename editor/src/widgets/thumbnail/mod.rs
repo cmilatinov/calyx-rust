@@ -52,6 +52,9 @@ pub const THUMBNAIL_DEFAULT_SIZE: u32 = 512;
 pub const THUMBNAIL_MIN_SIZE: u32 = 64;
 pub const THUMBNAIL_MAX_SIZE: u32 = 512;
 pub const THUMBNAIL_DEFAULT_FRAME_MARGIN: f32 = 0.025;
+/// Version of how thumbnails are rendered, part of the disk cache key. Bump
+/// it when the renderer's look changes, so cached thumbnails render again.
+const THUMBNAIL_RENDER_VERSION: u32 = 2;
 pub const THUMBNAIL_MIN_FRAME_MARGIN: f32 = 0.0;
 pub const THUMBNAIL_MAX_FRAME_MARGIN: f32 = 0.45;
 
@@ -97,7 +100,7 @@ impl ThumbnailRenderSettings {
 
     fn cache_key(self) -> String {
         let frame_margin_millis = (self.sanitized().frame_margin * 1000.0).round() as u32;
-        format!("frame-margin-{frame_margin_millis}")
+        format!("render-{THUMBNAIL_RENDER_VERSION}-frame-margin-{frame_margin_millis}")
     }
 
     fn sanitized(self) -> Self {

@@ -1215,6 +1215,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "calyx_shader"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "cc"
 version = "1.2.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2127,6 +2135,7 @@ dependencies = [
  "bimap",
  "bincode",
  "bytemuck",
+ "calyx_shader",
  "chrono",
  "downcast-rs 2.0.2",
  "dunce",
@@ -2135,6 +2144,7 @@ dependencies = [
  "egui-wgpu",
  "engine_derive",
  "engine_feature_pins",
+ "enumflags2",
  "env_filter 1.0.0",
  "glob",
  "gltf",

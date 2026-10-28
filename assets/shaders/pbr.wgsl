@@ -92,7 +92,7 @@ fn vs_main(vertex: VertexIn) -> VertexOut {
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4f {
-    let albedo = 5.0 * textureSample(diffuse_texture, diffuse_sampler, in.uv);
+    let albedo = textureSample(diffuse_texture, diffuse_sampler, in.uv);
     let n = normalize(in.normal);
     let view_position = vec3f(
         camera.inverse_view[3][0],
@@ -159,11 +159,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     let direct_ambient = kd * environment.ambient_light.rgb * albedo.rgb;
     color += material.ambient_occlusion * (ambient + direct_ambient);
 
-    // Tone mapping
-    let gamma = 1.4;
-    color = color / (color + vec3(1.0));
-    color = pow(color, vec3(1.0 / gamma));
-
+    // Linear HDR radiance: the post-processing chain tone maps it.
     return vec4f(color.xyz, albedo.a);
 }
 
