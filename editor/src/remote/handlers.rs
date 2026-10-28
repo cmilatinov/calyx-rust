@@ -14,6 +14,7 @@ use uuid::Uuid;
 use super::runtime::{color_image_to_rgba, save_png, PendingOp, RemoteRuntime, ResponseSlot};
 use super::server::{parse_error_response, ClientId, Incoming};
 use crate::panel::{Panel, PanelGame};
+use crate::prefab_instances;
 use crate::scene_edit::SceneEdit;
 use crate::selection::{Selection, SelectionType};
 use crate::{EditorApp, EditorAppState};
@@ -238,6 +239,42 @@ impl EditorApp {
                 self.state.prefab_mode_mut().close();
                 Ok(Some(self.remote_prefab_state()))
             }
+            Command::InstantiatePrefab { path } => {
+                let asset_id = self.remote_prefab_asset(path)?;
+                self.state.flush_pending_inspector_value_edits();
+                let mut edit = SceneEdit::begin("Remote instantiate prefab");
+                match prefab_instances::instantiate_prefab(
+                    &mut edit,
+                    &mut self.state.game,
+                    asset_id,
+                ) {
+                    Ok(root) => {
+                        self.state.commit_scene_edit(edit);
+                        Ok(Some(serde_json::json!({ "id": root.to_string() })))
+                    }
+                    Err(error) => {
+                        edit.cancel();
+                        Err((ErrorKind::BadRequest, error))
+                    }
+                }
+            }
+            Command::UpdatePrefabInstances { path } => {
+                let asset_id = path
+                    .map(|path| self.remote_prefab_asset(path))
+                    .transpose()?;
+                let update = self
+                    .state
+                    .update_prefab_instances(asset_id)
+                    .map_err(|error| (ErrorKind::BadRequest, error))?;
+                Ok(Some(serde_json::json!({
+                    "instances": update.instances,
+                    "added": update.added,
+                    "removed": update.removed,
+                    "unlinked": update.unlinked,
+                    "kept_overrides": update.kept_overrides,
+                    "dropped_components": update.dropped.len(),
+                })))
+            }
 
             Command::GetSceneState => {
                 let scene = self.state.game.scenes.simulation_scene();
@@ -428,15 +465,15 @@ impl EditorApp {
         }
     }
 
-    fn remote_open_prefab(&mut self, path: PathBuf) -> CommandResult {
+    /// The asset id of the prefab file at `path`.
+    fn remote_prefab_asset(&self, path: PathBuf) -> Result<Uuid, (ErrorKind, String)> {
         let path = dunce::canonicalize(&path).map_err(|error| {
             (
                 ErrorKind::NotFound,
                 format!("prefab file {}: {error}", path.display()),
             )
         })?;
-        let asset_id = self
-            .state
+        self.state
             .game
             .assets
             .registries
@@ -448,7 +485,11 @@ impl EditorApp {
                     ErrorKind::NotFound,
                     format!("{} is not a registered asset", path.display()),
                 )
-            })?;
+            })
+    }
+
+    fn remote_open_prefab(&mut self, path: PathBuf) -> CommandResult {
+        let asset_id = self.remote_prefab_asset(path)?;
         self.state
             .prefab_mode_mut()
             .open(asset_id)
@@ -544,6 +585,10 @@ impl EditorApp {
             "local_transform": transform_json(&scene.transform(game_object)),
             "world_transform": transform_json(&scene.world_transform(game_object)),
             "components": component_names,
+            "prefab_link": scene.prefab_link(game_object).map(|link| serde_json::json!({
+                "prefab": link.prefab.to_string(),
+                "object": link.object.to_string(),
+            })),
         })))
     }
 

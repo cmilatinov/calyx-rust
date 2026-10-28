@@ -576,4 +576,109 @@ mod tests {
             );
         }
     }
+
+    /// The names of `root` and its descendants in `scene`, sorted.
+    fn subtree_names(scene: &Scene, root: GameObject) -> Vec<String> {
+        let mut names = scene
+            .descendants(root)
+            .chain([root])
+            .map(|object| scene.name(object))
+            .collect::<Vec<_>>();
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    #[test]
+    fn a_saved_prefab_reaches_linked_instances_only_through_the_update() {
+        use crate::prefab_instances::{instantiate_prefab, update_prefab_instances};
+
+        let root = AssetRoot::new();
+        let mut editor = Editor::open_level(&root);
+        let asset_id = editor.asset_id(&root.prefab_file());
+        let mut edit = SceneEdit::begin("Import prefab");
+        let instance = instantiate_prefab(&mut edit, &mut editor.game, asset_id)
+            .expect("prefab should instantiate");
+        edit.commit(&mut editor.document, &editor.game);
+        let instance_object = editor.scene().find(instance).unwrap();
+        let mut edit = SceneEdit::begin("Move instance");
+        edit.scene_mut(&mut editor.game).set_transform(
+            instance_object,
+            &glm::translation(&Vec3::new(0.0, 0.0, 5.0)),
+        );
+        edit.commit(&mut editor.document, &editor.game);
+        let instance_lid = |editor: &Editor| {
+            let scene = editor.scene();
+            let root = scene.find(instance).unwrap();
+            scene
+                .children(root)
+                .find(|child| scene.name(*child) == "Lid")
+                .expect("the instance has a lid")
+        };
+        let lid_id = editor.scene().uuid(instance_lid(&editor));
+
+        let prefab = editor.open_prefab(&root);
+        editor.add_object("Handle", "Lid");
+        let lid = editor.find("Lid");
+        let mut edit = SceneEdit::begin("Move lid");
+        edit.scene_mut(&mut editor.game)
+            .set_transform(lid, &glm::translation(&Vec3::new(0.0, 2.0, 0.0)));
+        edit.commit(&mut editor.document, &editor.game);
+        prefab
+            .save(&editor.game, &mut editor.document)
+            .expect("prefab should save");
+        editor.close(prefab);
+
+        // Saving the prefab left the instance as it was.
+        let instance_object = editor.scene().find(instance).unwrap();
+        assert_eq!(
+            subtree_names(editor.scene(), instance_object),
+            ["Crate", "Lid"]
+        );
+        assert!(
+            editor
+                .scene()
+                .transform(instance_lid(&editor))
+                .position
+                .norm()
+                < 1e-5
+        );
+
+        let mut edit = SceneEdit::begin("Update prefab instances");
+        let update = update_prefab_instances(&mut edit, &mut editor.game, Some(asset_id))
+            .expect("instances should update");
+        edit.commit(&mut editor.document, &editor.game);
+
+        assert_eq!(update.instances, 1, "the unlinked copy is not an instance");
+        assert_eq!(update.added, 1);
+        let scene = editor.scene();
+        let instance_object = scene.find(instance).unwrap();
+        assert_eq!(
+            subtree_names(scene, instance_object),
+            ["Crate", "Handle", "Lid"]
+        );
+        let lid = instance_lid(&editor);
+        assert_eq!(scene.uuid(lid), lid_id, "the lid keeps its id");
+        assert!((scene.transform(lid).position - Vec3::new(0.0, 2.0, 0.0)).norm() < 1e-5);
+        assert!(
+            (scene.transform(instance_object).position - Vec3::new(0.0, 0.0, 5.0)).norm() < 1e-5,
+            "the instance keeps its root transform"
+        );
+
+        // The update is one undo step.
+        editor.document.undo(&mut editor.game);
+        let instance_object = editor.scene().find(instance).unwrap();
+        assert_eq!(
+            subtree_names(editor.scene(), instance_object),
+            ["Crate", "Lid"]
+        );
+        assert!(
+            editor
+                .scene()
+                .transform(instance_lid(&editor))
+                .position
+                .norm()
+                < 1e-5
+        );
+    }
 }

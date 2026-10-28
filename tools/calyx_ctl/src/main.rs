@@ -173,6 +173,11 @@ enum PrefabAction {
         #[arg(long)]
         discard: bool,
     },
+    /// Instantiate a prefab asset at the scene root, linked to the prefab.
+    Instantiate { path: PathBuf },
+    /// Update the scene's instances of a prefab (of every prefab when no
+    /// path is given) from the saved prefab, as one undo step.
+    Update { path: Option<PathBuf> },
 }
 
 #[derive(Subcommand)]
@@ -434,6 +439,12 @@ fn build_command(action: &Action, base: Duration) -> Result<(Command, Duration),
             PrefabAction::Open { path } => simple(Command::OpenPrefab { path: path.clone() }),
             PrefabAction::Save => simple(Command::SavePrefab),
             PrefabAction::Close { discard } => simple(Command::ClosePrefab { discard: *discard }),
+            PrefabAction::Instantiate { path } => {
+                simple(Command::InstantiatePrefab { path: path.clone() })
+            }
+            PrefabAction::Update { path } => {
+                simple(Command::UpdatePrefabInstances { path: path.clone() })
+            }
         },
         Action::Objects => simple(Command::ListObjects),
         Action::Object(object) => match object {

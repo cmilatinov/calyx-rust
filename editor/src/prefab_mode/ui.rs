@@ -60,10 +60,12 @@ pub(crate) fn show_banner(ctx: &egui::Context, state: &mut EditorAppState) {
                         .clicked();
                     save = ui
                         .add_enabled(dirty, Button::new("Save Prefab"))
-                        .on_hover_text("Write the prefab asset; scene instances stay as they are")
+                        .on_hover_text(
+                            "Write the prefab asset; scene instances change only through                              Edit > Update Prefab Instances",
+                        )
                         .clicked();
                     ui.label(
-                        egui::RichText::new("Scene instances are not updated")
+                        egui::RichText::new("Scene instances update only on request")
                             .italics()
                             .color(Color32::from_gray(200)),
                     );
