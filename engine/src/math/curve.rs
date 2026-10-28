@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "a3dc0e41-613e-46c6-8002-895f5f2ececb"]
 #[reflect(Default)]
-#[repr(C)]
 pub enum CurveInterpolation {
     /// Holds the key's value until the next key.
     Constant,
@@ -24,7 +23,6 @@ pub enum CurveInterpolation {
 #[uuid = "35d039a9-828b-4f2b-abc8-da8c5af2b028"]
 #[reflect(Default)]
 #[serde(default)]
-#[repr(C)]
 pub struct CurveKey {
     /// Where the key sits on the curve's timeline.
     pub time: f32,
@@ -106,7 +104,6 @@ impl CurveSegment {
 #[uuid = "5ec3b58f-4ea5-4ecb-9a22-ba19772a6331"]
 #[reflect(Default)]
 #[serde(from = "CurveData")]
-#[repr(C)]
 pub struct Curve {
     /// The curve's keys, sorted by time.
     pub keys: Vec<CurveKey>,

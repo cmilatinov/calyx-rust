@@ -68,7 +68,6 @@ impl TickClock {
 /// Frame timer and fixed-tick conversion utility.
 #[derive(Resource, TypeUuid)]
 #[uuid = "b0a01abf-afee-4107-94e8-6e2fbab21f72"]
-#[repr(C)]
 pub struct Time {
     timers: RefCell<HashMap<&'static str, Instant>>,
     last_time: Instant,

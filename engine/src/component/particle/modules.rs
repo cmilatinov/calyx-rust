@@ -26,7 +26,6 @@ use serde::{Deserialize, Serialize};
 /// emitter. Init: position.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "37c707d9-f6e8-4dc1-b2b1-159ceff99082"]
-#[repr(C)]
 pub enum ParticleSpawnShape {
     /// Uniform sphere centered on the emitter.
     Sphere {
@@ -65,7 +64,6 @@ impl ParticleSpawnShape {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "6c5546bb-496e-4b68-8c1f-1d288b7665f5"]
 #[serde(default)]
-#[repr(C)]
 pub struct ParticleScalarRange {
     /// Minimum sampled value.
     pub min: f32,
@@ -100,7 +98,6 @@ impl ParticleScalarRange {
 #[uuid = "a25e1804-ec6f-4904-8aeb-b87e421d200f"]
 #[reflect(Default)]
 #[serde(default)]
-#[repr(C)]
 pub struct ParticleVelocity {
     /// Base local-space spawn velocity.
     pub initial: Vec3,
@@ -136,7 +133,6 @@ impl ParticleVelocity {
 #[uuid = "6ef001ba-5f23-46e0-83b6-2da991b03ece"]
 #[reflect(Default)]
 #[serde(default)]
-#[repr(C)]
 pub struct ParticleForces {
     /// Constant acceleration applied to particles.
     pub acceleration: Vec3,
@@ -171,7 +167,6 @@ impl ParticleForces {
 #[uuid = "5af8ac8a-9652-477b-9487-68a077b3a6b3"]
 #[reflect(Default)]
 #[serde(from = "ParticleSizeData")]
-#[repr(C)]
 pub struct ParticleSizeOverLifetime {
     /// Size over normalized particle lifetime.
     pub curve: Curve,
@@ -249,7 +244,6 @@ impl ParticleSizeOverLifetime {
 #[uuid = "dda37e30-d5de-4c77-a4b2-b273797bc2d5"]
 #[reflect(Default)]
 #[serde(from = "ParticleColorData")]
-#[repr(C)]
 pub struct ParticleColorOverLifetime {
     /// Color over normalized particle lifetime.
     pub gradient: Gradient,
@@ -314,7 +308,6 @@ impl ParticleColorOverLifetime {
 /// Supported particle blending modes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "444a8eaa-3d18-486b-96bb-7d038b1979bc"]
-#[repr(C)]
 pub enum ParticleBlendMode {
     /// Standard alpha blending.
     Alpha,
@@ -328,7 +321,6 @@ pub enum ParticleBlendMode {
 #[uuid = "dc67d8fd-a232-4830-ba3d-c02830d5e964"]
 #[reflect(Default)]
 #[serde(default)]
-#[repr(C)]
 pub struct ParticleRendering {
     /// Blend mode used by the renderer.
     pub blend_mode: ParticleBlendMode,

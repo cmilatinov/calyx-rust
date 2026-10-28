@@ -12,7 +12,6 @@ use super::geometry::EdgeInsets;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "79124a2c-87b6-40bb-a974-1ec15c830c70"]
 #[reflect(Default)]
-#[repr(C)]
 pub struct UiColor {
     pub r: u8,
     pub g: u8,
@@ -53,7 +52,6 @@ impl UiColor {
 /// Length unit used by layout.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "53a35f1e-66be-446c-a1f4-84b7fe3b4b51"]
-#[repr(C)]
 pub enum UiLength {
     #[default]
     Auto,
@@ -66,7 +64,6 @@ pub enum UiLength {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "74660455-08dd-410b-927f-42fd97f218c8"]
 #[reflect(Default)]
-#[repr(C)]
 pub struct CornerRadius {
     pub top_left: f32,
     pub top_right: f32,
@@ -127,7 +124,6 @@ impl CornerRadius {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "38d31f12-096e-41bf-a0ed-90fd6d5c454e"]
 #[reflect(Default)]
-#[repr(C)]
 pub struct Border {
     pub color: UiColor,
     pub width: f32,
@@ -161,7 +157,6 @@ impl Border {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "67850a50-61f7-4eba-92f7-b9cb3f672f0f"]
 #[reflect(Default)]
-#[repr(C)]
 pub struct UiTransform {
     pub rotate_x: f32,
     pub rotate_y: f32,
@@ -216,7 +211,6 @@ impl UiTransform {
 /// Whether a node participates in pointer hit testing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "c1acddbe-c29c-49bb-b1fb-a7d88b42ac7a"]
-#[repr(C)]
 pub enum PointerEvents {
     #[default]
     Auto,
@@ -226,7 +220,6 @@ pub enum PointerEvents {
 /// Alignment on a cross axis.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "b321416d-aacd-4fe2-ae60-632b92e3bfca"]
-#[repr(C)]
 pub enum AlignItems {
     Start,
     Center,
@@ -238,7 +231,6 @@ pub enum AlignItems {
 /// Alignment on a main axis.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "21f68979-c70b-4cb0-beaf-f2e9f6df9a33"]
-#[repr(C)]
 pub enum JustifyContent {
     #[default]
     Start,
@@ -252,7 +244,6 @@ pub enum JustifyContent {
     Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, TypeUuid, Reflect,
 )]
 #[uuid = "e845c9eb-2eec-4f01-bc76-24ff48819b10"]
-#[repr(C)]
 pub enum ScreenClass {
     #[default]
     Compact,
@@ -276,7 +267,6 @@ impl ScreenClass {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "b9af0caa-5d30-4d6c-9240-68e4b1f4d9d0"]
 #[reflect(Default)]
-#[repr(C)]
 pub struct Style {
     pub width: UiLength,
     pub height: UiLength,
@@ -663,7 +653,6 @@ fn pick_end<T: Copy>(from: T, to: T, amount: f32) -> T {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "e76be5f4-13a4-4cb6-a164-ac3e801eaa41"]
 #[reflect(Default)]
-#[repr(C)]
 pub struct ColorTokens {
     pub surface: UiColor,
     pub surface_translucent: UiColor,
@@ -691,7 +680,6 @@ impl Default for ColorTokens {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "8c9a32f8-3040-4ddc-8fa2-2aaefbc68d4f"]
 #[reflect(Default)]
-#[repr(C)]
 pub struct SpaceTokens {
     pub xs: f32,
     pub sm: f32,
@@ -715,7 +703,6 @@ impl Default for SpaceTokens {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "4516a5f5-c042-4763-9fdd-3058d25787f9"]
 #[reflect(Default)]
-#[repr(C)]
 pub struct FontTokens {
     pub body: f32,
     pub label: f32,
@@ -735,7 +722,6 @@ impl Default for FontTokens {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "26862421-b65e-466f-aeeb-82d929b9d58f"]
 #[reflect(Default)]
-#[repr(C)]
 pub struct RadiusTokens {
     pub none: f32,
     pub sm: f32,
@@ -758,7 +744,6 @@ impl Default for RadiusTokens {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "a179de6e-7818-4ecf-9214-159d9d4c6038"]
 #[reflect(Default)]
-#[repr(C)]
 pub struct Theme {
     pub colors: ColorTokens,
     pub spacing: SpaceTokens,

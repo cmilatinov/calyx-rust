@@ -13,7 +13,6 @@ use uuid::Uuid;
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[uuid = "41339285-5516-4e83-ae27-8003f26f1922"]
 #[reflect(Default, TypeInspector)]
-#[repr(C)]
 pub struct ParticleSpawnShapeInspector;
 
 impl ParticleSpawnShapeInspector {

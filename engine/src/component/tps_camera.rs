@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate)]
 #[reflect_attr(name = "Third Person Camera")]
-#[repr(C)]
 pub struct ComponentThirdPersonCamera {
     /// Target object followed by the camera.
     pub target: GameObjectRef,

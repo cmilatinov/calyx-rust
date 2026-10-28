@@ -13,7 +13,6 @@ use serde::{Deserialize, Serialize};
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Bone")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentBone {
     /// Bone name as authored in the source mesh.
     pub name: String,

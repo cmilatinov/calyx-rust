@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Transform")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentTransform {
     /// Local transform relative to the parent game object.
     pub transform: Transform,

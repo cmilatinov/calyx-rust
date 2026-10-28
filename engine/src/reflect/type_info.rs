@@ -1,5 +1,4 @@
 use crate::reflect::Reflect;
-use crate::utils::TypeUuid;
 use indexmap::IndexMap;
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -14,7 +13,6 @@ pub type FieldSetter = fn(&mut dyn Reflect, Box<dyn Reflect>) -> Option<()>;
 
 /// Supported attribute payloads stored on reflected types and fields.
 #[derive(Copy, Clone)]
-#[repr(C)]
 pub enum AttributeValue {
     /// Marker attribute with no payload.
     None,
@@ -31,7 +29,6 @@ pub type AttributeMap = HashMap<&'static str, AttributeValue>;
 /// Allows you to introspect structs (and potentially other types in the future)
 /// at runtime by listing, querying and setting their fields
 /// Runtime metadata for a reflected type.
-#[repr(C)]
 pub enum TypeInfo {
     /// Struct-like type metadata.
     Struct(StructInfo),
@@ -48,7 +45,6 @@ pub enum TypeInfo {
 }
 
 /// Minimal type descriptor embedded inside higher-level metadata.
-#[repr(C)]
 pub struct TypeDescriptor {
     /// Rust `TypeId` for the described type.
     pub type_id: TypeId,
@@ -59,7 +55,6 @@ pub struct TypeDescriptor {
 }
 
 /// Reflection metadata for a struct-like type.
-#[repr(C)]
 pub struct StructInfo {
     /// Fully qualified Rust type name.
     pub type_name: &'static str,
@@ -84,7 +79,6 @@ impl StructInfo {
 }
 
 /// Reflection metadata for an enum type.
-#[repr(C)]
 pub struct EnumInfo {
     /// Fully qualified Rust type name.
     pub type_name: &'static str,
@@ -109,7 +103,6 @@ impl EnumInfo {
 }
 
 /// Reflection metadata for one enum variant.
-#[repr(C)]
 pub struct EnumVariantInfo {
     /// Variant name.
     pub name: &'static str,
@@ -118,7 +111,6 @@ pub struct EnumVariantInfo {
 }
 
 /// Reflection metadata for one enum variant field.
-#[repr(C)]
 pub struct EnumVariantFieldInfo {
     /// Optional field name for named variants.
     pub name: Option<&'static str>,
@@ -131,7 +123,6 @@ pub struct EnumVariantFieldInfo {
 }
 
 /// Reflection metadata for a list-like container.
-#[repr(C)]
 pub struct ListInfo {
     /// Fully qualified Rust type name.
     pub type_name: &'static str,
@@ -142,7 +133,6 @@ pub struct ListInfo {
 }
 
 /// Reflection metadata for an `Option<T>`-like type.
-#[repr(C)]
 pub struct OptionInfo {
     /// Fully qualified Rust type name.
     pub type_name: &'static str,
@@ -153,7 +143,6 @@ pub struct OptionInfo {
 }
 
 /// Reflection metadata for a map-like container.
-#[repr(C)]
 pub struct MapInfo {
     /// Fully qualified Rust type name.
     pub type_name: &'static str,
@@ -166,7 +155,6 @@ pub struct MapInfo {
 }
 
 /// Reflection metadata for one named struct field.
-#[repr(C)]
 pub struct NamedField {
     /// Rust field name.
     pub name: &'static str,
@@ -190,18 +178,12 @@ pub struct NamedField {
 
 impl NamedField {
     /// Reads the field as a concrete `T`.
-    pub fn get<'a, T: 'static + Reflect + TypeUuid>(
-        &'a self,
-        instance: &'a dyn Reflect,
-    ) -> Option<&'a T> {
+    pub fn get<'a, T: Reflect>(&'a self, instance: &'a dyn Reflect) -> Option<&'a T> {
         let value = (self.getter)(instance)?;
         value.downcast_ref::<T>()
     }
     /// Reads the field mutably as a concrete `T`.
-    pub fn get_mut<'a, T: 'static + Reflect + TypeUuid>(
-        &'a self,
-        instance: &'a mut dyn Reflect,
-    ) -> Option<&'a mut T> {
+    pub fn get_mut<'a, T: Reflect>(&'a self, instance: &'a mut dyn Reflect) -> Option<&'a mut T> {
         let value = (self.getter_mut)(instance)?;
         value.downcast_mut::<T>()
     }
@@ -285,7 +267,6 @@ mod tests {
 
     #[derive(TypeUuid, Reflect)]
     #[allow(dead_code)]
-    #[repr(C)]
     struct ManyFields {
         zeta: f32,
         alpha: f32,
@@ -327,7 +308,6 @@ mod tests {
 
     #[derive(TypeUuid, Reflect)]
     #[allow(dead_code)]
-    #[repr(C)]
     struct Grouped {
         #[reflect_attr(group = "Physics", min = 0.0)]
         mass: f32,

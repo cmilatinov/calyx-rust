@@ -55,7 +55,6 @@ use serde::{Deserialize, Serialize};
 #[reflect(Default, TypeUuidDynamic, Component, ComponentReset)]
 #[reflect_attr(name = "Particle System")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentParticleSystem {
     /// Whether the emitter is currently spawning particles. Live particles
     /// keep simulating either way.

@@ -14,7 +14,6 @@ use serde::{Deserialize, Serialize};
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Camera")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentCamera {
     /// Vertical field of view in radians.
     #[reflect_attr(angle, min = 30.0, max = 160.0, speed = 0.1)]

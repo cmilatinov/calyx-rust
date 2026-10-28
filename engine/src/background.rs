@@ -10,7 +10,6 @@ use rusty_pool::{JoinHandle, ThreadPool};
 /// Shared background task executor used by editor and runtime systems.
 #[derive(Resource, TypeUuid)]
 #[uuid = "38c4c3b8-07c7-4858-a754-d34c6ad1ebc1"]
-#[repr(C)]
 pub struct Background {
     thread_pool: ThreadPool,
     task_list: HashMap<isize, usize>,

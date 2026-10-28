@@ -17,7 +17,6 @@ use uuid::Uuid;
 
 /// Blend-tree motion entry keyed by a threshold value.
 #[derive(Default, Clone, Serialize, Deserialize)]
-#[repr(C)]
 pub struct BlendTreeMotion<T: Default + Clone> {
     /// Threshold or coordinate used to weight this motion.
     pub threshold: T,
@@ -27,7 +26,6 @@ pub struct BlendTreeMotion<T: Default + Clone> {
 
 /// Motion node stored inside an animation graph.
 #[derive(Clone, Serialize, Deserialize)]
-#[repr(C)]
 pub enum AnimationMotion {
     /// Direct animation clip playback.
     AnimationClip(AnimationClip),
@@ -39,7 +37,6 @@ pub enum AnimationMotion {
 
 /// Leaf motion that plays one animation clip at a configurable speed.
 #[derive(Clone, Serialize, Deserialize)]
-#[repr(C)]
 pub struct AnimationClip {
     /// Playback speed multiplier.
     pub speed: f32,
@@ -58,7 +55,6 @@ impl Default for AnimationClip {
 
 /// Generic N-dimensional blend tree.
 #[derive(Default, Clone, Serialize, Deserialize)]
-#[repr(C)]
 pub struct BlendTree<const N: usize>
 where
     [f32; N]: Default + Serialize + for<'a> Deserialize<'a>,

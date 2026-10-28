@@ -16,7 +16,6 @@ use serde::{Deserialize, Serialize};
 #[uuid = "ee22c2ed-999e-400e-b348-64abf7294b9c"]
 #[reflect(Default)]
 #[serde(default)]
-#[repr(C)]
 pub struct PostProcessSettings {
     /// Tone mapping, the display transform. It always runs.
     pub tonemapping: TonemapSettings,
@@ -27,7 +26,6 @@ pub struct PostProcessSettings {
 #[uuid = "9a7db307-2c75-4b38-ae50-cea01d7f32af"]
 #[reflect(Default)]
 #[serde(default)]
-#[repr(C)]
 pub struct TonemapSettings {
     /// Curve that maps linear HDR color to the display range.
     pub preset: TonemappingPreset,
@@ -56,7 +54,6 @@ impl TonemapSettings {
 /// Tone-mapping curves.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "a4d6b439-bdc2-4aeb-aaf7-1f14f147255b"]
-#[repr(C)]
 pub enum TonemappingPreset {
     /// Stephen Hill's fit of the ACES reference rendering and output
     /// transforms.

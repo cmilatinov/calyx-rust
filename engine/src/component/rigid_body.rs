@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Rigid Body")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentRigidBody {
     /// Whether this rigid body is active.
     pub enabled: bool,

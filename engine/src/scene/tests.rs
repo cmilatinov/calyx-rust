@@ -25,7 +25,6 @@ mod tests {
     #[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
     #[uuid = "7bd0b53d-5b08-4e96-bb8b-fb3b82bf96c9"]
     #[reflect(Default, TypeUuidDynamic, Component, ComponentStart)]
-    #[repr(C)]
     struct StartCounter {
         count: u32,
     }
@@ -1367,7 +1366,6 @@ mod tests {
     #[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
     #[uuid = "3b8e5f1a-6c2d-4f9e-a07b-5d4c1e8f2a93"]
     #[reflect(TypeUuidDynamic, Component)]
-    #[repr(C)]
     struct Counted {
         #[serde(serialize_with = "counted")]
         value: f32,
@@ -1789,7 +1787,6 @@ mod tests {
     #[derive(Default, Clone, TypeUuid, Serialize, Deserialize, Reflect)]
     #[uuid = "4f0c8a3e-2b71-4d6a-9e15-c7a3b9d20f84"]
     #[reflect(Default)]
-    #[repr(C)]
     struct RefSlot {
         target: GameObjectRef,
     }
@@ -1797,7 +1794,6 @@ mod tests {
     #[derive(Default, Clone, TypeUuid, Serialize, Deserialize, Reflect)]
     #[uuid = "8c5d1f2a-3e47-4b9c-a6d0-71f2e9b4c385"]
     #[reflect(Default)]
-    #[repr(C)]
     struct RefPair(f32, GameObjectRef);
 
     #[derive(Default, Clone, TypeUuid, Serialize, Deserialize, Reflect)]
@@ -1814,7 +1810,6 @@ mod tests {
     #[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
     #[uuid = "b7d2e915-6c3a-4f08-8a4e-1d9f5c27e6b3"]
     #[reflect(Default, TypeUuidDynamic, Component)]
-    #[repr(C)]
     struct NestedRefComponent {
         direct: GameObjectRef,
         slot: RefSlot,

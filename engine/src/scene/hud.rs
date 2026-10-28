@@ -104,7 +104,6 @@ mod tests {
     #[derive(Default, Clone, Copy, TypeUuid, Serialize, Deserialize, Component, Reflect)]
     #[uuid = "4f0e8d55-6a7c-4b0e-9d61-2c7f6f1f3a10"]
     #[reflect(Default, TypeUuidDynamic, Component, ComponentHud)]
-    #[repr(C)]
     struct TestHudCounter {
         value: u32,
         hidden: bool,

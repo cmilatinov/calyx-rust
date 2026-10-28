@@ -3,42 +3,36 @@ use crate::core::{Ref, Time};
 use crate::input::InputState;
 use crate::net::Network;
 use crate::physics::PhysicsConfiguration;
-use crate::utils::{TypeUuid, TypeUuidDynamic};
 pub use engine_derive::Resource;
+use std::any::{Any, TypeId};
 use std::collections::HashMap;
-use uuid::Uuid;
 
 /// Marker trait for values stored inside a [`ResourceMap`].
-pub trait Resource: TypeUuidDynamic + 'static {}
+pub trait Resource: Any {}
 
 impl dyn Resource {
     /// Returns `true` when this resource is a `T`.
-    pub fn is<T: Resource + TypeUuid>(&self) -> bool {
-        self.uuid() == T::type_uuid()
+    pub fn is<T: Resource>(&self) -> bool {
+        let resource: &dyn Any = self;
+        resource.is::<T>()
     }
 
     /// Downcasts this resource to `T` by shared reference.
-    pub fn downcast_ref<T: Resource + TypeUuid>(&self) -> Option<&T> {
-        if self.is::<T>() {
-            unsafe { Some(&*(self as *const dyn Resource as *const T)) }
-        } else {
-            None
-        }
+    pub fn downcast_ref<T: Resource>(&self) -> Option<&T> {
+        let resource: &dyn Any = self;
+        resource.downcast_ref()
     }
 
     /// Downcasts this resource to `T` by mutable reference.
-    pub fn downcast_mut<T: Resource + TypeUuid>(&mut self) -> Option<&mut T> {
-        if self.is::<T>() {
-            unsafe { Some(&mut *(self as *mut dyn Resource as *mut T)) }
-        } else {
-            None
-        }
+    pub fn downcast_mut<T: Resource>(&mut self) -> Option<&mut T> {
+        let resource: &mut dyn Any = self;
+        resource.downcast_mut()
     }
 }
 
 /// Type-indexed runtime resource storage used by the engine loop.
 pub struct ResourceMap {
-    inner: HashMap<Uuid, Box<dyn Resource>>,
+    inner: HashMap<TypeId, Box<dyn Resource>>,
 }
 
 impl Default for ResourceMap {
@@ -63,47 +57,44 @@ impl ResourceMap {
 
     #[inline]
     /// Inserts `resource`, replacing any existing value of the same type.
-    pub fn insert<T: Resource + TypeUuid>(&mut self, resource: T) {
-        self.inner.insert(T::type_uuid(), Box::new(resource));
+    pub fn insert<T: Resource>(&mut self, resource: T) {
+        self.inner.insert(TypeId::of::<T>(), Box::new(resource));
     }
 
     #[inline]
     /// Inserts `T::default()`.
-    pub fn insert_default<T: Resource + Default + TypeUuid>(&mut self) {
+    pub fn insert_default<T: Resource + Default>(&mut self) {
         self.insert(T::default());
     }
 
     #[inline]
     /// Removes and returns the resource of type `T`.
-    pub fn remove<T: Resource + TypeUuid>(&mut self) -> Option<T> {
-        let resource = self.inner.remove(&T::type_uuid())?;
-        let raw = Box::into_raw(resource);
-        unsafe { Some(*Box::from_raw(raw as *mut T)) }
+    pub fn remove<T: Resource>(&mut self) -> Option<T> {
+        let resource: Box<dyn Any> = self.inner.remove(&TypeId::of::<T>())?;
+        resource.downcast().ok().map(|resource| *resource)
     }
 
     #[inline]
     /// Returns the resource of type `T`.
-    pub fn resource<T: Resource + TypeUuid>(&self) -> Option<&T> {
+    pub fn resource<T: Resource>(&self) -> Option<&T> {
         self.inner
-            .get(&T::type_uuid())
+            .get(&TypeId::of::<T>())
             .and_then(|r| r.downcast_ref())
     }
 
     #[inline]
     /// Returns the mutable resource of type `T`.
-    pub fn resource_mut<T: Resource + TypeUuid>(&mut self) -> Option<&mut T> {
+    pub fn resource_mut<T: Resource>(&mut self) -> Option<&mut T> {
         self.inner
-            .get_mut(&T::type_uuid())
+            .get_mut(&TypeId::of::<T>())
             .and_then(|r| r.downcast_mut())
     }
 
     #[inline]
     /// Returns mutable references to two distinct resources when both exist.
-    pub fn resource_pair_mut<T1: Resource + TypeUuid, T2: Resource + TypeUuid>(
-        &mut self,
-    ) -> Option<(&mut T1, &mut T2)> {
-        let id1 = T1::type_uuid();
-        let id2 = T2::type_uuid();
+    pub fn resource_pair_mut<T1: Resource, T2: Resource>(&mut self) -> Option<(&mut T1, &mut T2)> {
+        let id1 = TypeId::of::<T1>();
+        let id2 = TypeId::of::<T2>();
         match self.inner.get_disjoint_mut([&id1, &id2]) {
             [Some(value1), Some(value2)] => {
                 if let (Some(value1), Some(value2)) =
@@ -188,12 +179,10 @@ mod tests {
 
     #[derive(Default, Resource, TypeUuid)]
     #[uuid = "e8adeabf-1129-4d04-9a25-aa7f0d7c2bb5"]
-    #[repr(C)]
     struct Counter(u32);
 
     #[derive(Default, Resource, TypeUuid)]
     #[uuid = "a436a4c3-3a6d-49e8-a5ed-9820e73691e5"]
-    #[repr(C)]
     struct Flag(bool);
 
     fn map_with_counter(n: u32) -> ResourceMap {
@@ -257,6 +246,58 @@ mod tests {
         assert!(resources
             .resource::<crate::core::Ref<crate::background::Background>>()
             .is_some());
+    }
+
+    // Two resources named `Probe`, which the `TypeUuid` derive gives the same
+    // type UUID since neither has a `#[uuid]` attribute.
+    mod first {
+        use crate as engine;
+        use crate::resource::Resource;
+        use crate::utils::TypeUuid;
+
+        #[derive(Resource, TypeUuid)]
+        pub struct Probe(pub u32);
+    }
+
+    mod second {
+        use crate as engine;
+        use crate::resource::Resource;
+        use crate::utils::TypeUuid;
+
+        #[derive(Resource, TypeUuid)]
+        pub struct Probe(pub String);
+    }
+
+    #[test]
+    fn same_named_resources_are_kept_apart() {
+        assert_eq!(first::Probe::type_uuid(), second::Probe::type_uuid());
+        let mut m = ResourceMap {
+            inner: Default::default(),
+        };
+        m.insert(first::Probe(4));
+        assert!(m.resource::<second::Probe>().is_none());
+        assert!(m.resource_mut::<second::Probe>().is_none());
+        assert!(m.remove::<second::Probe>().is_none());
+
+        m.insert(second::Probe("probe".into()));
+        let (first, second) = m
+            .resource_pair_mut::<first::Probe, second::Probe>()
+            .unwrap();
+        first.0 += 1;
+        second.0.push('!');
+        assert_eq!(m.remove::<first::Probe>().map(|p| p.0), Some(5));
+        assert_eq!(m.resource::<second::Probe>().unwrap().0, "probe!");
+    }
+
+    #[test]
+    fn a_resource_downcasts_only_to_its_own_type() {
+        let mut resource: Box<dyn Resource> = Box::new(first::Probe(1));
+        assert!(resource.is::<first::Probe>());
+        assert!(!resource.is::<second::Probe>());
+        assert!(resource.downcast_ref::<second::Probe>().is_none());
+        assert!(resource.downcast_mut::<second::Probe>().is_none());
+        resource.downcast_mut::<first::Probe>().unwrap().0 = 2;
+        assert_eq!(resource.downcast_ref::<first::Probe>().unwrap().0, 2);
     }
 
     #[test]

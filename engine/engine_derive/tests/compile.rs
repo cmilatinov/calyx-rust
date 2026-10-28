@@ -10,15 +10,13 @@ fn type_uuid_derive() {
 #[test]
 fn resource_derive() {
     let t = trybuild::TestCases::new();
-    t.compile_fail("tests/ui/resource_missing_repr_c.rs");
     t.compile_fail("tests/ui/resource_not_struct.rs");
-    t.pass("tests/ui/resource_repr_c_with_hints.rs");
+    t.pass("tests/ui/resource_plain_struct.rs");
 }
 
 #[test]
 fn reflect_derive() {
     let t = trybuild::TestCases::new();
-    t.compile_fail("tests/ui/reflect_missing_repr_c.rs");
     t.compile_fail("tests/ui/reflect_union.rs");
     t.compile_fail("tests/ui/reflect_bad_attrs.rs");
     t.compile_fail("tests/ui/reflect_bad_group.rs");

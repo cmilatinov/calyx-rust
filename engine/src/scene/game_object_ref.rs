@@ -21,7 +21,6 @@ use super::GameObject;
 #[derive(Default, Clone, Copy, TypeUuid, Reflect)]
 #[uuid = "a20d9c21-adea-4af1-ad75-05828aad89de"]
 #[reflect(Default)]
-#[repr(C)]
 pub struct GameObjectRef {
     id: Uuid,
 }

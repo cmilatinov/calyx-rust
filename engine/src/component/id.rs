@@ -11,7 +11,6 @@ use uuid::Uuid;
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Game Object")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentID {
     /// Persistent UUID used for serialization and references.
     #[reflect_attr(name = "ID")]

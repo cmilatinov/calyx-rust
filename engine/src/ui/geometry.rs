@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "0d4378a1-5f8e-4514-8f76-1f5ca7f692d4"]
 #[reflect(Default)]
-#[repr(C)]
 pub struct UiPoint {
     pub x: f32,
     pub y: f32,
@@ -26,7 +25,6 @@ impl UiPoint {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "f81f5f61-38c8-46fd-ad98-14a5ce067703"]
 #[reflect(Default)]
-#[repr(C)]
 pub struct UiSize {
     pub width: f32,
     pub height: f32,
@@ -47,7 +45,6 @@ impl UiSize {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "f2da5c94-73d2-4055-9419-ac5e01bfb329"]
 #[reflect(Default)]
-#[repr(C)]
 pub struct UiRect {
     pub min: UiPoint,
     pub max: UiPoint,
@@ -100,7 +97,6 @@ impl UiRect {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "99d8d3d8-83e8-4dbc-a0fa-4ba13e30f226"]
 #[reflect(Default)]
-#[repr(C)]
 pub struct EdgeInsets {
     pub top: f32,
     pub right: f32,

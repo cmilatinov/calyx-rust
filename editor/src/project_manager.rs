@@ -22,7 +22,6 @@ use rusty_pool::JoinHandle;
 
 #[derive(Default, Resource, TypeUuid)]
 #[uuid = "1f7d437c-a775-4f7f-8474-a6b4a348704f"]
-#[repr(C)]
 pub struct ProjectAssemblyStatus {
     loaded: bool,
 }

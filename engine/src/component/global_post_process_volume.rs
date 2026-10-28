@@ -14,7 +14,6 @@ use serde::{Deserialize, Serialize};
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Global Post Process Volume")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentGlobalPostProcessVolume {
     /// Whether the renderer considers this volume.
     pub enabled: bool,

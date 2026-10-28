@@ -20,7 +20,6 @@ const COVER_ROWS: [u32; 3] = [6, 8, 12];
 #[reflect(Default, TypeUuidDynamic, Component, ComponentStart)]
 #[reflect_attr(name = "Arena Generator")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentArena {
     pub mesh: AssetRef<Mesh>,
     pub material: AssetRef<Material>,

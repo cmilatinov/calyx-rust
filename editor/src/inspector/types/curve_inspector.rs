@@ -21,7 +21,6 @@ const GRAPH_HEIGHT: f32 = 72.0;
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[uuid = "fb42379b-3cb7-49fd-aedd-780a0fef6186"]
 #[reflect(Default, TypeInspector)]
-#[repr(C)]
 pub struct CurveInspector;
 
 /// The width left on the cursor's row before the inspector's right edge and

@@ -30,18 +30,13 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 #[derive(Clone, Copy)]
-#[repr(C)]
 struct AnimatorTransition {
     transition: EdgeIndex,
-    source_time_start: f32,
     time: f32,
-    has_exit_time: bool,
-    exit_time: f32,
     duration: f32,
 }
 
 #[derive(Default, Clone)]
-#[repr(C)]
 struct AnimatorPose {
     bone_transforms: Vec<BoneTransform>,
 }
@@ -90,7 +85,6 @@ impl Lerp<f32> for AnimationParameters {
 #[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate, ComponentReset)]
 #[reflect_attr(name = "Animator")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentAnimator {
     /// Playback time in seconds.
     pub time: TimeType,
@@ -273,22 +267,14 @@ impl ComponentAnimator {
     }
 
     fn begin_transition(&mut self, transition: EdgeIndex, graph: &AnimationGraph) {
-        if let Some((duration, has_exit_time, exit_time)) =
-            graph.edge_weight(transition).map(|transition| {
-                (
-                    transition.duration,
-                    transition.has_exit_time,
-                    transition.exit_time,
-                )
-            })
+        if let Some(duration) = graph
+            .edge_weight(transition)
+            .map(|transition| transition.duration)
         {
             self.current_transition = Some(AnimatorTransition {
                 transition,
-                source_time_start: self.time,
                 time: 0.0,
                 duration,
-                has_exit_time,
-                exit_time,
             });
         }
     }

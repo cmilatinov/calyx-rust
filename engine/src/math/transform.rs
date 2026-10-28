@@ -12,7 +12,6 @@ use super::{compose_transform, decompose_transform};
 
 /// Position, rotation, and scale stored as decomposed transform components.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, TypeUuid, Reflect)]
-#[repr(C)]
 pub struct Transform {
     /// Local-space translation.
     pub position: Vec3,

@@ -40,7 +40,6 @@ struct MaterialAutosaveState {
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[reflect(Default, AssetInspector)]
-#[repr(C)]
 pub struct MaterialInspector;
 
 impl AssetInspector for MaterialInspector {

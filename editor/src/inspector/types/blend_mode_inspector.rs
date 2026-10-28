@@ -12,7 +12,6 @@ use uuid::Uuid;
 #[derive(Default, Clone, TypeUuid, Reflect)]
 #[uuid = "4f16380d-093c-412c-b73a-f33ea8f4dc4f"]
 #[reflect(Default, TypeInspector)]
-#[repr(C)]
 pub struct ParticleBlendModeInspector;
 
 impl TypeInspector for ParticleBlendModeInspector {

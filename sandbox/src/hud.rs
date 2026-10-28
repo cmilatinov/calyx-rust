@@ -31,7 +31,6 @@ use serde::{Deserialize, Serialize};
 #[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate, ComponentHud)]
 #[reflect_attr(name = "Tank HUD")]
 #[serde(default)]
-#[repr(C)]
 pub struct ComponentTankHud {
     pub screen_margin: f32,
     /// Whether the scoreboard action was held on the last update.

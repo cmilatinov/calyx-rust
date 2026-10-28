@@ -1,11 +1,11 @@
 error: reflect traits must be paths, for example #[reflect(Default)]
- --> tests/ui/reflect_bad_attrs.rs:3:11
+ --> tests/ui/reflect_bad_attrs.rs:2:11
   |
-3 | #[reflect(Default = 1)]
+2 | #[reflect(Default = 1)]
   |           ^^^^^^^^^^^
 
 error: reflect_attr keys must be identifiers
-  --> tests/ui/reflect_bad_attrs.rs:11:20
-   |
-11 |     #[reflect_attr(a::b)]
-   |                    ^^^^
+ --> tests/ui/reflect_bad_attrs.rs:9:20
+  |
+9 |     #[reflect_attr(a::b)]
+  |                    ^^^^
