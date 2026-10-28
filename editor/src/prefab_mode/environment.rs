@@ -21,8 +21,11 @@ use engine::render::SceneEnvironment;
 /// drawn, so [`PREFAB_MODE_BACKDROP`](super::PREFAB_MODE_BACKDROP) stays the
 /// background.
 pub(super) const PREFAB_ENVIRONMENT_ASSET: &str = "skyboxes/prefab_studio";
-/// How strongly the studio HDRI lights the prefab, as a sky light's intensity.
-const PREFAB_ENVIRONMENT_INTENSITY: f32 = 1.0;
+/// How strongly the studio HDRI lights the prefab, as a sky light's intensity:
+/// bright enough that a prefab reads about as it does in the sandbox scene once
+/// the view is tone mapped with ACES at 0 EV.
+const PREFAB_ENVIRONMENT_INTENSITY: f32 = 6.0;
+
 /// The scene view's lighting in prefab mode, lighting with `skybox`, the
 /// loaded studio HDRI, without drawing it, so the prefab backdrop shows.
 /// `None` outside prefab mode, so the scene's own lights apply.
@@ -60,7 +63,7 @@ mod generator {
     /// Azimuth of the key, from +X towards +Z.
     const KEY_AZIMUTH_DEG: f32 = 45.0;
     /// Peak radiance of the key's soft blob, on top of the sky.
-    const KEY_PEAK: [f32; 3] = [12.0, 11.4, 10.2];
+    const KEY_PEAK: [f32; 3] = [30.0, 28.5, 25.5];
     /// Angular falloff of the key blob, as `1 - cos` of the angle at which it
     /// drops to `1/e`: about 11 degrees.
     const KEY_SPREAD: f32 = 0.02;

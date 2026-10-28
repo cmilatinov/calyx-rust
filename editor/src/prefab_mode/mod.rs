@@ -39,13 +39,14 @@ pub(crate) use self::ui::{
 };
 
 /// The scene view's clear color, behind the grid where nothing is drawn. The
-/// renderer takes it as linear color, so this near-black shows as dark gray.
-pub(crate) const SCENE_VIEW_BACKDROP: Color32 = Color32::from_rgb(8, 8, 8);
+/// renderer takes it as linear HDR color and tone maps it with ACES at 0 EV,
+/// so this near-black shows as dark gray (about sRGB 49).
+pub(crate) const SCENE_VIEW_BACKDROP: Color32 = Color32::from_rgb(21, 21, 21);
 /// The scene view's clear color in prefab mode: a muted blue-gray in the
 /// banner's hue, so prefab mode reads at a glance while the grid, gizmos and
-/// objects stay legible. Linear, like [`SCENE_VIEW_BACKDROP`], so it shows
-/// as a lighter slate blue.
-const PREFAB_MODE_BACKDROP: Color32 = Color32::from_rgb(6, 12, 26);
+/// objects stay legible. Tone mapped like [`SCENE_VIEW_BACKDROP`], so it
+/// shows as a lighter slate blue (about sRGB 41, 61, 90).
+const PREFAB_MODE_BACKDROP: Color32 = Color32::from_rgb(17, 27, 47);
 
 /// The scene view's clear color: blue-gray in prefab mode, else the normal
 /// backdrop.
