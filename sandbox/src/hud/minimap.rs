@@ -5,12 +5,13 @@ use crate::arena::ComponentArena;
 use crate::sentry::ComponentSentry;
 use crate::spawn::ComponentRespawnState;
 use crate::tank::{ComponentHealth, ComponentProjectileTarget, ComponentTankController};
+use engine::math::Transform;
 use engine::scene::{GameObject, Scene};
 use engine::ui::{
     CornerRadius, EdgeInsets, LayoutNode, PaintCommand, PointerEvents, Style, UiArena, UiColor,
     UiLength, UiNodeHandle, UiPoint, UiRect, UiSize, UiTransform, UiWidget, Widget,
 };
-use nalgebra_glm::{vec2, Vec2, Vec3};
+use nalgebra_glm::{vec2, vec3, Vec2, Vec3};
 
 /// Half the side of the square the map shows when the scene has no arena,
 /// in metres, centred on the player.
@@ -116,6 +117,19 @@ impl GroundRect {
             half_axes: [vec2(size.x * 0.5, 0.0), vec2(0.0, size.y * 0.5)],
         }
     }
+
+    /// The ground under a rectangle of `size` along its local X and Z,
+    /// centred on `center` in the local space of `transform`.
+    pub fn placed(transform: &Transform, center: Vec3, size: Vec2) -> Self {
+        let half_axis = |local: Vec3| ground(transform.transform_direction(&local));
+        Self {
+            center: ground(transform.transform_position(&center)),
+            half_axes: [
+                half_axis(vec3(size.x * 0.5, 0.0, 0.0)),
+                half_axis(vec3(0.0, 0.0, size.y * 0.5)),
+            ],
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -161,14 +175,11 @@ pub(crate) fn minimap_state(scene: &Scene, player: GameObject) -> MinimapState {
 
     let (view, floor, cover) = match arena {
         Some((transform, ((width, depth), cell_size, cover))) => {
-            let floor = GroundRect::axis_aligned(ground(transform.position), vec2(width, depth));
+            let floor = GroundRect::placed(&transform, Vec3::zeros(), vec2(width, depth));
             let cover = cover
                 .iter()
                 .map(|position| {
-                    GroundRect::axis_aligned(
-                        ground(transform.transform_position(position)),
-                        vec2(cell_size, cell_size),
-                    )
+                    GroundRect::placed(&transform, *position, vec2(cell_size, cell_size))
                 })
                 .collect();
             (MinimapView::fitting(floor, right), Some(floor), cover)
@@ -663,5 +674,48 @@ mod tests {
         ]
         .map(|corner| view.map_point(corner, map_rect()));
         assert_same_corners(floor, expected);
+    }
+
+    #[test]
+    fn minimap_state_reads_the_arena_at_its_world_scale() {
+        let mut scene = engine::test_support::test_scene();
+        let arena = scene.create(None, None);
+        // Twice as wide along X, and turned a quarter about Y so that its
+        // local X runs along world -Z.
+        scene.set_world_transform(
+            arena,
+            Transform::from_components(
+                vec3(0.0, 0.0, 11.0),
+                UnitQuaternion::from_euler_angles(0.0, std::f32::consts::FRAC_PI_2, 0.0),
+                vec3(2.0, 1.0, 1.0),
+            )
+            .matrix(),
+        );
+        scene.add_component(arena, ComponentArena::default());
+        let player = scene.create(None, None);
+
+        let state = minimap_state(&scene, player);
+
+        // The default 30 x 32 arena, stretched to 60 m along its local X.
+        let floor = state.floor.expect("the arena has a floor");
+        assert!((floor.center - vec2(0.0, 11.0)).norm() < 1e-4, "{floor:?}");
+        assert!(
+            (floor.half_axes[0] - vec2(0.0, -30.0)).norm() < 1e-4,
+            "{floor:?}"
+        );
+        assert!(
+            (floor.half_axes[1] - vec2(16.0, 0.0)).norm() < 1e-4,
+            "{floor:?}"
+        );
+        assert!(
+            (state.view.half_extent - vec2(16.0, 30.0)).norm() < 1e-4,
+            "{:?}",
+            state.view
+        );
+        // Each 2 m block of cover is 4 m along the arena's local X.
+        for cover in &state.cover {
+            assert!((cover.half_axes[0].norm() - 2.0).abs() < 1e-4, "{cover:?}");
+            assert!((cover.half_axes[1].norm() - 1.0).abs() < 1e-4, "{cover:?}");
+        }
     }
 }
