@@ -8,7 +8,7 @@ use crate::tank::{ComponentHealth, ComponentProjectileTarget, ComponentTankContr
 use engine::scene::{GameObject, Scene};
 use engine::ui::{
     CornerRadius, EdgeInsets, LayoutNode, PaintCommand, PointerEvents, Style, UiArena, UiColor,
-    UiLength, UiNodeHandle, UiPoint, UiRect, UiSize, UiWidget, Widget,
+    UiLength, UiNodeHandle, UiPoint, UiRect, UiSize, UiTransform, UiWidget, Widget,
 };
 use nalgebra_glm::{vec2, Vec2, Vec3};
 
@@ -41,14 +41,13 @@ impl MinimapView {
         }
     }
 
-    /// A view that fits an axis-aligned ground rectangle of `size` (along X
-    /// and Z) centred on `center`.
-    pub fn fitting(center: Vec2, size: Vec2, right: Vec2) -> Self {
-        let mut view = Self::facing(center, Vec2::zeros(), right);
-        let half = size * 0.5;
+    /// A view centred on the ground rectangle `area` that fits all of it.
+    pub fn fitting(area: GroundRect, right: Vec2) -> Self {
+        let mut view = Self::facing(area.center, Vec2::zeros(), right);
+        let [a, b] = area.half_axes;
         view.half_extent = vec2(
-            view.right.x.abs() * half.x + view.right.y.abs() * half.y,
-            view.up.x.abs() * half.x + view.up.y.abs() * half.y,
+            a.dot(&view.right).abs() + b.dot(&view.right).abs(),
+            a.dot(&view.up).abs() + b.dot(&view.up).abs(),
         );
         view
     }
@@ -76,6 +75,47 @@ impl MinimapView {
     pub fn map_direction(&self, direction: Vec2) -> Vec2 {
         vec2(direction.dot(&self.right), -direction.dot(&self.up))
     }
+
+    /// The ground rectangle `area` on a map drawn in `rect`: a screen
+    /// rectangle and the turn about its centre that lays it over `area`.
+    pub fn map_rect(&self, area: GroundRect, rect: UiRect) -> (UiRect, UiTransform) {
+        let scale = self.scale(rect);
+        let center = self.map_point(area.center, rect);
+        let a = self.map_direction(area.half_axes[0]) * scale;
+        let b = self.map_direction(area.half_axes[1]) * scale;
+        let (half_width, half_height) = (a.norm(), b.norm());
+        let screen = UiRect {
+            min: UiPoint::new(center.x - half_width, center.y - half_height),
+            max: UiPoint::new(center.x + half_width, center.y + half_height),
+        };
+        let turn = UiTransform {
+            rotate_z: if half_width > f32::EPSILON {
+                a.y.atan2(a.x)
+            } else {
+                0.0
+            },
+            ..UiTransform::identity()
+        };
+        (screen, turn)
+    }
+}
+
+/// A rectangle on the ground: its centre and the two half-axes from the
+/// centre to the middle of two adjacent sides.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct GroundRect {
+    pub center: Vec2,
+    pub half_axes: [Vec2; 2],
+}
+
+impl GroundRect {
+    /// A rectangle of `size` along X and Z, centred on `center`.
+    pub fn axis_aligned(center: Vec2, size: Vec2) -> Self {
+        Self {
+            center,
+            half_axes: [vec2(size.x * 0.5, 0.0), vec2(0.0, size.y * 0.5)],
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -99,10 +139,10 @@ pub(crate) struct MinimapBlip {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct MinimapState {
     pub view: MinimapView,
-    /// The arena floor's ground size, walls included, when there is one.
-    pub arena_size: Option<Vec2>,
-    /// Centre and side of each wall-height block of cover.
-    pub cover: Vec<(Vec2, f32)>,
+    /// The arena floor, walls included, when there is one.
+    pub floor: Option<GroundRect>,
+    /// Each wall-height block of cover.
+    pub cover: Vec<GroundRect>,
     pub blips: Vec<MinimapBlip>,
 }
 
@@ -119,15 +159,19 @@ pub(crate) fn minimap_state(scene: &Scene, player: GameObject) -> MinimapState {
             .map(|arena| (scene.world_transform(object), arena))
     });
 
-    let (view, arena_size, cover) = match arena {
+    let (view, floor, cover) = match arena {
         Some((transform, ((width, depth), cell_size, cover))) => {
-            let center = ground(transform.position);
-            let size = vec2(width, depth);
+            let floor = GroundRect::axis_aligned(ground(transform.position), vec2(width, depth));
             let cover = cover
                 .iter()
-                .map(|position| (ground(transform.transform_position(position)), cell_size))
+                .map(|position| {
+                    GroundRect::axis_aligned(
+                        ground(transform.transform_position(position)),
+                        vec2(cell_size, cell_size),
+                    )
+                })
                 .collect();
-            (MinimapView::fitting(center, size, right), Some(size), cover)
+            (MinimapView::fitting(floor, right), Some(floor), cover)
         }
         None => (
             MinimapView::facing(
@@ -142,7 +186,7 @@ pub(crate) fn minimap_state(scene: &Scene, player: GameObject) -> MinimapState {
 
     MinimapState {
         view,
-        arena_size,
+        floor,
         cover,
         blips: scene
             .objects()
@@ -278,47 +322,45 @@ struct MinimapWidget {
     colors: MinimapColors,
 }
 
-impl MinimapWidget {
-    fn ground_rect(&self, center: Vec2, size: Vec2, rect: UiRect) -> UiRect {
-        let view = &self.state.view;
-        let half = size * 0.5;
-        let a = view.map_point(center - half, rect);
-        let b = view.map_point(center + half, rect);
-        UiRect {
-            min: UiPoint::new(a.x.min(b.x), a.y.min(b.y)),
-            max: UiPoint::new(a.x.max(b.x), a.y.max(b.y)),
-        }
-    }
-}
-
 impl UiWidget for MinimapWidget {
     fn default_size(&self, _style: &Style, max: UiSize) -> UiSize {
         max
     }
 
     fn paint(&self, node: &LayoutNode, commands: &mut Vec<PaintCommand>) {
-        let rect = node.content_rect.inset(EdgeInsets::all(4.0));
+        self.paint_map(node.content_rect.inset(EdgeInsets::all(4.0)), commands);
+    }
+}
+
+impl MinimapWidget {
+    /// Paints the map into `rect`.
+    fn paint_map(&self, rect: UiRect, commands: &mut Vec<PaintCommand>) {
         let view = &self.state.view;
         let colors = self.colors;
 
-        if let Some(size) = self.state.arena_size {
-            let floor = self.ground_rect(view.center, size, rect);
-            commands.push(PaintCommand::FillRect {
-                rect: floor,
-                color: colors.floor,
-                radius: CornerRadius::default(),
-            });
-            commands.push(PaintCommand::StrokeRect {
-                rect: floor,
-                border: engine::ui::Border::solid(colors.bounds, 1.5),
-                radius: CornerRadius::default(),
+        if let Some(floor) = self.state.floor {
+            let (floor, turn) = view.map_rect(floor, rect);
+            turned(commands, floor, turn, |commands| {
+                commands.push(PaintCommand::FillRect {
+                    rect: floor,
+                    color: colors.floor,
+                    radius: CornerRadius::default(),
+                });
+                commands.push(PaintCommand::StrokeRect {
+                    rect: floor,
+                    border: engine::ui::Border::solid(colors.bounds, 1.5),
+                    radius: CornerRadius::default(),
+                });
             });
         }
-        for &(center, side) in &self.state.cover {
-            commands.push(PaintCommand::FillRect {
-                rect: self.ground_rect(center, vec2(side, side), rect),
-                color: colors.cover,
-                radius: CornerRadius::default(),
+        for &cover in &self.state.cover {
+            let (cover, turn) = view.map_rect(cover, rect);
+            turned(commands, cover, turn, |commands| {
+                commands.push(PaintCommand::FillRect {
+                    rect: cover,
+                    color: colors.cover,
+                    radius: CornerRadius::default(),
+                });
             });
         }
 
@@ -361,15 +403,39 @@ impl UiWidget for MinimapWidget {
     }
 }
 
+/// Paints what `paint` pushes turned by `turn` about the centre of `rect`.
+fn turned(
+    commands: &mut Vec<PaintCommand>,
+    rect: UiRect,
+    turn: UiTransform,
+    paint: impl FnOnce(&mut Vec<PaintCommand>),
+) {
+    if turn.is_identity() {
+        paint(commands);
+        return;
+    }
+    commands.push(PaintCommand::PushTransform {
+        rect,
+        transform: turn,
+    });
+    paint(commands);
+    commands.push(PaintCommand::PopTransform);
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{minimap_state, BlipKind, MinimapView};
+    use super::{
+        minimap_state, BlipKind, GroundRect, MinimapColors, MinimapState, MinimapView,
+        MinimapWidget,
+    };
     use crate::arena::ComponentArena;
+    use crate::hud::HudStyle;
     use crate::sentry::ComponentSentry;
     use crate::tank::{ComponentHealth, ComponentProjectileTarget, ComponentTankController};
     use engine::component::ComponentID;
     use engine::math::Transform;
     use engine::scene::GameObjectRef;
+    use engine::ui::{PaintCommand, UiColor, UiTransform};
     use engine::ui::{UiPoint, UiRect, UiSize};
     use nalgebra::UnitQuaternion;
     use nalgebra_glm::{vec2, vec3};
@@ -388,7 +454,10 @@ mod tests {
     #[test]
     fn an_arena_fit_view_maps_its_corners_to_the_map_edges() {
         // A 40 x 20 arena centred on (0, 10), with +X to the right.
-        let view = MinimapView::fitting(vec2(0.0, 10.0), vec2(40.0, 20.0), vec2(1.0, 0.0));
+        let view = MinimapView::fitting(
+            GroundRect::axis_aligned(vec2(0.0, 10.0), vec2(40.0, 20.0)),
+            vec2(1.0, 0.0),
+        );
 
         // 200 px across 40 m: 5 px per metre, so the 20 m depth spans 100 px
         // around the map centre (200, 150).
@@ -410,7 +479,10 @@ mod tests {
     #[test]
     fn a_turned_view_keeps_the_camera_right_on_the_right() {
         // The camera looks down -X, so its right is +Z and map up is -X.
-        let view = MinimapView::fitting(vec2(0.0, 0.0), vec2(40.0, 20.0), vec2(0.0, 1.0));
+        let view = MinimapView::fitting(
+            GroundRect::axis_aligned(vec2(0.0, 0.0), vec2(40.0, 20.0)),
+            vec2(0.0, 1.0),
+        );
 
         assert_eq!(view.up, vec2(-1.0, 0.0));
         assert_eq!(view.half_extent, vec2(10.0, 20.0));
@@ -475,7 +547,10 @@ mod tests {
         let state = minimap_state(&scene, player);
 
         // The default 15 x 16 arena of 2 m cells, centred where it stands.
-        assert_eq!(state.arena_size, Some(vec2(30.0, 32.0)));
+        assert_eq!(
+            state.floor,
+            Some(GroundRect::axis_aligned(vec2(0.0, 11.0), vec2(30.0, 32.0)))
+        );
         assert_eq!(state.view.center, vec2(0.0, 11.0));
         assert_eq!(state.cover.len(), 9);
         let mut kinds: Vec<BlipKind> = state.blips.iter().map(|blip| blip.kind).collect();
@@ -492,5 +567,101 @@ mod tests {
         assert_eq!(player_blip.position, vec2(2.0, 4.0));
         let heading = player_blip.heading.expect("a tank shows its heading");
         assert!((heading - vec2(1.0, 0.0)).norm() < 1e-5, "{heading:?}");
+    }
+
+    /// Every filled rectangle `commands` paint, as the four screen corners
+    /// it covers once the active transforms rotate it.
+    fn painted_quads(commands: &[PaintCommand]) -> Vec<(UiColor, [UiPoint; 4])> {
+        let rotate = |point: UiPoint, rect: UiRect, transform: UiTransform| {
+            assert_eq!((transform.rotate_x, transform.rotate_y), (0.0, 0.0));
+            let center = UiPoint::new(
+                (rect.min.x + rect.max.x) * 0.5,
+                (rect.min.y + rect.max.y) * 0.5,
+            );
+            let (x, y) = (
+                (point.x - center.x) * transform.scale,
+                (point.y - center.y) * transform.scale,
+            );
+            let (sin, cos) = transform.rotate_z.sin_cos();
+            UiPoint::new(center.x + x * cos - y * sin, center.y + x * sin + y * cos)
+        };
+        let mut transforms: Vec<(UiRect, UiTransform)> = Vec::new();
+        let mut quads = Vec::new();
+        for command in commands {
+            match command {
+                PaintCommand::PushTransform { rect, transform } => {
+                    transforms.push((*rect, *transform))
+                }
+                PaintCommand::PopTransform => {
+                    transforms.pop();
+                }
+                PaintCommand::FillRect { rect, color, .. } => {
+                    let corners = [
+                        rect.min,
+                        UiPoint::new(rect.max.x, rect.min.y),
+                        rect.max,
+                        UiPoint::new(rect.min.x, rect.max.y),
+                    ]
+                    .map(|corner| {
+                        transforms
+                            .iter()
+                            .rev()
+                            .fold(corner, |corner, (rect, transform)| {
+                                rotate(corner, *rect, *transform)
+                            })
+                    });
+                    quads.push((*color, corners));
+                }
+                _ => {}
+            }
+        }
+        quads
+    }
+
+    fn assert_same_corners(actual: [UiPoint; 4], expected: [UiPoint; 4]) {
+        for corner in expected {
+            assert!(
+                actual
+                    .iter()
+                    .any(|point| (point.x - corner.x).abs() < 1e-3
+                        && (point.y - corner.y).abs() < 1e-3),
+                "{corner:?} should be a corner of {actual:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_diagonal_view_paints_the_arena_floor_as_a_rotated_quad() {
+        // The camera's right is 45 degrees between +X and +Z.
+        let right = vec2(1.0, 1.0).normalize();
+        let floor = GroundRect::axis_aligned(vec2(0.0, 0.0), vec2(30.0, 32.0));
+        let view = MinimapView::fitting(floor, right);
+        let colors = MinimapColors::from(HudStyle::default());
+        let widget = MinimapWidget {
+            state: MinimapState {
+                view,
+                floor: Some(floor),
+                cover: Vec::new(),
+                blips: Vec::new(),
+            },
+            colors,
+        };
+        let mut commands = Vec::new();
+
+        widget.paint_map(map_rect(), &mut commands);
+
+        let floor = painted_quads(&commands)
+            .into_iter()
+            .find(|(color, _)| *color == colors.floor)
+            .expect("the floor is painted")
+            .1;
+        let expected = [
+            vec2(-15.0, -16.0),
+            vec2(15.0, -16.0),
+            vec2(15.0, 16.0),
+            vec2(-15.0, 16.0),
+        ]
+        .map(|corner| view.map_point(corner, map_rect()));
+        assert_same_corners(floor, expected);
     }
 }
