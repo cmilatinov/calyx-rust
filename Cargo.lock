@@ -2224,6 +2224,7 @@ dependencies = [
  "syn 2.0.117",
  "tiny-skia",
  "tiny-skia-path",
+ "toml_datetime 1.0.0+spec-1.1.0",
  "tracing",
  "url",
  "uuid 1.22.0",

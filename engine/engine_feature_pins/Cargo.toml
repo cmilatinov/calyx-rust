@@ -43,8 +43,14 @@ zeroize = { version = "1.8.2", features = ["alloc"] }
 # of a `cargo test --workspace` enable these features on it. They are build
 # dependencies so they join the host's feature resolution; `build.rs` exists
 # only to give them a build script to belong to.
+#
+# On Linux the host also builds `toml_datetime` for the proc macros of `zbus`,
+# which the editor reaches through accesskit, and trybuild, a dev-dependency of
+# engine_derive, enables `serde` on it. Pinning it on every platform keeps the
+# pin in effect when the build script's host is not the target.
 [build-dependencies]
 serde_core = { version = "1.0.228", features = ["alloc", "result", "std"] }
+toml_datetime = { version = "1.0.0", features = ["serde"] }
 
 [target.'cfg(windows)'.dependencies]
 bytemuck = { version = "1.25.0", features = ["aarch64_simd"] }
