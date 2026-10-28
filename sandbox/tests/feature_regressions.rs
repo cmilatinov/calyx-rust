@@ -481,3 +481,52 @@ fn sandbox_campfire_emits_from_each_of_its_systems() {
         assert_eq!(texture, serde_json::json!(puff));
     }
 }
+
+/// Collects the string literals passed to `.{method}("...")` in every source file
+/// under `dir`.
+fn names_read_by(dir: &std::path::Path, method: &str, names: &mut Vec<String>) {
+    let call = format!(".{method}(\"");
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            names_read_by(&path, method, names);
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
+            let source = std::fs::read_to_string(&path).unwrap();
+            let mut remaining = source.as_str();
+            while let Some(start) = remaining.find(&call) {
+                remaining = &remaining[start + call.len()..];
+                let end = remaining.find('"').unwrap();
+                names.push(remaining[..end].to_string());
+            }
+        }
+    }
+}
+
+#[test]
+fn sandbox_action_map_binds_every_action_and_axis_the_game_reads() {
+    let (_copy, assets) = sandbox_assets();
+    let map = assets
+        .registries
+        .assets
+        .read()
+        .load::<engine::input::ActionMap>(engine::input::PROJECT_ACTION_MAP_NAME)
+        .expect("the sandbox should ship input.cxinput");
+    let map = map.read();
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let input = egui::InputState::default();
+
+    let mut actions = Vec::new();
+    names_read_by(&source, "action", &mut actions);
+    assert!(actions.contains(&"shoot".to_string()));
+    assert!(actions.contains(&"scoreboard".to_string()));
+    for name in actions {
+        assert!(map.action(&name, &input).is_some(), "unbound action {name}");
+    }
+
+    let mut axes = Vec::new();
+    names_read_by(&source, "axis", &mut axes);
+    assert!(axes.contains(&"move_forward".to_string()));
+    for name in axes {
+        assert!(map.axis(&name, &input).is_some(), "unbound axis {name}");
+    }
+}

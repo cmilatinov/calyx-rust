@@ -19,14 +19,14 @@ Core runtime. Modules:
 - `context.rs` — RegistryContext, AssetContext, GameContext. Layered read-only wrappers.
 - `class_registry.rs` — ComponentRegistry for type-erased component construction from reflection.
 - `math/` — Transform (position/rotation/scale), matrix decomposition, inverse. Curve: a scalar over time as sorted keys (time, value, interpolation: constant, linear or smooth), evaluated with `Curve::evaluate`, holding the end keys' values outside them; its inspector edits keys on a normalized 0..1 timeline.
-- `input/` — Thin wrapper over egui::InputState.
+- `input/` — Thin wrapper over egui::InputState. `ActionMap` names actions and axes over key and pointer bindings; the default map binds nothing. A project ships its bindings as the `input.cxinput` asset (`PROJECT_ACTION_MAP_NAME`), which `GameContext::new` and `HeadlessSceneRunner::from_scene` follow, hot reloads included. A project without one has no bindings.
 
 ### `editor` (binary)
 egui + eframe editor application.
 - `panel/` — Modular panels: Viewport, Inspector, SceneHierarchy, ContentBrowser, Terminal, Game, Animator. Panel trait with name/icon/ui.
 - `inspector/` — InspectorRegistry with type-specific inspectors (bool, float, int, string, color, transform, vec, curve, asset ref, game object ref, collider, rigid body, UUID). Asset inspectors for Material, Shader, Prefab, AnimationGraph.
 - `widgets/` — Tab system, file button, list widget.
-- `camera.rs` — EditorCamera (orbit/fly).
+- `camera.rs` — EditorCamera (orbit/fly), with its own `ActionMap` (`EditorCamera::action_map`); the scene view never reads the project map, and the Game tab reads only the project map.
 - `selection.rs` — Selection state (GameObject or Asset).
 - `scene_document.rs` — SceneDocument: the authoring scene's undo history, dirty state, recovery autosave and file. Panels write the scene through a `SceneEdit` (`scene_edit.rs`), which captures the scene at its first write, commits everything written as one undo step, and records nothing while a simulation copy of the scene exists.
 - `project_manager.rs` — Project loading, assembly building, background tasks.
@@ -50,8 +50,9 @@ Example game project. Compiles as dynamic library (plugin) with `plugin_main` en
 - `player.rs` — ComponentPlayerController (WASD movement, camera-relative, network ownership check).
 - `network.rs` — Game-specific network handlers.
 - `game.rs` — Standalone game binary.
+- `assets/input.cxinput` — The sandbox's action map: `shoot` (primary button, Space), `jump` (Space), `scoreboard` (Tab), and the `move_forward` (W/S) and `move_right` (D/A) axes.
 - `combat.rs` — Kill events. A projectile records its shooter, and a lethal hit becomes a `KillEvent` passed to `record_kill`, which counts kills and deaths on `ComponentCombatStats` and adds the kill to every `ComponentKillFeed`. Networked kills are meant to enter through the same `record_kill`.
-- `hud.rs` and `hud/` — The tank HUD (`ComponentTankHud`): health, weapon, a minimap drawn from world positions, the kill feed, and a scoreboard while the `scoreboard` action (Tab) is held.
+- `hud.rs` and `hud/` — The tank HUD (`ComponentTankHud`): health, weapon, a minimap drawn from world positions, the kill feed, and a scoreboard while the `scoreboard` action (Tab in the sandbox's `input.cxinput`) is held.
 
 ## Key Patterns
 - `Ref<T>` everywhere for shared ownership with UUID tracking.
