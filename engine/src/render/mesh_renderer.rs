@@ -93,7 +93,6 @@ impl MeshRenderer {
         sky_light_intensity: f32,
         ambient_light: [f32; 4],
         draw_list: &[(AssetId, AssetId, AssetId, Range<u32>)],
-        gizmo_renderer: Option<&mut GizmoRenderer>,
     ) {
         let material_bind_groups = self.build_material_bind_groups(
             device,
@@ -183,10 +182,6 @@ impl MeshRenderer {
             RenderUtils::bind_mesh_buffers(&mut render_pass, mesh);
             RenderUtils::draw_mesh_instanced(&mut render_pass, mesh, instances.clone());
             last = (shader_id, mat_id, mesh_id);
-        }
-
-        if let Some(gizmo_renderer) = gizmo_renderer {
-            gizmo_renderer.render_gizmos(targets.color.descriptor.format, &mut render_pass);
         }
     }
 
