@@ -111,6 +111,7 @@ pub(crate) struct GroundRect {
 
 impl GroundRect {
     /// A rectangle of `size` along X and Z, centred on `center`.
+    #[cfg(test)]
     pub fn axis_aligned(center: Vec2, size: Vec2) -> Self {
         Self {
             center,
