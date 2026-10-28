@@ -6,7 +6,7 @@ use crate as engine;
 use crate::assets::animation::{AnimationKeyFrames, QuatKeyFrame, VectorKeyFrame};
 use crate::assets::animation_graph::{
     AnimationCondition, AnimationGraph, AnimationMotion, AnimationParameterCondition,
-    AnimationParameterValue, BoolCondition, FloatCondition, IntCondition,
+    AnimationParameterValue, AnimationTransition, BoolCondition, FloatCondition, IntCondition,
 };
 use crate::assets::mesh::BoneTransform;
 use crate::assets::AssetRef;
@@ -44,7 +44,7 @@ struct AnimatorPose {
 /// Read-only snapshot of animator state needed for pose computation.
 /// Avoids cloning the entire ComponentAnimator (which includes the pose Vec).
 struct AnimatorSnapshot {
-    time: TimeType,
+    state_time: TimeType,
     current_state: Option<NodeIndex>,
     parameters: HashMap<Uuid, AnimationParameterValue>,
     animation_graph: AssetRef<AnimationGraph>,
@@ -53,7 +53,7 @@ struct AnimatorSnapshot {
 impl AnimatorSnapshot {
     fn from_component(c: &ComponentAnimator) -> Self {
         Self {
-            time: c.time,
+            state_time: c.state_time,
             current_state: c.current_state,
             parameters: c.parameters.clone(),
             animation_graph: c.animation_graph.clone(),
@@ -86,7 +86,8 @@ impl Lerp<f32> for AnimationParameters {
 #[reflect_attr(name = "Animator")]
 #[serde(default)]
 pub struct ComponentAnimator {
-    /// Playback time in seconds.
+    /// Total time in seconds the animator has played. Clips play from the time spent in the
+    /// current state instead, so a state entered restarts its clip.
     pub time: TimeType,
     /// Whether to draw the bone hierarchy as debug gizmos.
     pub draw_debug_skeleton: bool,
@@ -95,6 +96,10 @@ pub struct ComponentAnimator {
     #[reflect_skip]
     #[serde(skip)]
     current_state: Option<NodeIndex>,
+    /// Seconds spent in the current state, from 0 when it was entered.
+    #[reflect_skip]
+    #[serde(skip)]
+    state_time: TimeType,
     #[reflect_skip]
     #[serde(skip)]
     current_transition: Option<AnimatorTransition>,
@@ -221,7 +226,9 @@ impl ComponentAnimator {
     }
 
     fn init(&mut self, assets: &ReadOnlyRegistryContext) {
-        if !self.parameters.is_empty() {
+        // A graph without parameters leaves the map empty, so the start state also marks that
+        // init has run.
+        if !self.parameters.is_empty() || self.current_state.is_some() {
             return;
         }
         let Some(graph_ref) = self.animation_graph.get_ref(assets) else {
@@ -234,6 +241,7 @@ impl ComponentAnimator {
         self.current_state = graph
             .start_node
             .and_then(|id| graph.node_indices().find(|n| graph[*n].id == id));
+        self.state_time = 0.0;
     }
 
     fn step_fsm(&mut self, assets: &ReadOnlyRegistryContext) {
@@ -249,15 +257,20 @@ impl ComponentAnimator {
                 }
                 return;
             }
-            let Some(mut transitions) = self.current_state.map(|n| graph.edges(n)) else {
+            let Some(state) = self.current_state else {
                 return;
             };
-            let Some(transition) = transitions.find(|transition| {
-                transition
-                    .weight()
-                    .conditions
-                    .iter()
-                    .all(|cond| Self::condition_satisfied(&self.parameters, cond))
+            let normalized_time = graph
+                .node_weight(state)
+                .and_then(|node| Self::motion_length(&self.parameters, assets, &node.motion))
+                .map(|length| self.state_time / length);
+            let Some(transition) = graph.edges(state).find(|transition| {
+                let transition = transition.weight();
+                Self::exit_time_reached(transition, normalized_time)
+                    && transition
+                        .conditions
+                        .iter()
+                        .all(|cond| Self::condition_satisfied(&self.parameters, cond))
             }) else {
                 return;
             };
@@ -283,9 +296,75 @@ impl ComponentAnimator {
         if let Some(transition) = self.current_transition.take() {
             if let Some((_source, target)) = graph.edge_endpoints(transition.transition) {
                 self.current_state = Some(target);
+                self.state_time = 0.0;
             }
         }
         self.current_transition = None;
+    }
+
+    /// Whether `transition` may start at `normalized_time`, the time in its source state over
+    /// the state's length. As in Unity, an exit time below 1 is met at that fraction of every
+    /// loop, and one of 1 or more is met once that many loops have played and then at the same
+    /// fraction of each later loop. A state without a length, such as one whose clip is
+    /// missing, does not hold its transitions back.
+    fn exit_time_reached(transition: &AnimationTransition, normalized_time: Option<f32>) -> bool {
+        if !transition.has_exit_time {
+            return true;
+        }
+        let Some(normalized_time) = normalized_time else {
+            return true;
+        };
+        normalized_time >= transition.exit_time
+            && normalized_time.fract() >= transition.exit_time.fract()
+    }
+
+    /// Seconds one loop of `motion` lasts. A blend tree lasts the average of its clips' lengths,
+    /// weighted by their current blend weights, as in Unity.
+    fn motion_length(
+        parameters: &HashMap<Uuid, AnimationParameterValue>,
+        assets: &ReadOnlyRegistryContext,
+        motion: &AnimationMotion,
+    ) -> Option<TimeType> {
+        match motion {
+            AnimationMotion::AnimationClip(clip) => {
+                let animation = clip.animation.get_ref(assets)?;
+                let animation = animation.read();
+                let length = animation.duration as f32
+                    / (clip.speed.abs() * animation.ticks_per_second as f32);
+                (length.is_finite() && length > 0.0).then_some(length)
+            }
+            AnimationMotion::BlendTree1D(tree) => Self::blend_length(
+                parameters,
+                assets,
+                tree.nearest_neighbors(2, parameters)
+                    .into_iter()
+                    .map(|(weight, neighbor)| (weight, &neighbor.motion)),
+            ),
+            AnimationMotion::BlendTree2D(tree) => Self::blend_length(
+                parameters,
+                assets,
+                tree.nearest_neighbors(4, parameters)
+                    .into_iter()
+                    .map(|(weight, neighbor)| (weight, &neighbor.motion)),
+            ),
+        }
+    }
+
+    fn blend_length<'a>(
+        parameters: &HashMap<Uuid, AnimationParameterValue>,
+        assets: &ReadOnlyRegistryContext,
+        motions: impl IntoIterator<Item = (f32, &'a AnimationMotion)>,
+    ) -> Option<TimeType> {
+        let (weighted, total) = motions
+            .into_iter()
+            .filter_map(|(weight, motion)| {
+                Self::motion_length(parameters, assets, motion).map(|length| (weight, length))
+            })
+            .fold((0.0, 0.0), |(weighted, total), (weight, length)| {
+                (weighted + weight * length, total + weight)
+            });
+        let length = weighted / total;
+        (length.is_finite() && length > 0.0).then_some(length)
     }
 
     fn condition_satisfied(
@@ -413,8 +492,12 @@ impl ComponentAnimator {
     }
 
     fn update_time(&mut self, time: &Time) {
-        let delta_time = time.delta_time();
+        self.advance(time.delta_time());
+    }
+
+    fn advance(&mut self, delta_time: TimeType) {
         self.time += delta_time;
+        self.state_time += delta_time;
         if let Some(transition) = &mut self.current_transition {
             transition.time += delta_time;
         }
@@ -487,7 +570,7 @@ impl ComponentAnimator {
                 assets,
                 &node.motion,
                 &c_bone.name,
-                snapshot.time,
+                snapshot.state_time,
                 &bind_pose,
             )
             .matrix();
@@ -822,12 +905,14 @@ mod tests {
         scene.add_component(
             root,
             ComponentAnimator {
-                time: 0.5,
                 animation_graph: AssetRef::from_id(graph.id()),
                 ..Default::default()
             },
         );
-        scene.write_component::<ComponentAnimator, _>(root, |c| c.init(&assets));
+        scene.write_component::<ComponentAnimator, _>(root, |c| {
+            c.init(&assets);
+            c.advance(0.5);
+        });
         ComponentAnimator::compute_animation_pose(
             &assets,
             &mut scene,
@@ -869,6 +954,365 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A hand-built state machine: states named by [`ExitTimeGraph::state`], transitions
+    /// between them, and one bool parameter `go` that every conditioned transition checks.
+    struct ExitTimeGraph {
+        assets: ReadOnlyRegistryContext,
+        graph: AnimationGraph,
+        go: Uuid,
+    }
+
+    impl ExitTimeGraph {
+        fn new() -> Self {
+            let go = Uuid::new_v4();
+            let mut graph = AnimationGraph::default();
+            graph
+                .parameters
+                .push(crate::assets::animation_graph::AnimationParameter {
+                    id: go,
+                    name: "go".to_string(),
+                    value: AnimationParameterValue::Bool(false),
+                });
+            Self {
+                assets: test_registries(),
+                graph,
+                go,
+            }
+        }
+
+        /// A clip `seconds` long at one tick per second, played at `speed`.
+        fn clip(&self, seconds: f64, speed: f32) -> AnimationMotion {
+            let animation = self
+                .assets
+                .assets
+                .read()
+                .create(
+                    format!("clip_{}", Uuid::new_v4()),
+                    Animation {
+                        node_keyframes: HashMap::new(),
+                        duration: seconds,
+                        ticks_per_second: 1.0,
+                    },
+                )
+                .unwrap();
+            AnimationMotion::AnimationClip(AnimationClip {
+                speed,
+                animation: AssetRef::from_id(animation.id()),
+            })
+        }
+
+        /// Adds a state; the first one added is the start state.
+        fn state(&mut self, name: &str, motion: AnimationMotion) -> NodeIndex {
+            let id = Uuid::new_v4();
+            if self.graph.start_node.is_none() {
+                self.graph.start_node = Some(id);
+            }
+            self.graph.add_node(AnimationNode {
+                id,
+                name: name.to_string(),
+                motion,
+                position: Default::default(),
+            })
+        }
+
+        /// Adds an instant transition. `exit_time` sets `has_exit_time`; `conditioned` makes it
+        /// wait for `go` to be true.
+        fn transition(
+            &mut self,
+            from: NodeIndex,
+            to: NodeIndex,
+            exit_time: Option<f32>,
+            conditioned: bool,
+        ) {
+            let conditions = if conditioned {
+                vec![AnimationParameterCondition {
+                    parameter: self.go,
+                    condition: AnimationCondition::Bool(BoolCondition::True),
+                }]
+            } else {
+                vec![]
+            };
+            self.graph.add_edge(
+                from,
+                to,
+                AnimationTransition {
+                    id: Uuid::new_v4(),
+                    name: String::new(),
+                    has_exit_time: exit_time.is_some(),
+                    exit_time: exit_time.unwrap_or(0.0),
+                    duration: 0.0,
+                    conditions,
+                },
+            );
+        }
+
+        fn animator(self) -> AnimatorUnderTest {
+            let graph = self
+                .assets
+                .assets
+                .read()
+                .create("exit_time_graph".to_string(), self.graph)
+                .unwrap();
+            let mut animator = ComponentAnimator {
+                animation_graph: AssetRef::from_id(graph.id()),
+                ..Default::default()
+            };
+            animator.init(&self.assets);
+            AnimatorUnderTest {
+                assets: self.assets,
+                animator,
+                go: self.go,
+            }
+        }
+    }
+
+    /// Steps an animator the way [`ComponentAnimator::update`] does, in frames of
+    /// [`AnimatorUnderTest::FRAME`] seconds, which binary floats hold exactly.
+    struct AnimatorUnderTest {
+        assets: ReadOnlyRegistryContext,
+        animator: ComponentAnimator,
+        go: Uuid,
+    }
+
+    impl AnimatorUnderTest {
+        const FRAME: f32 = 0.125;
+
+        fn set_go(&mut self, value: bool) {
+            self.animator
+                .parameters
+                .insert(self.go, AnimationParameterValue::Bool(value));
+        }
+
+        /// Runs one frame: the state machine sees the time reached so far, then time advances.
+        fn frame(&mut self) {
+            self.animator.init(&self.assets);
+            self.animator.step_fsm(&self.assets);
+            self.animator.advance(Self::FRAME);
+        }
+
+        /// Runs frames until the state machine has seen `seconds` of time in the current state.
+        fn run_to(&mut self, seconds: f32) {
+            while self.animator.state_time <= seconds {
+                self.frame();
+            }
+        }
+
+        fn state(&self) -> String {
+            let graph = self.animator.animation_graph.get_ref(&self.assets).unwrap();
+            let graph = graph.read();
+            graph[self.animator.current_state.unwrap()].name.clone()
+        }
+
+        fn transitioning(&self) -> bool {
+            self.animator.current_transition.is_some()
+        }
+    }
+
+    #[test]
+    fn exit_time_transition_waits_for_the_exit_time() {
+        let mut graph = ExitTimeGraph::new();
+        let a = graph.state("A", graph.clip(1.0, 1.0));
+        let b = graph.state("B", graph.clip(1.0, 1.0));
+        graph.transition(a, b, Some(0.75), true);
+        let mut animator = graph.animator();
+        animator.set_go(true);
+
+        animator.run_to(0.625);
+        assert!(!animator.transitioning(), "started before the exit time");
+
+        animator.run_to(0.75);
+        assert!(animator.transitioning(), "did not start at the exit time");
+        animator.frame();
+        assert_eq!(animator.state(), "B");
+    }
+
+    #[test]
+    fn exit_time_transition_still_needs_its_conditions() {
+        let mut graph = ExitTimeGraph::new();
+        let a = graph.state("A", graph.clip(1.0, 1.0));
+        let b = graph.state("B", graph.clip(1.0, 1.0));
+        graph.transition(a, b, Some(0.75), true);
+        let mut animator = graph.animator();
+
+        animator.run_to(0.875);
+        assert!(!animator.transitioning());
+        assert_eq!(animator.state(), "A");
+    }
+
+    #[test]
+    fn exit_time_transition_without_conditions_flows_on_when_the_clip_ends() {
+        // A clip of 2 ticks at speed 2 lasts one second.
+        let mut graph = ExitTimeGraph::new();
+        let a = graph.state("A", graph.clip(2.0, 2.0));
+        let b = graph.state("B", graph.clip(1.0, 1.0));
+        graph.transition(a, b, Some(1.0), false);
+        let mut animator = graph.animator();
+
+        animator.run_to(0.875);
+        assert!(!animator.transitioning());
+
+        animator.run_to(1.0);
+        assert!(animator.transitioning());
+        animator.frame();
+        assert_eq!(animator.state(), "B");
+    }
+
+    #[test]
+    fn graph_without_parameters_flows_on_at_the_exit_time() {
+        let mut graph = ExitTimeGraph::new();
+        graph.graph.parameters.clear();
+        let a = graph.state("A", graph.clip(1.0, 1.0));
+        let b = graph.state("B", graph.clip(1.0, 1.0));
+        graph.transition(a, b, Some(1.0), false);
+        let mut animator = graph.animator();
+
+        animator.run_to(1.0);
+        animator.frame();
+        assert_eq!(animator.state(), "B");
+        animator.frame();
+        assert_eq!(animator.state(), "B", "returned to the start state");
+    }
+
+    #[test]
+    fn exit_time_below_one_fires_at_that_point_of_the_loop_the_conditions_pass_in() {
+        let mut graph = ExitTimeGraph::new();
+        let a = graph.state("A", graph.clip(1.0, 1.0));
+        let b = graph.state("B", graph.clip(1.0, 1.0));
+        graph.transition(a, b, Some(0.75), true);
+        let mut animator = graph.animator();
+
+        // The conditions pass a quarter into the second loop: wait for 75% of that loop.
+        animator.run_to(1.125);
+        animator.set_go(true);
+        animator.run_to(1.625);
+        assert!(!animator.transitioning(), "started before 75% of the loop");
+        animator.run_to(1.75);
+        assert!(animator.transitioning(), "did not start at 75% of the loop");
+    }
+
+    #[test]
+    fn exit_time_below_one_fires_at_once_when_the_conditions_pass_past_it() {
+        let mut graph = ExitTimeGraph::new();
+        let a = graph.state("A", graph.clip(1.0, 1.0));
+        let b = graph.state("B", graph.clip(1.0, 1.0));
+        graph.transition(a, b, Some(0.75), true);
+        let mut animator = graph.animator();
+
+        animator.run_to(1.75);
+        animator.set_go(true);
+        animator.frame();
+        assert!(animator.transitioning());
+    }
+
+    #[test]
+    fn exit_time_above_one_counts_loops() {
+        let mut graph = ExitTimeGraph::new();
+        let a = graph.state("A", graph.clip(1.0, 1.0));
+        let b = graph.state("B", graph.clip(1.0, 1.0));
+        graph.transition(a, b, Some(1.5), true);
+        let mut animator = graph.animator();
+        animator.set_go(true);
+
+        animator.run_to(1.375);
+        assert!(!animator.transitioning(), "started before 1.5 loops");
+        animator.run_to(1.5);
+        assert!(animator.transitioning(), "did not start at 1.5 loops");
+    }
+
+    #[test]
+    fn exit_time_above_one_fires_at_its_fraction_of_each_later_loop() {
+        let mut graph = ExitTimeGraph::new();
+        let a = graph.state("A", graph.clip(1.0, 1.0));
+        let b = graph.state("B", graph.clip(1.0, 1.0));
+        graph.transition(a, b, Some(1.5), true);
+        let mut animator = graph.animator();
+
+        // The conditions pass a quarter into the third loop: wait for half of that loop.
+        animator.run_to(2.125);
+        animator.set_go(true);
+        animator.run_to(2.375);
+        assert!(!animator.transitioning(), "started before half of the loop");
+        animator.run_to(2.5);
+        assert!(
+            animator.transitioning(),
+            "did not start at half of the loop"
+        );
+    }
+
+    #[test]
+    fn transition_without_exit_time_fires_when_its_conditions_pass() {
+        let mut graph = ExitTimeGraph::new();
+        let a = graph.state("A", graph.clip(1.0, 1.0));
+        let b = graph.state("B", graph.clip(1.0, 1.0));
+        graph.transition(a, b, None, true);
+        let mut animator = graph.animator();
+
+        animator.run_to(0.25);
+        assert!(!animator.transitioning());
+        animator.set_go(true);
+        animator.frame();
+        assert!(animator.transitioning());
+    }
+
+    #[test]
+    fn exit_time_counts_from_when_the_state_was_entered() {
+        let mut graph = ExitTimeGraph::new();
+        let a = graph.state("A", graph.clip(1.0, 1.0));
+        let b = graph.state("B", graph.clip(1.0, 1.0));
+        let c = graph.state("C", graph.clip(1.0, 1.0));
+        graph.transition(a, b, None, true);
+        graph.transition(b, c, Some(0.5), false);
+        let mut animator = graph.animator();
+
+        animator.run_to(0.625);
+        animator.set_go(true);
+        animator.frame();
+        animator.frame();
+        assert_eq!(animator.state(), "B");
+
+        animator.run_to(0.375);
+        assert!(!animator.transitioning(), "B's exit time counted A's time");
+        animator.run_to(0.5);
+        assert!(animator.transitioning());
+    }
+
+    #[test]
+    fn blend_tree_state_length_is_the_blend_weighted_clip_length() {
+        // Halfway between a 1 s clip and a 3 s clip, both weigh half: the state lasts 2 s.
+        let mut graph = ExitTimeGraph::new();
+        let blend = Uuid::new_v4();
+        graph
+            .graph
+            .parameters
+            .push(crate::assets::animation_graph::AnimationParameter {
+                id: blend,
+                name: "blend".to_string(),
+                value: AnimationParameterValue::Float(0.5),
+            });
+        let tree = BlendTree::<1> {
+            parameters: vec![blend],
+            motions: vec![
+                crate::assets::animation_graph::BlendTreeMotion {
+                    threshold: [0.0],
+                    motion: graph.clip(1.0, 1.0),
+                },
+                crate::assets::animation_graph::BlendTreeMotion {
+                    threshold: [1.0],
+                    motion: graph.clip(3.0, 1.0),
+                },
+            ],
+        };
+        let a = graph.state("A", AnimationMotion::BlendTree1D(tree));
+        let b = graph.state("B", graph.clip(1.0, 1.0));
+        graph.transition(a, b, Some(0.5), false);
+        let mut animator = graph.animator();
+
+        animator.run_to(0.875);
+        assert!(!animator.transitioning(), "used a length under 2 s");
+        animator.run_to(1.0);
+        assert!(animator.transitioning(), "used a length over 2 s");
     }
 
     #[test]

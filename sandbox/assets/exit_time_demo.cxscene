@@ -1,0 +1,142 @@
+{
+  "components": {
+    "2d3c4ea9-e18b-4260-b0b5-2d5982e5c940": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "2d3c4ea9-e18b-4260-b0b5-2d5982e5c940",
+        "name": "ExitTimeDemo",
+        "visible": true
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "f24db81d-7054-40b8-8f3c-d9740c03948e": {
+        "animation_graph": "bd07e38f-c205-e790-c673-1d159dffc10e",
+        "draw_debug_skeleton": false,
+        "time": 0.0
+      }
+    },
+    "9bd81e51-47be-413b-9933-5d8cf1254cce": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "9bd81e51-47be-413b-9933-5d8cf1254cce",
+        "name": "Body",
+        "visible": true
+      },
+      "bb784426-a5ec-4995-a86a-c40e7e2cb3ab": {
+        "material": "00000000-0000-0000-0000-000000000000",
+        "mesh": "086b379f-7f3c-21f3-ec68-614f59809cd6",
+        "root_bone": "d08e589f-3ac6-4941-b532-d852c5eb3368"
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    "b40a3e44-5dc8-4c2d-9ab1-83221e31c428": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "b40a3e44-5dc8-4c2d-9ab1-83221e31c428",
+        "name": "Spine",
+        "visible": true
+      },
+      "4a83ab8d-8a10-462a-90bd-8a0cf7f32b7f": {
+        "bind_pose": null,
+        "name": "Spine"
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    "d08e589f-3ac6-4941-b532-d852c5eb3368": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "d08e589f-3ac6-4941-b532-d852c5eb3368",
+        "name": "Hip",
+        "visible": true
+      },
+      "4a83ab8d-8a10-462a-90bd-8a0cf7f32b7f": {
+        "bind_pose": null,
+        "name": "Hip"
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    }
+  },
+  "hierarchy": {
+    "2d3c4ea9-e18b-4260-b0b5-2d5982e5c940": [
+      "d08e589f-3ac6-4941-b532-d852c5eb3368",
+      "9bd81e51-47be-413b-9933-5d8cf1254cce"
+    ],
+    "d08e589f-3ac6-4941-b532-d852c5eb3368": [
+      "b40a3e44-5dc8-4c2d-9ab1-83221e31c428"
+    ]
+  },
+  "roots": [
+    "2d3c4ea9-e18b-4260-b0b5-2d5982e5c940"
+  ]
+}
