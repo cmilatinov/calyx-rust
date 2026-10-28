@@ -9,6 +9,8 @@ pub enum AssetInspectorAction {
     /// Instantiate the prefab asset into the scene, as one undo step.
     ImportPrefab(Uuid),
     OpenScene(Uuid),
+    /// Open the prefab asset in prefab mode.
+    OpenPrefab(Uuid),
 }
 
 #[reflect_trait]

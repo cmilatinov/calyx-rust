@@ -14,6 +14,8 @@ use egui::{
     TextFormat, TextStyle, Ui, Vec2,
 };
 use engine::assets::animation_graph::AnimationGraph;
+use engine::scene::Prefab;
+use engine::utils::TypeUuid;
 use re_ui::list_item::ShowCollapsingResponse;
 use std::any::Any;
 use std::fs::{DirEntry, OpenOptions, ReadDir};
@@ -204,6 +206,9 @@ impl Panel for PanelContentBrowser {
                                 if is_selected && is_dir && res.double_clicked() {
                                     self.set_selected_folder(&mut state.selection, node.clone());
                                 }
+                                if !is_dir && res.double_clicked() {
+                                    Self::open_asset(state, node);
+                                }
                                 if !is_dir {
                                     self.asset_context_menu(state, &res, node);
                                 }
@@ -344,6 +349,23 @@ impl PanelContentBrowser {
                 state.commit_scene_edit(edit);
             }
             AssetInspectorAction::OpenScene(asset_id) => state.open_scene_asset(asset_id),
+            AssetInspectorAction::OpenPrefab(asset_id) => {
+                state.prefab_mode_mut().request_open(asset_id)
+            }
+        }
+    }
+
+    /// Opens the asset file a double-click landed on, when it is a prefab.
+    fn open_asset(state: &mut EditorAppState, path: &Path) {
+        let prefab = {
+            let registry = state.game.assets.registries.assets.read();
+            registry
+                .asset_meta_from_path(path)
+                .filter(|meta| meta.type_uuid == Prefab::type_uuid())
+                .map(|meta| meta.id)
+        };
+        if let Some(asset_id) = prefab {
+            state.prefab_mode_mut().request_open(asset_id);
         }
     }
 

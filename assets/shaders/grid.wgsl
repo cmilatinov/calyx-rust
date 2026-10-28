@@ -1,4 +1,4 @@
-//#include "shaders/inputs.wgsl"
+//#include "shaders/fullscreen.wgsl"
 //#include "shaders/camera.wgsl"
 
 struct VertexOut {
@@ -17,11 +17,13 @@ fn to_world_space(clip_coords: vec3f) -> vec3f {
     return pos.xyz / pos.w;
 }
 
+// Interpolating the near and far points across the full-screen triangle is
+// exact: a point on a fixed clip-space depth unprojects affinely in screen xy.
 @vertex
-fn vs_main(vertex: VertexIn) -> VertexOut {
-    let pos = vertex.position.xy;
+fn vs_main(@builtin(vertex_index) index: u32) -> VertexOut {
+    let pos = fullscreen_vertex(index).position.xy;
     var out: VertexOut;
-    out.position = vec4f(vertex.position, 1.0);
+    out.position = vec4f(pos, 0.0, 1.0);
     out.near_point = to_world_space(vec3f(pos, 0.0));
     out.far_point = to_world_space(vec3f(pos, 1.0));
     return out;

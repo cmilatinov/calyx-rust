@@ -131,6 +131,16 @@ pub struct GameContext {
 pub enum UpdatedScene {
     /// The simulation copy, while simulation runs: the editor during play.
     Simulation,
+    /// The editor: the simulation copy while it runs, as [`Self::Simulation`].
+    /// While play is stopped and `preview_particles` is set, only the edit
+    /// scene's particles advance, without [`Scene::update`]: no physics,
+    /// scripts or component updates. While play is stopped and it is not set,
+    /// the particle simulation releases its systems, so no view draws any.
+    /// Paused play advances nothing.
+    Editor {
+        /// Whether the edit scene's particles simulate while play is stopped.
+        preview_particles: bool,
+    },
     /// The current scene: the player.
     Current,
 }
@@ -155,11 +165,18 @@ impl GameContext {
 
     /// Runs one frame of `target`: [`update_scene`] on that scene with this
     /// context's resources and particle simulation. Does nothing for
-    /// [`UpdatedScene::Simulation`] while simulation is paused or stopped.
+    /// [`UpdatedScene::Simulation`] while simulation is paused or stopped;
+    /// [`UpdatedScene::Editor`] says what it does then.
     pub fn update_scene(&mut self, target: UpdatedScene, input: &Input) {
         let assets = self.assets.lock_read();
         let scene = match target {
             UpdatedScene::Simulation => self.scenes.running_simulation_scene_mut(),
+            UpdatedScene::Editor { preview_particles } => {
+                if !self.scenes.is_simulating() && !self.scenes.has_simulation_scene() {
+                    self.preview_edit_scene_particles(preview_particles, &assets.render_context);
+                }
+                self.scenes.running_simulation_scene_mut()
+            }
             UpdatedScene::Current => Some(self.scenes.current_scene_mut()),
         };
         if let Some(scene) = scene {
@@ -174,18 +191,40 @@ impl GameContext {
         }
     }
 
+    /// Advances only the edit scene's particles while `preview` is set, and
+    /// otherwise releases the particle simulation's systems so no view draws
+    /// a stale preview. A stopped play copy's systems are released by the
+    /// rebind the next preview frame makes.
+    fn preview_edit_scene_particles(&mut self, preview: bool, render_context: &RenderContext) {
+        if preview {
+            self.particles.simulate(
+                self.scenes.simulation_scene(),
+                render_context,
+                self.resources.time().delta_time(),
+            );
+        } else if self.particles.scene_id().is_some() {
+            self.particles = ParticleSimulation::new();
+        }
+    }
+
     /// Prepares `target` for this frame, whether or not it advances:
     /// [`Scene::prepare`], then [`ParticleSimulation::prepare`], which
     /// uploads the curves and gradients edited since the last frame, so a
     /// paused simulation draws them.
     ///
-    /// [`UpdatedScene::Simulation`] prepares the simulation copy whenever one
-    /// exists, paused included, and the current scene otherwise, as the
-    /// editor shows it.
+    /// [`UpdatedScene::Simulation`] and [`UpdatedScene::Editor`] prepare the
+    /// simulation copy whenever one exists, paused included, and the current
+    /// scene otherwise, as the editor shows it. With play stopped that is the
+    /// edit scene, so curve and gradient edits reach the edit scene's
+    /// preview. The particle prepare acts only on the scene the simulation
+    /// is bound to, so the frame after Play or Stop, before the preview or
+    /// the play copy rebinds it, prepares no particles.
     pub fn prepare_scene(&mut self, target: UpdatedScene) {
         let assets = self.assets.lock_read();
         let scene = match target {
-            UpdatedScene::Simulation => self.scenes.simulation_scene_mut(),
+            UpdatedScene::Simulation | UpdatedScene::Editor { .. } => {
+                self.scenes.simulation_scene_mut()
+            }
             UpdatedScene::Current => self.scenes.current_scene_mut(),
         };
         scene.prepare();
@@ -218,3 +257,6 @@ pub fn update_scene(
     scene.update(registries, resources, input);
     particles.simulate(scene, render_context, resources.time().delta_time());
 }
+
+#[cfg(test)]
+mod tests;

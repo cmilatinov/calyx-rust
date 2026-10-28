@@ -139,6 +139,24 @@ pub enum Command {
         path: Option<PathBuf>,
     },
 
+    /// Opens a `.cxprefab` asset in prefab mode: the open scene is set aside
+    /// and the prefab becomes the authoring scene every other command
+    /// edits. Refused while the open prefab has unsaved changes.
+    OpenPrefab {
+        /// Path to the prefab file, absolute or relative to the editor's
+        /// working directory.
+        path: PathBuf,
+    },
+    /// Saves the open prefab to its asset file. Scene instances of the
+    /// prefab are not changed.
+    SavePrefab,
+    /// Closes the open prefab and returns to the scene set aside.
+    ClosePrefab {
+        /// Drop unsaved prefab changes instead of refusing to close.
+        #[serde(default)]
+        discard: bool,
+    },
+
     /// Returns the full active scene serialized as scene-file JSON.
     GetSceneState,
     /// Lists all game objects: id, name, parent, and component type names.
@@ -464,6 +482,11 @@ mod tests {
                 path: PathBuf::from("assets/scene.cxscene"),
             },
             Command::SaveScene { path: None },
+            Command::OpenPrefab {
+                path: PathBuf::from("assets/prefabs/crate.cxprefab"),
+            },
+            Command::SavePrefab,
+            Command::ClosePrefab { discard: true },
             Command::GetSceneState,
             Command::ListObjects,
             Command::GetObject {

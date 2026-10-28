@@ -1,8 +1,4 @@
-//#include "shaders/inputs.wgsl"
-
-struct VertexOut {
-    @builtin(position) position: vec4f,
-};
+//#include "shaders/fullscreen.wgsl"
 
 struct OutlineUniform {
     target_object_id: u32,
@@ -18,10 +14,8 @@ var object_ids: texture_2d<u32>;
 var<uniform> outline: OutlineUniform;
 
 @vertex
-fn vs_main(vertex: VertexIn) -> VertexOut {
-    var out: VertexOut;
-    out.position = vec4f(vertex.position, 1.0);
-    return out;
+fn vs_main(@builtin(vertex_index) index: u32) -> FullscreenVertexOut {
+    return fullscreen_vertex(index);
 }
 
 fn load_object_id(pixel: vec2i, size: vec2i) -> u32 {
@@ -49,7 +43,7 @@ fn has_neighbor(pixel: vec2i, size: vec2i, target_id: u32, radius: u32) -> bool 
 }
 
 @fragment
-fn fs_main(in: VertexOut) -> @location(0) vec4f {
+fn fs_main(in: FullscreenVertexOut) -> @location(0) vec4f {
     let size = vec2i(textureDimensions(object_ids));
     let pixel = clamp(vec2i(in.position.xy), vec2i(0, 0), size - vec2i(1, 1));
     let center_id = load_object_id(pixel, size);

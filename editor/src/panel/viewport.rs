@@ -17,7 +17,7 @@ use engine::render::CameraLike;
 use engine::scene::GameObject;
 use mint::ColumnMatrix4;
 use nalgebra_glm::{DMat4, Mat4};
-use re_ui::Icon;
+use re_ui::{Icon, UiExt};
 use std::any::Any;
 use transform_gizmo_egui::config::DEFAULT_SNAP_ANGLE;
 use transform_gizmo_egui::mint::RowMatrix4;
@@ -109,6 +109,15 @@ impl PanelViewport {
             if degrees != radians.to_degrees() {
                 *radians = degrees.to_radians();
             }
+            ui.separator();
+            // re_ui's style grows hovered and pressed widgets by 2 points,
+            // which pushes a plain checkbox's box into its label;
+            // `re_checkbox` keeps the box its resting size.
+            ui.re_checkbox(
+                &mut app_state.preview_particles,
+                "Simulate particles in edit mode",
+            )
+            .on_hover_text("Run the edit scene's particle systems while play is stopped");
         });
         ui.add_space(-ui.style().spacing.item_spacing.y + padding);
     }
