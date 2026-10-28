@@ -13,6 +13,8 @@ use uuid::Uuid;
 
 pub struct SkyboxRenderer {
     skybox: Option<Uuid>,
+    /// Whether the selected skybox is drawn as the sky, or only lights.
+    visible: bool,
     skybox_shader: Ref<Shader>,
     skybox_cubemap_shader: Ref<Shader>,
     skybox_irradiance_cubemap_shader: Ref<Shader>,
@@ -27,6 +29,7 @@ impl SkyboxRenderer {
         let load = |name| SceneRendererError::load::<Shader>(context, name);
         Ok(Self {
             skybox: None,
+            visible: true,
             skybox_shader: load("shaders/environment/skybox")?,
             skybox_cubemap_shader: load("shaders/environment/cubemap")?,
             skybox_irradiance_cubemap_shader: load("shaders/environment/irradiance")?,
@@ -43,6 +46,12 @@ impl SkyboxRenderer {
 
     pub fn set_skybox(&mut self, skybox: Option<Uuid>) {
         self.skybox = skybox;
+    }
+
+    /// Sets whether [`Self::render`] draws the selected skybox. A hidden
+    /// skybox still lights the scene.
+    pub fn set_visible(&mut self, visible: bool) {
+        self.visible = visible;
     }
 
     fn selected_skybox_ref(
@@ -90,6 +99,7 @@ impl SkyboxRenderer {
         samples: u32,
     ) {
         let skybox = Self::selected_skybox_ref(self.skybox, assets)
+            .filter(|_| self.visible)
             .map(|skybox_ref| skybox_ref.read())
             .filter(|skybox| skybox.environment_maps().is_some());
         if let Some(skybox) = skybox {

@@ -12,6 +12,7 @@ use num_traits::FromPrimitive;
 use transform_gizmo_egui::{GizmoMode, GizmoOrientation};
 
 use self::panel::*;
+use self::prefab_mode::PrefabMode;
 pub use self::project_manager::*;
 use self::scene_document::SceneDocument;
 // The inspector's list-edit tests patch values the way undo does.
@@ -52,6 +53,7 @@ mod camera;
 mod icons;
 mod inspector;
 mod panel;
+mod prefab_mode;
 mod project_manager;
 mod remote;
 mod scene_autosave;
@@ -104,6 +106,8 @@ pub struct EditorAppState {
     pub(crate) pinned_components: PinnedComponents,
     active_scene: ActiveSceneState,
     window_title: String,
+    project_path: PathBuf,
+    prefab_mode: PrefabMode,
 }
 
 #[derive(Debug, Default)]
@@ -128,12 +132,17 @@ impl ActiveSceneState {
             .unwrap_or_else(|| "Untitled Scene".into())
     }
 
-    fn title(&self, project_name: &str, dirty: bool) -> String {
+    /// The window title, naming `document_label` instead of the scene when
+    /// another document, such as a prefab, is open.
+    fn title(&self, project_name: &str, document_label: Option<&str>, dirty: bool) -> String {
         let dirty_marker = if dirty { " *" } else { "" };
-        format!(
-            "Calyx - {project_name} - {}{dirty_marker}",
-            self.scene_label()
-        )
+        match document_label {
+            Some(label) => format!("Calyx - {project_name} - {label}{dirty_marker}"),
+            None => format!(
+                "Calyx - {project_name} - {}{dirty_marker}",
+                self.scene_label()
+            ),
+        }
     }
 }
 
@@ -151,7 +160,7 @@ impl EditorAppState {
                 grid: true,
                 gizmos: true,
                 samples: 1,
-                clear_color: Color32::from_rgb(8, 8, 8),
+                clear_color: prefab_mode::SCENE_VIEW_BACKDROP,
                 ..Default::default()
             },
             initial_render_size,
@@ -183,6 +192,8 @@ impl EditorAppState {
             pinned_components: PinnedComponents::load(&project_path),
             active_scene: Default::default(),
             window_title: String::new(),
+            project_path,
+            prefab_mode: Default::default(),
             scene_renderer,
             game_renderer,
             inspector_registry,
@@ -232,18 +243,30 @@ impl EditorAppState {
     }
 
     pub fn open_scene_file(&mut self, file: PathBuf) -> bool {
+        if self.prefab_mode.refuse_scene_change() {
+            return false;
+        }
         self.scene_document.open_file(&mut self.game, file)
     }
 
     pub fn open_scene_asset(&mut self, asset_id: uuid::Uuid) {
+        if self.prefab_mode.refuse_scene_change() {
+            return;
+        }
         self.scene_document.open_asset(&mut self.game, asset_id);
     }
 
     fn new_scene_from_default(&mut self) {
+        if self.prefab_mode.refuse_scene_change() {
+            return;
+        }
         self.scene_document.open_default(&mut self.game);
     }
 
     fn save_current_scene(&mut self, file: PathBuf) -> bool {
+        if self.prefab_mode.refuse_scene_change() {
+            return false;
+        }
         self.scene_document.save(&mut self.game, file)
     }
 
@@ -257,6 +280,9 @@ impl EditorAppState {
     }
 
     fn shutdown_scene_document(&mut self) {
+        // The prompt has had its say about the prefab's changes by now; the
+        // scene set aside gets its final recovery autosave.
+        self.prefab_mode_mut().close();
         self.scene_document.shutdown(&self.game);
     }
 }
@@ -406,6 +432,7 @@ impl eframe::App for EditorApp {
         self.state.thumbnails.handle().install(ctx);
 
         self.menu_bar(ctx);
+        prefab_mode::show_banner(ctx, &mut self.state);
 
         egui::CentralPanel::default()
             .frame(Frame {
@@ -430,6 +457,7 @@ impl eframe::App for EditorApp {
         self.render_view_outline();
         self.update_window_title(ctx);
         self.state.show_scene_recovery_prompt(ctx);
+        prefab_mode::show_unsaved_changes_prompt(ctx, &mut self.state);
 
         self.frame_counter.tick(self.state.game.resources.time());
 
@@ -499,10 +527,11 @@ impl EditorApp {
             .set_scene(scene_meta.asset_name.clone(), scene_meta.file.clone());
 
         let project_name = self.project_manager.read().current_project().name().clone();
-        let title = self
-            .state
-            .active_scene
-            .title(project_name.as_str(), self.state.is_scene_dirty());
+        let title = self.state.active_scene.title(
+            project_name.as_str(),
+            self.state.prefab_mode.document_label().as_deref(),
+            self.state.is_scene_dirty(),
+        );
         if self.state.window_title != title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.state.window_title = title;
@@ -531,6 +560,7 @@ impl EditorApp {
                     scene_renderer,
                     game_renderer,
                     game_size,
+                    prefab_mode,
                     camera:
                         EditorCamera {
                             camera, transform, ..
@@ -547,6 +577,7 @@ impl EditorApp {
             camera.aspect = width as f32 / height as f32;
         }
         camera.update_projection();
+        prefab_mode.dress_scene_view(scene_renderer.options_mut());
         scene_renderer.set_hovered_game_object(None);
         scene_renderer.set_selected_game_object(None);
 
@@ -627,16 +658,24 @@ impl EditorApp {
 impl EditorApp {
     fn file_menu(&mut self, ui: &mut Ui) {
         ui.menu_button("File", |ui| {
-            if ui.button("New").clicked() {
+            let prefab_open = self.state.prefab_mode.is_open();
+            let new_response = ui
+                .add_enabled(!prefab_open, Button::new("New"))
+                .on_disabled_hover_text(prefab_mode::CLOSE_PREFAB_FIRST);
+            if new_response.clicked() {
                 self.new_interaction();
                 ui.close_menu();
             }
             let open_response = ui
                 .add_enabled(
-                    self.project_manager.read().assemblies_loaded(),
+                    !prefab_open && self.project_manager.read().assemblies_loaded(),
                     Button::new("Open"),
                 )
-                .on_disabled_hover_text("Build project assemblies before opening scenes");
+                .on_disabled_hover_text(if prefab_open {
+                    prefab_mode::CLOSE_PREFAB_FIRST
+                } else {
+                    "Build project assemblies before opening scenes"
+                });
             if open_response.clicked() {
                 self.open_interaction();
                 ui.close_menu();
@@ -645,9 +684,19 @@ impl EditorApp {
                 self.save_interaction(false);
                 ui.close_menu();
             }
-            if ui.button("Save As").clicked() {
+            let save_as_response = ui
+                .add_enabled(!prefab_open, Button::new("Save As"))
+                .on_disabled_hover_text("A prefab saves to its own asset file");
+            if save_as_response.clicked() {
                 self.save_interaction(true);
                 ui.close_menu();
+            }
+            if prefab_open {
+                ui.separator();
+                if ui.button("Close Prefab").clicked() {
+                    self.state.prefab_mode_mut().request_close();
+                    ui.close_menu();
+                }
             }
         });
     }
@@ -693,6 +742,12 @@ impl EditorApp {
     }
 
     fn save_interaction(&mut self, save_as: bool) {
+        if self.state.prefab_mode.is_open() {
+            if let Err(error) = self.state.prefab_mode_mut().save() {
+                log::error!("{error}");
+            }
+            return;
+        }
         let Some(file) = self.scene_save_file(save_as) else {
             return;
         };
@@ -748,16 +803,21 @@ impl EditorApp {
                 }
 
                 let is_simulating = self.is_simulating();
-                if Self::icon_button(
-                    ui,
-                    if is_simulating {
-                        include_image!("../../resources/icons/pause_dark.png")
-                    } else {
-                        include_image!("../../resources/icons/execute_dark.png")
-                    },
-                )
-                .clicked()
-                {
+                let prefab_open = self.state.prefab_mode.is_open();
+                let play_response = ui
+                    .add_enabled_ui(!prefab_open, |ui| {
+                        Self::icon_button(
+                            ui,
+                            if is_simulating {
+                                include_image!("../../resources/icons/pause_dark.png")
+                            } else {
+                                include_image!("../../resources/icons/execute_dark.png")
+                            },
+                        )
+                    })
+                    .inner
+                    .on_disabled_hover_text(prefab_mode::PLAY_IN_PREFAB_MODE);
+                if play_response.clicked() {
                     if is_simulating {
                         log::info!(
                             "User paused scene simulation; objects={}",
@@ -849,6 +909,9 @@ impl EditorApp {
     /// project's runtime window sets the game aspect, and a fresh simulation
     /// runs the configured startup scene when the project has one.
     pub(crate) fn start_simulation(&mut self) -> Result<(), String> {
+        if self.state.prefab_mode.is_open() {
+            return Err(prefab_mode::PLAY_IN_PREFAB_MODE.into());
+        }
         self.state.refresh_inspector_baselines();
         let window_size = self
             .project_manager
@@ -930,7 +993,7 @@ mod tests {
 
         state.set_scene(None, None);
         assert_eq!(
-            state.title("Sandbox", false),
+            state.title("Sandbox", None, false),
             "Calyx - Sandbox - Untitled Scene"
         );
     }
@@ -941,7 +1004,10 @@ mod tests {
         let file = PathBuf::from("assets/scene.cxscene");
 
         state.set_scene(Some("scene".into()), Some(file));
-        assert_eq!(state.title("Sandbox", false), "Calyx - Sandbox - scene");
+        assert_eq!(
+            state.title("Sandbox", None, false),
+            "Calyx - Sandbox - scene"
+        );
     }
 
     #[test]
@@ -951,7 +1017,7 @@ mod tests {
 
         state.set_scene(None, Some(file));
         assert_eq!(
-            state.title("Sandbox", false),
+            state.title("Sandbox", None, false),
             "Calyx - Sandbox - scene.cxscene"
         );
     }
@@ -961,7 +1027,10 @@ mod tests {
         let mut state = ActiveSceneState::default();
 
         state.set_scene(Some("scene".into()), None);
-        assert_eq!(state.title("Sandbox", true), "Calyx - Sandbox - scene *");
+        assert_eq!(
+            state.title("Sandbox", None, true),
+            "Calyx - Sandbox - scene *"
+        );
     }
 
     #[test]
