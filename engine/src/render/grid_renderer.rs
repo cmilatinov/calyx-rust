@@ -1,11 +1,9 @@
-use crate::assets::mesh::{Instance, Mesh};
 use crate::assets::texture::Texture;
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::render_utils::RenderUtils;
-use crate::render::{PipelineOptions, RenderContext, SceneRendererError, Shader};
+use crate::render::{PipelineOptions, SceneRendererError, Shader};
 use egui_wgpu::wgpu;
-use nalgebra_glm::Mat4;
 
 pub struct GridRenderer {
     shader: Ref<Shader>,
@@ -42,16 +40,11 @@ impl GridRenderer {
 
     pub fn render(
         &mut self,
-        render_context: &RenderContext,
         encoder: &mut wgpu::CommandEncoder,
-        screen_space_quad: &Ref<Mesh>,
         scene_texture_msaa: &Texture,
         scene_depth_texture: &Texture,
         samples: u32,
     ) {
-        let device = render_context.device();
-        let queue = render_context.queue();
-        let mut quad_mesh = screen_space_quad.write();
         let shader = self.shader.read();
         let mut render_pass = RenderUtils::overlay_pass(
             encoder,
@@ -60,27 +53,19 @@ impl GridRenderer {
             "Scene Grid",
         );
 
-        let mut depth_stencil = RenderUtils::depth_default(wgpu::TextureFormat::Depth32Float);
-        depth_stencil.depth_write_enabled = false;
-        let options = PipelineOptions::builder()
+        let options = PipelineOptions::fullscreen_builder()
             .samples(samples)
-            .depth_stencil(Some(depth_stencil))
-            .fragment_targets(vec![Some(RenderUtils::color_alpha_blending(
+            .target(RenderUtils::color_alpha_blending(
                 scene_texture_msaa.descriptor.format,
-            ))])
+            ))
+            .depth_stencil(wgpu::DepthStencilState {
+                depth_write_enabled: false,
+                ..RenderUtils::depth_default(wgpu::TextureFormat::Depth32Float)
+            })
             .build();
         render_pass.set_pipeline(&shader.pipeline(&options));
         render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-        quad_mesh.instances.resize(
-            1,
-            Instance {
-                bone_transform_index: -1,
-                object_id: 0,
-                _padding: Default::default(),
-                transform: Mat4::identity().into(),
-            },
-        );
-        RenderUtils::render_mesh(device, queue, &mut render_pass, &mut quad_mesh);
+        RenderUtils::draw_fullscreen(&mut render_pass);
     }
 }
 

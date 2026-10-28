@@ -478,6 +478,8 @@ fn default_material_ref(context: &ReadOnlyAssetContext) -> Result<AssetRef<Mater
         .ok_or_else(|| "missing default material for thumbnail render".into())
 }
 
+/// Lights a thumbnail scene. Intensities are linear: thumbnails go through
+/// the default ACES tone mapping at 0 EV, like any scene without a volume.
 fn add_preview_lighting(scene: &mut Scene) {
     let ambient = scene.create(None, None);
     scene.add_component(
@@ -485,7 +487,7 @@ fn add_preview_lighting(scene: &mut Scene) {
         ComponentAmbientLight {
             active: true,
             color: Color32::from_rgb(185, 196, 210),
-            intensity: 0.07,
+            intensity: 0.8,
         },
     );
 
@@ -498,7 +500,7 @@ fn add_preview_lighting(scene: &mut Scene) {
         ComponentDirectionalLight {
             active: true,
             color: Color32::WHITE,
-            intensity: 1.15,
+            intensity: 6.0,
         },
     );
 
@@ -510,7 +512,7 @@ fn add_preview_lighting(scene: &mut Scene) {
             active: true,
             radius: 7.0,
             color: Color32::WHITE,
-            intensity: 0.12,
+            intensity: 0.8,
         },
     );
 }

@@ -2144,6 +2144,7 @@ dependencies = [
  "egui-wgpu",
  "engine_derive",
  "engine_feature_pins",
+ "enumflags2",
  "env_filter 1.0.0",
  "glob",
  "gltf",
