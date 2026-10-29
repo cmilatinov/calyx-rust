@@ -23,7 +23,8 @@
 //!   carries an override; then it stays as an ordinary, unlinked object. A
 //!   child of a deleted object that is not deleted itself, such as an object
 //!   added to the instance, moves to the nearest ancestor that stays.
-//! - An object the instance deleted stays deleted.
+//! - An object the instance deleted stays deleted, and a reference the
+//!   prefab makes to it reaches no object.
 //! - Every object keeps its parent and sibling order in the instance. An
 //!   object moved out from under its instance root stays part of the
 //!   instance and is updated where it is.
@@ -93,6 +94,15 @@ fn value_hash(value: &serde_json::Value) -> u64 {
     text.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
         (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
     })
+}
+
+/// The id a reference to the prefab object `source` takes in the instance
+/// rooted at `instance` when the instance does not hold that object. It is
+/// the same on every update, so an update with nothing new changes nothing.
+/// Mixing in the instance's random root id makes it as unlikely to name an
+/// existing object as a fresh random id.
+fn missing_member_id(instance: Uuid, source: Uuid) -> Uuid {
+    Uuid::from_u128(instance.as_u128() ^ source.as_u128())
 }
 
 impl Scene {
@@ -341,11 +351,19 @@ impl Scene {
             }
         }
 
-        // Every member takes the prefab's components it does not override.
-        let mapping = members
+        // Every member takes the prefab's components it does not override. A
+        // reference to a prefab object the instance does not hold, such as
+        // one it deleted, maps to an id of its own that names no object, so
+        // it never falls back to the prefab's object.
+        let mut mapping = members
             .iter()
             .map(|(source, game_object)| (*source, self.uuid(*game_object)))
             .collect::<BiHashMap<_, _>>();
+        for source in prefab.data.components.keys() {
+            if !members.contains_key(source) {
+                mapping.insert(*source, missing_member_id(instance, *source));
+            }
+        }
         let objects = prefab
             .data
             .components
@@ -478,8 +496,9 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::component::ComponentPointLight;
+    use crate::component::{ComponentPointLight, ComponentSkinnedMesh};
     use crate::context::ReadOnlyRegistryContext;
+    use crate::scene::GameObjectRef;
     use crate::scene::SceneData;
     use crate::test_support::test_registries;
     use nalgebra_glm::{self as glm, Vec3};
@@ -779,6 +798,45 @@ mod tests {
             level.prefab_link(level_handle).map(|link| link.object),
             Some(fixture.authoring.uuid(handle))
         );
+    }
+
+    #[test]
+    fn a_reference_to_an_object_the_instance_deleted_does_not_reach_the_prefab_object() {
+        let mut fixture = Fixture::new();
+        let source_lid = fixture.source("Lid");
+        let skin = ComponentSkinnedMesh {
+            root_bone: GameObjectRef::new(fixture.authoring.uuid(source_lid)),
+            ..Default::default()
+        };
+        let body = fixture.body;
+        fixture.authoring.add_component(body, skin);
+        fixture.update();
+        let target = |level: &Scene, instance: GameObject| {
+            level
+                .read_component::<ComponentSkinnedMesh, _, _>(instance, |skin| skin.root_bone.id())
+                .expect("the instance has the skinned mesh")
+        };
+        let lid = fixture.target("Lid");
+        assert_eq!(
+            target(&fixture.level, fixture.instance),
+            fixture.level.uuid(lid)
+        );
+
+        fixture.level.delete(lid);
+        fixture.level.flush_deletes();
+        fixture.update();
+
+        let level = &fixture.level;
+        let target_id = target(level, fixture.instance);
+        assert_ne!(
+            target_id,
+            fixture.authoring.uuid(source_lid),
+            "the reference does not fall back to the prefab's own object"
+        );
+        assert!(level.find(target_id).is_none());
+        let before = serde_json::to_value(&fixture.level).unwrap();
+        fixture.update();
+        assert_eq!(serde_json::to_value(&fixture.level).unwrap(), before);
     }
 
     #[test]
