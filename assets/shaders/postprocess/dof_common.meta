@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "5cb4ec42-e5fb-4eb7-a079-1b954710c914",
+    "name": "shaders/postprocess/dof_common",
+    "display_name": "dof_common",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

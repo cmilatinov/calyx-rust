@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "7def7679-fb16-49cf-a106-f3cc288f9add",
+    "name": "shaders/postprocess/dof_coc",
+    "display_name": "dof_coc",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

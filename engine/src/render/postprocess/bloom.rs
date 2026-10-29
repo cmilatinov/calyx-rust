@@ -842,14 +842,14 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            ["bloom", "tonemap", "fxaa"],
-            "the renderer runs bloom"
+            ["depth_of_field", "bloom", "tonemap", "fxaa"],
+            "the renderer runs bloom after depth of field"
         );
         assert_eq!(
             *renderer.last_post_process_plan(),
             ChainPlan {
                 passes: vec![PlannedPass {
-                    pass: 1,
+                    pass: 2,
                     input: PassTarget::Source,
                     output: PassTarget::Output,
                 }],
@@ -876,6 +876,7 @@ mod tests {
             let pass_context = PassContext {
                 render_context: &render_context,
                 size,
+                camera: Default::default(),
             };
             pass.prepare(&pass_context, &bloom(1.0, radius));
             let mut encoder = render_context
