@@ -740,6 +740,7 @@ fn tone_mapping_matches_the_aces_fit_and_keeps_alpha() {
             exposure_ev: 2.0,
             ..Default::default()
         },
+        ..Default::default()
     };
     let (texel, _) = run_chain(
         &render_context,
@@ -765,6 +766,7 @@ fn volume(enabled: bool, priority: i32, exposure_ev: f32) -> ComponentGlobalPost
                 exposure_ev,
                 ..Default::default()
             },
+            ..Default::default()
         },
     }
 }

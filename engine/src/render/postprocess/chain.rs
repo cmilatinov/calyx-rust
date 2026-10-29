@@ -140,10 +140,14 @@ impl PostProcessChain {
         &self.pool
     }
 
-    /// Frees intermediate targets and the depth copy, as a resize needs.
+    /// Frees intermediate targets, the depth copy and the textures passes
+    /// own, as a resize needs.
     pub fn clear_targets(&mut self) {
         self.pool.clear();
         self.depth.clear();
+        for pass in &mut self.passes {
+            pass.release_targets();
+        }
     }
 
     /// Records the frame's enabled passes into `encoder`, from
@@ -158,6 +162,11 @@ impl PostProcessChain {
         targets: ChainTargets,
     ) -> ChainPlan {
         let plan = ChainPlan::build(&self.passes, settings);
+        for (index, pass) in self.passes.iter_mut().enumerate() {
+            if !plan.passes.iter().any(|planned| planned.pass == index) {
+                pass.release_targets();
+            }
+        }
         for error in &plan.skipped {
             crate::logging::warn_once(format!("post-process-skipped:{error}"), || {
                 format!("Skipping a post-process pass: {error}")

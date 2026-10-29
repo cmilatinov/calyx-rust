@@ -3,6 +3,7 @@
 //!
 //! See `docs/design/post-processing/architecture.md`.
 
+pub use bloom::*;
 pub use chain::*;
 pub use depth::*;
 pub use pass::*;
@@ -10,6 +11,7 @@ pub use pool::*;
 pub use settings::*;
 pub use tonemap::*;
 
+mod bloom;
 mod chain;
 mod depth;
 mod pass;
