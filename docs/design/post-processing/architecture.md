@@ -98,6 +98,7 @@ pub trait PostProcessPass {
     fn enabled(&self, settings: &PostProcessSettings) -> bool;
     fn prepare(&mut self, context: &PassContext, settings: &PostProcessSettings);
     fn record(&mut self, context: &PassContext, encoder: &mut wgpu::CommandEncoder, io: PassIo);
+    fn release_targets(&mut self) {}                         // default: owns none
 }
 
 pub struct PassIo<'a> {
@@ -107,7 +108,9 @@ pub struct PassIo<'a> {
 }
 ```
 
-`prepare` uploads the pass's uniforms from the settings. `record` draws from `input` into `output`. A pass reads its input with `textureLoad` or a sampler and writes every output pixel, so it never needs to load the output.
+`prepare` uploads the pass's uniforms from the settings. `record` draws from `input` into `output`. A pass that owns textures besides the pool targets, such as bloom's mip chain, frees them in `release_targets`. A pass reads its input with `textureLoad` or a sampler and writes every output pixel, so it never needs to load the output.
+
+`PassContext` carries the render context, the chain's size and `projection`, the projection matrix of the camera the frame was rendered with. `SceneRenderer::render_scene_base` hands it to the chain with `PostProcessChain::set_projection`, so a pass that reads depth can rebuild view-space positions with the same matrix the depth was written through.
 
 ## Chain And Target Pool
 
@@ -116,6 +119,7 @@ pub struct PassIo<'a> {
 - Passes run in stage order (`Hdr`, `Tonemap`, `Ldr`), then insertion order within a stage.
 - Each frame the chain keeps the passes whose `enabled` returns true and whose inputs are available, then wires them: the first reads the chain's source, the last writes the chain's output, and each pass between writes the pool target the next one reads. Intermediates alternate between two pool targets (A, B), so a pass never reads the texture it writes.
 - The pool is fetched from only when two or more passes run. The tone-map-only chain never touches it.
+- The chain calls `release_targets` on every pass when the renderer resizes, and on each pass that does not run in a frame, so a disabled effect holds no texture.
 - `TargetPool` holds at most the two slots, A and B. It creates each on first use at the chain's size and format, recreates one whose size or format differ, reuses them across frames and frees both when the renderer resizes.
 
 The wiring is a pure plan (`ChainPlan`) built before any GPU work, which keeps ordering and ping-pong testable without a device.
@@ -138,11 +142,32 @@ Tone mapping asks for nothing.
 - `TonemappingPreset::Aces` is Stephen Hill's fit of the ACES RRT and ODT (BakingLab, MIT): the ACES input matrix, the rational RRT/ODT curve, then the output matrix, clamped to `[0, 1]`. It maps linear 0.18 to about 0.106 and 1.0 to about 0.619.
 - Alpha passes through unchanged, so views cleared to transparent, such as thumbnails, keep their transparency.
 
+## Ambient Occlusion
+
+`SsaoPass` (`postprocess/ssao.rs`) is an `Hdr` pass that reads `SceneInput::Depth`. It is enabled by `settings.ambient_occlusion.enabled`, off by default, so a frame without it keeps the tone-map-only plan and builds no depth copy. The renderer registers it before every other `Hdr` pass, so it darkens the scene before depth of field blurs it and before bloom spreads light. It records three render passes:
+
+```text
+occlusion   depth (full size)            -> occlusion (1/2)   visibility in r, view z in g
+blur        occlusion                    -> blurred (1/2)     depth-aware 4x4
+composite   input, blurred, depth        -> output            input.rgb * visibility, alpha kept
+```
+
+- **Reconstruction**: the renderer produces no normals (`SceneInput::Normals` is unavailable), so each occlusion texel rebuilds its view-space position from depth with the inverse of `PassContext::projection`, and its normal from the cross product of the position differences to its horizontal and vertical neighbours. On each axis it takes the neighbour closer in depth, so normals do not bend at silhouettes, and it turns the normal toward the camera.
+- **Hemisphere**: up to 64 kernel offsets in the unit hemisphere around +z, generated once per sample count from a fixed seed. They cluster toward the center and keep at least 0.15 of their length along the normal, so a flat surface does not occlude itself. Each texel turns the kernel around its normal by one of 16 angles from a 4x4 tile in Bayer order, then scales it by `radius`.
+- **Occlusion**: each sample is projected back to the screen and compared with the depth there. A surface more than `bias` in front of the sample occludes it, faded out by `smoothstep(radius / |dz|)` when that surface lies far in front of the pixel, so a foreground object does not darken the wall behind it. Samples off screen or on the sky do not count. Visibility is `(1 - occluded / samples) ^ intensity`.
+- **Blur**: a 4x4 box over exactly one tile of the noise, which cancels the rotation pattern, weighting each texel by how close its view depth is to the center's (zero at a 10% difference).
+- **Composite**: reads the input and depth with `textureLoad`, upsamples the blurred visibility from its four nearest texels, weighted bilinearly and by depth, and multiplies it into the color. Sky pixels, at depth `0.9999999` (what the skybox writes) or beyond, pass through bit for bit, and so does alpha.
+- **Targets**: two `Rg16Float` textures at half the chain's size, rounded up. The pass creates them on the first frame SSAO runs, recreates them when the size changes, and frees them in `release_targets`, so a disabled or resized SSAO holds no texture.
+- **Approximation**: the occlusion multiplies the final HDR color, which already holds direct light, so it also darkens creases a light shines straight into. Ambient occlusion should only attenuate indirect light. This stands until the renderer produces normals or a G-buffer, so the forward pass can apply occlusion to its ambient and image-based terms alone.
+
 ## Settings And Volumes
 
 ```rust
-pub struct PostProcessSettings { pub tonemapping: TonemapSettings }
+pub struct PostProcessSettings { pub tonemapping: TonemapSettings, pub ambient_occlusion: AmbientOcclusionSettings }
 pub struct TonemapSettings { pub preset: TonemappingPreset, pub exposure_ev: f32 }  // Aces, 0.0
+pub struct AmbientOcclusionSettings {                         // off, 0.5, 1.0, 0.025, 16
+    pub enabled: bool, pub radius: f32, pub intensity: f32, pub bias: f32, pub sample_count: u32,
+}
 pub enum TonemappingPreset { Aces }
 
 pub struct ComponentGlobalPostProcessVolume {
@@ -162,6 +187,7 @@ pub struct ComponentGlobalPostProcessVolume {
 
 - `assets/shaders/fullscreen.wgsl`: the shared full-screen triangle, `fullscreen_vertex(index)`. `assets/shaders/fullscreen_pass.wgsl` includes it and declares the `vs_main` that calls it, so a shader that draws the plain triangle includes the entry point and declares only its fragment stage: the post passes, the overlay composite, the selection outline and 2D mip generation. The editor grid adds outputs of its own, so it includes `fullscreen.wgsl` and declares its own vertex stage. Every full-screen draw takes its pipeline options from `PipelineOptions::fullscreen_builder()`, which sets only the color target, depth and sample count; the engine has no full-screen quad mesh.
 - `assets/shaders/postprocess/tonemap.wgsl`: the tone-map pass.
+- `assets/shaders/postprocess/ssao.wgsl`, `ssao_blur.wgsl` and `ssao_composite.wgsl`: the SSAO passes. `ssao_common.wgsl` holds their uniform, the view-space reconstruction and the depth weight they share.
 - `assets/shaders/postprocess/depth_resolve.wgsl`: copies sample 0 of the multisampled depth.
 - `assets/shaders/overlay_composite.wgsl`: blends the resolved overlay target over the scene texture.
 - `pbr.wgsl` drops Reinhard, gamma 1.4 and the `* 5.0` on albedo.
@@ -195,6 +221,7 @@ Headless tests in `engine/src/render/postprocess/`:
 - The display-encoding test above.
 - Depth reaches a pass that requests it, single-sample at one and four samples; normals and velocity report unavailable.
 - Volume selection picks the highest enabled priority, warns on a tie, and falls back to the defaults.
+- SSAO leaves a flat plane facing the camera unoccluded, darkens an inside corner most at its crease, and leaves the sky, at a cleared or skybox depth, bit for bit unchanged. With it disabled the renderer's plan is tone mapping alone. Its targets are half the chain's size and freed on release, and settings saved before it load with it off.
 
 Headless tests in `engine/src/render/overlay/` and `scene_renderer.rs`:
 

@@ -19,6 +19,9 @@ use serde::{Deserialize, Serialize};
 pub struct PostProcessSettings {
     /// Tone mapping, the display transform. It always runs.
     pub tonemapping: TonemapSettings,
+    /// Screen-space ambient occlusion, first in the `Hdr` stage. Off by
+    /// default.
+    pub ambient_occlusion: super::AmbientOcclusionSettings,
 }
 
 /// Tone-mapping curve and exposure.

@@ -8,6 +8,7 @@ use crate::assets::texture::Texture;
 use crate::context::ReadOnlyAssetContext;
 use crate::render::{RenderContext, SceneRendererError};
 use egui_wgpu::wgpu;
+use nalgebra_glm::Mat4;
 use std::sync::Arc;
 
 /// A texture a planned pass reads or writes.
@@ -107,6 +108,7 @@ pub struct PostProcessChain {
     passes: Vec<Box<dyn PostProcessPass>>,
     pool: TargetPool,
     depth: DepthResolve,
+    projection: Mat4,
 }
 
 impl PostProcessChain {
@@ -116,7 +118,14 @@ impl PostProcessChain {
             passes: Vec::new(),
             pool: TargetPool::default(),
             depth: DepthResolve::new(context)?,
+            projection: Mat4::identity(),
         })
+    }
+
+    /// Sets the projection of the camera the next frame is rendered with,
+    /// which passes that read depth use to rebuild view-space positions.
+    pub fn set_projection(&mut self, projection: Mat4) {
+        self.projection = projection;
     }
 
     /// Adds `pass` after every pass of its stage and the stages before it.
@@ -140,10 +149,14 @@ impl PostProcessChain {
         &self.pool
     }
 
-    /// Frees intermediate targets and the depth copy, as a resize needs.
+    /// Frees intermediate targets, the depth copy and the textures passes
+    /// own, as a resize needs.
     pub fn clear_targets(&mut self) {
         self.pool.clear();
         self.depth.clear();
+        for pass in &mut self.passes {
+            pass.release_targets();
+        }
     }
 
     /// Records the frame's enabled passes into `encoder`, from
@@ -158,6 +171,11 @@ impl PostProcessChain {
         targets: ChainTargets,
     ) -> ChainPlan {
         let plan = ChainPlan::build(&self.passes, settings);
+        for (index, pass) in self.passes.iter_mut().enumerate() {
+            if !plan.passes.iter().any(|planned| planned.pass == index) {
+                pass.release_targets();
+            }
+        }
         for error in &plan.skipped {
             crate::logging::warn_once(format!("post-process-skipped:{error}"), || {
                 format!("Skipping a post-process pass: {error}")
@@ -176,6 +194,7 @@ impl PostProcessChain {
             passes,
             pool,
             depth,
+            projection,
         } = self;
         let size = (
             targets.output.descriptor.size.width,
@@ -193,6 +212,7 @@ impl PostProcessChain {
         let context = PassContext {
             render_context,
             size,
+            projection: *projection,
         };
         for planned in &plan.passes {
             passes[planned.pass].prepare(&context, settings);

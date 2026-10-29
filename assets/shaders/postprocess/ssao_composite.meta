@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "9b4b7156-6146-47f5-83ca-d03b136643ac",
+    "name": "shaders/postprocess/ssao_composite",
+    "display_name": "ssao_composite",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}
