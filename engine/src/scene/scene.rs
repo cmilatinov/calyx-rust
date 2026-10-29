@@ -579,7 +579,7 @@ impl Scene {
 
     /// Checks that `prefab` is a single well-formed tree rooted at its root
     /// object, so instantiation cannot fail midway or leave stray objects.
-    pub(crate) fn validate_prefab(&self, prefab: &Prefab) -> Result<(), SceneError> {
+    pub fn validate_prefab(&self, prefab: &Prefab) -> Result<(), SceneError> {
         let invalid = |reason: String| Err(SceneError::InvalidPrefab(reason));
         let components = &prefab.data.components;
         if !components.contains_key(&prefab.root) {

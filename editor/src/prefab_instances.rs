@@ -47,8 +47,9 @@ pub(crate) fn instantiate_prefab(
 
 /// Updates the open scene's instances of the prefab asset `prefab`, or of
 /// every prefab the scene holds instances of when `prefab` is `None`, from
-/// the prefab assets as last saved, through `edit`. Every prefab loads before
-/// any instance changes, so a prefab that fails to load changes nothing.
+/// the prefab assets as last saved, through `edit`. Every prefab loads and is
+/// checked before any instance changes, so a prefab that fails to load or is
+/// malformed changes nothing.
 pub(crate) fn update_prefab_instances(
     edit: &mut SceneEdit,
     game: &mut GameContext,
@@ -61,13 +62,17 @@ pub(crate) fn update_prefab_instances(
     let mut prefabs = Vec::new();
     for asset_id in prefab_ids {
         let prefab = load_prefab(game, asset_id)?;
-        if !edit
-            .scene(game)
+        let scene = edit.scene(game);
+        if scene
             .prefab_instances(asset_id, prefab.prefab.root)
             .is_empty()
         {
-            prefabs.push((asset_id, prefab));
+            continue;
         }
+        scene
+            .validate_prefab(&prefab.prefab)
+            .map_err(|err| format!("failed to update instances of {}: {err}", prefab.label))?;
+        prefabs.push((asset_id, prefab));
     }
 
     let mut total = PrefabUpdate::default();

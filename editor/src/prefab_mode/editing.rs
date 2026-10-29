@@ -212,7 +212,7 @@ mod tests {
     use crate::selection::{Selection, SelectionType};
     use engine::component::ComponentID;
     use engine::context::GameContext;
-    use engine::scene::{GameObject, PrefabData, Scene};
+    use engine::scene::{GameObject, Prefab, PrefabData, Scene};
     use engine::test_support::{test_asset_context_with_assets, test_game_context};
     use nalgebra_glm::{self as glm, Vec3};
     use std::fs;
@@ -680,5 +680,57 @@ mod tests {
                 .norm()
                 < 1e-5
         );
+    }
+
+    #[test]
+    fn an_invalid_prefab_stops_the_update_before_any_instance_changes() {
+        use crate::prefab_instances::{instantiate_prefab, update_prefab_instances};
+
+        let root = AssetRoot::new();
+        let copy_file = root.0.join("prefabs").join("crate-copy.cxprefab");
+        fs::copy(root.prefab_file(), &copy_file).expect("prefab should copy");
+        let mut editor = Editor::open_level(&root);
+        let mut files = [root.prefab_file(), copy_file];
+        // Every prefab updates in asset id order: the first takes an edit,
+        // the second turns out invalid.
+        files.sort_by_key(|file| editor.asset_id(file));
+        let [first, second] = files;
+        let mut edit = SceneEdit::begin("Import prefabs");
+        for file in [&first, &second] {
+            let asset_id = editor.asset_id(file);
+            instantiate_prefab(&mut edit, &mut editor.game, asset_id)
+                .expect("prefab should instantiate");
+        }
+        edit.commit(&mut editor.document, &editor.game);
+
+        let mut edited = read_prefab(&first);
+        for components in edited.data.components.values_mut() {
+            for value in components.values_mut() {
+                if value.get("name").and_then(|name| name.as_str()) == Some("Lid") {
+                    value["name"] = "Hatch".into();
+                }
+            }
+        }
+        write_prefab_file(&first, &Prefab::from(edited)).expect("prefab should be written");
+        // Well-formed JSON whose hierarchy names an object it does not hold.
+        let mut broken = read_prefab(&second);
+        broken
+            .data
+            .hierarchy
+            .entry(broken.root)
+            .or_default()
+            .push(Uuid::new_v4());
+        write_prefab_file(&second, &Prefab::from(broken)).expect("prefab should be written");
+        let names = editor.names();
+
+        // As the editor runs it: an update that fails is cancelled.
+        let mut edit = SceneEdit::begin("Update prefab instances");
+        let error = update_prefab_instances(&mut edit, &mut editor.game, None)
+            .err()
+            .expect("an invalid prefab fails the update");
+        edit.cancel();
+
+        assert!(error.contains("is missing"), "{error}");
+        assert_eq!(editor.names(), names, "no instance changed");
     }
 }
