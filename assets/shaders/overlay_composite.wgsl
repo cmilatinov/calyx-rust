@@ -1,4 +1,4 @@
-//#include "shaders/fullscreen.wgsl"
+//#include "shaders/fullscreen_pass.wgsl"
 
 // Composites the resolved overlay target over the post-processed scene
 // texture. Overlays alpha blend into a target cleared to transparent, which
@@ -8,11 +8,6 @@
 
 @group(0) @binding(0)
 var overlay: texture_2d<f32>;
-
-@vertex
-fn vs_main(@builtin(vertex_index) index: u32) -> FullscreenVertexOut {
-    return fullscreen_vertex(index);
-}
 
 @fragment
 fn fs_main(in: FullscreenVertexOut) -> @location(0) vec4f {

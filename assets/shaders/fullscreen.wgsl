@@ -1,14 +1,12 @@
-// Full-screen triangle. A shader includes it and declares its own vertex
-// entry point, drawn with three vertices and no vertex buffers:
+// Full-screen triangle: one triangle twice the screen's size, which the
+// rasterizer clips to the screen, so it covers every pixel once. uv is [0, 1]
+// on screen with (0, 0) at the top left, matching texture coordinates. Draw it
+// with three vertices and no vertex buffers.
 //
-//     @vertex
-//     fn vs_main(@builtin(vertex_index) index: u32) -> FullscreenVertexOut {
-//         return fullscreen_vertex(index);
-//     }
-//
-// One triangle twice the screen's size; the rasterizer clips it to the
-// screen, so it covers every pixel once. uv is [0, 1] on screen with (0, 0)
-// at the top left, matching texture coordinates.
+// A shader that only needs the plain triangle includes
+// "shaders/fullscreen_pass.wgsl", which declares `vs_main` from this
+// file. Include this file directly only for a custom vertex stage that calls
+// `fullscreen_vertex(index)` and adds outputs of its own, as the grid does.
 
 const FULLSCREEN_POSITIONS = array<vec2f, 3>(vec2f(-1.0, 1.0), vec2f(3.0, 1.0), vec2f(-1.0, -3.0));
 const FULLSCREEN_UVS = array<vec2f, 3>(vec2f(0.0, 0.0), vec2f(2.0, 0.0), vec2f(0.0, 2.0));

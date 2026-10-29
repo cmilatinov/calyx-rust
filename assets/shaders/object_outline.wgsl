@@ -1,4 +1,4 @@
-//#include "shaders/fullscreen.wgsl"
+//#include "shaders/fullscreen_pass.wgsl"
 
 struct OutlineUniform {
     target_object_id: u32,
@@ -12,11 +12,6 @@ var object_ids: texture_2d<u32>;
 
 @group(0) @binding(1)
 var<uniform> outline: OutlineUniform;
-
-@vertex
-fn vs_main(@builtin(vertex_index) index: u32) -> FullscreenVertexOut {
-    return fullscreen_vertex(index);
-}
 
 fn load_object_id(pixel: vec2i, size: vec2i) -> u32 {
     let clamped = clamp(pixel, vec2i(0, 0), size - vec2i(1, 1));
