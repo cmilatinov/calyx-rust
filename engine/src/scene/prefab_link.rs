@@ -293,13 +293,12 @@ impl Scene {
         members.retain(|source, _| prefab.data.components.contains_key(source));
 
         // Objects the prefab added, parents first, each after its prefab
-        // sibling.
+        // sibling. The whole prefab tree is walked, so a member the instance
+        // moved out from under a deleted object still gets its new children.
         let mut added = HashSet::new();
         let mut stack = vec![prefab.root];
         while let Some(parent_source) = stack.pop() {
-            let Some(parent) = members.get(&parent_source).copied() else {
-                continue;
-            };
+            let parent = members.get(&parent_source).copied();
             let mut previous: Option<GameObject> = None;
             for child_source in prefab
                 .data
@@ -308,13 +307,17 @@ impl Scene {
                 .into_iter()
                 .flatten()
             {
+                stack.push(*child_source);
                 if let Some(child) = members.get(child_source).copied() {
-                    stack.push(*child_source);
-                    if self.parent(child) == Some(parent) {
+                    if parent.is_some() && self.parent(child) == parent {
                         previous = Some(child);
                     }
                     continue;
                 }
+                let Some(parent) = parent else {
+                    // The instance deleted its parent.
+                    continue;
+                };
                 if known.contains(child_source) {
                     // The instance deleted it.
                     continue;
@@ -345,7 +348,6 @@ impl Scene {
                 }
                 members.insert(*child_source, child);
                 added.insert(child);
-                stack.push(*child_source);
                 previous = Some(child);
                 update.added += 1;
             }
@@ -837,6 +839,30 @@ mod tests {
         let before = serde_json::to_value(&fixture.level).unwrap();
         fixture.update();
         assert_eq!(serde_json::to_value(&fixture.level).unwrap(), before);
+    }
+
+    #[test]
+    fn an_object_the_prefab_adds_under_a_moved_member_of_a_deleted_parent_is_added() {
+        let mut fixture = Fixture::new();
+        let source_lid = fixture.source("Lid");
+        let source_hinge = create(&mut fixture.authoring, "Hinge", Some(source_lid));
+        fixture.update();
+        let hinge = fixture.target("Hinge");
+        fixture
+            .level
+            .set_parent(hinge, Some(fixture.instance))
+            .expect("the hinge should move under the root");
+        let lid = fixture.target("Lid");
+        fixture.level.delete(lid);
+        fixture.level.flush_deletes();
+        create(&mut fixture.authoring, "Pin", Some(source_hinge));
+
+        let update = fixture.update();
+
+        assert_eq!(update.added, 1);
+        let level = &fixture.level;
+        assert_eq!(level.parent(fixture.target("Pin")), Some(hinge));
+        assert_eq!(names(level), ["Crate", "Hinge", "Pin"]);
     }
 
     #[test]
