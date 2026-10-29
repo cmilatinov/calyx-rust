@@ -1,6 +1,6 @@
-use crate::assets::texture::Texture;
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
+use crate::render::overlay::{OverlayContext, OverlayPass};
 use crate::render::render_utils::RenderUtils;
 use crate::render::{PipelineOptions, SceneRendererError, Shader};
 use egui_wgpu::wgpu;
@@ -37,35 +37,31 @@ impl GridRenderer {
     pub fn camera_bind_group(&self) -> &wgpu::BindGroup {
         &self.camera_bind_group
     }
+}
 
-    pub fn render(
-        &mut self,
-        encoder: &mut wgpu::CommandEncoder,
-        scene_texture_msaa: &Texture,
-        scene_depth_texture: &Texture,
-        samples: u32,
-    ) {
-        let shader = self.shader.read();
-        let mut render_pass = RenderUtils::overlay_pass(
-            encoder,
-            &scene_texture_msaa.view,
-            Some(&scene_depth_texture.view),
-            "Scene Grid",
-        );
+impl OverlayPass for GridRenderer {
+    fn name(&self) -> &str {
+        "grid"
+    }
 
+    fn enabled(&self, context: &OverlayContext) -> bool {
+        context.options.grid
+    }
+
+    fn prepare(&mut self, _context: &OverlayContext) {}
+
+    fn record(&mut self, context: &OverlayContext, render_pass: &mut wgpu::RenderPass<'_>) {
         let options = PipelineOptions::fullscreen_builder()
-            .samples(samples)
-            .target(RenderUtils::color_alpha_blending(
-                scene_texture_msaa.descriptor.format,
-            ))
+            .samples(context.samples)
+            .target(RenderUtils::color_alpha_blending(context.format))
             .depth_stencil(wgpu::DepthStencilState {
                 depth_write_enabled: false,
                 ..RenderUtils::depth_default(wgpu::TextureFormat::Depth32Float)
             })
             .build();
-        render_pass.set_pipeline(&shader.pipeline(&options));
+        render_pass.set_pipeline(&self.shader.read().pipeline(&options));
         render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-        RenderUtils::draw_fullscreen(&mut render_pass);
+        RenderUtils::draw_fullscreen(render_pass);
     }
 }
 

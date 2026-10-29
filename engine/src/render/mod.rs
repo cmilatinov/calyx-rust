@@ -35,6 +35,8 @@ mod grid_renderer;
 mod light_manager;
 mod mesh_renderer;
 mod outline_renderer;
+/// Editor overlays composited over the post-processed scene.
+pub mod overlay;
 mod particle_renderer;
 mod particle_simulation;
 mod pipeline_options;

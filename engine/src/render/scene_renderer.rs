@@ -10,6 +10,7 @@ use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::math::Transform;
 use crate::render::asset_render_state::AssetRenderState;
+use crate::render::overlay::{OverlayCompositor, OverlayContext, OverlayPass};
 use crate::render::postprocess::{
     ChainPlan, ChainTargets, PostProcessChain, PostProcessSettings, TonemapPass,
 };
@@ -219,6 +220,7 @@ pub struct SceneRenderer {
     post_process: PostProcessChain,
     post_process_settings: PostProcessSettings,
     last_post_process_plan: ChainPlan,
+    overlay: OverlayCompositor,
 }
 
 /// Instance index of the next skinned draw in a mesh's shared bone buffer, or `None` for a mesh without bones.
@@ -306,6 +308,7 @@ impl SceneRenderer {
         let particle_renderer = ParticleRenderer::new(context)?;
         let mut post_process = PostProcessChain::new(context)?;
         post_process.push(Box::new(TonemapPass::new(context)?));
+        let overlay = OverlayCompositor::new(context)?;
 
         // Default assets
         let cube = SceneRendererError::load::<Mesh>(context, "meshes/cube")?;
@@ -358,6 +361,7 @@ impl SceneRenderer {
             post_process,
             post_process_settings: Default::default(),
             last_post_process_plan: Default::default(),
+            overlay,
         })
     }
 
@@ -475,7 +479,6 @@ impl SceneRenderer {
                 self.sky_light_intensity,
                 self.light_manager.ambient_light(),
                 &draw_list,
-                None,
             );
         }
         self.mesh_renderer.render_object_ids(
@@ -501,14 +504,6 @@ impl SceneRenderer {
             self.grid_renderer.camera_bind_group(),
             self.options.samples,
         );
-        if self.options.grid {
-            self.grid_renderer.render(
-                &mut encoder,
-                &self.scene_texture_msaa,
-                &self.scene_depth_texture,
-                self.options.samples,
-            );
-        }
         self.particle_renderer.render(
             &render_context,
             &mut encoder,
@@ -521,25 +516,19 @@ impl SceneRenderer {
             &self.scene_depth_texture,
             self.options.samples,
         );
-        if self.options.gizmos {
-            let mut render_pass = RenderUtils::overlay_pass(
-                &mut encoder,
-                &self.scene_texture_msaa.view,
-                Some(&self.scene_depth_texture.view),
-                "Scene Gizmos",
-            );
-            self.gizmo_renderer
-                .render_gizmos(self.scene_texture_msaa.descriptor.format, &mut render_pass);
-        }
         queue.submit(Some(encoder.finish()));
     }
 
-    /// Applies the current outline state, resolves the scene and runs the
-    /// post-processing chain into the scene texture for presentation.
+    /// Resolves the scene, runs the post-processing chain into the scene
+    /// texture, then composites the editor overlays over it for
+    /// presentation.
     ///
     /// The chain uses the settings [`Self::render_scene_base`] resolved from
-    /// its scene. Call it once after each [`Self::render_scene_base`]: above
-    /// one sample the resolve discards the multisampled surface.
+    /// its scene. The overlays (grid, gizmos, and the outline of the current
+    /// hovered and selected objects) draw after the whole chain, so
+    /// post-processing never changes their colors. Call it once after each
+    /// [`Self::render_scene_base`]: above one sample the resolve discards the
+    /// multisampled surface.
     pub fn finalize_scene(&mut self) {
         let render_context = self.asset_context.render_context.clone();
         let device = render_context.device();
@@ -547,7 +536,6 @@ impl SceneRenderer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("scene_finalize_encoder"),
         });
-        self.render_outline_to_scene(&render_context, &mut encoder);
         let source = match &self.hdr_resolved {
             Some(hdr_resolved) => {
                 Self::resolve_scene_texture(&self.scene_texture_msaa, hdr_resolved, &mut encoder);
@@ -565,6 +553,7 @@ impl SceneRenderer {
                 depth: &self.scene_depth_texture,
             },
         );
+        self.render_overlays(&render_context, &mut encoder);
         queue.submit(Some(encoder.finish()));
     }
 
@@ -691,22 +680,43 @@ impl SceneRenderer {
             .unwrap_or_default()
     }
 
-    fn render_outline_to_scene(
+    /// Draws the enabled overlays, in order grid, gizmos, outline, over the
+    /// post-processed scene texture, depth-tested against the multisampled
+    /// scene depth.
+    fn render_overlays(
         &mut self,
-        render_context: &RenderContext,
+        render_context: &Arc<RenderContext>,
         encoder: &mut wgpu::CommandEncoder,
     ) {
         self.outline_renderer
             .set_selected_object_id(self.object_id_for_game_object(self.selected_game_object));
         self.outline_renderer
             .set_hovered_object_id(self.object_id_for_game_object(self.hovered_game_object));
-        self.outline_renderer.render(
+        let context = OverlayContext {
             render_context,
+            options: &self.options,
+            format: OverlayCompositor::FORMAT,
+            samples: self.options.samples,
+            object_ids: &self.scene_object_id_texture,
+        };
+        let overlays: &mut [&mut dyn OverlayPass] = &mut [
+            &mut self.grid_renderer,
+            &mut self.gizmo_renderer,
+            &mut self.outline_renderer,
+        ];
+        self.overlay.run(
             encoder,
-            &self.scene_texture_msaa,
-            &self.scene_object_id_texture,
-            self.options.samples,
+            overlays,
+            &context,
+            &self.scene_depth_texture,
+            &self.scene_texture,
         );
+    }
+
+    /// The overlay compositor, whose target exists only while an overlay is
+    /// enabled.
+    pub fn overlay(&self) -> &OverlayCompositor {
+        &self.overlay
     }
 
     fn build_asset_data(&mut self, render_context: &RenderContext, scene: &Scene) {
@@ -1359,6 +1369,7 @@ impl SceneRenderer {
             self.options.samples,
         );
         self.post_process.clear_targets();
+        self.overlay.clear_targets();
     }
 }
 
@@ -1482,11 +1493,12 @@ mod tests {
     use crate::assets::skybox::Skybox;
     use crate::assets::AssetRef;
     use crate::component::{
-        ComponentID, ComponentMesh, ComponentParticleSystem, ParticleColorOverLifetime,
-        ParticleEmission, ParticleForces, ParticleScalarRange, ParticleSizeOverLifetime,
-        ParticleSpawnShape, ParticleVelocity,
+        ComponentGlobalPostProcessVolume, ComponentID, ComponentMesh, ComponentParticleSystem,
+        ParticleColorOverLifetime, ParticleEmission, ParticleForces, ParticleScalarRange,
+        ParticleSizeOverLifetime, ParticleSpawnShape, ParticleVelocity,
     };
     use crate::math::Transform;
+    use crate::render::postprocess::TonemapSettings;
     use crate::render::{Camera, Shader};
     use crate::test_support::{
         test_adapter, test_asset_context_with_assets, SceneBuilder, TestAssets,
@@ -1955,6 +1967,125 @@ mod tests {
         assert!(!renderer.assets.contains(first.id()));
         assert!(renderer.assets.contains(cube.id()));
         assert!(renderer.assets.contains(second.id()));
+    }
+
+    #[test]
+    fn the_outline_keeps_its_color_through_post_processing_and_picking_is_unchanged() {
+        const SIZE: (u32, u32) = (64, 64);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let material = pbr_material(&read_only_context, "test/outline_color");
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        let uuid = spawn_mesh(&mut builder, "cube", &cube, &material, Vec3::zeros());
+        // +3 EV through ACES would change any color the chain touched.
+        let volume = builder.spawn("volume");
+        builder.add_component(
+            volume,
+            ComponentGlobalPostProcessVolume {
+                enabled: true,
+                priority: 0,
+                settings: PostProcessSettings {
+                    tonemapping: TonemapSettings {
+                        exposure_ev: 3.0,
+                        ..Default::default()
+                    },
+                },
+            },
+        );
+        let scene = builder.finish();
+        let (camera, transform) = front_camera(1.0, 5.0);
+        let (center_x, center_y) = project(&camera, &transform, Vec3::zeros(), SIZE);
+
+        for samples in [1, 4] {
+            let flags = test_adapter()
+                .get_texture_format_features(wgpu::TextureFormat::Rgba16Float)
+                .flags;
+            if !flags.sample_count_supported(samples) {
+                eprintln!("skipping {samples} samples: unsupported by the test adapter");
+                continue;
+            }
+            let mut renderer = SceneRenderer::new(
+                &read_only_context,
+                SceneRendererOptions {
+                    samples,
+                    clear_color: Color32::BLACK,
+                    ..Default::default()
+                },
+                SIZE,
+            )
+            .expect("scene renderer should load its assets");
+            renderer.set_selected_game_object(Some(uuid));
+            renderer.render_scene_base(&camera, &transform, &scene, None, None);
+            renderer.finalize_scene();
+            assert_eq!(
+                renderer.post_process_settings().tonemapping.exposure_ev,
+                3.0
+            );
+            let image = read_scene_texture(&renderer, &render_context);
+
+            // Black tone maps to black, so scanning in from the right edge,
+            // the first other pixel is the outline right of the cube.
+            let edge = (0..SIZE.0)
+                .rev()
+                .find(|&x| image.get_pixel(x, center_y).0 != [0, 0, 0, 255])
+                .expect("the cube's row has an outline");
+            assert!(edge > center_x, "the outline lies right of the cube");
+            assert_eq!(
+                image.get_pixel(edge, center_y).0,
+                [255, 149, 0, 255],
+                "the selection outline keeps its authored color at {samples} samples"
+            );
+
+            assert_eq!(
+                renderer.pick_game_object(center_x, center_y),
+                Some(uuid),
+                "the cube is picked under its center at {samples} samples"
+            );
+            assert_eq!(
+                renderer.pick_game_object(edge, center_y),
+                None,
+                "the outline is not pickable at {samples} samples"
+            );
+        }
+    }
+
+    #[test]
+    fn only_views_that_show_an_overlay_allocate_the_overlay_target() {
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let scene = SceneBuilder::new(read_only_context.registries.clone()).finish();
+        let (camera, transform) = front_camera(1.0, 5.0);
+        let frame = |options: SceneRendererOptions| {
+            let mut renderer = SceneRenderer::new(&read_only_context, options, (16, 16))
+                .expect("scene renderer should load its assets");
+            renderer.render_scene_base(&camera, &transform, &scene, None, None);
+            renderer.finalize_scene();
+            renderer
+        };
+
+        // The Game tab, the player and thumbnails show no overlay.
+        let game = frame(SceneRendererOptions::default());
+        assert!(game.overlay().target().is_none());
+
+        let editor = frame(SceneRendererOptions {
+            grid: true,
+            gizmos: true,
+            ..Default::default()
+        });
+        let target = editor
+            .overlay()
+            .target()
+            .expect("the editor shows overlays");
+        assert_eq!(target.descriptor.format, OverlayCompositor::FORMAT);
     }
 
     #[test]

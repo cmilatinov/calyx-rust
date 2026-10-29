@@ -99,7 +99,7 @@ impl RenderUtils {
 
     /// Draws the full-screen triangle of `shaders/fullscreen.wgsl`:
     /// three vertices, no vertex buffers, one instance. The pipeline must
-    /// come from [`crate::render::PipelineOptions::fullscreen`].
+    /// come from [`crate::render::PipelineOptions::fullscreen_builder`].
     pub fn draw_fullscreen(render_pass: &mut wgpu::RenderPass<'_>) {
         render_pass.draw(0..3, 0..1);
     }
@@ -170,7 +170,7 @@ impl RenderUtils {
     }
 
     /// Binds the mesh vertex and index buffers on `render_pass`.
-    pub fn bind_mesh_buffers<'a>(render_pass: &mut wgpu::RenderPass<'a>, mesh: &'a Mesh) {
+    pub fn bind_mesh_buffers(render_pass: &mut wgpu::RenderPass<'_>, mesh: &Mesh) {
         if !mesh.indices.is_empty() {
             render_pass.set_index_buffer(
                 mesh.index_buffer.as_ref().unwrap().slice(..),
@@ -181,9 +181,9 @@ impl RenderUtils {
     }
 
     /// Issues an indexed instanced draw for `mesh`.
-    pub fn draw_mesh_instanced<'a>(
-        render_pass: &mut wgpu::RenderPass<'a>,
-        mesh: &'a Mesh,
+    pub fn draw_mesh_instanced(
+        render_pass: &mut wgpu::RenderPass<'_>,
+        mesh: &Mesh,
         instances: Range<u32>,
     ) {
         render_pass.draw_indexed(0..(mesh.indices.len() as u32), 0, instances);

@@ -1,8 +1,8 @@
-use crate::assets::texture::Texture;
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
+use crate::render::overlay::{OverlayContext, OverlayPass};
 use crate::render::render_utils::RenderUtils;
-use crate::render::{CachedBindGroup, PipelineOptions, RenderContext, SceneRendererError, Shader};
+use crate::render::{CachedBindGroup, PipelineOptions, SceneRendererError, Shader};
 use egui::Color32;
 use egui_wgpu::wgpu;
 
@@ -15,9 +15,9 @@ struct OutlineUniform {
     outline_color: [f32; 4],
 }
 
-/// One outline pass's uniforms and bind group. Each pass has its own uniform
-/// buffer: both passes are recorded before one submit, so a shared buffer
-/// would hold only the last pass's values.
+/// One outline's uniforms and bind group. Each outline has its own uniform
+/// buffer: both draw in one render pass before one submit, so a shared
+/// buffer would hold only the last outline's values.
 pub(crate) struct OutlinePass {
     uniform_buffer: wgpu::Buffer,
     bind_group: CachedBindGroup<(wgpu::BindGroupLayout, wgpu::TextureView)>,
@@ -70,125 +70,121 @@ impl OutlineRenderer {
         })
     }
 
+    /// Sets the object outlined as selected; `0` outlines nothing.
     pub fn set_selected_object_id(&mut self, selected_object_id: u32) {
         self.selected_object_id = selected_object_id;
-    }
-
-    pub fn set_hovered_object_id(&mut self, hovered_object_id: u32) {
-        self.hovered_object_id = hovered_object_id;
-    }
-
-    pub fn render(
-        &mut self,
-        render_context: &RenderContext,
-        encoder: &mut wgpu::CommandEncoder,
-        scene_texture_msaa: &Texture,
-        scene_object_id_texture: &Texture,
-        samples: u32,
-    ) {
         // An inactive pass releases the object-id view it bound, which a
         // resize may have replaced since.
-        if self.hovered_object_id == 0 {
-            self.hovered_pass.bind_group.clear();
-        }
-        if self.selected_object_id == 0 {
+        if selected_object_id == 0 {
             self.selected_pass.bind_group.clear();
         }
-        if self.selected_object_id == 0 && self.hovered_object_id == 0 {
-            return;
+    }
+
+    /// Sets the object outlined as hovered; `0` outlines nothing.
+    pub fn set_hovered_object_id(&mut self, hovered_object_id: u32) {
+        self.hovered_object_id = hovered_object_id;
+        if hovered_object_id == 0 {
+            self.hovered_pass.bind_group.clear();
         }
+    }
 
-        let shader = self.shader.read();
-        let options = PipelineOptions::fullscreen_builder()
-            .samples(samples)
-            .target(RenderUtils::color_alpha_blending(
-                scene_texture_msaa.descriptor.format,
-            ))
-            .build();
-        let pipeline = shader.pipeline(&options);
-        let bind_group_layout = shader.bind_group_layouts[0].clone();
-        drop(shader);
-
-        if self.hovered_object_id != 0 {
-            Self::render_pass(
+    /// The outline passes that draw this frame, hovered first, each with
+    /// the object it outlines, its color and its radius.
+    fn active_passes(&mut self) -> impl Iterator<Item = (&mut OutlinePass, u32, Color32, u32)> {
+        [
+            (
                 &mut self.hovered_pass,
-                render_context,
-                encoder,
-                &scene_texture_msaa.view,
-                &scene_object_id_texture.view,
-                &pipeline,
-                &bind_group_layout,
                 self.hovered_object_id,
                 self.hovered_color,
                 Self::HOVERED_OUTLINE_RADIUS,
-            );
-        }
-
-        if self.selected_object_id != 0 {
-            Self::render_pass(
+            ),
+            (
                 &mut self.selected_pass,
-                render_context,
-                encoder,
-                &scene_texture_msaa.view,
-                &scene_object_id_texture.view,
-                &pipeline,
-                &bind_group_layout,
                 self.selected_object_id,
                 self.selected_color,
                 Self::SELECTED_OUTLINE_RADIUS,
-            );
+            ),
+        ]
+        .into_iter()
+        .filter(|(_, object_id, _, _)| *object_id != 0)
+    }
+}
+
+/// Outlines the hovered and the selected object from the object-id texture,
+/// over the post-processed scene. Each outline is one full-screen draw.
+impl OverlayPass for OutlineRenderer {
+    fn name(&self) -> &str {
+        "outline"
+    }
+
+    fn enabled(&self, _context: &OverlayContext) -> bool {
+        self.selected_object_id != 0 || self.hovered_object_id != 0
+    }
+
+    fn prepare(&mut self, context: &OverlayContext) {
+        let layout = self.shader.read().bind_group_layouts[0].clone();
+        let device = context.render_context.device();
+        let queue = context.render_context.queue();
+        let object_ids = &context.object_ids.view;
+        for (pass, target_object_id, outline_color, outline_radius) in self.active_passes() {
+            let uniform = OutlineUniform {
+                target_object_id,
+                outline_radius,
+                _padding: Default::default(),
+                outline_color: color32_to_linear(outline_color),
+            };
+            queue.write_buffer(&pass.uniform_buffer, 0, bytemuck::bytes_of(&uniform));
+            let uniform_buffer = &pass.uniform_buffer;
+            pass.bind_group
+                .get_or_create((layout.clone(), object_ids.clone()), || {
+                    device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("outline_bind_group"),
+                        layout: &layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(object_ids),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: uniform_buffer.as_entire_binding(),
+                            },
+                        ],
+                    })
+                });
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn render_pass(
-        pass: &mut OutlinePass,
-        render_context: &RenderContext,
-        encoder: &mut wgpu::CommandEncoder,
-        scene_texture_view: &wgpu::TextureView,
-        object_id_texture_view: &wgpu::TextureView,
-        pipeline: &wgpu::RenderPipeline,
-        bind_group_layout: &wgpu::BindGroupLayout,
-        target_object_id: u32,
-        outline_color: Color32,
-        outline_radius: u32,
-    ) {
-        let device = render_context.device();
-        let queue = render_context.queue();
-        let uniform = OutlineUniform {
-            target_object_id,
-            outline_radius,
-            _padding: Default::default(),
-            outline_color: color32_to_linear(outline_color),
-        };
-        queue.write_buffer(&pass.uniform_buffer, 0, bytemuck::bytes_of(&uniform));
+    fn record(&mut self, context: &OverlayContext, render_pass: &mut wgpu::RenderPass<'_>) {
+        let pipeline = self
+            .shader
+            .read()
+            .pipeline(&Self::pipeline_options(context));
+        render_pass.set_pipeline(&pipeline);
+        for (pass, ..) in self.active_passes() {
+            // `prepare` built the group for this frame's object-id view.
+            let Some(bind_group) = pass.bind_group.get() else {
+                continue;
+            };
+            render_pass.set_bind_group(0, bind_group, &[]);
+            RenderUtils::draw_fullscreen(render_pass);
+        }
+    }
+}
 
-        let uniform_buffer = &pass.uniform_buffer;
-        let bind_group = pass.bind_group.get_or_create(
-            (bind_group_layout.clone(), object_id_texture_view.clone()),
-            || {
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("outline_bind_group"),
-                    layout: bind_group_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(object_id_texture_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: uniform_buffer.as_entire_binding(),
-                        },
-                    ],
-                })
-            },
-        );
-
-        let mut render_pass =
-            RenderUtils::overlay_pass(encoder, scene_texture_view, None, "Scene Outline");
-        render_pass.set_pipeline(pipeline);
-        render_pass.set_bind_group(0, bind_group, &[]);
-        RenderUtils::draw_fullscreen(&mut render_pass);
+impl OutlineRenderer {
+    /// The outline's pipeline: a full-screen draw blended into the overlay
+    /// target, which ignores the overlay pass's depth.
+    fn pipeline_options(context: &OverlayContext) -> PipelineOptions {
+        PipelineOptions::fullscreen_builder()
+            .samples(context.samples)
+            .target(RenderUtils::color_alpha_blending(context.format))
+            .depth_stencil(wgpu::DepthStencilState {
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Always,
+                ..RenderUtils::depth_default(wgpu::TextureFormat::Depth32Float)
+            })
+            .build()
     }
 }
 

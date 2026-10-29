@@ -34,6 +34,11 @@ impl<K: PartialEq> CachedBindGroup<K> {
         &self.cached.as_ref().expect("the cache was just filled").1
     }
 
+    /// The cached group, whatever key built it.
+    pub fn get(&self) -> Option<&wgpu::BindGroup> {
+        self.cached.as_ref().map(|(_, group)| group)
+    }
+
     /// Whether a group is cached.
     #[cfg(test)]
     pub fn is_cached(&self) -> bool {

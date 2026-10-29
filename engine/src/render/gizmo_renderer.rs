@@ -17,6 +17,7 @@ use crate::core::ReadOnlyRef;
 use crate::math::Transform;
 use crate::physics::PhysicsDebugRenderer;
 use crate::render::gizmos::Gizmos;
+use crate::render::overlay::{OverlayContext, OverlayPass};
 use crate::render::render_utils::RenderUtils;
 use crate::scene::Scene;
 
@@ -341,10 +342,10 @@ impl GizmoRenderer {
     }
 
     /// Renders all collected gizmos into the current render pass.
-    pub fn render_gizmos<'a>(
-        &'a mut self,
+    pub fn render_gizmos(
+        &mut self,
         target_format: wgpu::TextureFormat,
-        render_pass: &mut wgpu::RenderPass<'a>,
+        render_pass: &mut wgpu::RenderPass<'_>,
     ) {
         let circle_options = self.pipeline_options(
             wgpu::PrimitiveTopology::LineStrip,
@@ -441,10 +442,10 @@ impl GizmoRenderer {
 
     /// Renders icon gizmos into the object-id target so editor picks can select
     /// objects represented only by gizmo icons.
-    pub fn render_icon_object_ids<'a>(
-        &'a mut self,
+    pub fn render_icon_object_ids(
+        &mut self,
         target_format: wgpu::TextureFormat,
-        render_pass: &mut wgpu::RenderPass<'a>,
+        render_pass: &mut wgpu::RenderPass<'_>,
     ) {
         if self.icons_mesh.indices.is_empty() {
             return;
@@ -609,6 +610,24 @@ impl GizmoRenderer {
                 name: name(),
                 error,
             })
+    }
+}
+
+/// Gizmos the scene collected in [`GizmoRenderer::draw_gizmos`], drawn over
+/// the post-processed scene.
+impl OverlayPass for GizmoRenderer {
+    fn name(&self) -> &str {
+        "gizmos"
+    }
+
+    fn enabled(&self, context: &OverlayContext) -> bool {
+        context.options.gizmos
+    }
+
+    fn prepare(&mut self, _context: &OverlayContext) {}
+
+    fn record(&mut self, context: &OverlayContext, render_pass: &mut wgpu::RenderPass<'_>) {
+        self.render_gizmos(context.format, render_pass);
     }
 }
 
