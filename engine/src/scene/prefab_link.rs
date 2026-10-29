@@ -24,7 +24,9 @@
 //!   child of a deleted object that is not deleted itself, such as an object
 //!   added to the instance, moves to the nearest ancestor that stays.
 //! - An object the instance deleted stays deleted.
-//! - Every object keeps its parent and sibling order in the instance.
+//! - Every object keeps its parent and sibling order in the instance. An
+//!   object moved out from under its instance root stays part of the
+//!   instance and is updated where it is.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -49,6 +51,10 @@ pub struct PrefabLink {
     pub prefab: Uuid,
     /// The UUID of the object inside the prefab this object was made from.
     pub object: Uuid,
+    /// The UUID of the instance's root object. It names the instance this
+    /// object belongs to wherever the object sits in the hierarchy, so an
+    /// object moved out from under its instance root still updates.
+    pub instance: Uuid,
     /// A hash of each component's value, keyed by component type UUID, as the
     /// prefab last gave it to this object. A component whose value hashes
     /// differently is an override.
@@ -128,6 +134,7 @@ impl Scene {
         parent: Option<GameObject>,
     ) -> Result<(GameObject, Vec<DroppedComponent>), SceneError> {
         let (game_object, dropped, mapping) = self.instantiate_prefab_mapped(prefab, parent)?;
+        let instance = self.uuid(game_object);
         let registry_ref = self.registries().components.clone();
         let registry = registry_ref.read();
         for (source, target) in mapping.iter() {
@@ -142,6 +149,7 @@ impl Scene {
             let link = PrefabLink {
                 prefab: prefab_id,
                 object: *source,
+                instance,
                 base: self.component_hashes(&registry, instance_object),
                 objects,
             };
@@ -192,27 +200,24 @@ impl Scene {
     }
 
     /// The objects of the instance rooted at `root`, keyed by the prefab
-    /// object each was made from. Another instance of the same prefab nested
-    /// inside it is not part of it.
+    /// object each was made from: every object whose link names `root` as
+    /// its instance, wherever it sits in the hierarchy. Another instance of
+    /// the same prefab, nested inside it or not, is not part of it.
     fn instance_members(
         &self,
         root: GameObject,
         prefab_id: Uuid,
         prefab_root: Uuid,
     ) -> BTreeMap<Uuid, GameObject> {
+        let instance = self.uuid(root);
         let mut members = BTreeMap::from([(prefab_root, root)]);
-        let mut stack = self.children_ordered(root).collect::<Vec<_>>();
-        while let Some(game_object) = stack.pop() {
-            if let Some(link) = self
-                .prefab_link(game_object)
-                .filter(|link| link.prefab == prefab_id)
-            {
-                if link.object == prefab_root {
-                    continue;
-                }
+        for (game_object_id, link) in &self.prefab_links {
+            if link.prefab != prefab_id || link.instance != instance || link.object == prefab_root {
+                continue;
+            }
+            if let Some(game_object) = self.find(*game_object_id) {
                 members.entry(link.object).or_insert(game_object);
             }
-            stack.extend(self.children_ordered(game_object));
         }
         members
     }
@@ -224,6 +229,7 @@ impl Scene {
         prefab: &Prefab,
         update: &mut PrefabUpdate,
     ) -> Result<(), SceneError> {
+        let instance = self.uuid(root);
         let mut members = self.instance_members(root, prefab_id, prefab.root);
         let known = self
             .prefab_link(root)
@@ -454,6 +460,7 @@ impl Scene {
             let link = PrefabLink {
                 prefab: prefab_id,
                 object: *source,
+                instance,
                 base: next_base,
                 objects: if is_root {
                     objects.clone()
@@ -736,6 +743,42 @@ mod tests {
         assert_eq!(level.parent(marker), Some(fixture.instance));
         assert_eq!(level.parent(knob), Some(fixture.instance));
         assert!(level.prefab_link(knob).is_none());
+    }
+
+    #[test]
+    fn a_member_moved_out_of_its_instance_still_updates_where_it_is() {
+        let mut fixture = Fixture::new();
+        let lid = fixture.target("Lid");
+        fixture
+            .level
+            .set_parent(lid, None)
+            .expect("the lid should move to the scene root");
+        let lid_parent = fixture.level.parent(lid);
+        assert_ne!(lid_parent, Some(fixture.instance));
+        let source_lid = fixture.source("Lid");
+        set_light(&mut fixture.authoring, source_lid, 2.0, 5.0);
+        let handle = create(&mut fixture.authoring, "Handle", Some(source_lid));
+
+        let update = fixture.update();
+
+        let level = &fixture.level;
+        assert_eq!(
+            light(level, lid),
+            Some((2.0, 5.0)),
+            "the lid takes the edit"
+        );
+        assert_eq!(
+            level.parent(lid),
+            lid_parent,
+            "the lid keeps its chosen parent"
+        );
+        assert_eq!(update.added, 1);
+        let level_handle = fixture.target("Handle");
+        assert_eq!(level.parent(level_handle), Some(lid));
+        assert_eq!(
+            level.prefab_link(level_handle).map(|link| link.object),
+            Some(fixture.authoring.uuid(handle))
+        );
     }
 
     #[test]
