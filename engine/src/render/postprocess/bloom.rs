@@ -842,7 +842,14 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            ["ssao", "depth_of_field", "bloom", "tonemap", "fxaa"],
+            [
+                "ssao",
+                "depth_of_field",
+                "bloom",
+                "tonemap",
+                "color_grading",
+                "fxaa"
+            ],
             "the renderer runs bloom after ssao and depth of field"
         );
         assert_eq!(

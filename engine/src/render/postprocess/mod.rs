@@ -5,6 +5,7 @@
 
 pub use bloom::*;
 pub use chain::*;
+pub use color_grading::*;
 pub use depth::*;
 pub use dof::*;
 pub use fxaa::*;
@@ -16,6 +17,7 @@ pub use tonemap::*;
 
 mod bloom;
 mod chain;
+mod color_grading;
 mod depth;
 mod dof;
 mod fxaa;

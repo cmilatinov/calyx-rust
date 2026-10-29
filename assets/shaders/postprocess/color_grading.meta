@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "3f0b8d1e-6c2a-4e57-9a41-d8b6f2c7e915",
+    "name": "shaders/postprocess/color_grading",
+    "display_name": "color_grading",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}
