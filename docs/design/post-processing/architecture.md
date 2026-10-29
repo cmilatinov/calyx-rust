@@ -164,7 +164,7 @@ pub struct ComponentGlobalPostProcessVolume {
 - `assets/shaders/postprocess/tonemap.wgsl`: the tone-map pass.
 - `assets/shaders/postprocess/depth_resolve.wgsl`: copies sample 0 of the multisampled depth.
 - `assets/shaders/overlay_composite.wgsl`: blends the resolved overlay target over the scene texture.
-- `pbr.wgsl` drops Reinhard, gamma 1.4 and the `* 5.0` on albedo.
+- `pbr.wgsl` drops Reinhard, gamma 1.4 and the `* 5.0` on albedo. It adds linear HDR emission, `emission_color * emission_strength`, after the lighting. A material saved before those fields existed reads zero strength and does not emit.
 - `skybox.wgsl` drops its exposure and gamma and scales the sky by the sky light's intensity, the same factor that scales its image-based lighting.
 - Particles already write linear color.
 
@@ -182,6 +182,8 @@ Removing the per-shader curves and the `* 5.0` changes every scene's brightness.
 - **Thumbnails**: the preview lights rise to 6 (directional), 0.8 (ambient) and 0.8 (point) so prefab thumbnails read as before at the default 0 EV. The thumbnail disk cache key gains a render version, so thumbnails cached under the old curve render again.
 
 The grid, gizmos and outline composite after post (#379, see Editor Overlays), so they keep their authored colors. Editor clear colors are still tone mapped.
+
+- **Showcase scene**: `sandbox/assets/post_showcase.cxscene` (#378) is the fixed reference for the look: rough, glossy, metallic and emissive materials (`materials/post_showcase/`), the sunset sky at intensity 1, a sun at 2.5, point lights from 5 to 5000, the campfire particles and a global volume at 0 EV.
 
 ## Testing
 
