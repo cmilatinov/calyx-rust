@@ -1,8 +1,8 @@
 //! The ordered chain of post-processing passes.
 
 use super::{
-    check_inputs, DepthResolve, IntermediateSlot, PassContext, PassIo, PostProcessError,
-    PostProcessPass, PostProcessSettings, SceneInput, TargetPool,
+    check_inputs, CameraPlanes, DepthResolve, IntermediateSlot, PassContext, PassIo,
+    PostProcessError, PostProcessPass, PostProcessSettings, SceneInput, TargetPool,
 };
 use crate::assets::texture::Texture;
 use crate::context::ReadOnlyAssetContext;
@@ -107,6 +107,7 @@ pub struct PostProcessChain {
     passes: Vec<Box<dyn PostProcessPass>>,
     pool: TargetPool,
     depth: DepthResolve,
+    camera: CameraPlanes,
 }
 
 impl PostProcessChain {
@@ -116,6 +117,7 @@ impl PostProcessChain {
             passes: Vec::new(),
             pool: TargetPool::default(),
             depth: DepthResolve::new(context)?,
+            camera: CameraPlanes::default(),
         })
     }
 
@@ -128,6 +130,12 @@ impl PostProcessChain {
             .position(|existing| existing.stage() > stage)
             .unwrap_or(self.passes.len());
         self.passes.insert(position, pass);
+    }
+
+    /// Sets the planes of the camera the next frames are drawn with, which
+    /// passes that read depth see in [`PassContext::camera`].
+    pub fn set_camera(&mut self, camera: CameraPlanes) {
+        self.camera = camera;
     }
 
     /// The passes, in the order they run.
@@ -185,6 +193,7 @@ impl PostProcessChain {
             passes,
             pool,
             depth,
+            camera,
         } = self;
         let size = (
             targets.output.descriptor.size.width,
@@ -202,6 +211,7 @@ impl PostProcessChain {
         let context = PassContext {
             render_context,
             size,
+            camera: *camera,
         };
         for planned in &plan.passes {
             passes[planned.pass].prepare(&context, settings);

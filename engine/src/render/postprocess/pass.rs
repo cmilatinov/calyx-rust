@@ -81,6 +81,45 @@ pub struct PassContext<'a> {
     pub render_context: &'a Arc<RenderContext>,
     /// Size in pixels of every texture the chain reads and writes.
     pub size: (u32, u32),
+    /// The near and far planes of the camera the scene was drawn with, so a
+    /// pass can turn depth into view distance.
+    pub camera: CameraPlanes,
+}
+
+/// The clip planes of the camera a frame was drawn with.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CameraPlanes {
+    /// Distance to the near plane.
+    pub near: f32,
+    /// Distance to the far plane.
+    pub far: f32,
+}
+
+impl Default for CameraPlanes {
+    /// The default render camera's planes.
+    fn default() -> Self {
+        Self {
+            near: 0.1,
+            far: 1000.0,
+        }
+    }
+}
+
+impl CameraPlanes {
+    /// View distance of a depth-buffer value. The projection is
+    /// `perspective_lh` with OpenGL's `[-1, 1]` depth range, of which the
+    /// depth buffer keeps `[0, 1]`.
+    pub fn linear_depth(&self, depth: f32) -> f32 {
+        let (near, far) = (self.near, self.far);
+        2.0 * near * far / (far + near - depth * (far - near))
+    }
+
+    /// The depth-buffer value of view distance `distance`, the inverse of
+    /// [`Self::linear_depth`].
+    pub fn depth_of(&self, distance: f32) -> f32 {
+        let (near, far) = (self.near, self.far);
+        (far + near - 2.0 * near * far / distance) / (far - near)
+    }
 }
 
 /// The textures one pass reads and writes. `input` and `output` are never the
