@@ -19,6 +19,8 @@ use serde::{Deserialize, Serialize};
 pub struct PostProcessSettings {
     /// Tone mapping, the display transform. It always runs.
     pub tonemapping: TonemapSettings,
+    /// Depth of field, in the `Hdr` stage. Off by default.
+    pub depth_of_field: super::DepthOfFieldSettings,
 }
 
 /// Tone-mapping curve and exposure.

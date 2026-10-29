@@ -6,6 +6,7 @@ use crate::render::RenderContext;
 use egui_wgpu::wgpu;
 use enumflags2::{bitflags, make_bitflags, BitFlags};
 use std::fmt;
+use std::sync::Arc;
 
 /// Where a pass runs in the chain. Passes run in stage order, then in the
 /// order they were added within a stage.
@@ -77,9 +78,48 @@ pub enum PostProcessError {
 /// What a pass may use while preparing and recording.
 pub struct PassContext<'a> {
     /// The render context the chain renders on.
-    pub render_context: &'a RenderContext,
+    pub render_context: &'a Arc<RenderContext>,
     /// Size in pixels of every texture the chain reads and writes.
     pub size: (u32, u32),
+    /// The near and far planes of the camera the scene was drawn with, so a
+    /// pass can turn depth into view distance.
+    pub camera: CameraPlanes,
+}
+
+/// The clip planes of the camera a frame was drawn with.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CameraPlanes {
+    /// Distance to the near plane.
+    pub near: f32,
+    /// Distance to the far plane.
+    pub far: f32,
+}
+
+impl Default for CameraPlanes {
+    /// The default render camera's planes.
+    fn default() -> Self {
+        Self {
+            near: 0.1,
+            far: 1000.0,
+        }
+    }
+}
+
+impl CameraPlanes {
+    /// View distance of a depth-buffer value. The projection is
+    /// `perspective_lh` with OpenGL's `[-1, 1]` depth range, of which the
+    /// depth buffer keeps `[0, 1]`.
+    pub fn linear_depth(&self, depth: f32) -> f32 {
+        let (near, far) = (self.near, self.far);
+        2.0 * near * far / (far + near - depth * (far - near))
+    }
+
+    /// The depth-buffer value of view distance `distance`, the inverse of
+    /// [`Self::linear_depth`].
+    pub fn depth_of(&self, distance: f32) -> f32 {
+        let (near, far) = (self.near, self.far);
+        (far + near - 2.0 * near * far / distance) / (far - near)
+    }
 }
 
 /// The textures one pass reads and writes. `input` and `output` are never the
@@ -116,4 +156,8 @@ pub trait PostProcessPass: Send + Sync {
 
     /// Records the pass: reads `io.input`, writes `io.output`.
     fn record(&mut self, context: &PassContext, encoder: &mut wgpu::CommandEncoder, io: PassIo);
+
+    /// Frees textures the pass owns besides the chain's pool targets. The
+    /// chain calls it on resize and on every frame the pass does not run.
+    fn release_targets(&mut self) {}
 }

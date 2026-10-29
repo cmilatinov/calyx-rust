@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "5ba31a9f-e236-48d2-80f3-e97509c583b9",
+    "name": "shaders/postprocess/dof_blur",
+    "display_name": "dof_blur",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

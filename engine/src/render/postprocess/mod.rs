@@ -5,6 +5,7 @@
 
 pub use chain::*;
 pub use depth::*;
+pub use dof::*;
 pub use pass::*;
 pub use pool::*;
 pub use settings::*;
@@ -12,6 +13,7 @@ pub use tonemap::*;
 
 mod chain;
 mod depth;
+mod dof;
 mod pass;
 mod pool;
 mod settings;

@@ -98,6 +98,7 @@ pub trait PostProcessPass {
     fn enabled(&self, settings: &PostProcessSettings) -> bool;
     fn prepare(&mut self, context: &PassContext, settings: &PostProcessSettings);
     fn record(&mut self, context: &PassContext, encoder: &mut wgpu::CommandEncoder, io: PassIo);
+    fn release_targets(&mut self) {}                         // default: owns none
 }
 
 pub struct PassIo<'a> {
@@ -116,6 +117,7 @@ pub struct PassIo<'a> {
 - Passes run in stage order (`Hdr`, `Tonemap`, `Ldr`), then insertion order within a stage.
 - Each frame the chain keeps the passes whose `enabled` returns true and whose inputs are available, then wires them: the first reads the chain's source, the last writes the chain's output, and each pass between writes the pool target the next one reads. Intermediates alternate between two pool targets (A, B), so a pass never reads the texture it writes.
 - The pool is fetched from only when two or more passes run. The tone-map-only chain never touches it.
+- The chain calls `release_targets` on every pass when the renderer resizes, and on each pass that does not run in a frame, so a disabled effect holds no texture.
 - `TargetPool` holds at most the two slots, A and B. It creates each on first use at the chain's size and format, recreates one whose size or format differ, reuses them across frames and frees both when the renderer resizes.
 
 The wiring is a pure plan (`ChainPlan`) built before any GPU work, which keeps ordering and ping-pong testable without a device.
@@ -129,6 +131,26 @@ A pass declares the scene inputs it reads in `inputs()`. The chain builds each o
 
 Tone mapping asks for nothing.
 
+`PassContext::camera` carries the near and far planes of the camera the frame was drawn with, as `CameraPlanes`. `render_scene_base` hands them to the chain with `PostProcessChain::set_camera`, so `finalize_scene` still needs no camera. `CameraPlanes::linear_depth` turns a depth-buffer value into view distance: the projection is `perspective_lh` with OpenGL's `[-1, 1]` depth range, of which the depth buffer keeps `[0, 1]`, so `distance = 2nf / (f + n - d (f - n))`.
+
+## Depth Of Field
+
+`DepthOfFieldPass` (`postprocess/dof.rs`) is an `Hdr` pass that reads `SceneInput::Depth`. It runs while `settings.depth_of_field.enabled` is on, which it is not by default, so a frame without it keeps the tone-map-only plan. It is the first `Hdr` pass, before bloom, so bloom spreads highlights that are already out of focus, as a lens would. It records two render passes:
+
+```text
+coc     depth           -> coc (R16Float, owned)   signed circle of confusion, in pixels
+blur    input + coc     -> output                  scatter-as-gather disc blur
+```
+
+- **Circle of confusion**: `clamp((distance - focus_distance) / focus_range, -1, 1) * max_blur`, from the linear depth above. It is negative in front of the focus plane (near field), positive behind it (far field) and zero on it, and reaches `max_blur` pixels `focus_range` world units either side of the plane. The sky, at the far plane, is fully blurred.
+- **Blur**: a gather over a golden-angle spiral, after Dennis Gustafsson's single-pass bokeh depth of field. It starts one pixel out and steps the radius by `radius_scale / radius` up to `max_blur`. A tap counts when its own circle of confusion reaches the pixel, with a weight ramping from 0 to 1 over the pixel either side of the tap's distance, and the taps keep a running average, so a pixel blurs by its neighbours' circles, not only its own.
+- **Near and far field**: one gather handles both. A tap behind the pixel (larger signed circle) is clamped to twice the pixel's own radius, so a blurred background never bleeds over a sharp or nearer edge. A tap in front of it is not clamped, so a blurred foreground spreads over the sharp pixels behind it.
+- **In focus**: a pixel whose circle is under half a pixel, with no blurred foreground over it, keeps its exact input value: every tap weighs zero and leaves the average untouched.
+- `max_blur` is clamped to 32 pixels. Taps number about `max_blur^2 / (2 * radius_scale)`, and `radius_scale` is `max(0.5, max_blur / 16)`, so a large blur stays near 256 taps.
+- Color and alpha blur together, through one linear, clamp-to-edge sampler that also filters the circle of confusion.
+- The pass owns the circle of confusion texture, separate from the pool targets. It creates it at the chain's size on the first frame depth of field runs, recreates it when the size changes, and frees it in `release_targets`, so a disabled or resized pass holds no texture.
+- Out of scope: bokeh shapes and physically based aperture settings.
+
 ## Tone Mapping
 
 `TonemapPass` is the `Tonemap` stage. It always runs: a missing or disabled volume selects `PostProcessSettings::default()`, never untone-mapped output.
@@ -141,9 +163,12 @@ Tone mapping asks for nothing.
 ## Settings And Volumes
 
 ```rust
-pub struct PostProcessSettings { pub tonemapping: TonemapSettings }
+pub struct PostProcessSettings { pub tonemapping: TonemapSettings, pub depth_of_field: DepthOfFieldSettings }
 pub struct TonemapSettings { pub preset: TonemappingPreset, pub exposure_ev: f32 }  // Aces, 0.0
 pub enum TonemappingPreset { Aces }
+pub struct DepthOfFieldSettings {                             // off, 10.0, 10.0, 8.0
+    pub enabled: bool, pub focus_distance: f32, pub focus_range: f32, pub max_blur: f32,
+}
 
 pub struct ComponentGlobalPostProcessVolume {
     pub enabled: bool,
@@ -163,6 +188,7 @@ pub struct ComponentGlobalPostProcessVolume {
 - `assets/shaders/fullscreen.wgsl`: the shared full-screen triangle, `fullscreen_vertex(index)`. `assets/shaders/fullscreen_pass.wgsl` includes it and declares the `vs_main` that calls it, so a shader that draws the plain triangle includes the entry point and declares only its fragment stage: the post passes, the overlay composite, the selection outline and 2D mip generation. The editor grid adds outputs of its own, so it includes `fullscreen.wgsl` and declares its own vertex stage. Every full-screen draw takes its pipeline options from `PipelineOptions::fullscreen_builder()`, which sets only the color target, depth and sample count; the engine has no full-screen quad mesh.
 - `assets/shaders/postprocess/tonemap.wgsl`: the tone-map pass.
 - `assets/shaders/postprocess/depth_resolve.wgsl`: copies sample 0 of the multisampled depth.
+- `assets/shaders/postprocess/dof_coc.wgsl` and `dof_blur.wgsl`: the depth of field passes. `dof_common.wgsl` holds their uniform, the depth linearization and the circle of confusion.
 - `assets/shaders/overlay_composite.wgsl`: blends the resolved overlay target over the scene texture.
 - `pbr.wgsl` drops Reinhard, gamma 1.4 and the `* 5.0` on albedo.
 - `skybox.wgsl` drops its exposure and gamma and scales the sky by the sky light's intensity, the same factor that scales its image-based lighting.
@@ -195,6 +221,7 @@ Headless tests in `engine/src/render/postprocess/`:
 - The display-encoding test above.
 - Depth reaches a pass that requests it, single-sample at one and four samples; normals and velocity report unavailable.
 - Volume selection picks the highest enabled priority, warns on a tie, and falls back to the defaults.
+- Depth of field (`dof.rs`): `CameraPlanes` inverts the render projection; pixels at the focus distance are unchanged; far pixels blur more than pixels near focus, and pixels in front of it blur too; a blurred background stays behind a sharp edge while a blurred foreground spreads over it; the pass reads depth at one and four samples with the same result; with it disabled the plan is the tone-map-only plan and its texture is not allocated, follows the chain's size, and is freed when disabled and on resize. Settings saved before it load with it off.
 
 Headless tests in `engine/src/render/overlay/` and `scene_renderer.rs`:
 
