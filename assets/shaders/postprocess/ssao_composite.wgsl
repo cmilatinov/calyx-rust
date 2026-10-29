@@ -4,8 +4,9 @@
 // Multiplies the blurred occlusion into the HDR scene color at full
 // resolution. The half-resolution occlusion is upsampled from its four
 // nearest texels, weighted bilinearly and by how close their view depth is
-// to this pixel's, so it does not bleed across silhouettes. Sky pixels and
-// alpha pass through untouched.
+// to this pixel's, so it does not bleed across silhouettes. A pixel whose
+// four texels all lie on other surfaces, such as a thin object between them,
+// takes no occlusion. Sky pixels and alpha pass through untouched.
 
 @group(0) @binding(0)
 var input_texture: texture_2d<f32>;
@@ -41,11 +42,16 @@ fn fs_main(in: FullscreenVertexOut) -> @location(0) vec4f {
             let at = clamp(base + vec2i(x, y), vec2i(0), half_size - 1);
             let occlusion = textureLoad(occlusion_texture, at, 0);
             let bilinear = mix(1.0 - f.x, f.x, f32(x)) * mix(1.0 - f.y, f.y, f32(y));
-            let weight = bilinear * ssao_depth_weight(occlusion.g, z) + 1e-5;
+            let weight = bilinear * ssao_depth_weight(occlusion.g, z);
             sum += occlusion.r * weight;
             weights += weight;
         }
     }
-    let visibility = sum / weights;
+    // Every texel rejected: nothing measured this surface, so leave it
+    // unoccluded rather than borrow another surface's occlusion.
+    var visibility = 1.0;
+    if weights > 0.0 {
+        visibility = sum / weights;
+    }
     return vec4f(texel.rgb * visibility, texel.a);
 }

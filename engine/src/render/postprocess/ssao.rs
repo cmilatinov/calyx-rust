@@ -778,6 +778,47 @@ mod tests {
     }
 
     #[test]
+    fn a_thin_surface_between_occlusion_texels_is_not_darkened() {
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        // The inside corner, with a one-pixel post at column 15 standing far in
+        // front of its crease. Occlusion texels sit on even pixels, so none
+        // of them sees the post: its four nearest texels all lie on the
+        // occluded crease behind it, at a depth that rejects every one.
+        let p00 = camera().projection[(0, 0)];
+        let column = |x: f32| ((x * p00 + 1.0) * 0.5 * SIZE.0 as f32).floor() as u32;
+        let depth = scene_depth(
+            &context.render_context,
+            |x, _| {
+                Some(if column(x) == 15 {
+                    1.0
+                } else {
+                    4.0 / (1.0 + x.abs())
+                })
+            },
+            1.0,
+        );
+
+        let output = run_ssao(&context, &ssao_with_radius(CORNER_RADIUS), &depth);
+
+        let visibility = visibility(&output);
+        let at = |x: u32, y: u32| visibility[(y * SIZE.0 + x) as usize];
+        for y in 8..24 {
+            assert!(
+                at(16, y) < 0.9,
+                "the crease behind the post at (16, {y}) is occluded: visibility {}",
+                at(16, y)
+            );
+            assert!(
+                at(15, y) > 0.999,
+                "the post at (15, {y}) takes no occlusion from the crease behind it: visibility {}",
+                at(15, y)
+            );
+        }
+    }
+
+    #[test]
     fn the_sky_is_untouched() {
         let assets = TestAssets::engine();
         let context = assets.asset_context();
