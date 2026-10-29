@@ -36,6 +36,9 @@ pub(crate) struct PrefabEditing {
     asset_id: Uuid,
     file: PathBuf,
     label: String,
+    /// The prefab's root object as opened. Linked instances are made from
+    /// it, so a save keeps it.
+    root: Uuid,
     set_aside: SetAsideScene,
 }
 
@@ -87,6 +90,7 @@ impl PrefabEditing {
             asset_id,
             file,
             label,
+            root: data.root,
             set_aside,
         })
     }
@@ -109,14 +113,31 @@ impl PrefabEditing {
 
     /// Writes the authoring scene to the prefab's file and marks `document`
     /// clean. The scene must hold exactly one top-level object, the prefab's
-    /// root.
+    /// root as it was opened: linked instances are made from that object and
+    /// cannot follow a new root.
     pub(crate) fn save(
         &self,
         game: &GameContext,
         document: &mut SceneDocument,
     ) -> Result<(), String> {
         document.flush_pending_values(game);
-        let prefab = scene_prefab(game.scenes.current_scene())?;
+        let scene = game.scenes.current_scene();
+        let prefab = scene_prefab(scene)?;
+        if prefab.root != self.root {
+            let name = |id: Uuid| {
+                scene
+                    .find(id)
+                    .map(|object| scene.name(object))
+                    .unwrap_or_else(|| id.to_string())
+            };
+            return Err(format!(
+                "the prefab's root object must stay {}, which its instances are made from, \
+                 and the prefab's root is now {}; move {} back to the top",
+                name(self.root),
+                name(prefab.root),
+                name(self.root)
+            ));
+        }
         write_prefab_file(&self.file, &prefab)
             .map_err(|error| format!("failed to save prefab {}: {error}", self.label))?;
         document.saved_detached(game);
@@ -490,6 +511,31 @@ mod tests {
         editor.document.undo(&mut editor.game);
         assert!(!editor.names().contains(&"Marker".to_owned()));
         assert!(!editor.document.is_dirty(), "its undo history came back");
+    }
+
+    #[test]
+    fn a_prefab_saves_only_with_its_root_object_kept() {
+        let root = AssetRoot::new();
+        let mut editor = Editor::open_level(&root);
+        let prefab_file = fs::read(root.prefab_file()).unwrap();
+        let prefab = editor.open_prefab(&root);
+        let body = editor.find("Crate");
+        let mut edit = SceneEdit::begin("Wrap crate");
+        let scene = edit.scene_mut(&mut editor.game);
+        let pallet = create(scene, "Pallet", None);
+        scene
+            .set_parent(body, Some(pallet))
+            .expect("the crate should move under the pallet");
+        edit.commit(&mut editor.document, &editor.game);
+
+        let error = prefab
+            .save(&editor.game, &mut editor.document)
+            .err()
+            .expect("a new root object does not save");
+
+        assert!(error.contains("root object"), "{error}");
+        assert_eq!(fs::read(root.prefab_file()).unwrap(), prefab_file);
+        assert!(editor.document.is_dirty());
     }
 
     #[test]

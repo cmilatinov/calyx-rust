@@ -11,6 +11,8 @@
 //! rules:
 //!
 //! - An instance keeps its root object's transform and every object's id.
+//! - A prefab whose root object is no longer the one its instances were made
+//!   from is refused, and nothing changes.
 //! - A component is an override when its value on the instance differs from
 //!   the value the prefab last gave it, or when the instance added or removed
 //!   it. An override is kept as it is. Every other component takes the
@@ -122,15 +124,41 @@ impl Scene {
     }
 
     /// The root objects of the scene's instances of the prefab asset
-    /// `prefab_id`, whose root object is `prefab_root`, in scene order.
-    pub fn prefab_instances(&self, prefab_id: Uuid, prefab_root: Uuid) -> Vec<GameObject> {
+    /// `prefab_id`, in scene order. An instance's root is the object its
+    /// links name as their instance, whatever prefab object it was made from.
+    pub fn prefab_instances(&self, prefab_id: Uuid) -> Vec<GameObject> {
         self.graph
             .descendants_ordered(self.root())
             .filter(|game_object| {
-                self.prefab_link(*game_object)
-                    .is_some_and(|link| link.prefab == prefab_id && link.object == prefab_root)
+                let game_object_id = self.uuid(*game_object);
+                self.prefab_links
+                    .get(&game_object_id)
+                    .is_some_and(|link| link.prefab == prefab_id && link.instance == game_object_id)
             })
             .collect()
+    }
+
+    /// Checks that [`Self::update_prefab_instances`] can update the scene's
+    /// instances of `prefab`, the prefab asset `prefab_id`, without failing
+    /// midway: the prefab is well formed and its root object is still the
+    /// one each instance was made from. An instance cannot follow a prefab
+    /// whose root object changed, so that prefab is refused.
+    pub fn check_prefab_update(&self, prefab_id: Uuid, prefab: &Prefab) -> Result<(), SceneError> {
+        self.validate_prefab(prefab)?;
+        for root in self.prefab_instances(prefab_id) {
+            let Some(link) = self.prefab_link(root) else {
+                continue;
+            };
+            if link.object != prefab.root {
+                return Err(SceneError::InvalidPrefab(format!(
+                    "its root object changed from {} to {}, and its instance {} cannot follow it",
+                    link.object,
+                    prefab.root,
+                    self.name(root)
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Instantiates `prefab`, the prefab asset `prefab_id`, as
@@ -173,16 +201,16 @@ impl Scene {
     /// [module docs](self). Instances made by
     /// [`Self::instantiate_linked_prefab`] are the ones updated.
     ///
-    /// Returns [`SceneError::InvalidPrefab`], and changes nothing, when the
-    /// prefab data is malformed.
+    /// Returns [`SceneError::InvalidPrefab`], and changes nothing, when
+    /// [`Self::check_prefab_update`] refuses the prefab.
     pub fn update_prefab_instances(
         &mut self,
         prefab_id: Uuid,
         prefab: &Prefab,
     ) -> Result<PrefabUpdate, SceneError> {
-        self.validate_prefab(prefab)?;
+        self.check_prefab_update(prefab_id, prefab)?;
         let mut update = PrefabUpdate::default();
-        for root in self.prefab_instances(prefab_id, prefab.root) {
+        for root in self.prefab_instances(prefab_id) {
             self.update_prefab_instance(root, prefab_id, prefab, &mut update)?;
             update.instances += 1;
         }
@@ -863,6 +891,31 @@ mod tests {
         let level = &fixture.level;
         assert_eq!(level.parent(fixture.target("Pin")), Some(hinge));
         assert_eq!(names(level), ["Crate", "Hinge", "Pin"]);
+    }
+
+    #[test]
+    fn a_prefab_whose_root_changed_fails_the_update_and_changes_nothing() {
+        let mut fixture = Fixture::new();
+        let pallet = create(&mut fixture.authoring, "Pallet", None);
+        let body = fixture.body;
+        fixture
+            .authoring
+            .set_parent(body, Some(pallet))
+            .expect("the crate should move under the pallet");
+        let source_lid = fixture.source("Lid");
+        set_light(&mut fixture.authoring, source_lid, 2.0, 5.0);
+        let prefab = fixture.authoring.create_prefab(pallet);
+        let before = serde_json::to_value(&fixture.level).unwrap();
+
+        let result = fixture
+            .level
+            .update_prefab_instances(fixture.prefab_id, &prefab);
+
+        assert!(
+            matches!(&result, Err(SceneError::InvalidPrefab(reason)) if reason.contains("root")),
+            "{result:?}"
+        );
+        assert_eq!(serde_json::to_value(&fixture.level).unwrap(), before);
     }
 
     #[test]
