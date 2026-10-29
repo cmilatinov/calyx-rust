@@ -6,6 +6,7 @@ use crate::render::RenderContext;
 use egui_wgpu::wgpu;
 use enumflags2::{bitflags, make_bitflags, BitFlags};
 use std::fmt;
+use std::sync::Arc;
 
 /// Where a pass runs in the chain. Passes run in stage order, then in the
 /// order they were added within a stage.
@@ -77,7 +78,7 @@ pub enum PostProcessError {
 /// What a pass may use while preparing and recording.
 pub struct PassContext<'a> {
     /// The render context the chain renders on.
-    pub render_context: &'a RenderContext,
+    pub render_context: &'a Arc<RenderContext>,
     /// Size in pixels of every texture the chain reads and writes.
     pub size: (u32, u32),
 }
@@ -116,4 +117,8 @@ pub trait PostProcessPass: Send + Sync {
 
     /// Records the pass: reads `io.input`, writes `io.output`.
     fn record(&mut self, context: &PassContext, encoder: &mut wgpu::CommandEncoder, io: PassIo);
+
+    /// Frees textures the pass owns besides the chain's pool targets. The
+    /// chain calls it on resize and on every frame the pass does not run.
+    fn release_targets(&mut self) {}
 }

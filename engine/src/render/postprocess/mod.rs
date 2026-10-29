@@ -3,6 +3,7 @@
 //!
 //! See `docs/design/post-processing/architecture.md`.
 
+pub use bloom::*;
 pub use chain::*;
 pub use color_grading::*;
 pub use depth::*;
@@ -12,6 +13,7 @@ pub use pool::*;
 pub use settings::*;
 pub use tonemap::*;
 
+mod bloom;
 mod chain;
 mod color_grading;
 mod depth;

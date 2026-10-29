@@ -1,5 +1,6 @@
 //! Post-processing settings and the global volume that selects them.
 
+use super::BloomSettings;
 use crate as engine;
 use crate::component::ComponentGlobalPostProcessVolume;
 use crate::reflect::{Reflect, ReflectDefault};
@@ -19,6 +20,8 @@ use serde::{Deserialize, Serialize};
 pub struct PostProcessSettings {
     /// Tone mapping, the display transform. It always runs.
     pub tonemapping: TonemapSettings,
+    /// Bloom, in the `Hdr` stage. Off by default.
+    pub bloom: BloomSettings,
     /// White balance, contrast and saturation, after tone mapping. Off by
     /// default.
     pub color_grading: super::ColorGradingSettings,
