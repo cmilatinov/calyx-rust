@@ -19,6 +19,8 @@ use serde::{Deserialize, Serialize};
 pub struct PostProcessSettings {
     /// Tone mapping, the display transform. It always runs.
     pub tonemapping: TonemapSettings,
+    /// Screen-space anti-aliasing, after tone mapping. Off by default.
+    pub anti_aliasing: super::AntiAliasingSettings,
 }
 
 /// Tone-mapping curve and exposure.
