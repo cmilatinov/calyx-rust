@@ -24,7 +24,9 @@
 //! - An object the prefab removed is deleted from the instance, unless it
 //!   carries an override; then it stays as an ordinary, unlinked object. A
 //!   child of a deleted object that is not deleted itself, such as an object
-//!   added to the instance, moves to the nearest ancestor that stays.
+//!   added to the instance, moves to the nearest ancestor that stays. A
+//!   reference the prefab still makes to a removed object reaches the
+//!   object the instance kept, or no object, in this and later updates.
 //! - An object the instance deleted stays deleted, and a reference the
 //!   prefab makes to it reaches no object.
 //! - Every object keeps its parent and sibling order in the instance. An
@@ -68,6 +70,13 @@ pub struct PrefabLink {
     /// deleted is told apart from one the prefab added since.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub objects: BTreeSet<Uuid>,
+    /// On the instance's root object only: each object the prefab removed,
+    /// keyed by its prefab UUID, with the id a reference the prefab still
+    /// makes to it takes in the instance. That is the object the instance
+    /// kept for its overrides, or an id that names no object when the
+    /// instance holds none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub removed: BTreeMap<Uuid, Uuid>,
 }
 
 /// What [`Scene::update_prefab_instances`] changed.
@@ -190,6 +199,7 @@ impl Scene {
                 instance,
                 base: self.component_hashes(&registry, instance_object),
                 objects,
+                removed: BTreeMap::new(),
             };
             self.prefab_links.insert(*target, link);
         }
@@ -274,13 +284,25 @@ impl Scene {
             .map(|link| link.objects.clone())
             .filter(|objects| !objects.is_empty())
             .unwrap_or_else(|| members.keys().copied().collect());
+        let mut removed = self
+            .prefab_link(root)
+            .map(|link| link.removed.clone())
+            .unwrap_or_default();
 
         let registry_ref = self.registries().components.clone();
         let registry = registry_ref.read();
         let types_ref = self.registries().types.clone();
         let types = types_ref.read();
 
-        // Objects the prefab removed.
+        // Objects the prefab removed. A reference the prefab still makes to
+        // one reaches the object the instance keeps for it, or no object.
+        for source in &known {
+            if !prefab.data.components.contains_key(source) && !members.contains_key(source) {
+                removed
+                    .entry(*source)
+                    .or_insert_with(|| missing_member_id(instance, *source));
+            }
+        }
         let mut deleted = HashSet::new();
         for (source, game_object) in &members {
             if prefab.data.components.contains_key(source) {
@@ -292,12 +314,16 @@ impl Scene {
                 .unwrap_or_default();
             if self.component_hashes(&registry, *game_object) == base {
                 deleted.insert(*game_object);
+                removed.insert(*source, missing_member_id(instance, *source));
             } else {
                 let game_object_id = self.uuid(*game_object);
                 self.prefab_links.remove(&game_object_id);
+                removed.insert(*source, game_object_id);
                 update.unlinked += 1;
             }
         }
+        // An object the prefab holds again is no longer removed.
+        removed.retain(|source, _| !prefab.data.components.contains_key(source));
         for game_object in &deleted {
             let mut keeper = self.parent(*game_object);
             while let Some(ancestor) = keeper.filter(|ancestor| deleted.contains(ancestor)) {
@@ -393,6 +419,9 @@ impl Scene {
             if !members.contains_key(source) {
                 mapping.insert(*source, missing_member_id(instance, *source));
             }
+        }
+        for (source, target) in &removed {
+            mapping.insert(*source, *target);
         }
         let objects = prefab
             .data
@@ -514,6 +543,11 @@ impl Scene {
                     objects.clone()
                 } else {
                     BTreeSet::new()
+                },
+                removed: if is_root {
+                    removed.clone()
+                } else {
+                    BTreeMap::new()
                 },
             };
             let game_object_id = self.uuid(game_object);
@@ -867,6 +901,71 @@ mod tests {
         let before = serde_json::to_value(&fixture.level).unwrap();
         fixture.update();
         assert_eq!(serde_json::to_value(&fixture.level).unwrap(), before);
+    }
+
+    /// A fixture whose prefab root holds a skinned mesh with the lid as its
+    /// root bone, updated into the instance.
+    fn fixture_referencing_the_lid() -> Fixture {
+        let mut fixture = Fixture::new();
+        let source_lid = fixture.source("Lid");
+        let skin = ComponentSkinnedMesh {
+            root_bone: GameObjectRef::new(fixture.authoring.uuid(source_lid)),
+            ..Default::default()
+        };
+        let body = fixture.body;
+        fixture.authoring.add_component(body, skin);
+        fixture.update();
+        fixture
+    }
+
+    fn root_bone(fixture: &Fixture) -> Uuid {
+        fixture
+            .level
+            .read_component::<ComponentSkinnedMesh, _, _>(fixture.instance, |skin| {
+                skin.root_bone.id()
+            })
+            .expect("the instance has the skinned mesh")
+    }
+
+    #[test]
+    fn a_reference_to_an_object_the_prefab_removed_keeps_the_object_the_instance_kept() {
+        let mut fixture = fixture_referencing_the_lid();
+        let lid = fixture.target("Lid");
+        set_light(&mut fixture.level, lid, 9.0, 1.0);
+        let source_lid = fixture.source("Lid");
+        fixture.authoring.delete(source_lid);
+        fixture.authoring.flush_deletes();
+
+        let update = fixture.update();
+
+        assert_eq!(update.unlinked, 1, "the overridden lid stays");
+        let lid_id = fixture.level.uuid(lid);
+        assert_eq!(root_bone(&fixture), lid_id);
+        fixture.update();
+        assert_eq!(
+            root_bone(&fixture),
+            lid_id,
+            "a later update keeps the reference"
+        );
+    }
+
+    #[test]
+    fn a_reference_to_an_object_the_prefab_removed_reaches_no_object_once_it_is_deleted() {
+        let mut fixture = fixture_referencing_the_lid();
+        let source_lid = fixture.source("Lid");
+        let source_lid_id = fixture.authoring.uuid(source_lid);
+        fixture.authoring.delete(source_lid);
+        fixture.authoring.flush_deletes();
+
+        let update = fixture.update();
+
+        assert_eq!(update.removed, 1);
+        for _ in 0..2 {
+            let target = root_bone(&fixture);
+            assert_ne!(target, source_lid_id, "it does not reach the prefab object");
+            assert!(fixture.level.find(target).is_none());
+            fixture.update();
+        }
     }
 
     #[test]
