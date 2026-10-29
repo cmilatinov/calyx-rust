@@ -16,6 +16,10 @@ struct MaterialProperties {
     metallic: f32,
     roughness: f32,
     ambient_occlusion: f32,
+    // Linear HDR radiance added on top of the lit color: emission_color * emission_strength.
+    // A material saved before these fields existed reads zero, so it does not emit.
+    emission_strength: f32,
+    emission_color: vec4f,
 };
 
 struct EnvironmentProperties {
@@ -158,6 +162,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     let ambient = diffuse + specular;
     let direct_ambient = kd * environment.ambient_light.rgb * albedo.rgb;
     color += material.ambient_occlusion * (ambient + direct_ambient);
+    color += material.emission_color.rgb * material.emission_strength;
 
     // Linear HDR radiance: the post-processing chain tone maps it.
     return vec4f(color.xyz, albedo.a);
