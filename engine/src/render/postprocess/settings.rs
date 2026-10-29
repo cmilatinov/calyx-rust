@@ -22,6 +22,8 @@ pub struct PostProcessSettings {
     pub tonemapping: TonemapSettings,
     /// Bloom, in the `Hdr` stage. Off by default.
     pub bloom: BloomSettings,
+    /// Screen-space anti-aliasing, after tone mapping. Off by default.
+    pub anti_aliasing: super::AntiAliasingSettings,
 }
 
 /// Tone-mapping curve and exposure.

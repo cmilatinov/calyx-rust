@@ -6,6 +6,7 @@
 pub use bloom::*;
 pub use chain::*;
 pub use depth::*;
+pub use fxaa::*;
 pub use pass::*;
 pub use pool::*;
 pub use settings::*;
@@ -14,6 +15,7 @@ pub use tonemap::*;
 mod bloom;
 mod chain;
 mod depth;
+mod fxaa;
 mod pass;
 mod pool;
 mod settings;

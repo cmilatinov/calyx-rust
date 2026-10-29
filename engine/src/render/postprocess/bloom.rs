@@ -729,7 +729,7 @@ mod tests {
             .iter()
             .map(|pass| pass.name())
             .collect();
-        assert_eq!(names, ["bloom", "tonemap"], "the renderer runs bloom");
+        assert_eq!(names, ["bloom", "tonemap", "fxaa"], "the renderer runs bloom");
         assert_eq!(
             *renderer.last_post_process_plan(),
             ChainPlan {
