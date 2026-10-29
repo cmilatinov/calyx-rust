@@ -19,6 +19,11 @@ use serde::{Deserialize, Serialize};
 pub struct PostProcessSettings {
     /// Tone mapping, the display transform. It always runs.
     pub tonemapping: TonemapSettings,
+    /// White balance, contrast and saturation, after tone mapping. Off by
+    /// default.
+    pub color_grading: super::ColorGradingSettings,
+    /// Darkened screen edges, after tone mapping. Off by default.
+    pub vignette: super::VignetteSettings,
 }
 
 /// Tone-mapping curve and exposure.

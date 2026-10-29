@@ -8,13 +8,16 @@ use darling::ast::NestedMeta;
 use proc_macro2::{Ident, Span};
 use quote::quote;
 use syn::{
-    Attribute, Data, DeriveInput, Expr, ExprLit, Fields, Lit, LitStr, Meta, MetaNameValue, Path,
+    Attribute, Data, DeriveInput, Expr, ExprLit, ExprUnary, Fields, Lit, LitStr, Meta,
+    MetaNameValue, Path, UnOp,
 };
 
 #[derive(Debug)]
 struct ReflectAttribute {
     name: Ident,
     value: Option<Lit>,
+    /// Whether a numeric `value` was written with a leading minus.
+    negative: bool,
 }
 
 impl TryFrom<NestedMeta> for ReflectAttribute {
@@ -26,7 +29,11 @@ impl TryFrom<NestedMeta> for ReflectAttribute {
                 let Some(name) = path.get_ident().cloned() else {
                     return Err(non_ident_key(&path));
                 };
-                Ok(Self { name, value: None })
+                Ok(Self {
+                    name,
+                    value: None,
+                    negative: false,
+                })
             }
             NestedMeta::Meta(Meta::NameValue(MetaNameValue {
                 path,
@@ -39,6 +46,36 @@ impl TryFrom<NestedMeta> for ReflectAttribute {
                 Ok(Self {
                     name,
                     value: Some(lit),
+                    negative: false,
+                })
+            }
+            NestedMeta::Meta(Meta::NameValue(MetaNameValue {
+                path,
+                value:
+                    Expr::Unary(ExprUnary {
+                        op: UnOp::Neg(_),
+                        expr,
+                        ..
+                    }),
+                ..
+            })) if matches!(
+                *expr,
+                Expr::Lit(ExprLit {
+                    lit: Lit::Float(_) | Lit::Int(_),
+                    ..
+                })
+            ) =>
+            {
+                let Some(name) = path.get_ident().cloned() else {
+                    return Err(non_ident_key(&path));
+                };
+                let Expr::Lit(ExprLit { lit, .. }) = *expr else {
+                    unreachable!("matched a numeric literal above");
+                };
+                Ok(Self {
+                    name,
+                    value: Some(lit),
+                    negative: true,
                 })
             }
             other => Err(darling::Error::custom(
@@ -58,11 +95,16 @@ fn attribute_map(attrs: &[ReflectAttribute]) -> proc_macro2::TokenStream {
     for attr in attrs {
         let name = attr.name.to_string();
         let lit_name = LitStr::new(name.as_str(), Span::call_site());
+        let sign = if attr.negative {
+            quote! { - }
+        } else {
+            quote! {}
+        };
         let value = match attr.value.as_ref() {
             Some(lit) => match lit {
                 Lit::Str(str) => quote! { #FQAttributeValue::String(#str) },
-                Lit::Float(float) => quote! { #FQAttributeValue::Float(#float) },
-                Lit::Int(int) => quote! { #FQAttributeValue::Integer(#int) },
+                Lit::Float(float) => quote! { #FQAttributeValue::Float(#sign #float) },
+                Lit::Int(int) => quote! { #FQAttributeValue::Integer(#sign #int) },
                 _ => quote! { #FQAttributeValue::None },
             },
             None => quote! { #FQAttributeValue::None },

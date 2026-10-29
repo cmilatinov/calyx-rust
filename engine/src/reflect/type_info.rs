@@ -330,6 +330,41 @@ mod tests {
         assert_eq!(info.field("label").unwrap().group(), None);
     }
 
+    #[derive(TypeUuid, Reflect)]
+    #[allow(dead_code)]
+    struct Signed {
+        #[reflect_attr(min = -1.5, max = 1.5)]
+        balance: f32,
+        #[reflect_attr(min = -3)]
+        offset: i32,
+    }
+
+    #[test]
+    fn negative_attribute_literals_keep_their_sign() {
+        let mut reg = TypeRegistry {
+            types: Default::default(),
+            identities: Default::default(),
+        };
+        Signed::register(&mut reg);
+        let TypeInfo::Struct(info) = reg.type_info::<Signed>().unwrap() else {
+            panic!("expected StructInfo");
+        };
+
+        let attr = |field: &str, name: &str| info.field(field).unwrap().attr(name);
+        assert!(matches!(
+            attr("balance", "min"),
+            Some(AttributeValue::Float(-1.5))
+        ));
+        assert!(matches!(
+            attr("balance", "max"),
+            Some(AttributeValue::Float(1.5))
+        ));
+        assert!(matches!(
+            attr("offset", "min"),
+            Some(AttributeValue::Integer(-3))
+        ));
+    }
+
     #[test]
     fn field_lookup() {
         let reg = transform_registry();

@@ -138,12 +138,34 @@ Tone mapping asks for nothing.
 - `TonemappingPreset::Aces` is Stephen Hill's fit of the ACES RRT and ODT (BakingLab, MIT): the ACES input matrix, the rational RRT/ODT curve, then the output matrix, clamped to `[0, 1]`. It maps linear 0.18 to about 0.106 and 1.0 to about 0.619.
 - Alpha passes through unchanged, so views cleared to transparent, such as thumbnails, keep their transparency.
 
+## Colour Grading And Vignette
+
+`ColorGradingPass` (`engine/src/render/postprocess/color_grading.rs`) is one `Ldr` pass that grades the tone-mapped image and then applies a vignette. It runs while `color_grading.enabled` or `vignette.enabled` is on, neither of which is by default, so a frame without them keeps the tone-map-only plan. A disabled half reaches the shader as neutral values, which leave the color unchanged.
+
+It runs on display-linear color, in this order:
+
+- **White balance**: `temperature` (blue to orange, -1 to 1) and `tint` (green to magenta, -1 to 1) shift the white point a von Kries scale corrects in CAT02 LMS. The illuminant's chromaticity moves along the daylight locus for temperature and off it for tint, as in Unity's post-processing stack. The CPU folds linear sRGB to LMS, the scale and LMS back to linear sRGB into one matrix, relative to the scale at 0 and 0, so a neutral white balance is exactly the identity.
+- **Contrast**: `pivot * (c / pivot)^contrast` per channel, a straight line through linear 18% grey (`0.18`) in log space. 1 is unchanged, 0 is flat mid grey.
+- **Saturation**: a mix between the color and its Rec. 709 luminance (`0.2126, 0.7152, 0.0722`, linear sRGB). 1 is unchanged, 0 is grey.
+- The graded color is clamped to `[0, 1]`.
+- **Vignette**: with `d = |uv - 0.5| * intensity * 3` and `d.x` scaled by the aspect ratio so the shape is round, the factor is `(1 - d.d)^(smoothness * 5)`, clamped. The color is multiplied by `mix(color, 1, factor)`: unchanged at the centre, fading to `color` (black by default) towards the edges. `color` is an sRGB `Color32` converted to linear on the CPU.
+
+Grading runs before FXAA (#400), as is usual: FXAA's edge detection then sees the final image, and grading does not change the contrast FXAA already smoothed. Both are `Ldr` passes, so the order is their registration order in `SceneRenderer::new`: tone mapping, colour grading, then FXAA.
+
+Alpha is read with the pixel and passes through, so transparent views such as thumbnails stay transparent.
+
 ## Settings And Volumes
 
 ```rust
-pub struct PostProcessSettings { pub tonemapping: TonemapSettings }
+pub struct PostProcessSettings {
+    pub tonemapping: TonemapSettings,
+    pub color_grading: ColorGradingSettings,
+    pub vignette: VignetteSettings,
+}
 pub struct TonemapSettings { pub preset: TonemappingPreset, pub exposure_ev: f32 }  // Aces, 0.0
 pub enum TonemappingPreset { Aces }
+pub struct ColorGradingSettings { pub enabled: bool, pub contrast: f32, pub saturation: f32, pub temperature: f32, pub tint: f32 }  // false, 1, 1, 0, 0
+pub struct VignetteSettings { pub enabled: bool, pub intensity: f32, pub smoothness: f32, pub color: Color32 }  // false, 0.4, 0.2, black
 
 pub struct ComponentGlobalPostProcessVolume {
     pub enabled: bool,
@@ -162,6 +184,7 @@ pub struct ComponentGlobalPostProcessVolume {
 
 - `assets/shaders/fullscreen.wgsl`: the shared full-screen triangle, `fullscreen_vertex(index)`. `assets/shaders/fullscreen_pass.wgsl` includes it and declares the `vs_main` that calls it, so a shader that draws the plain triangle includes the entry point and declares only its fragment stage: the post passes, the overlay composite, the selection outline and 2D mip generation. The editor grid adds outputs of its own, so it includes `fullscreen.wgsl` and declares its own vertex stage. Every full-screen draw takes its pipeline options from `PipelineOptions::fullscreen_builder()`, which sets only the color target, depth and sample count; the engine has no full-screen quad mesh.
 - `assets/shaders/postprocess/tonemap.wgsl`: the tone-map pass.
+- `assets/shaders/postprocess/color_grading.wgsl`: the colour grading and vignette pass.
 - `assets/shaders/postprocess/depth_resolve.wgsl`: copies sample 0 of the multisampled depth.
 - `assets/shaders/overlay_composite.wgsl`: blends the resolved overlay target over the scene texture.
 - `pbr.wgsl` drops Reinhard, gamma 1.4 and the `* 5.0` on albedo.
@@ -195,6 +218,7 @@ Headless tests in `engine/src/render/postprocess/`:
 - The display-encoding test above.
 - Depth reaches a pass that requests it, single-sample at one and four samples; normals and velocity report unavailable.
 - Volume selection picks the highest enabled priority, warns on a tie, and falls back to the defaults.
+- Colour grading (`color_grading/tests.rs`): neutral settings return the input, zero saturation gives grey at the input's luminance, contrast keeps mid grey, positive temperature warms and positive tint adds magenta, the vignette darkens the corners and leaves the centre unchanged, and alpha is preserved. With both effects off the pass is left out of the plan, and settings saved before it load with both off.
 
 Headless tests in `engine/src/render/overlay/` and `scene_renderer.rs`:
 
