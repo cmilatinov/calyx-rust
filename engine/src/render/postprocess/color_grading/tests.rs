@@ -1,8 +1,10 @@
 use super::*;
 use crate::assets::texture::Texture;
-use crate::render::postprocess::{ChainPlan, ChainTargets, PostProcessChain, TonemapPass};
+use crate::render::postprocess::{
+    AntiAliasingSettings, ChainPlan, ChainTargets, PostProcessChain, TonemapPass,
+};
 use crate::render::scene_renderer::half_to_f32;
-use crate::render::RenderContext;
+use crate::render::{RenderContext, SceneRenderer};
 use crate::test_support::TestAssets;
 use std::sync::Arc;
 
@@ -249,6 +251,32 @@ fn with_grading_and_vignette_disabled_the_pass_is_skipped() {
             "either effect runs the pass, after tone mapping"
         );
     }
+}
+
+#[test]
+fn the_scene_renderer_grades_before_fxaa() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let context = context.lock_read();
+    let renderer = SceneRenderer::new(&context, Default::default(), (WIDTH, HEIGHT))
+        .expect("scene renderer should load its assets");
+    let settings = PostProcessSettings {
+        anti_aliasing: AntiAliasingSettings {
+            fxaa: true,
+            ..Default::default()
+        },
+        ..grading(Default::default())
+    };
+    let chain = renderer.post_process();
+
+    let plan = ChainPlan::build(chain.passes(), &settings);
+
+    let names: Vec<_> = plan
+        .passes
+        .iter()
+        .map(|planned| chain.passes()[planned.pass].name())
+        .collect();
+    assert_eq!(names, ["tonemap", "color_grading", "fxaa"]);
 }
 
 #[test]

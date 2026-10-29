@@ -6,6 +6,7 @@
 pub use chain::*;
 pub use color_grading::*;
 pub use depth::*;
+pub use fxaa::*;
 pub use pass::*;
 pub use pool::*;
 pub use settings::*;
@@ -14,6 +15,7 @@ pub use tonemap::*;
 mod chain;
 mod color_grading;
 mod depth;
+mod fxaa;
 mod pass;
 mod pool;
 mod settings;

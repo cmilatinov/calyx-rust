@@ -934,3 +934,248 @@ fn scenes_without_an_enabled_volume_are_still_tone_mapped() {
     let texel = read_rgba16f(&render_context, renderer.scene_texture());
     assert_close(texel[0], aces_reference([0.5; 3])[0], "white at -1 EV");
 }
+
+// FXAA.
+
+const EDGE_SIZE: u32 = 16;
+
+/// `value` as half-float bits. Exact for the normal values these tests use.
+fn f32_to_half(value: f32) -> u16 {
+    if value == 0.0 {
+        return 0;
+    }
+    let bits = value.to_bits();
+    let sign = ((bits >> 16) & 0x8000) as u16;
+    let exponent = ((bits >> 23) & 0xff) as i32 - 127 + 15;
+    let fraction = ((bits >> 13) & 0x3ff) as u16;
+    sign | ((exponent as u16) << 10) | fraction
+}
+
+fn image_target(render_context: &Arc<RenderContext>, label: &'static str) -> Texture {
+    Texture::new(
+        render_context.clone(),
+        &wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: EDGE_SIZE,
+                height: EDGE_SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        },
+        None,
+        None,
+        false,
+    )
+}
+
+/// An `EDGE_SIZE` square image, row-major, one texel per pixel.
+type Image = Vec<[f32; 4]>;
+
+fn upload_image(render_context: &RenderContext, texture: &Texture, image: &Image) {
+    let bytes: Vec<u8> = image
+        .iter()
+        .flat_map(|texel| texel.map(f32_to_half))
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    render_context.queue().write_texture(
+        texture.texture.as_image_copy(),
+        &bytes,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(EDGE_SIZE * 8),
+            rows_per_image: Some(EDGE_SIZE),
+        },
+        texture.descriptor.size,
+    );
+}
+
+fn read_image(render_context: &RenderContext, texture: &Texture) -> Image {
+    let device = render_context.device();
+    let row = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("fxaa_test_readback"),
+        size: (row * EDGE_SIZE) as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    encoder.copy_texture_to_buffer(
+        texture.texture.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(row),
+                rows_per_image: Some(EDGE_SIZE),
+            },
+        },
+        texture.descriptor.size,
+    );
+    render_context.queue().submit(Some(encoder.finish()));
+    let slice = buffer.slice(..);
+    slice.map_async(wgpu::MapMode::Read, |result| result.expect("map failed"));
+    let _ = device.poll(wgpu::Maintain::Wait);
+    let data = slice.get_mapped_range();
+    let image = (0..EDGE_SIZE as usize)
+        .flat_map(|y| (0..EDGE_SIZE as usize).map(move |x| (x, y)))
+        .map(|(x, y)| {
+            let texel = y * row as usize + x * 8;
+            std::array::from_fn(|channel| {
+                let at = texel + channel * 2;
+                half_to_f32(u16::from_le_bytes([data[at], data[at + 1]]))
+            })
+        })
+        .collect();
+    drop(data);
+    buffer.unmap();
+    image
+}
+
+fn fxaa_on() -> PostProcessSettings {
+    PostProcessSettings {
+        anti_aliasing: AntiAliasingSettings {
+            fxaa: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+/// Runs a chain holding only the FXAA pass over `image`.
+fn run_fxaa(context: &crate::context::ReadOnlyAssetContext, image: &Image) -> Image {
+    let render_context = context.render_context.clone();
+    let mut chain = PostProcessChain::new(context).expect("chain shaders load");
+    chain.push(Box::new(FxaaPass::new(context).expect("fxaa loads")));
+    let source = image_target(&render_context, "fxaa_test_source");
+    let output = image_target(&render_context, "fxaa_test_output");
+    let depth = depth_target(&render_context, 1);
+    upload_image(&render_context, &source, image);
+    let mut encoder = render_context
+        .device()
+        .create_command_encoder(&Default::default());
+    let plan = chain.run(
+        &render_context,
+        &mut encoder,
+        &fxaa_on(),
+        ChainTargets {
+            source: &source,
+            output: &output,
+            depth: &depth,
+        },
+    );
+    render_context.queue().submit(Some(encoder.finish()));
+    assert_eq!(plan.passes.len(), 1, "the FXAA pass runs");
+    read_image(&render_context, &output)
+}
+
+#[test]
+fn fxaa_is_off_by_default_and_settings_saved_before_it_still_load() {
+    let defaults = AntiAliasingSettings::default();
+    assert!(!defaults.fxaa, "FXAA is off by default");
+    assert_eq!(defaults.edge_threshold, 0.166);
+    assert_eq!(defaults.subpixel, 0.75);
+
+    let saved = r#"{"tonemapping":{"preset":"Aces","exposure_ev":1.5}}"#;
+    let settings: PostProcessSettings = serde_json::from_str(saved).expect("old settings load");
+    assert_eq!(settings.tonemapping.exposure_ev, 1.5);
+    assert_eq!(settings.anti_aliasing, AntiAliasingSettings::default());
+
+    let partial = r#"{"anti_aliasing":{"fxaa":true}}"#;
+    let settings: PostProcessSettings = serde_json::from_str(partial).expect("partial loads");
+    assert!(settings.anti_aliasing.fxaa);
+    assert_eq!(settings.anti_aliasing.subpixel, 0.75);
+}
+
+#[test]
+fn with_fxaa_disabled_the_plan_is_unchanged() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let context = context.lock_read();
+    let mut chain = PostProcessChain::new(&context).expect("chain shaders load");
+    chain.push(Box::new(FxaaPass::new(&context).expect("fxaa loads")));
+    chain.push(Box::new(TonemapPass::new(&context).expect("tonemap loads")));
+    let names = |plan: &ChainPlan| {
+        plan.passes
+            .iter()
+            .map(|planned| chain.passes()[planned.pass].name().to_string())
+            .collect::<Vec<_>>()
+    };
+
+    let plan = ChainPlan::build(chain.passes(), &Default::default());
+    assert_eq!(names(&plan), ["tonemap"]);
+    assert_eq!(
+        targets(&plan),
+        vec![(PassTarget::Source, PassTarget::Output)]
+    );
+    assert_eq!(plan.intermediates, 0);
+
+    let plan = ChainPlan::build(chain.passes(), &fxaa_on());
+    assert_eq!(
+        names(&plan),
+        ["tonemap", "fxaa"],
+        "FXAA runs after tone mapping"
+    );
+    assert_eq!(plan.intermediates, 1);
+}
+
+#[test]
+fn fxaa_smooths_a_hard_diagonal_edge_and_keeps_alpha() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let context = context.lock_read();
+    // White above the diagonal, black below. Alpha differs on each side, so
+    // a blended alpha would show.
+    let size = EDGE_SIZE as usize;
+    let image: Image = (0..size * size)
+        .map(|index| {
+            let (x, y) = (index % size, index / size);
+            if x > y {
+                [1.0, 1.0, 1.0, 1.0]
+            } else {
+                [0.0, 0.0, 0.0, 0.5]
+            }
+        })
+        .collect();
+
+    let output = run_fxaa(&context, &image);
+
+    let blended = output
+        .iter()
+        .filter(|texel| texel[0] > 0.05 && texel[0] < 0.95)
+        .count();
+    assert!(
+        blended >= size,
+        "the staircase gains intermediate values along the edge, got {blended}"
+    );
+    for (index, (out, input)) in output.iter().zip(&image).enumerate() {
+        let (x, y) = (index % size, index / size);
+        assert_eq!(out[3], input[3], "alpha at ({x}, {y}) passes through");
+        if x.abs_diff(y) > 2 {
+            assert_eq!(out[0], input[0], "({x}, {y}) is away from the edge");
+        }
+    }
+}
+
+#[test]
+fn fxaa_leaves_a_flat_colour_and_its_alpha_unchanged() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let context = context.lock_read();
+    let flat = [0.25, 0.5, 0.75, 0.5];
+    let image: Image = vec![flat; (EDGE_SIZE * EDGE_SIZE) as usize];
+
+    let output = run_fxaa(&context, &image);
+
+    for texel in output {
+        assert_eq!(texel, flat);
+    }
+}

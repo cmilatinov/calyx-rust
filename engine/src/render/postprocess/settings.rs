@@ -24,6 +24,8 @@ pub struct PostProcessSettings {
     pub color_grading: super::ColorGradingSettings,
     /// Darkened screen edges, after tone mapping. Off by default.
     pub vignette: super::VignetteSettings,
+    /// Screen-space anti-aliasing, after tone mapping. Off by default.
+    pub anti_aliasing: super::AntiAliasingSettings,
 }
 
 /// Tone-mapping curve and exposure.

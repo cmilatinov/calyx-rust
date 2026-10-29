@@ -154,6 +154,16 @@ Grading runs before FXAA (#400), as is usual: FXAA's edge detection then sees th
 
 Alpha is read with the pixel and passes through, so transparent views such as thumbnails stay transparent.
 
+## Anti-Aliasing
+
+`FxaaPass` (`engine/src/render/postprocess/fxaa.rs`) is an `Ldr` pass that runs FXAA 3.11 Quality, preset 12, after tone mapping. It runs while `PostProcessSettings::anti_aliasing.fxaa` is on, which it is not by default, so a frame without it keeps the tone-map-only plan.
+
+- `assets/shaders/postprocess/fxaa.wgsl` ports the PC quality path of Timothy Lottes' `FxaaPixelShader`: early exit below the local contrast threshold, horizontal or vertical edge choice, a five-step search along the edge (1, 1.5, 2, 4 and 12 pixels), and the sub-pixel blend. It samples its input with a linear, clamp-to-edge sampler the pass owns.
+- It runs after tone mapping because its luma edge detection needs display-range values. Its input is display-linear, so luma is the square root of linear Rec. 601 luma, close to the gamma-encoded luma the reference expects.
+- `edge_threshold` (default 0.166) is the minimum contrast, relative to the brightest neighbour, treated as an edge. `subpixel` (default 0.75) is how much sub-pixel aliasing is removed. Both are the reference's defaults. The absolute floor, 0.0833, is a shader constant.
+- Alpha is read from the pixel itself, never filtered, so transparent views such as thumbnails stay transparent.
+- FXAA does not see editor overlays: they composite after the chain and keep their MSAA.
+
 ## Settings And Volumes
 
 ```rust
@@ -161,11 +171,13 @@ pub struct PostProcessSettings {
     pub tonemapping: TonemapSettings,
     pub color_grading: ColorGradingSettings,
     pub vignette: VignetteSettings,
+    pub anti_aliasing: AntiAliasingSettings,
 }
 pub struct TonemapSettings { pub preset: TonemappingPreset, pub exposure_ev: f32 }  // Aces, 0.0
 pub enum TonemappingPreset { Aces }
 pub struct ColorGradingSettings { pub enabled: bool, pub contrast: f32, pub saturation: f32, pub temperature: f32, pub tint: f32 }  // false, 1, 1, 0, 0
 pub struct VignetteSettings { pub enabled: bool, pub intensity: f32, pub smoothness: f32, pub color: Color32 }  // false, 0.4, 0.2, black
+pub struct AntiAliasingSettings { pub fxaa: bool, pub edge_threshold: f32, pub subpixel: f32 }  // false, 0.166, 0.75
 
 pub struct ComponentGlobalPostProcessVolume {
     pub enabled: bool,
@@ -185,9 +197,10 @@ pub struct ComponentGlobalPostProcessVolume {
 - `assets/shaders/fullscreen.wgsl`: the shared full-screen triangle, `fullscreen_vertex(index)`. `assets/shaders/fullscreen_pass.wgsl` includes it and declares the `vs_main` that calls it, so a shader that draws the plain triangle includes the entry point and declares only its fragment stage: the post passes, the overlay composite, the selection outline and 2D mip generation. The editor grid adds outputs of its own, so it includes `fullscreen.wgsl` and declares its own vertex stage. Every full-screen draw takes its pipeline options from `PipelineOptions::fullscreen_builder()`, which sets only the color target, depth and sample count; the engine has no full-screen quad mesh.
 - `assets/shaders/postprocess/tonemap.wgsl`: the tone-map pass.
 - `assets/shaders/postprocess/color_grading.wgsl`: the colour grading and vignette pass.
+- `assets/shaders/postprocess/fxaa.wgsl`: the FXAA pass.
 - `assets/shaders/postprocess/depth_resolve.wgsl`: copies sample 0 of the multisampled depth.
 - `assets/shaders/overlay_composite.wgsl`: blends the resolved overlay target over the scene texture.
-- `pbr.wgsl` drops Reinhard, gamma 1.4 and the `* 5.0` on albedo.
+- `pbr.wgsl` drops Reinhard, gamma 1.4 and the `* 5.0` on albedo. It adds linear HDR emission, `emission_color * emission_strength`, after the lighting. A material saved before those fields existed reads zero strength and does not emit.
 - `skybox.wgsl` drops its exposure and gamma and scales the sky by the sky light's intensity, the same factor that scales its image-based lighting.
 - Particles already write linear color.
 
@@ -206,6 +219,8 @@ Removing the per-shader curves and the `* 5.0` changes every scene's brightness.
 
 The grid, gizmos and outline composite after post (#379, see Editor Overlays), so they keep their authored colors. Editor clear colors are still tone mapped.
 
+- **Showcase scene**: `sandbox/assets/post_showcase.cxscene` (#378) is the fixed reference for the look: rough, glossy, metallic and emissive materials (`materials/post_showcase/`), the sunset sky at intensity 1, a sun at 2.5, point lights from 5 to 5000, the campfire particles and a global volume at 0 EV.
+
 ## Testing
 
 Headless tests in `engine/src/render/postprocess/`:
@@ -218,7 +233,8 @@ Headless tests in `engine/src/render/postprocess/`:
 - The display-encoding test above.
 - Depth reaches a pass that requests it, single-sample at one and four samples; normals and velocity report unavailable.
 - Volume selection picks the highest enabled priority, warns on a tie, and falls back to the defaults.
-- Colour grading (`color_grading/tests.rs`): neutral settings return the input, zero saturation gives grey at the input's luminance, contrast keeps mid grey, positive temperature warms and positive tint adds magenta, the vignette darkens the corners and leaves the centre unchanged, and alpha is preserved. With both effects off the pass is left out of the plan, and settings saved before it load with both off.
+- Colour grading (`color_grading/tests.rs`): neutral settings return the input, zero saturation gives grey at the input's luminance, contrast keeps mid grey, positive temperature warms and positive tint adds magenta, the vignette darkens the corners and leaves the centre unchanged, and alpha is preserved. With both effects off the pass is left out of the plan, the scene renderer plans it before FXAA, and settings saved before it load with both off.
+- FXAA smooths a hard diagonal edge and keeps each pixel's alpha, leaves a flat colour and its alpha unchanged, and leaves the plan unchanged while disabled. Settings saved before it load with it off.
 
 Headless tests in `engine/src/render/overlay/` and `scene_renderer.rs`:
 
