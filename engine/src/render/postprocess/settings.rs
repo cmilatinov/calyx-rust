@@ -1,5 +1,6 @@
 //! Post-processing settings and the global volume that selects them.
 
+use super::BloomSettings;
 use crate as engine;
 use crate::component::ComponentGlobalPostProcessVolume;
 use crate::reflect::{Reflect, ReflectDefault};
@@ -21,6 +22,10 @@ pub struct PostProcessSettings {
     pub tonemapping: TonemapSettings,
     /// Depth of field, in the `Hdr` stage. Off by default.
     pub depth_of_field: super::DepthOfFieldSettings,
+    /// Bloom, in the `Hdr` stage. Off by default.
+    pub bloom: BloomSettings,
+    /// Screen-space anti-aliasing, after tone mapping. Off by default.
+    pub anti_aliasing: super::AntiAliasingSettings,
 }
 
 /// Tone-mapping curve and exposure.

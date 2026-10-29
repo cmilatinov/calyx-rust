@@ -108,7 +108,7 @@ pub struct PassIo<'a> {
 }
 ```
 
-`prepare` uploads the pass's uniforms from the settings. `record` draws from `input` into `output`. A pass reads its input with `textureLoad` or a sampler and writes every output pixel, so it never needs to load the output.
+`prepare` uploads the pass's uniforms from the settings. `record` draws from `input` into `output`. A pass that owns textures besides the pool targets, such as bloom's mip chain, frees them in `release_targets`. A pass reads its input with `textureLoad` or a sampler and writes every output pixel, so it never needs to load the output.
 
 ## Chain And Target Pool
 
@@ -160,15 +160,50 @@ blur    input + coc     -> output                  scatter-as-gather disc blur
 - `TonemappingPreset::Aces` is Stephen Hill's fit of the ACES RRT and ODT (BakingLab, MIT): the ACES input matrix, the rational RRT/ODT curve, then the output matrix, clamped to `[0, 1]`. It maps linear 0.18 to about 0.106 and 1.0 to about 0.619.
 - Alpha passes through unchanged, so views cleared to transparent, such as thumbnails, keep their transparency.
 
+## Bloom
+
+`BloomPass` (`postprocess/bloom.rs`) is an `Hdr` pass. It is enabled by `settings.bloom.enabled`, off by default, so a frame without bloom keeps the tone-map-only plan. It records several render passes into the encoder:
+
+```text
+prefilter    input (full size)  -> mip 0 (1/2)   13-tap downsample, soft-knee threshold, then / N
+downsample   mip i-1            -> mip i         13-tap downsample, for i in 1..N
+upsample     mip i              -> mip i-1       3x3 tent, added (One + One blend), for i in N-1..1
+composite    input + mip 0      -> output        input + tent(mip 0) * intensity, alpha kept
+```
+
+- **Threshold**: the prefilter measures a pixel's brightest channel `b`, so saturated lights bloom in their own color. With `t = threshold` and `k = threshold * knee`, light below `t - k` contributes nothing, light above `t + k` contributes what lies above `t`, and between the two a quadratic `(b - t + k)^2 / 4k` joins them. The color is scaled by that contribution over `b`. An image entirely below `t - k` therefore passes through bit for bit.
+- **Downsample**: the 13-tap filter from Jimenez's Call of Duty: Advanced Warfare talk, five overlapping bilinear 2x2 boxes weighted to a 4x4 low-pass. It avoids the flicker a plain 2x2 box gives when a bright pixel moves.
+- **Upsample**: each mip is tent-filtered and blended additively onto the next larger mip, so mip 0 ends up holding the sum of every level's blur, each blurred twice as wide as the one above it.
+- **Composite**: reads the input with `textureLoad` and adds the tent-filtered mip 0, scaled by `intensity`. The prefilter already divided the light by the mip count `N`, which keeps the added energy about the same whatever the radius and keeps mip 0, the sum of `N` levels, within half-float range: a flat 20,000 summed over six undivided levels would reach 120,000, past the half-float maximum of 65,504. The sum is clamped to 65,504, so a bright input saturates instead of reaching the tone mapper as infinity.
+- **Mip chain**: `radius` is the mip count `N`, clamped to `1..=8` and to the halvings the chain's size allows before a side reaches one pixel. Mip `i` is the chain's size shifted right by `i + 1`. The pass owns the mips, separate from the pool targets, in the input's format. It creates them on the first frame bloom runs, recreates any whose size or format no longer match the chain, and frees them in `release_targets`, so a disabled or resized bloom holds no texture.
+- One linear, clamp-to-edge sampler and one uniform (threshold, absolute knee, intensity, `1 / N`) serve every draw. Each mip caches the bind groups that read into it.
+
+## Anti-Aliasing
+
+`FxaaPass` (`engine/src/render/postprocess/fxaa.rs`) is an `Ldr` pass that runs FXAA 3.11 Quality, preset 12, after tone mapping. It runs while `PostProcessSettings::anti_aliasing.fxaa` is on, which it is not by default, so a frame without it keeps the tone-map-only plan.
+
+- `assets/shaders/postprocess/fxaa.wgsl` ports the PC quality path of Timothy Lottes' `FxaaPixelShader`: early exit below the local contrast threshold, horizontal or vertical edge choice, a five-step search along the edge (1, 1.5, 2, 4 and 12 pixels), and the sub-pixel blend. It samples its input with a linear, clamp-to-edge sampler the pass owns.
+- It runs after tone mapping because its luma edge detection needs display-range values. Its input is display-linear, so luma is the square root of linear Rec. 601 luma, close to the gamma-encoded luma the reference expects.
+- `edge_threshold` (default 0.166) is the minimum contrast, relative to the brightest neighbour, treated as an edge. `subpixel` (default 0.75) is how much sub-pixel aliasing is removed. Both are the reference's defaults. The absolute floor, 0.0833, is a shader constant.
+- Alpha is read from the pixel itself, never filtered, so transparent views such as thumbnails stay transparent.
+- FXAA does not see editor overlays: they composite after the chain and keep their MSAA.
+
 ## Settings And Volumes
 
 ```rust
-pub struct PostProcessSettings { pub tonemapping: TonemapSettings, pub depth_of_field: DepthOfFieldSettings }
+pub struct PostProcessSettings {
+    pub tonemapping: TonemapSettings, pub depth_of_field: DepthOfFieldSettings, pub bloom: BloomSettings,
+    pub anti_aliasing: AntiAliasingSettings,
+}
 pub struct TonemapSettings { pub preset: TonemappingPreset, pub exposure_ev: f32 }  // Aces, 0.0
+pub struct BloomSettings {                                    // off, 1.0, 0.5, 0.5, 6
+    pub enabled: bool, pub threshold: f32, pub knee: f32, pub intensity: f32, pub radius: u32,
+}
 pub enum TonemappingPreset { Aces }
 pub struct DepthOfFieldSettings {                             // off, 10.0, 10.0, 8.0
     pub enabled: bool, pub focus_distance: f32, pub focus_range: f32, pub max_blur: f32,
 }
+pub struct AntiAliasingSettings { pub fxaa: bool, pub edge_threshold: f32, pub subpixel: f32 }  // false, 0.166, 0.75
 
 pub struct ComponentGlobalPostProcessVolume {
     pub enabled: bool,
@@ -187,10 +222,12 @@ pub struct ComponentGlobalPostProcessVolume {
 
 - `assets/shaders/fullscreen.wgsl`: the shared full-screen triangle, `fullscreen_vertex(index)`. `assets/shaders/fullscreen_pass.wgsl` includes it and declares the `vs_main` that calls it, so a shader that draws the plain triangle includes the entry point and declares only its fragment stage: the post passes, the overlay composite, the selection outline and 2D mip generation. The editor grid adds outputs of its own, so it includes `fullscreen.wgsl` and declares its own vertex stage. Every full-screen draw takes its pipeline options from `PipelineOptions::fullscreen_builder()`, which sets only the color target, depth and sample count; the engine has no full-screen quad mesh.
 - `assets/shaders/postprocess/tonemap.wgsl`: the tone-map pass.
+- `assets/shaders/postprocess/bloom_prefilter.wgsl`, `bloom_downsample.wgsl`, `bloom_upsample.wgsl` and `bloom_composite.wgsl`: the bloom passes. `bloom_filters.wgsl` holds the 13-tap downsample and the tent upsample they share.
+- `assets/shaders/postprocess/fxaa.wgsl`: the FXAA pass.
 - `assets/shaders/postprocess/depth_resolve.wgsl`: copies sample 0 of the multisampled depth.
 - `assets/shaders/postprocess/dof_coc.wgsl` and `dof_blur.wgsl`: the depth of field passes. `dof_common.wgsl` holds their uniform, the depth linearization and the circle of confusion.
 - `assets/shaders/overlay_composite.wgsl`: blends the resolved overlay target over the scene texture.
-- `pbr.wgsl` drops Reinhard, gamma 1.4 and the `* 5.0` on albedo.
+- `pbr.wgsl` drops Reinhard, gamma 1.4 and the `* 5.0` on albedo. It adds linear HDR emission, `emission_color * emission_strength`, after the lighting. A material saved before those fields existed reads zero strength and does not emit.
 - `skybox.wgsl` drops its exposure and gamma and scales the sky by the sky light's intensity, the same factor that scales its image-based lighting.
 - Particles already write linear color.
 
@@ -209,6 +246,8 @@ Removing the per-shader curves and the `* 5.0` changes every scene's brightness.
 
 The grid, gizmos and outline composite after post (#379, see Editor Overlays), so they keep their authored colors. Editor clear colors are still tone mapped.
 
+- **Showcase scene**: `sandbox/assets/post_showcase.cxscene` (#378) is the fixed reference for the look: rough, glossy, metallic and emissive materials (`materials/post_showcase/`), the sunset sky at intensity 1, a sun at 2.5, point lights from 5 to 5000, the campfire particles and a global volume at 0 EV.
+
 ## Testing
 
 Headless tests in `engine/src/render/postprocess/`:
@@ -222,6 +261,8 @@ Headless tests in `engine/src/render/postprocess/`:
 - Depth reaches a pass that requests it, single-sample at one and four samples; normals and velocity report unavailable.
 - Volume selection picks the highest enabled priority, warns on a tie, and falls back to the defaults.
 - Depth of field (`dof.rs`): `CameraPlanes` inverts the render projection; pixels at the focus distance are unchanged; far pixels blur more than pixels near focus, and pixels in front of it blur too; a blurred background stays behind a sharp edge while a blurred foreground spreads over it; the pass reads depth at one and four samples with the same result; with it disabled the plan is the tone-map-only plan and its texture is not allocated, follows the chain's size, and is freed when disabled and on resize. Settings saved before it load with it off.
+- Bloom (`bloom.rs`): a single pixel above the threshold spreads energy into its neighbours, fading with distance, and keeps alpha; an image entirely below the threshold passes through unchanged; a flat image of 20,000 blooms to the expected value without overflowing the half-float mips; a composite past the half-float maximum saturates at it; with bloom disabled the renderer's plan is the tone-map-only plan; the mip chain follows the chain's size and the radius and is freed on release; the chain releases a pass's targets on resize and on frames the pass does not run.
+- FXAA smooths a hard diagonal edge and keeps each pixel's alpha, leaves a flat colour and its alpha unchanged, and leaves the plan unchanged while disabled. Settings saved before it load with it off.
 
 Headless tests in `engine/src/render/overlay/` and `scene_renderer.rs`:
 

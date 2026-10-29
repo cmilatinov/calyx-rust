@@ -3,17 +3,21 @@
 //!
 //! See `docs/design/post-processing/architecture.md`.
 
+pub use bloom::*;
 pub use chain::*;
 pub use depth::*;
 pub use dof::*;
+pub use fxaa::*;
 pub use pass::*;
 pub use pool::*;
 pub use settings::*;
 pub use tonemap::*;
 
+mod bloom;
 mod chain;
 mod depth;
 mod dof;
+mod fxaa;
 mod pass;
 mod pool;
 mod settings;
