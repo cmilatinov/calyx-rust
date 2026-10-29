@@ -28,7 +28,7 @@ use crate::scene::game_object_store::GameObjectStore;
 use crate::scene::network_index::NetworkObjectIndex;
 use crate::scene::scene_graph::SceneGraph;
 use crate::scene::transform_cache::TransformCache;
-use crate::scene::{DropReason, DroppedComponent, Prefab, SceneError, SceneView};
+use crate::scene::{DropReason, DroppedComponent, Prefab, PrefabLink, SceneError, SceneView};
 use crate::utils::{ContextSeed, TypeUuid};
 
 use super::scene_graph::{self, SiblingDir};
@@ -62,7 +62,17 @@ pub struct SceneData {
     /// Top-level objects in sibling order: the root's children for a whole
     /// scene, or the subtree's own root for a subtree.
     pub roots: Vec<Uuid>,
+    /// Each prefab instance object's link to the prefab object it was made
+    /// from, keyed by the instance object's UUID. Only a whole scene carries
+    /// links; a subtree, and so a prefab, has none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub prefab_links: BTreeMap<Uuid, PrefabLink>,
 }
+
+/// A new prefab instance's root object, the components skipped while
+/// instantiating it, and the map from each prefab object's UUID to its
+/// instance object's UUID.
+pub(crate) type MappedInstance = (GameObject, Vec<DroppedComponent>, BiHashMap<Uuid, Uuid>);
 
 /// Detached snapshot of a scene that can be restored later against a registry
 /// context.
@@ -129,6 +139,9 @@ pub struct Scene {
     /// Entries are hints that lookups check and repair; see
     /// [`Scene::find_network_object`].
     network_objects: NetworkObjectIndex,
+    /// Each prefab instance object's link to its prefab, keyed by the
+    /// object's UUID; see [`PrefabLink`].
+    pub(crate) prefab_links: BTreeMap<Uuid, PrefabLink>,
     root: GameObject,
     camera: Option<GameObject>,
     registries: ReadOnlyRegistryContext,
@@ -197,6 +210,7 @@ impl Scene {
             transforms: TransformCache::default(),
             changes: ChangeSet::default(),
             network_objects: NetworkObjectIndex::default(),
+            prefab_links: BTreeMap::new(),
             root,
             camera: Default::default(),
             registries: assets,
@@ -378,6 +392,11 @@ impl Scene {
                 log::warn!("Skipping invalid scene root entry: {err}");
             }
         }
+        for (game_object_id, link) in value.prefab_links {
+            if scene.find(game_object_id).is_some() {
+                scene.prefab_links.insert(game_object_id, link);
+            }
+        }
         (scene, dropped)
     }
 }
@@ -400,6 +419,12 @@ impl From<&Scene> for SceneData {
         data.roots = scene
             .children_ordered(scene.root)
             .map(|game_object| scene.uuid(game_object))
+            .collect();
+        data.prefab_links = scene
+            .prefab_links
+            .iter()
+            .filter(|(game_object_id, _)| data.components.contains_key(game_object_id))
+            .map(|(game_object_id, link)| (*game_object_id, link.clone()))
             .collect();
         data
     }
@@ -554,7 +579,7 @@ impl Scene {
 
     /// Checks that `prefab` is a single well-formed tree rooted at its root
     /// object, so instantiation cannot fail midway or leave stray objects.
-    fn validate_prefab(&self, prefab: &Prefab) -> Result<(), SceneError> {
+    pub(crate) fn validate_prefab(&self, prefab: &Prefab) -> Result<(), SceneError> {
         let invalid = |reason: String| Err(SceneError::InvalidPrefab(reason));
         let components = &prefab.data.components;
         if !components.contains_key(&prefab.root) {
@@ -631,6 +656,17 @@ impl Scene {
         prefab: &Prefab,
         parent: Option<GameObject>,
     ) -> Result<(GameObject, Vec<DroppedComponent>), SceneError> {
+        let (game_object, dropped, _) = self.instantiate_prefab_mapped(prefab, parent)?;
+        Ok((game_object, dropped))
+    }
+
+    /// [`Self::instantiate_prefab_reporting`], also returning the map from
+    /// each prefab object's UUID to its instance object's UUID.
+    pub(crate) fn instantiate_prefab_mapped(
+        &mut self,
+        prefab: &Prefab,
+        parent: Option<GameObject>,
+    ) -> Result<MappedInstance, SceneError> {
         self.validate_prefab(prefab)?;
         let mut dropped = Vec::new();
         let mut names = HashMap::new();
@@ -744,7 +780,7 @@ impl Scene {
             self.set_parent(game_object, Some(parent))?;
         }
 
-        Ok((game_object, dropped))
+        Ok((game_object, dropped, id_mapping))
     }
 
     /// Reparents `game_object` under `parent`, appending it after existing
@@ -856,7 +892,7 @@ impl Scene {
     /// Adds the type-erased `instance` of `component`'s type to `game_object`.
     /// Returns `false` when the object is missing or `instance` is another
     /// type.
-    fn bind_instance(
+    pub(crate) fn bind_instance(
         &mut self,
         game_object: GameObject,
         component: &dyn Component,
@@ -1070,6 +1106,20 @@ impl Scene {
         });
     }
 
+    /// Removes the component of `component`'s type from `game_object`, for
+    /// callers already holding the component registry. Removing the
+    /// object's [`ComponentID`] is refused.
+    pub(crate) fn remove_instance(&mut self, game_object: GameObject, component: &dyn Component) {
+        if component.component_type_id() == ComponentTypeId::of::<ComponentID>() {
+            log::warn!("Game objects keep their ComponentID; not removing it");
+            return;
+        }
+        self.write_entry(game_object, component.component_type_id(), |entry| {
+            component.remove_instance(entry);
+            Some(())
+        });
+    }
+
     /// Removes the component with reflected type UUID `type_uuid` from
     /// `game_object`. Returns whether the component type is registered and
     /// the object exists. Removing the object's [`ComponentID`] is refused
@@ -1206,14 +1256,26 @@ impl Scene {
                 }
             })
             .collect();
+        let mut deleted_ids = HashSet::new();
         for game_object in roots {
             for go in self.graph.detach_subtree(game_object) {
                 self.network_objects.remove(go);
+                if let Some(game_object_id) = self.store.uuid(go.entity) {
+                    self.prefab_links.remove(&game_object_id);
+                    deleted_ids.insert(game_object_id);
+                }
                 self.world.0.remove(go.entity);
                 self.changes.forget(go.entity);
                 self.store.remove(go.entity);
                 self.transforms.remove(go.node);
             }
+        }
+        // Deleting a prefab instance's root ends the instance: the members
+        // that survive it, moved out from under the root, become ordinary
+        // objects.
+        if !deleted_ids.is_empty() {
+            self.prefab_links
+                .retain(|_, link| !deleted_ids.contains(&link.instance));
         }
     }
 

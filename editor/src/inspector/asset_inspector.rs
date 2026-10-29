@@ -11,6 +11,9 @@ pub enum AssetInspectorAction {
     OpenScene(Uuid),
     /// Open the prefab asset in prefab mode.
     OpenPrefab(Uuid),
+    /// Update the open scene's instances of the prefab asset from it, as one
+    /// undo step.
+    UpdatePrefabInstances(Uuid),
 }
 
 #[reflect_trait]

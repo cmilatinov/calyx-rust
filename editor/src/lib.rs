@@ -53,6 +53,7 @@ mod camera;
 mod icons;
 mod inspector;
 mod panel;
+mod prefab_instances;
 mod prefab_mode;
 mod project_manager;
 mod remote;
@@ -720,6 +721,21 @@ impl EditorApp {
                 .clicked()
             {
                 self.state.redo_scene_edit();
+                ui.close_menu();
+            }
+            ui.separator();
+            let unavailable = prefab_instances::update_unavailable_reason(&self.state);
+            let update_response = ui
+                .add_enabled(
+                    unavailable.is_none(),
+                    Button::new("Update Prefab Instances"),
+                )
+                .on_hover_text("Update every prefab instance in the scene from its saved prefab")
+                .on_disabled_hover_text(unavailable.unwrap_or_default());
+            if update_response.clicked() {
+                if let Err(error) = self.state.update_prefab_instances(None) {
+                    log::error!("{error}");
+                }
                 ui.close_menu();
             }
         });

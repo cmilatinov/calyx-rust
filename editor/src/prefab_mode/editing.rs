@@ -36,6 +36,9 @@ pub(crate) struct PrefabEditing {
     asset_id: Uuid,
     file: PathBuf,
     label: String,
+    /// The prefab's root object as opened. Linked instances are made from
+    /// it, so a save keeps it.
+    root: Uuid,
     set_aside: SetAsideScene,
 }
 
@@ -87,6 +90,7 @@ impl PrefabEditing {
             asset_id,
             file,
             label,
+            root: data.root,
             set_aside,
         })
     }
@@ -109,14 +113,31 @@ impl PrefabEditing {
 
     /// Writes the authoring scene to the prefab's file and marks `document`
     /// clean. The scene must hold exactly one top-level object, the prefab's
-    /// root.
+    /// root as it was opened: linked instances are made from that object and
+    /// cannot follow a new root.
     pub(crate) fn save(
         &self,
         game: &GameContext,
         document: &mut SceneDocument,
     ) -> Result<(), String> {
         document.flush_pending_values(game);
-        let prefab = scene_prefab(game.scenes.current_scene())?;
+        let scene = game.scenes.current_scene();
+        let prefab = scene_prefab(scene)?;
+        if prefab.root != self.root {
+            let name = |id: Uuid| {
+                scene
+                    .find(id)
+                    .map(|object| scene.name(object))
+                    .unwrap_or_else(|| id.to_string())
+            };
+            return Err(format!(
+                "the prefab's root object must stay {}, which its instances are made from, \
+                 and the prefab's root is now {}; move {} back to the top",
+                name(self.root),
+                name(prefab.root),
+                name(self.root)
+            ));
+        }
         write_prefab_file(&self.file, &prefab)
             .map_err(|error| format!("failed to save prefab {}: {error}", self.label))?;
         document.saved_detached(game);
@@ -212,7 +233,7 @@ mod tests {
     use crate::selection::{Selection, SelectionType};
     use engine::component::ComponentID;
     use engine::context::GameContext;
-    use engine::scene::{GameObject, PrefabData, Scene};
+    use engine::scene::{GameObject, Prefab, PrefabData, Scene};
     use engine::test_support::{test_asset_context_with_assets, test_game_context};
     use nalgebra_glm::{self as glm, Vec3};
     use std::fs;
@@ -493,6 +514,31 @@ mod tests {
     }
 
     #[test]
+    fn a_prefab_saves_only_with_its_root_object_kept() {
+        let root = AssetRoot::new();
+        let mut editor = Editor::open_level(&root);
+        let prefab_file = fs::read(root.prefab_file()).unwrap();
+        let prefab = editor.open_prefab(&root);
+        let body = editor.find("Crate");
+        let mut edit = SceneEdit::begin("Wrap crate");
+        let scene = edit.scene_mut(&mut editor.game);
+        let pallet = create(scene, "Pallet", None);
+        scene
+            .set_parent(body, Some(pallet))
+            .expect("the crate should move under the pallet");
+        edit.commit(&mut editor.document, &editor.game);
+
+        let error = prefab
+            .save(&editor.game, &mut editor.document)
+            .err()
+            .expect("a new root object does not save");
+
+        assert!(error.contains("root object"), "{error}");
+        assert_eq!(fs::read(root.prefab_file()).unwrap(), prefab_file);
+        assert!(editor.document.is_dirty());
+    }
+
+    #[test]
     fn closing_without_saving_leaves_the_prefab_asset_unchanged() {
         let root = AssetRoot::new();
         let mut editor = Editor::open_level(&root);
@@ -575,5 +621,162 @@ mod tests {
                 "a saved object holds a light: {components:?}"
             );
         }
+    }
+
+    /// The names of `root` and its descendants in `scene`, sorted.
+    fn subtree_names(scene: &Scene, root: GameObject) -> Vec<String> {
+        let mut names = scene
+            .descendants(root)
+            .chain([root])
+            .map(|object| scene.name(object))
+            .collect::<Vec<_>>();
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    #[test]
+    fn a_saved_prefab_reaches_linked_instances_only_through_the_update() {
+        use crate::prefab_instances::{instantiate_prefab, update_prefab_instances};
+
+        let root = AssetRoot::new();
+        let mut editor = Editor::open_level(&root);
+        let asset_id = editor.asset_id(&root.prefab_file());
+        let mut edit = SceneEdit::begin("Import prefab");
+        let instance = instantiate_prefab(&mut edit, &mut editor.game, asset_id)
+            .expect("prefab should instantiate");
+        edit.commit(&mut editor.document, &editor.game);
+        let instance_object = editor.scene().find(instance).unwrap();
+        let mut edit = SceneEdit::begin("Move instance");
+        edit.scene_mut(&mut editor.game).set_transform(
+            instance_object,
+            &glm::translation(&Vec3::new(0.0, 0.0, 5.0)),
+        );
+        edit.commit(&mut editor.document, &editor.game);
+        let instance_lid = |editor: &Editor| {
+            let scene = editor.scene();
+            let root = scene.find(instance).unwrap();
+            scene
+                .children(root)
+                .find(|child| scene.name(*child) == "Lid")
+                .expect("the instance has a lid")
+        };
+        let lid_id = editor.scene().uuid(instance_lid(&editor));
+
+        let prefab = editor.open_prefab(&root);
+        editor.add_object("Handle", "Lid");
+        let lid = editor.find("Lid");
+        let mut edit = SceneEdit::begin("Move lid");
+        edit.scene_mut(&mut editor.game)
+            .set_transform(lid, &glm::translation(&Vec3::new(0.0, 2.0, 0.0)));
+        edit.commit(&mut editor.document, &editor.game);
+        prefab
+            .save(&editor.game, &mut editor.document)
+            .expect("prefab should save");
+        editor.close(prefab);
+
+        // Saving the prefab left the instance as it was.
+        let instance_object = editor.scene().find(instance).unwrap();
+        assert_eq!(
+            subtree_names(editor.scene(), instance_object),
+            ["Crate", "Lid"]
+        );
+        assert!(
+            editor
+                .scene()
+                .transform(instance_lid(&editor))
+                .position
+                .norm()
+                < 1e-5
+        );
+
+        let mut edit = SceneEdit::begin("Update prefab instances");
+        let update = update_prefab_instances(&mut edit, &mut editor.game, Some(asset_id))
+            .expect("instances should update");
+        edit.commit(&mut editor.document, &editor.game);
+
+        assert_eq!(update.instances, 1, "the unlinked copy is not an instance");
+        assert_eq!(update.added, 1);
+        let scene = editor.scene();
+        let instance_object = scene.find(instance).unwrap();
+        assert_eq!(
+            subtree_names(scene, instance_object),
+            ["Crate", "Handle", "Lid"]
+        );
+        let lid = instance_lid(&editor);
+        assert_eq!(scene.uuid(lid), lid_id, "the lid keeps its id");
+        assert!((scene.transform(lid).position - Vec3::new(0.0, 2.0, 0.0)).norm() < 1e-5);
+        assert!(
+            (scene.transform(instance_object).position - Vec3::new(0.0, 0.0, 5.0)).norm() < 1e-5,
+            "the instance keeps its root transform"
+        );
+
+        // The update is one undo step.
+        editor.document.undo(&mut editor.game);
+        let instance_object = editor.scene().find(instance).unwrap();
+        assert_eq!(
+            subtree_names(editor.scene(), instance_object),
+            ["Crate", "Lid"]
+        );
+        assert!(
+            editor
+                .scene()
+                .transform(instance_lid(&editor))
+                .position
+                .norm()
+                < 1e-5
+        );
+    }
+
+    #[test]
+    fn an_invalid_prefab_stops_the_update_before_any_instance_changes() {
+        use crate::prefab_instances::{instantiate_prefab, update_prefab_instances};
+
+        let root = AssetRoot::new();
+        let copy_file = root.0.join("prefabs").join("crate-copy.cxprefab");
+        fs::copy(root.prefab_file(), &copy_file).expect("prefab should copy");
+        let mut editor = Editor::open_level(&root);
+        let mut files = [root.prefab_file(), copy_file];
+        // Every prefab updates in asset id order: the first takes an edit,
+        // the second turns out invalid.
+        files.sort_by_key(|file| editor.asset_id(file));
+        let [first, second] = files;
+        let mut edit = SceneEdit::begin("Import prefabs");
+        for file in [&first, &second] {
+            let asset_id = editor.asset_id(file);
+            instantiate_prefab(&mut edit, &mut editor.game, asset_id)
+                .expect("prefab should instantiate");
+        }
+        edit.commit(&mut editor.document, &editor.game);
+
+        let mut edited = read_prefab(&first);
+        for components in edited.data.components.values_mut() {
+            for value in components.values_mut() {
+                if value.get("name").and_then(|name| name.as_str()) == Some("Lid") {
+                    value["name"] = "Hatch".into();
+                }
+            }
+        }
+        write_prefab_file(&first, &Prefab::from(edited)).expect("prefab should be written");
+        // Well-formed JSON whose hierarchy names an object it does not hold.
+        let mut broken = read_prefab(&second);
+        broken
+            .data
+            .hierarchy
+            .entry(broken.root)
+            .or_default()
+            .push(Uuid::new_v4());
+        write_prefab_file(&second, &Prefab::from(broken)).expect("prefab should be written");
+        let names = editor.names();
+
+        // As the editor runs it: an update that fails is cancelled.
+        let mut edit = SceneEdit::begin("Update prefab instances");
+        let error = update_prefab_instances(&mut edit, &mut editor.game, None)
+            .err()
+            .expect("an invalid prefab fails the update");
+        edit.cancel();
+
+        assert!(error.contains("is missing"), "{error}");
+        assert_eq!(editor.names(), names, "no instance changed");
     }
 }

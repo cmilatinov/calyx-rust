@@ -148,13 +148,31 @@ pub enum Command {
         path: PathBuf,
     },
     /// Saves the open prefab to its asset file. Scene instances of the
-    /// prefab are not changed.
+    /// prefab change only when `update_prefab_instances` runs.
     SavePrefab,
     /// Closes the open prefab and returns to the scene set aside.
     ClosePrefab {
         /// Drop unsaved prefab changes instead of refusing to close.
         #[serde(default)]
         discard: bool,
+    },
+    /// Instantiates a prefab asset at the authoring scene's root, linked to
+    /// the prefab so `update_prefab_instances` can update it later. Responds
+    /// with the instance's root object id.
+    InstantiatePrefab {
+        /// Path to the prefab file, absolute or relative to the editor's
+        /// working directory.
+        path: PathBuf,
+    },
+    /// Updates the open scene's instances of a prefab from the prefab asset
+    /// as last saved, as one undo step: of every prefab with instances in
+    /// the scene when `path` is omitted. Refused while a prefab is open or a
+    /// simulation scene exists.
+    UpdatePrefabInstances {
+        /// Path to the prefab file, absolute or relative to the editor's
+        /// working directory.
+        #[serde(default)]
+        path: Option<PathBuf>,
     },
 
     /// Returns the full active scene serialized as scene-file JSON.
@@ -487,6 +505,13 @@ mod tests {
             },
             Command::SavePrefab,
             Command::ClosePrefab { discard: true },
+            Command::InstantiatePrefab {
+                path: PathBuf::from("assets/prefabs/crate.cxprefab"),
+            },
+            Command::UpdatePrefabInstances { path: None },
+            Command::UpdatePrefabInstances {
+                path: Some(PathBuf::from("assets/prefabs/crate.cxprefab")),
+            },
             Command::GetSceneState,
             Command::ListObjects,
             Command::GetObject {

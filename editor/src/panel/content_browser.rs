@@ -352,6 +352,11 @@ impl PanelContentBrowser {
             AssetInspectorAction::OpenPrefab(asset_id) => {
                 state.prefab_mode_mut().request_open(asset_id)
             }
+            AssetInspectorAction::UpdatePrefabInstances(asset_id) => {
+                if let Err(error) = state.update_prefab_instances(Some(asset_id)) {
+                    log::error!("{error}");
+                }
+            }
         }
     }
 

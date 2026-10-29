@@ -10,6 +10,7 @@ pub use self::game_object_ref::*;
 pub use self::game_object_store::*;
 pub use self::hud::*;
 pub use self::prefab::*;
+pub use self::prefab_link::{PrefabLink, PrefabUpdate};
 pub use self::scene::*;
 pub use self::scene_graph::{SceneGraph, SiblingDir, WalkChildren};
 pub use self::scene_manager::*;
@@ -21,6 +22,7 @@ mod error;
 pub(crate) mod game_object_ref;
 mod hud;
 mod prefab;
+mod prefab_link;
 mod scene_manager;
 mod scene_view;
 
