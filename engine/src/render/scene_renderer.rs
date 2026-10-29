@@ -12,7 +12,8 @@ use crate::math::Transform;
 use crate::render::asset_render_state::AssetRenderState;
 use crate::render::overlay::{OverlayCompositor, OverlayContext, OverlayPass};
 use crate::render::postprocess::{
-    ChainPlan, ChainTargets, FxaaPass, PostProcessChain, PostProcessSettings, TonemapPass,
+    BloomPass, ChainPlan, ChainTargets, FxaaPass, PostProcessChain, PostProcessSettings,
+    TonemapPass,
 };
 use crate::render::render_utils::RenderUtils;
 use crate::render::{
@@ -308,6 +309,7 @@ impl SceneRenderer {
         let particle_renderer = ParticleRenderer::new(context)?;
         let mut post_process = PostProcessChain::new(context)?;
         post_process.push(Box::new(TonemapPass::new(context)?));
+        post_process.push(Box::new(BloomPass::new(context)?));
         post_process.push(Box::new(FxaaPass::new(context)?));
         let overlay = OverlayCompositor::new(context)?;
 

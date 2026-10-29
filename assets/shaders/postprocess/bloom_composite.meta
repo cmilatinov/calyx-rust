@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "98e0d4b9-ceb2-47ec-9fa8-2cb08e64774f",
+    "name": "shaders/postprocess/bloom_composite",
+    "display_name": "bloom_composite",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

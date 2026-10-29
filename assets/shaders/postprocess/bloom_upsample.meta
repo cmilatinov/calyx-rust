@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "200b2528-befb-4436-8c3f-d9c9aedf3cb0",
+    "name": "shaders/postprocess/bloom_upsample",
+    "display_name": "bloom_upsample",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}
