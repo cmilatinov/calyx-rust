@@ -5,7 +5,6 @@ use crate::assets::texture::Texture;
 use crate::render::RenderContext;
 use egui_wgpu::wgpu;
 use enumflags2::{bitflags, make_bitflags, BitFlags};
-use nalgebra_glm::Mat4;
 use std::fmt;
 use std::sync::Arc;
 
@@ -82,9 +81,57 @@ pub struct PassContext<'a> {
     pub render_context: &'a Arc<RenderContext>,
     /// Size in pixels of every texture the chain reads and writes.
     pub size: (u32, u32),
-    /// The projection of the camera the frame was rendered with, the matrix
-    /// the scene's depth was written through.
-    pub projection: Mat4,
+    /// The near and far planes of the camera the scene was drawn with, so a
+    /// pass can turn depth into view distance.
+    pub camera: CameraPlanes,
+}
+
+/// The clip planes of the camera a frame was drawn with.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CameraPlanes {
+    /// Distance to the near plane.
+    pub near: f32,
+    /// Distance to the far plane.
+    pub far: f32,
+    /// Tangents of half the horizontal and vertical fields of view, so a pass
+    /// can rebuild view-space positions: a pixel at normalized device
+    /// coordinates `ndc` and view distance `z` lies at `ndc * tan_half_fov * z`.
+    pub tan_half_fov: [f32; 2],
+}
+
+impl Default for CameraPlanes {
+    /// The default render camera's planes.
+    fn default() -> Self {
+        Self {
+            near: 0.1,
+            far: 1000.0,
+            // The default camera: 70 degrees horizontally at 16:9.
+            tan_half_fov: [0.7002075, 0.39386674],
+        }
+    }
+}
+
+impl CameraPlanes {
+    /// View distance of a depth-buffer value. The projection is
+    /// `perspective_lh` with OpenGL's `[-1, 1]` depth range, of which the
+    /// depth buffer keeps `[0, 1]`.
+    pub fn linear_depth(&self, depth: f32) -> f32 {
+        let (near, far) = (self.near, self.far);
+        2.0 * near * far / (far + near - depth * (far - near))
+    }
+
+    /// The depth-buffer value of view distance `distance`, the inverse of
+    /// [`Self::linear_depth`].
+    pub fn depth_of(&self, distance: f32) -> f32 {
+        let (near, far) = (self.near, self.far);
+        (far + near - 2.0 * near * far / distance) / (far - near)
+    }
+
+    /// The tangents of half the fields of view of `projection`, a
+    /// `perspective_lh` matrix.
+    pub fn tan_half_fov_of(projection: &nalgebra_glm::Mat4) -> [f32; 2] {
+        [1.0 / projection[(0, 0)], 1.0 / projection[(1, 1)]]
+    }
 }
 
 /// The textures one pass reads and writes. `input` and `output` are never the

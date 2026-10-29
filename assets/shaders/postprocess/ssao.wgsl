@@ -32,9 +32,13 @@ fn load_depth(pixel: vec2i) -> f32 {
     return textureLoad(depth_texture, clamp(pixel, vec2i(0), full_size() - 1), 0);
 }
 
+fn linear_depth(depth: f32) -> f32 {
+    return ssao_linear_depth(ssao.near, ssao.far, depth);
+}
+
 fn view_at(pixel: vec2i) -> vec3f {
     let uv = (vec2f(pixel) + 0.5) / vec2f(full_size());
-    return ssao_view_position(ssao.inverse_projection, uv, load_depth(pixel));
+    return ssao_view_position(ssao.tan_half_fov, uv, linear_depth(load_depth(pixel)));
 }
 
 // The difference to the neighbour on one axis that lies on the same surface:
@@ -91,12 +95,10 @@ fn fs_main(in: FullscreenVertexOut) -> @location(0) vec4f {
     var occlusion = 0.0;
     for (var i = 0u; i < count; i++) {
         let sample_position = center + tbn * ssao.kernel[i].xyz * ssao.radius;
-        let clip = ssao.projection * vec4f(sample_position, 1.0);
-        if clip.w <= 0.0 {
+        if sample_position.z <= 0.0 {
             continue;
         }
-        let ndc = clip.xy / clip.w;
-        let uv = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+        let uv = ssao_project(ssao.tan_half_fov, sample_position);
         // Samples off screen have nothing to test against.
         if any(uv < vec2f(0.0)) || any(uv >= vec2f(1.0)) {
             continue;
@@ -105,7 +107,7 @@ fn fs_main(in: FullscreenVertexOut) -> @location(0) vec4f {
         if ssao_is_sky(scene_depth) {
             continue;
         }
-        let scene_z = ssao_view_position(ssao.inverse_projection, uv, scene_depth).z;
+        let scene_z = linear_depth(scene_depth);
         // A surface in front of the sample hides it. Surfaces far in front of
         // this pixel, beyond the radius, fade out instead of darkening it.
         let range = smoothstep(0.0, 1.0, ssao.radius / max(abs(center.z - scene_z), 1e-5));

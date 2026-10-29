@@ -11,8 +11,9 @@ use crate::core::Ref;
 use crate::math::Transform;
 use crate::render::asset_render_state::AssetRenderState;
 use crate::render::overlay::{OverlayCompositor, OverlayContext, OverlayPass};
+use crate::render::postprocess::{CameraPlanes, SsaoPass};
 use crate::render::postprocess::{
-    ChainPlan, ChainTargets, PostProcessChain, PostProcessSettings, SsaoPass, TonemapPass,
+    ChainPlan, ChainTargets, PostProcessChain, PostProcessSettings, TonemapPass,
 };
 use crate::render::render_utils::RenderUtils;
 use crate::render::{
@@ -411,7 +412,11 @@ impl SceneRenderer {
         let device = render_context.device();
 
         self.load_camera_uniforms(queue, camera, camera_transform);
-        self.post_process.set_projection(camera.projection);
+        self.post_process.set_camera(CameraPlanes {
+            near: camera.near_plane,
+            far: camera.far_plane,
+            tan_half_fov: CameraPlanes::tan_half_fov_of(&camera.projection),
+        });
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("encoder"),

@@ -27,8 +27,7 @@ fn fs_main(in: FullscreenVertexOut) -> @location(0) vec4f {
     if ssao_is_sky(depth) {
         return texel;
     }
-    let full_size = vec2f(textureDimensions(depth_texture));
-    let z = ssao_view_position(ssao.inverse_projection, in.position.xy / full_size, depth).z;
+    let z = ssao_linear_depth(ssao.near, ssao.far, depth);
 
     let half_size = vec2i(textureDimensions(occlusion_texture));
     // Occlusion texel (i, j) was computed at full-resolution pixel (2i, 2j).

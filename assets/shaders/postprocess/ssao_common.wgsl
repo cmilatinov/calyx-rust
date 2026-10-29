@@ -12,10 +12,11 @@ const SSAO_SKY_DEPTH: f32 = 0.9999999;
 const SSAO_SKY_VIEW_Z: f32 = 60000.0;
 
 struct SsaoUniform {
-    // The camera projection the scene's depth was written through, and its
-    // inverse. View space is left-handed: the camera looks down +z.
-    projection: mat4x4f,
-    inverse_projection: mat4x4f,
+    // The camera's clip planes and the tangents of half its fields of view.
+    // View space is left-handed: the camera looks down +z.
+    near: f32,
+    far: f32,
+    tan_half_fov: vec2f,
     // Hemisphere radius, in view-space units.
     radius: f32,
     // Depth difference below which a sample does not count as occluded.
@@ -32,11 +33,23 @@ fn ssao_is_sky(depth: f32) -> bool {
     return depth >= SSAO_SKY_DEPTH;
 }
 
-// The view-space position at `uv` ((0, 0) top left) with depth `depth`.
-fn ssao_view_position(inverse_projection: mat4x4f, uv: vec2f, depth: f32) -> vec3f {
+// View distance of a depth-buffer value, as `CameraPlanes::linear_depth`:
+// the projection is `perspective_lh` with a [-1, 1] depth range, of which the
+// depth buffer keeps [0, 1].
+fn ssao_linear_depth(near: f32, far: f32, depth: f32) -> f32 {
+    return 2.0 * near * far / (far + near - depth * (far - near));
+}
+
+// The view-space position at `uv` ((0, 0) top left) and view distance `z`.
+fn ssao_view_position(tan_half_fov: vec2f, uv: vec2f, z: f32) -> vec3f {
     let ndc = vec2f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
-    let position = inverse_projection * vec4f(ndc, depth, 1.0);
-    return position.xyz / position.w;
+    return vec3f(ndc * tan_half_fov * z, z);
+}
+
+// The uv ((0, 0) top left) a view-space position projects to.
+fn ssao_project(tan_half_fov: vec2f, position: vec3f) -> vec2f {
+    let ndc = position.xy / (tan_half_fov * position.z);
+    return vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
 }
 
 // How much two view depths belong to the same surface, from 1 (equal) down

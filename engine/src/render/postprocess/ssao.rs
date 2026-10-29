@@ -69,8 +69,9 @@ const MAX_SAMPLES: usize = AmbientOcclusionSettings::MAX_SAMPLES as usize;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct SsaoUniform {
-    projection: [[f32; 4]; 4],
-    inverse_projection: [[f32; 4]; 4],
+    near: f32,
+    far: f32,
+    tan_half_fov: [f32; 2],
     radius: f32,
     bias: f32,
     intensity: f32,
@@ -269,8 +270,9 @@ impl PostProcessPass for SsaoPass {
         let ao = &settings.ambient_occlusion;
         let samples = ao.samples();
         let uniform = SsaoUniform {
-            projection: context.projection.into(),
-            inverse_projection: nalgebra_glm::inverse(&context.projection).into(),
+            near: context.camera.near,
+            far: context.camera.far,
+            tan_half_fov: context.camera.tan_half_fov,
             radius: ao.radius.max(0.0),
             bias: ao.bias.max(0.0),
             intensity: ao.intensity.max(0.0),
@@ -403,12 +405,11 @@ mod tests {
     use super::*;
     use crate::component::ComponentGlobalPostProcessVolume;
     use crate::render::postprocess::{
-        ChainPlan, ChainTargets, PassTarget, PlannedPass, PostProcessChain,
+        CameraPlanes, ChainPlan, ChainTargets, PassTarget, PlannedPass, PostProcessChain,
     };
     use crate::render::scene_renderer::half_to_f32;
     use crate::render::{Camera, SceneRenderer, SceneRendererOptions};
     use crate::test_support::{SceneBuilder, TestAssets};
-    use nalgebra_glm::Mat4;
 
     const SIZE: (u32, u32) = (32, 32);
     const BYTES_PER_ROW: u32 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
@@ -419,6 +420,16 @@ mod tests {
 
     fn camera() -> Camera {
         Camera::new(1.0, 60f32.to_radians(), 0.1, 100.0)
+    }
+
+    /// The planes the renderer hands the chain for [`camera`].
+    fn planes() -> CameraPlanes {
+        let camera = camera();
+        CameraPlanes {
+            near: camera.near_plane,
+            far: camera.far_plane,
+            tan_half_fov: CameraPlanes::tan_half_fov_of(&camera.projection),
+        }
     }
 
     fn ssao() -> PostProcessSettings {
@@ -471,11 +482,6 @@ mod tests {
         )
     }
 
-    /// The depth `projection` writes for view depth `z`.
-    fn depth_of(projection: &Mat4, z: f32) -> f32 {
-        (projection[(2, 2)] * z + projection[(2, 3)]) / (projection[(3, 2)] * z)
-    }
-
     const DEPTH_COPY_SHADER: &str = "
 @group(0) @binding(0) var values: texture_2d<f32>;
 @vertex fn vs_main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {
@@ -487,13 +493,12 @@ mod tests {
 }
 ";
 
-    /// Scene depth of [`SIZE`] seen through `projection`. `view_z` gives the
+    /// Scene depth of [`SIZE`] seen through [`camera`]'s projection. `view_z` gives the
     /// view depth of the surface along the ray through each pixel center,
     /// passed as its slopes `(x / z, y / z)`, or `None` for sky, which gets
     /// the raw depth `sky`.
     fn scene_depth(
         render_context: &Arc<RenderContext>,
-        projection: &Mat4,
         view_z: impl Fn(f32, f32) -> Option<f32>,
         sky: f32,
     ) -> Texture {
@@ -505,9 +510,15 @@ mod tests {
             for x in 0..SIZE.0 {
                 let ndc_x = (x as f32 + 0.5) / SIZE.0 as f32 * 2.0 - 1.0;
                 let ndc_y = 1.0 - (y as f32 + 0.5) / SIZE.1 as f32 * 2.0;
+                // Through the render projection itself, independent of the
+                // planes the pass is given.
+                let projection = camera().projection;
                 let slopes = (ndc_x / projection[(0, 0)], ndc_y / projection[(1, 1)]);
                 let value = view_z(slopes.0, slopes.1)
-                    .map(|z| depth_of(projection, z))
+                    .map(|z| {
+                        let clip = projection * nalgebra_glm::vec4(0.0, 0.0, z, 1.0);
+                        clip.z / clip.w
+                    })
                     .unwrap_or(sky);
                 let start = (y * BYTES_PER_ROW + x * 4) as usize;
                 data[start..start + 4].copy_from_slice(&value.to_le_bytes());
@@ -654,7 +665,7 @@ mod tests {
         let render_context = context.render_context.clone();
         let mut chain = PostProcessChain::new(context).expect("chain shaders load");
         chain.push(Box::new(SsaoPass::new(context).expect("ssao loads")));
-        chain.set_projection(camera().projection);
+        chain.set_camera(planes());
         let source = texture(&render_context, SIZE, wgpu::TextureFormat::Rgba16Float);
         let output = texture(&render_context, SIZE, wgpu::TextureFormat::Rgba16Float);
         let mut encoder = render_context
@@ -704,12 +715,7 @@ mod tests {
         let assets = TestAssets::engine();
         let context = assets.asset_context();
         let context = context.lock_read();
-        let depth = scene_depth(
-            &context.render_context,
-            &camera().projection,
-            |_, _| Some(4.0),
-            1.0,
-        );
+        let depth = scene_depth(&context.render_context, |_, _| Some(4.0), 1.0);
 
         for radius in [AmbientOcclusionSettings::default().radius, CORNER_RADIUS] {
             let output = run_ssao(&context, &ssao_with_radius(radius), &depth);
@@ -735,7 +741,6 @@ mod tests {
         // front of the camera, down the middle of the image: z + |x| = 4.
         let depth = scene_depth(
             &context.render_context,
-            &camera().projection,
             |x, _| Some(4.0 / (1.0 + x.abs())),
             1.0,
         );
@@ -777,13 +782,11 @@ mod tests {
         let assets = TestAssets::engine();
         let context = assets.asset_context();
         let context = context.lock_read();
-        let projection = camera().projection;
         for sky in [1.0, SKYBOX_DEPTH] {
             // A corner on the left half and sky on the right, so the sky
             // borders occluded geometry.
             let depth = scene_depth(
                 &context.render_context,
-                &projection,
                 |x, _| (x < 0.0).then(|| 4.0 / (1.0 + (x + 0.3).abs())),
                 sky,
             );
@@ -871,7 +874,7 @@ mod tests {
             let pass_context = PassContext {
                 render_context: &render_context,
                 size,
-                projection: camera().projection,
+                camera: planes(),
             };
             pass.prepare(&pass_context, &ssao());
             let mut encoder = render_context

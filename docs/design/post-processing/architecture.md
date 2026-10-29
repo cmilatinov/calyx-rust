@@ -110,8 +110,6 @@ pub struct PassIo<'a> {
 
 `prepare` uploads the pass's uniforms from the settings. `record` draws from `input` into `output`. A pass that owns textures besides the pool targets, such as bloom's mip chain, frees them in `release_targets`. A pass reads its input with `textureLoad` or a sampler and writes every output pixel, so it never needs to load the output.
 
-`PassContext` carries the render context, the chain's size and `projection`, the projection matrix of the camera the frame was rendered with. `SceneRenderer::render_scene_base` hands it to the chain with `PostProcessChain::set_projection`, so a pass that reads depth can rebuild view-space positions with the same matrix the depth was written through.
-
 ## Chain And Target Pool
 
 `PostProcessChain` owns the passes and a `TargetPool`.
@@ -133,6 +131,10 @@ A pass declares the scene inputs it reads in `inputs()`. The chain builds each o
 
 Tone mapping asks for nothing.
 
+`PassContext::camera` carries the near and far planes of the camera the frame was drawn with, as `CameraPlanes`. `render_scene_base` hands them to the chain with `PostProcessChain::set_camera`, so `finalize_scene` still needs no camera. `CameraPlanes::linear_depth` turns a depth-buffer value into view distance: the projection is `perspective_lh` with OpenGL's `[-1, 1]` depth range, of which the depth buffer keeps `[0, 1]`, so `distance = 2nf / (f + n - d (f - n))`.
+
+`CameraPlanes::tan_half_fov` holds the tangents of half the horizontal and vertical fields of view, taken from the projection matrix (`1 / P[0][0]`, `1 / P[1][1]`), so a pass can rebuild view-space positions: the pixel at normalized device coordinates `ndc` and view distance `z` lies at `(ndc * tan_half_fov * z, z)`, and a view-space point projects back to `ndc = xy / (tan_half_fov * z)`.
+
 ## Tone Mapping
 
 `TonemapPass` is the `Tonemap` stage. It always runs: a missing or disabled volume selects `PostProcessSettings::default()`, never untone-mapped output.
@@ -152,7 +154,7 @@ blur        occlusion                    -> blurred (1/2)     depth-aware 4x4
 composite   input, blurred, depth        -> output            input.rgb * visibility, alpha kept
 ```
 
-- **Reconstruction**: the renderer produces no normals (`SceneInput::Normals` is unavailable), so each occlusion texel rebuilds its view-space position from depth with the inverse of `PassContext::projection`, and its normal from the cross product of the position differences to its horizontal and vertical neighbours. On each axis it takes the neighbour closer in depth, so normals do not bend at silhouettes, and it turns the normal toward the camera.
+- **Reconstruction**: the renderer produces no normals (`SceneInput::Normals` is unavailable), so each occlusion texel rebuilds its view-space position from depth with `PassContext::camera` (linear depth and `tan_half_fov`), and its normal from the cross product of the position differences to its horizontal and vertical neighbours. On each axis it takes the neighbour closer in depth, so normals do not bend at silhouettes, and it turns the normal toward the camera.
 - **Hemisphere**: up to 64 kernel offsets in the unit hemisphere around +z, generated once per sample count from a fixed seed. They cluster toward the center and keep at least 0.15 of their length along the normal, so a flat surface does not occlude itself. Each texel turns the kernel around its normal by one of 16 angles from a 4x4 tile in Bayer order, then scales it by `radius`.
 - **Occlusion**: each sample is projected back to the screen and compared with the depth there. A surface more than `bias` in front of the sample occludes it, faded out by `smoothstep(radius / |dz|)` when that surface lies far in front of the pixel, so a foreground object does not darken the wall behind it. Samples off screen or on the sky do not count. Visibility is `(1 - occluded / samples) ^ intensity`.
 - **Blur**: a 4x4 box over exactly one tile of the noise, which cancels the rotation pattern, weighting each texel by how close its view depth is to the center's (zero at a 10% difference).

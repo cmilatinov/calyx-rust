@@ -1,14 +1,13 @@
 //! The ordered chain of post-processing passes.
 
 use super::{
-    check_inputs, DepthResolve, IntermediateSlot, PassContext, PassIo, PostProcessError,
-    PostProcessPass, PostProcessSettings, SceneInput, TargetPool,
+    check_inputs, CameraPlanes, DepthResolve, IntermediateSlot, PassContext, PassIo,
+    PostProcessError, PostProcessPass, PostProcessSettings, SceneInput, TargetPool,
 };
 use crate::assets::texture::Texture;
 use crate::context::ReadOnlyAssetContext;
 use crate::render::{RenderContext, SceneRendererError};
 use egui_wgpu::wgpu;
-use nalgebra_glm::Mat4;
 use std::sync::Arc;
 
 /// A texture a planned pass reads or writes.
@@ -108,7 +107,7 @@ pub struct PostProcessChain {
     passes: Vec<Box<dyn PostProcessPass>>,
     pool: TargetPool,
     depth: DepthResolve,
-    projection: Mat4,
+    camera: CameraPlanes,
 }
 
 impl PostProcessChain {
@@ -118,14 +117,8 @@ impl PostProcessChain {
             passes: Vec::new(),
             pool: TargetPool::default(),
             depth: DepthResolve::new(context)?,
-            projection: Mat4::identity(),
+            camera: CameraPlanes::default(),
         })
-    }
-
-    /// Sets the projection of the camera the next frame is rendered with,
-    /// which passes that read depth use to rebuild view-space positions.
-    pub fn set_projection(&mut self, projection: Mat4) {
-        self.projection = projection;
     }
 
     /// Adds `pass` after every pass of its stage and the stages before it.
@@ -137,6 +130,12 @@ impl PostProcessChain {
             .position(|existing| existing.stage() > stage)
             .unwrap_or(self.passes.len());
         self.passes.insert(position, pass);
+    }
+
+    /// Sets the planes of the camera the next frames are drawn with, which
+    /// passes that read depth see in [`PassContext::camera`].
+    pub fn set_camera(&mut self, camera: CameraPlanes) {
+        self.camera = camera;
     }
 
     /// The passes, in the order they run.
@@ -194,7 +193,7 @@ impl PostProcessChain {
             passes,
             pool,
             depth,
-            projection,
+            camera,
         } = self;
         let size = (
             targets.output.descriptor.size.width,
@@ -212,7 +211,7 @@ impl PostProcessChain {
         let context = PassContext {
             render_context,
             size,
-            projection: *projection,
+            camera: *camera,
         };
         for planned in &plan.passes {
             passes[planned.pass].prepare(&context, settings);
