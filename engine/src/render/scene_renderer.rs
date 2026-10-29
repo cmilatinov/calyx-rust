@@ -12,10 +12,9 @@ use crate::math::Transform;
 use crate::render::asset_render_state::AssetRenderState;
 use crate::render::overlay::{OverlayCompositor, OverlayContext, OverlayPass};
 use crate::render::postprocess::{
-    BloomPass, ChainPlan, ChainTargets, FxaaPass, PostProcessChain, PostProcessSettings,
-    TonemapPass,
+    BloomPass, CameraPlanes, ChainPlan, ChainTargets, DepthOfFieldPass, FxaaPass, PostProcessChain,
+    PostProcessSettings, SsaoPass, TonemapPass,
 };
-use crate::render::postprocess::{CameraPlanes, SsaoPass};
 use crate::render::render_utils::RenderUtils;
 use crate::render::{
     Camera, GizmoRenderer, GridRenderer, LightManager, MeshRenderDefaults, MeshRenderTargets,
@@ -311,6 +310,9 @@ impl SceneRenderer {
         let mut post_process = PostProcessChain::new(context)?;
         // SSAO runs first in the Hdr stage, on the unblurred scene.
         post_process.push(Box::new(SsaoPass::new(context)?));
+        // Depth of field runs after SSAO, before bloom, so bloom
+        // spreads already blurred highlights.
+        post_process.push(Box::new(DepthOfFieldPass::new(context)?));
         post_process.push(Box::new(TonemapPass::new(context)?));
         post_process.push(Box::new(BloomPass::new(context)?));
         post_process.push(Box::new(FxaaPass::new(context)?));

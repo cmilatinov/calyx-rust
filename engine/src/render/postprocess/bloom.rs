@@ -842,14 +842,14 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            ["ssao", "bloom", "tonemap", "fxaa"],
-            "the renderer runs bloom after ssao"
+            ["ssao", "depth_of_field", "bloom", "tonemap", "fxaa"],
+            "the renderer runs bloom after ssao and depth of field"
         );
         assert_eq!(
             *renderer.last_post_process_plan(),
             ChainPlan {
                 passes: vec![PlannedPass {
-                    pass: 2,
+                    pass: 3,
                     input: PassTarget::Source,
                     output: PassTarget::Output,
                 }],

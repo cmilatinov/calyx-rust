@@ -23,6 +23,8 @@ pub struct PostProcessSettings {
     /// Screen-space ambient occlusion, first in the `Hdr` stage. Off by
     /// default.
     pub ambient_occlusion: super::AmbientOcclusionSettings,
+    /// Depth of field, in the `Hdr` stage. Off by default.
+    pub depth_of_field: super::DepthOfFieldSettings,
     /// Bloom, in the `Hdr` stage. Off by default.
     pub bloom: BloomSettings,
     /// Screen-space anti-aliasing, after tone mapping. Off by default.
