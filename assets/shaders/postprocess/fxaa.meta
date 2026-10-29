@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "564be9d8-f1cc-4a0c-973a-b637d3a64500",
+    "name": "shaders/postprocess/fxaa",
+    "display_name": "fxaa",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

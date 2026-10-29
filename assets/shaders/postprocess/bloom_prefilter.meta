@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "0dcee049-79d2-477e-a81b-bd95c776f30e",
+    "name": "shaders/postprocess/bloom_prefilter",
+    "display_name": "bloom_prefilter",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

@@ -11,10 +11,11 @@ use crate::core::Ref;
 use crate::math::Transform;
 use crate::render::asset_render_state::AssetRenderState;
 use crate::render::overlay::{OverlayCompositor, OverlayContext, OverlayPass};
-use crate::render::postprocess::{CameraPlanes, SsaoPass};
 use crate::render::postprocess::{
-    ChainPlan, ChainTargets, PostProcessChain, PostProcessSettings, TonemapPass,
+    BloomPass, ChainPlan, ChainTargets, FxaaPass, PostProcessChain, PostProcessSettings,
+    TonemapPass,
 };
+use crate::render::postprocess::{CameraPlanes, SsaoPass};
 use crate::render::render_utils::RenderUtils;
 use crate::render::{
     Camera, GizmoRenderer, GridRenderer, LightManager, MeshRenderDefaults, MeshRenderTargets,
@@ -311,6 +312,8 @@ impl SceneRenderer {
         // SSAO runs first in the Hdr stage, on the unblurred scene.
         post_process.push(Box::new(SsaoPass::new(context)?));
         post_process.push(Box::new(TonemapPass::new(context)?));
+        post_process.push(Box::new(BloomPass::new(context)?));
+        post_process.push(Box::new(FxaaPass::new(context)?));
         let overlay = OverlayCompositor::new(context)?;
 
         // Default assets
@@ -1498,6 +1501,7 @@ fn register_object_id(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::assets::material::ShaderVariableValue;
     use crate::assets::skybox::Skybox;
     use crate::assets::AssetRef;
     use crate::component::{
@@ -2064,6 +2068,76 @@ mod tests {
                 "the outline is not pickable at {samples} samples"
             );
         }
+    }
+
+    #[test]
+    fn an_emissive_material_glows_without_light_and_a_default_one_stays_black() {
+        const SIZE: (u32, u32) = (64, 64);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        // A material made from the shader reflects the emission fields with
+        // zero strength, so it does not emit.
+        let plain = pbr_material(&read_only_context, "test/emission_off");
+        let emissive = {
+            let registry = read_only_context.registries.assets.read();
+            let shader = registry
+                .load::<Shader>("shaders/pbr")
+                .expect("missing pbr shader");
+            let mut material = Material::from_shader(&read_only_context, shader);
+            for variable in material.variables.iter_mut() {
+                match variable.name.as_str() {
+                    "emission_color" => {
+                        variable.value = ShaderVariableValue::Color([0.25, 0.5, 1.0, 1.0])
+                    }
+                    "emission_strength" => variable.value = ShaderVariableValue::Float(2.0),
+                    _ => {}
+                }
+            }
+            registry
+                .create_or_update("test/emission_on".into(), material)
+                .expect("material should be created")
+        };
+        let left = vec3(-1.0, 0.0, 0.0);
+        let right = vec3(1.0, 0.0, 0.0);
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        spawn_mesh(&mut builder, "plain", &cube, &plain, left);
+        spawn_mesh(&mut builder, "emissive", &cube, &emissive, right);
+        let scene = builder.finish();
+        let (camera, transform) = front_camera(1.0, 5.0);
+
+        let mut renderer = SceneRenderer::new(
+            &read_only_context,
+            SceneRendererOptions {
+                clear_color: Color32::BLACK,
+                ..Default::default()
+            },
+            SIZE,
+        )
+        .expect("scene renderer should load its assets");
+        renderer.render_scene_base(&camera, &transform, &scene, None, None);
+        renderer.finalize_scene();
+        let image = read_scene_texture(&renderer, &render_context);
+
+        let (x, y) = project(&camera, &transform, left, SIZE);
+        assert_eq!(
+            image.get_pixel(x, y).0,
+            [0, 0, 0, 255],
+            "an unlit cube without emission is black"
+        );
+        let (x, y) = project(&camera, &transform, right, SIZE);
+        let [r, g, b, _] = image.get_pixel(x, y).0;
+        assert!(
+            b > g && g > r && r > 0,
+            "the emissive cube shows its emission color, got ({r}, {g}, {b})"
+        );
     }
 
     #[test]
