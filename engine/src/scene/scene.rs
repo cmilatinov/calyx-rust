@@ -1256,17 +1256,26 @@ impl Scene {
                 }
             })
             .collect();
+        let mut deleted_ids = HashSet::new();
         for game_object in roots {
             for go in self.graph.detach_subtree(game_object) {
                 self.network_objects.remove(go);
                 if let Some(game_object_id) = self.store.uuid(go.entity) {
                     self.prefab_links.remove(&game_object_id);
+                    deleted_ids.insert(game_object_id);
                 }
                 self.world.0.remove(go.entity);
                 self.changes.forget(go.entity);
                 self.store.remove(go.entity);
                 self.transforms.remove(go.node);
             }
+        }
+        // Deleting a prefab instance's root ends the instance: the members
+        // that survive it, moved out from under the root, become ordinary
+        // objects.
+        if !deleted_ids.is_empty() {
+            self.prefab_links
+                .retain(|_, link| !deleted_ids.contains(&link.instance));
         }
     }
 

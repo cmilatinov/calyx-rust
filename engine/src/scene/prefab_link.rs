@@ -32,6 +32,8 @@
 //! - Every object keeps its parent and sibling order in the instance. An
 //!   object moved out from under its instance root stays part of the
 //!   instance and is updated where it is.
+//! - Deleting an instance's root object ends the instance: every member that
+//!   survives it becomes an ordinary, unlinked object.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -901,6 +903,26 @@ mod tests {
         let before = serde_json::to_value(&fixture.level).unwrap();
         fixture.update();
         assert_eq!(serde_json::to_value(&fixture.level).unwrap(), before);
+    }
+
+    #[test]
+    fn deleting_the_instance_root_unlinks_the_members_that_survive_it() {
+        let mut fixture = Fixture::new();
+        let lid = fixture.target("Lid");
+        fixture
+            .level
+            .set_parent(lid, None)
+            .expect("the lid should move to the scene root");
+        fixture.level.delete(fixture.instance);
+        fixture.level.flush_deletes();
+
+        let level = &fixture.level;
+        assert_eq!(names(level), ["Lid"]);
+        assert!(level.prefab_link(lid).is_none(), "the lid is unlinked");
+        assert!(
+            level.linked_prefabs().is_empty(),
+            "the scene holds no instance of the prefab"
+        );
     }
 
     /// A fixture whose prefab root holds a skinned mesh with the lid as its
