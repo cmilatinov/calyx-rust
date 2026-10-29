@@ -6,10 +6,10 @@
 struct BloomUniform {
     threshold: f32,
     knee: f32,
-    // Scale of the added light, already divided by the mip count, since the
-    // first mip holds the sum of every mip.
+    // Scale of the added light. The first mip holds the sum of every mip, but
+    // the prefilter already divided the light by the mip count.
     intensity: f32,
-    _padding: f32,
+    mip_scale: f32,
 };
 
 @group(0) @binding(0)

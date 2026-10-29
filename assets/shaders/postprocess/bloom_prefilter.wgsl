@@ -11,7 +11,9 @@ struct BloomUniform {
     knee: f32,
     // The composite's scale of the blurred light.
     intensity: f32,
-    _padding: f32,
+    // One over the mip count. The upsample sums every mip into the first, so
+    // dividing here keeps that sum within half-float range.
+    mip_scale: f32,
 };
 
 @group(0) @binding(0)
@@ -44,5 +46,5 @@ fn soft_threshold(color: vec3f) -> vec3f {
 fn fs_main(in: FullscreenVertexOut) -> @location(0) vec4f {
     // Negative or overflowed scene color must not spread through the blur.
     let color = clamp(bloom_downsample(input_texture, input_sampler, in.uv), vec3f(0.0), vec3f(65000.0));
-    return vec4f(soft_threshold(color), 1.0);
+    return vec4f(soft_threshold(color) * bloom.mip_scale, 1.0);
 }

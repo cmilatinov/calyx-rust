@@ -71,7 +71,10 @@ struct BloomUniform {
     threshold: f32,
     knee: f32,
     intensity: f32,
-    _padding: f32,
+    /// One over the mip count. The prefilter scales the light by it, so the
+    /// sum of every mip that the upsample builds stays within half-float
+    /// range.
+    mip_scale: f32,
 }
 
 type ViewKey = (wgpu::BindGroupLayout, wgpu::TextureView);
@@ -92,8 +95,9 @@ struct Mip {
 /// light above the threshold. Each later mip downsamples the one before it
 /// with a 13-tap filter. Going back up, each mip is tent-filtered and added
 /// onto the next larger one, so the first mip ends up holding every mip's
-/// blur. The composite adds it onto the input, scaled by the intensity over
-/// the mip count.
+/// blur. The prefilter already divides the light by the mip count, so that
+/// sum stays within half-float range. The composite adds it onto the input,
+/// scaled by the intensity.
 ///
 /// The pass owns its mip chain, separate from the chain's pool targets. It
 /// creates it on the first frame bloom runs, sized from the chain, and frees
@@ -308,8 +312,8 @@ impl PostProcessPass for BloomPass {
         let uniform = BloomUniform {
             threshold,
             knee: threshold * bloom.knee.clamp(0.0, 1.0),
-            intensity: bloom.intensity.max(0.0) / self.mip_count as f32,
-            _padding: 0.0,
+            intensity: bloom.intensity.max(0.0),
+            mip_scale: 1.0 / self.mip_count as f32,
         };
         context.render_context.queue().write_buffer(
             &self.uniform_buffer,
@@ -672,6 +676,32 @@ mod tests {
     }
 
     #[test]
+    fn a_bright_image_blooms_without_overflowing_the_half_float_mips() {
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        // Each of the four mips holds about 20,000; summed unnormalized they
+        // would pass the half-float maximum of 65,504.
+        let source = upload(&context.render_context, SIZE, |_, _| {
+            [20_000.0, 20_000.0, 20_000.0, 1.0]
+        });
+
+        let output = run_bloom(&context, &bloom(0.5, 4), &source);
+
+        // A flat image blurs to itself: input + (input - threshold) * intensity.
+        let expected = 20_000.0 + (20_000.0 - 1.0) * 0.5;
+        for texel in &output {
+            for &channel in &texel[..3] {
+                assert!(
+                    (channel - expected).abs() <= expected * 0.01,
+                    "expected about {expected}, got {texel:?}"
+                );
+            }
+            assert_eq!(texel[3], 1.0, "bloom keeps alpha");
+        }
+    }
+
+    #[test]
     fn an_image_below_the_threshold_passes_through_unchanged() {
         let assets = TestAssets::engine();
         let context = assets.asset_context();
@@ -729,7 +759,11 @@ mod tests {
             .iter()
             .map(|pass| pass.name())
             .collect();
-        assert_eq!(names, ["bloom", "tonemap", "fxaa"], "the renderer runs bloom");
+        assert_eq!(
+            names,
+            ["bloom", "tonemap", "fxaa"],
+            "the renderer runs bloom"
+        );
         assert_eq!(
             *renderer.last_post_process_plan(),
             ChainPlan {
