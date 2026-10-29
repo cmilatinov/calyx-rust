@@ -100,6 +100,11 @@ pub struct ComponentAnimator {
     #[reflect_skip]
     #[serde(skip)]
     state_time: TimeType,
+    /// Normalized time the state machine last checked the current state's transitions at, so
+    /// an exit time a frame steps over is still met.
+    #[reflect_skip]
+    #[serde(skip)]
+    checked_normalized_time: Option<f32>,
     #[reflect_skip]
     #[serde(skip)]
     current_transition: Option<AnimatorTransition>,
@@ -242,6 +247,7 @@ impl ComponentAnimator {
             .start_node
             .and_then(|id| graph.node_indices().find(|n| graph[*n].id == id));
         self.state_time = 0.0;
+        self.checked_normalized_time = None;
     }
 
     fn step_fsm(&mut self, assets: &ReadOnlyRegistryContext) {
@@ -264,9 +270,11 @@ impl ComponentAnimator {
                 .node_weight(state)
                 .and_then(|node| Self::motion_length(&self.parameters, assets, &node.motion))
                 .map(|length| self.state_time / length);
+            let checked_normalized_time = self.checked_normalized_time;
+            self.checked_normalized_time = normalized_time;
             let Some(transition) = graph.edges(state).find(|transition| {
                 let transition = transition.weight();
-                Self::exit_time_reached(transition, normalized_time)
+                Self::exit_time_reached(transition, checked_normalized_time, normalized_time)
                     && transition
                         .conditions
                         .iter()
@@ -297,6 +305,7 @@ impl ComponentAnimator {
             if let Some((_source, target)) = graph.edge_endpoints(transition.transition) {
                 self.current_state = Some(target);
                 self.state_time = 0.0;
+                self.checked_normalized_time = None;
             }
         }
         self.current_transition = None;
@@ -305,17 +314,35 @@ impl ComponentAnimator {
     /// Whether `transition` may start at `normalized_time`, the time in its source state over
     /// the state's length. As in Unity, an exit time below 1 is met at that fraction of every
     /// loop, and one of 1 or more is met once that many loops have played and then at the same
-    /// fraction of each later loop. A state without a length, such as one whose clip is
-    /// missing, does not hold its transitions back.
-    fn exit_time_reached(transition: &AnimationTransition, normalized_time: Option<f32>) -> bool {
+    /// fraction of each later loop. An exit point that a frame steps over since
+    /// `checked_normalized_time`, the normalized time last checked in this state, is met too,
+    /// even when the frame lands in the next loop before the exit fraction. A state without a
+    /// length, such as one whose clip is missing, does not hold its transitions back.
+    fn exit_time_reached(
+        transition: &AnimationTransition,
+        checked_normalized_time: Option<f32>,
+        normalized_time: Option<f32>,
+    ) -> bool {
         if !transition.has_exit_time {
             return true;
         }
         let Some(normalized_time) = normalized_time else {
             return true;
         };
-        normalized_time >= transition.exit_time
-            && normalized_time.fract() >= transition.exit_time.fract()
+        let exit_time = transition.exit_time;
+        if normalized_time >= exit_time && normalized_time.fract() >= exit_time.fract() {
+            return true;
+        }
+        // The exit points are `exit_time + k` for every whole k >= 0. Find the first one after
+        // the last check and see whether this frame has reached it.
+        checked_normalized_time.is_some_and(|checked| {
+            let next_exit_point = if checked < exit_time {
+                exit_time
+            } else {
+                exit_time + (checked - exit_time).floor() + 1.0
+            };
+            next_exit_point <= normalized_time
+        })
     }
 
     /// Seconds one loop of `motion` lasts. A blend tree lasts the average of its clips' lengths,
@@ -1238,6 +1265,44 @@ mod tests {
         assert!(
             animator.transitioning(),
             "did not start at half of the loop"
+        );
+    }
+
+    #[test]
+    fn exit_time_stepped_over_at_a_loop_boundary_still_fires() {
+        // Frames see 0.875 and then 1.0 (fraction 0): no frame lands past 0.95 in a loop.
+        let mut graph = ExitTimeGraph::new();
+        let a = graph.state("A", graph.clip(1.0, 1.0));
+        let b = graph.state("B", graph.clip(1.0, 1.0));
+        graph.transition(a, b, Some(0.95), false);
+        let mut animator = graph.animator();
+
+        animator.run_to(0.875);
+        assert!(!animator.transitioning(), "started before the exit time");
+        animator.run_to(1.0);
+        assert!(
+            animator.transitioning(),
+            "missed the exit time it stepped over"
+        );
+    }
+
+    #[test]
+    fn exit_time_above_one_stepped_over_at_a_loop_boundary_still_fires() {
+        // A clip of 1 tick at speed 4 lasts a quarter second, so each frame is half a loop and
+        // frames only ever land on fractions 0 and 0.5.
+        let mut graph = ExitTimeGraph::new();
+        let a = graph.state("A", graph.clip(1.0, 4.0));
+        let b = graph.state("B", graph.clip(1.0, 1.0));
+        graph.transition(a, b, Some(1.95), true);
+        let mut animator = graph.animator();
+        animator.set_go(true);
+
+        animator.run_to(0.375);
+        assert!(!animator.transitioning(), "started before 1.95 loops");
+        animator.run_to(0.5);
+        assert!(
+            animator.transitioning(),
+            "missed the exit time it stepped over"
         );
     }
 
