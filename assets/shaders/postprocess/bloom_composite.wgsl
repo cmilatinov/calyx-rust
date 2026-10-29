@@ -12,6 +12,9 @@ struct BloomUniform {
     mip_scale: f32,
 };
 
+// The largest finite half float.
+const HALF_MAX: f32 = 65504.0;
+
 @group(0) @binding(0)
 var input_texture: texture_2d<f32>;
 
@@ -28,6 +31,10 @@ var<uniform> bloom: BloomUniform;
 fn fs_main(in: FullscreenVertexOut) -> @location(0) vec4f {
     let texel = textureLoad(input_texture, vec2i(in.position.xy), 0);
     let glow = bloom_upsample(bloom_texture, bloom_sampler, in.uv);
+    // The HDR targets are `Rgba16Float`. A sum past their largest finite
+    // value saturates there instead of becoming infinity, which the tone
+    // mapper's rational curve would turn into NaN.
+    let color = min(texel.rgb + glow * bloom.intensity, vec3f(HALF_MAX));
     // Alpha is coverage, not color, and passes through untouched.
-    return vec4f(texel.rgb + glow * bloom.intensity, texel.a);
+    return vec4f(color, texel.a);
 }

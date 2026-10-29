@@ -377,34 +377,37 @@ impl PostProcessPass for BloomPass {
             RenderUtils::draw_fullscreen(&mut render_pass);
         }
 
-        // Upsample each mip and add it onto the next larger one.
-        let (upsample, upsample_layout) = Self::pipeline(upsample, Self::additive(format));
-        for level in (1..mips.len()).rev() {
-            let source = mips[level].texture.view.clone();
-            let layout = upsample_layout.clone();
-            let bind_group = mips[level - 1]
-                .upsample
-                .get_or_create((layout.clone(), source.clone()), || {
-                    Self::sampling_bind_group(device, &layout, &source, sampler, None)
-                })
-                .clone();
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Bloom Upsample"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &mips[level - 1].texture.view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            render_pass.set_pipeline(&upsample);
-            render_pass.set_bind_group(0, &bind_group, &[]);
-            RenderUtils::draw_fullscreen(&mut render_pass);
+        // Upsample each mip and add it onto the next larger one. A single mip
+        // has nothing to upsample, so it needs no blending pipeline.
+        if mips.len() > 1 {
+            let (upsample, upsample_layout) = Self::pipeline(upsample, Self::additive(format));
+            for level in (1..mips.len()).rev() {
+                let source = mips[level].texture.view.clone();
+                let layout = upsample_layout.clone();
+                let bind_group = mips[level - 1]
+                    .upsample
+                    .get_or_create((layout.clone(), source.clone()), || {
+                        Self::sampling_bind_group(device, &layout, &source, sampler, None)
+                    })
+                    .clone();
+                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Bloom Upsample"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &mips[level - 1].texture.view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                render_pass.set_pipeline(&upsample);
+                render_pass.set_bind_group(0, &bind_group, &[]);
+                RenderUtils::draw_fullscreen(&mut render_pass);
+            }
         }
 
         // Add the first mip, holding every mip's blur, onto the input.
@@ -464,6 +467,8 @@ mod tests {
 
     const SIZE: (u32, u32) = (16, 16);
     const BYTES_PER_ROW: u32 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    /// The largest finite half float.
+    const HALF_MAX: f32 = 65_504.0;
 
     /// `value` as a half float. Test values are zero or normal halves.
     fn f32_to_half(value: f32) -> u16 {
@@ -477,6 +482,14 @@ mod tests {
     }
 
     fn color_target(render_context: &Arc<RenderContext>, size: (u32, u32)) -> Texture {
+        format_target(render_context, size, wgpu::TextureFormat::Rgba16Float)
+    }
+
+    fn format_target(
+        render_context: &Arc<RenderContext>,
+        size: (u32, u32),
+        format: wgpu::TextureFormat,
+    ) -> Texture {
         Texture::new(
             render_context.clone(),
             &wgpu::TextureDescriptor {
@@ -489,7 +502,7 @@ mod tests {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba16Float,
+                format,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                     | wgpu::TextureUsages::TEXTURE_BINDING
                     | wgpu::TextureUsages::COPY_SRC
@@ -557,10 +570,35 @@ mod tests {
         texture
     }
 
-    /// Every texel of an `Rgba16Float` texture, row by row.
+    /// An `Rgba32Float` texture of `size` holding `pixel` everywhere.
+    fn upload_f32(
+        render_context: &Arc<RenderContext>,
+        size: (u32, u32),
+        pixel: [f32; 4],
+    ) -> Texture {
+        let texture = format_target(render_context, size, wgpu::TextureFormat::Rgba32Float);
+        let data: Vec<u8> = (0..size.0 * size.1)
+            .flat_map(|_| bytemuck::cast::<[f32; 4], [u8; 16]>(pixel))
+            .collect();
+        render_context.queue().write_texture(
+            texture.texture.as_image_copy(),
+            &data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(size.0 * 16),
+                rows_per_image: Some(size.1),
+            },
+            texture.descriptor.size,
+        );
+        texture
+    }
+
+    /// Every texel of an `Rgba16Float` or `Rgba32Float` texture, row by row.
     fn read_all(render_context: &RenderContext, texture: &Texture) -> Vec<[f32; 4]> {
         let size = texture.descriptor.size;
-        assert!(size.width * 8 <= BYTES_PER_ROW);
+        let wide = texture.descriptor.format == wgpu::TextureFormat::Rgba32Float;
+        let texel_bytes = if wide { 16 } else { 8 };
+        assert!(size.width * texel_bytes <= BYTES_PER_ROW);
         let device = render_context.device();
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("bloom_test_readback"),
@@ -589,10 +627,15 @@ mod tests {
         let mut texels = Vec::new();
         for y in 0..size.height {
             for x in 0..size.width {
-                let start = (y * BYTES_PER_ROW + x * 8) as usize;
+                let start = (y * BYTES_PER_ROW + x * texel_bytes) as usize;
                 texels.push(std::array::from_fn(|channel| {
-                    let at = start + channel * 2;
-                    half_to_f32(u16::from_le_bytes([bytes[at], bytes[at + 1]]))
+                    if wide {
+                        let at = start + channel * 4;
+                        f32::from_le_bytes(bytes[at..at + 4].try_into().unwrap())
+                    } else {
+                        let at = start + channel * 2;
+                        half_to_f32(u16::from_le_bytes([bytes[at], bytes[at + 1]]))
+                    }
                 }));
             }
         }
@@ -624,7 +667,7 @@ mod tests {
         chain.push(Box::new(BloomPass::new(context).expect("bloom loads")));
         let size = source.descriptor.size;
         let size = (size.width, size.height);
-        let output = color_target(&render_context, size);
+        let output = format_target(&render_context, size, source.descriptor.format);
         let depth = depth_target(&render_context, size);
         let mut encoder = render_context
             .device()
@@ -695,6 +738,44 @@ mod tests {
                 assert!(
                     (channel - expected).abs() <= expected * 0.01,
                     "expected about {expected}, got {texel:?}"
+                );
+            }
+            assert_eq!(texel[3], 1.0, "bloom keeps alpha");
+        }
+    }
+
+    #[test]
+    fn a_composite_brighter_than_half_float_saturates_instead_of_overflowing() {
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        // The scene's HDR targets are `Rgba16Float`, but how a GPU stores a
+        // value past their range is up to it: some saturate, some write
+        // infinity. An `Rgba32Float` chain shows what the composite writes.
+        if !context
+            .render_context
+            .device()
+            .features()
+            .contains(wgpu::Features::FLOAT32_FILTERABLE)
+        {
+            eprintln!("skipping: the test adapter cannot filter Rgba32Float targets");
+            return;
+        }
+        // 50,000 + 49,999 * 0.5 is about 75,000, past the half-float maximum.
+        // One mip, since `Rgba32Float` cannot blend the upsample.
+        let source = upload_f32(
+            &context.render_context,
+            SIZE,
+            [50_000.0, 50_000.0, 50_000.0, 1.0],
+        );
+
+        let output = run_bloom(&context, &bloom(0.5, 1), &source);
+
+        for texel in &output {
+            for &channel in &texel[..3] {
+                assert_eq!(
+                    channel, HALF_MAX,
+                    "the composite saturates at the half-float maximum, got {texel:?}"
                 );
             }
             assert_eq!(texel[3], 1.0, "bloom keeps alpha");
