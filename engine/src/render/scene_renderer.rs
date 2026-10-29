@@ -12,8 +12,8 @@ use crate::math::Transform;
 use crate::render::asset_render_state::AssetRenderState;
 use crate::render::overlay::{OverlayCompositor, OverlayContext, OverlayPass};
 use crate::render::postprocess::{
-    BloomPass, CameraPlanes, ChainPlan, ChainTargets, DepthOfFieldPass, FxaaPass, PostProcessChain,
-    PostProcessSettings, TonemapPass,
+    BloomPass, CameraPlanes, ChainPlan, ChainTargets, ColorGradingPass, DepthOfFieldPass, FxaaPass,
+    PostProcessChain, PostProcessSettings, TonemapPass,
 };
 use crate::render::render_utils::RenderUtils;
 use crate::render::{
@@ -313,6 +313,7 @@ impl SceneRenderer {
         post_process.push(Box::new(DepthOfFieldPass::new(context)?));
         post_process.push(Box::new(TonemapPass::new(context)?));
         post_process.push(Box::new(BloomPass::new(context)?));
+        post_process.push(Box::new(ColorGradingPass::new(context)?));
         post_process.push(Box::new(FxaaPass::new(context)?));
         let overlay = OverlayCompositor::new(context)?;
 

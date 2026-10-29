@@ -24,6 +24,11 @@ pub struct PostProcessSettings {
     pub depth_of_field: super::DepthOfFieldSettings,
     /// Bloom, in the `Hdr` stage. Off by default.
     pub bloom: BloomSettings,
+    /// White balance, contrast and saturation, after tone mapping. Off by
+    /// default.
+    pub color_grading: super::ColorGradingSettings,
+    /// Darkened screen edges, after tone mapping. Off by default.
+    pub vignette: super::VignetteSettings,
     /// Screen-space anti-aliasing, after tone mapping. Off by default.
     pub anti_aliasing: super::AntiAliasingSettings,
 }

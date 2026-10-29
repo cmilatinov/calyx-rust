@@ -178,6 +178,22 @@ composite    input + mip 0      -> output        input + tent(mip 0) * intensity
 - **Mip chain**: `radius` is the mip count `N`, clamped to `1..=8` and to the halvings the chain's size allows before a side reaches one pixel. Mip `i` is the chain's size shifted right by `i + 1`. The pass owns the mips, separate from the pool targets, in the input's format. It creates them on the first frame bloom runs, recreates any whose size or format no longer match the chain, and frees them in `release_targets`, so a disabled or resized bloom holds no texture.
 - One linear, clamp-to-edge sampler and one uniform (threshold, absolute knee, intensity, `1 / N`) serve every draw. Each mip caches the bind groups that read into it.
 
+## Colour Grading And Vignette
+
+`ColorGradingPass` (`engine/src/render/postprocess/color_grading.rs`) is one `Ldr` pass that grades the tone-mapped image and then applies a vignette. It runs while `color_grading.enabled` or `vignette.enabled` is on, neither of which is by default, so a frame without them keeps the tone-map-only plan. A disabled half reaches the shader as neutral values, which leave the color unchanged.
+
+It runs on display-linear color, in this order:
+
+- **White balance**: `temperature` (blue to orange, -1 to 1) and `tint` (green to magenta, -1 to 1) shift the white point a von Kries scale corrects in CAT02 LMS. The illuminant's chromaticity moves along the daylight locus for temperature and off it for tint, as in Unity's post-processing stack. The CPU folds linear sRGB to LMS, the scale and LMS back to linear sRGB into one matrix, relative to the scale at 0 and 0, so a neutral white balance is exactly the identity.
+- **Contrast**: `pivot * (c / pivot)^contrast` per channel, a straight line through linear 18% grey (`0.18`) in log space. 1 is unchanged, 0 is flat mid grey.
+- **Saturation**: a mix between the color and its Rec. 709 luminance (`0.2126, 0.7152, 0.0722`, linear sRGB). 1 is unchanged, 0 is grey.
+- The graded color is clamped to `[0, 1]`.
+- **Vignette**: with `d = |uv - 0.5| * intensity * 3` and `d.x` scaled by the aspect ratio so the shape is round, the factor is `(1 - d.d)^(smoothness * 5)`, clamped. The color is multiplied by `mix(color, 1, factor)`: unchanged at the centre, fading to `color` (black by default) towards the edges. `color` is an sRGB `Color32` converted to linear on the CPU.
+
+Grading runs before FXAA (#400), as is usual: FXAA's edge detection then sees the final image, and grading does not change the contrast FXAA already smoothed. Both are `Ldr` passes, so the order is their registration order in `SceneRenderer::new`: tone mapping, colour grading, then FXAA.
+
+Alpha is read with the pixel and passes through, so transparent views such as thumbnails stay transparent.
+
 ## Anti-Aliasing
 
 `FxaaPass` (`engine/src/render/postprocess/fxaa.rs`) is an `Ldr` pass that runs FXAA 3.11 Quality, preset 12, after tone mapping. It runs while `PostProcessSettings::anti_aliasing.fxaa` is on, which it is not by default, so a frame without it keeps the tone-map-only plan.
@@ -192,7 +208,11 @@ composite    input + mip 0      -> output        input + tent(mip 0) * intensity
 
 ```rust
 pub struct PostProcessSettings {
-    pub tonemapping: TonemapSettings, pub depth_of_field: DepthOfFieldSettings, pub bloom: BloomSettings,
+    pub tonemapping: TonemapSettings,
+    pub depth_of_field: DepthOfFieldSettings,
+    pub bloom: BloomSettings,
+    pub color_grading: ColorGradingSettings,
+    pub vignette: VignetteSettings,
     pub anti_aliasing: AntiAliasingSettings,
 }
 pub struct TonemapSettings { pub preset: TonemappingPreset, pub exposure_ev: f32 }  // Aces, 0.0
@@ -203,6 +223,8 @@ pub enum TonemappingPreset { Aces }
 pub struct DepthOfFieldSettings {                             // off, 10.0, 10.0, 8.0
     pub enabled: bool, pub focus_distance: f32, pub focus_range: f32, pub max_blur: f32,
 }
+pub struct ColorGradingSettings { pub enabled: bool, pub contrast: f32, pub saturation: f32, pub temperature: f32, pub tint: f32 }  // false, 1, 1, 0, 0
+pub struct VignetteSettings { pub enabled: bool, pub intensity: f32, pub smoothness: f32, pub color: Color32 }  // false, 0.4, 0.2, black
 pub struct AntiAliasingSettings { pub fxaa: bool, pub edge_threshold: f32, pub subpixel: f32 }  // false, 0.166, 0.75
 
 pub struct ComponentGlobalPostProcessVolume {
@@ -223,6 +245,7 @@ pub struct ComponentGlobalPostProcessVolume {
 - `assets/shaders/fullscreen.wgsl`: the shared full-screen triangle, `fullscreen_vertex(index)`. `assets/shaders/fullscreen_pass.wgsl` includes it and declares the `vs_main` that calls it, so a shader that draws the plain triangle includes the entry point and declares only its fragment stage: the post passes, the overlay composite, the selection outline and 2D mip generation. The editor grid adds outputs of its own, so it includes `fullscreen.wgsl` and declares its own vertex stage. Every full-screen draw takes its pipeline options from `PipelineOptions::fullscreen_builder()`, which sets only the color target, depth and sample count; the engine has no full-screen quad mesh.
 - `assets/shaders/postprocess/tonemap.wgsl`: the tone-map pass.
 - `assets/shaders/postprocess/bloom_prefilter.wgsl`, `bloom_downsample.wgsl`, `bloom_upsample.wgsl` and `bloom_composite.wgsl`: the bloom passes. `bloom_filters.wgsl` holds the 13-tap downsample and the tent upsample they share.
+- `assets/shaders/postprocess/color_grading.wgsl`: the colour grading and vignette pass.
 - `assets/shaders/postprocess/fxaa.wgsl`: the FXAA pass.
 - `assets/shaders/postprocess/depth_resolve.wgsl`: copies sample 0 of the multisampled depth.
 - `assets/shaders/postprocess/dof_coc.wgsl` and `dof_blur.wgsl`: the depth of field passes. `dof_common.wgsl` holds their uniform, the depth linearization and the circle of confusion.
@@ -262,6 +285,7 @@ Headless tests in `engine/src/render/postprocess/`:
 - Volume selection picks the highest enabled priority, warns on a tie, and falls back to the defaults.
 - Depth of field (`dof.rs`): `CameraPlanes` inverts the render projection; pixels at the focus distance are unchanged; far pixels blur more than pixels near focus, and pixels in front of it blur too; a blurred background stays behind a sharp edge while a blurred foreground spreads over it; the pass reads depth at one and four samples with the same result; with it disabled the plan is the tone-map-only plan and its texture is not allocated, follows the chain's size, and is freed when disabled and on resize. Settings saved before it load with it off.
 - Bloom (`bloom.rs`): a single pixel above the threshold spreads energy into its neighbours, fading with distance, and keeps alpha; an image entirely below the threshold passes through unchanged; a flat image of 20,000 blooms to the expected value without overflowing the half-float mips; a composite past the half-float maximum saturates at it; with bloom disabled the renderer's plan is the tone-map-only plan; the mip chain follows the chain's size and the radius and is freed on release; the chain releases a pass's targets on resize and on frames the pass does not run.
+- Colour grading (`color_grading/tests.rs`): neutral settings return the input, zero saturation gives grey at the input's luminance, contrast keeps mid grey, positive temperature warms and positive tint adds magenta, the vignette darkens the corners and leaves the centre unchanged, and alpha is preserved. With both effects off the pass is left out of the plan, the scene renderer plans it before FXAA, and settings saved before it load with both off.
 - FXAA smooths a hard diagonal edge and keeps each pixel's alpha, leaves a flat colour and its alpha unchanged, and leaves the plan unchanged while disabled. Settings saved before it load with it off.
 
 Headless tests in `engine/src/render/overlay/` and `scene_renderer.rs`:
