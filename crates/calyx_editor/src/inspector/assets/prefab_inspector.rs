@@ -11,6 +11,7 @@ use crate::asset_open::{
 use crate::inspector::asset_inspector::{
     AssetInspector, AssetInspectorAction, ReflectAssetInspector,
 };
+use crate::panel::{Panel, PanelViewport};
 use crate::prefab_instances;
 use crate::prefab_mode::PrefabOpenRequest;
 use crate::scene_edit::SceneEdit;
@@ -87,7 +88,10 @@ impl AssetOpener for PrefabInspector {
 
     fn open(&self, editor: &mut AssetOpenContext<'_>, asset_id: Uuid) -> AssetOpenOutcome {
         match editor.prefab_mode_mut().request_open(asset_id) {
-            Ok(PrefabOpenRequest::Opened) => AssetOpenOutcome::Opened,
+            Ok(PrefabOpenRequest::Opened) => {
+                editor.focus_panel(PanelViewport::name());
+                AssetOpenOutcome::Opened
+            }
             Ok(PrefabOpenRequest::Prompted) => AssetOpenOutcome::Prompted,
             Err(error) => {
                 log::error!("{error}");

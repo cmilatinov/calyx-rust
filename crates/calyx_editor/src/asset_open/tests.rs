@@ -14,7 +14,7 @@ use super::{
     AssetOpenContext, AssetOpenOutcome, AssetOpenerRegistry, SceneOpenTarget, SceneSwitch,
     SceneSwitchAnswer, OPEN_DURING_PLAY,
 };
-use crate::panel::{Panel, PanelAnimator};
+use crate::panel::{Panel, PanelAnimator, PanelViewport};
 use crate::prefab_mode::{PrefabMode, CLOSE_PREFAB_FIRST};
 use crate::scene_document::SceneDocument;
 use crate::scene_edit::SceneEdit;
@@ -179,6 +179,7 @@ fn opening_a_scene_loads_it_as_the_authoring_scene() {
     assert_eq!(outcome, AssetOpenOutcome::Opened);
     assert_eq!(editor.names(), ["Other", "Second"]);
     assert!(!editor.document.is_dirty());
+    assert_eq!(editor.focus_panel, Some(PanelViewport::name()));
 }
 
 #[test]
@@ -196,6 +197,7 @@ fn opening_a_prefab_enters_prefab_mode() {
         .expect("a prefab should be open");
     assert_eq!(open.asset_id(), prefab);
     assert_eq!(editor.names(), ["Crate"]);
+    assert_eq!(editor.focus_panel, Some(PanelViewport::name()));
 }
 
 #[test]

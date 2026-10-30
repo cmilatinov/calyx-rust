@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 use super::{AssetOpenContext, AssetOpenOutcome, OPEN_DURING_PLAY};
+use crate::panel::{Panel, PanelViewport};
 use crate::prefab_mode::CLOSE_PREFAB_FIRST;
 use crate::EditorAppState;
 
@@ -132,6 +133,7 @@ impl AssetOpenContext<'_> {
             SceneOpenTarget::File(file) => self.scene_document.open_file(self.game, file),
         };
         if opened {
+            self.focus_panel(PanelViewport::name());
             AssetOpenOutcome::Opened
         } else {
             AssetOpenOutcome::Refused("the scene did not open; see the editor log".into())
