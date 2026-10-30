@@ -34,6 +34,13 @@ impl ProjectAssemblyStatus {
     fn set_loaded(&mut self, loaded: bool) {
         self.loaded = loaded;
     }
+
+    /// The status once project assemblies have loaded, for tests that open
+    /// scenes and prefabs.
+    #[cfg(test)]
+    pub(crate) fn loaded() -> Self {
+        Self { loaded: true }
+    }
 }
 
 pub struct ProjectManager {

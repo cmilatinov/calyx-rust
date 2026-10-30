@@ -181,6 +181,22 @@ pub enum Command {
         path: Option<PathBuf>,
     },
 
+    /// Opens an asset as a double-click in the content browser does, through
+    /// the editor's open-asset dispatch: a scene loads into the scene view, a
+    /// prefab opens in prefab mode, an animation graph opens in the Animator
+    /// panel, a shader opens in the OS default app, and any other asset is
+    /// selected for the inspector. Responds with what the open did.
+    OpenAsset {
+        /// Path to the asset file, absolute or relative to the editor's
+        /// working directory.
+        path: PathBuf,
+        /// How to answer the prompt about the open scene's unsaved changes
+        /// when opening a scene raises it. Without it the prompt stays open
+        /// in the editor and the response reports `prompted`.
+        #[serde(default)]
+        unsaved_scene: Option<UnsavedSceneAnswer>,
+    },
+
     /// Returns the full active scene serialized as scene-file JSON.
     GetSceneState,
     /// Lists all game objects: id, name, parent, and component type names.
@@ -312,6 +328,20 @@ pub enum Command {
         /// Number of frames to wait.
         frames: u32,
     },
+}
+
+/// How to answer the editor's prompt about the open scene's unsaved changes.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UnsavedSceneAnswer {
+    /// Save the open scene to its file, then open the other scene. Refused
+    /// when the open scene has no file yet.
+    Save,
+    /// Open the other scene without saving; the changes stay in the open
+    /// scene's recovery autosave.
+    Discard,
+    /// Keep the open scene.
+    Cancel,
 }
 
 /// Coordinate spaces for pointer coordinates.
@@ -535,6 +565,14 @@ mod tests {
                 path: PathBuf::from("assets/prefabs/crate.cxprefab"),
             },
             Command::UpdatePrefabInstances { path: None },
+            Command::OpenAsset {
+                path: PathBuf::from("assets/scene.cxscene"),
+                unsaved_scene: None,
+            },
+            Command::OpenAsset {
+                path: PathBuf::from("assets/scene.cxscene"),
+                unsaved_scene: Some(UnsavedSceneAnswer::Discard),
+            },
             Command::UpdatePrefabInstances {
                 path: Some(PathBuf::from("assets/prefabs/crate.cxprefab")),
             },

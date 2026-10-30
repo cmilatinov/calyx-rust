@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use calyx_remote_protocol::{
     CaptureTarget, Command, CoordSpace, InputEventSpec, PickTarget, PointerButtonSpec,
-    ResponsePayload, TransformSpace,
+    ResponsePayload, TransformSpace, UnsavedSceneAnswer,
 };
 use clap::{Parser, Subcommand, ValueEnum};
 
@@ -94,6 +94,9 @@ enum Action {
     /// Prefab mode: edit a prefab asset in isolation from the scene.
     #[command(subcommand)]
     Prefab(PrefabAction),
+    /// Asset operations, as the content browser does them.
+    #[command(subcommand)]
+    Asset(AssetAction),
     /// List all game objects.
     Objects,
     /// Game object operations.
@@ -183,6 +186,17 @@ enum PrefabAction {
     /// Update the scene's instances of a prefab (of every prefab when no
     /// path is given) from the saved prefab, as one undo step.
     Update { path: Option<PathBuf> },
+}
+
+#[derive(Subcommand)]
+enum AssetAction {
+    /// Open an asset as a double-click in the content browser does.
+    Open {
+        path: PathBuf,
+        /// Answer the unsaved-scene prompt; without it the prompt stays open.
+        #[arg(long, value_enum)]
+        unsaved: Option<UnsavedArg>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -291,6 +305,26 @@ enum ButtonArg {
     Primary,
     Secondary,
     Middle,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum UnsavedArg {
+    /// Save the open scene first (refused for a scene with no file).
+    Save,
+    /// Open without saving.
+    Discard,
+    /// Keep the open scene.
+    Cancel,
+}
+
+impl From<UnsavedArg> for UnsavedSceneAnswer {
+    fn from(value: UnsavedArg) -> Self {
+        match value {
+            UnsavedArg::Save => UnsavedSceneAnswer::Save,
+            UnsavedArg::Discard => UnsavedSceneAnswer::Discard,
+            UnsavedArg::Cancel => UnsavedSceneAnswer::Cancel,
+        }
+    }
 }
 
 impl From<ButtonArg> for PointerButtonSpec {
@@ -458,6 +492,12 @@ fn build_command(action: &Action, base: Duration) -> Result<(Command, Duration),
             PrefabAction::Update { path } => {
                 simple(Command::UpdatePrefabInstances { path: path.clone() })
             }
+        },
+        Action::Asset(asset) => match asset {
+            AssetAction::Open { path, unsaved } => simple(Command::OpenAsset {
+                path: path.clone(),
+                unsaved_scene: unsaved.map(Into::into),
+            }),
         },
         Action::Objects => simple(Command::ListObjects),
         Action::Object(object) => match object {
