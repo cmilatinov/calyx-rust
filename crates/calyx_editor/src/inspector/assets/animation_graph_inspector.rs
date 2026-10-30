@@ -1,5 +1,7 @@
+use crate::asset_open::{AssetOpenContext, AssetOpenOutcome, AssetOpener, ReflectAssetOpener};
 use crate::inspector::asset_inspector::{AssetInspector, ReflectAssetInspector};
 use crate::inspector::widgets::Widgets;
+use crate::panel::{Panel, PanelAnimator};
 use crate::widgets::{List, ListButtons, ListItemContext};
 use calyx_engine::assets::animation::Animation;
 use calyx_engine::assets::animation_graph::{
@@ -24,8 +26,22 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
-#[reflect(Default, AssetInspector)]
+#[reflect(Default, AssetInspector, AssetOpener)]
 pub struct AnimationGraphInspector;
+
+/// An animation graph opens in the Animator panel, which draws the selected
+/// graph.
+impl AssetOpener for AnimationGraphInspector {
+    fn target_type_uuid(&self) -> Uuid {
+        AnimationGraph::type_uuid()
+    }
+
+    fn open(&self, editor: &mut AssetOpenContext<'_>, asset_id: Uuid) -> AssetOpenOutcome {
+        editor.select(asset_id);
+        editor.focus_panel(PanelAnimator::name());
+        AssetOpenOutcome::Opened
+    }
+}
 
 impl AssetInspector for AnimationGraphInspector {
     fn target_type_uuid(&self) -> Uuid {

@@ -5,15 +5,19 @@ use calyx_engine::utils::TypeUuid;
 use egui::Ui;
 use uuid::Uuid;
 
+use crate::asset_open::{
+    AssetOpenContext, AssetOpenOutcome, AssetOpener, ReflectAssetOpener, OPEN_DURING_PLAY,
+};
 use crate::inspector::asset_inspector::{
     AssetInspector, AssetInspectorAction, ReflectAssetInspector,
 };
+use crate::panel::{Panel, PanelViewport};
 use crate::prefab_instances;
-use crate::project_manager::ProjectAssemblyStatus;
+use crate::prefab_mode::PrefabOpenRequest;
 use crate::scene_edit::SceneEdit;
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
-#[reflect(Default, AssetInspector)]
+#[reflect(Default, AssetInspector, AssetOpener)]
 pub struct PrefabInspector;
 
 impl AssetInspector for PrefabInspector {
@@ -35,18 +39,6 @@ impl AssetInspector for PrefabInspector {
             ui.close_menu();
             return AssetInspectorAction::ImportPrefab(asset_id);
         }
-        let open_response = match Self::open_unavailable_reason(game, asset_id) {
-            Some(reason) => ui
-                .add_enabled(false, egui::Button::new("Open Prefab"))
-                .on_disabled_hover_text(reason),
-            None => ui
-                .button("Open Prefab")
-                .on_hover_text("Edit the prefab asset in prefab mode"),
-        };
-        if open_response.clicked() {
-            ui.close_menu();
-            return AssetInspectorAction::OpenPrefab(asset_id);
-        }
         let has_instances = game
             .scenes
             .simulation_scene()
@@ -64,18 +56,26 @@ impl AssetInspector for PrefabInspector {
     }
 }
 
-impl PrefabInspector {
-    /// Why the prefab asset `asset_id` cannot open in prefab mode now, if it
-    /// cannot.
-    fn open_unavailable_reason(game: &GameContext, asset_id: Uuid) -> Option<&'static str> {
-        let assemblies_loaded = game
-            .resources
-            .resource::<calyx_engine::core::Ref<ProjectAssemblyStatus>>()
-            .is_some_and(|status| status.read().is_loaded());
-        if !assemblies_loaded {
+/// A prefab opens in prefab mode, asking first about the open prefab's
+/// unsaved changes.
+impl AssetOpener for PrefabInspector {
+    fn target_type_uuid(&self) -> Uuid {
+        Prefab::type_uuid()
+    }
+
+    fn open_unavailable_reason(
+        &self,
+        editor: &AssetOpenContext<'_>,
+        asset_id: Uuid,
+    ) -> Option<&'static str> {
+        if editor.in_play_mode() {
+            return Some(OPEN_DURING_PLAY);
+        }
+        if !editor.assemblies_loaded() {
             return Some("Build project assemblies before opening prefabs");
         }
-        let editable = game
+        let editable = editor
+            .game
             .assets
             .registries
             .assets
@@ -86,6 +86,22 @@ impl PrefabInspector {
         (!editable).then_some("Prefabs imported from model files cannot be edited")
     }
 
+    fn open(&self, editor: &mut AssetOpenContext<'_>, asset_id: Uuid) -> AssetOpenOutcome {
+        match editor.prefab_mode_mut().request_open(asset_id) {
+            Ok(PrefabOpenRequest::Opened) => {
+                editor.focus_panel(PanelViewport::name());
+                AssetOpenOutcome::Opened
+            }
+            Ok(PrefabOpenRequest::Prompted) => AssetOpenOutcome::Prompted,
+            Err(error) => {
+                log::error!("{error}");
+                AssetOpenOutcome::Refused(error)
+            }
+        }
+    }
+}
+
+impl PrefabInspector {
     /// Instantiates the prefab asset `asset_id` at the scene root through
     /// `edit`, linked to the prefab.
     pub fn import(edit: &mut SceneEdit, game: &mut GameContext, asset_id: Uuid) {

@@ -8,9 +8,6 @@ pub enum AssetInspectorAction {
     None,
     /// Instantiate the prefab asset into the scene, as one undo step.
     ImportPrefab(Uuid),
-    OpenScene(Uuid),
-    /// Open the prefab asset in prefab mode.
-    OpenPrefab(Uuid),
     /// Update the open scene's instances of the prefab asset from it, as one
     /// undo step.
     UpdatePrefabInstances(Uuid),

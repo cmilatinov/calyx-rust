@@ -3,7 +3,7 @@
 
 use egui::{Align, Button, Color32, Frame, Layout, Margin};
 
-use super::PrefabPrompt;
+use super::{PrefabPrompt, PrefabPromptAnswer, PrefabPromptOutcome};
 use crate::EditorAppState;
 
 /// Hover text of the scene file actions prefab mode disables.
@@ -88,16 +88,11 @@ pub(crate) fn show_banner(ctx: &egui::Context, state: &mut EditorAppState) {
 pub(crate) fn show_unsaved_changes_prompt(ctx: &egui::Context, state: &mut EditorAppState) {
     intercept_close_with_unsaved_prefab(ctx, state);
     let mode = &mut state.prefab_mode;
-    let (Some(action), Some(prefab)) = (mode.prompt, mode.prefab()) else {
+    let (Some(_), Some(prefab)) = (mode.prompt, mode.prefab()) else {
         mode.prompt = None;
         return;
     };
     let label = prefab.label().to_owned();
-    enum Answer {
-        Save,
-        Discard,
-        Cancel,
-    }
     let mut answer = None;
     egui::Modal::new(egui::Id::new("prefab_unsaved_changes")).show(ctx, |ui| {
         ui.heading("Unsaved Prefab Changes");
@@ -106,45 +101,21 @@ pub(crate) fn show_unsaved_changes_prompt(ctx: &egui::Context, state: &mut Edito
         ui.label("Save them to the prefab asset before closing it?");
         ui.horizontal(|ui| {
             if ui.button("Save").clicked() {
-                answer = Some(Answer::Save);
+                answer = Some(PrefabPromptAnswer::Save);
             }
             if ui.button("Don't Save").clicked() {
-                answer = Some(Answer::Discard);
+                answer = Some(PrefabPromptAnswer::Discard);
             }
             if ui.button("Cancel").clicked() {
-                answer = Some(Answer::Cancel);
+                answer = Some(PrefabPromptAnswer::Cancel);
             }
         });
     });
     let Some(answer) = answer else {
         return;
     };
-    state.prefab_mode.prompt = None;
-    let mut prefab_mode = state.prefab_mode_mut();
-    match answer {
-        Answer::Cancel => return,
-        Answer::Save => {
-            if let Err(error) = prefab_mode.save() {
-                log::error!("{error}");
-                return;
-            }
-        }
-        Answer::Discard => {}
-    }
-    match action {
-        PrefabPrompt::Close => {
-            prefab_mode.close();
-        }
-        PrefabPrompt::Open(asset_id) => {
-            prefab_mode.close();
-            if let Err(error) = prefab_mode.open(asset_id) {
-                log::error!("Failed to open prefab: {error}");
-            }
-        }
-        PrefabPrompt::Quit => {
-            state.prefab_mode.confirm_close();
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        }
+    if state.answer_prefab_prompt(answer) == PrefabPromptOutcome::Quit {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 }
 

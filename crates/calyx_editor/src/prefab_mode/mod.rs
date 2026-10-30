@@ -76,6 +76,31 @@ enum PrefabPrompt {
     Quit,
 }
 
+/// The user's answer to the unsaved-prefab prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PrefabPromptAnswer {
+    /// Save the open prefab, then carry on.
+    Save,
+    /// Carry on and drop the open prefab's changes.
+    Discard,
+    /// Keep the open prefab.
+    Cancel,
+}
+
+/// What answering the unsaved-prefab prompt did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PrefabPromptOutcome {
+    /// The open prefab stayed open: the answer was Cancel, its save failed,
+    /// or no prompt was waiting.
+    Kept,
+    /// The prefab closed and the scene is back.
+    Closed,
+    /// The prefab that waited on the prompt is open.
+    Opened,
+    /// The editor window may close.
+    Quit,
+}
+
 /// The editor's prefab mode: the prefab open in it, if one is, and what waits
 /// on the user's answer about its unsaved changes.
 #[derive(Default)]
@@ -152,14 +177,42 @@ impl EditorAppState {
     /// Prefab mode with the editor state it opens, saves and closes prefabs
     /// in.
     pub(crate) fn prefab_mode_mut(&mut self) -> PrefabModeMut<'_> {
+        self.prefab_mode.with(
+            &mut self.game,
+            &mut self.scene_document,
+            &mut self.selection,
+            &self.project_path,
+        )
+    }
+}
+
+impl PrefabMode {
+    /// Prefab mode with the editor state it opens, saves and closes prefabs
+    /// in, for callers that hold that state as separate borrows.
+    pub(crate) fn with<'a>(
+        &'a mut self,
+        game: &'a mut GameContext,
+        scene_document: &'a mut SceneDocument,
+        selection: &'a mut Selection,
+        project_path: &'a Path,
+    ) -> PrefabModeMut<'a> {
         PrefabModeMut {
-            mode: &mut self.prefab_mode,
-            game: &mut self.game,
-            scene_document: &mut self.scene_document,
-            selection: &mut self.selection,
-            project_path: &self.project_path,
+            mode: self,
+            game,
+            scene_document,
+            selection,
+            project_path,
         }
     }
+}
+
+/// What [`PrefabModeMut::request_open`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PrefabOpenRequest {
+    /// The prefab is open in prefab mode.
+    Opened,
+    /// The unsaved-prefab prompt waits on the user's answer first.
+    Prompted,
 }
 
 impl PrefabModeMut<'_> {
@@ -238,15 +291,56 @@ impl PrefabModeMut<'_> {
 
     /// Opens the prefab asset `asset_id`, first asking what to do with the
     /// open prefab's unsaved changes, if it has any.
-    pub(crate) fn request_open(&mut self, asset_id: Uuid) {
+    pub(crate) fn request_open(&mut self, asset_id: Uuid) -> Result<PrefabOpenRequest, String> {
         let open_prefab_is_dirty =
             self.mode.prefab.as_ref().is_some_and(|prefab| {
                 prefab.asset_id() != asset_id && self.scene_document.is_dirty()
             });
         if open_prefab_is_dirty {
             self.mode.prompt = Some(PrefabPrompt::Open(asset_id));
-        } else if let Err(error) = self.open(asset_id) {
-            log::error!("Failed to open prefab: {error}");
+            return Ok(PrefabOpenRequest::Prompted);
+        }
+        self.open(asset_id)
+            .map(|()| PrefabOpenRequest::Opened)
+            .map_err(|error| format!("Failed to open prefab: {error}"))
+    }
+
+    /// Takes the user's answer to the unsaved-prefab prompt and carries out
+    /// what waited on it. Save writes the open prefab first, and keeps it
+    /// open when that fails.
+    pub(crate) fn answer_prompt(&mut self, answer: PrefabPromptAnswer) -> PrefabPromptOutcome {
+        let Some(action) = self.mode.prompt.take() else {
+            return PrefabPromptOutcome::Kept;
+        };
+        match answer {
+            PrefabPromptAnswer::Cancel => return PrefabPromptOutcome::Kept,
+            PrefabPromptAnswer::Save => {
+                if let Err(error) = self.save() {
+                    log::error!("{error}");
+                    return PrefabPromptOutcome::Kept;
+                }
+            }
+            PrefabPromptAnswer::Discard => {}
+        }
+        match action {
+            PrefabPrompt::Close => {
+                self.close();
+                PrefabPromptOutcome::Closed
+            }
+            PrefabPrompt::Open(asset_id) => {
+                self.close();
+                match self.open(asset_id) {
+                    Ok(()) => PrefabPromptOutcome::Opened,
+                    Err(error) => {
+                        log::error!("Failed to open prefab: {error}");
+                        PrefabPromptOutcome::Closed
+                    }
+                }
+            }
+            PrefabPrompt::Quit => {
+                self.mode.confirm_close();
+                PrefabPromptOutcome::Quit
+            }
         }
     }
 

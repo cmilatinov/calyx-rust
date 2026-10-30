@@ -5,7 +5,7 @@ use calyx_engine::scene::{GameObject, Scene};
 use calyx_engine::utils::TypeUuid;
 use calyx_remote_protocol::{
     CaptureTarget, Command, CoordSpace, ErrorKind, InputEventSpec, ModifiersSpec, PickTarget,
-    PointerButtonSpec, RequestEnvelope, TransformSpace,
+    PointerButtonSpec, RequestEnvelope, TransformSpace, UnsavedSceneAnswer,
 };
 use nalgebra::UnitQuaternion;
 use nalgebra_glm::Vec3;
@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use super::runtime::{color_image_to_rgba, save_png, PendingOp, RemoteRuntime, ResponseSlot};
 use super::server::{parse_error_response, ClientId, Incoming};
+use crate::asset_open::{AssetOpenOutcome, SceneSwitchAnswer};
 use crate::panel::{Panel, PanelGame};
 use crate::prefab_instances;
 use crate::scene_edit::SceneEdit;
@@ -277,6 +278,11 @@ impl EditorApp {
                 })))
             }
 
+            Command::OpenAsset {
+                path,
+                unsaved_scene,
+            } => self.remote_open_asset(path, unsaved_scene),
+
             Command::GetSceneState => {
                 let scene = self.state.game.scenes.simulation_scene();
                 serde_json::to_value(scene)
@@ -496,6 +502,63 @@ impl EditorApp {
             .open(asset_id)
             .map_err(|error| (ErrorKind::BadRequest, error))?;
         Ok(Some(self.remote_prefab_state()))
+    }
+
+    /// Opens the asset file at `path` through the open-asset dispatch, as a
+    /// double-click in the content browser does, answering the unsaved-scene
+    /// prompt with `unsaved_scene` when the open raises it.
+    fn remote_open_asset(
+        &mut self,
+        path: PathBuf,
+        unsaved_scene: Option<UnsavedSceneAnswer>,
+    ) -> CommandResult {
+        let path = dunce::canonicalize(&path).map_err(|error| {
+            (
+                ErrorKind::NotFound,
+                format!("asset file {}: {error}", path.display()),
+            )
+        })?;
+        let asset_id = self
+            .state
+            .game
+            .assets
+            .registries
+            .assets
+            .read()
+            .asset_id_from_path(&path)
+            .ok_or_else(|| {
+                (
+                    ErrorKind::NotFound,
+                    format!("{} is not a registered asset", path.display()),
+                )
+            })?;
+        let mut outcome = self.state.open_asset(asset_id);
+        if let (AssetOpenOutcome::Prompted, Some(answer)) = (&outcome, unsaved_scene) {
+            if self.state.scene_switch.pending().is_some() {
+                let answer = match answer {
+                    UnsavedSceneAnswer::Save => SceneSwitchAnswer::Save,
+                    UnsavedSceneAnswer::Discard => SceneSwitchAnswer::Discard,
+                    UnsavedSceneAnswer::Cancel => SceneSwitchAnswer::Cancel,
+                };
+                // A remote client has no file picker to answer Save As with.
+                outcome = self.state.answer_scene_prompt(answer, || None);
+            }
+        }
+        let outcome = match outcome {
+            AssetOpenOutcome::Opened => "opened",
+            AssetOpenOutcome::Selected => "selected",
+            AssetOpenOutcome::Prompted => "prompted",
+            AssetOpenOutcome::Refused(reason) => return Err((ErrorKind::BadRequest, reason)),
+        };
+        let scenes = &self.state.game.scenes;
+        Ok(Some(serde_json::json!({
+            "outcome": outcome,
+            "asset_id": asset_id.to_string(),
+            "selection": self.state.selection.first(SelectionType::Asset).map(|id| id.to_string()),
+            "scene_file": scenes.current_scene_meta().file.as_ref().map(|f| f.display().to_string()),
+            "scene_dirty": self.state.is_scene_dirty(),
+            "prefab": self.remote_prefab_state(),
+        })))
     }
 
     /// Resolves the scene a `play` names, refusing it while a simulation
