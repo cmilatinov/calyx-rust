@@ -191,7 +191,6 @@ mod tests {
                 shape: ColliderShape::Sphere { radius: 2.0 },
                 friction: 0.3,
                 density: 50.0,
-                ..Default::default()
             },
         );
         scene.add_component(

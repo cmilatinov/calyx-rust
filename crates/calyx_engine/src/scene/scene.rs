@@ -23,7 +23,7 @@ use crate::physics::PhysicsContext;
 use crate::reflect::{ReflectDefault, TypeInfo};
 use crate::resource::ResourceMap;
 use crate::scene::change_set::ChangeSet;
-use crate::scene::disabled_components::{migrate_legacy_enabled, DisabledComponents};
+use crate::scene::disabled_components::DisabledComponents;
 use crate::scene::dropped_components::{log_dropped_components, registered_type_name};
 use crate::scene::game_object_store::GameObjectStore;
 use crate::scene::network_index::NetworkObjectIndex;
@@ -53,12 +53,7 @@ pub struct GameObject {
 /// Every map is ordered by UUID, so saving the same scene always writes the
 /// same file and an edit changes only its own lines. Component payloads are
 /// `serde_json` values, whose objects keep their keys sorted too.
-///
-/// Loading migrates data saved before the scene kept the enabled state: an
-/// `enabled` field in a camera, collider, rigid body or global post-process
-/// volume payload moves into [`Self::disabled_components`].
 #[derive(Default, Clone, Serialize, Deserialize)]
-#[serde(from = "StoredSceneData")]
 pub struct SceneData {
     /// Component payloads keyed by game object UUID and then component type
     /// UUID.
@@ -77,32 +72,6 @@ pub struct SceneData {
     /// object UUID. A component not listed is enabled.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub disabled_components: BTreeMap<Uuid, BTreeSet<Uuid>>,
-}
-
-/// [`SceneData`] as saved, before [`migrate_legacy_enabled`] runs on it.
-#[derive(Deserialize)]
-struct StoredSceneData {
-    components: BTreeMap<Uuid, BTreeMap<Uuid, serde_json::Value>>,
-    hierarchy: BTreeMap<Uuid, Vec<Uuid>>,
-    roots: Vec<Uuid>,
-    #[serde(default)]
-    prefab_links: BTreeMap<Uuid, PrefabLink>,
-    #[serde(default)]
-    disabled_components: BTreeMap<Uuid, BTreeSet<Uuid>>,
-}
-
-impl From<StoredSceneData> for SceneData {
-    fn from(stored: StoredSceneData) -> Self {
-        let mut data = SceneData {
-            components: stored.components,
-            hierarchy: stored.hierarchy,
-            roots: stored.roots,
-            prefab_links: stored.prefab_links,
-            disabled_components: stored.disabled_components,
-        };
-        migrate_legacy_enabled(&mut data);
-        data
-    }
 }
 
 impl SceneData {
