@@ -29,8 +29,8 @@ click through the editor.
 ```
 cargo run -p calyx_ctl -- launch --project ./sandbox     # builds, spawns, waits; prints {port, pid}
 calyx_ctl info                                           # session metadata + input_debug
-calyx_ctl scene load sandbox/assets/scene.cxscene      # the tank gameplay scene
-calyx_ctl play --scene sandbox/assets/scene.cxscene      # plain `play` runs the startup scene (the showcase)
+calyx_ctl scene load sandbox/assets/game/scenes/arena.cxscene   # the tank gameplay scene
+calyx_ctl play --scene sandbox/assets/game/scenes/arena.cxscene # plain `play` runs the startup scene (the showcase)
 calyx_ctl focus-game                                     # REQUIRED before gameplay input
 calyx_ctl wait --frames 3                                # let the Game tab publish its rect
 calyx_ctl input key W --hold-frames 90

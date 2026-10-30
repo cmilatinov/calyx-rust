@@ -283,8 +283,7 @@ mod tests {
             .read()
             .reload_by_path::<calyx_engine::scene::Scene>(
                 &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("assets")
-                    .join("scene.cxscene"),
+                    .join("assets/game/scenes/arena.cxscene"),
             )
             .expect("sandbox scene should load");
         let mut scene = scene_ref.read().clone();

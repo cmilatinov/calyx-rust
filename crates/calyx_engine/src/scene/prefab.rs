@@ -445,7 +445,7 @@ mod tests {
         let assets = crate::test_support::TestAssets::models();
         let context = assets.asset_context();
         let context = context.lock_read();
-        let path = assets.sandbox_root().join("models/tank_game/Tank_002.fbx");
+        let path = assets.sandbox_root().join("game/models/Tank_002.fbx");
         Prefab::from_file(&context, &path)
             .unwrap_or_else(|e| panic!("failed to import the tank: {e}"))
             .asset

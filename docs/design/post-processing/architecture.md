@@ -293,7 +293,7 @@ Removing the per-shader curves and the `* 5.0` changes every scene's brightness.
 
 The grid, gizmos and outline composite after post (#379, see Editor Overlays), so they keep their authored colors. Editor clear colors are still tone mapped.
 
-- **Showcase scene**: `sandbox/assets/post_showcase.cxscene` (#378) is the fixed reference for the look: rough, glossy, metallic and emissive materials (`materials/post_showcase/`), the sunset sky at intensity 1, a sun at 2.5, point lights from 5 to 5000, the campfire particles and a global volume at 0 EV.
+- **Showcase scene**: `sandbox/assets/showcase/post_processing/post_processing.cxscene` (#378) is the fixed reference for the look: rough, glossy, metallic and emissive materials (`showcase/post_processing/materials/` and `shared/materials/`, the latter also used by the main showcase), the sunset sky at intensity 1, a sun at 2.5, point lights from 5 to 5000, the campfire particles and a global volume at 0 EV.
 
 ## Testing
 
