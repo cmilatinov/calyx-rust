@@ -2084,6 +2084,34 @@ mod tests {
     }
 
     #[test]
+    fn rest_pose_keeps_the_shear_of_a_non_uniformly_scaled_root() {
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        // A rotated bone under a non-uniformly scaled root has a sheared world matrix. The bone
+        // sits exactly at its bind pose in root space, so its palette entry is the identity.
+        let hip =
+            glm::translation(&vec3(0.0, 1.0, 0.0)) * glm::rotation(45f32.to_radians(), &Vec3::z());
+        let mesh = skinned_cube(&read_only_context, "test/sheared_rest", "hip", hip);
+        let material = pbr_material(&read_only_context, "test/sheared_rest_material");
+        let root = glm::scaling(&vec3(2.0, 1.0, 1.0));
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        let (_, _, mesh_object) =
+            spawn_skinned_model(&mut builder, &mesh, &material, root, hip, Vec::new());
+        let scene = builder.finish();
+
+        let mut renderer = renderer(&read_only_context, 1, (16, 16));
+        renderer.build_asset_data(&read_only_context.render_context, &scene);
+
+        let slot = bone_slot(&renderer, &scene, mesh_object);
+        let uploaded: Mat4 = mesh.read().bone_transforms[slot].transform.into();
+        assert!(
+            (uploaded - Mat4::identity()).abs().max() < 1e-5,
+            "a bone at its bind pose should skin to the identity, uploaded {uploaded}"
+        );
+    }
+
+    #[test]
     fn a_short_palette_keeps_the_next_instance_in_its_own_bone_slot() {
         let assets = TestAssets::engine();
         let context = assets.asset_context();

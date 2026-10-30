@@ -34,15 +34,24 @@ impl Component for ComponentSkinnedMesh {}
 impl ComponentSkinnedMesh {
     /// Root-space transform of each bone object under `root`, by bone name, as the scene holds
     /// them. Reads the scene only, so it poses a skinned mesh without running its animator.
+    ///
+    /// Local matrices are multiplied down from `root`, as the animator's traversal does, rather
+    /// than read back from world transforms: a world transform is cached decomposed, which drops
+    /// the shear a non-uniformly scaled ancestor gives a rotated bone.
     pub fn bone_poses(scene: &Scene, root: GameObject) -> HashMap<String, Mat4> {
-        let root_inverse = scene.world_transform(root).inverse_matrix();
-        scene
-            .descendants_with::<ComponentBone>(root)
-            .filter_map(|bone| {
-                let name = scene.read_component::<ComponentBone, _, _>(bone, |c| c.name.clone())?;
-                Some((name, root_inverse * scene.world_transform(bone).matrix()))
-            })
-            .collect()
+        let mut bones = HashMap::new();
+        let mut stack = vec![(root, Mat4::identity())];
+        while let Some((game_object, transform)) = stack.pop() {
+            if let Some(name) =
+                scene.read_component::<ComponentBone, _, _>(game_object, |c| c.name.clone())
+            {
+                bones.insert(name, transform);
+            }
+            for child in scene.children(game_object) {
+                stack.push((child, transform * scene.transform(child).matrix()));
+            }
+        }
+        bones
     }
 
     /// Writes `mesh`'s skinning palette into `palette`, one transform per mesh bone in bone index
