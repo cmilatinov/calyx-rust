@@ -16,7 +16,7 @@ Related work:
 
 ## Frame Today
 
-`SceneRenderer` (`engine/src/render/scene_renderer.rs`) renders a frame in two calls.
+`SceneRenderer` (`crates/calyx_engine/src/render/scene_renderer.rs`) renders a frame in two calls.
 
 ```text
 render_scene_base:  meshes (pbr.wgsl)   albedo * 5, Reinhard, gamma 1.4
@@ -49,7 +49,7 @@ With a single sample the multisampled target is already single-sample, so it is 
 
 ## Editor Overlays
 
-The grid, gizmos and the selection outline draw after the whole chain, Ldr stage included, so tone mapping, exposure and later effects never change their colors. `engine/src/render/overlay/` holds them.
+The grid, gizmos and the selection outline draw after the whole chain, Ldr stage included, so tone mapping, exposure and later effects never change their colors. `crates/calyx_engine/src/render/overlay/` holds them.
 
 ```rust
 pub trait OverlayPass {
@@ -81,7 +81,7 @@ Textures are still uploaded as `Rgba8Unorm`, so albedo maps are sampled without 
 
 ## Pass Interface
 
-`engine/src/render/postprocess/` holds the chain.
+`crates/calyx_engine/src/render/postprocess/` holds the chain.
 
 ```rust
 pub enum PostProcessStage { Hdr, Tonemap, Ldr }
@@ -199,7 +199,7 @@ composite    input + mip 0      -> output        input + tent(mip 0) * intensity
 
 ## Colour Grading And Vignette
 
-`ColorGradingPass` (`engine/src/render/postprocess/color_grading.rs`) is one `Ldr` pass that grades the tone-mapped image and then applies a vignette. It runs while `color_grading.enabled` or `vignette.enabled` is on, neither of which is by default, so a frame without them keeps the tone-map-only plan. A disabled half reaches the shader as neutral values, which leave the color unchanged.
+`ColorGradingPass` (`crates/calyx_engine/src/render/postprocess/color_grading.rs`) is one `Ldr` pass that grades the tone-mapped image and then applies a vignette. It runs while `color_grading.enabled` or `vignette.enabled` is on, neither of which is by default, so a frame without them keeps the tone-map-only plan. A disabled half reaches the shader as neutral values, which leave the color unchanged.
 
 It runs on display-linear color, in this order:
 
@@ -215,7 +215,7 @@ Alpha is read with the pixel and passes through, so transparent views such as th
 
 ## Anti-Aliasing
 
-`FxaaPass` (`engine/src/render/postprocess/fxaa.rs`) is an `Ldr` pass that runs FXAA 3.11 Quality, preset 12, after tone mapping. It runs while `PostProcessSettings::anti_aliasing.fxaa` is on, which it is not by default, so a frame without it keeps the tone-map-only plan.
+`FxaaPass` (`crates/calyx_engine/src/render/postprocess/fxaa.rs`) is an `Ldr` pass that runs FXAA 3.11 Quality, preset 12, after tone mapping. It runs while `PostProcessSettings::anti_aliasing.fxaa` is on, which it is not by default, so a frame without it keeps the tone-map-only plan.
 
 - `assets/shaders/postprocess/fxaa.wgsl` ports the PC quality path of Timothy Lottes' `FxaaPixelShader`: early exit below the local contrast threshold, horizontal or vertical edge choice, a five-step search along the edge (1, 1.5, 2, 4 and 12 pixels), and the sub-pixel blend. It samples its input with a linear, clamp-to-edge sampler the pass owns.
 - It runs after tone mapping because its luma edge detection needs display-range values. Its input is display-linear, so luma is the square root of linear Rec. 601 luma, close to the gamma-encoded luma the reference expects.
@@ -297,7 +297,7 @@ The grid, gizmos and outline composite after post (#379, see Editor Overlays), s
 
 ## Testing
 
-Headless tests in `engine/src/render/postprocess/`:
+Headless tests in `crates/calyx_engine/src/render/postprocess/`:
 
 - The plan orders passes by stage, then insertion order, and ping-pongs two pool targets.
 - A tone-map-only chain allocates no pool target, and a chain of three passes allocates two.
@@ -313,7 +313,7 @@ Headless tests in `engine/src/render/postprocess/`:
 - Colour grading (`color_grading/tests.rs`): neutral settings return the input, zero saturation gives grey at the input's luminance, contrast keeps mid grey, positive temperature warms and positive tint adds magenta, the vignette darkens the corners and leaves the centre unchanged, and alpha is preserved. With both effects off the pass is left out of the plan, the scene renderer plans it before FXAA, and settings saved before it load with both off.
 - FXAA smooths a hard diagonal edge and keeps each pixel's alpha, leaves a flat colour and its alpha unchanged, and leaves the plan unchanged while disabled. Settings saved before it load with it off.
 
-Headless tests in `engine/src/render/overlay/` and `scene_renderer.rs`:
+Headless tests in `crates/calyx_engine/src/render/overlay/` and `scene_renderer.rs`:
 
 - A half-covered, anti-aliased overlay edge pixel composites as premultiplied alpha, without darkening.
 - Enabled overlays record in order, and the overlay target exists only while one is enabled.

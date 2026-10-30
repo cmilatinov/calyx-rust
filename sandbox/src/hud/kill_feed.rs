@@ -2,8 +2,8 @@
 
 use super::{hud_text, HudStyle};
 use crate::combat::ComponentKillFeed;
-use engine::scene::{GameObject, Scene};
-use engine::ui::{
+use calyx_engine::scene::{GameObject, Scene};
+use calyx_engine::ui::{
     AlignItems, Border, CornerRadius, EdgeInsets, PointerEvents, StylePatch, UiArena, UiLength,
     UiNodeHandle, Widget,
 };
@@ -72,7 +72,7 @@ impl Widget for KillFeedHud<'_> {
             .iter()
             .enumerate()
             .map(|(index, line)| {
-                let fade = |color: engine::ui::UiColor| color.with_alpha(line.opacity);
+                let fade = |color: calyx_engine::ui::UiColor| color.with_alpha(line.opacity);
                 let mut width = PADDING_X * 2.0;
                 let mut text = |ui: &mut UiArena, part: &str, value: &str, color| {
                     let part_width = estimated_text_width(value, FONT_SIZE);

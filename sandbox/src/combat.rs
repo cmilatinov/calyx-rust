@@ -5,14 +5,14 @@
 //! gameplay reports a lethal projectile hit; a networked game can deserialize
 //! a [`KillEvent`] from the host and record it the same way.
 
-use engine::component::{
+use calyx_engine::component::{
     Component, ComponentEventContext, ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
 };
-use engine::input::Input;
-use engine::reflect::{Reflect, ReflectDefault};
-use engine::resource::ResourceMap;
-use engine::scene::{GameObject, Scene};
-use engine::utils::{ReflectTypeUuidDynamic, TypeUuid, Uuid};
+use calyx_engine::input::Input;
+use calyx_engine::reflect::{Reflect, ReflectDefault};
+use calyx_engine::resource::ResourceMap;
+use calyx_engine::scene::{GameObject, Scene};
+use calyx_engine::utils::{ReflectTypeUuidDynamic, TypeUuid, Uuid};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
@@ -201,9 +201,9 @@ impl ComponentKillFeed {
 #[cfg(test)]
 mod tests {
     use super::{record_kill, Combatant, ComponentCombatStats, ComponentKillFeed, KillEvent};
-    use engine::component::ComponentID;
-    use engine::scene::{GameObject, Scene};
-    use engine::test_support::HeadlessSceneRunner;
+    use calyx_engine::component::ComponentID;
+    use calyx_engine::scene::{GameObject, Scene};
+    use calyx_engine::test_support::HeadlessSceneRunner;
 
     fn named(scene: &mut Scene, name: &str) -> GameObject {
         scene.create(
@@ -228,11 +228,11 @@ mod tests {
     fn kill(victim: &str) -> KillEvent {
         KillEvent {
             killer: Some(Combatant {
-                id: engine::utils::Uuid::new_v4(),
+                id: calyx_engine::utils::Uuid::new_v4(),
                 name: "Tank".to_string(),
             }),
             victim: Combatant {
-                id: engine::utils::Uuid::new_v4(),
+                id: calyx_engine::utils::Uuid::new_v4(),
                 name: victim.to_string(),
             },
         }
@@ -302,7 +302,7 @@ mod tests {
 
     #[test]
     fn kill_feed_ages_with_the_simulation() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         let hud = named(&mut scene, "Hud");
         scene.add_component(hud, ComponentKillFeed::default());
         let mut runner = HeadlessSceneRunner::from_scene(scene);
@@ -325,7 +325,7 @@ mod tests {
 
     #[test]
     fn recorded_kills_count_kills_and_deaths() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         let tank = named(&mut scene, "Tank");
         let sentry = named(&mut scene, "Sentry");
         let target = named(&mut scene, "Target A");
@@ -362,7 +362,7 @@ mod tests {
 
     #[test]
     fn a_self_kill_or_unknown_killer_counts_only_the_death() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         let tank = named(&mut scene, "Tank");
         scene.add_component(tank, ComponentCombatStats::default());
         scene.add_component(tank, ComponentKillFeed::default());
@@ -391,7 +391,7 @@ mod tests {
 
     #[test]
     fn recorded_kills_reach_every_kill_feed() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         let first = named(&mut scene, "First HUD");
         let second = named(&mut scene, "Second HUD");
         scene.add_component(first, ComponentKillFeed::default());

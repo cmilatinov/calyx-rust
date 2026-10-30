@@ -1,6 +1,6 @@
 // Curve evaluation on the GPU, matching `Curve::evaluate` on the CPU
-// (`engine/src/math/curve.rs`) and `GpuCurveKey` / `GpuCurveRange`
-// (`engine/src/render/gpu_curve.rs`).
+// (`crates/calyx_engine/src/math/curve.rs`) and `GpuCurveKey` / `GpuCurveRange`
+// (`crates/calyx_engine/src/render/gpu_curve.rs`).
 //
 // Include it with `//#include "shaders/common/curve.wgsl"`. It declares no bindings:
 // it reads its keys from the parameter `curve_storage`, curves packed one

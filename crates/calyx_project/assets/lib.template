@@ -1,0 +1,6 @@
+use calyx_engine::reflect::type_registry::TypeRegistry;
+
+#[no_mangle]
+pub extern "C" fn plugin_main(registry: &mut TypeRegistry) {
+    registry.register_crate(env!("CARGO_PKG_NAME"));
+}
