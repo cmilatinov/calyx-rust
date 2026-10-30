@@ -396,12 +396,18 @@ fn enabled_overlays_record_in_order_and_the_target_exists_only_while_one_is() {
 /// A camera above the grid looking down at the world origin, where both grid
 /// layers and both axes overlap.
 fn grid_camera_uniform(size: u32) -> CameraUniform {
+    camera_uniform(
+        size,
+        glm::look_at_lh(
+            &glm::vec3(0.5, 3.0, -3.0),
+            &glm::vec3(0.0, 0.0, 0.0),
+            &glm::vec3(0.0, 1.0, 0.0),
+        ),
+    )
+}
+
+fn camera_uniform(size: u32, view: glm::Mat4) -> CameraUniform {
     let camera = Camera::new(1.0, 70f32.to_radians(), 0.1, 1000.0);
-    let view = glm::look_at_lh(
-        &glm::vec3(0.5, 3.0, -3.0),
-        &glm::vec3(0.0, 0.0, 0.0),
-        &glm::vec3(0.0, 1.0, 0.0),
-    );
     CameraUniform {
         projection: camera.projection.into(),
         view: view.into(),
@@ -413,9 +419,9 @@ fn grid_camera_uniform(size: u32) -> CameraUniform {
     }
 }
 
-#[test]
-fn the_grid_leaves_coverage_alpha_in_range_and_color_no_brighter_than_it() {
-    const SIZE: u32 = 64;
+/// Renders the real grid seen through `camera` into a `size` x `size`
+/// overlay target and returns its texels, row by row.
+fn render_grid(camera: CameraUniform, size: u32) -> Vec<[f32; 4]> {
     let assets = TestAssets::engine();
     let context = assets.asset_context();
     let context = context.lock_read();
@@ -425,7 +431,7 @@ fn the_grid_leaves_coverage_alpha_in_range_and_color_no_brighter_than_it() {
             .device()
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("grid_test_camera"),
-                contents: bytemuck::cast_slice(&[grid_camera_uniform(SIZE)]),
+                contents: bytemuck::cast_slice(&[camera]),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
     let mut grid = GridRenderer::new(&context, &camera_buffer).expect("grid shader loads");
@@ -435,15 +441,15 @@ fn the_grid_leaves_coverage_alpha_in_range_and_color_no_brighter_than_it() {
         &render_context,
         wgpu::TextureFormat::Rgba16Float,
         1,
-        SIZE,
-        SIZE,
+        size,
+        size,
     );
     let depth = sized_texture(
         &render_context,
         wgpu::TextureFormat::Depth32Float,
         1,
-        SIZE,
-        SIZE,
+        size,
+        size,
     );
     let object_ids = sized_texture(&render_context, wgpu::TextureFormat::R32Uint, 1, 1, 1);
     let options = SceneRendererOptions {
@@ -470,8 +476,13 @@ fn the_grid_leaves_coverage_alpha_in_range_and_color_no_brighter_than_it() {
     );
     render_context.queue().submit(Some(encoder.finish()));
     assert_eq!(recorded, 1);
+    read_texels(&render_context, compositor.target().expect("drawn"))
+}
 
-    let texels = read_texels(&render_context, compositor.target().expect("drawn"));
+#[test]
+fn the_grid_leaves_coverage_alpha_in_range_and_color_no_brighter_than_it() {
+    const SIZE: u32 = 64;
+    let texels = render_grid(grid_camera_uniform(SIZE), SIZE);
     // The origin is at the image centre: both layers and both axes cover it.
     let centre = texels[(SIZE / 2 * SIZE + SIZE / 2) as usize];
     assert!(
@@ -522,5 +533,64 @@ fn an_overlay_texel_with_coverage_above_one_never_subtracts_the_scene() {
         // Held to coverage one and color 0.6, the overlay hides the scene. A
         // factor of 1 - a = -1 on the scene would give 0.6 - background.
         assert_close(row[0][0], 0.6, "over-covered pixel");
+    }
+}
+
+/// Where the ray through the centre of pixel (`x`, `y`) meets the grid plane.
+fn grid_point(camera: &CameraUniform, size: u32, x: u32, y: u32) -> glm::Vec3 {
+    let inverse = glm::Mat4::from(camera.inverse_view) * glm::Mat4::from(camera.inverse_projection);
+    let ndc = glm::vec2(
+        (x as f32 + 0.5) / size as f32 * 2.0 - 1.0,
+        1.0 - (y as f32 + 0.5) / size as f32 * 2.0,
+    );
+    let unproject = |depth: f32| {
+        let point = inverse * glm::vec4(ndc.x, ndc.y, depth, 1.0);
+        point.xyz() / point.w
+    };
+    let (near, far) = (unproject(0.0), unproject(0.5));
+    near + (far - near) * (-near.y / (far.y - near.y))
+}
+
+#[test]
+fn a_major_grid_line_has_clearly_more_coverage_than_a_minor_one() {
+    const SIZE: u32 = 128;
+    // Straight down at x = 9, z = 5.5, away from both axes: lines across the
+    // middle row are about 18 pixels apart, the major line at x = 10 and the
+    // minor ones at x = 6, 7, 8, 9, 11 and 12.
+    let camera = camera_uniform(
+        SIZE,
+        glm::look_at_lh(
+            &glm::vec3(9.0, 5.0, 5.5),
+            &glm::vec3(9.0, 0.0, 5.5),
+            &glm::vec3(0.0, 0.0, 1.0),
+        ),
+    );
+    let texels = render_grid(camera, SIZE);
+    let row = SIZE / 2;
+    // The coverage across one line, summed over the pixels within half a unit
+    // of it, and its peak.
+    let line = |line_x: f32| {
+        (0..SIZE)
+            .filter(|&x| (grid_point(&camera, SIZE, x, row).x - line_x).abs() < 0.5)
+            .map(|x| texels[(row * SIZE + x) as usize][3])
+            .fold((0.0f32, 0.0f32), |(sum, peak), alpha| {
+                (sum + alpha, peak.max(alpha))
+            })
+    };
+    let (major_sum, major_peak) = line(10.0);
+    for minor_x in [7.0, 8.0, 11.0] {
+        let (minor_sum, minor_peak) = line(minor_x);
+        assert!(
+            minor_peak > 0.1,
+            "the minor line at x = {minor_x} is drawn: peak {minor_peak}"
+        );
+        assert!(
+            major_peak >= 1.5 * minor_peak,
+            "the major line peaks at {major_peak}, the minor one at x = {minor_x} at {minor_peak}"
+        );
+        assert!(
+            major_sum >= 3.0 * minor_sum,
+            "the major line covers {major_sum}, the minor one at x = {minor_x} {minor_sum}"
+        );
     }
 }
