@@ -144,7 +144,6 @@
           0,
           255
         ],
-        "enabled": true,
         "far_plane": 100.0,
         "fov": 1.2217304706573486,
         "near_plane": 0.10000000149011612
@@ -393,7 +392,6 @@
         }
       },
       "cdbfef3f-81a5-4ccb-a0f6-098bc5a26979": {
-        "enabled": true,
         "priority": 0,
         "settings": {
           "tonemapping": {
