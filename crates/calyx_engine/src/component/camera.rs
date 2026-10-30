@@ -41,6 +41,11 @@ impl Default for ComponentCamera {
 }
 
 impl Component for ComponentCamera {
+    /// Main camera selection skips a disabled camera.
+    fn can_disable(&self) -> bool {
+        true
+    }
+
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {
         let transform = scene.world_transform(game_object);
         gizmos.set_color(&Vec4::new(1.0, 1.0, 1.0, 1.0));

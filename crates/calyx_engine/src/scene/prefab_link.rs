@@ -531,7 +531,7 @@ impl Scene {
                         Ok(instance) => {
                             self.bind_instance(game_object, component, instance);
                             let enabled = prefab.data.is_component_enabled(*source, type_uuid);
-                            self.set_instance_enabled(game_object, type_uuid, component, enabled);
+                            self.set_instance_enabled(game_object, component, enabled);
                         }
                         Err(err) => {
                             skip(

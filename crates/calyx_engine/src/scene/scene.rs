@@ -23,9 +23,7 @@ use crate::physics::PhysicsContext;
 use crate::reflect::{ReflectDefault, TypeInfo};
 use crate::resource::ResourceMap;
 use crate::scene::change_set::ChangeSet;
-use crate::scene::disabled_components::{
-    can_disable_component, migrate_legacy_enabled, DisabledComponents,
-};
+use crate::scene::disabled_components::{migrate_legacy_enabled, DisabledComponents};
 use crate::scene::dropped_components::{log_dropped_components, registered_type_name};
 use crate::scene::game_object_store::GameObjectStore;
 use crate::scene::network_index::NetworkObjectIndex;
@@ -593,16 +591,24 @@ impl Scene {
     }
 
     /// Marks `game_object`'s just-loaded component of type `type_uuid`
-    /// disabled, as the data it was loaded from stores it.
+    /// disabled, as the data it was loaded from stores it. A type that
+    /// cannot be disabled, saved disabled before it had to opt in or by
+    /// hand, loads enabled with a warning, and its entry is not saved again.
     pub(crate) fn disable_loaded(
         &mut self,
         game_object: GameObject,
         type_uuid: Uuid,
         component: &dyn Component,
     ) {
-        if can_disable_component(type_uuid) {
+        if component.can_disable() {
             self.disabled
                 .set(game_object.entity, component.component_type_id(), false);
+        } else {
+            log::warn!(
+                "Ignoring the saved disabled state of object {}'s {} ({type_uuid}): the component cannot be disabled, so it loads enabled",
+                self.uuid(game_object),
+                component.type_name(),
+            );
         }
     }
 }
@@ -1249,23 +1255,20 @@ impl Scene {
     /// the state, such as camera selection, physics and post-process volume
     /// selection, skip a disabled component. Returns `false`, changing
     /// nothing, when the object has no such component or the type cannot be
-    /// disabled; see [`can_disable_component`]. A change is reported as a
+    /// disabled; see [`Component::can_disable`]. A change is reported as a
     /// write of the component.
     pub fn set_component_enabled<T: Component + 'static>(
         &mut self,
         game_object: GameObject,
         enabled: bool,
     ) -> bool {
-        let component = ComponentTypeId::of::<T>();
-        if component == ComponentTypeId::of::<ComponentID>()
-            || component == ComponentTypeId::of::<ComponentTransform>()
-            || self
-                .read_component::<T, _, _>(game_object, |_| ())
-                .is_none()
+        if !self
+            .read_component::<T, _, _>(game_object, |component| component.can_disable())
+            .unwrap_or(false)
         {
             return false;
         }
-        self.set_type_enabled(game_object, component, enabled);
+        self.set_type_enabled(game_object, ComponentTypeId::of::<T>(), enabled);
         true
     }
 
@@ -1290,28 +1293,24 @@ impl Scene {
         type_uuid: Uuid,
         enabled: bool,
     ) -> bool {
-        if !can_disable_component(type_uuid) {
-            return false;
-        }
         let registry_ref = self.registries.components.clone();
         let registry = registry_ref.read();
         let Some(component) = registry.component(type_uuid) else {
             return false;
         };
-        self.set_instance_enabled(game_object, type_uuid, component, enabled)
+        self.set_instance_enabled(game_object, component, enabled)
     }
 
     /// [`Self::set_component_enabled_dyn`] for callers already holding the
-    /// component registry, with `component` the registered prototype of
-    /// `type_uuid`.
+    /// component registry, with `component` the registered prototype of the
+    /// type.
     pub(crate) fn set_instance_enabled(
         &mut self,
         game_object: GameObject,
-        type_uuid: Uuid,
         component: &dyn Component,
         enabled: bool,
     ) -> bool {
-        if !can_disable_component(type_uuid)
+        if !component.can_disable()
             || self
                 .read_component_dyn(game_object, component, |_| ())
                 .is_none()

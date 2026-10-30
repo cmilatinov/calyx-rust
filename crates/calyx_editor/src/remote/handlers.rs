@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
+use calyx_engine::class_registry::ComponentRegistry;
 use calyx_engine::component::{Component, ComponentID};
-use calyx_engine::scene::{can_disable_component, GameObject, Scene};
+use calyx_engine::scene::{GameObject, Scene};
 use calyx_engine::utils::TypeUuid;
 use calyx_remote_protocol::{
     CaptureTarget, Command, CoordSpace, ErrorKind, InputEventSpec, ModifiersSpec, PickTarget,
@@ -676,12 +677,11 @@ impl EditorApp {
         enabled: bool,
     ) -> CommandResult {
         let type_uuid = resolve_component_type(&self.state, component)?;
-        if !can_disable_component(type_uuid) {
-            return Err((
-                ErrorKind::BadRequest,
-                format!("{component} cannot be disabled"),
-            ));
-        }
+        ensure_can_disable(
+            &self.state.game.assets.registries.components.read(),
+            type_uuid,
+            component,
+        )?;
         let scene = self.state.game.scenes.simulation_scene_mut();
         let game_object = resolve_object(scene, object)?;
         if !scene.set_component_enabled_dyn(game_object, type_uuid, enabled) {
@@ -1324,11 +1324,31 @@ fn pointer_button_event(pos: egui::Pos2, button: PointerButtonSpec, pressed: boo
     }
 }
 
+/// Refuses, as a bad request, a component type `component` (type UUID
+/// `type_uuid`) that does not opt in to disabling.
+fn ensure_can_disable(
+    registry: &ComponentRegistry,
+    type_uuid: Uuid,
+    component: &str,
+) -> Result<(), (ErrorKind, String)> {
+    if registry.can_disable(type_uuid) {
+        return Ok(());
+    }
+    Err((
+        ErrorKind::BadRequest,
+        format!(
+            "{component} cannot be disabled: only components whose systems honor the enabled state support it"
+        ),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::remote::runtime::tests::test_runtime;
-    use calyx_engine::component::ComponentTransform;
+    use calyx_engine::component::{
+        ComponentCamera, ComponentMesh, ComponentPointLight, ComponentTransform,
+    };
 
     #[test]
     fn a_game_capture_renders_only_while_the_game_panel_has_no_size() {
@@ -1389,6 +1409,25 @@ mod tests {
             (child_world - Vec3::new(5.0, 1.0, 0.0)).norm() < 1e-5,
             "child world position {child_world:?}"
         );
+    }
+
+    #[test]
+    fn disabling_a_component_that_cannot_be_disabled_is_a_bad_request() {
+        let registries = calyx_engine::test_support::test_registries();
+        let components = registries.components.read();
+        assert!(ensure_can_disable(&components, ComponentCamera::type_uuid(), "camera").is_ok());
+        for (type_uuid, name) in [
+            (ComponentMesh::type_uuid(), "mesh"),
+            (ComponentPointLight::type_uuid(), "point light"),
+            (ComponentTransform::type_uuid(), "transform"),
+        ] {
+            let (kind, message) = ensure_can_disable(&components, type_uuid, name).unwrap_err();
+            assert_eq!(kind, ErrorKind::BadRequest);
+            assert!(
+                message.contains(&format!("{name} cannot be disabled")),
+                "{message}"
+            );
+        }
     }
 
     #[test]

@@ -10,7 +10,7 @@ use crate::selection::SelectionType;
 use crate::EditorAppState;
 use calyx_engine::assets::animation_graph::AnimationGraph;
 use calyx_engine::reflect::TypeInfo;
-use calyx_engine::scene::{can_disable_component, GameObject};
+use calyx_engine::scene::GameObject;
 use egui::scroll_area::ScrollBarVisibility;
 use egui::{Id, Ui};
 use re_ui::list_item::{LabelContent, ListItem};
@@ -185,7 +185,7 @@ impl PanelInspector {
             else {
                 continue;
             };
-            let enabled = can_disable_component(*type_uuid).then(|| {
+            let enabled = component.can_disable().then(|| {
                 state
                     .game
                     .scenes

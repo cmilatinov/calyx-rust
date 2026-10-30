@@ -37,4 +37,9 @@ impl ComponentGlobalPostProcessVolume {
     }
 }
 
-impl Component for ComponentGlobalPostProcessVolume {}
+impl Component for ComponentGlobalPostProcessVolume {
+    /// Post-process volume selection skips a disabled volume.
+    fn can_disable(&self) -> bool {
+        true
+    }
+}

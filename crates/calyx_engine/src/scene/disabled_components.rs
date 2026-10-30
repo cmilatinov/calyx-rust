@@ -3,6 +3,9 @@
 //! Every component is enabled unless the scene lists it here, so the map holds
 //! only disabled entries. Systems that honor the state, such as camera
 //! selection and physics, read it through [`Scene`](crate::scene::Scene).
+//! Only component types that opt in through
+//! [`Component::can_disable`](crate::component::Component::can_disable) can
+//! be listed.
 
 use std::collections::{HashMap, HashSet};
 
@@ -12,8 +15,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::component::{
-    ComponentCamera, ComponentCollider, ComponentGlobalPostProcessVolume, ComponentID,
-    ComponentRigidBody, ComponentTransform,
+    ComponentCamera, ComponentCollider, ComponentGlobalPostProcessVolume, ComponentRigidBody,
 };
 use crate::scene::SceneData;
 use crate::utils::TypeUuid;
@@ -57,13 +59,6 @@ impl DisabledComponents {
     pub(crate) fn forget(&mut self, entity: Entity) {
         self.0.remove(&entity);
     }
-}
-
-/// Whether components of type `type_uuid` can be disabled. Every object keeps
-/// its [`ComponentID`] and [`ComponentTransform`] in effect, so those two
-/// cannot.
-pub fn can_disable_component(type_uuid: Uuid) -> bool {
-    type_uuid != ComponentID::type_uuid() && type_uuid != ComponentTransform::type_uuid()
 }
 
 /// The component types that carried their own `enabled` field before the

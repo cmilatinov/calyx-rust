@@ -5,8 +5,9 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::component::{
-    ComponentCamera, ComponentCollider, ComponentGlobalPostProcessVolume, ComponentID,
-    ComponentPointLight, ComponentRigidBody, ComponentTransform,
+    ComponentCamera, ComponentCollider, ComponentDirectionalLight,
+    ComponentGlobalPostProcessVolume, ComponentID, ComponentMesh, ComponentPointLight,
+    ComponentRigidBody, ComponentSkinnedMesh, ComponentTransform,
 };
 use crate::context::ReadOnlyRegistryContext;
 use crate::scene::{GameObject, Scene, SceneData};
@@ -72,18 +73,86 @@ fn toggling_a_component_is_reported_as_a_write() {
 }
 
 #[test]
+fn only_types_whose_systems_honor_the_state_opt_in() {
+    let registries = test_registries();
+    let components = registries.components.read();
+    for type_uuid in [
+        ComponentCamera::type_uuid(),
+        ComponentCollider::type_uuid(),
+        ComponentRigidBody::type_uuid(),
+        ComponentGlobalPostProcessVolume::type_uuid(),
+    ] {
+        assert!(components.can_disable(type_uuid), "{type_uuid}");
+    }
+    for type_uuid in [
+        ComponentID::type_uuid(),
+        ComponentTransform::type_uuid(),
+        ComponentMesh::type_uuid(),
+        ComponentSkinnedMesh::type_uuid(),
+        ComponentPointLight::type_uuid(),
+        ComponentDirectionalLight::type_uuid(),
+        Uuid::new_v4(),
+    ] {
+        assert!(!components.can_disable(type_uuid), "{type_uuid}");
+    }
+}
+
+#[test]
 fn only_present_components_of_switchable_types_can_be_disabled() {
     let registries = test_registries();
     let (mut scene, go) = scene_with_camera(&registries);
+    scene.add_component(go, ComponentMesh::default());
 
     assert!(!scene.set_component_enabled::<ComponentRigidBody>(go, false));
     assert!(!scene.set_component_enabled::<ComponentID>(go, false));
     assert!(!scene.set_component_enabled::<ComponentTransform>(go, false));
+    assert!(!scene.set_component_enabled::<ComponentPointLight>(go, false));
+    assert!(!scene.set_component_enabled::<ComponentMesh>(go, false));
     assert!(!scene.set_component_enabled_dyn(go, ComponentTransform::type_uuid(), false));
+    assert!(!scene.set_component_enabled_dyn(go, ComponentPointLight::type_uuid(), false));
+    assert!(!scene.set_component_enabled_dyn(go, ComponentMesh::type_uuid(), false));
     assert!(!scene.set_component_enabled_dyn(go, Uuid::new_v4(), false));
     assert!(scene.is_component_enabled::<ComponentTransform>(go));
+    assert!(scene.is_component_enabled::<ComponentPointLight>(go));
+    assert!(scene.is_component_enabled::<ComponentMesh>(go));
     let data: SceneData = (&scene).into();
     assert!(data.disabled_components.is_empty());
+}
+
+#[test]
+fn a_saved_entry_for_a_type_that_cannot_be_disabled_is_ignored() {
+    let registries = test_registries();
+    let (mut scene, go) = scene_with_camera(&registries);
+    scene.set_component_enabled::<ComponentCamera>(go, false);
+    let id = scene.uuid(go);
+
+    // Saved with the light listed too, as a file written before the light
+    // had to opt in, or by hand, may be.
+    let mut saved = serde_json::to_value(&scene).unwrap();
+    saved["disabled_components"][id.to_string()] = json!([
+        ComponentCamera::type_uuid().to_string(),
+        ComponentPointLight::type_uuid().to_string(),
+    ]);
+    let data: SceneData = serde_json::from_value(saved).unwrap();
+    assert!(!data.is_component_enabled(id, ComponentPointLight::type_uuid()));
+
+    let loaded: Scene = (&registries, data).into();
+    let loaded_go = loaded.find(id).unwrap();
+    assert!(!loaded.is_component_enabled::<ComponentCamera>(loaded_go));
+    assert!(
+        loaded.is_component_enabled::<ComponentPointLight>(loaded_go),
+        "the light loads enabled"
+    );
+    let resaved: SceneData = (&loaded).into();
+    assert_eq!(
+        resaved
+            .disabled_components
+            .get(&id)
+            .cloned()
+            .unwrap_or_default(),
+        [ComponentCamera::type_uuid()].into(),
+        "the light's entry is not saved again"
+    );
 }
 
 #[test]
@@ -117,8 +186,9 @@ fn the_state_survives_a_save_and_load() {
 fn removing_a_component_or_its_object_drops_its_entry() {
     let registries = test_registries();
     let (mut scene, go) = scene_with_camera(&registries);
+    scene.add_component(go, ComponentCollider::default());
     scene.set_component_enabled::<ComponentCamera>(go, false);
-    scene.set_component_enabled::<ComponentPointLight>(go, false);
+    scene.set_component_enabled::<ComponentCollider>(go, false);
 
     scene.remove_component::<ComponentCamera>(go);
     scene.add_component(go, ComponentCamera::default());
@@ -126,8 +196,8 @@ fn removing_a_component_or_its_object_drops_its_entry() {
         scene.is_component_enabled::<ComponentCamera>(go),
         "a component added again starts enabled"
     );
-    assert!(scene.remove_component_dyn(go, ComponentPointLight::type_uuid()));
-    assert!(scene.is_component_enabled::<ComponentPointLight>(go));
+    assert!(scene.remove_component_dyn(go, ComponentCollider::type_uuid()));
+    assert!(scene.is_component_enabled::<ComponentCollider>(go));
 
     scene.set_component_enabled::<ComponentCamera>(go, false);
     scene.delete(go);
@@ -141,10 +211,11 @@ fn removing_a_component_or_its_object_drops_its_entry() {
 fn the_state_follows_a_prefab_and_its_instances() {
     let registries = test_registries();
     let (mut scene, go) = scene_with_camera(&registries);
+    scene.add_component(go, ComponentCollider::default());
     let child = scene.create(None, Some(go));
-    scene.add_component(child, ComponentPointLight::default());
+    scene.add_component(child, ComponentCollider::default());
     scene.set_component_enabled::<ComponentCamera>(go, false);
-    scene.set_component_enabled::<ComponentPointLight>(child, false);
+    scene.set_component_enabled::<ComponentCollider>(child, false);
 
     // Saved with the prefab, and through its file.
     let prefab = scene.create_prefab(go);
@@ -156,9 +227,9 @@ fn the_state_follows_a_prefab_and_its_instances() {
         let instance = scene.instantiate_prefab(&prefab, None).unwrap();
         assert_ne!(instance, go);
         assert!(!scene.is_component_enabled::<ComponentCamera>(instance));
-        assert!(scene.is_component_enabled::<ComponentPointLight>(instance));
+        assert!(scene.is_component_enabled::<ComponentCollider>(instance));
         let instance_child = scene.children(instance).next().unwrap();
-        assert!(!scene.is_component_enabled::<ComponentPointLight>(instance_child));
+        assert!(!scene.is_component_enabled::<ComponentCollider>(instance_child));
     }
 
     // A linked instance follows the prefab when it updates, unless it
@@ -170,16 +241,16 @@ fn the_state_follows_a_prefab_and_its_instances() {
     let (overriding, _) = scene
         .instantiate_linked_prefab(prefab_id, &prefab, None)
         .unwrap();
-    scene.set_component_enabled::<ComponentPointLight>(overriding, false);
+    scene.set_component_enabled::<ComponentCollider>(overriding, false);
     scene.set_component_enabled::<ComponentCamera>(go, true);
     let updated = scene.create_prefab(go);
     scene.update_prefab_instances(prefab_id, &updated).unwrap();
 
     assert!(scene.is_component_enabled::<ComponentCamera>(linked));
-    assert!(scene.is_component_enabled::<ComponentPointLight>(linked));
+    assert!(scene.is_component_enabled::<ComponentCollider>(linked));
     assert!(scene.is_component_enabled::<ComponentCamera>(overriding));
     assert!(
-        !scene.is_component_enabled::<ComponentPointLight>(overriding),
+        !scene.is_component_enabled::<ComponentCollider>(overriding),
         "the instance keeps its own state as an override"
     );
 }

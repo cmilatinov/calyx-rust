@@ -4,7 +4,6 @@
 //! game code use to build, traverse, serialize, and simulate hierarchies of
 //! game objects.
 
-pub use self::disabled_components::can_disable_component;
 pub use self::dropped_components::{dropped_components_report, DropReason, DroppedComponent};
 pub use self::error::*;
 pub use self::game_object_ref::*;

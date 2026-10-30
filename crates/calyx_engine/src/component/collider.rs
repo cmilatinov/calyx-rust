@@ -75,7 +75,12 @@ impl Default for ComponentCollider {
     }
 }
 
-impl Component for ComponentCollider {}
+impl Component for ComponentCollider {
+    /// Physics leaves a disabled collider out of the simulation.
+    fn can_disable(&self) -> bool {
+        true
+    }
+}
 
 #[cfg(test)]
 mod tests {

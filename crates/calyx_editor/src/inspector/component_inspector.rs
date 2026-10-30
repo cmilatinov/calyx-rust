@@ -264,7 +264,8 @@ impl<'a> ComponentInspector<'a> {
     /// Draws `instance` under a collapsing header, marked with a pin icon
     /// when `pin` says it is pinned. `enabled` is the component's enabled
     /// state, or `None` for a component that cannot be disabled: the header
-    /// then has no checkbox. While the component is disabled, its body is
+    /// then has no checkbox, and the pin icon takes the icon slot the
+    /// checkbox would; otherwise the pin sits right of the title. While the component is disabled, its body is
     /// greyed out and cannot be edited. The header's context menu offers the
     /// pin edits `pin` allows and removing it, except for the components
     /// every object keeps.
@@ -296,7 +297,10 @@ impl<'a> ComponentInspector<'a> {
                     }
                 });
         }
-        if pin.pinned {
+        if pin.pinned && enabled.is_none() {
+            label = label.with_icon(&icons::PIN);
+        } else if pin.pinned {
+            // The checkbox takes the icon slot, so the pin moves right.
             label = label
                 .with_buttons(|ui| {
                     ui.add(
@@ -727,7 +731,9 @@ mod tests {
     use crate::inspector::type_inspector::{InspectorContext, InspectorResponse};
     use crate::scene_history::{InspectorValueEdit, SceneHistory, SceneHistoryRestore};
     use crate::widgets::ListContainer;
-    use calyx_engine::component::{ComponentCamera, ComponentParticleSystem};
+    use calyx_engine::component::{
+        Component, ComponentCamera, ComponentParticleSystem, ComponentPointLight,
+    };
     use calyx_engine::reflect::type_registry::TypeRegistry;
     use calyx_engine::reflect::{ListInfo, Reflect, TypeInfo};
     use calyx_engine::utils::TypeUuid;
@@ -1182,20 +1188,45 @@ mod tests {
         assert_eq!(toggles.get(), 0);
     }
 
+    /// The inspector panel passes an enabled state only for a component type
+    /// that opts in to disabling, so a point light's header, pinned or not,
+    /// has no checkbox.
     #[test]
     fn components_that_cannot_be_disabled_have_no_checkbox() {
         let mut h = InspectorHarness::new();
         let registry = h.inspector_registry();
         let inspector = ComponentInspector::new(&registry);
-        let mut camera = ComponentCamera::default();
-        h.type_info = ComponentCamera::type_uuid();
-        let mut draw = |ui: &mut Ui, ctx: &InspectorContext| {
-            inspector
-                .show(ui, ctx, camera.as_reflect_mut(), PinState::default(), None)
-                .edit
-        };
-        h.idle(3, &mut draw);
-        assert!(h.widgets(Role::CheckBox).is_empty(), "{:#?}", h.nodes());
+        let mut light = ComponentPointLight::default();
+        assert!(!light.can_disable());
+        h.type_info = ComponentPointLight::type_uuid();
+        for pinned in [false, true] {
+            let enabled = light.can_disable().then_some(true);
+            let pin = PinState {
+                pinned,
+                ..PinState::default()
+            };
+            let mut draw = |ui: &mut Ui, ctx: &InspectorContext| {
+                inspector
+                    .show(ui, ctx, light.as_reflect_mut(), pin, enabled)
+                    .edit
+            };
+            h.idle(3, &mut draw);
+            let header = h
+                .nodes()
+                .iter()
+                .find(|node| node.label.as_deref() == Some("Point Light"))
+                .unwrap_or_else(|| panic!("no Point Light header in {:#?}", h.nodes()))
+                .rect;
+            // The light's own Active field is a checkbox in the body.
+            let checkboxes = h.widgets(Role::CheckBox);
+            assert_eq!(checkboxes.len(), 1, "{:#?}", h.nodes());
+            assert!(
+                checkboxes
+                    .iter()
+                    .all(|checkbox| !header.intersects(checkbox.rect)),
+                "no checkbox in the header {header:?}: {checkboxes:#?}"
+            );
+        }
     }
 
     /// The particle system's size module shows its curve in the curve editor,

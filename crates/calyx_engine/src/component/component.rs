@@ -167,6 +167,19 @@ pub struct ComponentEventContext<'a> {
 #[allow(unused, missing_docs)]
 #[reflect_trait]
 pub trait Component: TypeUuidDynamic + ComponentInstance {
+    /// Whether the scene can switch this component off. Defaults to `false`.
+    ///
+    /// A component type opts in by returning `true` once every system that
+    /// consumes it skips a disabled instance, as camera selection and
+    /// physics do. Only then does the inspector show its enabled checkbox,
+    /// and only then do [`Scene::set_component_enabled`] and `calyx_ctl
+    /// component disable` accept it. The method is on the prototype the
+    /// component registry keeps, so callers holding only a type UUID ask
+    /// [`ComponentRegistry::can_disable`](crate::class_registry::ComponentRegistry::can_disable).
+    fn can_disable(&self) -> bool {
+        false
+    }
+
     /// Called when the component is removed from a game object.
     ///
     /// Use this to detach child objects, release runtime-only resources, or

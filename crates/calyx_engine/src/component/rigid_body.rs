@@ -35,4 +35,9 @@ impl Default for ComponentRigidBody {
     }
 }
 
-impl Component for ComponentRigidBody {}
+impl Component for ComponentRigidBody {
+    /// Physics leaves a disabled rigid body out of the simulation.
+    fn can_disable(&self) -> bool {
+        true
+    }
+}
