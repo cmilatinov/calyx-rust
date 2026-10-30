@@ -1,3 +1,4 @@
+use crate::asset_open::{AssetOpenContext, AssetOpenOutcome, AssetOpener, ReflectAssetOpener};
 use crate::inspector::asset_inspector::{
     AssetInspector, AssetInspectorAction, ReflectAssetInspector,
 };
@@ -14,8 +15,42 @@ use std::io::BufWriter;
 use uuid::Uuid;
 
 #[derive(Default, Clone, TypeUuid, Reflect)]
-#[reflect(Default, AssetInspector)]
+#[reflect(Default, AssetInspector, AssetOpener)]
 pub struct ShaderInspector;
+
+/// A shader is WGSL text, so it opens in the OS default app for its file.
+impl AssetOpener for ShaderInspector {
+    fn target_type_uuid(&self) -> Uuid {
+        Shader::type_uuid()
+    }
+
+    fn open(&self, editor: &mut AssetOpenContext<'_>, asset_id: Uuid) -> AssetOpenOutcome {
+        let path = editor
+            .game
+            .assets
+            .registries
+            .assets
+            .read()
+            .asset_meta_from_id(asset_id)
+            .and_then(|meta| meta.path);
+        let Some(path) = path else {
+            let reason = format!("shader {asset_id} has no file to open");
+            log::error!("Failed to open {reason}");
+            return AssetOpenOutcome::Refused(reason);
+        };
+        match open::that_detached(&path) {
+            Ok(()) => {
+                log::info!("Opened shader {} in the default app", path.display());
+                AssetOpenOutcome::Opened
+            }
+            Err(error) => {
+                let reason = format!("shader {} in the default app: {error}", path.display());
+                log::error!("Failed to open {reason}");
+                AssetOpenOutcome::Refused(reason)
+            }
+        }
+    }
+}
 
 impl AssetInspector for ShaderInspector {
     fn target_type_uuid(&self) -> Uuid {

@@ -152,14 +152,42 @@ impl EditorAppState {
     /// Prefab mode with the editor state it opens, saves and closes prefabs
     /// in.
     pub(crate) fn prefab_mode_mut(&mut self) -> PrefabModeMut<'_> {
+        self.prefab_mode.with(
+            &mut self.game,
+            &mut self.scene_document,
+            &mut self.selection,
+            &self.project_path,
+        )
+    }
+}
+
+impl PrefabMode {
+    /// Prefab mode with the editor state it opens, saves and closes prefabs
+    /// in, for callers that hold that state as separate borrows.
+    pub(crate) fn with<'a>(
+        &'a mut self,
+        game: &'a mut GameContext,
+        scene_document: &'a mut SceneDocument,
+        selection: &'a mut Selection,
+        project_path: &'a Path,
+    ) -> PrefabModeMut<'a> {
         PrefabModeMut {
-            mode: &mut self.prefab_mode,
-            game: &mut self.game,
-            scene_document: &mut self.scene_document,
-            selection: &mut self.selection,
-            project_path: &self.project_path,
+            mode: self,
+            game,
+            scene_document,
+            selection,
+            project_path,
         }
     }
+}
+
+/// What [`PrefabModeMut::request_open`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PrefabOpenRequest {
+    /// The prefab is open in prefab mode.
+    Opened,
+    /// The unsaved-prefab prompt waits on the user's answer first.
+    Prompted,
 }
 
 impl PrefabModeMut<'_> {
@@ -238,16 +266,18 @@ impl PrefabModeMut<'_> {
 
     /// Opens the prefab asset `asset_id`, first asking what to do with the
     /// open prefab's unsaved changes, if it has any.
-    pub(crate) fn request_open(&mut self, asset_id: Uuid) {
+    pub(crate) fn request_open(&mut self, asset_id: Uuid) -> Result<PrefabOpenRequest, String> {
         let open_prefab_is_dirty =
             self.mode.prefab.as_ref().is_some_and(|prefab| {
                 prefab.asset_id() != asset_id && self.scene_document.is_dirty()
             });
         if open_prefab_is_dirty {
             self.mode.prompt = Some(PrefabPrompt::Open(asset_id));
-        } else if let Err(error) = self.open(asset_id) {
-            log::error!("Failed to open prefab: {error}");
+            return Ok(PrefabOpenRequest::Prompted);
         }
+        self.open(asset_id)
+            .map(|()| PrefabOpenRequest::Opened)
+            .map_err(|error| format!("Failed to open prefab: {error}"))
     }
 
     /// Closes the open prefab, first asking what to do with its unsaved

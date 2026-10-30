@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use calyx_remote_protocol::{
     CaptureTarget, Command, CoordSpace, InputEventSpec, PickTarget, PointerButtonSpec,
-    ResponsePayload, TransformSpace,
+    ResponsePayload, TransformSpace, UnsavedSceneAnswer,
 };
 use clap::{Parser, Subcommand, ValueEnum};
 
@@ -89,6 +89,9 @@ enum Action {
     /// Prefab mode: edit a prefab asset in isolation from the scene.
     #[command(subcommand)]
     Prefab(PrefabAction),
+    /// Asset operations, as the content browser does them.
+    #[command(subcommand)]
+    Asset(AssetAction),
     /// List all game objects.
     Objects,
     /// Game object operations.
@@ -178,6 +181,23 @@ enum PrefabAction {
     /// Update the scene's instances of a prefab (of every prefab when no
     /// path is given) from the saved prefab, as one undo step.
     Update { path: Option<PathBuf> },
+}
+
+#[derive(Subcommand)]
+enum AssetAction {
+    /// Open an asset as a double-click in the content browser does.
+    Open {
+        path: PathBuf,
+        /// Answer the unsaved-scene prompt by saving the open scene first.
+        #[arg(long, conflicts_with_all = ["discard", "cancel"])]
+        save: bool,
+        /// Answer the unsaved-scene prompt by opening without saving.
+        #[arg(long, conflicts_with = "cancel")]
+        discard: bool,
+        /// Answer the unsaved-scene prompt by keeping the open scene.
+        #[arg(long)]
+        cancel: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -409,6 +429,19 @@ fn frame_timeout(base: Duration, frames: u32) -> Duration {
     base + Duration::from_millis(frames as u64 * 50)
 }
 
+/// The unsaved-scene answer the `asset open` flags choose, if any.
+fn unsaved_scene_answer(save: bool, discard: bool, cancel: bool) -> Option<UnsavedSceneAnswer> {
+    if save {
+        Some(UnsavedSceneAnswer::Save)
+    } else if discard {
+        Some(UnsavedSceneAnswer::Discard)
+    } else if cancel {
+        Some(UnsavedSceneAnswer::Cancel)
+    } else {
+        None
+    }
+}
+
 fn build_command(action: &Action, base: Duration) -> Result<(Command, Duration), String> {
     let simple = |command: Command| Ok((command, base));
     match action {
@@ -445,6 +478,17 @@ fn build_command(action: &Action, base: Duration) -> Result<(Command, Duration),
             PrefabAction::Update { path } => {
                 simple(Command::UpdatePrefabInstances { path: path.clone() })
             }
+        },
+        Action::Asset(asset) => match asset {
+            AssetAction::Open {
+                path,
+                save,
+                discard,
+                cancel,
+            } => simple(Command::OpenAsset {
+                path: path.clone(),
+                unsaved_scene: unsaved_scene_answer(*save, *discard, *cancel),
+            }),
         },
         Action::Objects => simple(Command::ListObjects),
         Action::Object(object) => match object {

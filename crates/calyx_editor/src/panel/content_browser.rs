@@ -8,13 +8,11 @@ use crate::widgets::{
 };
 use crate::{icons, EditorAppState};
 use calyx_engine::assets::animation_graph::AnimationGraph;
-use calyx_engine::scene::Prefab;
-use calyx_engine::utils::TypeUuid;
 use egui::load::SizedTexture;
 use egui::text::LayoutJob;
 use egui::{
-    Align, FontFamily, FontId, Frame, ImageSource, Layout, Margin, Rect, Response, Sense, Slider,
-    TextFormat, TextStyle, Ui, Vec2,
+    Align, FontFamily, FontId, Frame, ImageSource, Key, Layout, Margin, Modifiers, Rect, Response,
+    Sense, Slider, TextFormat, TextStyle, Ui, Vec2,
 };
 use re_ui::list_item::ShowCollapsingResponse;
 use std::any::Any;
@@ -29,6 +27,9 @@ pub struct PanelContentBrowser {
     selected_folder: PathBuf,
     selected_file: Option<PathBuf>,
     thumbnail_size_px: f32,
+    /// Whether the last press landed in the content browser, so Enter opens
+    /// its selected file.
+    has_focus: bool,
 }
 
 impl PanelContentBrowser {
@@ -37,6 +38,7 @@ impl PanelContentBrowser {
             selected_folder: root_path.into(),
             selected_file: None,
             thumbnail_size_px: CONTENT_BROWSER_THUMBNAIL_DEFAULT_SIZE_PX,
+            has_focus: false,
         }
     }
 }
@@ -53,6 +55,7 @@ impl Panel for PanelContentBrowser {
             self.selected_file = None;
             state.selection = Selection::none();
         }
+        self.open_selected_file_on_enter(ui, state);
 
         egui::SidePanel::left("file_tree")
             .resizable(true)
@@ -207,7 +210,7 @@ impl Panel for PanelContentBrowser {
                                     self.set_selected_folder(&mut state.selection, node.clone());
                                 }
                                 if !is_dir && res.double_clicked() {
-                                    Self::open_asset(state, node);
+                                    Self::open_file(state, node);
                                 }
                                 if !is_dir {
                                     self.asset_context_menu(state, &res, node);
@@ -308,6 +311,11 @@ impl PanelContentBrowser {
     }
 
     fn asset_context_menu(&mut self, state: &mut EditorAppState, response: &Response, path: &Path) {
+        // The menu draws only on the right click that opens it and while it
+        // stays open; skip working out its entries otherwise.
+        if !response.secondary_clicked() && !response.context_menu_opened() {
+            return;
+        }
         let (asset_id, type_uuid) = {
             let registry = state.game.assets.registries.assets.read();
             let asset_id = registry.asset_id_from_path(path);
@@ -321,22 +329,31 @@ impl PanelContentBrowser {
             return;
         };
 
+        let open_unavailable = state.asset_open_unavailable_reason(asset_id);
         let inspector_registry = &state.inspector_registry;
         let game = &mut state.game;
+        let mut open = false;
         let mut action = AssetInspectorAction::None;
         response.context_menu(|ui| {
-            let Some(inspector) = type_uuid
-                .and_then(|type_uuid| inspector_registry.asset_inspector_lookup(type_uuid))
-            else {
-                ui.label("No actions available");
+            let open_response = ui
+                .add_enabled(open_unavailable.is_none(), egui::Button::new("Open"))
+                .on_disabled_hover_text(open_unavailable.unwrap_or_default());
+            if open_response.clicked() {
+                open = true;
+                ui.close_menu();
                 return;
-            };
-            if inspector.has_context_menu() {
+            }
+            let inspector = type_uuid
+                .and_then(|type_uuid| inspector_registry.asset_inspector_lookup(type_uuid))
+                .filter(|inspector| inspector.has_context_menu());
+            if let Some(inspector) = inspector {
+                ui.separator();
                 action = inspector.show_context_menu(ui, game, asset_id);
-            } else {
-                ui.label("No actions available");
             }
         });
+        if open {
+            state.open_asset(asset_id);
+        }
         Self::handle_asset_inspector_action(state, action);
     }
 
@@ -348,10 +365,6 @@ impl PanelContentBrowser {
                 PrefabInspector::import(&mut edit, &mut state.game, asset_id);
                 state.commit_scene_edit(edit);
             }
-            AssetInspectorAction::OpenScene(asset_id) => state.open_scene_asset(asset_id),
-            AssetInspectorAction::OpenPrefab(asset_id) => {
-                state.prefab_mode_mut().request_open(asset_id)
-            }
             AssetInspectorAction::UpdatePrefabInstances(asset_id) => {
                 if let Err(error) = state.update_prefab_instances(Some(asset_id)) {
                     log::error!("{error}");
@@ -360,17 +373,40 @@ impl PanelContentBrowser {
         }
     }
 
-    /// Opens the asset file a double-click landed on, when it is a prefab.
-    fn open_asset(state: &mut EditorAppState, path: &Path) {
-        let prefab = {
-            let registry = state.game.assets.registries.assets.read();
-            registry
-                .asset_meta_from_path(path)
-                .filter(|meta| meta.type_uuid == Prefab::type_uuid())
-                .map(|meta| meta.id)
+    /// Opens the asset file at `path` through the open-asset dispatch. A
+    /// file that is not a registered asset has nothing to open.
+    fn open_file(state: &mut EditorAppState, path: &Path) {
+        let asset_id = state
+            .game
+            .assets
+            .registries
+            .assets
+            .read()
+            .asset_id_from_path(path);
+        if let Some(asset_id) = asset_id {
+            state.open_asset(asset_id);
+        }
+    }
+
+    /// Opens the selected file when Enter is pressed while the content
+    /// browser has the user's attention: its last press landed here and no
+    /// widget holds keyboard focus.
+    fn open_selected_file_on_enter(&mut self, ui: &Ui, state: &mut EditorAppState) {
+        if ui.input(|input| input.pointer.any_pressed()) {
+            self.has_focus = ui.rect_contains_pointer(ui.max_rect());
+        }
+        if !self.has_focus || ui.memory(|memory| memory.focused().is_some()) {
+            return;
+        }
+        let Some(path) = self.selected_file.clone() else {
+            return;
         };
-        if let Some(asset_id) = prefab {
-            state.prefab_mode_mut().request_open(asset_id);
+        // The selection may have moved elsewhere since the file was clicked.
+        if !path.is_file() || !self.is_selected(state, &path, false) {
+            return;
+        }
+        if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter)) {
+            Self::open_file(state, &path);
         }
     }
 

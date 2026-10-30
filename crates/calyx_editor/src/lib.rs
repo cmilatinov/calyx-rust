@@ -11,6 +11,7 @@ use inspector::pinned_components::PinnedComponents;
 use num_traits::FromPrimitive;
 use transform_gizmo_egui::{GizmoMode, GizmoOrientation};
 
+use self::asset_open::{AssetOpenerRegistry, SceneOpenTarget, SceneSwitch};
 use self::panel::*;
 use self::prefab_mode::PrefabMode;
 pub use self::project_manager::*;
@@ -49,6 +50,7 @@ use winit::platform::windows::EventLoopBuilderExtWindows;
 #[cfg(feature = "x11")]
 use winit::platform::x11::EventLoopBuilderExtX11;
 
+mod asset_open;
 mod camera;
 mod icons;
 mod inspector;
@@ -89,6 +91,8 @@ pub struct EditorAppState {
     pub scene_renderer: SceneRenderer,
     pub game_renderer: SceneRenderer,
     pub inspector_registry: InspectorRegistry,
+    /// How each asset type opens, by asset type UUID.
+    pub(crate) asset_openers: AssetOpenerRegistry,
     pub camera: EditorCamera,
     pub game_aspect: Option<(u32, u32)>,
     pub selection: Selection,
@@ -113,6 +117,10 @@ pub struct EditorAppState {
     window_title: String,
     project_path: PathBuf,
     prefab_mode: PrefabMode,
+    /// The scene open waiting on the unsaved-scene prompt, if one is.
+    scene_switch: SceneSwitch,
+    /// The panel an asset open asked to bring to the front, by name.
+    focus_panel: Option<&'static str>,
 }
 
 #[derive(Debug, Default)]
@@ -159,6 +167,7 @@ impl EditorAppState {
     ) -> Result<Self, SceneRendererError> {
         let asset_context = game.assets.lock_read();
         let inspector_registry = InspectorRegistry::new(&asset_context.registries.types.read());
+        let asset_openers = AssetOpenerRegistry::new(&asset_context.registries.types.read());
         let scene_renderer = SceneRenderer::new(
             &asset_context,
             SceneRendererOptions {
@@ -200,9 +209,12 @@ impl EditorAppState {
             window_title: String::new(),
             project_path,
             prefab_mode: Default::default(),
+            scene_switch: SceneSwitch::default(),
+            focus_panel: None,
             scene_renderer,
             game_renderer,
             inspector_registry,
+            asset_openers,
         })
     }
 
@@ -450,6 +462,11 @@ impl eframe::App for EditorApp {
                 stroke: Default::default(),
             })
             .show(ctx, |ui| {
+                if let Some(name) = self.state.focus_panel.take() {
+                    self.tree.make_active(
+                        |_, tile| matches!(tile, egui_tiles::Tile::Pane(pane) if *pane == name),
+                    );
+                }
                 let Self { panels, state, .. } = self;
                 let mut panel_manager = PanelManager { panels, state };
                 self.tree.ui(&mut panel_manager, ui);
@@ -464,6 +481,7 @@ impl eframe::App for EditorApp {
         self.update_window_title(ctx);
         self.state.show_scene_recovery_prompt(ctx);
         prefab_mode::show_unsaved_changes_prompt(ctx, &mut self.state);
+        asset_open::show_unsaved_scene_prompt(ctx, &mut self.state);
 
         self.frame_counter.tick(self.state.game.resources.time());
 
@@ -672,13 +690,18 @@ impl EditorApp {
                 self.new_interaction();
                 ui.close_menu();
             }
+            let in_play_mode = self.state.game.scenes.has_simulation_scene();
             let open_response = ui
                 .add_enabled(
-                    !prefab_open && self.project_manager.read().assemblies_loaded(),
+                    !prefab_open
+                        && !in_play_mode
+                        && self.project_manager.read().assemblies_loaded(),
                     Button::new("Open"),
                 )
                 .on_disabled_hover_text(if prefab_open {
                     prefab_mode::CLOSE_PREFAB_FIRST
+                } else if in_play_mode {
+                    asset_open::OPEN_DURING_PLAY
                 } else {
                     "Build project assemblies before opening scenes"
                 });
@@ -759,7 +782,7 @@ impl EditorApp {
         let Some(file) = Self::pick_scene_open_file() else {
             return;
         };
-        self.state.open_scene_file(file);
+        self.state.request_scene_open(SceneOpenTarget::File(file));
     }
 
     fn save_interaction(&mut self, save_as: bool) {
