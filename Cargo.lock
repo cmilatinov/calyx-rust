@@ -1208,8 +1208,191 @@ dependencies = [
 name = "calyx_ctl"
 version = "0.1.0"
 dependencies = [
+ "calyx_remote_protocol",
  "clap",
- "remote_protocol",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "calyx_editor"
+version = "0.1.0"
+dependencies = [
+ "calyx_engine",
+ "calyx_project",
+ "calyx_remote_protocol",
+ "convert_case 0.8.0",
+ "dirs",
+ "dunce",
+ "eframe",
+ "egui",
+ "egui-wgpu",
+ "egui_extras",
+ "egui_tiles",
+ "enum_dispatch",
+ "image",
+ "inventory",
+ "lazy_static",
+ "legion",
+ "libloading",
+ "log",
+ "mint",
+ "nalgebra",
+ "nalgebra-glm",
+ "num",
+ "num-derive",
+ "num-traits",
+ "petgraph",
+ "rapier3d",
+ "re_ui",
+ "relative-path",
+ "rfd",
+ "rusty_pool",
+ "serde",
+ "serde_json",
+ "sha-1",
+ "transform-gizmo-egui",
+ "uuid 1.22.0",
+ "winit",
+]
+
+[[package]]
+name = "calyx_engine"
+version = "0.1.0"
+dependencies = [
+ "approx",
+ "bimap",
+ "bincode",
+ "bytemuck",
+ "calyx_engine_derive",
+ "calyx_engine_feature_pins",
+ "calyx_shader",
+ "chrono",
+ "downcast-rs 2.0.2",
+ "dunce",
+ "eframe",
+ "egui",
+ "egui-wgpu",
+ "enumflags2",
+ "env_filter 1.0.0",
+ "glob",
+ "gltf",
+ "image",
+ "indexmap 2.13.0",
+ "inventory",
+ "legion",
+ "lerp",
+ "log",
+ "mint",
+ "naga 25.0.1",
+ "nalgebra",
+ "nalgebra-glm",
+ "notify",
+ "num-traits",
+ "paste",
+ "path-absolutize",
+ "petgraph",
+ "pollster",
+ "rand 0.9.2",
+ "rapier3d",
+ "regex",
+ "relative-path",
+ "renet",
+ "renet_netcode",
+ "rusty_pool",
+ "serde",
+ "serde_json",
+ "sha-1",
+ "thiserror 2.0.18",
+ "toml 0.9.12+spec-1.1.0",
+ "transform-gizmo-egui",
+ "typed-builder",
+ "ufbx",
+ "uuid 1.22.0",
+]
+
+[[package]]
+name = "calyx_engine_derive"
+version = "0.1.0"
+dependencies = [
+ "darling 0.20.11",
+ "proc-macro2",
+ "quote",
+ "sha-1",
+ "syn 2.0.117",
+ "trybuild",
+ "uuid 1.22.0",
+]
+
+[[package]]
+name = "calyx_engine_feature_pins"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "ecolor",
+ "egui",
+ "epaint",
+ "futures-core",
+ "futures-sink",
+ "getrandom 0.2.17",
+ "half",
+ "lock_api",
+ "mio",
+ "num-rational",
+ "parking_lot 0.12.5",
+ "percent-encoding",
+ "proc-macro2",
+ "quote",
+ "rand 0.8.5",
+ "rand_core 0.6.4",
+ "rgb",
+ "rustix 1.1.4",
+ "serde_core",
+ "smallvec",
+ "strict-num",
+ "syn 2.0.117",
+ "tiny-skia",
+ "tiny-skia-path",
+ "toml_datetime 1.0.0+spec-1.1.0",
+ "tracing",
+ "url",
+ "uuid 1.22.0",
+ "winapi",
+ "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
+ "winnow",
+ "zeroize",
+]
+
+[[package]]
+name = "calyx_icon_atlas"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "glob",
+ "image",
+ "resvg",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "calyx_project"
+version = "0.1.0"
+dependencies = [
+ "calyx_engine",
+ "chrono",
+ "serde",
+ "tinytemplate",
+ "toml 0.9.12+spec-1.1.0",
+ "uuid 1.22.0",
+]
+
+[[package]]
+name = "calyx_remote_protocol"
+version = "0.1.0"
+dependencies = [
  "serde",
  "serde_json",
 ]
@@ -1861,48 +2044,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "editor"
-version = "0.1.0"
-dependencies = [
- "convert_case 0.8.0",
- "dirs",
- "dunce",
- "eframe",
- "egui",
- "egui-wgpu",
- "egui_extras",
- "egui_tiles",
- "engine",
- "enum_dispatch",
- "image",
- "inventory",
- "lazy_static",
- "legion",
- "libloading",
- "log",
- "mint",
- "nalgebra",
- "nalgebra-glm",
- "num",
- "num-derive",
- "num-traits",
- "petgraph",
- "project",
- "rapier3d",
- "re_ui",
- "relative-path",
- "remote_protocol",
- "rfd",
- "rusty_pool",
- "serde",
- "serde_json",
- "sha-1",
- "transform-gizmo-egui",
- "uuid 1.22.0",
- "winit",
-]
-
-[[package]]
 name = "eframe"
 version = "0.31.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2126,115 +2267,6 @@ name = "endi"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
-
-[[package]]
-name = "engine"
-version = "0.1.0"
-dependencies = [
- "approx",
- "bimap",
- "bincode",
- "bytemuck",
- "calyx_shader",
- "chrono",
- "downcast-rs 2.0.2",
- "dunce",
- "eframe",
- "egui",
- "egui-wgpu",
- "engine_derive",
- "engine_feature_pins",
- "enumflags2",
- "env_filter 1.0.0",
- "glob",
- "gltf",
- "image",
- "indexmap 2.13.0",
- "inventory",
- "legion",
- "lerp",
- "log",
- "mint",
- "naga 25.0.1",
- "nalgebra",
- "nalgebra-glm",
- "notify",
- "num-traits",
- "paste",
- "path-absolutize",
- "petgraph",
- "pollster",
- "rand 0.9.2",
- "rapier3d",
- "regex",
- "relative-path",
- "renet",
- "renet_netcode",
- "rusty_pool",
- "serde",
- "serde_json",
- "sha-1",
- "thiserror 2.0.18",
- "toml 0.9.12+spec-1.1.0",
- "transform-gizmo-egui",
- "typed-builder",
- "ufbx",
- "uuid 1.22.0",
-]
-
-[[package]]
-name = "engine_derive"
-version = "0.1.0"
-dependencies = [
- "darling 0.20.11",
- "proc-macro2",
- "quote",
- "sha-1",
- "syn 2.0.117",
- "trybuild",
- "uuid 1.22.0",
-]
-
-[[package]]
-name = "engine_feature_pins"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "ecolor",
- "egui",
- "epaint",
- "futures-core",
- "futures-sink",
- "getrandom 0.2.17",
- "half",
- "lock_api",
- "mio",
- "num-rational",
- "parking_lot 0.12.5",
- "percent-encoding",
- "proc-macro2",
- "quote",
- "rand 0.8.5",
- "rand_core 0.6.4",
- "rgb",
- "rustix 1.1.4",
- "serde_core",
- "smallvec",
- "strict-num",
- "syn 2.0.117",
- "tiny-skia",
- "tiny-skia-path",
- "toml_datetime 1.0.0+spec-1.1.0",
- "tracing",
- "url",
- "uuid 1.22.0",
- "winapi",
- "windows-sys 0.52.0",
- "windows-sys 0.59.0",
- "windows-sys 0.61.2",
- "winnow",
- "zeroize",
-]
 
 [[package]]
 name = "enum-map"
@@ -3196,18 +3228,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f31827a206f56af32e590ba56d5d2d085f558508192593743f16b2306495269f"
 dependencies = [
  "cc",
-]
-
-[[package]]
-name = "icon_atlas"
-version = "0.1.0"
-dependencies = [
- "clap",
- "glob",
- "image",
- "resvg",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -5089,18 +5109,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "project"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "engine",
- "serde",
- "tinytemplate",
- "toml 0.9.12+spec-1.1.0",
- "uuid 1.22.0",
-]
-
-[[package]]
 name = "prost"
 version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5924,14 +5932,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "remote_protocol"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "renderdoc-sys"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6219,9 +6219,9 @@ dependencies = [
 name = "sandbox"
 version = "0.1.0"
 dependencies = [
+ "calyx_engine",
  "eframe",
  "egui",
- "engine",
  "inventory",
  "legion",
  "log",

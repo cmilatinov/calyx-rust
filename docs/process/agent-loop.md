@@ -12,14 +12,14 @@ click through the editor.
 
 ## Components
 
-- `tools/remote_protocol` - the wire protocol (newline-delimited JSON over
+- `crates/calyx_remote_protocol` - the wire protocol (newline-delimited JSON over
   localhost TCP). Request/response envelopes, the `Command` enum, and
   `InputEventSpec` input scripts live here.
-- `editor/src/remote/` - the server. Enabled only when the editor starts with
+- `crates/calyx_editor/src/remote/` - the server. Enabled only when the editor starts with
   the `CALYX_REMOTE_PORT` environment variable set (`0` = ephemeral port); the
   editor is byte-for-byte inert otherwise. The bound port and editor pid are
   written to `<project>/.calyx/remote.json` (gitignored).
-- `tools/calyx_ctl` - the CLI client. One subcommand per protocol command plus
+- `crates/calyx_ctl` - the CLI client. One subcommand per protocol command plus
   `launch` and `raw`. Prints the response payload as JSON on stdout; exit code
   `0` = ok, `1` = the editor answered with an error, `2` = transport/discovery
   failure.
@@ -129,8 +129,8 @@ has been delivered.
   the repo root (the editor's working directory under `launch`).
 - **Logs**: the editor writes `logs/calyx_editor_<timestamp>.log` in its
   working directory. `CALYX_LOG` (fallback `RUST_LOG`) filters, default
-  `engine=info,editor=info,sandbox=info`. Remote commands are logged at debug
-  level (`CALYX_LOG=editor=debug`).
+  `calyx_engine=info,calyx_editor=info,sandbox=info`. Remote commands are logged
+  at debug level (`CALYX_LOG=calyx_editor=debug`).
 - **Worktrees on Windows**: building in a git worktree under
   `.claude/worktrees/` can push native build scratch paths past the Windows
   path limit. Set `CARGO_TARGET_DIR` to a short path whose last component is `target`

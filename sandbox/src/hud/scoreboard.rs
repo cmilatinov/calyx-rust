@@ -3,8 +3,8 @@
 
 use super::{hud_text, HudStyle};
 use crate::combat::ComponentCombatStats;
-use engine::scene::{GameObject, Scene};
-use engine::ui::{
+use calyx_engine::scene::{GameObject, Scene};
+use calyx_engine::ui::{
     AlignItems, Border, CornerRadius, EdgeInsets, PointerEvents, StylePatch, UiArena, UiLength,
     UiNodeHandle, Widget,
 };
@@ -74,8 +74,8 @@ impl ScoreboardHud<'_> {
         id: &str,
         cells: [String; 3],
         font_size: f32,
-        color: engine::ui::UiColor,
-        background: Option<engine::ui::UiColor>,
+        color: calyx_engine::ui::UiColor,
+        background: Option<calyx_engine::ui::UiColor>,
     ) -> UiNodeHandle {
         let style = self.style;
         let [name, kills, deaths] = cells;
@@ -189,11 +189,11 @@ impl Widget for ScoreboardHud<'_> {
 mod tests {
     use super::{scoreboard_rows, ScoreboardRow};
     use crate::combat::ComponentCombatStats;
-    use engine::component::ComponentID;
+    use calyx_engine::component::ComponentID;
 
     #[test]
     fn scoreboard_rows_rank_combatants_by_kills_then_deaths() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         let mut add = |name: &str, kills, deaths| {
             let object = scene.create(
                 Some(ComponentID {

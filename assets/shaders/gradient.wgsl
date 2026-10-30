@@ -1,6 +1,6 @@
 // Gradient evaluation on the GPU, matching `Gradient::evaluate` on the CPU
-// (`engine/src/math/gradient.rs`) and `GpuGradientKey` / `GpuGradientRange`
-// (`engine/src/render/gpu_gradient.rs`).
+// (`crates/calyx_engine/src/math/gradient.rs`) and `GpuGradientKey` / `GpuGradientRange`
+// (`crates/calyx_engine/src/render/gpu_gradient.rs`).
 //
 // Include it with `//#include "shaders/gradient.wgsl"`; it sits next to
 // `curve.wgsl` without clashing. It declares no bindings: it reads its keys

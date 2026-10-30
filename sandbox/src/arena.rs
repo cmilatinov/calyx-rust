@@ -1,12 +1,12 @@
-use engine::assets::{material::Material, mesh::Mesh, AssetRef};
-use engine::component::{
+use calyx_engine::assets::{material::Material, mesh::Mesh, AssetRef};
+use calyx_engine::component::{
     ColliderShape, Component, ComponentCollider, ComponentEventContext, ComponentID, ComponentMesh,
     ComponentRigidBody, ComponentStart, ReflectComponent, ReflectComponentStart,
 };
-use engine::math::Transform;
-use engine::reflect::{Reflect, ReflectDefault};
-use engine::scene::{GameObject, Scene};
-use engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
+use calyx_engine::math::Transform;
+use calyx_engine::reflect::{Reflect, ReflectDefault};
+use calyx_engine::scene::{GameObject, Scene};
+use calyx_engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use nalgebra_glm::vec3;
 use rapier3d::dynamics::RigidBodyType;
 use serde::{Deserialize, Serialize};
@@ -217,9 +217,9 @@ fn cover_cells(columns: u32, rows: u32) -> Vec<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::{cover_cells, generate_arena, perimeter_cells, ComponentArena};
-    use engine::assets::AssetAccess;
-    use engine::component::ComponentMesh;
-    use engine::component::{ColliderShape, ComponentCollider, ComponentRigidBody};
+    use calyx_engine::assets::AssetAccess;
+    use calyx_engine::component::ComponentMesh;
+    use calyx_engine::component::{ColliderShape, ComponentCollider, ComponentRigidBody};
     use rapier3d::dynamics::RigidBodyType;
     use std::collections::HashSet;
 
@@ -236,7 +236,7 @@ mod tests {
 
     #[test]
     fn generator_creates_independent_fixed_grid_cubes() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         let arena_object = scene.create(None, None);
         generate_arena(&mut scene, arena_object, &ComponentArena::default());
 
@@ -274,16 +274,14 @@ mod tests {
 
     #[test]
     fn sandbox_scene_generates_arena_when_started() {
-        let assets =
-            engine::test_support::test_asset_context_with_assets(vec![std::path::PathBuf::from(
-                env!("CARGO_MANIFEST_DIR"),
-            )
-            .join("assets")]);
+        let assets = calyx_engine::test_support::test_asset_context_with_assets(vec![
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),
+        ]);
         let scene_ref = assets
             .registries
             .assets
             .read()
-            .reload_by_path::<engine::scene::Scene>(
+            .reload_by_path::<calyx_engine::scene::Scene>(
                 &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                     .join("assets")
                     .join("scene.cxscene"),
