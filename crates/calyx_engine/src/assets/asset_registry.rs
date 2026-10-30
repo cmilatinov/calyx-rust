@@ -1518,6 +1518,11 @@ impl AssetRegistry {
         path: &Path,
         meta_path: &Path,
     ) -> Result<(), BoxedError> {
+        // An asset is typed by its extension. Checked before anything is
+        // written, so a file without one gets no `.meta`.
+        let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
+            return Err(format!("{} has no file extension to type it by", path.display()).into());
+        };
         let name_path = Self::relative_asset_path(asset_path, path)?;
         // The asset this name resolves to now, captured before the metadata
         // read below replaces it, in case this file takes over its id.
@@ -1553,9 +1558,7 @@ impl AssetRegistry {
             self.write_meta_file(meta_path, &meta)?;
             meta.main
         };
-        meta.type_uuid = self
-            .asset_type_uuid_from_ext(path.extension().unwrap().to_str().unwrap())
-            .unwrap_or(Uuid::nil());
+        meta.type_uuid = self.asset_type_uuid_from_ext(ext).unwrap_or(Uuid::nil());
         meta.path = Some(match path.absolutize().map_err(Box::new)? {
             Cow::Borrowed(p) => p.to_path_buf(),
             Cow::Owned(p) => p,
@@ -2182,6 +2185,26 @@ mod tests {
         drop(registry);
         std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
         std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
+    }
+
+    #[test]
+    fn registering_a_file_without_an_extension_is_refused() {
+        let root = temp_asset_root("calyx-register-extensionless");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        // A scene saved as `new_level`, with no extension to type it by.
+        let path = root.join("new_level");
+        std::fs::write(&path, b"{}").expect("failed to write extensionless file");
+
+        let error = registry
+            .register_file(&path)
+            .expect_err("a file without an extension has no asset type");
+
+        assert!(error.to_string().contains("no file extension"), "{error}");
+        assert_eq!(registry.asset_id_from_path(&path), None);
+        assert!(!root.join("new_level.meta").exists(), "no .meta is written");
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
 
     #[test]
