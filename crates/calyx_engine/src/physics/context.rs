@@ -422,13 +422,22 @@ impl PhysicsContext {
                 .map(|p| scene.transform_relative_to(go, p))
                 .unwrap_or_else(|| scene.world_transform(go));
             let position = Self::isometry(&transform);
-            let c = &mut scene.physics.colliders[c_handle];
+            let physics = &mut scene.physics;
+            let c = &mut physics.colliders[c_handle];
             // An attached collider's position is relative to its body; setting
             // its world position would move it off the body until the body moves.
             match c.position_wrt_parent() {
                 Some(current) if *current != position => c.set_position_wrt_parent(position),
                 Some(_) => {}
                 None => c.set_position(position),
+            }
+            // Rapier moves attached colliders to their body only when it steps,
+            // so place them now: `prepare` rebuilds the query pipeline next.
+            if let (Some(body), Some(offset)) = (c.parent(), c.position_wrt_parent().copied()) {
+                let world = physics.bodies[body].position() * offset;
+                if *c.position() != world {
+                    c.set_position(world);
+                }
             }
         }
     }

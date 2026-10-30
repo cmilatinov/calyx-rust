@@ -972,4 +972,49 @@ mod tests {
             "ball should rest on the ground, y={y}"
         );
     }
+
+    #[test]
+    fn moved_body_collider_is_queried_at_its_new_position() {
+        let mut scene = test_scene();
+        let target = scene.create(None, None);
+        scene.set_transform(
+            target,
+            &nalgebra_glm::translation(&Vec3::new(0.0, 0.0, 5.0)),
+        );
+        scene.add_component(
+            target,
+            ComponentRigidBody {
+                ty: RigidBodyType::Fixed,
+                ..Default::default()
+            },
+        );
+        scene.add_component(
+            target,
+            ComponentCollider {
+                shape: ColliderShape::Sphere { radius: 0.5 },
+                ..Default::default()
+            },
+        );
+        scene.prepare();
+
+        // Move the body without stepping physics, as a frame where the fixed
+        // step does not run, then query right after the prepare.
+        scene.set_transform(
+            target,
+            &nalgebra_glm::translation(&Vec3::new(0.0, 0.0, 8.0)),
+        );
+        scene.prepare();
+
+        let hit = scene
+            .physics
+            .cast_ray(
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(0.0, 0.0, 1.0),
+                10.0,
+                true,
+                QueryFilter::default(),
+            )
+            .expect("ray should hit the moved sphere");
+        assert!((hit.toi - 7.5).abs() < 1e-4, "unexpected toi {}", hit.toi);
+    }
 }
