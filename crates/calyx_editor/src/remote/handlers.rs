@@ -541,15 +541,14 @@ impl EditorApp {
                 ))
             }
         };
-        if self.state.save_current_scene(file.clone()) {
-            Ok(Some(serde_json::json!({
+        match self.state.save_current_scene(file.clone()) {
+            Ok(()) => Ok(Some(serde_json::json!({
                 "scene_file": file.display().to_string(),
-            })))
-        } else {
-            Err((
+            }))),
+            Err(error) => Err((
                 ErrorKind::Internal,
-                format!("failed to save scene to {}", file.display()),
-            ))
+                format!("failed to save scene to {}: {error}", file.display()),
+            )),
         }
     }
 

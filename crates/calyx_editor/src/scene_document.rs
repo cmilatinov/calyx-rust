@@ -268,22 +268,53 @@ impl SceneDocument {
         log::info!("Created new scene from default scene");
     }
 
-    /// Writes the authoring scene to `file`, which becomes its file.
-    pub fn save(&mut self, game: &mut GameContext, file: PathBuf) -> bool {
+    /// Writes the authoring scene to `file`, which becomes its file, and
+    /// registers it as an asset, so it opens at once. A `file` outside every
+    /// asset root is refused, since it could never be opened again: the
+    /// error says why.
+    pub fn save(&mut self, game: &mut GameContext, file: PathBuf) -> Result<(), String> {
+        let result = self.write(game, &file);
+        if let Err(error) = &result {
+            log::error!("Failed to save scene {}: {error}", file.display());
+        }
+        result
+    }
+
+    fn write(&mut self, game: &mut GameContext, file: &Path) -> Result<(), String> {
+        {
+            let registry = game.assets.registries.assets.read();
+            if !registry.is_in_asset_root(file) {
+                let roots = registry
+                    .asset_paths()
+                    .iter()
+                    .map(|root| root.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(format!(
+                    "{} is outside every asset root ({roots}); the editor opens scenes                      only from an asset root, so save it inside one",
+                    file.display()
+                ));
+            }
+        }
         let scene = game.scenes.current_scene();
         let object_count = scene.objects().count();
-        if let Err(error) = write_scene_file(&file, scene) {
-            log::error!("Failed to save scene {}: {error}", file.display());
-            return false;
-        }
+        write_scene_file(file, scene)?;
         log::info!("Saved scene {} ({object_count} objects)", file.display());
+        // The watcher registers a new file too, but later and on its own
+        // thread, so a scene opened right after its save could miss it.
+        if let Err(error) = game.assets.registries.assets.read().register_file(file) {
+            log::warn!(
+                "Saved scene {} is not registered as an asset until the editor restarts: {error}",
+                file.display()
+            );
+        }
 
         let previous_file = game.scenes.current_scene_meta().file.clone();
-        game.scenes.set_current_scene_file(Some(file.clone()));
+        game.scenes.set_current_scene_file(Some(file.to_path_buf()));
         self.autosave
-            .scene_saved(previous_file.as_deref(), &file, game.scenes.current_scene());
+            .scene_saved(previous_file.as_deref(), file, game.scenes.current_scene());
         self.revision += 1;
-        true
+        Ok(())
     }
 
     /// Commits pending inspector edits and writes the scene's recovery
@@ -607,12 +638,14 @@ mod tests {
     /// Saves a scene with `objects` objects into `root`, then opens it in a
     /// fresh game whose assets come from `root`.
     fn open_saved_scene(root: &AssetRoot, objects: usize) -> (SceneDocument, GameContext) {
-        let mut writer = test_game_context();
+        let mut writer = GameContext::new(test_asset_context_with_assets(vec![root.0.clone()]));
         let mut writer_document = document();
         for _ in 0..objects {
             add_object(&mut writer_document, &mut writer);
         }
-        assert!(writer_document.save(&mut writer, root.scene_file()));
+        writer_document
+            .save(&mut writer, root.scene_file())
+            .expect("the scene saves");
 
         let mut game = GameContext::new(test_asset_context_with_assets(vec![root.0.clone()]));
         let mut document = document();
@@ -674,7 +707,9 @@ mod tests {
         let (mut document, mut game) = open_saved_scene(&root, 1);
         add_object(&mut document, &mut game);
 
-        assert!(document.save(&mut game, root.scene_file()));
+        document
+            .save(&mut game, root.scene_file())
+            .expect("the scene saves");
 
         assert!(!document.is_dirty());
         let mut reopened = GameContext::new(test_asset_context_with_assets(vec![root.0.clone()]));
@@ -685,6 +720,50 @@ mod tests {
         // Undoing past the save leaves the scene different from its file.
         document.undo(&mut game);
         assert!(document.is_dirty());
+    }
+
+    #[test]
+    fn a_scene_saved_to_a_new_path_opens_in_the_same_session() {
+        let root = AssetRoot::new();
+        let mut game = GameContext::new(test_asset_context_with_assets(vec![root.0.clone()]));
+        let mut document = document();
+        add_object(&mut document, &mut game);
+        add_object(&mut document, &mut game);
+        let file = root.0.join("levels").join("saved-as.cxscene");
+
+        document
+            .save(&mut game, file.clone())
+            .expect("a scene saves into an asset root");
+        document.open_default(&mut game);
+        assert_ne!(object_count(&game), 2, "the default scene replaced it");
+
+        // The registry the editor opens through, with no watcher event yet.
+        assert!(document.open_file(&mut game, file.clone()));
+        assert_eq!(object_count(&game), 2);
+        assert_eq!(
+            game.scenes.current_scene_meta().file.as_deref(),
+            Some(file.as_path())
+        );
+    }
+
+    #[test]
+    fn a_save_outside_every_asset_root_is_refused_and_says_why() {
+        let root = AssetRoot::new();
+        let outside = AssetRoot::new();
+        let mut game = GameContext::new(test_asset_context_with_assets(vec![root.0.clone()]));
+        let mut document = document();
+        add_object(&mut document, &mut game);
+        let file = outside.scene_file();
+
+        let error = document
+            .save(&mut game, file.clone())
+            .expect_err("a scene outside every asset root could not be opened again");
+
+        assert!(error.contains("outside every asset root"), "{error}");
+        assert!(error.contains(&root.0.display().to_string()), "{error}");
+        assert!(!file.exists(), "nothing is written");
+        assert!(document.is_dirty(), "the scene keeps its unsaved changes");
+        assert_eq!(game.scenes.current_scene_meta().file, None);
     }
 
     #[test]

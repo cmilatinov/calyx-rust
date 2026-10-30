@@ -514,21 +514,48 @@ mod tests {
     use crate::scene_document::SceneDocument;
     use crate::scene_edit::SceneEdit;
     use calyx_engine::context::GameContext;
-    use calyx_engine::test_support::test_game_context;
+    use calyx_engine::test_support::{test_asset_context_with_assets, test_game_context};
     use nalgebra_glm::{translation, vec3, Mat4};
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use uuid::Uuid;
 
     fn document() -> SceneDocument {
         SceneDocument::new(Path::new("gizmo-drag-test-project"))
     }
 
-    fn temp_scene_file() -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("gizmo-drag-{}.cxscene", Uuid::new_v4()))
+    /// A scratch asset root a scene can be saved into, removed on drop.
+    struct AssetRoot(PathBuf);
+
+    impl AssetRoot {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!("gizmo-drag-{}", Uuid::new_v4()));
+            std::fs::create_dir_all(&root).expect("asset root should be created");
+            Self(dunce::canonicalize(&root).expect("asset root should canonicalize"))
+        }
+
+        fn scene_file(&self) -> PathBuf {
+            self.0.join("scene.cxscene")
+        }
+    }
+
+    impl Drop for AssetRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 
     fn game_with_object() -> (GameContext, Uuid, Mat4) {
-        let mut game = test_game_context();
+        with_object(test_game_context())
+    }
+
+    /// A game whose assets come from `root`, so its scene can be saved there.
+    fn game_with_object_in(root: &AssetRoot) -> (GameContext, Uuid, Mat4) {
+        with_object(GameContext::new(test_asset_context_with_assets(vec![root
+            .0
+            .clone()])))
+    }
+
+    fn with_object(mut game: GameContext) -> (GameContext, Uuid, Mat4) {
         let scene = game.scenes.current_scene_mut();
         let object = scene.create(None, None);
         let start = translation(&vec3(1.0, 2.0, 3.0));
@@ -569,13 +596,14 @@ mod tests {
 
     #[test]
     fn an_abandoned_gizmo_drag_restores_the_transform() {
-        let (mut game, id, start) = game_with_object();
+        let root = AssetRoot::new();
+        let (mut game, id, start) = game_with_object_in(&root);
         let mut document = document();
-        let file = temp_scene_file();
-        assert!(document.save(&mut game, file.clone()));
+        document
+            .save(&mut game, root.scene_file())
+            .expect("the scene saves");
 
         drag_in(&document, &mut game, id).abandon(&mut document, &mut game);
-        let _ = std::fs::remove_file(&file);
 
         assert_eq!(local_matrix(&game, id), start, "the drag is rolled back");
         assert!(!document.can_undo(&game));
@@ -621,15 +649,16 @@ mod tests {
 
     #[test]
     fn an_abandoned_drag_keeps_a_transform_saved_during_it() {
-        let (mut game, id, _) = game_with_object();
+        let root = AssetRoot::new();
+        let (mut game, id, _) = game_with_object_in(&root);
         let mut document = document();
-        let file = temp_scene_file();
         let drag = drag_in(&document, &mut game, id);
         // Saved while the viewport was hidden, with the drag's transform.
-        assert!(document.save(&mut game, file.clone()));
+        document
+            .save(&mut game, root.scene_file())
+            .expect("the scene saves");
 
         drag.abandon(&mut document, &mut game);
-        let _ = std::fs::remove_file(&file);
 
         assert_eq!(local_matrix(&game, id), translation(&vec3(9.0, 0.0, 0.0)));
         assert!(!document.is_dirty(), "the scene matches the file");
