@@ -1,4 +1,4 @@
-//#include "shaders/constants.wgsl"
+//#include "shaders/common/constants.wgsl"
 
 fn radical_inverse_vdc(input: u32) -> f32 {
     var bits = input;

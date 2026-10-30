@@ -2,13 +2,13 @@
 // enough that proving it `Send`/`Sync` passes the default limit.
 #![recursion_limit = "256"]
 
-use engine::component::ComponentParticleSystem;
-use engine::context::GameContext;
-use engine::math::Transform;
-use engine::scene::{Prefab, Scene, SceneHud};
-use engine::test_support::{HeadlessSceneRunner, TestAssets};
-use engine::ui::{PaintCommand, UiInput, UiPoint, UiRect, UiSize};
-use engine::utils::TypeUuid;
+use calyx_engine::component::ComponentParticleSystem;
+use calyx_engine::context::GameContext;
+use calyx_engine::math::Transform;
+use calyx_engine::scene::{Prefab, Scene, SceneHud};
+use calyx_engine::test_support::{HeadlessSceneRunner, TestAssets};
+use calyx_engine::ui::{PaintCommand, UiInput, UiPoint, UiRect, UiSize};
+use calyx_engine::utils::TypeUuid;
 use nalgebra_glm::{vec3, Vec3};
 use sandbox::spawn::ComponentRespawnState;
 use sandbox::tank::{ComponentHealth, ComponentTankController};
@@ -16,7 +16,7 @@ use sandbox::tank::{ComponentHealth, ComponentTankController};
 /// Sandbox assets over a temporary copy of the asset roots, so loading them
 /// never rewrites tracked `.meta` files. Keep the `TestAssets` alive while the
 /// context is in use.
-fn sandbox_assets() -> (TestAssets, engine::context::AssetContext) {
+fn sandbox_assets() -> (TestAssets, calyx_engine::context::AssetContext) {
     let copy = TestAssets::game();
     let assets = copy.asset_context();
     sandbox::plugin_main(&mut assets.registries.types.write());
@@ -28,7 +28,7 @@ fn sandbox_assets() -> (TestAssets, engine::context::AssetContext) {
     (copy, assets)
 }
 
-fn load_sandbox_scene(copy: &TestAssets, assets: &engine::context::AssetContext) -> Scene {
+fn load_sandbox_scene(copy: &TestAssets, assets: &calyx_engine::context::AssetContext) -> Scene {
     assets
         .registries
         .assets
@@ -39,7 +39,7 @@ fn load_sandbox_scene(copy: &TestAssets, assets: &engine::context::AssetContext)
         .clone()
 }
 
-fn object_named(scene: &Scene, name: &str) -> engine::scene::GameObject {
+fn object_named(scene: &Scene, name: &str) -> calyx_engine::scene::GameObject {
     scene
         .objects()
         .find(|game_object| scene.name(*game_object) == name)
@@ -58,7 +58,7 @@ fn simulation_changes_do_not_leak_into_the_authoring_scene() {
     let scene = load_sandbox_scene(&copy, &assets);
     let mut game = GameContext::new(assets);
     game.scenes
-        .load_scene(engine::core::Ref::new(scene).readonly());
+        .load_scene(calyx_engine::core::Ref::new(scene).readonly());
 
     let tank = object_named(game.scenes.current_scene(), "Tank");
     let authoring_transform = game.scenes.current_scene().world_transform(tank);
@@ -102,7 +102,7 @@ fn tank_moves_without_changing_its_authored_scale() {
 }
 
 /// Moves `target` onto the tank barrel's firing line, `distance` metres ahead.
-fn place_on_firing_line(scene: &mut Scene, target: engine::scene::GameObject, distance: f32) {
+fn place_on_firing_line(scene: &mut Scene, target: calyx_engine::scene::GameObject, distance: f32) {
     let tank = object_named(scene, "Tank");
     let barrel = scene
         .read_component::<ComponentTankController, _, _>(tank, |controller| {
@@ -118,13 +118,13 @@ fn place_on_firing_line(scene: &mut Scene, target: engine::scene::GameObject, di
     scene.set_world_transform(target, target_transform.matrix());
 }
 
-fn current_health(scene: &Scene, object: engine::scene::GameObject) -> f32 {
+fn current_health(scene: &Scene, object: calyx_engine::scene::GameObject) -> f32 {
     scene
         .read_component::<ComponentHealth, _, _>(object, |health| health.current_health)
         .expect("object should have health")
 }
 
-fn find_named(scene: &Scene, name: &str) -> Option<engine::scene::GameObject> {
+fn find_named(scene: &Scene, name: &str) -> Option<calyx_engine::scene::GameObject> {
     scene
         .objects()
         .find(|game_object| scene.name(*game_object) == name)
@@ -509,7 +509,7 @@ fn sandbox_action_map_binds_every_action_and_axis_the_game_reads() {
         .registries
         .assets
         .read()
-        .load::<engine::input::ActionMap>(engine::input::PROJECT_ACTION_MAP_NAME)
+        .load::<calyx_engine::input::ActionMap>(calyx_engine::input::PROJECT_ACTION_MAP_NAME)
         .expect("the sandbox should ship input.cxinput");
     let map = map.read();
     let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");

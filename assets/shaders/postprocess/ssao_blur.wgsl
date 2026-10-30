@@ -1,4 +1,4 @@
-//#include "shaders/fullscreen_pass.wgsl"
+//#include "shaders/common/fullscreen_pass.wgsl"
 //#include "shaders/postprocess/ssao_common.wgsl"
 
 // Depth-aware 4x4 blur of the half-resolution occlusion. The 4x4 window

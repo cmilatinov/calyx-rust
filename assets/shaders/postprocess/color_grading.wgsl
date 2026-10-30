@@ -1,4 +1,4 @@
-//#include "shaders/fullscreen_pass.wgsl"
+//#include "shaders/common/fullscreen_pass.wgsl"
 
 // Colour grading, then a vignette, on display-linear color after tone mapping.
 // A disabled effect arrives as neutral values (identity white balance,

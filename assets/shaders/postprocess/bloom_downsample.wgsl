@@ -1,4 +1,4 @@
-//#include "shaders/fullscreen_pass.wgsl"
+//#include "shaders/common/fullscreen_pass.wgsl"
 //#include "shaders/postprocess/bloom_filters.wgsl"
 
 // Downsamples one bloom mip into the next, half its size.

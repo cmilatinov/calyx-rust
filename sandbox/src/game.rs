@@ -1,16 +1,16 @@
+use calyx_engine::context::{AssetContext, GameContext, UpdatedScene};
+use calyx_engine::error::DynError;
+use calyx_engine::input::Input;
+use calyx_engine::logging::{DefaultLogger, Log};
+use calyx_engine::render::{Camera, SceneRenderer, SceneRendererOptions};
+use calyx_engine::runtime::{
+    initial_render_size, wgpu_configuration, FrameCounter, ProjectRuntimeSettings, WindowSettings,
+};
+use calyx_engine::scene::{Scene, SceneHud};
+use calyx_engine::ui::{UiInput, UiPoint};
 use eframe::{Frame, NativeOptions};
 use egui::load::SizedTexture;
 use egui::{Context, Direction, Image, ImageSource, InnerResponse, Layout, Rect, Sense};
-use engine::context::{AssetContext, GameContext, UpdatedScene};
-use engine::error::DynError;
-use engine::input::Input;
-use engine::logging::{DefaultLogger, Log};
-use engine::render::{Camera, SceneRenderer, SceneRendererOptions};
-use engine::runtime::{
-    initial_render_size, wgpu_configuration, FrameCounter, ProjectRuntimeSettings, WindowSettings,
-};
-use engine::scene::{Scene, SceneHud};
-use engine::ui::{UiInput, UiPoint};
 use sandbox::plugin_main;
 use std::path::PathBuf;
 #[cfg(windows)]

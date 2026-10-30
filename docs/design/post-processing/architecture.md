@@ -16,7 +16,7 @@ Related work:
 
 ## Frame Today
 
-`SceneRenderer` (`engine/src/render/scene_renderer.rs`) renders a frame in two calls.
+`SceneRenderer` (`crates/calyx_engine/src/render/scene_renderer.rs`) renders a frame in two calls.
 
 ```text
 render_scene_base:  meshes (pbr.wgsl)   albedo * 5, Reinhard, gamma 1.4
@@ -49,7 +49,7 @@ With a single sample the multisampled target is already single-sample, so it is 
 
 ## Editor Overlays
 
-The grid, gizmos and the selection outline draw after the whole chain, Ldr stage included, so tone mapping, exposure and later effects never change their colors. `engine/src/render/overlay/` holds them.
+The grid, gizmos and the selection outline draw after the whole chain, Ldr stage included, so tone mapping, exposure and later effects never change their colors. `crates/calyx_engine/src/render/overlay/` holds them.
 
 ```rust
 pub trait OverlayPass {
@@ -63,7 +63,7 @@ pub trait OverlayPass {
 - `GridRenderer`, `GizmoRenderer` and `OutlineRenderer` implement it. The renderer hands them to `OverlayCompositor::run` as a plain list in that fixed order, with no stages.
 - Every enabled overlay records into one shared render pass over the overlay target, cleared to transparent, and the scene's still-multisampled depth, both at the scene's sample count. Overlay edges and overlay-against-geometry intersections keep their MSAA anti-aliasing. The same pass resolves the target.
 - The overlay target is `Rgba16Float`, display-linear like `scene_texture`. It exists only while an overlay is enabled: the editor viewport shows the grid and gizmos, and the outline is enabled while an object is hovered or selected. The Game tab, the player and thumbnails show none, so they allocate nothing for it.
-- Overlays alpha blend (`RenderUtils::color_alpha_blending`) into the transparent target, which leaves premultiplied color with coverage alpha. The composite therefore blends the resolved target over `scene_texture` as premultiplied alpha, `rgb + dst * (1 - a)` (`shaders/overlay_composite.wgsl`). Blending it as `rgb * a + dst * (1 - a)` would multiply by alpha twice and darken anti-aliased edges.
+- Overlays alpha blend (`RenderUtils::color_alpha_blending`) into the transparent target, which leaves premultiplied color with coverage alpha. The composite therefore blends the resolved target over `scene_texture` as premultiplied alpha, `rgb + dst * (1 - a)` (`shaders/editor/overlay_composite.wgsl`). Blending it as `rgb * a + dst * (1 - a)` would multiply by alpha twice and darken anti-aliased edges.
 - Particles stay in the scene pass and are tone mapped with it.
 
 `OverlayPass` mirrors `PostProcessPass` but stays separate. Post-process passes take the encoder because some record several render passes, such as bloom's downsample and upsample chain, while overlays all draw into one shared multisampled pass. The shared code lives in the full-screen helpers below instead.
@@ -81,7 +81,7 @@ Textures are still uploaded as `Rgba8Unorm`, so albedo maps are sampled without 
 
 ## Pass Interface
 
-`engine/src/render/postprocess/` holds the chain.
+`crates/calyx_engine/src/render/postprocess/` holds the chain.
 
 ```rust
 pub enum PostProcessStage { Hdr, Tonemap, Ldr }
@@ -157,7 +157,7 @@ blur    input + coc     -> output                  scatter-as-gather disc blur
 `TonemapPass` is the `Tonemap` stage. It always runs: a missing or disabled volume selects `PostProcessSettings::default()`, never untone-mapped output.
 
 - Its uniform holds the exposure scale `2^EV` and the preset.
-- It draws one full-screen triangle (`shaders/fullscreen.wgsl`, no vertex buffers).
+- It draws one full-screen triangle (`shaders/common/fullscreen.wgsl`, no vertex buffers).
 - `TonemappingPreset::Aces` is Stephen Hill's fit of the ACES RRT and ODT (BakingLab, MIT): the ACES input matrix, the rational RRT/ODT curve, then the output matrix, clamped to `[0, 1]`. It maps linear 0.18 to about 0.106 and 1.0 to about 0.619.
 - Alpha passes through unchanged, so views cleared to transparent, such as thumbnails, keep their transparency.
 
@@ -199,7 +199,7 @@ composite    input + mip 0      -> output        input + tent(mip 0) * intensity
 
 ## Colour Grading And Vignette
 
-`ColorGradingPass` (`engine/src/render/postprocess/color_grading.rs`) is one `Ldr` pass that grades the tone-mapped image and then applies a vignette. It runs while `color_grading.enabled` or `vignette.enabled` is on, neither of which is by default, so a frame without them keeps the tone-map-only plan. A disabled half reaches the shader as neutral values, which leave the color unchanged.
+`ColorGradingPass` (`crates/calyx_engine/src/render/postprocess/color_grading.rs`) is one `Ldr` pass that grades the tone-mapped image and then applies a vignette. It runs while `color_grading.enabled` or `vignette.enabled` is on, neither of which is by default, so a frame without them keeps the tone-map-only plan. A disabled half reaches the shader as neutral values, which leave the color unchanged.
 
 It runs on display-linear color, in this order:
 
@@ -215,7 +215,7 @@ Alpha is read with the pixel and passes through, so transparent views such as th
 
 ## Anti-Aliasing
 
-`FxaaPass` (`engine/src/render/postprocess/fxaa.rs`) is an `Ldr` pass that runs FXAA 3.11 Quality, preset 12, after tone mapping. It runs while `PostProcessSettings::anti_aliasing.fxaa` is on, which it is not by default, so a frame without it keeps the tone-map-only plan.
+`FxaaPass` (`crates/calyx_engine/src/render/postprocess/fxaa.rs`) is an `Ldr` pass that runs FXAA 3.11 Quality, preset 12, after tone mapping. It runs while `PostProcessSettings::anti_aliasing.fxaa` is on, which it is not by default, so a frame without it keeps the tone-map-only plan.
 
 - `assets/shaders/postprocess/fxaa.wgsl` ports the PC quality path of Timothy Lottes' `FxaaPixelShader`: early exit below the local contrast threshold, horizontal or vertical edge choice, a five-step search along the edge (1, 1.5, 2, 4 and 12 pixels), and the sub-pixel blend. It samples its input with a linear, clamp-to-edge sampler the pass owns.
 - It runs after tone mapping because its luma edge detection needs display-range values. Its input is display-linear, so luma is the square root of linear Rec. 601 luma, close to the gamma-encoded luma the reference expects.
@@ -265,7 +265,7 @@ pub struct ComponentGlobalPostProcessVolume {
 
 ## Shaders
 
-- `assets/shaders/fullscreen.wgsl`: the shared full-screen triangle, `fullscreen_vertex(index)`. `assets/shaders/fullscreen_pass.wgsl` includes it and declares the `vs_main` that calls it, so a shader that draws the plain triangle includes the entry point and declares only its fragment stage: the post passes, the overlay composite, the selection outline and 2D mip generation. The editor grid adds outputs of its own, so it includes `fullscreen.wgsl` and declares its own vertex stage. Every full-screen draw takes its pipeline options from `PipelineOptions::fullscreen_builder()`, which sets only the color target, depth and sample count; the engine has no full-screen quad mesh.
+- `assets/shaders/common/fullscreen.wgsl`: the shared full-screen triangle, `fullscreen_vertex(index)`. `assets/shaders/common/fullscreen_pass.wgsl` includes it and declares the `vs_main` that calls it, so a shader that draws the plain triangle includes the entry point and declares only its fragment stage: the post passes, the overlay composite, the selection outline and 2D mip generation. The editor grid adds outputs of its own, so it includes `fullscreen.wgsl` and declares its own vertex stage. Every full-screen draw takes its pipeline options from `PipelineOptions::fullscreen_builder()`, which sets only the color target, depth and sample count; the engine has no full-screen quad mesh.
 - `assets/shaders/postprocess/tonemap.wgsl`: the tone-map pass.
 - `assets/shaders/postprocess/ssao.wgsl`, `ssao_blur.wgsl` and `ssao_composite.wgsl`: the SSAO passes. `ssao_common.wgsl` holds their uniform, the view-space reconstruction and the depth weight they share.
 - `assets/shaders/postprocess/bloom_prefilter.wgsl`, `bloom_downsample.wgsl`, `bloom_upsample.wgsl` and `bloom_composite.wgsl`: the bloom passes. `bloom_filters.wgsl` holds the 13-tap downsample and the tent upsample they share.
@@ -273,7 +273,7 @@ pub struct ComponentGlobalPostProcessVolume {
 - `assets/shaders/postprocess/fxaa.wgsl`: the FXAA pass.
 - `assets/shaders/postprocess/depth_resolve.wgsl`: copies sample 0 of the multisampled depth.
 - `assets/shaders/postprocess/dof_coc.wgsl` and `dof_blur.wgsl`: the depth of field passes. `dof_common.wgsl` holds their uniform, the depth linearization and the circle of confusion.
-- `assets/shaders/overlay_composite.wgsl`: blends the resolved overlay target over the scene texture.
+- `assets/shaders/editor/overlay_composite.wgsl`: blends the resolved overlay target over the scene texture.
 - `pbr.wgsl` drops Reinhard, gamma 1.4 and the `* 5.0` on albedo. It adds linear HDR emission, `emission_color * emission_strength`, after the lighting. A material saved before those fields existed reads zero strength and does not emit.
 - `skybox.wgsl` drops its exposure and gamma and scales the sky by the sky light's intensity, the same factor that scales its image-based lighting.
 - Particles already write linear color.
@@ -297,7 +297,7 @@ The grid, gizmos and outline composite after post (#379, see Editor Overlays), s
 
 ## Testing
 
-Headless tests in `engine/src/render/postprocess/`:
+Headless tests in `crates/calyx_engine/src/render/postprocess/`:
 
 - The plan orders passes by stage, then insertion order, and ping-pongs two pool targets.
 - A tone-map-only chain allocates no pool target, and a chain of three passes allocates two.
@@ -313,7 +313,7 @@ Headless tests in `engine/src/render/postprocess/`:
 - Colour grading (`color_grading/tests.rs`): neutral settings return the input, zero saturation gives grey at the input's luminance, contrast keeps mid grey, positive temperature warms and positive tint adds magenta, the vignette darkens the corners and leaves the centre unchanged, and alpha is preserved. With both effects off the pass is left out of the plan, the scene renderer plans it before FXAA, and settings saved before it load with both off.
 - FXAA smooths a hard diagonal edge and keeps each pixel's alpha, leaves a flat colour and its alpha unchanged, and leaves the plan unchanged while disabled. Settings saved before it load with it off.
 
-Headless tests in `engine/src/render/overlay/` and `scene_renderer.rs`:
+Headless tests in `crates/calyx_engine/src/render/overlay/` and `scene_renderer.rs`:
 
 - A half-covered, anti-aliased overlay edge pixel composites as premultiplied alpha, without darkening.
 - Enabled overlays record in order, and the overlay target exists only while one is enabled.

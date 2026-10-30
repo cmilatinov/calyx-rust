@@ -13,7 +13,7 @@ name = "game"
 path = "src/game.rs"
 
 [dependencies]
-engine = { path = "../engine" }
+calyx_engine = { path = "../crates/calyx_engine" }
 serde.workspace = true
 inventory.workspace = true
 egui.workspace = true

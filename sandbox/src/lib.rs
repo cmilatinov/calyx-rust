@@ -10,7 +10,7 @@ pub mod sentry;
 pub mod spawn;
 pub mod tank;
 
-use engine::reflect::type_registry::TypeRegistry;
+use calyx_engine::reflect::type_registry::TypeRegistry;
 
 #[no_mangle]
 pub extern "C" fn plugin_main(registry: &mut TypeRegistry) {
@@ -27,7 +27,7 @@ mod tests {
     use crate::sentry::ComponentSentry;
     use crate::spawn::{ComponentRespawnState, ComponentSpawnPoint};
     use crate::tank::ComponentTankController;
-    use engine::component::ComponentTransform;
+    use calyx_engine::component::ComponentTransform;
 
     #[test]
     fn plugin_main_exports_only_sandbox_reflection_types() {

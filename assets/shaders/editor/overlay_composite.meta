@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "d2ec57bc-3b1a-414a-9b40-a9f0eb3e5b0d",
+    "name": "shaders/editor/overlay_composite",
+    "display_name": "overlay_composite",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

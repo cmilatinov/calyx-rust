@@ -1,4 +1,4 @@
-//#include "shaders/fullscreen_pass.wgsl"
+//#include "shaders/common/fullscreen_pass.wgsl"
 //#include "shaders/postprocess/bloom_filters.wgsl"
 
 // Adds the blurred light of the first bloom mip onto the HDR scene color.

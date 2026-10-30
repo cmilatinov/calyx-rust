@@ -1,4 +1,4 @@
-//#include "shaders/fullscreen_pass.wgsl"
+//#include "shaders/common/fullscreen_pass.wgsl"
 //#include "shaders/postprocess/bloom_filters.wgsl"
 
 // Upsamples one bloom mip and adds it onto the next larger one: the pipeline
