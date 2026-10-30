@@ -763,6 +763,9 @@ impl SceneRenderer {
             );
         }
         let mut skinned_meshes: HashSet<Uuid> = Default::default();
+        let mut rest_poses: HashMap<GameObject, HashMap<String, Mat4>> = HashMap::new();
+        let no_bones = HashMap::new();
+        let mut rest_palette = Vec::new();
         let mut query = <(Entity, &ComponentSkinnedMesh)>::query();
         for (entity, c_skinned_mesh) in query.iter(world) {
             let Some(game_object) = scene.game_object_from_entity(*entity) else {
@@ -788,8 +791,8 @@ impl SceneRenderer {
                 if !skinned_meshes.contains(&mesh_id) {
                     mesh.bone_transforms.clear();
                 }
-                let Some(index) =
-                    skinning_instance_index(mesh.bone_transforms.len(), mesh.bones.len())
+                let num_bones = mesh.bones.len();
+                let Some(index) = skinning_instance_index(mesh.bone_transforms.len(), num_bones)
                 else {
                     crate::logging::warn_once(format!("boneless-skinned-mesh:{mesh_id}"), || {
                         format!("Skinned mesh {mesh_id} has no bones; skipping skinning upload")
@@ -798,8 +801,25 @@ impl SceneRenderer {
                 };
                 skinned_meshes.insert(mesh_id);
                 bone_transform_index = index;
-                mesh.bone_transforms
-                    .extend(c_skinned_mesh.bone_transforms.iter().copied());
+                // Each instance takes exactly `num_bones` slots, so the next instance's index
+                // holds. A palette the animator has not filled, as in edit mode, draws the rest
+                // pose the bone objects hold instead of collapsing every vertex.
+                if c_skinned_mesh.bone_transforms.len() >= num_bones {
+                    mesh.bone_transforms
+                        .extend_from_slice(&c_skinned_mesh.bone_transforms[..num_bones]);
+                } else {
+                    let bones = c_skinned_mesh
+                        .root_bone
+                        .game_object(scene)
+                        .map(|root| {
+                            &*rest_poses
+                                .entry(root)
+                                .or_insert_with(|| ComponentSkinnedMesh::bone_poses(scene, root))
+                        })
+                        .unwrap_or(&no_bones);
+                    ComponentSkinnedMesh::skinning_palette(&mesh, bones, &mut rest_palette);
+                    mesh.bone_transforms.extend_from_slice(&rest_palette);
+                }
             }
             self.insert_draw_list_entry(
                 &mesh_ref,
@@ -1900,6 +1920,213 @@ mod tests {
             let _ = device.poll(wgpu::Maintain::Wait);
         }
         assert_eq!(picked, Some(left_uuid));
+    }
+
+    /// Registers a copy of the cube mesh skinned entirely to one bone, `bone`, whose bind pose is
+    /// `bind`.
+    fn skinned_cube(
+        context: &ReadOnlyAssetContext,
+        name: &str,
+        bone: &str,
+        bind: Mat4,
+    ) -> Ref<Mesh> {
+        let registry = context.registries.assets.read();
+        let cube = registry.cube().expect("missing cube mesh");
+        let mut mesh = Mesh::new(&context.render_context);
+        {
+            let cube = cube.read();
+            mesh.indices = cube.indices.clone();
+            mesh.vertices = cube.vertices.clone();
+            mesh.normals = cube.normals.clone();
+            mesh.uvs = cube.uvs.clone();
+        }
+        mesh.bone_indices = vec![glm::IVec4::new(0, -1, -1, -1); mesh.vertices.len()];
+        mesh.bone_weights = vec![vec4(1.0, 0.0, 0.0, 0.0); mesh.vertices.len()];
+        mesh.bones.insert(
+            bone.into(),
+            crate::assets::mesh::BoneInfo {
+                index: 0,
+                inverse_bind_transform: glm::inverse(&bind),
+            },
+        );
+        mesh.mark_dirty();
+        registry
+            .create_or_update(name.into(), mesh)
+            .expect("skinned mesh should be created")
+    }
+
+    /// A skinned model as imported models are laid out: a root holding the bone `hip` at local
+    /// transform `hip`, and a skinned object drawing `mesh` with `palette`, placed by the root.
+    /// Returns the root, the bone and the skinned object.
+    fn spawn_skinned_model(
+        builder: &mut SceneBuilder,
+        mesh: &Ref<Mesh>,
+        material: &Ref<Material>,
+        root: Mat4,
+        hip: Mat4,
+        palette: Vec<crate::assets::mesh::BoneTransform>,
+    ) -> (GameObject, GameObject, GameObject) {
+        let root_object = builder.spawn("model");
+        builder.set_transform(root_object, root);
+        let hip_object = builder.spawn_child(root_object, "hip");
+        builder.set_transform(hip_object, hip);
+        builder.add_component(
+            hip_object,
+            crate::component::ComponentBone {
+                name: "hip".into(),
+                bind_pose: None,
+            },
+        );
+        let mesh_object = builder.spawn_child(root_object, "mesh");
+        let root_uuid = builder.scene().uuid(root_object);
+        builder.add_component(
+            mesh_object,
+            ComponentSkinnedMesh {
+                mesh: AssetRef::from_id(mesh.id()),
+                material: AssetRef::from_id(material.id()),
+                root_bone: crate::scene::GameObjectRef::new(root_uuid),
+                bone_transforms: palette,
+            },
+        );
+        (root_object, hip_object, mesh_object)
+    }
+
+    /// The slot in its mesh's bone buffer that `game_object`'s skinned draw reads.
+    fn bone_slot(renderer: &SceneRenderer, scene: &Scene, game_object: GameObject) -> usize {
+        let object_id = renderer.object_id_lookup[&scene.uuid(game_object)];
+        let draw = renderer
+            .draw_list
+            .iter()
+            .find(|draw| draw.object_id == object_id)
+            .expect("the skinned mesh should be queued");
+        usize::try_from(draw.bone_transform_index).expect("a skinned draw has a bone slot")
+    }
+
+    #[test]
+    fn skinned_mesh_draws_its_rest_pose_before_any_animator_update() {
+        const SIZE: (u32, u32) = (32, 32);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let bind = glm::translation(&vec3(1.0, 0.0, 0.0));
+        let mesh = skinned_cube(&read_only_context, "test/skinned_cube", "hip", bind);
+        let material = pbr_material(&read_only_context, "test/skinned");
+        // No animator and no palette: the scene as loaded in edit mode. The bone holds its bind
+        // pose, so the rest pose draws the cube where the mesh models it, at the origin.
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        let (_, _, mesh_object) = spawn_skinned_model(
+            &mut builder,
+            &mesh,
+            &material,
+            Mat4::identity(),
+            bind,
+            Vec::new(),
+        );
+        let mesh_uuid = builder.scene().uuid(mesh_object);
+        let scene = builder.finish();
+
+        let mut renderer = renderer(&read_only_context, 1, SIZE);
+        let (camera, transform) = front_camera(1.0, 5.0);
+        renderer.render_scene_base(&camera, &transform, &scene, None, None);
+        renderer.finalize_scene();
+
+        assert_eq!(
+            renderer.pick_game_object(SIZE.0 / 2, SIZE.1 / 2),
+            Some(mesh_uuid),
+            "the skinned mesh should draw in its rest pose at the origin"
+        );
+    }
+
+    #[test]
+    fn rest_pose_palette_is_each_bone_in_root_space_times_its_inverse_bind() {
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let bind = glm::translation(&vec3(1.0, 0.0, 0.0));
+        let mesh = skinned_cube(&read_only_context, "test/rest_palette", "hip", bind);
+        let material = pbr_material(&read_only_context, "test/rest_palette_material");
+        let root =
+            glm::translation(&vec3(5.0, 0.0, 0.0)) * glm::rotation(90f32.to_radians(), &Vec3::y());
+        let hip =
+            glm::translation(&vec3(0.0, 2.0, 0.0)) * glm::rotation(30f32.to_radians(), &Vec3::z());
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        let (root_object, hip_object, mesh_object) =
+            spawn_skinned_model(&mut builder, &mesh, &material, root, hip, Vec::new());
+        let scene = builder.finish();
+        let hip_before = scene.transform(hip_object).matrix();
+
+        let mut renderer = renderer(&read_only_context, 1, (16, 16));
+        renderer.build_asset_data(&read_only_context.render_context, &scene);
+
+        let expected = scene.world_transform(root_object).inverse_matrix()
+            * scene.world_transform(hip_object).matrix()
+            * glm::inverse(&bind);
+        let slot = bone_slot(&renderer, &scene, mesh_object);
+        let uploaded: Mat4 = mesh.read().bone_transforms[slot].transform.into();
+        assert!(
+            (uploaded - expected).abs().max() < 1e-5,
+            "expected {expected}, uploaded {uploaded}"
+        );
+        // Drawing the rest pose reads the scene and writes nothing back into it.
+        let palette_untouched = scene
+            .read_component::<ComponentSkinnedMesh, _, _>(mesh_object, |c| {
+                c.bone_transforms.is_empty()
+            })
+            .unwrap();
+        assert!(palette_untouched);
+        assert_eq!(scene.transform(hip_object).matrix(), hip_before);
+        let bind_pose_untouched = scene
+            .read_component::<crate::component::ComponentBone, _, _>(hip_object, |c| {
+                c.bind_pose.is_none()
+            })
+            .unwrap();
+        assert!(bind_pose_untouched);
+    }
+
+    #[test]
+    fn a_short_palette_keeps_the_next_instance_in_its_own_bone_slot() {
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let bind = glm::translation(&vec3(1.0, 0.0, 0.0));
+        let mesh = skinned_cube(&read_only_context, "test/short_palette", "hip", bind);
+        let material = pbr_material(&read_only_context, "test/short_palette_material");
+        let animated: Mat4 = glm::translation(&vec3(0.0, 3.0, 0.0));
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        let (_, _, rest) = spawn_skinned_model(
+            &mut builder,
+            &mesh,
+            &material,
+            Mat4::identity(),
+            bind,
+            Vec::new(),
+        );
+        let (_, _, posed) = spawn_skinned_model(
+            &mut builder,
+            &mesh,
+            &material,
+            Mat4::identity(),
+            bind,
+            vec![crate::assets::mesh::BoneTransform {
+                transform: animated.into(),
+            }],
+        );
+        let scene = builder.finish();
+
+        let mut renderer = renderer(&read_only_context, 1, (16, 16));
+        renderer.build_asset_data(&read_only_context.render_context, &scene);
+
+        let mesh = mesh.read();
+        assert_eq!(mesh.bone_transforms.len(), 2, "one bone set per instance");
+        let rest_slot = bone_slot(&renderer, &scene, rest);
+        let posed_slot = bone_slot(&renderer, &scene, posed);
+        let mut slots = [rest_slot, posed_slot];
+        slots.sort();
+        assert_eq!(slots, [0, 1]);
+        let rest_transform: Mat4 = mesh.bone_transforms[rest_slot].transform.into();
+        let posed_transform: Mat4 = mesh.bone_transforms[posed_slot].transform.into();
+        assert!((rest_transform - Mat4::identity()).abs().max() < 1e-5);
+        assert_eq!(posed_transform, animated, "a full palette is drawn as is");
     }
 
     #[test]
