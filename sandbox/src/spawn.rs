@@ -1,13 +1,13 @@
 use crate::tank::ComponentHealth;
-use engine::component::{
+use calyx_engine::component::{
     Component, ComponentEventContext, ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
 };
-use engine::input::Input;
-use engine::math::Transform;
-use engine::reflect::{Reflect, ReflectDefault};
-use engine::resource::ResourceMap;
-use engine::scene::{GameObject, Scene};
-use engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
+use calyx_engine::input::Input;
+use calyx_engine::math::Transform;
+use calyx_engine::reflect::{Reflect, ReflectDefault};
+use calyx_engine::resource::ResourceMap;
+use calyx_engine::scene::{GameObject, Scene};
+use calyx_engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use serde::{Deserialize, Serialize};
 
 pub const SPAWN_TEAM_ANY: u32 = u32::MAX;
@@ -208,7 +208,7 @@ mod tests {
         find_spawn_transform, update_respawn_state, ComponentRespawnState, ComponentSpawnPoint,
         RespawnAction, SPAWN_TEAM_ANY,
     };
-    use engine::math::Transform;
+    use calyx_engine::math::Transform;
     use nalgebra::UnitQuaternion;
     use nalgebra_glm::vec3;
 
@@ -302,7 +302,7 @@ mod tests {
 
     #[test]
     fn spawn_lookup_prefers_matching_team_then_order() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         let generic = scene.create(None, None);
         let team_late = scene.create(None, None);
         let team_first = scene.create(None, None);
@@ -341,7 +341,7 @@ mod tests {
 
     #[test]
     fn respawn_update_moves_object_to_spawn_point() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         let spawn = scene.create(None, None);
         let player = scene.create(None, None);
         scene.set_world_transform(spawn, Transform::from_xyz(8.0, 0.0, 4.0).matrix());
@@ -377,7 +377,7 @@ mod tests {
 
     #[test]
     fn respawn_update_preserves_object_scale() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         let spawn = scene.create(None, None);
         let player = scene.create(None, None);
         let mut spawn_transform = Transform::from_xyz(8.0, 0.0, 4.0);
@@ -412,7 +412,7 @@ mod tests {
 
     #[test]
     fn respawn_update_places_the_controlled_object_and_moves_its_complete_rig() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         let spawn = scene.create(None, None);
         let player = scene.create(None, None);
         let tank = scene.create(None, None);
@@ -452,7 +452,7 @@ mod tests {
 
     #[test]
     fn respawn_does_not_move_siblings_under_a_shared_group() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         let spawn = scene.create(None, None);
         let players = scene.create(None, None);
         let player = scene.create(None, Some(players));
@@ -483,7 +483,7 @@ mod tests {
 
     #[test]
     fn respawn_preserves_rig_rotation_when_the_controlled_object_has_turned() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         let spawn = scene.create(None, None);
         let player = scene.create(None, None);
         let tank = scene.create(None, None);

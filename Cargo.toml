@@ -1,13 +1,13 @@
 [workspace]
 members = [
-    "calyx_shader",
-    "engine",
-    "editor",
-    "project",
+    "crates/calyx_shader",
+    "crates/calyx_engine",
+    "crates/calyx_editor",
+    "crates/calyx_project",
+    "crates/calyx_icon_atlas",
+    "crates/calyx_remote_protocol",
+    "crates/calyx_ctl",
     "sandbox",
-    "tools/icon_atlas",
-    "tools/remote_protocol",
-    "tools/calyx_ctl",
 ]
 resolver = "2"
 
@@ -15,8 +15,8 @@ resolver = "2"
 # Cargo otherwise builds a crate used both at build time and at run time once
 # when a build needs it at run time and once more with less debug info when it
 # does not, so the project assembly's build and the editor's would compile
-# engine's proc macros differently and link different engine builds (see
-# engine/engine_feature_pins).
+# calyx_engine's proc macros differently and link different engine builds
+# (see crates/calyx_engine_feature_pins).
 [profile.dev.build-override]
 debug = true
 

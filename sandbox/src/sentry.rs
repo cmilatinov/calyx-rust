@@ -1,14 +1,14 @@
 use crate::spawn::ComponentRespawnState;
 use crate::tank::{flatten_xz, spawn_round, yaw_rotation, ComponentProjectile};
-use engine::component::{
+use calyx_engine::component::{
     Component, ComponentEventContext, ComponentMesh, ComponentUpdate, ReflectComponent,
     ReflectComponentUpdate,
 };
-use engine::input::Input;
-use engine::reflect::{Reflect, ReflectDefault};
-use engine::resource::ResourceMap;
-use engine::scene::{GameObject, GameObjectRef, Scene};
-use engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
+use calyx_engine::input::Input;
+use calyx_engine::reflect::{Reflect, ReflectDefault};
+use calyx_engine::resource::ResourceMap;
+use calyx_engine::scene::{GameObject, GameObjectRef, Scene};
+use calyx_engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use serde::{Deserialize, Serialize};
 
 /// A fixed turret that turns to its target and fires rounds at it while the
@@ -131,17 +131,17 @@ mod tests {
     use super::ComponentSentry;
     use crate::spawn::ComponentRespawnState;
     use crate::tank::{ComponentHealth, ComponentProjectile, ComponentProjectileTarget};
-    use engine::component::{ColliderShape, ComponentCollider, ComponentRigidBody};
-    use engine::math::Transform;
-    use engine::scene::{GameObject, GameObjectRef, Scene};
-    use engine::test_support::HeadlessSceneRunner;
+    use calyx_engine::component::{ColliderShape, ComponentCollider, ComponentRigidBody};
+    use calyx_engine::math::Transform;
+    use calyx_engine::scene::{GameObject, GameObjectRef, Scene};
+    use calyx_engine::test_support::HeadlessSceneRunner;
     use nalgebra_glm::vec3;
     use rapier3d::dynamics::RigidBodyType;
 
     /// A sentry at the origin aimed along nothing yet, and a tank `distance`
     /// metres down +Z.
     fn sentry_and_tank(distance: f32) -> (Scene, GameObject, GameObject) {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         let tank = scene.create(None, None);
         scene.set_world_transform(tank, Transform::from_xyz(0.0, 0.0, distance).matrix());
         scene.add_component(

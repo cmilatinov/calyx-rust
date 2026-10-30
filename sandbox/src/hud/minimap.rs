@@ -5,9 +5,9 @@ use crate::arena::ComponentArena;
 use crate::sentry::ComponentSentry;
 use crate::spawn::ComponentRespawnState;
 use crate::tank::{ComponentHealth, ComponentProjectileTarget, ComponentTankController};
-use engine::math::Transform;
-use engine::scene::{GameObject, Scene};
-use engine::ui::{
+use calyx_engine::math::Transform;
+use calyx_engine::scene::{GameObject, Scene};
+use calyx_engine::ui::{
     CornerRadius, EdgeInsets, LayoutNode, PaintCommand, PointerEvents, Style, StylePatch, UiArena,
     UiColor, UiLength, UiNodeHandle, UiPoint, UiRect, UiSize, UiTransform, UiWidget, Widget,
 };
@@ -288,7 +288,7 @@ impl Widget for MinimapHud {
             })
             .id(ui, "hud-minimap-map")
             .background(ui, self.style.bar_background)
-            .border(ui, engine::ui::Border::solid(self.style.outline, 1.0))
+            .border(ui, calyx_engine::ui::Border::solid(self.style.outline, 1.0))
             .radius(ui, CornerRadius::all(2.0))
             .width(ui, UiLength::Fill)
             .flex_grow(ui, 1.0)
@@ -362,7 +362,7 @@ impl MinimapWidget {
                 });
                 commands.push(PaintCommand::StrokeRect {
                     rect: floor,
-                    border: engine::ui::Border::solid(colors.bounds, 1.5),
+                    border: calyx_engine::ui::Border::solid(colors.bounds, 1.5),
                     radius: CornerRadius::default(),
                 });
             });
@@ -446,11 +446,11 @@ mod tests {
     use crate::hud::HudStyle;
     use crate::sentry::ComponentSentry;
     use crate::tank::{ComponentHealth, ComponentProjectileTarget, ComponentTankController};
-    use engine::component::ComponentID;
-    use engine::math::Transform;
-    use engine::scene::GameObjectRef;
-    use engine::ui::{PaintCommand, UiColor, UiTransform};
-    use engine::ui::{UiPoint, UiRect, UiSize};
+    use calyx_engine::component::ComponentID;
+    use calyx_engine::math::Transform;
+    use calyx_engine::scene::GameObjectRef;
+    use calyx_engine::ui::{PaintCommand, UiColor, UiTransform};
+    use calyx_engine::ui::{UiPoint, UiRect, UiSize};
     use nalgebra::UnitQuaternion;
     use nalgebra_glm::{vec2, vec3};
 
@@ -513,8 +513,8 @@ mod tests {
 
     #[test]
     fn minimap_state_marks_tanks_sentries_and_live_targets() {
-        let mut scene = engine::test_support::test_scene();
-        let named = |scene: &mut engine::scene::Scene, name: &str| {
+        let mut scene = calyx_engine::test_support::test_scene();
+        let named = |scene: &mut calyx_engine::scene::Scene, name: &str| {
             scene.create(
                 Some(ComponentID {
                     name: name.to_string(),
@@ -681,7 +681,7 @@ mod tests {
 
     #[test]
     fn minimap_state_reads_the_arena_at_its_world_scale() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         let arena = scene.create(None, None);
         // Twice as wide along X, and turned a quarter about Y so that its
         // local X runs along world -Z.

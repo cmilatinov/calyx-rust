@@ -1,11 +1,11 @@
-use engine::component::{
+use calyx_engine::component::{
     Component, ComponentEventContext, ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
 };
-use engine::input::Input;
-use engine::reflect::{Reflect, ReflectDefault};
-use engine::resource::ResourceMap;
-use engine::scene::{GameObject, Scene};
-use engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
+use calyx_engine::input::Input;
+use calyx_engine::reflect::{Reflect, ReflectDefault};
+use calyx_engine::resource::ResourceMap;
+use calyx_engine::scene::{GameObject, Scene};
+use calyx_engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use serde::{Deserialize, Serialize};
 
 pub const GAME_PHASE_MAIN_MENU: u32 = 0;

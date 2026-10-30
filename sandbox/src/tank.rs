@@ -1,19 +1,19 @@
 use crate::combat::{record_kill, KillEvent};
 use crate::spawn::ComponentRespawnState;
-use engine::component::{
+use calyx_engine::component::{
     ColliderShape, Component, ComponentCamera, ComponentCollider, ComponentEventContext,
     ComponentID, ComponentMesh, ComponentRigidBody, ComponentTransform, ComponentUpdate,
     ReflectComponent, ReflectComponentUpdate,
 };
-use engine::core::TimeType;
-use engine::input::Input;
-use engine::math::Transform;
-use engine::reflect::{Reflect, ReflectDefault};
-use engine::render::{Camera, Ray};
-use engine::resource::ResourceMap;
-use engine::scene::GameObjectRef;
-use engine::scene::Scene;
-use engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
+use calyx_engine::core::TimeType;
+use calyx_engine::input::Input;
+use calyx_engine::math::Transform;
+use calyx_engine::reflect::{Reflect, ReflectDefault};
+use calyx_engine::render::{Camera, Ray};
+use calyx_engine::resource::ResourceMap;
+use calyx_engine::scene::GameObjectRef;
+use calyx_engine::scene::Scene;
+use calyx_engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use legion::Entity;
 use nalgebra::UnitQuaternion;
 use nalgebra_glm::{vec2, vec3, Vec3};
@@ -281,8 +281,8 @@ impl ComponentUpdate for ComponentTankController {
 }
 
 fn update_hull(
-    scene: &mut engine::scene::Scene,
-    game_object: engine::scene::GameObject,
+    scene: &mut calyx_engine::scene::Scene,
+    game_object: calyx_engine::scene::GameObject,
     input: &Input,
     dt: TimeType,
     controller: &mut ComponentTankController,
@@ -533,7 +533,7 @@ fn sweep_hull(scene: &Scene, transform: &Transform, movement: Vec3) -> (Vec3, Op
 }
 
 fn update_turret(
-    scene: &mut engine::scene::Scene,
+    scene: &mut calyx_engine::scene::Scene,
     dt: TimeType,
     controller: &ComponentTankController,
     previous_tank_transform: &Transform,
@@ -582,7 +582,7 @@ fn turn_towards(current: f32, target: f32, max_step: f32) -> f32 {
 }
 
 fn update_crosshair(
-    scene: &mut engine::scene::Scene,
+    scene: &mut calyx_engine::scene::Scene,
     controller: &ComponentTankController,
     aim_point: Option<Vec3>,
 ) {
@@ -599,7 +599,7 @@ fn update_crosshair(
 }
 
 fn update_camera(
-    scene: &mut engine::scene::Scene,
+    scene: &mut calyx_engine::scene::Scene,
     controller: &ComponentTankController,
     previous_tank_transform: &Transform,
     tank_transform: &Transform,
@@ -618,8 +618,8 @@ fn update_camera(
 }
 
 fn update_shooting(
-    scene: &mut engine::scene::Scene,
-    tank: engine::scene::GameObject,
+    scene: &mut calyx_engine::scene::Scene,
+    tank: calyx_engine::scene::GameObject,
     input: &Input,
     dt: TimeType,
     controller: &mut ComponentTankController,
@@ -684,8 +684,8 @@ fn can_fire(shoot_pressed: bool, cooldown_remaining: f32, ammo: u32) -> bool {
 }
 
 fn spawn_projectile(
-    scene: &mut engine::scene::Scene,
-    tank: engine::scene::GameObject,
+    scene: &mut calyx_engine::scene::Scene,
+    tank: calyx_engine::scene::GameObject,
     controller: &ComponentTankController,
 ) -> bool {
     let Some(barrel_object) = controller.barrel.game_object(scene) else {
@@ -764,8 +764,8 @@ pub(crate) fn spawn_round(
 }
 
 fn update_projectile(
-    scene: &mut engine::scene::Scene,
-    game_object: engine::scene::GameObject,
+    scene: &mut calyx_engine::scene::Scene,
+    game_object: calyx_engine::scene::GameObject,
     dt: f32,
 ) {
     let Some(mut projectile) =
@@ -847,10 +847,10 @@ fn first_obstacle_time(scene: &Scene, start: Vec3, end: Vec3, radius: f32) -> Op
 /// Damages `target` by `damage` and, when the hit kills it, records the kill
 /// for `shooter`.
 fn apply_projectile_damage(
-    scene: &mut engine::scene::Scene,
-    target: engine::scene::GameObject,
+    scene: &mut calyx_engine::scene::Scene,
+    target: calyx_engine::scene::GameObject,
     damage: f32,
-    shooter: Option<engine::scene::GameObject>,
+    shooter: Option<calyx_engine::scene::GameObject>,
 ) {
     if scene
         .read_component::<ComponentRespawnState, _, _>(target, |state| state.is_gameplay_locked())
@@ -894,12 +894,12 @@ fn apply_projectile_damage(
 }
 
 fn first_projectile_hit(
-    scene: &engine::scene::Scene,
-    projectile_object: engine::scene::GameObject,
+    scene: &calyx_engine::scene::Scene,
+    projectile_object: calyx_engine::scene::GameObject,
     start: Vec3,
     end: Vec3,
     projectile_radius: f32,
-) -> Option<engine::scene::GameObject> {
+) -> Option<calyx_engine::scene::GameObject> {
     scene.objects().find(|&candidate| {
         candidate != projectile_object
             && scene
@@ -938,7 +938,7 @@ fn follow_camera_xz(
 }
 
 fn cursor_ground_intersection(
-    scene: &engine::scene::Scene,
+    scene: &calyx_engine::scene::Scene,
     input: &Input,
     controller: &ComponentTankController,
     ground_y: f32,
@@ -999,12 +999,12 @@ mod tests {
     };
     use crate::combat::{ComponentCombatStats, ComponentKillFeed};
     use crate::spawn::{update_respawn_state, ComponentRespawnState, ComponentSpawnPoint};
-    use engine::component::{
+    use calyx_engine::component::{
         ColliderShape, ComponentCollider, ComponentID, ComponentRigidBody, ComponentTransform,
     };
-    use engine::math::Transform;
-    use engine::render::Camera;
-    use engine::scene::GameObjectRef;
+    use calyx_engine::math::Transform;
+    use calyx_engine::render::Camera;
+    use calyx_engine::scene::GameObjectRef;
     use nalgebra::UnitQuaternion;
     use nalgebra_glm::{vec2, vec3};
     use rapier3d::dynamics::RigidBodyType;
@@ -1083,13 +1083,13 @@ mod tests {
 
     #[test]
     fn sandbox_scene_deserializes_objects() {
-        let test_assets = engine::test_support::TestAssets::sandbox();
+        let test_assets = calyx_engine::test_support::TestAssets::sandbox();
         let assets = test_assets.asset_context();
         let scene_ref = assets
             .registries
             .assets
             .read()
-            .reload_by_path::<engine::scene::Scene>(
+            .reload_by_path::<calyx_engine::scene::Scene>(
                 &test_assets.sandbox_root().join("scene.cxscene"),
             )
             .expect("sandbox scene should load");
@@ -1110,7 +1110,7 @@ mod tests {
             "sandbox scene should deserialize ComponentID data"
         );
 
-        let mut game = engine::context::GameContext::new(assets);
+        let mut game = calyx_engine::context::GameContext::new(assets);
         game.scenes.load_scene(scene_ref.readonly());
         assert!(
             game.scenes.current_scene().objects().count() > 0,
@@ -1120,18 +1120,18 @@ mod tests {
 
     #[test]
     fn editor_simulation_start_preserves_sandbox_camera_transform() {
-        let test_assets = engine::test_support::TestAssets::sandbox();
+        let test_assets = calyx_engine::test_support::TestAssets::sandbox();
         let assets = test_assets.asset_context();
         let scene_ref = assets
             .registries
             .assets
             .read()
-            .reload_by_path::<engine::scene::Scene>(
+            .reload_by_path::<calyx_engine::scene::Scene>(
                 &test_assets.sandbox_root().join("scene.cxscene"),
             )
             .expect("sandbox scene should load");
 
-        let mut game = engine::context::GameContext::new(assets);
+        let mut game = calyx_engine::context::GameContext::new(assets);
         game.scenes.load_scene(scene_ref.readonly());
         let authoring_camera_transform = {
             let scene = game.scenes.current_scene();
@@ -1180,18 +1180,18 @@ mod tests {
 
     #[test]
     fn editor_simulation_first_update_preserves_camera_without_input() {
-        let test_assets = engine::test_support::TestAssets::sandbox();
+        let test_assets = calyx_engine::test_support::TestAssets::sandbox();
         let assets = test_assets.asset_context();
         let scene_ref = assets
             .registries
             .assets
             .read()
-            .reload_by_path::<engine::scene::Scene>(
+            .reload_by_path::<calyx_engine::scene::Scene>(
                 &test_assets.sandbox_root().join("scene.cxscene"),
             )
             .expect("sandbox scene should load");
 
-        let mut game = engine::context::GameContext::new(assets);
+        let mut game = calyx_engine::context::GameContext::new(assets);
         game.scenes.load_scene(scene_ref.readonly());
         let authoring_object_count = game.scenes.current_scene().objects().count();
         game.scenes.start_simulation();
@@ -1216,7 +1216,8 @@ mod tests {
         };
 
         let ctx = egui::Context::default();
-        let input = engine::input::Input::from_ctx(&ctx, None, game.resources.input_mut(), false);
+        let input =
+            calyx_engine::input::Input::from_ctx(&ctx, None, game.resources.input_mut(), false);
         let registries = game.assets.lock_read().registries;
         game.scenes.update(&registries, &mut game.resources, &input);
 
@@ -1247,13 +1248,13 @@ mod tests {
 
     #[test]
     fn sandbox_shooting_does_not_move_targets() {
-        let test_assets = engine::test_support::TestAssets::sandbox();
+        let test_assets = calyx_engine::test_support::TestAssets::sandbox();
         let assets = test_assets.asset_context();
         let scene_ref = assets
             .registries
             .assets
             .read()
-            .reload_by_path::<engine::scene::Scene>(
+            .reload_by_path::<calyx_engine::scene::Scene>(
                 &test_assets.sandbox_root().join("scene.cxscene"),
             )
             .expect("sandbox scene should load");
@@ -1266,7 +1267,7 @@ mod tests {
             (name, scene.world_transform(target))
         });
 
-        let mut runner = engine::test_support::HeadlessSceneRunner::from_scene(scene);
+        let mut runner = calyx_engine::test_support::HeadlessSceneRunner::from_scene(scene);
         runner.press_key(egui::Key::Space);
         runner.step_many(120);
 
@@ -1305,7 +1306,7 @@ mod tests {
 
     #[test]
     fn hull_movement_stops_before_middle_cover() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         add_fixed_cube(&mut scene, vec3(0.0, 1.0, 3.0), vec3(1.0, 1.0, 1.0));
         scene.prepare();
 
@@ -1321,7 +1322,7 @@ mod tests {
 
     #[test]
     fn diagonal_hull_movement_slides_along_wall() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         add_fixed_cube(&mut scene, vec3(2.0, 1.0, 0.0), vec3(0.5, 1.0, 10.0));
         scene.prepare();
 
@@ -1338,7 +1339,7 @@ mod tests {
 
     #[test]
     fn yawed_hull_slides_along_wall_using_world_normal() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         add_fixed_cube(&mut scene, vec3(2.0, 1.0, 0.0), vec3(0.5, 1.0, 10.0));
         scene.prepare();
         let mut transform = Transform::from_xyz(0.0, 0.0, 0.0);
@@ -1354,7 +1355,7 @@ mod tests {
 
     #[test]
     fn hull_movement_ignores_projectile_colliders() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         let projectile = scene.create(None, None);
         scene.set_transform(projectile, &Transform::from_xyz(0.0, 0.75, 2.0).matrix());
         scene.add_component(
@@ -1384,7 +1385,7 @@ mod tests {
 
     #[test]
     fn hull_does_not_turn_its_corners_into_a_wall() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         // The wall face sits at x = 0.8, just clear of the hull's 0.75 half
         // width; a quarter turn would swing the 1.0 half length into it.
         add_fixed_cube(&mut scene, vec3(1.3, 1.0, 0.0), vec3(0.5, 1.0, 10.0));
@@ -1476,7 +1477,7 @@ mod tests {
     }
 
     fn add_fixed_cube(
-        scene: &mut engine::scene::Scene,
+        scene: &mut calyx_engine::scene::Scene,
         position: nalgebra_glm::Vec3,
         half_extents: nalgebra_glm::Vec3,
     ) {
@@ -1584,7 +1585,7 @@ mod tests {
 
     #[test]
     fn spawned_projectile_has_velocity_and_physics_components() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         let barrel = scene.create(
             Some(ComponentID {
                 name: "Barrel".to_string(),
@@ -1651,7 +1652,7 @@ mod tests {
 
         let expected_rotation = scene.world_transform(barrel).rotation;
         scene.prepare();
-        let mut runner = engine::test_support::HeadlessSceneRunner::from_scene(scene);
+        let mut runner = calyx_engine::test_support::HeadlessSceneRunner::from_scene(scene);
         for step in 1..=10 {
             runner.step();
             let projectile = runner
@@ -1670,7 +1671,7 @@ mod tests {
 
     #[test]
     fn projectile_hit_applies_damage_to_health() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         let projectile = scene.create(
             Some(ComponentID {
                 name: "Projectile".to_string(),
@@ -1723,7 +1724,7 @@ mod tests {
 
     #[test]
     fn arena_wall_stops_projectile_before_target() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         add_fixed_cube(&mut scene, vec3(0.0, 0.0, 2.5), vec3(5.0, 1.0, 0.25));
         let projectile = scene.create(None, None);
         scene.add_component(
@@ -1765,7 +1766,7 @@ mod tests {
 
     #[test]
     fn projectile_is_destroyed_when_it_reaches_a_wall() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         add_fixed_cube(&mut scene, vec3(0.0, 0.0, 2.5), vec3(5.0, 1.0, 0.25));
         let projectile = scene.create(None, None);
         scene.add_component(
@@ -1795,7 +1796,7 @@ mod tests {
 
     #[test]
     fn projectile_expires_after_its_lifetime_in_open_space() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         let projectile = scene.create(None, None);
         scene.add_component(
             projectile,
@@ -1833,7 +1834,7 @@ mod tests {
 
     #[test]
     fn lethal_projectile_hit_records_the_kill_for_its_shooter() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         let tank = scene.create(
             Some(ComponentID {
                 name: "Tank".to_string(),
@@ -1861,7 +1862,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let fire = |scene: &mut engine::scene::Scene, damage: f32| {
+        let fire = |scene: &mut calyx_engine::scene::Scene, damage: f32| {
             let projectile = scene.create(None, None);
             scene.add_component(
                 projectile,
@@ -1876,7 +1877,7 @@ mod tests {
             );
             update_projectile(scene, projectile, 0.5);
         };
-        let kills = |scene: &engine::scene::Scene| {
+        let kills = |scene: &calyx_engine::scene::Scene| {
             scene
                 .read_component::<ComponentCombatStats, _, _>(tank, |stats| stats.kills)
                 .unwrap()
@@ -1902,7 +1903,7 @@ mod tests {
 
     #[test]
     fn lethal_projectile_hit_marks_health_dead_and_can_destroy_target() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         let projectile = scene.create(None, None);
         scene.add_component(
             projectile,
@@ -1940,7 +1941,7 @@ mod tests {
 
     #[test]
     fn lethal_damage_respawns_player_and_restores_health() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         let spawn = scene.create(None, None);
         let player = scene.create(None, None);
         scene.set_world_transform(spawn, Transform::from_xyz(8.0, 0.0, 4.0).matrix());
@@ -1984,7 +1985,7 @@ mod tests {
 
     #[test]
     fn invulnerable_player_ignores_projectile_damage() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         let player = scene.create(None, None);
         scene.add_component(player, ComponentHealth::default());
         scene.add_component(
@@ -2006,7 +2007,7 @@ mod tests {
 
     #[test]
     fn waiting_to_respawn_player_ignores_projectile_damage() {
-        let mut scene = engine::test_support::test_scene();
+        let mut scene = calyx_engine::test_support::test_scene();
         let player = scene.create(None, None);
         scene.add_component(player, ComponentHealth::default());
         scene.add_component(

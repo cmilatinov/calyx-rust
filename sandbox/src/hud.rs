@@ -4,19 +4,19 @@ mod scoreboard;
 
 use crate::spawn::ComponentRespawnState;
 use crate::tank::{ComponentHealth, ComponentTankController};
-use engine::component::{
+use calyx_engine::component::{
     Component, ComponentEventContext, ComponentHud, ComponentUpdate, ReflectComponent,
     ReflectComponentHud, ReflectComponentUpdate,
 };
-use engine::input::Input;
-use engine::reflect::{Reflect, ReflectDefault};
-use engine::resource::ResourceMap;
-use engine::scene::{GameObject, Scene};
-use engine::ui::{
+use calyx_engine::input::Input;
+use calyx_engine::reflect::{Reflect, ReflectDefault};
+use calyx_engine::resource::ResourceMap;
+use calyx_engine::scene::{GameObject, Scene};
+use calyx_engine::ui::{
     Border, CornerRadius, EdgeInsets, JustifyContent, PointerEvents, StylePatch, UiArena, UiColor,
     UiLength, UiNodeHandle, UiRect, UiSize, Widget,
 };
-use engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
+use calyx_engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use kill_feed::{kill_feed_lines, KillFeedHud, KillFeedLine};
 use minimap::{minimap_state, MinimapHud, MinimapState};
 use scoreboard::{scoreboard_height, scoreboard_rows, ScoreboardHud, ScoreboardRow};
@@ -498,13 +498,13 @@ mod tests {
     use crate::combat::{record_kill, ComponentCombatStats, ComponentKillFeed, KillEvent};
     use crate::spawn::ComponentRespawnState;
     use crate::tank::{ComponentHealth, ComponentProjectileTarget, ComponentTankController};
-    use engine::component::ComponentID;
-    use engine::math::Transform;
-    use engine::scene::{Scene, SceneHud};
-    use engine::ui::{PaintCommand, UiInput, UiPoint, UiRect, UiSize};
+    use calyx_engine::component::ComponentID;
+    use calyx_engine::math::Transform;
+    use calyx_engine::scene::{Scene, SceneHud};
+    use calyx_engine::ui::{PaintCommand, UiInput, UiPoint, UiRect, UiSize};
 
-    fn tank_scene(respawn: ComponentRespawnState) -> (Scene, engine::scene::GameObject) {
-        let mut scene = engine::test_support::test_scene();
+    fn tank_scene(respawn: ComponentRespawnState) -> (Scene, calyx_engine::scene::GameObject) {
+        let mut scene = calyx_engine::test_support::test_scene();
         let tank = scene.create(None, None);
         scene.add_component(
             tank,
