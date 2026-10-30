@@ -114,10 +114,12 @@ impl AssetOpenContext<'_> {
                     log::info!("Kept the open scene: it was not saved");
                     return AssetOpenOutcome::Refused("the open scene was not saved".into());
                 };
-                if !self.scene_document.save(self.game, file) {
-                    return AssetOpenOutcome::Refused(
-                        "the open scene failed to save; see the editor log".into(),
-                    );
+                // The scene document logs why the save failed.
+                if let Err(error) = self.scene_document.save(self.game, file) {
+                    log::info!("Kept the open scene: it failed to save");
+                    return AssetOpenOutcome::Refused(format!(
+                        "the open scene failed to save: {error}"
+                    ));
                 }
             }
             SceneSwitchAnswer::Discard => {}

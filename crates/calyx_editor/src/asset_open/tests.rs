@@ -356,6 +356,29 @@ fn save_without_a_file_or_a_pick_keeps_the_open_scene() {
 }
 
 #[test]
+fn a_failed_save_keeps_the_open_scene() {
+    let root = AssetRoot::new();
+    let outside = AssetRoot::new();
+    let mut editor = Editor::new(&root);
+    editor.document.open_default(&mut editor.game);
+    editor.edit_scene();
+    editor.open(&root.file("second.cxscene"));
+    let picked = outside.file("outside.cxscene");
+
+    let outcome = editor
+        .context()
+        .answer_scene_prompt(SceneSwitchAnswer::Save, || Some(picked.clone()));
+
+    assert!(matches!(outcome, AssetOpenOutcome::Refused(_)));
+    assert!(
+        !picked.exists(),
+        "a scene outside every asset root is not saved"
+    );
+    assert_eq!(editor.scene_file(), None);
+    assert!(editor.document.is_dirty());
+}
+
+#[test]
 fn dont_save_opens_the_other_scene_leaving_the_file_unchanged() {
     let root = AssetRoot::new();
     let mut editor = Editor::new(&root);
