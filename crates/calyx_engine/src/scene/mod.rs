@@ -23,7 +23,7 @@ mod error;
 pub(crate) mod game_object_ref;
 mod hud;
 mod prefab;
-mod prefab_link;
+pub(crate) mod prefab_link;
 mod scene_manager;
 mod scene_view;
 

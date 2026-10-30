@@ -309,6 +309,71 @@ fn old_enabled_fields_load_as_disabled_entries() {
 }
 
 #[test]
+fn old_enabled_fields_keep_linked_instances_following_their_prefab() {
+    let registries = test_registries();
+    let mut scene = registries.scene();
+    let source = scene.create(None, None);
+    scene.add_component(source, ComponentCamera::default());
+    let prefab = scene.create_prefab(source);
+    let prefab_id = Uuid::new_v4();
+    let link = |scene: &mut Scene| {
+        scene
+            .instantiate_linked_prefab(prefab_id, &prefab, None)
+            .unwrap()
+            .0
+    };
+    let untouched = link(&mut scene);
+    let overridden = link(&mut scene);
+    let switched_off = link(&mut scene);
+    scene.write_component::<ComponentCamera, _>(overridden, |camera| camera.far_plane = 500.0);
+    let ids = [untouched, overridden, switched_off].map(|go| scene.uuid(go));
+
+    // Saved as before the scene kept the state: each camera payload carries
+    // its own flag, and each base hash was taken over a payload carrying the
+    // flag the prefab gave it, `true`. The third instance switched its
+    // camera off, an override of the state.
+    let camera_type = ComponentCamera::type_uuid().to_string();
+    let mut saved = serde_json::to_value(&scene).unwrap();
+    for (index, id) in ids.iter().enumerate() {
+        let id = id.to_string();
+        saved["components"][&id][&camera_type]["enabled"] = json!(index != 2);
+        let mut base_payload = saved["components"][&id][&camera_type].clone();
+        base_payload["enabled"] = json!(true);
+        if index == 1 {
+            base_payload["far_plane"] = json!(100.0);
+        }
+        saved["prefab_links"][&id]["base"][&camera_type] =
+            json!(crate::scene::prefab_link::value_hash(&base_payload));
+    }
+    let data: SceneData = serde_json::from_value(saved).unwrap();
+    let mut loaded: Scene = (&registries, data).into();
+
+    // The prefab's camera changes; only the untouched instance follows it.
+    scene.write_component::<ComponentCamera, _>(source, |camera| camera.near_plane = 0.5);
+    let updated = scene.create_prefab(source);
+    let update = loaded.update_prefab_instances(prefab_id, &updated).unwrap();
+
+    let camera = |index: usize| {
+        let go = loaded.find(ids[index]).unwrap();
+        loaded
+            .read_component::<ComponentCamera, _, _>(go, |camera| {
+                (camera.near_plane, camera.far_plane)
+            })
+            .unwrap()
+    };
+    assert_eq!(
+        camera(0).0,
+        0.5,
+        "the untouched instance follows the prefab"
+    );
+    assert_eq!(camera(1).0, 0.1, "the overridden camera keeps its value");
+    assert_eq!(camera(1).1, 500.0);
+    assert_eq!(camera(2).0, 0.1, "the switched-off camera is an override");
+    assert!(!loaded.is_component_enabled::<ComponentCamera>(loaded.find(ids[2]).unwrap()));
+    assert_eq!(update.kept_overrides, 2);
+}
+
+#[test]
 fn query_helpers_filter_on_the_state() {
     let registries = test_registries();
     let mut scene = registries.scene();

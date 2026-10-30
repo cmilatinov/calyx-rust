@@ -102,7 +102,7 @@ pub struct PrefabUpdate {
 
 /// A stable 64-bit FNV-1a hash of `value`'s JSON text. Object keys are
 /// sorted, so equal values hash equally across runs and builds.
-fn value_hash(value: &serde_json::Value) -> u64 {
+pub(crate) fn value_hash(value: &serde_json::Value) -> u64 {
     let text = value.to_string();
     text.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
         (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
@@ -111,7 +111,7 @@ fn value_hash(value: &serde_json::Value) -> u64 {
 
 /// The hash of a component's `value` and whether it is `enabled`. An enabled
 /// component hashes as its value alone, as before the scene kept the state.
-fn component_hash(value: &serde_json::Value, enabled: bool) -> u64 {
+pub(crate) fn component_hash(value: &serde_json::Value, enabled: bool) -> u64 {
     if enabled {
         value_hash(value)
     } else {
