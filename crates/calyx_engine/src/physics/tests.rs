@@ -892,4 +892,129 @@ mod tests {
         scene.prepare();
         assert!(scene.physics.bodies[handle].is_enabled());
     }
+
+    /// A static ground with its top face at y = 0.
+    fn add_ground(scene: &mut crate::scene::Scene) {
+        let ground = scene.create(None, None);
+        scene.set_transform(
+            ground,
+            &nalgebra_glm::translation(&Vec3::new(0.0, -0.5, 0.0)),
+        );
+        scene.add_component(
+            ground,
+            ComponentCollider {
+                shape: ColliderShape::Cuboid {
+                    half_extents: Vec3::new(10.0, 0.5, 10.0),
+                },
+                ..Default::default()
+            },
+        );
+    }
+
+    /// Runs `frames` editor frames: a prepare, then a physics update.
+    fn run_frames(scene: &mut crate::scene::Scene, frames: usize) {
+        let time = time_with_delta(1.0 / 60.0);
+        let config = PhysicsConfiguration::default();
+        for _ in 0..frames {
+            scene.prepare();
+            PhysicsContext::update(scene, &time, &config);
+        }
+    }
+
+    fn falling_ball(
+        scene: &mut crate::scene::Scene,
+        collider_on_child: bool,
+    ) -> crate::scene::GameObject {
+        let ball = scene.create(None, None);
+        scene.set_transform(ball, &nalgebra_glm::translation(&Vec3::new(2.0, 2.0, 1.0)));
+        scene.add_component(ball, ComponentRigidBody::default());
+        let collider = if collider_on_child {
+            scene.create(None, Some(ball))
+        } else {
+            ball
+        };
+        scene.add_component(
+            collider,
+            ComponentCollider {
+                shape: ColliderShape::Sphere { radius: 0.5 },
+                ..Default::default()
+            },
+        );
+        ball
+    }
+
+    #[test]
+    fn collider_on_the_rigid_body_object_lands_on_the_ground() {
+        let mut scene = test_scene();
+        add_ground(&mut scene);
+        let ball = falling_ball(&mut scene, false);
+
+        run_frames(&mut scene, 180);
+
+        let y = scene.world_transform(ball).position.y;
+        assert!(
+            (y - 0.5).abs() < 0.05,
+            "ball should rest on the ground, y={y}"
+        );
+    }
+
+    #[test]
+    fn child_collider_lands_on_the_ground() {
+        let mut scene = test_scene();
+        add_ground(&mut scene);
+        let ball = falling_ball(&mut scene, true);
+
+        run_frames(&mut scene, 180);
+
+        let y = scene.world_transform(ball).position.y;
+        assert!(
+            (y - 0.5).abs() < 0.05,
+            "ball should rest on the ground, y={y}"
+        );
+    }
+
+    #[test]
+    fn moved_body_collider_is_queried_at_its_new_position() {
+        let mut scene = test_scene();
+        let target = scene.create(None, None);
+        scene.set_transform(
+            target,
+            &nalgebra_glm::translation(&Vec3::new(0.0, 0.0, 5.0)),
+        );
+        scene.add_component(
+            target,
+            ComponentRigidBody {
+                ty: RigidBodyType::Fixed,
+                ..Default::default()
+            },
+        );
+        scene.add_component(
+            target,
+            ComponentCollider {
+                shape: ColliderShape::Sphere { radius: 0.5 },
+                ..Default::default()
+            },
+        );
+        scene.prepare();
+
+        // Move the body without stepping physics, as a frame where the fixed
+        // step does not run, then query right after the prepare.
+        scene.set_transform(
+            target,
+            &nalgebra_glm::translation(&Vec3::new(0.0, 0.0, 8.0)),
+        );
+        scene.prepare();
+
+        let hit = scene
+            .physics
+            .cast_ray(
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(0.0, 0.0, 1.0),
+                10.0,
+                true,
+                QueryFilter::default(),
+            )
+            .expect("ray should hit the moved sphere");
+        assert!((hit.toi - 7.5).abs() < 1e-4, "unexpected toi {}", hit.toi);
+    }
 }

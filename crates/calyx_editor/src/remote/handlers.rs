@@ -178,8 +178,9 @@ impl EditorApp {
                 Ok(Some(serde_json::Value::Null))
             }
 
-            Command::Play => {
-                self.start_simulation()
+            Command::Play { scene } => {
+                let scene = scene.map(|path| self.remote_play_scene(path)).transpose()?;
+                self.start_simulation_of(scene)
                     .map_err(|error| (ErrorKind::Internal, error))?;
                 Ok(Some(serde_json::Value::Null))
             }
@@ -558,6 +559,24 @@ impl EditorApp {
             "scene_dirty": self.state.is_scene_dirty(),
             "prefab": self.remote_prefab_state(),
         })))
+    }
+
+    /// Resolves the scene a `play` names, refusing it while a simulation
+    /// scene exists, since a resumed simulation keeps the scene it runs.
+    fn remote_play_scene(&self, path: PathBuf) -> Result<PathBuf, (ErrorKind, String)> {
+        if self.state.game.scenes.has_simulation_scene() {
+            return Err((
+                ErrorKind::BadRequest,
+                "a simulation is running or paused; stop it before playing another scene".into(),
+            ));
+        }
+        // The asset registry keys assets by canonical path.
+        dunce::canonicalize(&path).map_err(|error| {
+            (
+                ErrorKind::NotFound,
+                format!("scene file {}: {error}", path.display()),
+            )
+        })
     }
 
     fn remote_load_scene(&mut self, path: PathBuf) -> CommandResult {

@@ -197,6 +197,8 @@ pub struct BindGroupEntry {
     size: Option<u32>,
 }
 
+/// What a material's bind groups bind. While it compares equal across frames,
+/// the renderer reuses the bind groups it built for the material.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct MaterialBindGroupCacheKey {
     shader_id: AssetId,
@@ -212,9 +214,18 @@ struct MaterialBindGroupCacheEntry {
 
 #[derive(Clone, PartialEq, Eq)]
 enum MaterialBindGroupCacheValue {
-    Buffer { size: Option<u32> },
-    Texture { texture_id: AssetId },
-    Sampler { texture_id: AssetId },
+    /// The buffer bound, compared by identity: a hot reload replaces the
+    /// material's buffers with new ones of the same size, and a bind group
+    /// that kept the old buffer would never see the material's values again.
+    Buffer {
+        buffer: Option<wgpu::Buffer>,
+    },
+    Texture {
+        texture_id: AssetId,
+    },
+    Sampler {
+        texture_id: AssetId,
+    },
 }
 
 impl Asset for Material {
@@ -379,9 +390,9 @@ impl Material {
             .flat_map(|(group, entries)| {
                 entries.iter().filter_map(|(binding, entry)| {
                     let value = match entry.ty {
-                        BindingType::Buffer => {
-                            MaterialBindGroupCacheValue::Buffer { size: entry.size }
-                        }
+                        BindingType::Buffer => MaterialBindGroupCacheValue::Buffer {
+                            buffer: self.find_buffer(*group, *binding).cloned(),
+                        },
                         BindingType::Texture => {
                             let texture_id = self
                                 .find_variable(*group, *binding)?

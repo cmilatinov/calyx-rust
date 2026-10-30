@@ -959,6 +959,12 @@ impl EditorApp {
     /// project's runtime window sets the game aspect, and a fresh simulation
     /// runs the configured startup scene when the project has one.
     pub(crate) fn start_simulation(&mut self) -> Result<(), String> {
+        self.start_simulation_of(None)
+    }
+
+    /// Starts simulation as [`Self::start_simulation`] does, running `scene`
+    /// instead of the project's startup scene on a fresh start.
+    pub(crate) fn start_simulation_of(&mut self, scene: Option<PathBuf>) -> Result<(), String> {
         if self.state.prefab_mode.is_open() {
             return Err(prefab_mode::PLAY_IN_PREFAB_MODE.into());
         }
@@ -975,14 +981,11 @@ impl EditorApp {
         match self
             .project_manager
             .read()
-            .start_simulation(&mut self.state.game.scenes)
+            .start_simulation(&mut self.state.game.scenes, scene)
         {
-            Ok(Some(path)) => log::info!(
-                "Loaded configured startup scene for simulation: {}",
-                path.display()
-            ),
+            Ok(Some(path)) => log::info!("Loaded scene for simulation: {}", path.display()),
             Ok(None) => {}
-            Err(error) => return Err(format!("Failed to load configured startup scene: {error}")),
+            Err(error) => return Err(format!("Failed to load the scene to simulate: {error}")),
         }
         self.state.game.scenes.start_simulation();
         Ok(())
