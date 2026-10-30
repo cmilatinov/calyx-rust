@@ -89,18 +89,20 @@ impl ProjectManager {
         self.runtime_settings.runtime()
     }
 
-    /// Starts the shared runtime from the project's configured startup scene.
+    /// Starts the shared runtime from `scene`, or else from the project's
+    /// configured startup scene.
     ///
-    /// A project without a startup scene leaves the current editor scene alone.
+    /// Without either, the current editor scene runs as it is.
     pub fn start_simulation(
         &self,
         scenes: &mut SceneManager,
+        scene: Option<PathBuf>,
     ) -> Result<Option<PathBuf>, BoxedError> {
         if scenes.has_simulation_scene() {
             scenes.start_simulation();
             return Ok(None);
         }
-        let Some(path) = self.runtime_settings.startup_scene_path() else {
+        let Some(path) = scene.or_else(|| self.runtime_settings.startup_scene_path()) else {
             scenes.start_simulation();
             return Ok(None);
         };
@@ -1237,6 +1239,16 @@ height = 600
         );
         let startup_path = root.join("assets").join("levels").join("first.cxscene");
         write_scene_file(&startup_path, &startup).unwrap();
+        let mut other = test_scene();
+        other.create(
+            Some(ComponentID {
+                name: "Named scene object".into(),
+                ..Default::default()
+            }),
+            None,
+        );
+        let other_path = root.join("assets").join("levels").join("other.cxscene");
+        write_scene_file(&other_path, &other).unwrap();
 
         let mut game = GameContext::new(test_asset_context_with_assets(vec![root.join("assets")]));
         game.scenes.current_scene_mut().create(
@@ -1258,7 +1270,10 @@ height = 600
             Some((800, 600))
         );
 
-        let started = project.read().start_simulation(&mut game.scenes).unwrap();
+        let started = project
+            .read()
+            .start_simulation(&mut game.scenes, None)
+            .unwrap();
         game.scenes.start_simulation();
 
         assert_eq!(started.as_deref(), Some(startup_path.as_path()));
@@ -1285,6 +1300,18 @@ height = 600
         drop(assets);
         game.scenes.stop_simulation();
         assert!(!game.scenes.is_simulating());
+
+        // A scene named for the run replaces the startup scene.
+        let started = project
+            .read()
+            .start_simulation(&mut game.scenes, Some(other_path.clone()))
+            .unwrap();
+        assert_eq!(started.as_deref(), Some(other_path.as_path()));
+        assert_eq!(
+            names(game.scenes.simulation_scene()),
+            ["Named scene object"]
+        );
+        game.scenes.stop_simulation();
 
         drop((project, game));
         fs::remove_dir_all(root).unwrap();

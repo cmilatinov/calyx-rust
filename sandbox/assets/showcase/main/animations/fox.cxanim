@@ -1,0 +1,90 @@
+{
+  "graph": {
+    "nodes": [
+      {
+        "id": "f4c38d0f-8dd5-435b-b13e-23fbbd4757fb",
+        "name": "Survey",
+        "motion": {
+          "AnimationClip": {
+            "speed": 1.0,
+            "animation": "1814e165-564e-b3ab-9615-bd06aef93288"
+          }
+        },
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        }
+      },
+      {
+        "id": "d7b1aa28-f23a-415a-b97e-f9a7c290b95d",
+        "name": "Walk",
+        "motion": {
+          "AnimationClip": {
+            "speed": 1.0,
+            "animation": "144cc319-87c4-42f7-1480-22cd06e6290e"
+          }
+        },
+        "position": {
+          "x": 220.0,
+          "y": 0.0
+        }
+      },
+      {
+        "id": "9338864c-4240-43dc-9578-9b46c21cf1fe",
+        "name": "Run",
+        "motion": {
+          "AnimationClip": {
+            "speed": 1.0,
+            "animation": "a8bdf687-e7f1-d558-0058-f69a4b19e6ca"
+          }
+        },
+        "position": {
+          "x": 440.0,
+          "y": 0.0
+        }
+      }
+    ],
+    "node_holes": [],
+    "edge_property": "directed",
+    "edges": [
+      [
+        0,
+        1,
+        {
+          "id": "167752db-657d-4eb0-b7eb-2d41ca76da1a",
+          "name": "Survey to Walk",
+          "has_exit_time": true,
+          "exit_time": 1.0,
+          "duration": 0.35,
+          "conditions": []
+        }
+      ],
+      [
+        1,
+        2,
+        {
+          "id": "2e93b5d8-1074-4ac5-ab5a-f29d2661a8f3",
+          "name": "Walk to Run",
+          "has_exit_time": true,
+          "exit_time": 3.0,
+          "duration": 0.35,
+          "conditions": []
+        }
+      ],
+      [
+        2,
+        0,
+        {
+          "id": "efb3825f-336e-4661-89d0-95beff235a6e",
+          "name": "Run to Survey",
+          "has_exit_time": true,
+          "exit_time": 4.0,
+          "duration": 0.35,
+          "conditions": []
+        }
+      ]
+    ]
+  },
+  "parameters": [],
+  "start_node": "f4c38d0f-8dd5-435b-b13e-23fbbd4757fb"
+}

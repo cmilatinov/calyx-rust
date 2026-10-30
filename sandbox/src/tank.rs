@@ -1055,8 +1055,9 @@ mod tests {
 
     #[test]
     fn sandbox_scene_camera_points_down_at_arena() {
-        let scene: Value = serde_json::from_str(include_str!("../assets/scene.cxscene"))
-            .expect("sandbox scene should be valid JSON");
+        let scene: Value =
+            serde_json::from_str(include_str!("../assets/game/scenes/arena.cxscene"))
+                .expect("sandbox scene should be valid JSON");
         let components = scene["components"]
             .as_object()
             .expect("sandbox scene should contain component data");
@@ -1089,7 +1090,7 @@ mod tests {
             .assets
             .read()
             .reload_by_path::<calyx_engine::scene::Scene>(
-                &test_assets.sandbox_root().join("scene.cxscene"),
+                &test_assets.sandbox_root().join("game/scenes/arena.cxscene"),
             )
             .expect("sandbox scene should load");
 
@@ -1126,7 +1127,7 @@ mod tests {
             .assets
             .read()
             .reload_by_path::<calyx_engine::scene::Scene>(
-                &test_assets.sandbox_root().join("scene.cxscene"),
+                &test_assets.sandbox_root().join("game/scenes/arena.cxscene"),
             )
             .expect("sandbox scene should load");
 
@@ -1186,7 +1187,7 @@ mod tests {
             .assets
             .read()
             .reload_by_path::<calyx_engine::scene::Scene>(
-                &test_assets.sandbox_root().join("scene.cxscene"),
+                &test_assets.sandbox_root().join("game/scenes/arena.cxscene"),
             )
             .expect("sandbox scene should load");
 
@@ -1254,7 +1255,7 @@ mod tests {
             .assets
             .read()
             .reload_by_path::<calyx_engine::scene::Scene>(
-                &test_assets.sandbox_root().join("scene.cxscene"),
+                &test_assets.sandbox_root().join("game/scenes/arena.cxscene"),
             )
             .expect("sandbox scene should load");
         let scene = scene_ref.read().clone();

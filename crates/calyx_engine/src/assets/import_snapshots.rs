@@ -709,7 +709,7 @@ fn teapot_obj_matches_snapshot() {
 fn tank_turret_head_obj_matches_snapshot() {
     mesh_snapshot(
         TestAssets::sandbox_root,
-        "meshes/tank_game/turret_head.obj",
+        "game/meshes/turret_head.obj",
         "tank_turret_head_obj",
     );
 }
@@ -718,7 +718,7 @@ fn tank_turret_head_obj_matches_snapshot() {
 fn tank_fbx_matches_snapshot() {
     prefab_snapshot(
         TestAssets::sandbox_root,
-        "models/tank_game/Tank_002.fbx",
+        "game/models/Tank_002.fbx",
         "tank_fbx",
     );
 }

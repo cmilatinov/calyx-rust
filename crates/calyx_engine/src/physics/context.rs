@@ -359,7 +359,7 @@ impl PhysicsContext {
                 scene.is_type_enabled(*entity, ComponentTypeId::of::<ComponentCollider>());
             match scene.physics.entity_collider.get(&go.entity) {
                 None => {
-                    let parent = scene.ancestor_with::<ComponentRigidBody>(go);
+                    let parent = Self::collider_body(scene, go);
                     let rb_handle = parent
                         .and_then(|p| scene.physics.entity_rigid_body.get(&p.entity).copied());
                     let transform = parent
@@ -430,14 +430,37 @@ impl PhysicsContext {
             let Some(&c_handle) = scene.physics.entity_collider.get(&go.entity) else {
                 continue;
             };
-            let parent = scene.ancestor_with::<ComponentRigidBody>(go);
+            let parent = Self::collider_body(scene, go);
             let transform = parent
                 .map(|p| scene.transform_relative_to(go, p))
                 .unwrap_or_else(|| scene.world_transform(go));
-            let c = &mut scene.physics.colliders[c_handle];
-            c.set_position(transform.position.into());
-            c.set_rotation(transform.rotation);
+            let position = Self::isometry(&transform);
+            let physics = &mut scene.physics;
+            let c = &mut physics.colliders[c_handle];
+            // An attached collider's position is relative to its body; setting
+            // its world position would move it off the body until the body moves.
+            match c.position_wrt_parent() {
+                Some(current) if *current != position => c.set_position_wrt_parent(position),
+                Some(_) => {}
+                None => c.set_position(position),
+            }
+            // Rapier moves attached colliders to their body only when it steps,
+            // so place them now: `prepare` rebuilds the query pipeline next.
+            if let (Some(body), Some(offset)) = (c.parent(), c.position_wrt_parent().copied()) {
+                let world = physics.bodies[body].position() * offset;
+                if *c.position() != world {
+                    c.set_position(world);
+                }
+            }
         }
+    }
+
+    /// The object whose rigid body a collider on `game_object` attaches to: its
+    /// own, else the nearest ancestor's.
+    fn collider_body(scene: &Scene, game_object: GameObject) -> Option<GameObject> {
+        scene
+            .read_component::<ComponentRigidBody, _, _>(game_object, |_| game_object)
+            .or_else(|| scene.ancestor_with::<ComponentRigidBody>(game_object))
     }
 
     pub fn update(scene: &mut Scene, time: &Time, config: &PhysicsConfiguration) {

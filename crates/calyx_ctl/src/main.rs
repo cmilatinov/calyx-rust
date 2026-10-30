@@ -64,7 +64,12 @@ enum Action {
     /// Close the editor.
     Shutdown,
     /// Start or resume simulation.
-    Play,
+    Play {
+        /// Run this scene file instead of the project's startup scene on a
+        /// fresh start.
+        #[arg(long)]
+        scene: Option<PathBuf>,
+    },
     /// Pause simulation (keeps the play copy).
     Pause,
     /// Stop simulation (discards the play copy).
@@ -422,7 +427,9 @@ fn build_command(action: &Action, base: Duration) -> Result<(Command, Duration),
         Action::Ping => simple(Command::Ping),
         Action::Info => simple(Command::Info),
         Action::Shutdown => simple(Command::Shutdown),
-        Action::Play => simple(Command::Play),
+        Action::Play { scene } => simple(Command::Play {
+            scene: scene.clone(),
+        }),
         Action::Pause => simple(Command::Pause),
         Action::Stop => simple(Command::Stop),
         Action::Step { frames } => Ok((
