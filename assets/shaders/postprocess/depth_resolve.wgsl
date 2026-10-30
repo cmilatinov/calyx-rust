@@ -1,4 +1,4 @@
-//#include "shaders/fullscreen_pass.wgsl"
+//#include "shaders/common/fullscreen_pass.wgsl"
 
 // Copies sample 0 of the multisampled scene depth into a single-sample depth
 // target, for post-processing passes that read depth.

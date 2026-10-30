@@ -2,7 +2,7 @@
 // (`engine/src/math/curve.rs`) and `GpuCurveKey` / `GpuCurveRange`
 // (`engine/src/render/gpu_curve.rs`).
 //
-// Include it with `//#include "shaders/curve.wgsl"`. It declares no bindings:
+// Include it with `//#include "shaders/common/curve.wgsl"`. It declares no bindings:
 // it reads its keys from the parameter `curve_storage`, curves packed one
 // after another with each curve's keys sorted by time, and a `CurveRange`
 // names one curve's keys in it. The including shader binds the parameter by

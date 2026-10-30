@@ -1,4 +1,4 @@
-//#include "shaders/fullscreen_pass.wgsl"
+//#include "shaders/common/fullscreen_pass.wgsl"
 
 @group(0) @binding(0)
 var in_texture: texture_2d<f32>;

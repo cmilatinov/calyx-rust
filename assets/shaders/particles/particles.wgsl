@@ -1,4 +1,4 @@
-//#include "shaders/camera.wgsl"
+//#include "shaders/common/camera.wgsl"
 
 struct VertexIn {
     @location(0) local_position: vec2f,

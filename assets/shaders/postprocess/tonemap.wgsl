@@ -1,4 +1,4 @@
-//#include "shaders/fullscreen_pass.wgsl"
+//#include "shaders/common/fullscreen_pass.wgsl"
 
 // Maps linear HDR scene color to display-linear color in [0, 1]. The scene
 // texture holds display-linear color: egui and the readback sRGB-encode it

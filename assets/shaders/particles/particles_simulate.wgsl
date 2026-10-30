@@ -6,8 +6,8 @@
 // Each kernel binds only its own resources from group 0, so every binding
 // number is used by one role.
 
-//#include "shaders/curve.wgsl"
-//#include "shaders/gradient.wgsl"
+//#include "shaders/common/curve.wgsl"
+//#include "shaders/common/gradient.wgsl"
 
 const WORKGROUP_SIZE: u32 = 64u;
 // Shortest lifetime a particle can have, as on the CPU.

@@ -1528,7 +1528,7 @@ mod tests {
     fn pbr_material(context: &ReadOnlyAssetContext, name: &str) -> Ref<Material> {
         let registry = context.registries.assets.read();
         let shader = registry
-            .load::<Shader>("shaders/pbr")
+            .load::<Shader>("shaders/mesh/pbr")
             .expect("missing pbr shader");
         registry
             .create_or_update(name.into(), Material::from_shader(context, shader))
@@ -1705,7 +1705,7 @@ mod tests {
 
         match result {
             Err(SceneRendererError::AssetLoad { name, .. }) => {
-                assert_eq!(name, "shaders/pbr");
+                assert_eq!(name, "shaders/mesh/pbr");
             }
             Err(error) => panic!("expected the pbr shader to fail to load, got {error:?}"),
             Ok(_) => panic!("a registry without shaders cannot build a scene renderer"),
@@ -1736,14 +1736,14 @@ mod tests {
     fn construction_errors_describe_the_asset_and_chain_the_load_error() {
         use std::error::Error;
 
-        let load_error = AssetError::NotFound.with_source("asset name `shaders/pbr`");
+        let load_error = AssetError::NotFound.with_source("asset name `shaders/mesh/pbr`");
         let failed = SceneRendererError::AssetLoad {
-            name: "shaders/pbr".into(),
+            name: "shaders/mesh/pbr".into(),
             error: load_error.clone(),
         };
         assert_eq!(
             failed.to_string(),
-            "scene renderer asset `shaders/pbr` failed to load"
+            "scene renderer asset `shaders/mesh/pbr` failed to load"
         );
         let source = failed
             .source()
@@ -2092,7 +2092,7 @@ mod tests {
         let emissive = {
             let registry = read_only_context.registries.assets.read();
             let shader = registry
-                .load::<Shader>("shaders/pbr")
+                .load::<Shader>("shaders/mesh/pbr")
                 .expect("missing pbr shader");
             let mut material = Material::from_shader(&read_only_context, shader);
             for variable in material.variables.iter_mut() {

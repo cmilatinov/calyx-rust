@@ -1,4 +1,4 @@
-//#include "shaders/fullscreen_pass.wgsl"
+//#include "shaders/common/fullscreen_pass.wgsl"
 
 // FXAA 3.11 Quality, preset 12, ported from Timothy Lottes' reference
 // (NVIDIA, public domain): `FxaaPixelShader`'s PC quality path.

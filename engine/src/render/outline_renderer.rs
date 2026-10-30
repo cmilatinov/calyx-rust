@@ -57,7 +57,7 @@ impl OutlineRenderer {
     const HOVERED_OUTLINE_RADIUS: u32 = 2;
 
     pub fn new(context: &ReadOnlyAssetContext) -> Result<Self, SceneRendererError> {
-        let shader = SceneRendererError::load::<Shader>(context, "shaders/object_outline")?;
+        let shader = SceneRendererError::load::<Shader>(context, "shaders/editor/object_outline")?;
         let device = context.render_context.device();
         Ok(Self {
             shader,

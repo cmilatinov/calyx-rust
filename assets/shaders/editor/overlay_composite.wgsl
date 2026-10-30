@@ -1,4 +1,4 @@
-//#include "shaders/fullscreen_pass.wgsl"
+//#include "shaders/common/fullscreen_pass.wgsl"
 
 // Composites the resolved overlay target over the post-processed scene
 // texture. Overlays alpha blend into a target cleared to transparent, which

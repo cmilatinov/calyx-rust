@@ -1,5 +1,5 @@
-//#include "shaders/fullscreen.wgsl"
-//#include "shaders/camera.wgsl"
+//#include "shaders/common/fullscreen.wgsl"
+//#include "shaders/common/camera.wgsl"
 
 struct VertexOut {
     @builtin(position) position: vec4f,

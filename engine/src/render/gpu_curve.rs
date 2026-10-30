@@ -1,4 +1,4 @@
-//! [`Curve`]s as `assets/shaders/curve.wgsl` reads them: keys packed one curve
+//! [`Curve`]s as `assets/shaders/common/curve.wgsl` reads them: keys packed one curve
 //! after another in one buffer, and a range per curve.
 
 use crate::math::{Curve, CurveInterpolation, CurveKey};
@@ -114,8 +114,8 @@ mod tests {
     /// its key buffer bound to the module's `curve_storage`. It includes the
     /// module twice, as two files of one shader might.
     const KERNEL: &str = r#"
-//#include "shaders/curve.wgsl"
-//#include "shaders/curve.wgsl"
+//#include "shaders/common/curve.wgsl"
+//#include "shaders/common/curve.wgsl"
 
 struct Query {
     curve: u32,
@@ -148,7 +148,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     #[test]
     fn gpu_curve_types_match_the_layout_of_curve_wgsl() {
         let source = preprocess(
-            "//#include \"shaders/curve.wgsl\"\n//#binding curve_storage\n\
+            "//#include \"shaders/common/curve.wgsl\"\n//#binding curve_storage\n\
              @group(0) @binding(0) var<storage, read> keys: array<CurveKey>;\n",
         )
         .expect("curve.wgsl preprocesses");

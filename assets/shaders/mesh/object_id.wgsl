@@ -1,6 +1,6 @@
-//#include "shaders/inputs.wgsl"
-//#include "shaders/camera.wgsl"
-//#include "shaders/mesh.wgsl"
+//#include "shaders/common/inputs.wgsl"
+//#include "shaders/common/camera.wgsl"
+//#include "shaders/mesh/mesh.wgsl"
 
 struct VertexOut {
     @builtin(position) position: vec4f,

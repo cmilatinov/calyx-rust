@@ -4,7 +4,7 @@
 // with three vertices and no vertex buffers.
 //
 // A shader that only needs the plain triangle includes
-// "shaders/fullscreen_pass.wgsl", which declares `vs_main` from this
+// "shaders/common/fullscreen_pass.wgsl", which declares `vs_main` from this
 // file. Include this file directly only for a custom vertex stage that calls
 // `fullscreen_vertex(index)` and adds outputs of its own, as the grid does.
 

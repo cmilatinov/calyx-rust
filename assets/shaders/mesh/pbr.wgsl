@@ -1,9 +1,9 @@
-//#include "shaders/constants.wgsl"
-//#include "shaders/inputs.wgsl"
-//#include "shaders/camera.wgsl"
-//#include "shaders/mesh.wgsl"
-//#include "shaders/lights.wgsl"
-//#include "shaders/pbr_utils.wgsl"
+//#include "shaders/common/constants.wgsl"
+//#include "shaders/common/inputs.wgsl"
+//#include "shaders/common/camera.wgsl"
+//#include "shaders/mesh/mesh.wgsl"
+//#include "shaders/common/lights.wgsl"
+//#include "shaders/common/pbr_utils.wgsl"
 
 struct VertexOut {
     @builtin(position) position: vec4f,

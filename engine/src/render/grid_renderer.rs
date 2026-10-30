@@ -15,7 +15,7 @@ impl GridRenderer {
         context: &ReadOnlyAssetContext,
         camera_uniform_buffer: &wgpu::Buffer,
     ) -> Result<Self, SceneRendererError> {
-        let shader = SceneRendererError::load::<Shader>(context, "shaders/grid")?;
+        let shader = SceneRendererError::load::<Shader>(context, "shaders/editor/grid")?;
         let camera_bind_group =
             context
                 .render_context

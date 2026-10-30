@@ -1,4 +1,4 @@
-//#include "shaders/fullscreen_pass.wgsl"
+//#include "shaders/common/fullscreen_pass.wgsl"
 //#include "shaders/postprocess/dof_common.wgsl"
 
 // Depth of field, first step: the signed circle of confusion of every pixel,

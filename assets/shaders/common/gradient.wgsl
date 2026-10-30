@@ -2,7 +2,7 @@
 // (`engine/src/math/gradient.rs`) and `GpuGradientKey` / `GpuGradientRange`
 // (`engine/src/render/gpu_gradient.rs`).
 //
-// Include it with `//#include "shaders/gradient.wgsl"`; it sits next to
+// Include it with `//#include "shaders/common/gradient.wgsl"`; it sits next to
 // `curve.wgsl` without clashing. It declares no bindings: it reads its keys
 // from the parameter `gradient_storage`, gradients packed one after another
 // with each gradient's keys sorted by time, and a `GradientRange` names one

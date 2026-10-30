@@ -1,5 +1,5 @@
-//#include "shaders/constants.wgsl"
-//#include "shaders/cubemap_face.wgsl"
+//#include "shaders/common/constants.wgsl"
+//#include "shaders/common/cubemap_face.wgsl"
 
 fn d(n: vec3f, h: vec3f, roughness: f32) -> f32 {
     let a = roughness * roughness;

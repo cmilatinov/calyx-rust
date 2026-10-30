@@ -26,7 +26,7 @@ use super::{Camera, PipelineOptions, SceneRendererError, Shader};
 
 const HIDDEN_GIZMO_OPACITY: f32 = 0.35;
 /// Gizmo instances one instance uniform buffer holds: `MAX_INSTANCES` in
-/// `shaders/gizmos.wgsl`.
+/// `shaders/editor/gizmos.wgsl`.
 const MAX_GIZMO_INSTANCES: usize = 30;
 const PHOSPHOR_ICON_ATLAS_PNG: &[u8] =
     include_bytes!("../../../resources/icons/phosphor_regular.png");
@@ -154,10 +154,10 @@ impl GizmoRenderer {
             }; MAX_GIZMO_INSTANCES],
         ));
 
-        let shader = Self::load_shader(game, Path::new("shaders/gizmos.wgsl"))?;
-        let icon_shader = Self::load_shader(game, Path::new("shaders/gizmo_icons.wgsl"))?;
+        let shader = Self::load_shader(game, Path::new("shaders/editor/gizmos.wgsl"))?;
+        let icon_shader = Self::load_shader(game, Path::new("shaders/editor/gizmo_icons.wgsl"))?;
         let icon_object_id_shader =
-            Self::load_shader(game, Path::new("shaders/gizmo_icon_object_id.wgsl"))?;
+            Self::load_shader(game, Path::new("shaders/editor/gizmo_icon_object_id.wgsl"))?;
 
         let gizmo_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("gizmo_bind_group"),
@@ -643,7 +643,7 @@ mod tests {
         let read_only_context = context.lock_read();
         let shader = Shader::from_file(
             &read_only_context,
-            &assets.engine_root().join("shaders/gizmo_icons.wgsl"),
+            &assets.engine_root().join("shaders/editor/gizmo_icons.wgsl"),
         )
         .expect("icon shader should load")
         .asset;
@@ -671,7 +671,7 @@ mod tests {
             &read_only_context,
             &assets
                 .engine_root()
-                .join("shaders/gizmo_icon_object_id.wgsl"),
+                .join("shaders/editor/gizmo_icon_object_id.wgsl"),
         )
         .expect("icon object id shader should load")
         .asset;
@@ -700,7 +700,7 @@ mod tests {
         let read_only_context = context.lock_read();
         let shader = Shader::from_file(
             &read_only_context,
-            &assets.engine_root().join("shaders/gizmos.wgsl"),
+            &assets.engine_root().join("shaders/editor/gizmos.wgsl"),
         )
         .expect("gizmo shader should load")
         .asset;

@@ -1,4 +1,4 @@
-//! [`Gradient`]s as `assets/shaders/gradient.wgsl` reads them: keys packed
+//! [`Gradient`]s as `assets/shaders/common/gradient.wgsl` reads them: keys packed
 //! one gradient after another in one buffer, and a range per gradient.
 
 use crate::math::{Gradient, GradientKey};
@@ -105,8 +105,8 @@ mod tests {
     /// included next to `curve.wgsl` as a shader using both would, each
     /// module's parameter bound to its own key buffer.
     const KERNEL: &str = r#"
-//#include "shaders/curve.wgsl"
-//#include "shaders/gradient.wgsl"
+//#include "shaders/common/curve.wgsl"
+//#include "shaders/common/gradient.wgsl"
 
 struct Query {
     gradient: u32,
@@ -142,7 +142,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     #[test]
     fn gpu_gradient_types_match_the_layout_of_gradient_wgsl() {
         let source = preprocess(
-            "//#include \"shaders/gradient.wgsl\"\n//#binding gradient_storage\n\
+            "//#include \"shaders/common/gradient.wgsl\"\n//#binding gradient_storage\n\
              @group(0) @binding(0) var<storage, read> keys: array<GradientKey>;\n",
         )
         .expect("gradient.wgsl preprocesses");

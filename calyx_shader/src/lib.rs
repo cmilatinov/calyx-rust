@@ -11,7 +11,7 @@
 //! # `//#include`
 //!
 //! ```wgsl
-//! //#include "shaders/curve.wgsl"
+//! //#include "shaders/common/curve.wgsl"
 //! ```
 //!
 //! On a line of its own, an include is replaced by the text of the file it
