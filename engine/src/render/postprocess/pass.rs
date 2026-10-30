@@ -93,6 +93,10 @@ pub struct CameraPlanes {
     pub near: f32,
     /// Distance to the far plane.
     pub far: f32,
+    /// Tangents of half the horizontal and vertical fields of view, so a pass
+    /// can rebuild view-space positions: a pixel at normalized device
+    /// coordinates `ndc` and view distance `z` lies at `ndc * tan_half_fov * z`.
+    pub tan_half_fov: [f32; 2],
 }
 
 impl Default for CameraPlanes {
@@ -101,6 +105,8 @@ impl Default for CameraPlanes {
         Self {
             near: 0.1,
             far: 1000.0,
+            // The default camera: 70 degrees horizontally at 16:9.
+            tan_half_fov: [0.7002075, 0.39386674],
         }
     }
 }
@@ -119,6 +125,12 @@ impl CameraPlanes {
     pub fn depth_of(&self, distance: f32) -> f32 {
         let (near, far) = (self.near, self.far);
         (far + near - 2.0 * near * far / distance) / (far - near)
+    }
+
+    /// The tangents of half the fields of view of `projection`, a
+    /// `perspective_lh` matrix.
+    pub fn tan_half_fov_of(projection: &nalgebra_glm::Mat4) -> [f32; 2] {
+        [1.0 / projection[(0, 0)], 1.0 / projection[(1, 1)]]
     }
 }
 

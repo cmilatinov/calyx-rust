@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "870009a2-9508-40a0-8a17-3b1b47e48846",
+    "name": "shaders/postprocess/ssao",
+    "display_name": "ssao",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

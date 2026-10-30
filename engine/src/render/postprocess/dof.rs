@@ -313,6 +313,8 @@ mod tests {
     const CAMERA: CameraPlanes = CameraPlanes {
         near: 0.1,
         far: 100.0,
+        // Depth of field only reads the planes.
+        tan_half_fov: [1.0, 1.0],
     };
     const FOCUS: f32 = 10.0;
     const RANGE: f32 = 10.0;

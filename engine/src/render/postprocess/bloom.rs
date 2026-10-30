@@ -458,7 +458,7 @@ mod tests {
     use super::*;
     use crate::component::ComponentGlobalPostProcessVolume;
     use crate::render::postprocess::{
-        ChainPlan, ChainTargets, PassTarget, PlannedPass, PostProcessChain,
+        CameraPlanes, ChainPlan, ChainTargets, PassTarget, PlannedPass, PostProcessChain,
     };
     use crate::render::scene_renderer::half_to_f32;
     use crate::render::{Camera, SceneRenderer, SceneRendererOptions};
@@ -843,19 +843,20 @@ mod tests {
         assert_eq!(
             names,
             [
+                "ssao",
                 "depth_of_field",
                 "bloom",
                 "tonemap",
                 "color_grading",
                 "fxaa"
             ],
-            "the renderer runs bloom after depth of field"
+            "the renderer runs bloom after ssao and depth of field"
         );
         assert_eq!(
             *renderer.last_post_process_plan(),
             ChainPlan {
                 passes: vec![PlannedPass {
-                    pass: 2,
+                    pass: 3,
                     input: PassTarget::Source,
                     output: PassTarget::Output,
                 }],
@@ -882,7 +883,7 @@ mod tests {
             let pass_context = PassContext {
                 render_context: &render_context,
                 size,
-                camera: Default::default(),
+                camera: CameraPlanes::default(),
             };
             pass.prepare(&pass_context, &bloom(1.0, radius));
             let mut encoder = render_context

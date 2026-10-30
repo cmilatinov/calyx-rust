@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "a73a696f-e8af-4b32-947d-652f0112a3fc",
+    "name": "shaders/postprocess/ssao_blur",
+    "display_name": "ssao_blur",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

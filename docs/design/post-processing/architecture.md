@@ -133,9 +133,10 @@ Tone mapping asks for nothing.
 
 `PassContext::camera` carries the near and far planes of the camera the frame was drawn with, as `CameraPlanes`. `render_scene_base` hands them to the chain with `PostProcessChain::set_camera`, so `finalize_scene` still needs no camera. `CameraPlanes::linear_depth` turns a depth-buffer value into view distance: the projection is `perspective_lh` with OpenGL's `[-1, 1]` depth range, of which the depth buffer keeps `[0, 1]`, so `distance = 2nf / (f + n - d (f - n))`.
 
+`CameraPlanes::tan_half_fov` holds the tangents of half the horizontal and vertical fields of view, taken from the projection matrix (`1 / P[0][0]`, `1 / P[1][1]`), so a pass can rebuild view-space positions: the pixel at normalized device coordinates `ndc` and view distance `z` lies at `(ndc * tan_half_fov * z, z)`, and a view-space point projects back to `ndc = xy / (tan_half_fov * z)`.
 ## Depth Of Field
 
-`DepthOfFieldPass` (`postprocess/dof.rs`) is an `Hdr` pass that reads `SceneInput::Depth`. It runs while `settings.depth_of_field.enabled` is on, which it is not by default, so a frame without it keeps the tone-map-only plan. It is the first `Hdr` pass, before bloom, so bloom spreads highlights that are already out of focus, as a lens would. It records two render passes:
+`DepthOfFieldPass` (`postprocess/dof.rs`) is an `Hdr` pass that reads `SceneInput::Depth`. It runs while `settings.depth_of_field.enabled` is on, which it is not by default, so a frame without it keeps the tone-map-only plan. It runs after SSAO and before bloom, so bloom spreads highlights that are already out of focus, as a lens would. It records two render passes:
 
 ```text
 coc     depth           -> coc (R16Float, owned)   signed circle of confusion, in pixels
@@ -159,6 +160,24 @@ blur    input + coc     -> output                  scatter-as-gather disc blur
 - It draws one full-screen triangle (`shaders/fullscreen.wgsl`, no vertex buffers).
 - `TonemappingPreset::Aces` is Stephen Hill's fit of the ACES RRT and ODT (BakingLab, MIT): the ACES input matrix, the rational RRT/ODT curve, then the output matrix, clamped to `[0, 1]`. It maps linear 0.18 to about 0.106 and 1.0 to about 0.619.
 - Alpha passes through unchanged, so views cleared to transparent, such as thumbnails, keep their transparency.
+
+## Ambient Occlusion
+
+`SsaoPass` (`postprocess/ssao.rs`) is an `Hdr` pass that reads `SceneInput::Depth`. It is enabled by `settings.ambient_occlusion.enabled`, off by default, so a frame without it keeps the tone-map-only plan and builds no depth copy. The renderer registers it before every other `Hdr` pass, so it darkens the scene before depth of field blurs it and before bloom spreads light. It records three render passes:
+
+```text
+occlusion   depth (full size)            -> occlusion (1/2)   visibility in r, view z in g
+blur        occlusion                    -> blurred (1/2)     depth-aware 4x4
+composite   input, blurred, depth        -> output            input.rgb * visibility, alpha kept
+```
+
+- **Reconstruction**: the renderer produces no normals (`SceneInput::Normals` is unavailable), so each occlusion texel rebuilds its view-space position from depth with `PassContext::camera` (linear depth and `tan_half_fov`), and its normal from the cross product of the position differences to its horizontal and vertical neighbours. On each axis it takes the neighbour closer in depth, so normals do not bend at silhouettes, and it turns the normal toward the camera.
+- **Hemisphere**: up to 64 kernel offsets in the unit hemisphere around +z, generated once per sample count from a fixed seed. They cluster toward the center and keep at least 0.15 of their length along the normal, so a flat surface does not occlude itself. Each texel turns the kernel around its normal by one of 16 angles from a 4x4 tile in Bayer order, then scales it by `radius`.
+- **Occlusion**: each sample is projected back to the screen and compared with the depth there. A surface more than `bias` in front of the sample occludes it, faded out by `smoothstep(radius / |dz|)` when that surface lies far in front of the pixel, so a foreground object does not darken the wall behind it. Samples off screen or on the sky do not count. Visibility is `(1 - occluded / samples) ^ intensity`.
+- **Blur**: a 4x4 box over exactly one tile of the noise, which cancels the rotation pattern, weighting each texel by how close its view depth is to the center's (zero at a 10% difference).
+- **Composite**: reads the input and depth with `textureLoad`, upsamples the blurred visibility from its four nearest texels, weighted bilinearly and by depth, and multiplies it into the color. A pixel whose four texels all lie on other surfaces, such as a thin object between them, keeps a visibility of 1. Sky pixels, at depth `0.9999999` (what the skybox writes) or beyond, pass through bit for bit, and so does alpha.
+- **Targets**: two `Rg16Float` textures at half the chain's size, rounded up. The pass creates them on the first frame SSAO runs, recreates them when the size changes, and frees them in `release_targets`, so a disabled or resized SSAO holds no texture.
+- **Approximation**: the occlusion multiplies the final HDR color, which already holds direct light, so it also darkens creases a light shines straight into. Ambient occlusion should only attenuate indirect light. This stands until the renderer produces normals or a G-buffer, so the forward pass can apply occlusion to its ambient and image-based terms alone.
 
 ## Bloom
 
@@ -209,6 +228,7 @@ Alpha is read with the pixel and passes through, so transparent views such as th
 ```rust
 pub struct PostProcessSettings {
     pub tonemapping: TonemapSettings,
+    pub ambient_occlusion: AmbientOcclusionSettings,
     pub depth_of_field: DepthOfFieldSettings,
     pub bloom: BloomSettings,
     pub color_grading: ColorGradingSettings,
@@ -216,6 +236,9 @@ pub struct PostProcessSettings {
     pub anti_aliasing: AntiAliasingSettings,
 }
 pub struct TonemapSettings { pub preset: TonemappingPreset, pub exposure_ev: f32 }  // Aces, 0.0
+pub struct AmbientOcclusionSettings {                         // off, 0.5, 1.0, 0.025, 16
+    pub enabled: bool, pub radius: f32, pub intensity: f32, pub bias: f32, pub sample_count: u32,
+}
 pub struct BloomSettings {                                    // off, 1.0, 0.5, 0.5, 6
     pub enabled: bool, pub threshold: f32, pub knee: f32, pub intensity: f32, pub radius: u32,
 }
@@ -244,6 +267,7 @@ pub struct ComponentGlobalPostProcessVolume {
 
 - `assets/shaders/fullscreen.wgsl`: the shared full-screen triangle, `fullscreen_vertex(index)`. `assets/shaders/fullscreen_pass.wgsl` includes it and declares the `vs_main` that calls it, so a shader that draws the plain triangle includes the entry point and declares only its fragment stage: the post passes, the overlay composite, the selection outline and 2D mip generation. The editor grid adds outputs of its own, so it includes `fullscreen.wgsl` and declares its own vertex stage. Every full-screen draw takes its pipeline options from `PipelineOptions::fullscreen_builder()`, which sets only the color target, depth and sample count; the engine has no full-screen quad mesh.
 - `assets/shaders/postprocess/tonemap.wgsl`: the tone-map pass.
+- `assets/shaders/postprocess/ssao.wgsl`, `ssao_blur.wgsl` and `ssao_composite.wgsl`: the SSAO passes. `ssao_common.wgsl` holds their uniform, the view-space reconstruction and the depth weight they share.
 - `assets/shaders/postprocess/bloom_prefilter.wgsl`, `bloom_downsample.wgsl`, `bloom_upsample.wgsl` and `bloom_composite.wgsl`: the bloom passes. `bloom_filters.wgsl` holds the 13-tap downsample and the tent upsample they share.
 - `assets/shaders/postprocess/color_grading.wgsl`: the colour grading and vignette pass.
 - `assets/shaders/postprocess/fxaa.wgsl`: the FXAA pass.
@@ -283,6 +307,7 @@ Headless tests in `engine/src/render/postprocess/`:
 - The display-encoding test above.
 - Depth reaches a pass that requests it, single-sample at one and four samples; normals and velocity report unavailable.
 - Volume selection picks the highest enabled priority, warns on a tie, and falls back to the defaults.
+- SSAO leaves a flat plane facing the camera unoccluded, darkens an inside corner most at its crease, does not darken a one-pixel post standing in front of that crease, and leaves the sky, at a cleared or skybox depth, bit for bit unchanged. With it disabled the renderer's plan is tone mapping alone. Its targets are half the chain's size and freed on release, and settings saved before it load with it off.
 - Depth of field (`dof.rs`): `CameraPlanes` inverts the render projection; pixels at the focus distance are unchanged; far pixels blur more than pixels near focus, and pixels in front of it blur too; a blurred background stays behind a sharp edge while a blurred foreground spreads over it; the pass reads depth at one and four samples with the same result; with it disabled the plan is the tone-map-only plan and its texture is not allocated, follows the chain's size, and is freed when disabled and on resize. Settings saved before it load with it off.
 - Bloom (`bloom.rs`): a single pixel above the threshold spreads energy into its neighbours, fading with distance, and keeps alpha; an image entirely below the threshold passes through unchanged; a flat image of 20,000 blooms to the expected value without overflowing the half-float mips; a composite past the half-float maximum saturates at it; with bloom disabled the renderer's plan is the tone-map-only plan; the mip chain follows the chain's size and the radius and is freed on release; the chain releases a pass's targets on resize and on frames the pass does not run.
 - Colour grading (`color_grading/tests.rs`): neutral settings return the input, zero saturation gives grey at the input's luminance, contrast keeps mid grey, positive temperature warms and positive tint adds magenta, the vignette darkens the corners and leaves the centre unchanged, and alpha is preserved. With both effects off the pass is left out of the plan, the scene renderer plans it before FXAA, and settings saved before it load with both off.

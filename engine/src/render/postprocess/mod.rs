@@ -12,6 +12,7 @@ pub use fxaa::*;
 pub use pass::*;
 pub use pool::*;
 pub use settings::*;
+pub use ssao::*;
 pub use tonemap::*;
 
 mod bloom;
@@ -23,6 +24,7 @@ mod fxaa;
 mod pass;
 mod pool;
 mod settings;
+mod ssao;
 mod tonemap;
 
 #[cfg(test)]
