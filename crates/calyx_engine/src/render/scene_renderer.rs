@@ -38,7 +38,7 @@ use uuid::Uuid;
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct CameraUniform {
+pub(crate) struct CameraUniform {
     pub projection: [[f32; 4]; 4],
     pub view: [[f32; 4]; 4],
     pub inverse_projection: [[f32; 4]; 4],

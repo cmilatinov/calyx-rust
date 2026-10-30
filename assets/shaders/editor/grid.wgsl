@@ -40,23 +40,45 @@ fn linearize_depth(depth: f32) -> f32 {
         camera.far_plane;
 }
 
-fn grid(frag_pos: vec3f, grid_color: vec3f, line_width: f32, scale: f32) -> vec4f {
+// One grid layer: lines at every integer of `frag_pos.xz * scale`, `color`
+// at `opacity` coverage. A line is `line_width` wide in grid units plus
+// `pixel_width` pixels in screen space, with a one pixel anti-aliased edge.
+// Each line direction fades out as its lines close in to a few pixels apart,
+// far away or at a grazing angle, so they never merge into a solid sheet. The
+// axes, the lines through zero, draw at full coverage in their own colors.
+fn grid(
+    frag_pos: vec3f,
+    color: vec3f,
+    opacity: f32,
+    line_width: f32,
+    pixel_width: f32,
+    scale: f32,
+) -> vec4f {
     let coord = frag_pos.xz * scale;
     let derivative = fwidth(coord);
-    let grid = max(abs(fract(coord - vec2f(0.5)) - vec2f(0.5)) - vec2f(line_width), vec2f(0.0)) / derivative;
-    var color = vec4f(grid_color, 1.0 - min(min(grid.x, grid.y), 1.0));
-    let min_x = min(derivative.x, 0.05);
-    let min_z = min(derivative.y, 0.05);
-    if (frag_pos.x > -min_x && frag_pos.x < min_x) {
-        color.x = 0.1;
-        color.y = 0.1;
-        color.z = 1.0;
-    } else if (frag_pos.z > -min_z && frag_pos.z < min_z) {
-        color.x = 1.0;
-        color.y = 0.1;
-        color.z = 0.1;
+    let pixels = max(abs(fract(coord - vec2f(0.5)) - vec2f(0.5)) - vec2f(line_width), vec2f(0.0)) / derivative;
+    let edge = vec2f(1.0) - clamp(pixels - vec2f(pixel_width), vec2f(0.0), vec2f(1.0));
+    let density = vec2f(1.0) - smoothstep(vec2f(0.1), vec2f(0.4), derivative);
+    let lines = edge * density;
+    let coverage = max(lines.x, lines.y) * opacity;
+    // The line through zero is an axis. It keeps full coverage at any density.
+    let axis = edge * step(abs(coord), vec2f(0.5));
+    if (axis.x > 0.0) {
+        return vec4f(0.1, 0.1, 1.0, max(axis.x, coverage));
+    } else if (axis.y > 0.0) {
+        return vec4f(1.0, 0.1, 0.1, max(axis.y, coverage));
     }
-    return color;
+    return vec4f(color, coverage);
+}
+
+// Straight-alpha `top` over `bottom`, both with alpha in [0, 1].
+fn over(top: vec4f, bottom: vec4f) -> vec4f {
+    let alpha = top.a + bottom.a * (1.0 - top.a);
+    if (alpha <= 0.0) {
+        return vec4f(0.0);
+    }
+    let color = (top.rgb * top.a + bottom.rgb * bottom.a * (1.0 - top.a)) / alpha;
+    return vec4f(color, alpha);
 }
 
 @fragment
@@ -68,9 +90,16 @@ fn fs_main(in: VertexOut) -> FragmentOut {
 
     var out: FragmentOut;
     let frag_pos = in.near_point + t * (in.far_point - in.near_point);
-    out.color =
-        grid(frag_pos, vec3f(0.05), 0.0001, 1.0) +
-        grid(frag_pos, vec3f(0.025), 0.001, 0.1);
+    // The major lines and axes cover the minor ones, so where both layers
+    // draw, which is every tenth line and both axes, coverage stays at most
+    // one. A plain sum reached two there, and the premultiplied composite
+    // then weighted the scene below by a negative factor.
+    // The major lines, every tenth one, stand out from the minor ones by a
+    // lighter color, higher coverage and an extra half pixel of width, all in
+    // range. The axes are the most prominent: full coverage in color.
+    let minor = grid(frag_pos, vec3f(0.05), 0.5, 0.0001, 0.0, 1.0);
+    let major = grid(frag_pos, vec3f(0.15), 0.9, 0.001, 0.5, 0.1);
+    out.color = clamp(over(major, minor), vec4f(0.0), vec4f(1.0));
 
     let view_pos = vec3f(
         camera.inverse_view[3][0],
