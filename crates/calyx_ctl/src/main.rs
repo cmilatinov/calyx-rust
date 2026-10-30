@@ -193,15 +193,9 @@ enum AssetAction {
     /// Open an asset as a double-click in the content browser does.
     Open {
         path: PathBuf,
-        /// Answer the unsaved-scene prompt by saving the open scene first.
-        #[arg(long, conflicts_with_all = ["discard", "cancel"])]
-        save: bool,
-        /// Answer the unsaved-scene prompt by opening without saving.
-        #[arg(long, conflicts_with = "cancel")]
-        discard: bool,
-        /// Answer the unsaved-scene prompt by keeping the open scene.
-        #[arg(long)]
-        cancel: bool,
+        /// Answer the unsaved-scene prompt; without it the prompt stays open.
+        #[arg(long, value_enum)]
+        unsaved: Option<UnsavedArg>,
     },
 }
 
@@ -305,6 +299,26 @@ enum ButtonArg {
     Primary,
     Secondary,
     Middle,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum UnsavedArg {
+    /// Save the open scene first (refused for a scene with no file).
+    Save,
+    /// Open without saving.
+    Discard,
+    /// Keep the open scene.
+    Cancel,
+}
+
+impl From<UnsavedArg> for UnsavedSceneAnswer {
+    fn from(value: UnsavedArg) -> Self {
+        match value {
+            UnsavedArg::Save => UnsavedSceneAnswer::Save,
+            UnsavedArg::Discard => UnsavedSceneAnswer::Discard,
+            UnsavedArg::Cancel => UnsavedSceneAnswer::Cancel,
+        }
+    }
 }
 
 impl From<ButtonArg> for PointerButtonSpec {
@@ -434,19 +448,6 @@ fn frame_timeout(base: Duration, frames: u32) -> Duration {
     base + Duration::from_millis(frames as u64 * 50)
 }
 
-/// The unsaved-scene answer the `asset open` flags choose, if any.
-fn unsaved_scene_answer(save: bool, discard: bool, cancel: bool) -> Option<UnsavedSceneAnswer> {
-    if save {
-        Some(UnsavedSceneAnswer::Save)
-    } else if discard {
-        Some(UnsavedSceneAnswer::Discard)
-    } else if cancel {
-        Some(UnsavedSceneAnswer::Cancel)
-    } else {
-        None
-    }
-}
-
 fn build_command(action: &Action, base: Duration) -> Result<(Command, Duration), String> {
     let simple = |command: Command| Ok((command, base));
     match action {
@@ -487,14 +488,9 @@ fn build_command(action: &Action, base: Duration) -> Result<(Command, Duration),
             }
         },
         Action::Asset(asset) => match asset {
-            AssetAction::Open {
-                path,
-                save,
-                discard,
-                cancel,
-            } => simple(Command::OpenAsset {
+            AssetAction::Open { path, unsaved } => simple(Command::OpenAsset {
                 path: path.clone(),
-                unsaved_scene: unsaved_scene_answer(*save, *discard, *cancel),
+                unsaved_scene: unsaved.map(Into::into),
             }),
         },
         Action::Objects => simple(Command::ListObjects),
