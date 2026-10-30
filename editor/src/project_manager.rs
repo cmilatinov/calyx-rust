@@ -1239,6 +1239,16 @@ height = 600
         );
         let startup_path = root.join("assets").join("levels").join("first.cxscene");
         write_scene_file(&startup_path, &startup).unwrap();
+        let mut other = test_scene();
+        other.create(
+            Some(ComponentID {
+                name: "Named scene object".into(),
+                ..Default::default()
+            }),
+            None,
+        );
+        let other_path = root.join("assets").join("levels").join("other.cxscene");
+        write_scene_file(&other_path, &other).unwrap();
 
         let mut game = GameContext::new(test_asset_context_with_assets(vec![root.join("assets")]));
         game.scenes.current_scene_mut().create(
@@ -1292,16 +1302,6 @@ height = 600
         assert!(!game.scenes.is_simulating());
 
         // A scene named for the run replaces the startup scene.
-        let mut other = test_scene();
-        other.create(
-            Some(ComponentID {
-                name: "Named scene object".into(),
-                ..Default::default()
-            }),
-            None,
-        );
-        let other_path = root.join("assets").join("levels").join("other.cxscene");
-        write_scene_file(&other_path, &other).unwrap();
         let started = project
             .read()
             .start_simulation(&mut game.scenes, Some(other_path.clone()))
