@@ -128,9 +128,6 @@ impl TypeInspector for ColliderInspector {
             return InspectorResponse::NONE;
         };
         let mut changed = InspectorResponse::NONE;
-        Widgets::inspector_prop_value(ui, "Enabled", |ui, _| {
-            changed |= ui.add(egui::Checkbox::without_text(&mut value.enabled));
-        });
         changed |= Self::collider_shape(ui, ctx, &mut value.shape);
         Widgets::inspector_prop_value(ui, "Friction", |ui, _| {
             changed |= ui.add(egui::DragValue::new(&mut value.friction));

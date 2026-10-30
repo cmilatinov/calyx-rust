@@ -207,6 +207,12 @@ enum ComponentAction {
     },
     /// Add a default-constructed component to an object.
     Add { object: String, component: String },
+    /// Print whether a component is enabled.
+    Enabled { object: String, component: String },
+    /// Enable a component.
+    Enable { object: String, component: String },
+    /// Disable a component; systems such as cameras and physics skip it.
+    Disable { object: String, component: String },
     /// List all registered component types.
     Types,
 }
@@ -481,6 +487,24 @@ fn build_command(action: &Action, base: Duration) -> Result<(Command, Duration),
                 object: object.clone(),
                 component: component.clone(),
             }),
+            ComponentAction::Enabled { object, component } => {
+                simple(Command::GetComponentEnabled {
+                    object: object.clone(),
+                    component: component.clone(),
+                })
+            }
+            ComponentAction::Enable { object, component } => simple(Command::SetComponentEnabled {
+                object: object.clone(),
+                component: component.clone(),
+                enabled: true,
+            }),
+            ComponentAction::Disable { object, component } => {
+                simple(Command::SetComponentEnabled {
+                    object: object.clone(),
+                    component: component.clone(),
+                    enabled: false,
+                })
+            }
             ComponentAction::Types => simple(Command::ListComponentTypes),
         },
         Action::Transform {

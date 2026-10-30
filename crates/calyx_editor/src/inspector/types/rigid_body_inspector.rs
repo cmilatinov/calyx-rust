@@ -38,9 +38,6 @@ impl TypeInspector for RigidBodyInspector {
     ) -> InspectorResponse {
         let mut changed = InspectorResponse::NONE;
         if let Some(value) = instance.downcast_mut::<ComponentRigidBody>() {
-            Widgets::inspector_prop_value(ui, "Enabled", |ui, _| {
-                changed |= ui.add(egui::Checkbox::without_text(&mut value.enabled));
-            });
             Widgets::inspector_prop_value(ui, "Type", |ui, _| {
                 let id = Id::new(ctx.game_object.node).with(ComponentRigidBody::type_uuid());
                 egui::ComboBox::from_id_salt(id)

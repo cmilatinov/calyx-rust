@@ -193,6 +193,13 @@ pub enum Command {
     },
     /// Lists all registered component types (UUID and type name).
     ListComponentTypes,
+    /// Returns whether one component is enabled, as `{ "enabled": bool }`.
+    GetComponentEnabled {
+        /// Game-object selector (UUID or name).
+        object: String,
+        /// Component type selector (UUID or type name).
+        component: String,
+    },
     /// Returns the current editor selection.
     GetSelection,
     /// Returns window geometry, `pixels_per_point`, and the last known panel
@@ -207,6 +214,16 @@ pub enum Command {
         component: String,
         /// Full serialized component value, as produced by `get_component`.
         value: serde_json::Value,
+    },
+    /// Enables or disables one component. `ComponentID` and
+    /// `ComponentTransform` cannot be disabled.
+    SetComponentEnabled {
+        /// Game-object selector (UUID or name).
+        object: String,
+        /// Component type selector (UUID or type name).
+        component: String,
+        /// The state to set.
+        enabled: bool,
     },
     /// Overwrites parts of an object's transform.
     SetTransform {
@@ -522,12 +539,21 @@ mod tests {
                 component: "ComponentTransform".into(),
             },
             Command::ListComponentTypes,
+            Command::GetComponentEnabled {
+                object: "Tank".into(),
+                component: "ComponentCamera".into(),
+            },
             Command::GetSelection,
             Command::QueryPanels,
             Command::SetComponent {
                 object: "Tank".into(),
                 component: "ComponentTransform".into(),
                 value: serde_json::json!({ "position": [0.0, 1.0, 2.0] }),
+            },
+            Command::SetComponentEnabled {
+                object: "Tank".into(),
+                component: "ComponentCamera".into(),
+                enabled: false,
             },
             Command::SetTransform {
                 object: "Tank".into(),

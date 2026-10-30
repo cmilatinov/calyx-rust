@@ -15,8 +15,6 @@ use serde::{Deserialize, Serialize};
 #[reflect_attr(name = "Global Post Process Volume")]
 #[serde(default)]
 pub struct ComponentGlobalPostProcessVolume {
-    /// Whether the renderer considers this volume.
-    pub enabled: bool,
     /// Among enabled volumes, the highest priority wins.
     pub priority: i32,
     /// The settings this volume applies.
@@ -30,10 +28,9 @@ impl Default for ComponentGlobalPostProcessVolume {
 }
 
 impl ComponentGlobalPostProcessVolume {
-    /// An enabled volume of priority zero applying `settings`.
+    /// A volume of priority zero applying `settings`.
     pub fn new(settings: PostProcessSettings) -> Self {
         Self {
-            enabled: true,
             priority: 0,
             settings,
         }

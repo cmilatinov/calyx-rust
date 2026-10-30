@@ -12,8 +12,6 @@ use serde::{Deserialize, Serialize};
 #[reflect_attr(name = "Rigid Body")]
 #[serde(default)]
 pub struct ComponentRigidBody {
-    /// Whether this rigid body is active.
-    pub enabled: bool,
     /// Rapier rigid-body type.
     #[reflect_attr(name = "Type")]
     pub ty: RigidBodyType,
@@ -29,7 +27,6 @@ pub struct ComponentRigidBody {
 impl Default for ComponentRigidBody {
     fn default() -> Self {
         Self {
-            enabled: true,
             ty: RigidBodyType::Dynamic,
             mass: 100.0,
             gravity_scale: 1.0,

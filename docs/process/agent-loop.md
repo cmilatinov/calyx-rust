@@ -69,8 +69,9 @@ name (`sandbox::tank::ComponentHealth`), or the bare type name
 | `scene load/save/state` | `load_scene`/`save_scene`/`get_scene_state` | paths resolve against the editor's working directory (repo root when using `launch`) |
 | `prefab open PATH`, `prefab save`, `prefab close [--discard]` | `open_prefab`/`save_prefab`/`close_prefab` | prefab mode: `open` sets the scene aside and makes the `.cxprefab` the authoring scene the object, component and transform commands edit; `save` writes the prefab asset only; `close` refuses unsaved changes without `--discard`. `info` reports the open prefab under `prefab`. `play`, `step`, `scene load` and `scene save` are refused while a prefab is open |
 | `prefab instantiate PATH`, `prefab update [PATH]` | `instantiate_prefab`/`update_prefab_instances` | `instantiate` adds a linked instance of the prefab at the scene root and returns its root `id`; `get_object` reports each instance object's `prefab_link`. `update` updates the scene's linked instances of that prefab (of every prefab without a path) from the saved asset as one undo step, keeping root transforms, object ids and overrides, and returns counts (`instances`, `added`, `removed`, `unlinked`, `kept_overrides`). Saving a prefab never updates instances by itself; `update` is refused while a prefab is open or a simulation scene exists |
-| `objects`, `object get/create/delete` | `list_objects`/`get_object`/... | `get_object` returns local + world transforms and component list; `delete` clears the editor selection when it removes the selected object or one of its ancestors |
+| `objects`, `object get/create/delete` | `list_objects`/`get_object`/... | `get_object` returns local + world transforms, the component list and `disabled_components`, the components the object holds disabled; `delete` clears the editor selection when it removes the selected object or one of its ancestors |
 | `component get/set/add/types` | `get_component`/`set_component`/... | `set` replaces the whole component; fields missing from the JSON fall back to serde defaults, so round-trip `get` first and edit. `add` refuses a component the object already has (use `set`) and refuses `ComponentID`. `set` on `ComponentID` may rename but never change `id`, which indexes the object |
+| `component enabled/enable/disable OBJ COMPONENT` | `get_component_enabled`/`set_component_enabled` | the scene's enabled state of one component, the inspector header's checkbox. `enabled` prints `{"enabled": bool}`. Systems such as camera selection, physics and post-process volume selection skip a disabled component; `get`/`set` never carry the state. `ComponentID` and `ComponentTransform` cannot be disabled (`bad_request`), and a component the object lacks is `not_found` |
 | `transform OBJ --position X Y Z [--rotation X Y Z] [--scale X Y Z] [--world]` | `set_transform` | rotation is XYZ Euler degrees |
 | `select`, `pick X Y --space S --target T` | `select`/`pick` | pick uses the GPU object-id buffer of the chosen renderer |
 | `focus-game [--release-grab]` | `focus_game` | activates the Game tab and grabs gameplay input focus |
@@ -78,8 +79,8 @@ name (`sandbox::tank::ComponentHealth`), or the bare type name
 | `screenshot --target window|game|viewport --out F` | `screenshot` | PNG; `window` includes the whole UI, `game`/`viewport` are the render textures. `game` works without the Game tab active: once the tab has been shown it is rendered every frame at the tab's size, and before that a game capture renders it on demand at the Scene viewport's size (or the window's). It fails with `bad_request` when the scene has no enabled camera, or when nothing has a size yet, naming `focus-game` |
 | `raw '<json>'` | any | escape hatch for the full protocol |
 
-Edits to the authoring scene (`object create/delete`, `component set/add`,
-`transform`) are recorded in the editor's undo history like panel edits; edits
+Edits to the authoring scene (`object create/delete`,
+`component set/add/enable/disable`, `transform`) are recorded in the editor's undo history like panel edits; edits
 made while a simulation scene exists are discarded by `stop` and not recorded.
 
 ## Input injection

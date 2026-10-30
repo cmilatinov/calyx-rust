@@ -183,6 +183,54 @@ impl Network {
         true
     }
 
+    /// Enables or disables `game_object`'s component of type `component_uuid`
+    /// locally and tells the other peers to do the same with their copy,
+    /// through the server.
+    ///
+    /// Only the owner of a network object may change it. Returns `false`,
+    /// changing nothing, when the local peer has no id yet, the object has no
+    /// [`ComponentNetworkObject`], another peer owns it, or the scene refuses
+    /// the change; see [`Scene::set_component_enabled_dyn`].
+    pub fn set_component_enabled(
+        &mut self,
+        scene: &mut Scene,
+        game_object: GameObject,
+        component_uuid: uuid::Uuid,
+        enabled: bool,
+    ) -> bool {
+        let Some(client_id) = self.local_id else {
+            return false;
+        };
+        let Some((network_object_id, owner_id)) = scene
+            .read_component::<ComponentNetworkObject, _, _>(game_object, |c| (c.id, c.owner_id))
+        else {
+            return false;
+        };
+        if owner_id != client_id {
+            log::warn!(
+                "Refusing to change component {component_uuid} of network object                  {network_object_id} owned by {owner_id}"
+            );
+            return false;
+        }
+        if !scene.set_component_enabled_dyn(game_object, component_uuid, enabled) {
+            return false;
+        }
+        let message = GameMessage::SetComponentEnabled {
+            network_object_id,
+            from_client_id: client_id,
+            component_uuid,
+            enabled,
+        };
+        let result = match &mut self.server {
+            Some(server) => server.broadcast_message(&message),
+            None => self.client.send_message(&message),
+        };
+        if let Err(e) = result {
+            log::warn!("Failed to send SetComponentEnabled: {e}");
+        }
+        true
+    }
+
     /// Returns whether this network resource is hosting a local server.
     pub fn is_host(&self) -> bool {
         self.server.is_some()
@@ -430,6 +478,45 @@ pub(crate) fn handle_destroy(
     }
 }
 
+/// Applies a `SetComponentEnabled` request delivered by `sender`, as
+/// [`handle_destroy`] applies a destroy: a request from a client that does
+/// not own the object is dropped, and the server relays an accepted one to
+/// every other client, including for an object it does not hold.
+pub(crate) fn handle_component_enabled(
+    server: &mut Option<Server>,
+    scene: &mut Scene,
+    sender: MessageSender,
+    message: &GameMessage,
+) {
+    let GameMessage::SetComponentEnabled {
+        network_object_id,
+        from_client_id,
+        component_uuid,
+        enabled,
+    } = message
+    else {
+        return;
+    };
+    let acting_client_id = sender.acting_client(*from_client_id);
+    let target = find_network_object(scene, *network_object_id);
+    if let Some((_, owner_id)) = target {
+        if owner_id != acting_client_id {
+            log::warn!(
+                "Rejected change of component {component_uuid} on network object                  {network_object_id} owned by {owner_id} from {acting_client_id}"
+            );
+            return;
+        }
+    }
+    if let Some(server) = server {
+        if let Err(e) = server.broadcast_message_except(acting_client_id, message) {
+            log::warn!("Failed to broadcast SetComponentEnabled: {e}");
+        }
+    }
+    if let Some((game_object, _)) = target {
+        scene.set_component_enabled_dyn(game_object, *component_uuid, *enabled);
+    }
+}
+
 /// Finds the game object carrying network object `network_object_id` and
 /// returns it with its owner.
 fn find_network_object(
@@ -542,6 +629,12 @@ impl MessageHandler<NetworkPrefabSyncContext<'_, '_>, GameMessage> for NetworkPr
                     *from_client_id,
                     message,
                 );
+                MessageHandlerResult::Consume
+            }
+            // In the same pass too, so a change that follows a spawn applies
+            // to the spawned object.
+            GameMessage::SetComponentEnabled { .. } => {
+                handle_component_enabled(server, scene, sender, message);
                 MessageHandlerResult::Consume
             }
             _ => MessageHandlerResult::Ignore,

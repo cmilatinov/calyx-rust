@@ -1,15 +1,17 @@
 #[cfg(test)]
 mod tests {
+    use crate::component::ComponentCamera;
     use crate::context::GameContext;
     use crate::core::Ref;
     use crate::net::{
-        handle_destroy, network_id_range, Client, ComponentNetworkObject, GameChannel, GameMessage,
-        MessageHandler, MessageHandlerResult, MessageQueue, MessageRoute, MessageSender, Network,
-        NetworkIdAllocator, NetworkSceneSync, Server, ServerEvent,
+        handle_component_enabled, handle_destroy, network_id_range, Client, ComponentNetworkObject,
+        GameChannel, GameMessage, MessageHandler, MessageHandlerResult, MessageQueue, MessageRoute,
+        MessageSender, Network, NetworkIdAllocator, NetworkSceneSync, Server, ServerEvent,
     };
     use crate::scene::{ComponentEdit, GameObject, Prefab, Scene};
     use crate::test_support::NetworkTestHarness as TestHarness;
     use crate::test_support::{test_game_context, test_scene};
+    use crate::utils::TypeUuid;
     use std::collections::HashSet;
     use std::time::Duration;
 
@@ -308,7 +310,7 @@ mod tests {
     #[test]
     fn protocol_id_is_schema_derived() {
         assert_ne!(GameMessage::PROTOCOL_ID, 42069);
-        assert_eq!(GameMessage::PROTOCOL_ID, 0x8d73_0dfb_4fa3_cfbd);
+        assert_eq!(GameMessage::PROTOCOL_ID, 0x1128_b1fc_55bb_dedd);
     }
 
     #[test]
@@ -344,6 +346,19 @@ mod tests {
                 network_object_id: 7,
                 from_client_id: 1,
                 to_client_id: 2,
+            }
+            .channel(),
+            GameChannel::ReliableOrdered
+        );
+
+        // An enabled-state change must not be lost or overtake the spawn of
+        // its object.
+        assert_eq!(
+            GameMessage::SetComponentEnabled {
+                network_object_id: 7,
+                from_client_id: 1,
+                component_uuid: uuid::Uuid::nil(),
+                enabled: false,
             }
             .channel(),
             GameChannel::ReliableOrdered
@@ -971,6 +986,14 @@ mod tests {
     /// `name`, so a spawn's prefab id resolves on each of them, and waits
     /// until every client knows its own id.
     fn setup_spawn_harness(name: &str) -> (TestHarness, Vec<Ref<Prefab>>) {
+        setup_spawn_harness_with(name, |_, _| {})
+    }
+
+    /// [`setup_spawn_harness`] with a prefab root that `build` adds to.
+    fn setup_spawn_harness_with(
+        name: &str,
+        build: impl Fn(&mut Scene, GameObject),
+    ) -> (TestHarness, Vec<Ref<Prefab>>) {
         let mut harness = TestHarness::new(2);
         assert!(harness.wait_connected(), "not all clients connected");
 
@@ -981,6 +1004,7 @@ mod tests {
                 let scene = ctx.scenes.current_scene_mut();
                 let root = scene.create(None, None);
                 scene.add_component(root, ComponentNetworkObject::default());
+                build(scene, root);
                 let prefab: Prefab = scene.create_prefab(root);
                 scene.delete(root);
                 scene.flush_deletes();
@@ -1086,6 +1110,95 @@ mod tests {
             })),
             "destroyed object lingers on a peer"
         );
+    }
+
+    /// Whether the object carrying network object `network_object_id` in
+    /// `scene` holds its camera enabled, or `None` without such an object.
+    fn camera_enabled(scene: &Scene, network_object_id: u64) -> Option<bool> {
+        network_object(scene, network_object_id)
+            .map(|go| scene.is_component_enabled::<ComponentCamera>(go))
+    }
+
+    /// The object carrying network object `network_object_id` in `scene`.
+    fn network_object(scene: &Scene, network_object_id: u64) -> Option<GameObject> {
+        scene.objects().find(|go| {
+            scene
+                .read_component::<ComponentNetworkObject, _, _>(*go, |c| c.id == network_object_id)
+                .unwrap_or(false)
+        })
+    }
+
+    #[test]
+    fn component_enabled_change_reaches_every_peer_through_the_server() {
+        let (mut harness, prefab_refs) =
+            setup_spawn_harness_with("net_component_enabled_test_prefab", |scene, root| {
+                scene.add_component(root, ComponentCamera::default());
+            });
+        let (spawned, network_object_id) =
+            spawn_from_client(&mut harness, 0, prefab_refs[1].clone());
+        assert!(
+            pump_until(&mut harness, |h| camera_enabled(
+                h.client(1).scenes.current_scene(),
+                network_object_id
+            ) == Some(true)),
+            "spawn never reached the other client"
+        );
+
+        // Another peer may not change the owner's object.
+        let other = harness.client_mut(1);
+        let other_object = network_object(other.scenes.current_scene(), network_object_id)
+            .expect("the other client holds the spawn");
+        let scene = other.scenes.current_scene_mut();
+        assert!(!other.resources.network_mut().set_component_enabled(
+            scene,
+            other_object,
+            ComponentCamera::type_uuid(),
+            false
+        ));
+
+        let owner = harness.client_mut(0);
+        let scene = owner.scenes.current_scene_mut();
+        assert!(owner.resources.network_mut().set_component_enabled(
+            scene,
+            spawned,
+            ComponentCamera::type_uuid(),
+            false
+        ));
+        assert!(
+            pump_until(&mut harness, |h| h.contexts.iter().all(|ctx| {
+                camera_enabled(ctx.scenes.current_scene(), network_object_id) == Some(false)
+            })),
+            "a peer still holds the camera enabled"
+        );
+    }
+
+    #[test]
+    fn component_enabled_change_from_non_owner_is_rejected() {
+        let (owner, attacker) = (1u64, 2u64);
+        let (mut scene, go) = scene_with_object(42, owner);
+        scene.add_component(go, ComponentCamera::default());
+        let mut server: Option<Server> = None;
+        let message = |from_client_id| GameMessage::SetComponentEnabled {
+            network_object_id: 42,
+            from_client_id,
+            component_uuid: ComponentCamera::type_uuid(),
+            enabled: false,
+        };
+        handle_component_enabled(
+            &mut server,
+            &mut scene,
+            MessageSender::Server,
+            &message(attacker),
+        );
+        assert!(scene.is_component_enabled::<ComponentCamera>(go));
+
+        handle_component_enabled(
+            &mut server,
+            &mut scene,
+            MessageSender::Server,
+            &message(owner),
+        );
+        assert!(!scene.is_component_enabled::<ComponentCamera>(go));
     }
 
     #[test]
@@ -1411,8 +1524,6 @@ mod tests {
 
     #[test]
     fn network_object_added_by_type_uuid_is_indexed() {
-        use crate::utils::TypeUuid;
-
         let mut scene = test_scene();
         let go = scene.create(None, None);
         scene.bind_component_dyn(go, ComponentNetworkObject::type_uuid());

@@ -33,14 +33,15 @@ mod tests {
     fn camera_disabled_not_found_by_main_camera() {
         let mut scene = test_scene();
         let go = scene.create(None, None);
-        scene.add_component(
-            go,
-            ComponentCamera {
-                enabled: false,
-                ..Default::default()
-            },
-        );
+        scene.add_component(go, ComponentCamera::default());
+        assert_eq!(scene.main_camera().map(|(camera, _)| camera), Some(go));
+        assert!(scene.set_component_enabled::<ComponentCamera>(go, false));
         assert!(scene.main_camera().is_none());
+
+        // A later enabled camera is picked over the disabled one.
+        let other = scene.create(None, None);
+        scene.add_component(other, ComponentCamera::default());
+        assert_eq!(scene.main_camera().map(|(camera, _)| camera), Some(other));
     }
 
     #[test]

@@ -5,7 +5,7 @@ use legion::{Entity, EntityStore, IntoQuery, World};
 use nalgebra_glm::Mat4;
 use serde::de::DeserializeSeed;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
@@ -23,6 +23,9 @@ use crate::physics::PhysicsContext;
 use crate::reflect::{ReflectDefault, TypeInfo};
 use crate::resource::ResourceMap;
 use crate::scene::change_set::ChangeSet;
+use crate::scene::disabled_components::{
+    can_disable_component, migrate_legacy_enabled, DisabledComponents,
+};
 use crate::scene::dropped_components::{log_dropped_components, registered_type_name};
 use crate::scene::game_object_store::GameObjectStore;
 use crate::scene::network_index::NetworkObjectIndex;
@@ -52,7 +55,12 @@ pub struct GameObject {
 /// Every map is ordered by UUID, so saving the same scene always writes the
 /// same file and an edit changes only its own lines. Component payloads are
 /// `serde_json` values, whose objects keep their keys sorted too.
+///
+/// Loading migrates data saved before the scene kept the enabled state: an
+/// `enabled` field in a camera, collider, rigid body or global post-process
+/// volume payload moves into [`Self::disabled_components`].
 #[derive(Default, Clone, Serialize, Deserialize)]
+#[serde(from = "StoredSceneData")]
 pub struct SceneData {
     /// Component payloads keyed by game object UUID and then component type
     /// UUID.
@@ -67,6 +75,46 @@ pub struct SceneData {
     /// links; a subtree, and so a prefab, has none.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub prefab_links: BTreeMap<Uuid, PrefabLink>,
+    /// The type UUIDs of each object's disabled components, keyed by game
+    /// object UUID. A component not listed is enabled.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub disabled_components: BTreeMap<Uuid, BTreeSet<Uuid>>,
+}
+
+/// [`SceneData`] as saved, before [`migrate_legacy_enabled`] runs on it.
+#[derive(Deserialize)]
+struct StoredSceneData {
+    components: BTreeMap<Uuid, BTreeMap<Uuid, serde_json::Value>>,
+    hierarchy: BTreeMap<Uuid, Vec<Uuid>>,
+    roots: Vec<Uuid>,
+    #[serde(default)]
+    prefab_links: BTreeMap<Uuid, PrefabLink>,
+    #[serde(default)]
+    disabled_components: BTreeMap<Uuid, BTreeSet<Uuid>>,
+}
+
+impl From<StoredSceneData> for SceneData {
+    fn from(stored: StoredSceneData) -> Self {
+        let mut data = SceneData {
+            components: stored.components,
+            hierarchy: stored.hierarchy,
+            roots: stored.roots,
+            prefab_links: stored.prefab_links,
+            disabled_components: stored.disabled_components,
+        };
+        migrate_legacy_enabled(&mut data);
+        data
+    }
+}
+
+impl SceneData {
+    /// Whether the component of type `type_uuid` on object `object_id` is
+    /// stored enabled.
+    pub fn is_component_enabled(&self, object_id: Uuid, type_uuid: Uuid) -> bool {
+        self.disabled_components
+            .get(&object_id)
+            .is_none_or(|disabled| !disabled.contains(&type_uuid))
+    }
 }
 
 /// A new prefab instance's root object, the components skipped while
@@ -142,6 +190,9 @@ pub struct Scene {
     /// Each prefab instance object's link to its prefab, keyed by the
     /// object's UUID; see [`PrefabLink`].
     pub(crate) prefab_links: BTreeMap<Uuid, PrefabLink>,
+    /// The components switched off, by entity and component type; every
+    /// other component is enabled. See [`Scene::is_component_enabled`].
+    pub(crate) disabled: DisabledComponents,
     root: GameObject,
     camera: Option<GameObject>,
     registries: ReadOnlyRegistryContext,
@@ -211,6 +262,7 @@ impl Scene {
             changes: ChangeSet::default(),
             network_objects: NetworkObjectIndex::default(),
             prefab_links: BTreeMap::new(),
+            disabled: DisabledComponents::default(),
             root,
             camera: Default::default(),
             registries: assets,
@@ -304,6 +356,7 @@ impl Scene {
         let mut dropped = Vec::new();
         let registry = registries.components.read();
         let types = registries.types.read();
+        let disabled = value.disabled_components;
         for (game_object_id, mut components) in value.components {
             // The object's key is its identity, since the hierarchy refers to
             // objects by key; the stored id component only supplies the rest.
@@ -362,7 +415,13 @@ impl Scene {
                         continue;
                     }
                 };
-                scene.bind_instance(game_object, component, instance);
+                if scene.bind_instance(game_object, component, instance)
+                    && disabled
+                        .get(&game_object_id)
+                        .is_some_and(|types| types.contains(&component_id))
+                {
+                    scene.disable_loaded(game_object, component_id, component);
+                }
             }
         }
         for (parent_id, children) in value.hierarchy {
@@ -521,6 +580,29 @@ impl Scene {
                 .entry(game_object_id)
                 .or_default()
                 .insert(*component_id, value);
+            if !self
+                .disabled
+                .is_enabled(game_object.entity, component.component_type_id())
+            {
+                data.disabled_components
+                    .entry(game_object_id)
+                    .or_default()
+                    .insert(*component_id);
+            }
+        }
+    }
+
+    /// Marks `game_object`'s just-loaded component of type `type_uuid`
+    /// disabled, as the data it was loaded from stores it.
+    pub(crate) fn disable_loaded(
+        &mut self,
+        game_object: GameObject,
+        type_uuid: Uuid,
+        component: &dyn Component,
+    ) {
+        if can_disable_component(type_uuid) {
+            self.disabled
+                .set(game_object.entity, component.component_type_id(), false);
         }
     }
 }
@@ -747,7 +829,13 @@ impl Scene {
                         continue;
                     }
                 };
-                self.bind_instance(game_object, component, instance);
+                if self.bind_instance(game_object, component, instance)
+                    && !prefab
+                        .data
+                        .is_component_enabled(*game_object_id, *component_id)
+                {
+                    self.disable_loaded(game_object, *component_id, component);
+                }
             }
         }
 
@@ -820,18 +908,18 @@ impl Scene {
 
     /// Returns the active camera object for rendering.
     ///
-    /// When an explicit camera override has not been selected, the first enabled
-    /// [`ComponentCamera`] in the scene is returned.
+    /// When an explicit camera override has not been selected, the first
+    /// [`ComponentCamera`] the scene holds enabled is returned.
     pub fn main_camera(&self) -> Option<(GameObject, &ComponentCamera)> {
         let mut query = <(Entity, &ComponentTransform, &ComponentCamera)>::query();
         query
             .iter(&self.world.0)
             .filter_map(|(e, _t, c)| self.game_object_from_entity(*e).map(|go| (go, c)))
-            .find(|(go, c)| {
+            .find(|(go, _)| {
                 if let Some(camera) = &self.camera {
                     go == camera
                 } else {
-                    c.enabled
+                    self.is_component_enabled::<ComponentCamera>(*go)
                 }
             })
     }
@@ -1104,6 +1192,8 @@ impl Scene {
             entry.remove_component::<T>();
             Some(())
         });
+        self.disabled
+            .set(game_object.entity, ComponentTypeId::of::<T>(), true);
     }
 
     /// Removes the component of `component`'s type from `game_object`, for
@@ -1118,6 +1208,8 @@ impl Scene {
             component.remove_instance(entry);
             Some(())
         });
+        self.disabled
+            .set(game_object.entity, component.component_type_id(), true);
     }
 
     /// Removes the component with reflected type UUID `type_uuid` from
@@ -1134,11 +1226,120 @@ impl Scene {
         let Some(component) = component_registry.component(type_uuid) else {
             return false;
         };
-        self.write_entry(game_object, component.component_type_id(), |entry| {
-            component.remove_instance(entry);
-            Some(())
-        })
-        .is_some()
+        let removed = self
+            .write_entry(game_object, component.component_type_id(), |entry| {
+                component.remove_instance(entry);
+                Some(())
+            })
+            .is_some();
+        self.disabled
+            .set(game_object.entity, component.component_type_id(), true);
+        removed
+    }
+
+    /// Whether `game_object`'s component `T` is enabled. Every component is
+    /// enabled until [`Self::set_component_enabled`] disables it; a missing
+    /// component reads as enabled.
+    pub fn is_component_enabled<T: Component + 'static>(&self, game_object: GameObject) -> bool {
+        self.disabled
+            .is_enabled(game_object.entity, ComponentTypeId::of::<T>())
+    }
+
+    /// Enables or disables `game_object`'s component `T`. Systems that honor
+    /// the state, such as camera selection, physics and post-process volume
+    /// selection, skip a disabled component. Returns `false`, changing
+    /// nothing, when the object has no such component or the type cannot be
+    /// disabled; see [`can_disable_component`]. A change is reported as a
+    /// write of the component.
+    pub fn set_component_enabled<T: Component + 'static>(
+        &mut self,
+        game_object: GameObject,
+        enabled: bool,
+    ) -> bool {
+        let component = ComponentTypeId::of::<T>();
+        if component == ComponentTypeId::of::<ComponentID>()
+            || component == ComponentTypeId::of::<ComponentTransform>()
+            || self
+                .read_component::<T, _, _>(game_object, |_| ())
+                .is_none()
+        {
+            return false;
+        }
+        self.set_type_enabled(game_object, component, enabled);
+        true
+    }
+
+    /// [`Self::is_component_enabled`] for the component of `component`'s type,
+    /// for callers that only know the type at runtime, such as through the
+    /// component registry's prototypes.
+    pub fn is_component_enabled_dyn(
+        &self,
+        game_object: GameObject,
+        component: &dyn Component,
+    ) -> bool {
+        self.disabled
+            .is_enabled(game_object.entity, component.component_type_id())
+    }
+
+    /// [`Self::set_component_enabled`] for the component with reflected type
+    /// UUID `type_uuid`. Returns `false` when the type is not registered,
+    /// cannot be disabled, or the object does not have it.
+    pub fn set_component_enabled_dyn(
+        &mut self,
+        game_object: GameObject,
+        type_uuid: Uuid,
+        enabled: bool,
+    ) -> bool {
+        if !can_disable_component(type_uuid) {
+            return false;
+        }
+        let registry_ref = self.registries.components.clone();
+        let registry = registry_ref.read();
+        let Some(component) = registry.component(type_uuid) else {
+            return false;
+        };
+        self.set_instance_enabled(game_object, type_uuid, component, enabled)
+    }
+
+    /// [`Self::set_component_enabled_dyn`] for callers already holding the
+    /// component registry, with `component` the registered prototype of
+    /// `type_uuid`.
+    pub(crate) fn set_instance_enabled(
+        &mut self,
+        game_object: GameObject,
+        type_uuid: Uuid,
+        component: &dyn Component,
+        enabled: bool,
+    ) -> bool {
+        if !can_disable_component(type_uuid)
+            || self
+                .read_component_dyn(game_object, component, |_| ())
+                .is_none()
+        {
+            return false;
+        }
+        self.set_type_enabled(game_object, component.component_type_id(), enabled);
+        true
+    }
+
+    /// Records `game_object`'s component of type `component` as `enabled`,
+    /// and reports a change as a write of the component, so its consumers,
+    /// such as physics, apply it.
+    fn set_type_enabled(
+        &mut self,
+        game_object: GameObject,
+        component: ComponentTypeId,
+        enabled: bool,
+    ) {
+        if self.disabled.set(game_object.entity, component, enabled) {
+            self.component_written(game_object, component);
+        }
+    }
+
+    /// Whether `entity`'s component of type `component` is enabled, for
+    /// engine systems that iterate the world by entity.
+    pub(crate) fn is_type_enabled(&self, entity: Entity, component: ComponentTypeId) -> bool {
+        self.disabled.is_enabled(entity, component)
     }
 
     /// Flushes pending deletions and prepares the physics scene for the next
@@ -1266,6 +1467,7 @@ impl Scene {
                 }
                 self.world.0.remove(go.entity);
                 self.changes.forget(go.entity);
+                self.disabled.forget(go.entity);
                 self.store.remove(go.entity);
                 self.transforms.remove(go.node);
             }
@@ -1458,6 +1660,27 @@ impl Scene {
     pub fn ancestor_with<T: Component>(&self, game_object: GameObject) -> Option<GameObject> {
         self.ancestors(game_object)
             .find_map(|go| self.map_has_component::<T>(go))
+    }
+
+    /// Iterates descendants that contain component `T` enabled; see
+    /// [`Self::is_component_enabled`].
+    pub fn descendants_with_enabled<T: Component + 'static>(
+        &self,
+        game_object: GameObject,
+    ) -> impl Iterator<Item = GameObject> + '_ {
+        self.descendants_with::<T>(game_object)
+            .filter(|go| self.is_component_enabled::<T>(*go))
+    }
+
+    /// Returns the first ancestor that contains component `T` enabled; see
+    /// [`Self::is_component_enabled`].
+    pub fn ancestor_with_enabled<T: Component + 'static>(
+        &self,
+        game_object: GameObject,
+    ) -> Option<GameObject> {
+        self.ancestors(game_object)
+            .filter_map(|go| self.map_has_component::<T>(go))
+            .find(|go| self.is_component_enabled::<T>(*go))
     }
 
     /// Finds the game object carrying network object `network_object_id`.

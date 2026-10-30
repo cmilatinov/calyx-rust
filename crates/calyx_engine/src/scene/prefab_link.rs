@@ -62,9 +62,9 @@ pub struct PrefabLink {
     /// object belongs to wherever the object sits in the hierarchy, so an
     /// object moved out from under its instance root still updates.
     pub instance: Uuid,
-    /// A hash of each component's value, keyed by component type UUID, as the
-    /// prefab last gave it to this object. A component whose value hashes
-    /// differently is an override.
+    /// A hash of each component's value and enabled state, keyed by component
+    /// type UUID, as the prefab last gave it to this object. A component whose
+    /// value or state hashes differently is an override.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub base: BTreeMap<Uuid, u64>,
     /// On the instance's root object only: every object the prefab held when
@@ -107,6 +107,16 @@ fn value_hash(value: &serde_json::Value) -> u64 {
     text.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
         (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
     })
+}
+
+/// The hash of a component's `value` and whether it is `enabled`. An enabled
+/// component hashes as its value alone, as before the scene kept the state.
+fn component_hash(value: &serde_json::Value, enabled: bool) -> u64 {
+    if enabled {
+        value_hash(value)
+    } else {
+        value_hash(&serde_json::json!({ "disabled": value }))
+    }
 }
 
 /// The id a reference to the prefab object `source` takes in the instance
@@ -230,8 +240,8 @@ impl Scene {
         Ok(update)
     }
 
-    /// The hash of each registered component's value on `game_object`, keyed
-    /// by component type UUID.
+    /// The hash of each registered component's value and enabled state on
+    /// `game_object`, keyed by component type UUID.
     fn component_hashes(
         &self,
         registry: &ComponentRegistry,
@@ -244,7 +254,9 @@ impl Scene {
             .components()
             .filter_map(|(type_uuid, component)| {
                 let value = component.get_instance(&entry)?.serialize()?;
-                Some((*type_uuid, value_hash(&value)))
+                let enabled =
+                    self.is_type_enabled(game_object.entity, component.component_type_id());
+                Some((*type_uuid, component_hash(&value, enabled)))
             })
             .collect()
     }
@@ -518,6 +530,8 @@ impl Scene {
                     match component.deserialize_remapped(data, &mapping) {
                         Ok(instance) => {
                             self.bind_instance(game_object, component, instance);
+                            let enabled = prefab.data.is_component_enabled(*source, type_uuid);
+                            self.set_instance_enabled(game_object, type_uuid, component, enabled);
                         }
                         Err(err) => {
                             skip(

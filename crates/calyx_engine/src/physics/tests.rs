@@ -241,10 +241,16 @@ mod tests {
         let transform =
             Transform::from_components(vec3(1.0, 2.0, 3.0), rotation, vec3(1.0, 1.0, 1.0));
 
-        let body =
-            PhysicsContext::rigid_body_from_component(&transform, &ComponentRigidBody::default());
-        let collider =
-            PhysicsContext::collider_from_component(&transform, &ComponentCollider::default());
+        let body = PhysicsContext::rigid_body_from_component(
+            &transform,
+            &ComponentRigidBody::default(),
+            true,
+        );
+        let collider = PhysicsContext::collider_from_component(
+            &transform,
+            &ComponentCollider::default(),
+            true,
+        );
 
         assert!(body.rotation().angle_to(&rotation) < 1e-5);
         assert!(collider.rotation().angle_to(&rotation) < 1e-5);
@@ -614,13 +620,13 @@ mod tests {
         scene.add_component(
             floor_col,
             ComponentCollider {
-                enabled: floor_enabled,
                 shape: ColliderShape::Cuboid {
                     half_extents: Vec3::new(10.0, 0.1, 10.0),
                 },
                 ..Default::default()
             },
         );
+        scene.set_component_enabled::<ComponentCollider>(floor_col, floor_enabled);
         (ball, floor_col)
     }
 
@@ -667,9 +673,7 @@ mod tests {
         step(&mut scene, 120);
         assert!(scene.world_transform(ball).position.y > 0.0);
 
-        scene.write_component::<ComponentCollider, _>(floor_col, |collider| {
-            collider.enabled = false;
-        });
+        assert!(scene.set_component_enabled::<ComponentCollider>(floor_col, false));
         scene.prepare();
         let handle = scene.physics.entity_collider[&floor_col.entity];
         assert!(!scene.physics.colliders[handle].is_enabled());
@@ -681,9 +685,7 @@ mod tests {
             "ball should fall once the floor is disabled, y={y}"
         );
 
-        scene.write_component::<ComponentCollider, _>(floor_col, |collider| {
-            collider.enabled = true;
-        });
+        assert!(scene.set_component_enabled::<ComponentCollider>(floor_col, true));
         scene.prepare();
         assert!(scene.physics.colliders[handle].is_enabled());
     }
@@ -877,19 +879,36 @@ mod tests {
     fn rigid_body_enabled_applies_at_creation_and_on_change() {
         let mut scene = test_scene();
         let go = scene.create(None, None);
-        scene.add_component(
-            go,
-            ComponentRigidBody {
-                enabled: false,
-                ..Default::default()
-            },
-        );
+        scene.add_component(go, ComponentRigidBody::default());
+        scene.set_component_enabled::<ComponentRigidBody>(go, false);
         scene.prepare();
         let handle = scene.physics.entity_rigid_body[&go.entity];
         assert!(!scene.physics.bodies[handle].is_enabled());
 
-        scene.write_component::<ComponentRigidBody, _>(go, |c| c.enabled = true);
+        scene.set_component_enabled::<ComponentRigidBody>(go, true);
         scene.prepare();
         assert!(scene.physics.bodies[handle].is_enabled());
+    }
+
+    /// A disabled rigid body is skipped by the simulation: it does not fall
+    /// under gravity until it is enabled again.
+    #[test]
+    fn a_disabled_rigid_body_is_skipped() {
+        let mut scene = test_scene();
+        let go = scene.create(None, None);
+        scene.set_transform(go, &nalgebra_glm::translation(&Vec3::new(0.0, 5.0, 0.0)));
+        scene.add_component(go, ComponentRigidBody::default());
+        scene.set_component_enabled::<ComponentRigidBody>(go, false);
+        scene.prepare();
+
+        step(&mut scene, 60);
+        let y = scene.world_transform(go).position.y;
+        assert!((y - 5.0).abs() < 1e-4, "a disabled body stays put, y={y}");
+
+        scene.set_component_enabled::<ComponentRigidBody>(go, true);
+        scene.prepare();
+        step(&mut scene, 60);
+        let y = scene.world_transform(go).position.y;
+        assert!(y < 4.0, "an enabled body falls, y={y}");
     }
 }

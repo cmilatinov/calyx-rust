@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use calyx_engine::component::{Component, ComponentID};
-use calyx_engine::scene::{GameObject, Scene};
+use calyx_engine::scene::{can_disable_component, GameObject, Scene};
 use calyx_engine::utils::TypeUuid;
 use calyx_remote_protocol::{
     CaptureTarget, Command, CoordSpace, ErrorKind, InputEventSpec, ModifiersSpec, PickTarget,
@@ -288,6 +288,9 @@ impl EditorApp {
                 self.remote_get_component(&object, &component)
             }
             Command::ListComponentTypes => Ok(Some(self.remote_list_component_types())),
+            Command::GetComponentEnabled { object, component } => {
+                self.remote_get_component_enabled(&object, &component)
+            }
             Command::GetSelection => {
                 let selection = &self.state.selection;
                 Ok(Some(serde_json::json!({
@@ -302,6 +305,11 @@ impl EditorApp {
                 component,
                 value,
             } => self.remote_set_component(&object, &component, &value),
+            Command::SetComponentEnabled {
+                object,
+                component,
+                enabled,
+            } => self.remote_set_component_enabled(&object, &component, enabled),
             Command::SetTransform {
                 object,
                 position,
@@ -585,6 +593,7 @@ impl EditorApp {
             "local_transform": transform_json(&scene.transform(game_object)),
             "world_transform": transform_json(&scene.world_transform(game_object)),
             "components": component_names,
+            "disabled_components": disabled_component_names(scene, &components, &types, game_object),
             "prefab_link": scene.prefab_link(game_object).map(|link| serde_json::json!({
                 "prefab": link.prefab.to_string(),
                 "object": link.object.to_string(),
@@ -614,6 +623,55 @@ impl EditorApp {
         serialized
             .map(Some)
             .ok_or_else(|| (ErrorKind::Internal, "component is not serializable".into()))
+    }
+
+    fn remote_get_component_enabled(&self, object: &str, component: &str) -> CommandResult {
+        let type_uuid = resolve_component_type(&self.state, component)?;
+        let scene = self.state.game.scenes.simulation_scene();
+        let game_object = resolve_object(scene, object)?;
+        let registry = self.state.game.assets.registries.components.read();
+        let prototype = registry.component(type_uuid).ok_or_else(|| {
+            (
+                ErrorKind::NotFound,
+                format!("unknown component {type_uuid}"),
+            )
+        })?;
+        if scene
+            .read_component_dyn(game_object, prototype, |_| ())
+            .is_none()
+        {
+            return Err((
+                ErrorKind::NotFound,
+                format!("object has no {component} component"),
+            ));
+        }
+        Ok(Some(serde_json::json!({
+            "enabled": scene.is_component_enabled_dyn(game_object, prototype),
+        })))
+    }
+
+    fn remote_set_component_enabled(
+        &mut self,
+        object: &str,
+        component: &str,
+        enabled: bool,
+    ) -> CommandResult {
+        let type_uuid = resolve_component_type(&self.state, component)?;
+        if !can_disable_component(type_uuid) {
+            return Err((
+                ErrorKind::BadRequest,
+                format!("{component} cannot be disabled"),
+            ));
+        }
+        let scene = self.state.game.scenes.simulation_scene_mut();
+        let game_object = resolve_object(scene, object)?;
+        if !scene.set_component_enabled_dyn(game_object, type_uuid, enabled) {
+            return Err((
+                ErrorKind::NotFound,
+                format!("object has no {component} component"),
+            ));
+        }
+        Ok(Some(serde_json::Value::Null))
     }
 
     fn remote_list_component_types(&self) -> serde_json::Value {
@@ -925,6 +983,8 @@ fn scene_edit_label(command: &Command) -> Option<&'static str> {
         Command::CreateObject { .. } => Some("Remote create game object"),
         Command::DeleteObject { .. } => Some("Remote delete game object"),
         Command::AddComponent { .. } => Some("Remote add component"),
+        Command::SetComponentEnabled { enabled: true, .. } => Some("Remote enable component"),
+        Command::SetComponentEnabled { enabled: false, .. } => Some("Remote disable component"),
         _ => None,
     }
 }
@@ -1028,6 +1088,25 @@ fn object_component_names(
     components
         .components()
         .filter(|(_, component)| component_types.contains(&component.component_type_id()))
+        .map(|(uuid, _)| component_type_name(types, *uuid))
+        .collect()
+}
+
+/// Returns the type names of the registered components `game_object` holds
+/// disabled.
+fn disabled_component_names(
+    scene: &Scene,
+    components: &calyx_engine::class_registry::ComponentRegistry,
+    types: &calyx_engine::reflect::type_registry::TypeRegistry,
+    game_object: GameObject,
+) -> Vec<String> {
+    let component_types = scene.component_types(game_object);
+    components
+        .components()
+        .filter(|(_, component)| {
+            component_types.contains(&component.component_type_id())
+                && !scene.is_component_enabled_dyn(game_object, component.as_ref())
+        })
         .map(|(uuid, _)| component_type_name(types, *uuid))
         .collect()
 }
