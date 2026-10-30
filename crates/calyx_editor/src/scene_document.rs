@@ -291,7 +291,7 @@ impl SceneDocument {
                     .collect::<Vec<_>>()
                     .join(", ");
                 return Err(format!(
-                    "{} is outside every asset root ({roots}); the editor opens scenes                      only from an asset root, so save it inside one",
+                    "{} is outside every asset root ({roots}); the editor opens scenes only from an asset root, so save it inside one",
                     file.display()
                 ));
             }
