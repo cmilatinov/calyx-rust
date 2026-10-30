@@ -17,7 +17,7 @@
 //!    [`ParticleColorOverLifetime`] evaluate each particle into a
 //!    [`ParticleRenderInstance`], drawn as [`ParticleRendering`] says.
 //!
-//! The kernels live in `assets/shaders/particles_simulate.wgsl` and work on
+//! The kernels live in `assets/shaders/particles/particles_simulate.wgsl` and work on
 //! flat buffers of [`Particle`]s. The CPU side of each system, its
 //! [`EmitterState`], never reads them back.
 

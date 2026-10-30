@@ -275,7 +275,7 @@ impl SkyboxFrontFaceDownscaler {
             .registries
             .assets
             .read()
-            .load::<Shader>("shaders/thumbnail_skybox_front_face")
+            .load::<Shader>("shaders/editor/thumbnail_skybox_front_face")
             .map_err(|err| format!("failed to load skybox thumbnail shader: {err}"))?;
         let shader = shader_ref.read();
         let pipeline = shader
@@ -384,7 +384,7 @@ impl TextureDownscaler {
             .registries
             .assets
             .read()
-            .load::<Shader>("shaders/thumbnail_downscale")
+            .load::<Shader>("shaders/editor/thumbnail_downscale")
             .map_err(|err| format!("failed to load thumbnail downscale shader: {err}"))?;
         let shader = shader_ref.read();
         let pipeline = shader

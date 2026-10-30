@@ -124,7 +124,7 @@ impl Gradient {
 
     /// The color at `time`, unmultiplied sRGB RGBA.
     ///
-    /// `assets/shaders/gradient.wgsl` evaluates gradients the same way on the
+    /// `assets/shaders/common/gradient.wgsl` evaluates gradients the same way on the
     /// GPU.
     pub fn evaluate(&self, time: f32) -> Vec4 {
         let (Some(first), Some(last)) = (self.keys.first(), self.keys.last()) else {

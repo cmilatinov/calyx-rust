@@ -1,9 +1,0 @@
-{
-  "main": {
-    "id": "7ec992db-cb65-49c8-b509-c4d1deefbd12",
-    "name": "shaders/fullscreen",
-    "display_name": "fullscreen",
-    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
-  },
-  "inner": []
-}

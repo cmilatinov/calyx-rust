@@ -59,8 +59,11 @@ pub struct MeshRenderDefaults<'a> {
 impl MeshRenderer {
     pub fn new(context: &ReadOnlyAssetContext) -> Result<Self, SceneRendererError> {
         Ok(Self {
-            scene_shader: SceneRendererError::load::<Shader>(context, "shaders/pbr")?,
-            object_id_shader: SceneRendererError::load::<Shader>(context, "shaders/object_id")?,
+            scene_shader: SceneRendererError::load::<Shader>(context, "shaders/mesh/pbr")?,
+            object_id_shader: SceneRendererError::load::<Shader>(
+                context,
+                "shaders/mesh/object_id",
+            )?,
             environment_uniform_buffer: context.render_context.device().create_buffer_init(
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("environment_uniform_buffer"),
@@ -389,7 +392,7 @@ mod tests {
         let read_only_context = context.lock_read();
         let asset_registry = read_only_context.registries.assets.read();
         let shader = asset_registry
-            .load::<Shader>("shaders/pbr")
+            .load::<Shader>("shaders/mesh/pbr")
             .expect("missing pbr shader");
         let default_texture = asset_registry
             .white_texture()
@@ -430,7 +433,7 @@ mod tests {
         let read_only_context = context.lock_read();
         let shader = Shader::from_file(
             &read_only_context,
-            &assets.engine_root().join("shaders/object_id.wgsl"),
+            &assets.engine_root().join("shaders/mesh/object_id.wgsl"),
         )
         .expect("object id shader should load")
         .asset;

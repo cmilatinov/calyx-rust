@@ -80,7 +80,7 @@ pub struct PipelineOptions {
     pub(crate) vertex_layouts: Vec<VertexLayout>,
 }
 
-/// Pipeline options of a draw of `shaders/fullscreen.wgsl`'s triangle, which
+/// Pipeline options of a draw of `shaders/common/fullscreen.wgsl`'s triangle, which
 /// [`RenderUtils::draw_fullscreen`] draws from no vertex buffers.
 ///
 /// Only what a full-screen draw varies is settable: there are no vertex

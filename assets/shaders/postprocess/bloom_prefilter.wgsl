@@ -1,4 +1,4 @@
-//#include "shaders/fullscreen_pass.wgsl"
+//#include "shaders/common/fullscreen_pass.wgsl"
 //#include "shaders/postprocess/bloom_filters.wgsl"
 
 // The first bloom pass: downsamples the HDR scene to the first mip at half

@@ -15,7 +15,7 @@ use legion::{Entity, IntoQuery};
 use std::collections::{HashMap, HashSet};
 
 /// Registry name of the shader holding every particle kernel.
-pub(crate) const PARTICLE_KERNELS: &str = "shaders/particles_simulate";
+pub(crate) const PARTICLE_KERNELS: &str = "shaders/particles/particles_simulate";
 /// Threads per workgroup of every particle kernel.
 const WORKGROUP_SIZE: u32 = 64;
 /// Most workgroups one dispatch dimension takes.

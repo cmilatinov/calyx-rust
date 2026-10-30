@@ -314,7 +314,7 @@ type TextureBindGroupKey = (wgpu::BindGroupLayout, wgpu::TextureView, wgpu::Samp
 impl ParticleRenderer {
     pub fn new(context: &ReadOnlyAssetContext) -> Result<Self, SceneRendererError> {
         let device = context.render_context.device();
-        let shader = SceneRendererError::load::<Shader>(context, "shaders/particles")?;
+        let shader = SceneRendererError::load::<Shader>(context, "shaders/particles/particles")?;
         let kernels = SceneRendererError::load::<Shader>(context, PARTICLE_KERNELS)?;
         let default_texture = SceneRendererError::load::<Texture>(context, "textures/white")?;
         let vertices = [
@@ -695,7 +695,7 @@ mod tests {
 
         let registry = read_only_context.registries.assets.read();
         let id = registry
-            .asset_id("shaders/particles")
+            .asset_id("shaders/particles/particles")
             .expect("particle shader should have metadata");
         let reloaded = registry
             .reload_by_id::<Shader>(id)

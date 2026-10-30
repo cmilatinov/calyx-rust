@@ -96,7 +96,7 @@ pub struct OverlayCompositor {
 
 impl OverlayCompositor {
     /// Shader asset the composite draws with.
-    pub const SHADER: &'static str = "shaders/overlay_composite";
+    pub const SHADER: &'static str = "shaders/editor/overlay_composite";
 
     /// Format of the overlay target: display-linear color with half-float
     /// precision, the scene texture's format.

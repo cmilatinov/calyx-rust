@@ -1,4 +1,4 @@
-//#include "shaders/fullscreen_pass.wgsl"
+//#include "shaders/common/fullscreen_pass.wgsl"
 //#include "shaders/postprocess/dof_common.wgsl"
 
 // Depth of field, second step: a scatter-as-gather disc blur over a golden

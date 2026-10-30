@@ -35,7 +35,7 @@ impl SkyboxRenderer {
             skybox_irradiance_cubemap_shader: load("shaders/environment/irradiance")?,
             skybox_prefilter_cubemap_shader: load("shaders/environment/prefilter")?,
             skybox_brdf_shader: load("shaders/environment/brdf")?,
-            skybox_cubemap_mip_shader: load("shaders/mip_generator_cube")?,
+            skybox_cubemap_mip_shader: load("shaders/utility/mip_generator_cube")?,
             cubemap_bind_group: Default::default(),
         })
     }

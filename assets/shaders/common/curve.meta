@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "6f80a36a-3d27-c5cb-b6c5-c4d07066fe85",
+    "name": "shaders/common/curve",
+    "display_name": "curve",
+    "type_uuid": "00000000-0000-0000-0000-000000000000"
+  },
+  "inner": []
+}

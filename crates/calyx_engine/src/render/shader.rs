@@ -836,7 +836,7 @@ mod tests {
             .registries
             .assets
             .read()
-            .load::<Shader>("shaders/mip_generator_cube")
+            .load::<Shader>("shaders/utility/mip_generator_cube")
             .expect("the mip generator should load");
         let shader = shader.read();
         let kernel = shader.compute_pipeline("compute_main").unwrap();

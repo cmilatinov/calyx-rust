@@ -300,7 +300,7 @@ impl Texture {
             .registries
             .assets
             .read()
-            .load::<Shader>("shaders/mip_generator_2d")?;
+            .load::<Shader>("shaders/utility/mip_generator_2d")?;
         let device = context.render_context.device();
         let queue = context.render_context.queue();
         let mip_shader = mip_shader_ref.read();

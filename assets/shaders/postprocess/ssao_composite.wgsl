@@ -1,4 +1,4 @@
-//#include "shaders/fullscreen_pass.wgsl"
+//#include "shaders/common/fullscreen_pass.wgsl"
 //#include "shaders/postprocess/ssao_common.wgsl"
 
 // Multiplies the blurred occlusion into the HDR scene color at full

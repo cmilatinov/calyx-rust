@@ -178,7 +178,7 @@ impl Curve {
     /// key and between keys at the same time, both values are the curve's
     /// value there and the weight is `0.0`; an empty curve gives zeros.
     ///
-    /// `assets/shaders/curve.wgsl` finds segments the same way on the GPU.
+    /// `assets/shaders/common/curve.wgsl` finds segments the same way on the GPU.
     pub fn segment(&self, time: f32) -> CurveSegment {
         let (Some(first), Some(last)) = (self.keys.first(), self.keys.last()) else {
             return CurveSegment::at(0.0);

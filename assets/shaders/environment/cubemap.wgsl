@@ -1,5 +1,5 @@
-//#include "shaders/constants.wgsl"
-//#include "shaders/cubemap_face.wgsl"
+//#include "shaders/common/constants.wgsl"
+//#include "shaders/common/cubemap_face.wgsl"
 
 @group(0) @binding(0)
 var src: texture_2d<f32>;

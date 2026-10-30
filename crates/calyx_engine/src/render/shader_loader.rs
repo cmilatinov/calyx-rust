@@ -60,9 +60,11 @@ fn canonical(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::AssetShaderLoader;
-    use crate::test_support::test_registries_with_assets;
+    use crate::test_support::{test_registries_with_assets, TestAssets};
     use calyx_shader::ShaderError;
+    use std::collections::HashSet;
     use std::fs;
+    use std::path::{Path, PathBuf};
     use uuid::Uuid;
 
     /// The loader resolves includes from any asset root and reports the
@@ -109,5 +111,84 @@ mod tests {
         );
         drop(registry);
         fs::remove_dir_all(root).expect("the temp asset roots are removed");
+    }
+
+    fn wgsl_files(dir: &Path, files: &mut Vec<PathBuf>) {
+        for entry in fs::read_dir(dir).expect("the shader dir is readable") {
+            let path = entry.expect("the shader dir lists").path();
+            if path.is_dir() {
+                wgsl_files(&path, files);
+            } else if path.extension().is_some_and(|ext| ext == "wgsl") {
+                files.push(path);
+            }
+        }
+    }
+
+    /// Every shader under the engine's `assets/shaders/` sits in a purpose
+    /// folder and resolves each of its includes through the asset roots, as
+    /// the engine loads it. A shader no other file includes also
+    /// preprocesses and passes naga's validation, so a moved file or a
+    /// stale include path fails here instead of when the engine first
+    /// loads the shader. A module, such as `common/curve.wgsl` with its
+    /// parameters, is checked through the shaders that include it.
+    #[test]
+    fn every_engine_shader_resolves_its_includes_and_preprocesses() {
+        let assets = TestAssets::engine();
+        let shaders_root = assets.engine_root().join("shaders");
+        let mut files = Vec::new();
+        wgsl_files(&shaders_root, &mut files);
+        let files: Vec<PathBuf> = files
+            .iter()
+            .map(|path| fs::canonicalize(path).expect("the shader exists"))
+            .collect();
+        let shaders_root = fs::canonicalize(&shaders_root).expect("the shader dir exists");
+
+        let loose: Vec<_> = files
+            .iter()
+            .filter(|path| path.parent() == Some(shaders_root.as_path()))
+            .collect();
+        assert!(
+            loose.is_empty(),
+            "shaders belong in a purpose folder of assets/shaders/: {loose:?}"
+        );
+
+        let registries = assets.registries();
+        let registry = registries.assets.read();
+        let loader = AssetShaderLoader::new(&registry);
+        let mut modules = HashSet::new();
+        for path in &files {
+            let dependencies = loader
+                .dependencies(path)
+                .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+            modules.extend(dependencies);
+        }
+        let shaders: Vec<_> = files
+            .iter()
+            .filter(|path| !modules.contains(*path))
+            .collect();
+        for path in &shaders {
+            let shader = loader
+                .preprocess(path)
+                .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+            let module = naga::front::wgsl::parse_str(&shader.source)
+                .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::all(),
+            )
+            .validate(&module)
+            .unwrap_or_else(|error| panic!("{}: {error:?}", path.display()));
+        }
+
+        let in_folder = |name: &str| shaders_root.join(name);
+        assert!(
+            modules.contains(&in_folder("common/curve.wgsl")),
+            "{modules:?}"
+        );
+        assert!(
+            shaders.contains(&&in_folder("mesh/pbr.wgsl")),
+            "{shaders:?}"
+        );
+        assert!(shaders.len() > 20, "only {} shaders", shaders.len());
     }
 }
