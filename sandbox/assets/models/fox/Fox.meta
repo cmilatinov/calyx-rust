@@ -1,0 +1,34 @@
+{
+  "main": {
+    "id": "06e2593c-6269-138d-632f-9e9dd7f8b671",
+    "name": "models/fox/Fox",
+    "display_name": "Fox",
+    "type_uuid": "960f1d60-3ad4-4f1d-92d3-cceb0e0623d7"
+  },
+  "inner": [
+    {
+      "id": "084f8985-9e74-5e5b-8f75-ac8130344b9c",
+      "name": "fox",
+      "display_name": "fox",
+      "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+    },
+    {
+      "id": "1814e165-564e-b3ab-9615-bd06aef93288",
+      "name": "Survey",
+      "display_name": "Survey",
+      "type_uuid": "627dee5d-c2d6-4e3e-9b9e-80e3e601848d"
+    },
+    {
+      "id": "144cc319-87c4-42f7-1480-22cd06e6290e",
+      "name": "Walk",
+      "display_name": "Walk",
+      "type_uuid": "627dee5d-c2d6-4e3e-9b9e-80e3e601848d"
+    },
+    {
+      "id": "a8bdf687-e7f1-d558-0058-f69a4b19e6ca",
+      "name": "Run",
+      "display_name": "Run",
+      "type_uuid": "627dee5d-c2d6-4e3e-9b9e-80e3e601848d"
+    }
+  ]
+}

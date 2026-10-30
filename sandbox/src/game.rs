@@ -242,7 +242,7 @@ mod tests {
         let startup_scene = settings.startup_scene_path().unwrap();
         assert_eq!(
             startup_scene,
-            project_directory().join("assets").join("scene.cxscene")
+            project_directory().join("assets").join("showcase.cxscene")
         );
         assert!(startup_scene.is_file(), "{}", startup_scene.display());
 
