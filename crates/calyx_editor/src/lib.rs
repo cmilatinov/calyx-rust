@@ -281,9 +281,10 @@ impl EditorAppState {
         self.scene_document.open_default(&mut self.game);
     }
 
-    fn save_current_scene(&mut self, file: PathBuf) -> bool {
+    /// Saves the authoring scene to `file`, or says why it did not.
+    fn save_current_scene(&mut self, file: PathBuf) -> Result<(), String> {
         if self.prefab_mode.refuse_scene_change() {
-            return false;
+            return Err("a prefab is open; close it to save the scene".into());
         }
         self.scene_document.save(&mut self.game, file)
     }
@@ -795,7 +796,8 @@ impl EditorApp {
         let Some(file) = self.scene_save_file(save_as) else {
             return;
         };
-        self.state.save_current_scene(file);
+        // A failed save is logged where it fails.
+        let _ = self.state.save_current_scene(file);
     }
 
     fn pick_scene_open_file() -> Option<PathBuf> {

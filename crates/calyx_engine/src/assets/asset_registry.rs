@@ -1,6 +1,7 @@
 use eframe::wgpu;
 use glob::glob;
 use nalgebra_glm::vec3;
+use notify::event::ModifyKind;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use path_absolutize::Absolutize;
 use relative_path::{PathExt, RelativePathBuf};
@@ -1151,21 +1152,18 @@ impl AssetRegistry {
         match event.kind {
             EventKind::Create(_) => {
                 for file in paths_iter {
-                    let Some(asset_path) = self.owning_asset_root(file) else {
-                        log::warn!(
-                            "Ignoring created file outside every asset root: {}",
-                            file.display()
-                        );
-                        continue;
-                    };
-                    if let Err(err) =
-                        self.build_asset_meta(asset_path, file, &file.with_extension("meta"))
-                    {
-                        log::warn!(
-                            "Failed to build asset metadata for {}: {}",
-                            file.display(),
-                            err
-                        );
+                    self.register_created_file(file);
+                }
+            }
+            // A file written to a temporary file and renamed onto its path,
+            // as scenes and prefabs are saved, arrives as a rename. Onto a
+            // path no asset holds yet, it is a new file.
+            EventKind::Modify(ModifyKind::Name(_)) => {
+                for file in paths_iter {
+                    if self.asset_id_from_path(file).is_some() {
+                        self.mark_path_dirty(file);
+                    } else {
+                        self.register_created_file(file);
                     }
                 }
             }
@@ -1212,6 +1210,86 @@ impl AssetRegistry {
                 self.clear_failed_background_load(file);
             }
         }
+    }
+
+    /// Registers the file the watcher reported as new, warning when it lies
+    /// outside every asset root or its metadata cannot be built.
+    fn register_created_file(&self, file: &Path) {
+        let Some(asset_path) = self.owning_asset_root(file) else {
+            log::warn!(
+                "Ignoring created file outside every asset root: {}",
+                file.display()
+            );
+            return;
+        };
+        if let Err(err) = self.build_asset_meta(asset_path, file, &file.with_extension("meta")) {
+            log::warn!(
+                "Failed to build asset metadata for {}: {}",
+                file.display(),
+                err
+            );
+        }
+    }
+
+    /// Whether `path` lies inside an asset root, so the registry can hold the
+    /// file at it. `path` need not exist; a relative path is taken from the
+    /// working directory.
+    pub fn is_in_asset_root(&self, path: &Path) -> bool {
+        self.rooted_path(path).is_some()
+    }
+
+    /// Registers the asset file at `path` right away, without waiting for the
+    /// watcher to report it, and returns its id. A registered file keeps its
+    /// id. A writer that opens the file it just wrote registers it here
+    /// first, since the watcher reports a file on its own thread, later.
+    pub fn register_file(&self, path: &Path) -> Result<Uuid, AssetError> {
+        let not_found = || AssetError::NotFound.with_path(path);
+        let (root, path) = self
+            .rooted_path(path)
+            .ok_or_else(|| not_found().with_source("the file is outside every asset root"))?;
+        if let Some(id) = self.asset_id_from_path(&path) {
+            return Ok(id);
+        }
+        self.build_asset_meta(root, &path, &path.with_extension("meta"))
+            .map_err(|err| AssetError::LoadError.with_path(&path).with_source(err))?;
+        self.asset_id_from_path(&path).ok_or_else(not_found)
+    }
+
+    /// The deepest asset root holding `path`, and `path` spelled from that
+    /// root as the registry stores it. Both sides are compared in normalized
+    /// form, so a root or file named through an 8.3 short name, a symlink or
+    /// another letter case still matches. `None` when no root holds `path`.
+    fn rooted_path(&self, path: &Path) -> Option<(&Path, PathBuf)> {
+        let path = Self::normalized_path(path)?;
+        self.asset_paths
+            .iter()
+            .filter_map(|root| {
+                let normalized_root = Self::normalized_path(root)?;
+                let rest = path.strip_prefix(&normalized_root).ok()?;
+                Some((normalized_root.components().count(), root, root.join(rest)))
+            })
+            .max_by_key(|(depth, ..)| *depth)
+            .map(|(_, root, path)| (root.as_path(), path))
+    }
+
+    /// `path` canonical when it exists, else made absolute against the working
+    /// directory below its canonical nearest existing ancestor.
+    fn normalized_path(path: &Path) -> Option<PathBuf> {
+        if let Ok(path) = dunce::canonicalize(path) {
+            return Some(path);
+        }
+        // The file may not exist yet: canonicalize its nearest existing
+        // ancestor, so its root matches the canonical asset roots.
+        let absolute = path.absolutize().ok()?.into_owned();
+        let mut existing = absolute.as_path();
+        let mut rest = Vec::new();
+        while !existing.exists() {
+            rest.push(existing.file_name()?.to_os_string());
+            existing = existing.parent()?;
+        }
+        let mut normalized = dunce::canonicalize(existing).ok()?;
+        normalized.extend(rest.iter().rev());
+        Some(normalized)
     }
 
     fn notify_event_paths(event: &Event) -> impl Iterator<Item = &PathBuf> {
@@ -1456,6 +1534,11 @@ impl AssetRegistry {
         path: &Path,
         meta_path: &Path,
     ) -> Result<(), BoxedError> {
+        // An asset is typed by its extension. Checked before anything is
+        // written, so a file without one gets no `.meta`.
+        let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
+            return Err(format!("{} has no file extension to type it by", path.display()).into());
+        };
         let name_path = Self::relative_asset_path(asset_path, path)?;
         // The asset this name resolves to now, captured before the metadata
         // read below replaces it, in case this file takes over its id.
@@ -1491,9 +1574,7 @@ impl AssetRegistry {
             self.write_meta_file(meta_path, &meta)?;
             meta.main
         };
-        meta.type_uuid = self
-            .asset_type_uuid_from_ext(path.extension().unwrap().to_str().unwrap())
-            .unwrap_or(Uuid::nil());
+        meta.type_uuid = self.asset_type_uuid_from_ext(ext).unwrap_or(Uuid::nil());
         meta.path = Some(match path.absolutize().map_err(Box::new)? {
             Cow::Borrowed(p) => p.to_path_buf(),
             Cow::Owned(p) => p,
@@ -2120,6 +2201,76 @@ mod tests {
         drop(registry);
         std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
         std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
+    }
+
+    #[test]
+    fn registering_a_file_without_an_extension_is_refused() {
+        let root = temp_asset_root("calyx-register-extensionless");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        // A scene saved as `new_level`, with no extension to type it by.
+        let path = root.join("new_level");
+        std::fs::write(&path, b"{}").expect("failed to write extensionless file");
+
+        let error = registry
+            .register_file(&path)
+            .expect_err("a file without an extension has no asset type");
+
+        assert!(error.to_string().contains("no file extension"), "{error}");
+        assert_eq!(registry.asset_id_from_path(&path), None);
+        assert!(!root.join("new_level.meta").exists(), "no .meta is written");
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn a_root_named_in_another_form_owns_the_files_under_it() {
+        let root = temp_asset_root("calyx-register-root-form");
+        std::fs::create_dir_all(root.join("sub")).expect("failed to create sub directory");
+        // The same directory as `root`, named through `sub/..`, as an 8.3
+        // short name or a symlink would name it differently on disk.
+        let alternate_root = root.join("sub").join("..");
+        let registries = test_registries_with_assets(vec![alternate_root]);
+        let registry = registries.assets.read();
+        let path = root.join("new_level.cxscene");
+        std::fs::write(&path, b"{}").expect("failed to write asset file");
+
+        assert!(registry.is_in_asset_root(&path));
+        let id = registry
+            .register_file(&path)
+            .expect("a file under the root registers");
+
+        assert_eq!(registry.asset_id("new_level"), Some(id));
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn rename_onto_a_new_asset_file_registers_it_with_its_meta() {
+        let root = temp_asset_root("calyx-rename-event");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        // How scenes and prefabs are saved: a temporary file renamed onto
+        // the target, which the watcher reports as a rename, not a create.
+        // On Windows the target arrives alone, as the rename's new name.
+        let temp_path = root.join("saved.cxscene.0123.tmp");
+        let asset_path = root.join("saved.cxscene");
+        std::fs::write(&temp_path, b"{}").expect("failed to write temp file");
+        std::fs::rename(&temp_path, &asset_path).expect("failed to rename temp file");
+        let event = Event::new(EventKind::Modify(notify::event::ModifyKind::Name(
+            notify::event::RenameMode::To,
+        )))
+        .add_path(asset_path.clone());
+
+        registry.recv_notify_event(event);
+
+        let id = registry
+            .asset_id_from_path(&asset_path)
+            .expect("the renamed-to file is registered");
+        assert_eq!(registry.asset_id("saved"), Some(id));
+        assert!(root.join("saved.meta").exists(), "its .meta is written");
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
 
     #[test]
