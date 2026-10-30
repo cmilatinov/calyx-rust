@@ -492,23 +492,11 @@ impl ComponentAnimator {
                 );
                 bones
             });
-            // Bone indices and inverse bind matrices belong to the mesh: meshes sharing a
-            // skeleton can list its bones in different orders.
-            let mesh = mesh_ref.read();
-            pose.bone_transforms.clear();
-            pose.bone_transforms.resize(
-                mesh.bones.len(),
-                BoneTransform {
-                    transform: Mat4::identity().into(),
-                },
+            ComponentSkinnedMesh::skinning_palette(
+                &mesh_ref.read(),
+                bones,
+                &mut pose.bone_transforms,
             );
-            for (name, bone) in &mesh.bones {
-                if let (Some(transform), Some(slot)) =
-                    (bones.get(name), pose.bone_transforms.get_mut(bone.index))
-                {
-                    slot.transform = (transform * bone.inverse_bind_transform).into();
-                }
-            }
             scene.write_component::<ComponentSkinnedMesh, _>(skinned_mesh_go, |c_skinned_mesh| {
                 c_skinned_mesh.bone_transforms.clear();
                 c_skinned_mesh
