@@ -29,8 +29,8 @@ click through the editor.
 ```
 cargo run -p calyx_ctl -- launch --project ./sandbox     # builds, spawns, waits; prints {port, pid}
 calyx_ctl info                                           # session metadata + input_debug
-calyx_ctl scene load sandbox/assets/scene.cxscene
-calyx_ctl play
+calyx_ctl scene load sandbox/assets/scene.cxscene      # the tank gameplay scene
+calyx_ctl play --scene sandbox/assets/scene.cxscene      # plain `play` runs the startup scene (the showcase)
 calyx_ctl focus-game                                     # REQUIRED before gameplay input
 calyx_ctl wait --frames 3                                # let the Game tab publish its rect
 calyx_ctl input key W --hold-frames 90
@@ -63,8 +63,8 @@ name (`sandbox::tank::ComponentHealth`), or the bare type name
 | CLI | Protocol | Notes |
 |---|---|---|
 | `ping`, `info`, `shutdown` | `ping`/`info`/`shutdown` | `info` includes `assemblies_loaded`, `is_simulating`, `object_count`, and an `input_debug` block |
-| `play`, `pause`, `stop` | `play`/`pause`/`stop` | same semantics as the toolbar buttons, so a fresh `play` runs the project's configured startup scene; `stop` discards simulation edits. Anything that pauses, stops, or replaces the simulation - these commands, a successful `load_scene`, or the toolbar and scene loads in the editor UI - cancels an in-flight `step_frames` (that client gets a `cancelled` error) |
-| `step --frames N` | `step_frames` | ensures simulation, advances exactly N editor frames, pauses, then responds; only one step may be in flight at a time, and disconnecting mid-step pauses the simulation |
+| `play [--scene PATH]`, `pause`, `stop` | `play`/`pause`/`stop` | same semantics as the toolbar buttons, so a fresh `play` runs the project's configured startup scene, whichever scene is loaded; `--scene` runs that scene file instead (refused while a simulation exists); `stop` discards simulation edits. Anything that pauses, stops, or replaces the simulation - these commands, a successful `load_scene`, or the toolbar and scene loads in the editor UI - cancels an in-flight `step_frames` (that client gets a `cancelled` error) |
+| `step --frames N` | `step_frames` | ensures simulation (a fresh start runs the startup scene, so `play --scene` first to step another scene), advances exactly N editor frames, pauses, then responds; only one step may be in flight at a time, and disconnecting mid-step pauses the simulation |
 | `wait --frames N` / `wait --simulating BOOL` | `wait_frames` / client-side polling | |
 | `scene load/save/state` | `load_scene`/`save_scene`/`get_scene_state` | paths resolve against the editor's working directory (repo root when using `launch`) |
 | `prefab open PATH`, `prefab save`, `prefab close [--discard]` | `open_prefab`/`save_prefab`/`close_prefab` | prefab mode: `open` sets the scene aside and makes the `.cxprefab` the authoring scene the object, component and transform commands edit; `save` writes the prefab asset only; `close` refuses unsaved changes without `--discard`. `info` reports the open prefab under `prefab`. `play`, `step`, `scene load` and `scene save` are refused while a prefab is open |
