@@ -1,0 +1,34 @@
+{
+  "main": {
+    "id": "e1b03ba7-6968-a8eb-8d93-9cfe333cc746",
+    "name": "showcase/exit_time/models/ExitTimeDemo",
+    "display_name": "ExitTimeDemo",
+    "type_uuid": "960f1d60-3ad4-4f1d-92d3-cceb0e0623d7"
+  },
+  "inner": [
+    {
+      "id": "086b379f-7f3c-21f3-ec68-614f59809cd6",
+      "name": "BodyMesh",
+      "display_name": "BodyMesh",
+      "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+    },
+    {
+      "id": "adf4edbd-5bcc-63aa-182d-ec59ecf03c2b",
+      "name": "ArmMesh",
+      "display_name": "ArmMesh",
+      "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+    },
+    {
+      "id": "c1bc48a3-55d7-f13a-1af8-2b11847ab12d",
+      "name": "Bend",
+      "display_name": "Bend",
+      "type_uuid": "627dee5d-c2d6-4e3e-9b9e-80e3e601848d"
+    },
+    {
+      "id": "27965bec-79c9-94c9-a1c1-4489e13bb5f5",
+      "name": "Hold",
+      "display_name": "Hold",
+      "type_uuid": "627dee5d-c2d6-4e3e-9b9e-80e3e601848d"
+    }
+  ]
+}

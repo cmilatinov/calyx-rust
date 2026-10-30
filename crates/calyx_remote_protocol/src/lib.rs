@@ -115,7 +115,13 @@ pub enum Command {
 
     /// Starts (or resumes) scene simulation as the toolbar's play button does,
     /// running the project's configured startup scene on a fresh start.
-    Play,
+    Play {
+        /// Scene file to run on a fresh start instead of the startup scene,
+        /// absolute or relative to the editor's working directory. Refused
+        /// while a simulation scene exists.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scene: Option<PathBuf>,
+    },
     /// Pauses simulation, keeping the simulation scene copy.
     Pause,
     /// Stops simulation and discards the simulation scene copy.
@@ -492,7 +498,10 @@ mod tests {
             Command::Ping,
             Command::Info,
             Command::Shutdown,
-            Command::Play,
+            Command::Play { scene: None },
+            Command::Play {
+                scene: Some(PathBuf::from("sandbox/assets/scene.cxscene")),
+            },
             Command::Pause,
             Command::Stop,
             Command::StepFrames { frames: 10 },
@@ -620,6 +629,22 @@ mod tests {
         let parsed: RequestEnvelope =
             serde_json::from_str(r#"{"id":9,"cmd":"step_frames","frames":4}"#).unwrap();
         assert_eq!(parsed.command, Command::StepFrames { frames: 4 });
+    }
+
+    /// A plain `play` stays the same on the wire, so older clients still run
+    /// the startup scene.
+    #[test]
+    fn play_without_a_scene_keeps_its_wire_format() {
+        let request = RequestEnvelope {
+            id: 1,
+            command: Command::Play { scene: None },
+        };
+        assert_eq!(
+            serde_json::to_string(&request).unwrap(),
+            r#"{"id":1,"cmd":"play"}"#
+        );
+        let parsed: RequestEnvelope = serde_json::from_str(r#"{"id":1,"cmd":"play"}"#).unwrap();
+        assert_eq!(parsed.command, Command::Play { scene: None });
     }
 
     #[test]

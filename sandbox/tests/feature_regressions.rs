@@ -33,7 +33,7 @@ fn load_sandbox_scene(copy: &TestAssets, assets: &calyx_engine::context::AssetCo
         .registries
         .assets
         .read()
-        .reload_by_path::<Scene>(&copy.sandbox_root().join("scene.cxscene"))
+        .reload_by_path::<Scene>(&copy.sandbox_root().join("game/scenes/arena.cxscene"))
         .expect("sandbox scene should load")
         .read()
         .clone()
@@ -414,7 +414,7 @@ fn assert_known_keys(authored: &serde_json::Value, known: &serde_json::Value, pa
 #[test]
 fn campfire_prefab_loads_with_every_particle_module_field_known() {
     let (copy, assets) = sandbox_assets();
-    let path = copy.sandbox_root().join("prefabs/campfire.cxprefab");
+    let path = copy.sandbox_root().join("shared/prefabs/campfire.cxprefab");
     let source: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     let particle_type = ComponentParticleSystem::type_uuid().to_string();
@@ -456,7 +456,7 @@ fn sandbox_campfire_emits_from_each_of_its_systems() {
         .registries
         .assets
         .read()
-        .asset_id("textures/particle_puff")
+        .asset_id("shared/textures/particle_puff")
         .expect("the puff texture should be a sandbox asset");
     let systems = ["Flames", "Flame Core", "Smoke"].map(|name| object_named(&scene, name));
     let mut runner = HeadlessSceneRunner::from_scene(scene).with_particles();
