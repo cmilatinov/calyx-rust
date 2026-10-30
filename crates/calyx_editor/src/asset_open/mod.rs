@@ -21,7 +21,8 @@ use calyx_engine::reflect::ReflectDefault;
 use calyx_engine::{reflect_trait, type_uuids};
 use uuid::Uuid;
 
-use crate::prefab_mode::{PrefabMode, PrefabModeMut};
+use crate::panel::{Panel, PanelViewport};
+use crate::prefab_mode::{PrefabMode, PrefabModeMut, PrefabPromptAnswer, PrefabPromptOutcome};
 use crate::scene_document::SceneDocument;
 use crate::selection::{Selection, SelectionType};
 use crate::{EditorAppState, ProjectAssemblyStatus};
@@ -185,6 +186,20 @@ impl AssetOpenContext<'_> {
         )
     }
 
+    /// Takes the user's answer to the unsaved-prefab prompt, bringing the
+    /// scene view to the front when the prefab that waited on it opens, as
+    /// an immediate prefab open does.
+    pub(crate) fn answer_prefab_prompt(
+        &mut self,
+        answer: PrefabPromptAnswer,
+    ) -> PrefabPromptOutcome {
+        let outcome = self.prefab_mode_mut().answer_prompt(answer);
+        if outcome == PrefabPromptOutcome::Opened {
+            self.focus_panel(PanelViewport::name());
+        }
+        outcome
+    }
+
     /// Whether a simulation copy of the scene exists, playing or paused.
     pub(crate) fn in_play_mode(&self) -> bool {
         self.game.scenes.has_simulation_scene()
@@ -260,5 +275,14 @@ impl EditorAppState {
     ) -> AssetOpenOutcome {
         let (_, mut editor) = self.asset_open_parts();
         editor.answer_scene_prompt(answer, pick_save_file)
+    }
+
+    /// Answers the unsaved-prefab prompt waiting on the user, if one is.
+    pub(crate) fn answer_prefab_prompt(
+        &mut self,
+        answer: PrefabPromptAnswer,
+    ) -> PrefabPromptOutcome {
+        let (_, mut editor) = self.asset_open_parts();
+        editor.answer_prefab_prompt(answer)
     }
 }

@@ -15,7 +15,7 @@ use super::{
     SceneSwitchAnswer, OPEN_DURING_PLAY,
 };
 use crate::panel::{Panel, PanelAnimator, PanelViewport};
-use crate::prefab_mode::{PrefabMode, CLOSE_PREFAB_FIRST};
+use crate::prefab_mode::{PrefabMode, PrefabPromptAnswer, PrefabPromptOutcome, CLOSE_PREFAB_FIRST};
 use crate::scene_document::SceneDocument;
 use crate::scene_edit::SceneEdit;
 use crate::scene_file::{write_prefab_file, write_scene_file};
@@ -216,6 +216,54 @@ fn opening_another_prefab_over_unsaved_prefab_changes_prompts() {
     assert_eq!(outcome, AssetOpenOutcome::Prompted);
     let open = editor.prefab_mode.prefab().expect("the prefab stays open");
     assert_eq!(open.asset_id(), crate_prefab);
+}
+
+#[test]
+fn a_prefab_opened_from_the_prompt_focuses_the_scene_view() {
+    let root = AssetRoot::new();
+    let mut editor = Editor::new(&root);
+    let barrel = editor.asset_id(&root.file("barrel.cxprefab"));
+    editor.open(&root.file("crate.cxprefab"));
+    editor.edit_scene();
+    // Another panel came to the front while the prefab was being edited.
+    editor.focus_panel = None;
+    assert_eq!(
+        editor.open(&root.file("barrel.cxprefab")),
+        AssetOpenOutcome::Prompted
+    );
+    assert_eq!(editor.focus_panel, None);
+
+    let outcome = editor
+        .context()
+        .answer_prefab_prompt(PrefabPromptAnswer::Discard);
+
+    assert_eq!(outcome, PrefabPromptOutcome::Opened);
+    let open = editor
+        .prefab_mode
+        .prefab()
+        .expect("a prefab should be open");
+    assert_eq!(open.asset_id(), barrel);
+    assert_eq!(editor.focus_panel, Some(PanelViewport::name()));
+}
+
+#[test]
+fn cancelling_the_prefab_prompt_keeps_the_prefab_and_focus() {
+    let root = AssetRoot::new();
+    let mut editor = Editor::new(&root);
+    let crate_prefab = editor.asset_id(&root.file("crate.cxprefab"));
+    editor.open(&root.file("crate.cxprefab"));
+    editor.edit_scene();
+    editor.focus_panel = None;
+    editor.open(&root.file("barrel.cxprefab"));
+
+    let outcome = editor
+        .context()
+        .answer_prefab_prompt(PrefabPromptAnswer::Cancel);
+
+    assert_eq!(outcome, PrefabPromptOutcome::Kept);
+    let open = editor.prefab_mode.prefab().expect("the prefab stays open");
+    assert_eq!(open.asset_id(), crate_prefab);
+    assert_eq!(editor.focus_panel, None);
 }
 
 #[test]
