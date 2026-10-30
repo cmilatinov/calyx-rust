@@ -1235,7 +1235,7 @@ impl AssetRegistry {
     /// file at it. `path` need not exist; a relative path is taken from the
     /// working directory.
     pub fn is_in_asset_root(&self, path: &Path) -> bool {
-        Self::normalized_path(path).is_some_and(|path| self.owning_asset_root(&path).is_some())
+        self.rooted_path(path).is_some()
     }
 
     /// Registers the asset file at `path` right away, without waiting for the
@@ -1244,20 +1244,36 @@ impl AssetRegistry {
     /// first, since the watcher reports a file on its own thread, later.
     pub fn register_file(&self, path: &Path) -> Result<Uuid, AssetError> {
         let not_found = || AssetError::NotFound.with_path(path);
-        let path = Self::normalized_path(path).ok_or_else(not_found)?;
+        let (root, path) = self
+            .rooted_path(path)
+            .ok_or_else(|| not_found().with_source("the file is outside every asset root"))?;
         if let Some(id) = self.asset_id_from_path(&path) {
             return Ok(id);
         }
-        let root = self
-            .owning_asset_root(&path)
-            .ok_or_else(|| not_found().with_source("the file is outside every asset root"))?;
         self.build_asset_meta(root, &path, &path.with_extension("meta"))
             .map_err(|err| AssetError::LoadError.with_path(&path).with_source(err))?;
         self.asset_id_from_path(&path).ok_or_else(not_found)
     }
 
-    /// `path` as the registry stores it: canonical when it exists, else made
-    /// absolute against the working directory.
+    /// The deepest asset root holding `path`, and `path` spelled from that
+    /// root as the registry stores it. Both sides are compared in normalized
+    /// form, so a root or file named through an 8.3 short name, a symlink or
+    /// another letter case still matches. `None` when no root holds `path`.
+    fn rooted_path(&self, path: &Path) -> Option<(&Path, PathBuf)> {
+        let path = Self::normalized_path(path)?;
+        self.asset_paths
+            .iter()
+            .filter_map(|root| {
+                let normalized_root = Self::normalized_path(root)?;
+                let rest = path.strip_prefix(&normalized_root).ok()?;
+                Some((normalized_root.components().count(), root, root.join(rest)))
+            })
+            .max_by_key(|(depth, ..)| *depth)
+            .map(|(_, root, path)| (root.as_path(), path))
+    }
+
+    /// `path` canonical when it exists, else made absolute against the working
+    /// directory below its canonical nearest existing ancestor.
     fn normalized_path(path: &Path) -> Option<PathBuf> {
         if let Ok(path) = dunce::canonicalize(path) {
             return Some(path);
@@ -2203,6 +2219,28 @@ mod tests {
         assert!(error.to_string().contains("no file extension"), "{error}");
         assert_eq!(registry.asset_id_from_path(&path), None);
         assert!(!root.join("new_level.meta").exists(), "no .meta is written");
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn a_root_named_in_another_form_owns_the_files_under_it() {
+        let root = temp_asset_root("calyx-register-root-form");
+        std::fs::create_dir_all(root.join("sub")).expect("failed to create sub directory");
+        // The same directory as `root`, named through `sub/..`, as an 8.3
+        // short name or a symlink would name it differently on disk.
+        let alternate_root = root.join("sub").join("..");
+        let registries = test_registries_with_assets(vec![alternate_root]);
+        let registry = registries.assets.read();
+        let path = root.join("new_level.cxscene");
+        std::fs::write(&path, b"{}").expect("failed to write asset file");
+
+        assert!(registry.is_in_asset_root(&path));
+        let id = registry
+            .register_file(&path)
+            .expect("a file under the root registers");
+
+        assert_eq!(registry.asset_id("new_level"), Some(id));
         drop(registry);
         std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
