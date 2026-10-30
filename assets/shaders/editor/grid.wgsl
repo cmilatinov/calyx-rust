@@ -59,6 +59,16 @@ fn grid(frag_pos: vec3f, grid_color: vec3f, line_width: f32, scale: f32) -> vec4
     return color;
 }
 
+// Straight-alpha `top` over `bottom`, both with alpha in [0, 1].
+fn over(top: vec4f, bottom: vec4f) -> vec4f {
+    let alpha = top.a + bottom.a * (1.0 - top.a);
+    if (alpha <= 0.0) {
+        return vec4f(0.0);
+    }
+    let color = (top.rgb * top.a + bottom.rgb * bottom.a * (1.0 - top.a)) / alpha;
+    return vec4f(color, alpha);
+}
+
 @fragment
 fn fs_main(in: VertexOut) -> FragmentOut {
     let t = -in.near_point.y / (in.far_point.y - in.near_point.y);
@@ -68,9 +78,15 @@ fn fs_main(in: VertexOut) -> FragmentOut {
 
     var out: FragmentOut;
     let frag_pos = in.near_point + t * (in.far_point - in.near_point);
-    out.color =
-        grid(frag_pos, vec3f(0.05), 0.0001, 1.0) +
-        grid(frag_pos, vec3f(0.025), 0.001, 0.1);
+    // The major lines and axes cover the minor ones, so where both layers
+    // draw, which is every tenth line and both axes, coverage stays at most
+    // one. A plain sum reached two there, and the premultiplied composite
+    // then weighted the scene below by a negative factor.
+    out.color = clamp(
+        over(grid(frag_pos, vec3f(0.025), 0.001, 0.1), grid(frag_pos, vec3f(0.05), 0.0001, 1.0)),
+        vec4f(0.0),
+        vec4f(1.0)
+    );
 
     let view_pos = vec3f(
         camera.inverse_view[3][0],

@@ -1,9 +1,12 @@
 use super::*;
 use crate::assets::texture::Texture;
 use crate::render::scene_renderer::half_to_f32;
-use crate::render::{RenderContext, RenderUtils, SceneRendererOptions};
+use crate::render::scene_renderer::CameraUniform;
+use crate::render::{Camera, GridRenderer, RenderContext, RenderUtils, SceneRendererOptions};
 use crate::test_support::{test_adapter, TestAssets};
 use egui_wgpu::wgpu;
+use egui_wgpu::wgpu::util::DeviceExt;
+use nalgebra_glm as glm;
 use std::sync::{Arc, Mutex};
 
 const WIDTH: u32 = 4;
@@ -130,13 +133,23 @@ fn texture(
     format: wgpu::TextureFormat,
     samples: u32,
 ) -> Texture {
+    sized_texture(render_context, format, samples, WIDTH, HEIGHT)
+}
+
+fn sized_texture(
+    render_context: &Arc<RenderContext>,
+    format: wgpu::TextureFormat,
+    samples: u32,
+    width: u32,
+    height: u32,
+) -> Texture {
     Texture::new(
         render_context.clone(),
         &wgpu::TextureDescriptor {
             label: Some("overlay_test_texture"),
             size: wgpu::Extent3d {
-                width: WIDTH,
-                height: HEIGHT,
+                width,
+                height,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -194,10 +207,18 @@ fn clear(encoder: &mut wgpu::CommandEncoder, color: &Texture, clear: f64, depth:
 
 /// Every texel of the one row of an `Rgba16Float` texture.
 fn read_row(render_context: &RenderContext, texture: &Texture) -> Vec<[f32; 4]> {
+    read_texels(render_context, texture)
+}
+
+/// Every texel of an `Rgba16Float` texture, row by row.
+fn read_texels(render_context: &RenderContext, texture: &Texture) -> Vec<[f32; 4]> {
+    let size = texture.descriptor.size;
+    let row_bytes = size.width * 8;
+    let padded_row_bytes = row_bytes.next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
     let device = render_context.device();
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("overlay_test_readback"),
-        size: wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as u64,
+        size: (padded_row_bytes * size.height) as u64,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
@@ -208,11 +229,11 @@ fn read_row(render_context: &RenderContext, texture: &Texture) -> Vec<[f32; 4]> 
             buffer: &buffer,
             layout: wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT),
-                rows_per_image: Some(1),
+                bytes_per_row: Some(padded_row_bytes),
+                rows_per_image: Some(size.height),
             },
         },
-        texture.descriptor.size,
+        size,
     );
     render_context.queue().submit(Some(encoder.finish()));
     let slice = buffer.slice(..);
@@ -220,10 +241,9 @@ fn read_row(render_context: &RenderContext, texture: &Texture) -> Vec<[f32; 4]> 
     let _ = device.poll(wgpu::Maintain::Wait);
     let bytes = slice.get_mapped_range().to_vec();
     buffer.unmap();
-    bytes[..(WIDTH * 8) as usize]
-        .as_chunks::<8>()
-        .0
-        .iter()
+    bytes
+        .chunks(padded_row_bytes as usize)
+        .flat_map(|row| row[..row_bytes as usize].as_chunks::<8>().0.to_vec())
         .map(|texel| {
             std::array::from_fn(|channel| {
                 half_to_f32(u16::from_le_bytes([
@@ -371,4 +391,136 @@ fn enabled_overlays_record_in_order_and_the_target_exists_only_while_one_is() {
         "no overlay is enabled, so no overlay target is kept"
     );
     assert_eq!(row[0], [0.5, 0.5, 0.5, 1.0], "the output is left as it was");
+}
+
+/// A camera above the grid looking down at the world origin, where both grid
+/// layers and both axes overlap.
+fn grid_camera_uniform(size: u32) -> CameraUniform {
+    let camera = Camera::new(1.0, 70f32.to_radians(), 0.1, 1000.0);
+    let view = glm::look_at_lh(
+        &glm::vec3(0.5, 3.0, -3.0),
+        &glm::vec3(0.0, 0.0, 0.0),
+        &glm::vec3(0.0, 1.0, 0.0),
+    );
+    CameraUniform {
+        projection: camera.projection.into(),
+        view: view.into(),
+        inverse_projection: glm::inverse(&camera.projection).into(),
+        inverse_view: glm::inverse(&view).into(),
+        near_plane: camera.near_plane,
+        far_plane: camera.far_plane,
+        viewport_size: [size as f32; 2],
+    }
+}
+
+#[test]
+fn the_grid_leaves_coverage_alpha_in_range_and_color_no_brighter_than_it() {
+    const SIZE: u32 = 64;
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let context = context.lock_read();
+    let render_context = context.render_context.clone();
+    let camera_buffer =
+        render_context
+            .device()
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("grid_test_camera"),
+                contents: bytemuck::cast_slice(&[grid_camera_uniform(SIZE)]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+    let mut grid = GridRenderer::new(&context, &camera_buffer).expect("grid shader loads");
+    let mut compositor = OverlayCompositor::new(&context).expect("composite shader loads");
+
+    let output = sized_texture(
+        &render_context,
+        wgpu::TextureFormat::Rgba16Float,
+        1,
+        SIZE,
+        SIZE,
+    );
+    let depth = sized_texture(
+        &render_context,
+        wgpu::TextureFormat::Depth32Float,
+        1,
+        SIZE,
+        SIZE,
+    );
+    let object_ids = sized_texture(&render_context, wgpu::TextureFormat::R32Uint, 1, 1, 1);
+    let options = SceneRendererOptions {
+        grid: true,
+        ..Default::default()
+    };
+    let overlay_context = OverlayContext {
+        render_context: &render_context,
+        options: &options,
+        format: OverlayCompositor::FORMAT,
+        samples: 1,
+        object_ids: &object_ids,
+    };
+    let mut encoder = render_context
+        .device()
+        .create_command_encoder(&Default::default());
+    clear(&mut encoder, &output, 0.5, &depth);
+    let recorded = compositor.run(
+        &mut encoder,
+        &mut [&mut grid],
+        &overlay_context,
+        &depth,
+        &output,
+    );
+    render_context.queue().submit(Some(encoder.finish()));
+    assert_eq!(recorded, 1);
+
+    let texels = read_texels(&render_context, compositor.target().expect("drawn"));
+    // The origin is at the image centre: both layers and both axes cover it.
+    let centre = texels[(SIZE / 2 * SIZE + SIZE / 2) as usize];
+    assert!(
+        centre[3] > 0.5,
+        "the grid covers the origin, where its layers overlap: {centre:?}"
+    );
+    // Rgba16Float rounds to about three decimal digits.
+    const EPSILON: f32 = 2e-3;
+    for (index, texel) in texels.iter().enumerate() {
+        let (x, y) = (index as u32 % SIZE, index as u32 / SIZE);
+        let alpha = texel[3];
+        assert!(
+            (-EPSILON..=1.0 + EPSILON).contains(&alpha),
+            "texel ({x}, {y}) has alpha {alpha} outside [0, 1]: {texel:?}"
+        );
+        for channel in &texel[..3] {
+            assert!(
+                *channel >= -EPSILON && *channel <= alpha + EPSILON,
+                "texel ({x}, {y}) is brighter than its coverage: {texel:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_overlay_texel_with_coverage_above_one_never_subtracts_the_scene() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let context = context.lock_read();
+    let render_context = context.render_context.clone();
+    let mut compositor = OverlayCompositor::new(&context).expect("composite shader loads");
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+    // Alpha blending a = 2 into the transparent target leaves rgb 2 * 0.3
+    // and alpha 2: outside the premultiplied contract.
+    let mut overlay = SolidOverlay::new("over_covered", &recorded);
+    overlay.color = [0.3, 0.3, 0.3, 2.0];
+
+    for background in [0.25, 0.75] {
+        let (row, _) = composite(
+            &render_context,
+            &mut compositor,
+            &mut [&mut overlay],
+            1,
+            background,
+        );
+        let target = read_row(&render_context, compositor.target().expect("drawn"));
+        assert!(target[0][3] > 1.0, "the target holds coverage above one");
+        // Held to coverage one and color 0.6, the overlay hides the scene. A
+        // factor of 1 - a = -1 on the scene would give 0.6 - background.
+        assert_close(row[0][0], 0.6, "over-covered pixel");
+    }
 }
