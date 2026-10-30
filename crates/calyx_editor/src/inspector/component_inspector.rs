@@ -16,8 +16,9 @@ use calyx_engine::reflect::{
 };
 use calyx_engine::utils::TypeUuid;
 use convert_case::{Case, Casing};
-use egui::{Id, RichText, Ui};
+use egui::{Id, Rect, Response, RichText, TextStyle, Ui, Vec2};
 use re_ui::list_item::{LabelContent, ListItem, PropertyContent, ShowCollapsingResponse};
+use re_ui::UiExt;
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -27,6 +28,23 @@ use super::type_inspector::{InspectorContext, InspectorResponse};
 use super::widgets::Widgets;
 use crate::icons;
 use crate::widgets::{List, ListContainer, ListItemContext};
+
+/// Draws the checkbox of a component header in `slot`, the header's icon
+/// slot. The box is as tall as the header's text and centred in the slot, and
+/// it keeps its size while hovered, so it never grows past the slot into the
+/// arrow or the title. Its click area is the box.
+fn header_checkbox(ui: &mut Ui, slot: Rect, checked: &mut bool) -> Response {
+    ui.scope(|ui| {
+        let size = TextStyle::Body.resolve(ui.style()).size.min(slot.height());
+        let spacing = ui.spacing_mut();
+        spacing.icon_width_inner *= size / spacing.icon_width;
+        spacing.icon_width = size;
+        spacing.interact_size.y = size;
+        let rect = Rect::from_center_size(slot.center(), Vec2::splat(size));
+        ui.put(rect, |ui: &mut Ui| ui.re_checkbox(checked, ""))
+    })
+    .inner
+}
 
 /// A structural change the inspector made to a reflected list.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -268,15 +286,15 @@ impl<'a> ComponentInspector<'a> {
             // The checkbox sits on top of the header row, so a click on it
             // reaches the checkbox and leaves the header as it is.
             let toggled = &mut toggled;
-            label = label.with_icon_fn(move |ui, rect, _| {
-                let mut checked = enabled;
-                let checkbox = ui
-                    .put(rect, egui::Checkbox::without_text(&mut checked))
-                    .on_hover_text(if enabled { "Disable" } else { "Enable" });
-                if checkbox.changed() {
-                    *toggled = Some(checked);
-                }
-            });
+            label =
+                label.with_icon_fn(move |ui, rect, _| {
+                    let mut checked = enabled;
+                    let checkbox = header_checkbox(ui, rect, &mut checked)
+                        .on_hover_text(if enabled { "Disable" } else { "Enable" });
+                    if checkbox.changed() {
+                        *toggled = Some(checked);
+                    }
+                });
         }
         if pin.pinned {
             label = label
@@ -1118,6 +1136,30 @@ mod tests {
             assert!(enabled.get(), "a second click switched it back on");
             assert_eq!(toggles.get(), 2);
             assert_eq!(h.labels().len(), labels, "the header stayed expanded");
+        });
+    }
+
+    #[test]
+    fn header_checkbox_fits_the_header_row() {
+        let mut h = InspectorHarness::new();
+        let enabled = std::cell::Cell::new(true);
+        let toggles = std::cell::Cell::new(0);
+        show_toggleable_camera(&mut h, &enabled, &toggles, |h, draw| {
+            h.idle(3, draw);
+            let checkbox = h.widgets(Role::CheckBox)[0].rect;
+            let header = h
+                .nodes()
+                .iter()
+                .find(|node| node.label.as_deref() == Some("Camera"))
+                .unwrap_or_else(|| panic!("no Camera header in {:#?}", h.nodes()))
+                .rect;
+            let text_size = h.ctx.style().text_styles[&egui::TextStyle::Body].size;
+            assert_eq!(checkbox.size(), Vec2::splat(text_size), "{checkbox:?}");
+            assert!(
+                (checkbox.center().y - header.center().y).abs() < 0.5,
+                "{checkbox:?} is centred in {header:?}"
+            );
+            assert!(header.contains_rect(checkbox), "{checkbox:?} in {header:?}");
         });
     }
 
