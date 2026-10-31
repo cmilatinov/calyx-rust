@@ -375,8 +375,11 @@ impl GizmoRenderer {
             .depth_stencil(Some(icon_depth))
             .fragment_targets(vec![Some(RenderUtils::color_alpha_blending(target_format))])
             .build();
-        if !self.circle_list.is_empty() {
-            render_pass.set_pipeline(&self.shader.pipeline(&circle_options));
+        let pipeline = (!self.circle_list.is_empty())
+            .then(|| self.shader.pipeline(&circle_options))
+            .flatten();
+        if let Some(pipeline) = pipeline {
+            render_pass.set_pipeline(&pipeline);
             render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
 
             RenderUtils::bind_mesh_buffers(render_pass, &self.wire_circle_mesh);
@@ -393,8 +396,11 @@ impl GizmoRenderer {
             }
         }
 
-        if !self.cube_list.is_empty() {
-            render_pass.set_pipeline(&self.shader.pipeline(&cube_options));
+        let pipeline = (!self.cube_list.is_empty())
+            .then(|| self.shader.pipeline(&cube_options))
+            .flatten();
+        if let Some(pipeline) = pipeline {
+            render_pass.set_pipeline(&pipeline);
             render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
 
             RenderUtils::bind_mesh_buffers(render_pass, &self.wire_cube_mesh);
@@ -412,8 +418,11 @@ impl GizmoRenderer {
             }
         }
 
-        if !self.lines_mesh.vertices.is_empty() {
-            render_pass.set_pipeline(&self.shader.pipeline(&line_options));
+        let pipeline = (!self.lines_mesh.vertices.is_empty())
+            .then(|| self.shader.pipeline(&line_options))
+            .flatten();
+        if let Some(pipeline) = pipeline {
+            render_pass.set_pipeline(&pipeline);
             render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
 
             RenderUtils::bind_mesh_buffers(render_pass, &self.lines_mesh);
@@ -421,8 +430,11 @@ impl GizmoRenderer {
             render_pass.draw(0..(self.lines_mesh.vertices.len() as u32), 0..1);
         }
 
-        if !self.points_mesh.vertices.is_empty() {
-            render_pass.set_pipeline(&self.shader.pipeline(&point_options));
+        let pipeline = (!self.points_mesh.vertices.is_empty())
+            .then(|| self.shader.pipeline(&point_options))
+            .flatten();
+        if let Some(pipeline) = pipeline {
+            render_pass.set_pipeline(&pipeline);
             render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
 
             RenderUtils::bind_mesh_buffers(render_pass, &self.points_mesh);
@@ -430,8 +442,11 @@ impl GizmoRenderer {
             render_pass.draw(0..(self.points_mesh.vertices.len() as u32), 0..1);
         }
 
-        if !self.icons_mesh.indices.is_empty() {
-            render_pass.set_pipeline(&self.icon_shader.pipeline(&icon_options));
+        let pipeline = (!self.icons_mesh.indices.is_empty())
+            .then(|| self.icon_shader.pipeline(&icon_options))
+            .flatten();
+        if let Some(pipeline) = pipeline {
+            render_pass.set_pipeline(&pipeline);
             render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
             render_pass.set_bind_group(1, &self.icon_texture.bind_group, &[]);
 
@@ -463,7 +478,10 @@ impl GizmoRenderer {
                 write_mask: wgpu::ColorWrites::RED,
             })])
             .build();
-        render_pass.set_pipeline(&self.icon_object_id_shader.pipeline(&options));
+        let Some(pipeline) = self.icon_object_id_shader.pipeline(&options) else {
+            return;
+        };
+        render_pass.set_pipeline(&pipeline);
         render_pass.set_bind_group(0, &self.gizmo_bind_group, &[]);
         render_pass.set_bind_group(1, &self.icon_texture.object_id_bind_group, &[]);
         RenderUtils::bind_mesh_buffers(render_pass, &self.icons_mesh);

@@ -12,9 +12,9 @@ use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::PipelineCompilationOptions;
 use naga::front::wgsl::ParseError;
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 /// Bind-group layout entries grouped by bind-group index.
 pub type BindGroupEntries = BTreeMap<u32, Vec<wgpu::BindGroupLayoutEntry>>;
@@ -54,11 +54,19 @@ pub struct Shader {
     /// Bind-group entries each compute entry point uses, by entry point
     /// name.
     compute_entry_points: HashMap<String, BindGroupEntries>,
-    /// Compute pipelines built so far, by entry point name.
-    compute_pipelines: Mutex<HashMap<String, ComputeKernel>>,
-    /// Render pipelines built so far, keyed by pipeline options. Behind a
-    /// mutex so [`Shader::pipeline`] can build through a read lock.
-    pipelines: Mutex<HashMap<PipelineOptions, wgpu::RenderPipeline>>,
+    /// Compute pipelines built so far, by entry point name, or `None` for
+    /// a kernel wgpu rejected.
+    compute_pipelines: Mutex<HashMap<String, Option<ComputeKernel>>>,
+    /// Render pipelines built so far, keyed by pipeline options, or `None`
+    /// for options wgpu rejected. Behind a mutex so [`Shader::pipeline`] can
+    /// build through a read lock.
+    pipelines: Mutex<HashMap<PipelineOptions, Option<wgpu::RenderPipeline>>>,
+    /// Render pipelines of the version this one hot-reloaded over, kept for
+    /// options whose pipeline wgpu rejects in this version.
+    previous_pipelines: HashMap<PipelineOptions, wgpu::RenderPipeline>,
+    /// Compute pipelines of the version this one hot-reloaded over, kept for
+    /// kernels wgpu rejects in this version.
+    previous_compute_pipelines: HashMap<String, ComputeKernel>,
     /// Parsed Naga module used for reflection.
     pub module: naga::Module,
 }
@@ -86,6 +94,21 @@ impl Asset for Shader {
             .and_then(|s| s.to_str())
             .unwrap_or("shader")
             .to_string();
+        // A writer that truncates the file before writing its new contents
+        // leaves it empty for a moment. Empty WGSL parses, into a shader with
+        // no entry points, so it is refused as a write in progress.
+        let raw = std::fs::read(path).map_err(|err| {
+            AssetError::LoadError
+                .with_path(path)
+                .with_type(Self::asset_name())
+                .with_source(err)
+        })?;
+        if raw.trim_ascii().is_empty() {
+            return Err(AssetError::Incomplete
+                .with_path(path)
+                .with_type(Self::asset_name())
+                .with_source("the shader source is empty"));
+        }
         let preprocessed = AssetShaderLoader::new(&game.registries.assets.read())
             .preprocess(path)
             .map_err(|err| {
@@ -103,14 +126,11 @@ impl Asset for Shader {
                 .with_source(Self::describe_parse_error(&err, &preprocessed))
         })?;
         let source = preprocessed.source;
+        // wgpu validates the module and layouts further than naga's parser,
+        // and its default handler panics on an error outside a scope.
+        let scope = ValidationScope::push(device);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some(
-                path.file_stem().and_then(|f| f.to_str()).ok_or(
-                    AssetError::LoadError
-                        .with_path(path)
-                        .with_type(Self::asset_name()),
-                )?,
-            ),
+            label: Some(name.as_str()),
             source: ShaderSource::Wgsl(Cow::Borrowed(source.as_str())),
         });
 
@@ -142,6 +162,12 @@ impl Asset for Shader {
             bind_group_layouts: bind_group_layouts.iter().collect::<Vec<_>>().as_slice(),
             push_constant_ranges: &[],
         });
+        if let Some(error) = scope.pop() {
+            return Err(AssetError::LoadError
+                .with_path(path)
+                .with_type(Self::asset_name())
+                .with_source(error));
+        }
 
         let compute_entry_points = Self::compute_entry_points(&module, &bind_group_entries);
 
@@ -157,12 +183,142 @@ impl Asset for Shader {
             compute_entry_points,
             compute_pipelines: Mutex::new(HashMap::new()),
             pipelines: Mutex::new(HashMap::new()),
+            previous_pipelines: HashMap::new(),
+            previous_compute_pipelines: HashMap::new(),
             module,
         }))
+    }
+
+    /// Refuses a version that lacks an entry point the live shader has, or
+    /// whose bind-group entries differ from the live shader's: renderers
+    /// draw through the live entry points with bind groups built from the
+    /// live layouts. An accepted version keeps the live pipelines, for
+    /// options whose pipeline wgpu rejects in it.
+    fn accept_reload(&mut self, previous: &Self) -> Result<(), AssetError> {
+        if let Some(change) = Self::incompatible_change(previous, self) {
+            return Err(AssetError::LoadError
+                .with_type(Self::asset_name())
+                .with_source(format!(
+                    "{change}, so the reload is refused and shader {} keeps running; \
+                     a change to its entry points or bind-group layout takes effect \
+                     when the editor restarts",
+                    previous.name
+                )));
+        }
+        let pipelines = previous
+            .pipelines
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        self.previous_pipelines = previous.previous_pipelines.clone();
+        self.previous_pipelines.extend(
+            pipelines
+                .into_iter()
+                .filter_map(|(options, pipeline)| Some((options, pipeline?))),
+        );
+        let kernels = previous
+            .compute_pipelines
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        self.previous_compute_pipelines = previous.previous_compute_pipelines.clone();
+        self.previous_compute_pipelines.extend(
+            kernels
+                .into_iter()
+                .filter_map(|(entry_point, kernel)| Some((entry_point, kernel?))),
+        );
+        Ok(())
+    }
+}
+
+/// A wgpu validation error scope on a device, so an error is returned
+/// rather than reaching the device's default handler, which panics. The
+/// scope is popped when the guard is dropped, so an early return or a panic
+/// between push and pop never leaves it on the device's stack.
+///
+/// wgpu keeps one error-scope stack per device, shared by every thread, so a
+/// scope also holds [`SCOPE_LOCK`] from push to pop. Without it, scopes opened
+/// on two threads at once could pop each other's errors. Scopes do not nest.
+struct ValidationScope<'a> {
+    device: Option<&'a wgpu::Device>,
+    // Released after `drop` pops the scope.
+    _lock: MutexGuard<'static, ()>,
+}
+
+static SCOPE_LOCK: Mutex<()> = Mutex::new(());
+
+impl<'a> ValidationScope<'a> {
+    fn push(device: &'a wgpu::Device) -> Self {
+        let lock = SCOPE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        Self {
+            device: Some(device),
+            _lock: lock,
+        }
+    }
+
+    /// Pops the scope, returning the first validation error raised in it.
+    fn pop(mut self) -> Option<wgpu::Error> {
+        Self::pop_from(self.device.take()?)
+    }
+
+    fn pop_from(device: &wgpu::Device) -> Option<wgpu::Error> {
+        pollster::block_on(device.pop_error_scope())
+    }
+}
+
+impl Drop for ValidationScope<'_> {
+    /// Pops a scope that was not popped explicitly, logging its error.
+    fn drop(&mut self) {
+        if let Some(error) = self.device.take().and_then(Self::pop_from) {
+            log::error!("wgpu validation error in an abandoned error scope: {error}");
+        }
     }
 }
 
 impl Shader {
+    /// The first difference between `live` and `reloaded` that a running
+    /// renderer cannot follow: an entry point `reloaded` lacks, or a changed
+    /// bind-group entry.
+    fn incompatible_change(live: &Self, reloaded: &Self) -> Option<String> {
+        for entry_point in &live.module.entry_points {
+            let kept =
+                reloaded.module.entry_points.iter().any(|other| {
+                    other.name == entry_point.name && other.stage == entry_point.stage
+                });
+            if !kept {
+                return Some(format!(
+                    "the reloaded shader has no {:?} entry point `{}`",
+                    entry_point.stage, entry_point.name
+                ));
+            }
+        }
+        let bindings = |groups: &BindGroupEntries| {
+            groups
+                .iter()
+                .flat_map(|(group, entries)| {
+                    entries
+                        .iter()
+                        .map(move |entry| ((*group, entry.binding), *entry))
+                })
+                .collect::<BTreeMap<_, _>>()
+        };
+        let live = bindings(&live.bind_group_entries);
+        let reloaded = bindings(&reloaded.bind_group_entries);
+        let keys = live.keys().chain(reloaded.keys()).collect::<BTreeSet<_>>();
+        for key in keys {
+            let change = match (live.get(key), reloaded.get(key)) {
+                (Some(_), None) => "was removed",
+                (None, Some(_)) => "was added",
+                (Some(before), Some(after)) if before != after => "changed",
+                _ => continue,
+            };
+            let (group, binding) = key;
+            return Some(format!("group {group} binding {binding} {change}"));
+        }
+        None
+    }
+
     /// Describes naga's `error` in `shader`'s source at the files and lines
     /// it came from, rather than the lines of the expanded source. A column
     /// is the expanded line's, which a parameter's replacement can shift.
@@ -460,6 +616,8 @@ impl Shader {
             .get_mut()
             .unwrap_or_else(PoisonError::into_inner)
             .clear();
+        self.previous_pipelines.clear();
+        self.previous_compute_pipelines.clear();
     }
 
     /// Returns the render pipeline for `options`, building and caching it on
@@ -467,7 +625,12 @@ impl Shader {
     /// count, target format, depth state or vertex layout builds a new
     /// pipeline. A hot reload replaces the shader, which starts with an empty
     /// cache, so callers that ask every frame pick up the reloaded pipeline.
-    pub fn pipeline(&self, options: &PipelineOptions) -> wgpu::RenderPipeline {
+    ///
+    /// When wgpu rejects the pipeline, the error is logged once and the
+    /// shader keeps the pipeline the version it reloaded over built for
+    /// `options`, or returns `None` when it has none, and the caller skips
+    /// the draw.
+    pub fn pipeline(&self, options: &PipelineOptions) -> Option<wgpu::RenderPipeline> {
         let mut pipelines = self
             .pipelines
             .lock()
@@ -475,7 +638,24 @@ impl Shader {
         if let Some(pipeline) = pipelines.get(options) {
             return pipeline.clone();
         }
+        let scope = ValidationScope::push(self.render_context.device());
         let pipeline = self.build_pipeline(options);
+        let pipeline = match scope.pop() {
+            None => Some(pipeline),
+            Some(error) => {
+                let previous = self.previous_pipelines.get(options).cloned();
+                log::error!(
+                    "wgpu rejected a render pipeline of shader {}, {}: {error}",
+                    self.name,
+                    if previous.is_some() {
+                        "keeping the one it built before"
+                    } else {
+                        "skipping its draws"
+                    }
+                );
+                previous
+            }
+        };
         pipelines.insert(options.clone(), pipeline.clone());
         pipeline
     }
@@ -533,7 +713,9 @@ impl Shader {
         self.pipelines
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .len()
+            .values()
+            .flatten()
+            .count()
     }
 
     /// Returns the compute pipeline of `entry_point` with the bind-group
@@ -545,18 +727,39 @@ impl Shader {
     /// just its own resources. A shader with one compute entry point keeps
     /// its own layouts from [`Self::bind_group_layouts`]. A hot reload replaces the shader, which
     /// starts with an empty cache.
+    ///
+    /// When wgpu rejects the pipeline, the error is logged once and the
+    /// shader keeps the kernel the version it reloaded over built, or
+    /// returns `None` when it has none.
     pub fn compute_pipeline(&self, entry_point: &str) -> Option<ComputeKernel> {
         let mut pipelines = self
             .compute_pipelines
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         if let Some(kernel) = pipelines.get(entry_point) {
-            return Some(kernel.clone());
+            return kernel.clone();
         }
         let used = self.compute_entry_points.get(entry_point)?;
+        let scope = ValidationScope::push(self.render_context.device());
         let kernel = self.build_compute_pipeline(entry_point, used);
+        let kernel = match scope.pop() {
+            None => Some(kernel),
+            Some(error) => {
+                let previous = self.previous_compute_pipelines.get(entry_point).cloned();
+                log::error!(
+                    "wgpu rejected compute pipeline {entry_point} of shader {}, {}: {error}",
+                    self.name,
+                    if previous.is_some() {
+                        "keeping the one it built before"
+                    } else {
+                        "skipping its dispatches"
+                    }
+                );
+                previous
+            }
+        };
         pipelines.insert(entry_point.to_string(), kernel.clone());
-        Some(kernel)
+        kernel
     }
 
     /// Returns how many compute pipelines this shader has built.
@@ -564,7 +767,9 @@ impl Shader {
         self.compute_pipelines
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .len()
+            .values()
+            .flatten()
+            .count()
     }
 
     fn build_compute_pipeline(&self, entry_point: &str, used: &BindGroupEntries) -> ComputeKernel {
@@ -892,5 +1097,256 @@ fn second(@builtin(global_invocation_id) gid: vec3u) {
             shader.bind_group_layouts.is_empty(),
             "a shader of several kernels keeps no layout of its own"
         );
+    }
+}
+
+#[cfg(test)]
+mod hot_reload_tests {
+    use super::Shader;
+    use crate::render::{PipelineOptions, RenderUtils};
+    use crate::test_support::TestAssets;
+    use egui_wgpu::wgpu;
+    use notify::{Event, EventKind};
+    use std::path::Path;
+    use std::time::Duration;
+
+    const NAME: &str = "reload_probe";
+
+    /// A full-screen shader with one uniform; `color` is its fragment color.
+    fn shader_source(color: &str) -> String {
+        format!(
+            r#"
+struct Tint {{ color: vec4f }}
+@group(0) @binding(0) var<uniform> tint: Tint;
+
+@vertex
+fn vs_main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {{
+    let uv = vec2f(f32((index << 1u) & 2u), f32(index & 2u));
+    return vec4f(uv * 2.0 - 1.0, 0.0, 1.0);
+}}
+
+@fragment
+fn fs_main() -> @location(0) vec4f {{
+    return tint.color * {color};
+}}
+"#
+        )
+    }
+
+    const NO_FRAGMENT: &str = r#"
+struct Tint { color: vec4f }
+@group(0) @binding(0) var<uniform> tint: Tint;
+
+@vertex
+fn vs_main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {
+    return tint.color;
+}
+"#;
+
+    const MOVED_BINDING: &str = r#"
+struct Tint { color: vec4f }
+@group(0) @binding(1) var<uniform> tint: Tint;
+
+@vertex
+fn vs_main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {
+    return vec4f(0.0, 0.0, 0.0, 1.0);
+}
+
+@fragment
+fn fs_main() -> @location(0) vec4f {
+    return tint.color;
+}
+"#;
+
+    /// Same entry points and bindings, but the vertex stage reads a vertex
+    /// attribute that a full-screen draw has no buffer for, so wgpu rejects
+    /// its pipeline.
+    const NEEDS_A_VERTEX_BUFFER: &str = r#"
+struct Tint { color: vec4f }
+@group(0) @binding(0) var<uniform> tint: Tint;
+
+@vertex
+fn vs_main(@location(0) position: vec3f) -> @builtin(position) vec4f {
+    return vec4f(position, 1.0);
+}
+
+@fragment
+fn fs_main() -> @location(0) vec4f {
+    return tint.color;
+}
+"#;
+
+    fn options() -> PipelineOptions {
+        PipelineOptions::fullscreen_builder()
+            .target(RenderUtils::color_alpha_blending(
+                wgpu::TextureFormat::Rgba8Unorm,
+            ))
+            .build()
+    }
+
+    fn write_and_reload(assets: &crate::context::ReadOnlyAssetContext, path: &Path, source: &str) {
+        std::fs::write(path, source).expect("the shader is writable");
+        let registry = assets.registries.assets.read();
+        registry.recv_notify_event(
+            Event::new(EventKind::Modify(notify::event::ModifyKind::Any))
+                .add_path(path.to_path_buf()),
+        );
+        std::thread::sleep(Duration::from_millis(200));
+        registry.reload_assets();
+    }
+
+    fn reload_error_messages(assets: &crate::context::ReadOnlyAssetContext) -> Vec<String> {
+        assets
+            .registries
+            .assets
+            .read()
+            .reload_errors()
+            .iter()
+            .map(|error| error.error.to_string())
+            .collect()
+    }
+
+    fn entry_points(shader: &Shader) -> Vec<String> {
+        shader
+            .module
+            .entry_points
+            .iter()
+            .map(|entry_point| entry_point.name.clone())
+            .collect()
+    }
+
+    /// An empty write, a version without `fs_main` and a version with a
+    /// moved binding are each refused and keep the running shader; a valid
+    /// edit that keeps the layout reloads.
+    #[test]
+    fn a_reload_that_would_break_the_running_shader_keeps_it() {
+        let assets = TestAssets::engine();
+        let path = assets.engine_root().join(format!("{NAME}.wgsl"));
+        std::fs::write(&path, shader_source("1.0")).expect("the shader is writable");
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let shader = context
+            .registries
+            .assets
+            .read()
+            .load::<Shader>(NAME)
+            .expect("the shader loads");
+        assert!(shader.read().pipeline(&options()).is_some());
+        let expected = vec!["vs_main".to_string(), "fs_main".to_string()];
+
+        write_and_reload(&context, &path, "");
+        assert_eq!(entry_points(&shader.read()), expected);
+        assert!(shader.read().pipeline(&options()).is_some());
+        assert!(
+            reload_error_messages(&context).is_empty(),
+            "an empty write is in progress"
+        );
+
+        write_and_reload(&context, &path, NO_FRAGMENT);
+        assert_eq!(entry_points(&shader.read()), expected);
+        assert!(shader.read().pipeline(&options()).is_some());
+        let errors = reload_error_messages(&context);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains("fs_main"), "{errors:?}");
+        assert!(errors[0].contains("restart"), "{errors:?}");
+
+        write_and_reload(&context, &path, MOVED_BINDING);
+        assert_eq!(entry_points(&shader.read()), expected);
+        assert!(shader.read().pipeline(&options()).is_some());
+        let errors = reload_error_messages(&context);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains("group 0 binding"), "{errors:?}");
+
+        write_and_reload(&context, &path, &shader_source("0.5"));
+        assert!(shader.read().source.contains("0.5"));
+        assert!(shader.read().pipeline(&options()).is_some());
+        assert!(reload_error_messages(&context).is_empty());
+    }
+
+    /// A reload wgpu rejects the pipeline of keeps drawing with the pipeline
+    /// the shader built before, and a shader with none skips the draw.
+    #[test]
+    fn a_pipeline_wgpu_rejects_keeps_the_previous_one_or_none() {
+        let assets = TestAssets::engine();
+        let path = assets.engine_root().join(format!("{NAME}.wgsl"));
+        std::fs::write(&path, shader_source("1.0")).expect("the shader is writable");
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let shader = context
+            .registries
+            .assets
+            .read()
+            .load::<Shader>(NAME)
+            .expect("the shader loads");
+        let before = shader.read().pipeline(&options()).expect("a pipeline");
+
+        write_and_reload(&context, &path, NEEDS_A_VERTEX_BUFFER);
+        assert!(reload_error_messages(&context).is_empty());
+        assert_eq!(shader.read().pipeline(&options()), Some(before));
+
+        let fresh = assets.engine_root().join("fresh_probe.wgsl");
+        std::fs::write(&fresh, NEEDS_A_VERTEX_BUFFER).expect("the shader is writable");
+        use crate::assets::Asset;
+        let fresh = Shader::from_file(&context, &fresh)
+            .expect("the shader loads")
+            .asset;
+        assert!(fresh.pipeline(&options()).is_none());
+    }
+
+    const INVALID: &str = "fn main() { let x: u32 = 1.0; }";
+    const VALID: &str = "@compute @workgroup_size(1) fn main() {}";
+
+    fn create_module(device: &wgpu::Device, source: &'static str) {
+        let _module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("scope_probe"),
+            source: wgpu::ShaderSource::Wgsl(source.into()),
+        });
+    }
+
+    /// A scope dropped without `pop` is popped by its guard, taking its
+    /// error with it, so the scope pushed before it is the one popped next.
+    /// Its outer scope is pushed outside the guard, so it runs on a device of
+    /// its own that no other test's scopes can reach.
+    #[test]
+    fn a_dropped_validation_scope_pops_itself() {
+        let adapter = crate::test_support::test_adapter();
+        let (device, _queue) =
+            pollster::block_on(adapter.request_device(&Default::default(), None))
+                .expect("a second test device");
+        let device = &device;
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        {
+            let _scope = super::ValidationScope::push(device);
+            create_module(device, INVALID);
+        }
+        assert!(pollster::block_on(device.pop_error_scope()).is_none());
+    }
+
+    /// Scopes opened on two threads at once each see only their own errors.
+    #[test]
+    fn validation_scopes_on_two_threads_keep_their_own_errors() {
+        let render_context = crate::test_support::test_render_context();
+        let device = render_context.device();
+        std::thread::scope(|threads| {
+            let invalid = threads.spawn(|| {
+                (0..200).all(|_| {
+                    let scope = super::ValidationScope::push(device);
+                    create_module(device, INVALID);
+                    scope.pop().is_some()
+                })
+            });
+            let valid = threads.spawn(|| {
+                (0..200).all(|_| {
+                    let scope = super::ValidationScope::push(device);
+                    create_module(device, VALID);
+                    scope.pop().is_none()
+                })
+            });
+            assert!(
+                invalid.join().unwrap(),
+                "an invalid module's error was lost"
+            );
+            assert!(valid.join().unwrap(), "a valid module got another's error");
+        });
     }
 }

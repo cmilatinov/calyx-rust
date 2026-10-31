@@ -59,7 +59,10 @@ impl OverlayPass for GridRenderer {
                 ..RenderUtils::depth_default(wgpu::TextureFormat::Depth32Float)
             })
             .build();
-        render_pass.set_pipeline(&self.shader.read().pipeline(&options));
+        let Some(pipeline) = self.shader.read().pipeline(&options) else {
+            return;
+        };
+        render_pass.set_pipeline(&pipeline);
         render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
         RenderUtils::draw_fullscreen(render_pass);
     }

@@ -156,10 +156,13 @@ impl OverlayPass for OutlineRenderer {
     }
 
     fn record(&mut self, context: &OverlayContext, render_pass: &mut wgpu::RenderPass<'_>) {
-        let pipeline = self
+        let Some(pipeline) = self
             .shader
             .read()
-            .pipeline(&Self::pipeline_options(context));
+            .pipeline(&Self::pipeline_options(context))
+        else {
+            return;
+        };
         render_pass.set_pipeline(&pipeline);
         for (pass, ..) in self.active_passes() {
             // `prepare` built the group for this frame's object-id view.

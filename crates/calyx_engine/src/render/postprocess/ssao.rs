@@ -189,14 +189,14 @@ impl SsaoPass {
     fn pipeline(
         shader: &Ref<Shader>,
         format: wgpu::TextureFormat,
-    ) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
+    ) -> Option<(wgpu::RenderPipeline, wgpu::BindGroupLayout)> {
         let shader = shader.read();
         let pipeline = shader.pipeline(
             &PipelineOptions::fullscreen_builder()
                 .target(RenderUtils::color_default(format))
                 .build(),
         );
-        (pipeline, shader.bind_group_layouts[0].clone())
+        Some((pipeline?, shader.bind_group_layouts[0].clone()))
     }
 }
 
@@ -258,7 +258,9 @@ impl PostProcessPass for SsaoPass {
         let targets = targets.as_ref().expect("the targets were just fitted");
 
         // Occlusion from depth, at half resolution.
-        let (pipeline, layout) = Self::pipeline(occlusion_shader, Self::TARGET_FORMAT);
+        let Some((pipeline, layout)) = Self::pipeline(occlusion_shader, Self::TARGET_FORMAT) else {
+            return;
+        };
         let bind_group =
             occlusion_bind_group.get_or_create((layout.clone(), depth.view.clone()), || {
                 device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -284,7 +286,9 @@ impl PostProcessPass for SsaoPass {
         drop(render_pass);
 
         // Depth-aware blur that removes the rotation noise.
-        let (pipeline, layout) = Self::pipeline(blur_shader, Self::TARGET_FORMAT);
+        let Some((pipeline, layout)) = Self::pipeline(blur_shader, Self::TARGET_FORMAT) else {
+            return;
+        };
         let occlusion = &targets.occlusion.view;
         let bind_group = blur_bind_group.get_or_create((layout.clone(), occlusion.clone()), || {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -304,7 +308,11 @@ impl PostProcessPass for SsaoPass {
         drop(render_pass);
 
         // Multiply the upsampled occlusion into the scene color.
-        let (pipeline, layout) = Self::pipeline(composite_shader, io.output.descriptor.format);
+        let Some((pipeline, layout)) =
+            Self::pipeline(composite_shader, io.output.descriptor.format)
+        else {
+            return;
+        };
         let blurred = &targets.blurred.view;
         let bind_group = composite_bind_group.get_or_create(
             (

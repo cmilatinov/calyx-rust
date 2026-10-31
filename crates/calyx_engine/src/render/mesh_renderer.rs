@@ -165,7 +165,10 @@ impl MeshRenderer {
                 continue;
             };
             if shader_id != last.0 {
-                render_pass.set_pipeline(&shader.pipeline(pipeline_options));
+                let Some(pipeline) = shader.pipeline(pipeline_options) else {
+                    continue;
+                };
+                render_pass.set_pipeline(&pipeline);
                 render_pass.set_bind_group(0, &scene_bind_group, &[]);
                 render_pass.set_bind_group(2, &light_storage_bind_group, &[]);
             }
@@ -311,6 +314,9 @@ impl MeshRenderer {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
+        let Some(pipeline) = pipeline else {
+            return;
+        };
         render_pass.set_pipeline(&pipeline);
         render_pass.set_bind_group(0, &camera_bind_group, &[]);
 

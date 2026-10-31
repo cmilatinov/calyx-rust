@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 use crate::assets::animation_graph::AnimationGraph;
-use crate::assets::error::AssetError;
+use crate::assets::error::{AssetError, AssetErrorKind};
 use crate::assets::import;
 use crate::assets::material::{Material, MaterialTexture};
 use crate::assets::mesh::Mesh;
@@ -999,9 +999,13 @@ impl AssetRegistry {
                             })
                         })
                         .transpose()?;
-                    let LoadedAsset { asset, sub_assets } = A::from_file(&assets, path)?;
+                    let LoadedAsset {
+                        mut asset,
+                        sub_assets,
+                    } = A::from_file(&assets, path)?;
                     let asset_ref = match existing {
                         Some(asset_ref) => {
+                            asset.accept_reload(&asset_ref.read())?;
                             *asset_ref.write() = asset;
                             asset_ref
                         }
@@ -1874,7 +1878,18 @@ impl AssetRegistry {
                 path.display()
             );
             if let Err(error) = self.load_asset(id, LoadMode::Reload, None) {
-                log::warn!(
+                if error.kind == AssetErrorKind::Incomplete {
+                    // The next write of the source marks it dirty again.
+                    log::info!(
+                        "Skipping hot reload of asset {} ({}) from {}: {}",
+                        meta.name,
+                        id,
+                        path.display(),
+                        error
+                    );
+                    continue;
+                }
+                log::error!(
                     "Failed to hot-reload asset {} ({}) from {}: {}",
                     meta.name,
                     id,
@@ -2100,7 +2115,6 @@ impl AssetRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assets::error::AssetErrorKind;
     use crate::test_support::test_registries_with_assets;
     use serde_json::json;
 
