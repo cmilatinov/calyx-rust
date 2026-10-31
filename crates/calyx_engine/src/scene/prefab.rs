@@ -4,7 +4,7 @@ use crate::assets::import::{self, ImportedNode};
 use crate::assets::material::Material;
 use crate::assets::mesh::Mesh;
 use crate::assets::texture::Texture;
-use crate::assets::{Asset, AssetRegistry, LoadedAsset};
+use crate::assets::{Asset, AssetMeta, AssetRegistry, LoadedAsset};
 use crate::component::{
     ComponentBone, ComponentID, ComponentMesh, ComponentSkinnedMesh, ComponentTransform,
 };
@@ -98,28 +98,32 @@ impl Asset for Prefab {
 
             // Every sub-asset of the model shares one namespace, so names are taken in a fixed
             // order, meshes first, and each keeps its id across reimports of the same file.
-            let mut used_names = HashSet::new();
-            let mut names = |source_names: Vec<&str>, fallback: &str| {
+            let mut sub_asset_names = SubAssetNames::new(&asset_registry, &meta);
+            let mut names = |source_names: Vec<&str>, fallback: &str, type_uuid: Uuid| {
                 source_names
                     .into_iter()
-                    .map(|name| imported_sub_asset_name(name, fallback, &mut used_names))
+                    .map(|name| sub_asset_names.allocate(name, fallback, type_uuid))
                     .collect::<Vec<_>>()
             };
             let mesh_names = names(
                 scene.meshes.iter().map(|m| m.name.as_str()).collect(),
                 "mesh",
+                Mesh::type_uuid(),
             );
             let animation_names = names(
                 scene.animations.iter().map(|a| a.name.as_str()).collect(),
                 "animation",
+                Animation::type_uuid(),
             );
             let material_names = names(
                 scene.materials.iter().map(|m| m.name.as_str()).collect(),
                 "material",
+                Material::type_uuid(),
             );
             let texture_names = names(
                 scene.textures.iter().map(|t| t.name.as_str()).collect(),
                 "texture",
+                Texture::type_uuid(),
             );
 
             let mut textures = Vec::new();
@@ -217,23 +221,79 @@ impl Asset for Prefab {
     }
 }
 
-fn imported_sub_asset_name(
-    source_name: &str,
-    fallback_name: &str,
-    used_names: &mut HashSet<String>,
-) -> String {
-    let stem = if source_name.is_empty() {
-        fallback_name
-    } else {
-        source_name
-    };
-    let mut candidate = stem.to_string();
-    let mut suffix = 1;
-    while !used_names.insert(candidate.clone()) {
-        candidate = format!("{stem}_{suffix}");
-        suffix += 1;
+/// Allocates the unique local names of a model's sub-assets for one import.
+///
+/// A name comes from the source name, or `fallback` when that is empty, with the lowest `_N`
+/// suffix that makes it unique. A sub-asset the model already had keeps its name, and so its id,
+/// when its type matches: a texture suffixed `Paint_1` because a material held `Paint` stays
+/// `Paint_1` after the material is renamed. A name the registry holds as another type, or under
+/// another parent, is skipped, since the registry would refuse it.
+struct SubAssetNames<'a> {
+    registry: &'a AssetRegistry,
+    parent: &'a AssetMeta,
+    /// The model's sub-assets before this import.
+    previous: Vec<AssetMeta>,
+    used: HashSet<String>,
+}
+
+impl<'a> SubAssetNames<'a> {
+    fn new(registry: &'a AssetRegistry, parent: &'a AssetMeta) -> Self {
+        Self {
+            registry,
+            parent,
+            previous: parent
+                .children
+                .iter()
+                .filter_map(|id| registry.asset_meta_from_id(*id))
+                .collect(),
+            used: HashSet::new(),
+        }
     }
-    candidate
+
+    fn allocate(&mut self, source_name: &str, fallback_name: &str, type_uuid: Uuid) -> String {
+        let stem = if source_name.is_empty() {
+            fallback_name
+        } else {
+            source_name
+        };
+        let suffix = |name: &str| -> Option<usize> {
+            if name == stem {
+                return Some(0);
+            }
+            let digits = name.strip_prefix(stem)?.strip_prefix('_')?;
+            let suffix = digits.parse::<usize>().ok()?;
+            (suffix > 0 && suffix.to_string() == digits).then_some(suffix)
+        };
+        let kept = self
+            .previous
+            .iter()
+            .filter(|meta| meta.type_uuid == type_uuid && !self.used.contains(&meta.name))
+            .filter_map(|meta| suffix(&meta.name).map(|suffix| (suffix, &meta.name)))
+            .min_by_key(|(suffix, _)| *suffix)
+            .map(|(_, name)| name.clone());
+        let name = kept.unwrap_or_else(|| {
+            (0..)
+                .map(|suffix| match suffix {
+                    0 => stem.to_string(),
+                    suffix => format!("{stem}_{suffix}"),
+                })
+                .find(|name| !self.used.contains(name) && self.is_free(name, type_uuid))
+                .expect("some suffix is free")
+        });
+        self.used.insert(name.clone());
+        name
+    }
+
+    /// Whether the registry would accept `name` for a sub-asset of this model of `type_uuid`.
+    fn is_free(&self, name: &str, type_uuid: Uuid) -> bool {
+        self.registry
+            .asset_meta(&format!("{}/{name}", self.parent.name))
+            .is_none_or(|meta| {
+                meta.type_uuid == type_uuid
+                    && meta.parent == Some(self.parent.id)
+                    && meta.path.is_none()
+            })
+    }
 }
 
 /// Resolves the default material assigned to imported meshes.
@@ -422,17 +482,28 @@ mod tests {
 
     #[test]
     fn imported_sub_asset_names_are_unique() {
-        let mut used_names = HashSet::new();
+        let context = test_game_context().assets.lock_read();
+        let registry = context.registries.assets.read();
+        let parent = AssetMeta {
+            id: Uuid::new_v4(),
+            name: format!("models/{}", Uuid::new_v4()),
+            display_name: String::new(),
+            type_uuid: Prefab::type_uuid(),
+            parent: None,
+            children: Vec::new(),
+            path: None,
+        };
+        let mut names = SubAssetNames::new(&registry, &parent);
+        let mesh = Mesh::type_uuid();
 
+        assert_eq!(names.allocate("Tracks", "mesh", mesh), "Tracks");
+        assert_eq!(names.allocate("Tracks", "mesh", mesh), "Tracks_1");
+        assert_eq!(names.allocate("", "mesh", mesh), "mesh");
         assert_eq!(
-            imported_sub_asset_name("Tracks", "mesh", &mut used_names),
-            "Tracks"
+            names.allocate("Tracks", "texture", Texture::type_uuid()),
+            "Tracks_2",
+            "every type shares one namespace"
         );
-        assert_eq!(
-            imported_sub_asset_name("Tracks", "mesh", &mut used_names),
-            "Tracks_1"
-        );
-        assert_eq!(imported_sub_asset_name("", "mesh", &mut used_names), "mesh");
     }
 
     fn node(name: &str, children: Vec<ImportedNode>) -> ImportedNode {
@@ -826,6 +897,52 @@ mod tests {
             first_ids,
             listed.iter().map(|(_, id)| *id).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn a_sub_asset_keeps_its_name_when_another_type_frees_the_one_it_was_suffixed_from() {
+        let assets = crate::test_support::TestAssets::models();
+        let path = assets.fixtures_root().join("gltf/Materials.gltf");
+        let source = std::fs::read_to_string(&path).unwrap();
+        let painted = "\"name\": \"Painted\"";
+        assert!(source.contains(painted));
+        // The material takes the image's name, so the texture becomes `Emissive_1`.
+        std::fs::write(&path, source.replace(painted, "\"name\": \"Emissive\"")).unwrap();
+        let texture_id = {
+            let context = assets.asset_context();
+            let context = context.lock_read();
+            let registry = context.registries.assets.read();
+            registry.load_by_path::<Prefab>(&path).unwrap();
+            let material = materials_sub_asset(&registry, "Emissive");
+            let texture = materials_sub_asset(&registry, "Emissive_1");
+            assert_eq!(
+                registry.asset_meta_from_id(material).unwrap().type_uuid,
+                Material::type_uuid()
+            );
+            assert_eq!(
+                registry.asset_meta_from_id(texture).unwrap().type_uuid,
+                Texture::type_uuid()
+            );
+
+            // Renaming the material frees `Emissive`, which the registry still holds as a
+            // material.
+            std::fs::write(&path, &source).unwrap();
+            registry.reload_by_path::<Prefab>(&path).unwrap();
+            assert_eq!(materials_sub_asset(&registry, "Emissive_1"), texture);
+            texture
+        };
+
+        // A fresh registry reads the rewritten `.meta` and keeps the texture's id.
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let registry = context.registries.assets.read();
+        registry.load_by_path::<Prefab>(&path).unwrap();
+        assert_eq!(materials_sub_asset(&registry, "Emissive_1"), texture_id);
+        assert!(registry
+            .asset_meta_from_path(&path)
+            .unwrap()
+            .children
+            .contains(&texture_id));
     }
 
     #[test]
