@@ -1,5 +1,5 @@
 use crate::core::AbsoluteTime;
-use crate::net::{NetworkIdRange, NetworkObjectId};
+use crate::net::{NetworkIdRange, NetworkObjectId, SnapshotEntry};
 use renet::{ClientId, DefaultChannel};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -97,6 +97,18 @@ pub enum GameMessage {
         component_uuid: Uuid,
         enabled: bool,
     },
+    // JOIN SNAPSHOT
+    /// Part of the snapshot the server sends a client that joins, right
+    /// after its `SelfConnected`: replicated state changed at runtime, applied
+    /// in order. See [`crate::net::ReplicationRecord`].
+    JoinSnapshot { entries: Vec<SnapshotEntry> },
+    /// Latest synced payload of one synchronized component, sent to a joining
+    /// client after the last `JoinSnapshot` chunk.
+    SnapshotComponent {
+        network_object_id: NetworkObjectId,
+        component_uuid: Uuid,
+        data: Vec<u8>,
+    },
 }
 
 impl GameMessage {
@@ -116,7 +128,13 @@ impl GameMessage {
         "from_client_id:ClientId,prefab_id:Uuid),",
         "DestroyGameObject(network_object_id:NetworkObjectId,from_client_id:ClientId),",
         "SetComponentEnabled(network_object_id:NetworkObjectId,from_client_id:ClientId,",
-        "component_uuid:Uuid,enabled:bool)}",
+        "component_uuid:Uuid,enabled:bool),",
+        "JoinSnapshot(entries:Vec<SnapshotEntry>),",
+        "SnapshotComponent(network_object_id:NetworkObjectId,component_uuid:Uuid,data:Vec<u8>)};",
+        "SnapshotEntry{Destroy(network_object_id:NetworkObjectId),",
+        "Spawn(prefab_id:Uuid,network_object_ids:HashMap<u32,NetworkObjectId>,owner_id:ClientId),",
+        "Owner(network_object_id:NetworkObjectId,owner_id:ClientId),",
+        "ComponentEnabled(network_object_id:NetworkObjectId,component_uuid:Uuid,enabled:bool)}",
     );
 
     /// Stable FNV-1a hash of the protocol schema string.
@@ -137,7 +155,9 @@ impl GameMessage {
             | Self::SelfConnected { .. }
             | Self::ClientConnected { .. }
             | Self::ClientDisconnected { .. }
-            | Self::SyncTime { .. } => None,
+            | Self::SyncTime { .. }
+            | Self::JoinSnapshot { .. }
+            | Self::SnapshotComponent { .. } => None,
         }
     }
 
@@ -161,8 +181,13 @@ impl GameMessage {
     pub fn channel(&self) -> GameChannel {
         match self {
             Self::SyncTime { .. } | Self::SyncComponent { .. } => GameChannel::Unreliable,
-            Self::SelfConnected { .. } => GameChannel::ReliableUnordered,
+            // `SelfConnected` shares the ordered channel with the join
+            // snapshot and live lifecycle messages, so a client always knows
+            // its id before it applies any of them.
             Self::ServerEvent(_)
+            | Self::SelfConnected { .. }
+            | Self::JoinSnapshot { .. }
+            | Self::SnapshotComponent { .. }
             | Self::ClientConnected { .. }
             | Self::ClientDisconnected { .. }
             | Self::TransferOwnership { .. }
@@ -235,6 +260,11 @@ impl RoutedMessage for GameMessage {
     fn route(&self) -> Option<MessageRoute> {
         match self {
             Self::SyncComponent {
+                network_object_id,
+                component_uuid,
+                ..
+            }
+            | Self::SnapshotComponent {
                 network_object_id,
                 component_uuid,
                 ..

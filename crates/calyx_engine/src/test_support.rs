@@ -636,6 +636,28 @@ impl NetworkTestHarness {
         Self { contexts }
     }
 
+    /// Connects one more client to the host, as a peer joining mid-session,
+    /// and returns its client index. It is connected once
+    /// [`NetworkTestHarness::wait_connected`] returns.
+    pub fn add_client(&mut self) -> usize {
+        let server_addr = self
+            .host()
+            .resources
+            .network()
+            .server
+            .as_ref()
+            .unwrap()
+            .bound_addr();
+        let mut ctx = test_game_context();
+        ctx.resources
+            .network_mut()
+            .client
+            .connect(server_addr)
+            .expect("failed to connect");
+        self.contexts.push(ctx);
+        self.client_count() - 1
+    }
+
     /// Returns the host context.
     pub fn host(&self) -> &GameContext {
         &self.contexts[0]

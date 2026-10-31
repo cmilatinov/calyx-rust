@@ -9,6 +9,7 @@ mod ids;
 mod message;
 mod network;
 mod server;
+mod snapshot;
 mod sync;
 
 pub use client::*;
@@ -17,6 +18,7 @@ pub use ids::*;
 pub use message::*;
 pub use network::*;
 pub use server::*;
+pub use snapshot::*;
 
 #[cfg(test)]
 mod tests;

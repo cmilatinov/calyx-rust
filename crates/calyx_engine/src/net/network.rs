@@ -6,7 +6,7 @@ use crate::net::client::Client;
 use crate::net::server::Server;
 use crate::net::{
     network_id_range, ComponentNetworkObject, GameMessage, MessageHandler, MessageHandlerResult,
-    MessageQueue, MessageSender, NetworkObjectId, ServerEvent,
+    MessageQueue, MessageSender, NetworkObjectId, ServerEvent, SnapshotEntry,
 };
 use crate::scene::{GameObject, Prefab, Scene};
 use crate::utils::TypeUuid;
@@ -174,7 +174,10 @@ impl Network {
             from_client_id: client_id,
         };
         let result = match &mut self.server {
-            Some(server) => server.broadcast_message(&message),
+            Some(server) => {
+                server.record_mut().destroy(network_object_id, true);
+                server.broadcast_message(&message)
+            }
             None => self.client.send_message(&message),
         };
         if let Err(e) = result {
@@ -222,7 +225,14 @@ impl Network {
             enabled,
         };
         let result = match &mut self.server {
-            Some(server) => server.broadcast_message(&message),
+            Some(server) => {
+                server.record_mut().set_component_enabled(
+                    network_object_id,
+                    component_uuid,
+                    enabled,
+                );
+                server.broadcast_message(&message)
+            }
             None => self.client.send_message(&message),
         };
         if let Err(e) = result {
@@ -280,6 +290,11 @@ impl Network {
             network_object_ids.insert(index, id);
         }
         assign_network_ids(scene, &objects, client_id, &network_object_ids);
+        if let Some(server) = &mut self.server {
+            server
+                .record_mut()
+                .spawn(client_id, prefab_ref.id(), &network_object_ids);
+        }
         let message = GameMessage::SpawnPrefab {
             network_object_ids,
             from_client_id: client_id,
@@ -336,31 +351,10 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
         message: &GameMessage,
     ) -> MessageHandlerResult {
         match message {
-            GameMessage::ServerEvent(ServerEvent::ClientConnected { client_id }) => {
-                let Some(server) = server else {
-                    return MessageHandlerResult::Consume;
-                };
-                let Some(id_range) = server.reserve_id_range(*client_id) else {
-                    log::error!("No network object id range left for client {client_id}");
-                    return MessageHandlerResult::Consume;
-                };
-                if let Err(e) = server.send_message(
-                    *client_id,
-                    &GameMessage::SelfConnected {
-                        client_ids: server.client_ids(),
-                        id_range,
-                    },
-                ) {
-                    log::warn!("Failed to send SelfConnected to {client_id}: {e}");
-                }
-                if let Err(e) = server.broadcast_message_except(
-                    *client_id,
-                    &GameMessage::ClientConnected {
-                        client_id: *client_id,
-                    },
-                ) {
-                    log::warn!("Failed to broadcast ClientConnected: {e}");
-                }
+            // `Server::update` already sent the client its `SelfConnected` and
+            // join snapshot, the moment the transport reported it, so nothing
+            // relayed before this pass reaches it ahead of the snapshot.
+            GameMessage::ServerEvent(ServerEvent::ClientConnected { .. }) => {
                 MessageHandlerResult::Consume
             }
             GameMessage::ServerEvent(ServerEvent::ClientDisconnected { client_id }) => {
@@ -425,6 +419,9 @@ impl MessageHandler<NetworkSceneSyncContext<'_, '_>, GameMessage> for NetworkSce
                         break 'server_logic;
                     };
                     log::trace!("SERVER - Transferring ownership");
+                    server
+                        .record_mut()
+                        .transfer(*network_object_id, *to_client_id);
                     if let Err(e) = server.broadcast_message(message) {
                         log::warn!("Failed to broadcast TransferOwnership: {e}");
                     }
@@ -469,6 +466,9 @@ pub(crate) fn handle_destroy(
         }
     }
     if let Some(server) = server {
+        server
+            .record_mut()
+            .destroy(network_object_id, target.is_some());
         if let Err(e) = server.broadcast_message_except(acting_client_id, message) {
             log::warn!("Failed to broadcast DestroyGameObject: {e}");
         }
@@ -508,6 +508,14 @@ pub(crate) fn handle_component_enabled(
         }
     }
     if let Some(server) = server {
+        // Only the state of an object some peer holds is kept for joiners.
+        if target.is_some() || server.record().is_spawned(*network_object_id) {
+            server.record_mut().set_component_enabled(
+                *network_object_id,
+                *component_uuid,
+                *enabled,
+            );
+        }
         if let Err(e) = server.broadcast_message_except(acting_client_id, message) {
             log::warn!("Failed to broadcast SetComponentEnabled: {e}");
         }
@@ -609,6 +617,9 @@ impl MessageHandler<NetworkPrefabSyncContext<'_, '_>, GameMessage> for NetworkPr
                 // The server relays the spawn to every other client once it
                 // has instantiated it like any other peer.
                 if let Some(server) = server {
+                    server
+                        .record_mut()
+                        .spawn(acting_client_id, *prefab_id, network_object_ids);
                     if let Err(e) = server.broadcast_message_except(acting_client_id, message) {
                         log::warn!("Failed to broadcast SpawnPrefab: {e}");
                     }
@@ -637,7 +648,73 @@ impl MessageHandler<NetworkPrefabSyncContext<'_, '_>, GameMessage> for NetworkPr
                 handle_component_enabled(server, scene, sender, message);
                 MessageHandlerResult::Consume
             }
+            GameMessage::JoinSnapshot { entries } => {
+                // Only the server sends a snapshot, and never to the host.
+                if sender != MessageSender::Server || server.is_some() {
+                    log::warn!("Ignored a join snapshot not sent by the server");
+                } else if local_id.is_none() {
+                    // `SelfConnected` travels ahead of the snapshot on the
+                    // same ordered channel, so this does not happen.
+                    log::warn!("Ignored a join snapshot received before SelfConnected");
+                } else {
+                    for entry in entries {
+                        apply_snapshot_entry(scene, context, entry);
+                    }
+                }
+                MessageHandlerResult::Consume
+            }
             _ => MessageHandlerResult::Ignore,
+        }
+    }
+}
+
+/// Applies one entry of the join snapshot the server sent.
+///
+/// Entries come from the server, so they skip the ownership checks of the
+/// live messages: the server accepted each change when it happened.
+fn apply_snapshot_entry(scene: &mut Scene, context: &ReadOnlyAssetContext, entry: &SnapshotEntry) {
+    match entry {
+        SnapshotEntry::Destroy { network_object_id } => {
+            if let Some((game_object, _)) = find_network_object(scene, *network_object_id) {
+                scene.delete(game_object);
+            }
+        }
+        SnapshotEntry::Spawn {
+            prefab_id,
+            network_object_ids,
+            owner_id,
+        } => {
+            if network_object_ids
+                .values()
+                .any(|&id| scene.indexed_network_object(id).is_some())
+            {
+                log::debug!("Skipped snapshot spawn of prefab {prefab_id}: its ids already exist");
+                return;
+            }
+            if let Err(reason) =
+                instantiate_spawn(scene, context, *owner_id, *prefab_id, network_object_ids)
+            {
+                log::warn!("Refused snapshot spawn of prefab {prefab_id}: {reason}");
+            }
+        }
+        SnapshotEntry::Owner {
+            network_object_id,
+            owner_id,
+        } => {
+            if let Some((game_object, _)) = find_network_object(scene, *network_object_id) {
+                scene.write_component::<ComponentNetworkObject, _>(game_object, |c_netobj| {
+                    c_netobj.owner_id = *owner_id;
+                });
+            }
+        }
+        SnapshotEntry::ComponentEnabled {
+            network_object_id,
+            component_uuid,
+            enabled,
+        } => {
+            if let Some((game_object, _)) = find_network_object(scene, *network_object_id) {
+                scene.set_component_enabled_dyn(game_object, *component_uuid, *enabled);
+            }
         }
     }
 }

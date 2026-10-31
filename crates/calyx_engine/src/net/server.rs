@@ -1,11 +1,15 @@
 use crate::error::BoxedError;
 use crate::net::message::{GameChannel, GameMessage};
-use crate::net::{MessageQueue, MessageSender, NetworkIdRange, NetworkObjectId, ServerEvent};
+use crate::net::{
+    MessageQueue, MessageSender, NetworkIdRange, NetworkObjectId, ReplicationRecord, ServerEvent,
+    SnapshotPlan, SNAPSHOT_CHUNK_BYTES, SNAPSHOT_LIVE_HEADROOM_BYTES,
+};
 use renet::{Bytes, ClientId, ConnectionConfig, RenetServer};
 use renet_netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig};
 use std::collections::HashMap;
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, SystemTime};
+use uuid::Uuid;
 
 /// Local authoritative server plus its netcode transport.
 pub struct Server {
@@ -21,6 +25,8 @@ pub struct Server {
     id_ranges: HashMap<ClientId, NetworkIdRange>,
     /// Next range [`Server::reserve_id_range`] hands out; 0 is never used.
     next_id_range: NetworkIdRange,
+    /// Replicated state changed at runtime, sent to each client that joins.
+    record: ReplicationRecord,
 }
 
 /// Component sync a client sent, kept encoded so the relay forwards the
@@ -28,6 +34,8 @@ pub struct Server {
 struct PendingSync {
     sender: ClientId,
     network_object_id: NetworkObjectId,
+    component_uuid: Uuid,
+    data: Vec<u8>,
     channel: GameChannel,
     bytes: Bytes,
 }
@@ -59,6 +67,7 @@ impl Server {
             pending_syncs: Vec::new(),
             id_ranges: HashMap::new(),
             next_id_range: 1,
+            record: ReplicationRecord::default(),
         })
     }
 
@@ -75,23 +84,23 @@ impl Server {
 
     /// Advances the server, emits connection events, and queues any received
     /// client messages.
+    ///
+    /// A client that just connected gets its `SelfConnected` and its join
+    /// snapshot here, as soon as the transport reports it and before this
+    /// call queues, relays or sends anything else. Every live message reaches
+    /// it later on the same ordered channel, so it never sees one before the
+    /// snapshot, and the snapshot holds every change relayed before it.
     pub fn update(&mut self, queue: &mut MessageQueue<GameMessage>, duration: Duration) {
-        let Self {
-            server,
-            transport,
-            pending_syncs,
-            ..
-        } = self;
-
-        server.update(duration);
-        if let Err(err) = transport.update(duration, server) {
+        self.server.update(duration);
+        if let Err(err) = self.transport.update(duration, &mut self.server) {
             log::error!("Error updating server transport: {err:?}");
         }
 
-        while let Some(event) = server.get_event() {
+        while let Some(event) = self.server.get_event() {
             match &event {
                 renet::ServerEvent::ClientConnected { client_id } => {
                     log::info!("Client connected: {client_id}");
+                    self.welcome_client(*client_id);
                 }
                 renet::ServerEvent::ClientDisconnected { client_id, reason } => {
                     log::info!("Client disconnected: {client_id}, reason: {reason}");
@@ -110,6 +119,12 @@ impl Server {
             );
         }
 
+        let Self {
+            server,
+            transport,
+            pending_syncs,
+            ..
+        } = self;
         for client_id in server.clients_id() {
             for channel in GameChannel::ALL {
                 while let Some(bytes) = server.receive_message(client_id, channel) {
@@ -128,12 +143,17 @@ impl Server {
                         continue;
                     }
                     if let GameMessage::SyncComponent {
-                        network_object_id, ..
+                        network_object_id,
+                        component_uuid,
+                        data,
+                        ..
                     } = &message
                     {
                         pending_syncs.push(PendingSync {
                             sender: client_id,
                             network_object_id: *network_object_id,
+                            component_uuid: *component_uuid,
+                            data: data.clone(),
                             channel: message.channel(),
                             bytes,
                         });
@@ -146,29 +166,115 @@ impl Server {
         transport.send_packets(server);
     }
 
+    /// Sends a client that just connected its `SelfConnected`, then its join
+    /// snapshot, and tells every other client it joined.
+    fn welcome_client(&mut self, client_id: ClientId) {
+        let Some(id_range) = self.reserve_id_range(client_id) else {
+            log::error!("No network object id range left for client {client_id}");
+            return;
+        };
+        let self_connected = GameMessage::SelfConnected {
+            client_ids: self.client_ids(),
+            id_range,
+        };
+        if let Err(e) = self.send_message(client_id, &self_connected) {
+            log::warn!("Failed to send SelfConnected to {client_id}: {e}");
+        }
+        self.send_join_snapshot(client_id);
+        if let Err(e) =
+            self.broadcast_message_except(client_id, &GameMessage::ClientConnected { client_id })
+        {
+            log::warn!("Failed to broadcast ClientConnected: {e}");
+        }
+    }
+
+    /// Sends `client_id` the snapshot of the replicated state changed at
+    /// runtime, on the reliable ordered channel.
+    ///
+    /// The snapshot is split into messages of up to [`SNAPSHOT_CHUNK_BYTES`].
+    /// All of it must fit in the channel's free memory, less
+    /// [`SNAPSHOT_LIVE_HEADROOM_BYTES`] for live traffic, or renet would
+    /// disconnect the client. A larger snapshot is cut to its longest prefix
+    /// that fits, with a warning that names its size.
+    fn send_join_snapshot(&mut self, client_id: ClientId) {
+        let messages = self.record.messages(SNAPSHOT_CHUNK_BYTES);
+        if messages.is_empty() {
+            return;
+        }
+        let channel = GameChannel::ReliableOrdered;
+        let budget = self
+            .server
+            .channel_available_memory(client_id, channel)
+            .saturating_sub(SNAPSHOT_LIVE_HEADROOM_BYTES);
+        let plan = SnapshotPlan::new(&messages, budget);
+        if plan.is_truncated() {
+            log::warn!(
+                "Join snapshot for client {client_id} is {} bytes, over its {budget}-byte \
+                 budget on the reliable channel; sending the first {} bytes, so the client \
+                 misses the rest of the replicated state",
+                plan.total_bytes,
+                plan.sent_bytes
+            );
+        } else {
+            log::debug!(
+                "Sending client {client_id} a join snapshot of {} bytes in {} messages",
+                plan.total_bytes,
+                plan.messages.len()
+            );
+        }
+        for bytes in plan.messages {
+            self.server.send_message(client_id, channel, bytes);
+        }
+    }
+
     /// Relays the component syncs received from clients since the last call
-    /// to every client but their sender.
+    /// to every client but their sender, and keeps each relayed payload as
+    /// its component's latest for the join snapshot.
     ///
     /// `owner_of` returns the owner of a network object the host holds. A
     /// sync for an object its sender does not own is dropped. The host may not
-    /// hold every object, so a sync for an object it does not know is relayed
-    /// and each receiving peer checks ownership itself.
+    /// hold every object; a sync for an object it does not hold is checked
+    /// against the owner the record keeps, and one for an object neither
+    /// knows is relayed without being kept, so each receiving peer checks
+    /// ownership itself.
     pub fn relay_component_syncs(
         &mut self,
         mut owner_of: impl FnMut(NetworkObjectId) -> Option<ClientId>,
     ) {
         for sync in std::mem::take(&mut self.pending_syncs) {
-            match owner_of(sync.network_object_id) {
-                Some(owner_id) if owner_id != sync.sender => log::warn!(
-                    "Rejected sync of network object {} owned by {owner_id} from {}",
+            let owner = owner_of(sync.network_object_id)
+                .or_else(|| self.record.owner(sync.network_object_id));
+            match owner {
+                Some(owner_id) if owner_id != sync.sender => {
+                    log::warn!(
+                        "Rejected sync of network object {} owned by {owner_id} from {}",
+                        sync.network_object_id,
+                        sync.sender
+                    );
+                    continue;
+                }
+                Some(_) => self.record.component_sync(
                     sync.network_object_id,
-                    sync.sender
+                    sync.component_uuid,
+                    &sync.data,
                 ),
-                _ => self
-                    .server
-                    .broadcast_message_except(sync.sender, sync.channel, sync.bytes),
+                None => {}
             }
+            self.server
+                .broadcast_message_except(sync.sender, sync.channel, sync.bytes);
         }
+    }
+
+    /// The replicated state the server accepted at runtime, which it sends
+    /// each client that joins.
+    pub fn record(&self) -> &ReplicationRecord {
+        &self.record
+    }
+
+    /// Mutable access to [`Server::record`], for the handlers that accept
+    /// replicated changes and the host's own changes.
+    pub(crate) fn record_mut(&mut self) -> &mut ReplicationRecord {
+        &mut self.record
     }
 
     /// Returns the network object id range reserved for `client_id`,

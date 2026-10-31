@@ -117,6 +117,12 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>> Synchronized<T> {
         let Ok(data) = bincode::serde::encode_to_vec(value, bincode::config::standard()) else {
             return;
         };
+        if let Some(server) = &mut network.server {
+            // The host's own payload, kept for clients that join later.
+            server
+                .record_mut()
+                .component_sync(c_netobj_id, self.options.component_uuid, &data);
+        }
         let message = GameMessage::SyncComponent {
             time: time.time(),
             from_client_id: self_client_id,
@@ -185,6 +191,27 @@ impl<T: Serialize + DeserializeOwned + Clone + Lerp<f32>>
                     bincode::serde::decode_from_slice(data, bincode::config::standard())
                 {
                     self.history.insert(time.time_to_tick(*sync_time), value);
+                }
+                MessageHandlerResult::Consume
+            }
+            // The latest payload a joining client receives in its snapshot.
+            // It only seeds an empty history: a live sync that arrived first
+            // is newer. It is placed at the current tick, since its owner's
+            // time stamp predates this client's clock sync.
+            GameMessage::SnapshotComponent {
+                network_object_id,
+                component_uuid,
+                data,
+            } if sender == MessageSender::Server
+                && c_netobj_id == *network_object_id
+                && *component_uuid == self.options.component_uuid =>
+            {
+                if self.history.is_empty() {
+                    if let Ok((value, _)) =
+                        bincode::serde::decode_from_slice(data, bincode::config::standard())
+                    {
+                        self.history.insert(time.current_tick(), value);
+                    }
                 }
                 MessageHandlerResult::Consume
             }
