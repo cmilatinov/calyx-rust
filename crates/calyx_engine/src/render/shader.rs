@@ -1305,10 +1305,15 @@ fn fs_main() -> @location(0) vec4f {
 
     /// A scope dropped without `pop` is popped by its guard, taking its
     /// error with it, so the scope pushed before it is the one popped next.
+    /// Its outer scope is pushed outside the guard, so it runs on a device of
+    /// its own that no other test's scopes can reach.
     #[test]
     fn a_dropped_validation_scope_pops_itself() {
-        let render_context = crate::test_support::test_render_context();
-        let device = render_context.device();
+        let adapter = crate::test_support::test_adapter();
+        let (device, _queue) =
+            pollster::block_on(adapter.request_device(&Default::default(), None))
+                .expect("a second test device");
+        let device = &device;
         device.push_error_scope(wgpu::ErrorFilter::Validation);
         {
             let _scope = super::ValidationScope::push(device);
