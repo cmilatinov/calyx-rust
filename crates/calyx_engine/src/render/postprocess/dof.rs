@@ -6,22 +6,22 @@ use super::{
 };
 use crate as calyx_engine;
 use crate::assets::texture::Texture;
+use crate::component::{Component, ReflectComponent};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::reflect::{Reflect, ReflectDefault};
 use crate::render::{CachedBindGroup, PipelineOptions, RenderUtils, SceneRendererError, Shader};
-use crate::utils::TypeUuid;
+use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use egui_wgpu::wgpu;
 use serde::{Deserialize, Serialize};
 
 /// Depth of field: the scene blurs with distance from a focus plane.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
-#[uuid = "0d4f5c8e-6a2b-4f0e-9a51-3c7e2b8d1f64"]
-#[reflect(Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect)]
+#[uuid = "ac9e495b-1859-42d8-b1c5-0d35f113c089"]
+#[reflect(Default, TypeUuidDynamic, Component)]
+#[reflect_attr(name = "Depth Of Field", category = "Post Processing")]
 #[serde(default)]
 pub struct DepthOfFieldSettings {
-    /// Whether depth of field runs.
-    pub enabled: bool,
     /// View distance, in world units, that is sharp.
     #[reflect_attr(min = 0.0, speed = 0.05)]
     pub focus_distance: f32,
@@ -53,10 +53,16 @@ impl DepthOfFieldSettings {
     }
 }
 
+impl Component for DepthOfFieldSettings {
+    /// A disabled effect component switches its pass off.
+    fn can_disable(&self) -> bool {
+        true
+    }
+}
+
 impl Default for DepthOfFieldSettings {
     fn default() -> Self {
         Self {
-            enabled: false,
             focus_distance: 10.0,
             focus_range: 10.0,
             max_blur: 8.0,
@@ -78,8 +84,8 @@ struct DofUniform {
 
 /// Depth of field in the `Hdr` stage. It computes each pixel's signed circle
 /// of confusion from linear depth into a texture it owns, then gathers a disc
-/// blur scaled by it, for both the near and the far field. It runs while
-/// [`DepthOfFieldSettings::enabled`] is on.
+/// blur scaled by it, for both the near and the far field. It runs while the
+/// settings hold a [`DepthOfFieldSettings`].
 pub struct DepthOfFieldPass {
     coc_shader: Ref<Shader>,
     blur_shader: Ref<Shader>,
@@ -184,11 +190,13 @@ impl PostProcessPass for DepthOfFieldPass {
     }
 
     fn enabled(&self, settings: &PostProcessSettings) -> bool {
-        settings.depth_of_field.enabled
+        settings.depth_of_field.is_some()
     }
 
     fn prepare(&mut self, context: &PassContext, settings: &PostProcessSettings) {
-        let dof = &settings.depth_of_field;
+        let Some(dof) = &settings.depth_of_field else {
+            return;
+        };
         let uniform = DofUniform {
             near_plane: context.camera.near,
             far_plane: context.camera.far,
@@ -325,12 +333,11 @@ mod tests {
 
     fn dof_on() -> PostProcessSettings {
         PostProcessSettings {
-            depth_of_field: DepthOfFieldSettings {
-                enabled: true,
+            depth_of_field: Some(DepthOfFieldSettings {
                 focus_distance: FOCUS,
                 focus_range: RANGE,
                 max_blur: MAX_BLUR,
-            },
+            }),
             ..Default::default()
         }
     }
@@ -670,21 +677,13 @@ mod tests {
     }
 
     #[test]
-    fn depth_of_field_is_off_by_default_and_settings_saved_before_it_still_load() {
+    fn depth_of_field_is_off_by_default_and_a_partial_component_loads_with_defaults() {
+        assert_eq!(PostProcessSettings::default().depth_of_field, None);
         let defaults = DepthOfFieldSettings::default();
-        assert!(!defaults.enabled, "depth of field is off by default");
-
-        let saved = r#"{"tonemapping":{"preset":"Aces","exposure_ev":1.5}}"#;
-        let settings: PostProcessSettings = serde_json::from_str(saved).expect("old settings load");
-        assert_eq!(settings.tonemapping.exposure_ev, 1.5);
-        assert_eq!(settings.depth_of_field, defaults);
-
-        let partial = r#"{"depth_of_field":{"enabled":true,"focus_distance":4.0}}"#;
-        let settings: PostProcessSettings =
-            serde_json::from_str(partial).expect("partial settings load");
-        assert!(settings.depth_of_field.enabled);
-        assert_eq!(settings.depth_of_field.focus_distance, 4.0);
-        assert_eq!(settings.depth_of_field.max_blur, defaults.max_blur);
+        let partial = r#"{"focus_distance":4.0}"#;
+        let dof: DepthOfFieldSettings = serde_json::from_str(partial).expect("partial loads");
+        assert_eq!(dof.focus_distance, 4.0);
+        assert_eq!(dof.max_blur, defaults.max_blur);
     }
 
     #[test]

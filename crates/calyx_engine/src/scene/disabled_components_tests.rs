@@ -10,6 +10,10 @@ use crate::component::{
     ComponentRigidBody, ComponentSkinnedMesh, ComponentTransform,
 };
 use crate::context::ReadOnlyRegistryContext;
+use crate::render::postprocess::{
+    AmbientOcclusionSettings, AntiAliasingSettings, BloomSettings, ColorGradingSettings,
+    DepthOfFieldSettings, TonemapSettings, VignetteSettings,
+};
 use crate::scene::{GameObject, Scene, SceneData};
 use crate::test_support::test_registries;
 use crate::utils::TypeUuid;
@@ -81,6 +85,13 @@ fn only_types_whose_systems_honor_the_state_opt_in() {
         ComponentCollider::type_uuid(),
         ComponentRigidBody::type_uuid(),
         ComponentGlobalPostProcessVolume::type_uuid(),
+        TonemapSettings::type_uuid(),
+        AmbientOcclusionSettings::type_uuid(),
+        DepthOfFieldSettings::type_uuid(),
+        BloomSettings::type_uuid(),
+        ColorGradingSettings::type_uuid(),
+        VignetteSettings::type_uuid(),
+        AntiAliasingSettings::type_uuid(),
     ] {
         assert!(components.can_disable(type_uuid), "{type_uuid}");
     }

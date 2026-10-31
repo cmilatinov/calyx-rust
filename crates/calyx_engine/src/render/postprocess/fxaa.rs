@@ -2,22 +2,22 @@
 
 use super::{PassContext, PassIo, PostProcessPass, PostProcessSettings, PostProcessStage};
 use crate as calyx_engine;
+use crate::component::{Component, ReflectComponent};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::reflect::{Reflect, ReflectDefault};
 use crate::render::{CachedBindGroup, PipelineOptions, RenderUtils, SceneRendererError, Shader};
-use crate::utils::TypeUuid;
+use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use egui_wgpu::wgpu;
 use serde::{Deserialize, Serialize};
 
 /// Screen-space anti-aliasing.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
-#[uuid = "de6e6d51-2a88-47cf-b1cc-0cafe432a02e"]
-#[reflect(Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect)]
+#[uuid = "c19ff2b7-c3ed-4f04-9dfa-e026efdedf82"]
+#[reflect(Default, TypeUuidDynamic, Component)]
+#[reflect_attr(name = "Anti-Aliasing (FXAA)", category = "Post Processing")]
 #[serde(default)]
 pub struct AntiAliasingSettings {
-    /// Whether FXAA runs after tone mapping.
-    pub fxaa: bool,
     /// Minimum local contrast, relative to the brightest neighbour, that FXAA
     /// treats as an edge. Lower smooths more edges and costs more.
     #[reflect_attr(min = 0.063, max = 0.333, speed = 0.001)]
@@ -28,11 +28,17 @@ pub struct AntiAliasingSettings {
     pub subpixel: f32,
 }
 
+impl Component for AntiAliasingSettings {
+    /// A disabled effect component switches its pass off.
+    fn can_disable(&self) -> bool {
+        true
+    }
+}
+
 impl Default for AntiAliasingSettings {
     fn default() -> Self {
         // FXAA 3.11's default quality settings.
         Self {
-            fxaa: false,
             edge_threshold: 0.166,
             subpixel: 0.75,
         }
@@ -48,7 +54,8 @@ struct FxaaUniform {
 }
 
 /// FXAA 3.11 Quality on display-linear color, in the `Ldr` stage. Alpha
-/// passes through. It runs while [`AntiAliasingSettings::fxaa`] is on.
+/// passes through. It runs while the settings hold an
+/// [`AntiAliasingSettings`].
 pub struct FxaaPass {
     shader: Ref<Shader>,
     sampler: wgpu::Sampler,
@@ -97,13 +104,16 @@ impl PostProcessPass for FxaaPass {
     }
 
     fn enabled(&self, settings: &PostProcessSettings) -> bool {
-        settings.anti_aliasing.fxaa
+        settings.anti_aliasing.is_some()
     }
 
     fn prepare(&mut self, context: &PassContext, settings: &PostProcessSettings) {
+        let Some(anti_aliasing) = &settings.anti_aliasing else {
+            return;
+        };
         let uniform = FxaaUniform {
-            edge_threshold: settings.anti_aliasing.edge_threshold,
-            subpixel: settings.anti_aliasing.subpixel,
+            edge_threshold: anti_aliasing.edge_threshold,
+            subpixel: anti_aliasing.subpixel,
             _padding: Default::default(),
         };
         context.render_context.queue().write_buffer(

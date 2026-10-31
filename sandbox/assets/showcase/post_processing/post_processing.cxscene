@@ -371,6 +371,10 @@
         "name": "Post Process",
         "visible": true
       },
+      "68ac12ac-fc9a-489e-b305-363eaf593966": {
+        "exposure_ev": 0.0,
+        "preset": "Aces"
+      },
       "c5b3b71f-1f14-4b5b-9881-436118684d29": {
         "transform": {
           "position": [
@@ -392,13 +396,7 @@
         }
       },
       "cdbfef3f-81a5-4ccb-a0f6-098bc5a26979": {
-        "priority": 0,
-        "settings": {
-          "tonemapping": {
-            "exposure_ev": 0.0,
-            "preset": "Aces"
-          }
-        }
+        "priority": 0
       }
     },
     "a3368759-58ca-4536-92ee-50cae9c9d7a3": {

@@ -7,26 +7,25 @@ use super::{
 };
 use crate as calyx_engine;
 use crate::assets::texture::Texture;
+use crate::component::{Component, ReflectComponent};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::reflect::{Reflect, ReflectDefault};
 use crate::render::{
     CachedBindGroup, PipelineOptions, RenderContext, RenderUtils, SceneRendererError, Shader,
 };
-use crate::utils::TypeUuid;
+use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use egui_wgpu::wgpu;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// Screen-space ambient occlusion.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
-#[uuid = "4582a55a-891f-4ba5-b545-8e2cfc2dc4f0"]
-#[reflect(Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect)]
+#[uuid = "01a950bc-d431-4495-8b86-7d51c5f2b4b0"]
+#[reflect(Default, TypeUuidDynamic, Component)]
+#[reflect_attr(name = "Ambient Occlusion", category = "Post Processing")]
 #[serde(default)]
 pub struct AmbientOcclusionSettings {
-    /// Whether SSAO runs. Off by default, so scenes saved before it existed
-    /// look the same.
-    pub enabled: bool,
     /// Radius of the hemisphere tested around each pixel, in world units.
     #[reflect_attr(min = 0.01, speed = 0.01)]
     pub radius: f32,
@@ -42,10 +41,16 @@ pub struct AmbientOcclusionSettings {
     pub sample_count: u32,
 }
 
+impl Component for AmbientOcclusionSettings {
+    /// A disabled effect component switches its pass off.
+    fn can_disable(&self) -> bool {
+        true
+    }
+}
+
 impl Default for AmbientOcclusionSettings {
     fn default() -> Self {
         Self {
-            enabled: false,
             radius: 0.5,
             intensity: 1.0,
             bias: 0.025,
@@ -263,11 +268,13 @@ impl PostProcessPass for SsaoPass {
     }
 
     fn enabled(&self, settings: &PostProcessSettings) -> bool {
-        settings.ambient_occlusion.enabled
+        settings.ambient_occlusion.is_some()
     }
 
     fn prepare(&mut self, context: &PassContext, settings: &PostProcessSettings) {
-        let ao = &settings.ambient_occlusion;
+        let Some(ao) = &settings.ambient_occlusion else {
+            return;
+        };
         let samples = ao.samples();
         let uniform = SsaoUniform {
             near: context.camera.near,
@@ -440,11 +447,10 @@ mod tests {
     /// tests use a radius several pixels wide.
     fn ssao_with_radius(radius: f32) -> PostProcessSettings {
         PostProcessSettings {
-            ambient_occlusion: AmbientOcclusionSettings {
-                enabled: true,
+            ambient_occlusion: Some(AmbientOcclusionSettings {
                 radius,
                 ..Default::default()
-            },
+            }),
             ..Default::default()
         }
     }
@@ -945,25 +951,13 @@ mod tests {
     }
 
     #[test]
-    fn settings_saved_before_ssao_load_with_it_off() {
-        let saved = r#"{ "tonemapping": { "exposure_ev": 1.5, "preset": "Aces" } }"#;
-        let settings: PostProcessSettings = serde_json::from_str(saved).expect("settings load");
-        assert_eq!(settings.tonemapping.exposure_ev, 1.5);
+    fn ssao_is_off_by_default_and_a_partial_component_loads_with_defaults() {
+        assert_eq!(PostProcessSettings::default().ambient_occlusion, None);
+        let partial = r#"{ "radius": 2.0 }"#;
+        let ao: AmbientOcclusionSettings = serde_json::from_str(partial).expect("ssao loads");
         assert_eq!(
-            settings.ambient_occlusion,
-            AmbientOcclusionSettings::default()
-        );
-        assert!(
-            !settings.ambient_occlusion.enabled,
-            "ssao is off by default"
-        );
-
-        let partial = r#"{ "ambient_occlusion": { "enabled": true, "radius": 2.0 } }"#;
-        let settings: PostProcessSettings = serde_json::from_str(partial).expect("settings load");
-        assert_eq!(
-            settings.ambient_occlusion,
+            ao,
             AmbientOcclusionSettings {
-                enabled: true,
                 radius: 2.0,
                 ..Default::default()
             }

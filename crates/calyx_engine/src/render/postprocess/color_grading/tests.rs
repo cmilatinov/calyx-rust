@@ -175,20 +175,14 @@ fn run_grading(settings: &PostProcessSettings, image: &Image) -> Image {
 
 fn grading(grading: ColorGradingSettings) -> PostProcessSettings {
     PostProcessSettings {
-        color_grading: ColorGradingSettings {
-            enabled: true,
-            ..grading
-        },
+        color_grading: Some(grading),
         ..Default::default()
     }
 }
 
 fn vignette(vignette: VignetteSettings) -> PostProcessSettings {
     PostProcessSettings {
-        vignette: VignetteSettings {
-            enabled: true,
-            ..vignette
-        },
+        vignette: Some(vignette),
         ..Default::default()
     }
 }
@@ -201,25 +195,19 @@ fn assert_close(actual: f32, expected: f32, what: &str) {
 }
 
 #[test]
-fn both_effects_are_off_by_default_and_settings_saved_before_them_still_load() {
+fn both_effects_are_off_by_default_and_partial_components_load_with_defaults() {
     let defaults = PostProcessSettings::default();
-    assert!(!defaults.color_grading.enabled, "grading is off by default");
-    assert!(!defaults.vignette.enabled, "the vignette is off by default");
+    assert_eq!(defaults.color_grading, None, "grading is off by default");
+    assert_eq!(defaults.vignette, None, "the vignette is off by default");
 
-    let saved = r#"{"tonemapping":{"preset":"Aces","exposure_ev":1.5}}"#;
-    let settings: PostProcessSettings = serde_json::from_str(saved).expect("old settings load");
-    assert_eq!(settings.tonemapping.exposure_ev, 1.5);
-    assert_eq!(settings.color_grading, ColorGradingSettings::default());
-    assert_eq!(settings.vignette, VignetteSettings::default());
-
-    let partial =
-        r#"{"color_grading":{"enabled":true,"saturation":0.5},"vignette":{"intensity":0.7}}"#;
-    let settings: PostProcessSettings = serde_json::from_str(partial).expect("partial loads");
-    assert!(settings.color_grading.enabled);
-    assert_eq!(settings.color_grading.saturation, 0.5);
-    assert_eq!(settings.color_grading.contrast, 1.0);
-    assert!(!settings.vignette.enabled);
-    assert_eq!(settings.vignette.intensity, 0.7);
+    let grading: ColorGradingSettings =
+        serde_json::from_str(r#"{"saturation":0.5}"#).expect("partial grading loads");
+    assert_eq!(grading.saturation, 0.5);
+    assert_eq!(grading.contrast, 1.0);
+    let vignette: VignetteSettings =
+        serde_json::from_str(r#"{"intensity":0.7}"#).expect("partial vignette loads");
+    assert_eq!(vignette.intensity, 0.7);
+    assert_eq!(vignette.smoothness, VignetteSettings::default().smoothness);
 }
 
 #[test]
@@ -261,10 +249,7 @@ fn the_scene_renderer_grades_before_fxaa() {
     let renderer = SceneRenderer::new(&context, Default::default(), (WIDTH, HEIGHT))
         .expect("scene renderer should load its assets");
     let settings = PostProcessSettings {
-        anti_aliasing: AntiAliasingSettings {
-            fxaa: true,
-            ..Default::default()
-        },
+        anti_aliasing: Some(AntiAliasingSettings::default()),
         ..grading(Default::default())
     };
     let chain = renderer.post_process();
@@ -283,11 +268,10 @@ fn the_scene_renderer_grades_before_fxaa() {
 fn neutral_settings_return_the_input() {
     let image = test_image();
     let settings = PostProcessSettings {
-        vignette: VignetteSettings {
-            enabled: true,
+        vignette: Some(VignetteSettings {
             intensity: 0.0,
             ..Default::default()
-        },
+        }),
         ..grading(Default::default())
     };
 
@@ -401,19 +385,17 @@ fn the_vignette_darkens_the_corners_and_leaves_the_centre_unchanged() {
 fn alpha_is_preserved() {
     let image = test_image();
     let settings = PostProcessSettings {
-        color_grading: ColorGradingSettings {
-            enabled: true,
+        color_grading: Some(ColorGradingSettings {
             contrast: 1.4,
             saturation: 0.3,
             temperature: 0.6,
             tint: -0.4,
-        },
-        vignette: VignetteSettings {
-            enabled: true,
+        }),
+        vignette: Some(VignetteSettings {
             intensity: 0.8,
             smoothness: 0.5,
             color: Color32::from_rgb(40, 0, 80),
-        },
+        }),
         ..Default::default()
     };
 

@@ -3,7 +3,8 @@
 //! These tests read every committed one and fail if a crate-qualified type
 //! name appears in them, if a component they hold has no registered type, or
 //! if a component that the scene now switches on and off still carries its
-//! own `enabled` field.
+//! own `enabled` field, or if a post-process volume still holds the combined
+//! settings its effect components replaced.
 
 // Matches the crates under test: the particle system component nests deep
 // enough that proving it `Send`/`Sync` passes the default limit.
@@ -15,6 +16,10 @@ use calyx_engine::component::{
     ComponentCamera, ComponentCollider, ComponentGlobalPostProcessVolume, ComponentRigidBody,
 };
 use calyx_engine::context::AssetContext;
+use calyx_engine::render::postprocess::{
+    AmbientOcclusionSettings, AntiAliasingSettings, BloomSettings, ColorGradingSettings,
+    DepthOfFieldSettings, TonemapSettings, VignetteSettings,
+};
 use calyx_engine::scene::{Prefab, Scene};
 use calyx_engine::test_support::TestAssets;
 use calyx_engine::utils::{TypeUuid, Uuid};
@@ -163,6 +168,14 @@ fn legacy_enabled_fields(scene: &Value) -> Vec<(String, Uuid)> {
         ComponentCollider::type_uuid(),
         ComponentRigidBody::type_uuid(),
         ComponentGlobalPostProcessVolume::type_uuid(),
+        // Effect components, whose fields were the volume's sub-structs.
+        TonemapSettings::type_uuid(),
+        AmbientOcclusionSettings::type_uuid(),
+        DepthOfFieldSettings::type_uuid(),
+        BloomSettings::type_uuid(),
+        ColorGradingSettings::type_uuid(),
+        VignetteSettings::type_uuid(),
+        AntiAliasingSettings::type_uuid(),
     ];
     let mut found = Vec::new();
     for (object, components) in scene["components"]
@@ -220,6 +233,57 @@ fn saved_scenes_and_prefabs_hold_no_legacy_enabled_fields() {
             "{} holds `enabled` fields that the scene's disabled_components map \
              now keeps and loading no longer reads (object, component type): \
              {found:?}",
+            file.display()
+        );
+    }
+}
+
+/// The objects in a saved scene whose global post-process volume still holds
+/// the combined `settings` that the effect components on its game object
+/// replaced, or FXAA's old `fxaa` switch. Loading ignores both, so such a
+/// scene would silently lose its effects.
+fn combined_post_process_settings(scene: &Value) -> Vec<String> {
+    let volume = ComponentGlobalPostProcessVolume::type_uuid().to_string();
+    let anti_aliasing = AntiAliasingSettings::type_uuid().to_string();
+    scene["components"]
+        .as_object()
+        .expect("a saved scene has a components map")
+        .iter()
+        .filter(|(_, components)| {
+            components[&volume].get("settings").is_some()
+                || components[&anti_aliasing].get("fxaa").is_some()
+        })
+        .map(|(object, _)| object.clone())
+        .collect()
+}
+
+#[test]
+fn combined_post_process_settings_flags_only_the_old_layout() {
+    let object = "07b17e3d-9b73-411b-9d08-c56698a37556";
+    let volume = ComponentGlobalPostProcessVolume::type_uuid().to_string();
+    let bloom = BloomSettings::type_uuid().to_string();
+    let mut scene = serde_json::json!({ "components": { object: {
+        volume.clone(): { "priority": 0 },
+        bloom: { "intensity": 0.25 },
+    } } });
+    assert!(combined_post_process_settings(&scene).is_empty());
+
+    scene["components"][object][&volume]["settings"] =
+        serde_json::json!({ "bloom": { "enabled": true } });
+    assert_eq!(combined_post_process_settings(&scene), [object]);
+}
+
+#[test]
+fn saved_scenes_and_prefabs_hold_no_combined_post_process_settings() {
+    let root = repository_root();
+    for (index, path) in saved_files(&["cxscene", "cxprefab"]) {
+        let file = root.join(ASSET_ROOTS[index]).join(&path);
+        let source: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap())
+            .unwrap_or_else(|e| panic!("{} is not JSON: {e}", file.display()));
+        let found = combined_post_process_settings(scene_data(&source, &path));
+        assert!(
+            found.is_empty(),
+            "{} holds a global post-process volume with combined `settings`,              which loading no longer reads; each effect is its own component              on the volume's game object (objects): {found:?}",
             file.display()
         );
     }

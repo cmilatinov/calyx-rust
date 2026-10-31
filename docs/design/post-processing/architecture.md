@@ -11,7 +11,7 @@ Related work:
 - Lit shaders write linear HDR radiance. Tone mapping is the single display transform, applied once, after the scene is drawn.
 - An ordered chain of full-screen passes runs between the MSAA resolve and the presented scene texture, so effects can be added without touching the forward pass.
 - A frame with only tone mapping costs one full-screen pass and allocates no intermediate targets.
-- A scene configures the chain with a reflected, serialized component the inspector edits with no custom UI. A scene without one still gets tone mapping.
+- A scene configures the chain with a volume component and one reflected, serialized component per effect on the same game object, which the inspector edits with no custom UI. A scene without a volume still gets tone mapping.
 - Every view of a scene goes through the same chain: editor viewport, Game tab, player, prefab mode and asset thumbnails.
 
 ## Frame Today
@@ -136,7 +136,7 @@ Tone mapping asks for nothing.
 `CameraPlanes::tan_half_fov` holds the tangents of half the horizontal and vertical fields of view, taken from the projection matrix (`1 / P[0][0]`, `1 / P[1][1]`), so a pass can rebuild view-space positions: the pixel at normalized device coordinates `ndc` and view distance `z` lies at `(ndc * tan_half_fov * z, z)`, and a view-space point projects back to `ndc = xy / (tan_half_fov * z)`.
 ## Depth Of Field
 
-`DepthOfFieldPass` (`postprocess/dof.rs`) is an `Hdr` pass that reads `SceneInput::Depth`. It runs while `settings.depth_of_field.enabled` is on, which it is not by default, so a frame without it keeps the tone-map-only plan. It runs after SSAO and before bloom, so bloom spreads highlights that are already out of focus, as a lens would. It records two render passes:
+`DepthOfFieldPass` (`postprocess/dof.rs`) is an `Hdr` pass that reads `SceneInput::Depth`. It runs while the settings hold a `depth_of_field`, which they do only when the volume has an enabled Depth Of Field component, so a frame without it keeps the tone-map-only plan. It runs after SSAO and before bloom, so bloom spreads highlights that are already out of focus, as a lens would. It records two render passes:
 
 ```text
 coc     depth           -> coc (R16Float, owned)   signed circle of confusion, in pixels
@@ -154,7 +154,7 @@ blur    input + coc     -> output                  scatter-as-gather disc blur
 
 ## Tone Mapping
 
-`TonemapPass` is the `Tonemap` stage. It always runs: a missing or disabled volume selects `PostProcessSettings::default()`, never untone-mapped output.
+`TonemapPass` is the `Tonemap` stage. It always runs: a missing or disabled volume, or a missing or disabled Tone Mapping component, leaves `TonemapSettings::default()`, never untone-mapped output.
 
 - Its uniform holds the exposure scale `2^EV` and the preset.
 - It draws one full-screen triangle (`shaders/common/fullscreen.wgsl`, no vertex buffers).
@@ -163,7 +163,7 @@ blur    input + coc     -> output                  scatter-as-gather disc blur
 
 ## Ambient Occlusion
 
-`SsaoPass` (`postprocess/ssao.rs`) is an `Hdr` pass that reads `SceneInput::Depth`. It is enabled by `settings.ambient_occlusion.enabled`, off by default, so a frame without it keeps the tone-map-only plan and builds no depth copy. The renderer registers it before every other `Hdr` pass, so it darkens the scene before depth of field blurs it and before bloom spreads light. It records three render passes:
+`SsaoPass` (`postprocess/ssao.rs`) is an `Hdr` pass that reads `SceneInput::Depth`. It runs while the settings hold an `ambient_occlusion`, from an enabled Ambient Occlusion component on the volume, so a frame without it keeps the tone-map-only plan and builds no depth copy. The renderer registers it before every other `Hdr` pass, so it darkens the scene before depth of field blurs it and before bloom spreads light. It records three render passes:
 
 ```text
 occlusion   depth (full size)            -> occlusion (1/2)   visibility in r, view z in g
@@ -181,7 +181,7 @@ composite   input, blurred, depth        -> output            input.rgb * visibi
 
 ## Bloom
 
-`BloomPass` (`postprocess/bloom.rs`) is an `Hdr` pass. It is enabled by `settings.bloom.enabled`, off by default, so a frame without bloom keeps the tone-map-only plan. It records several render passes into the encoder:
+`BloomPass` (`postprocess/bloom.rs`) is an `Hdr` pass. It runs while the settings hold a `bloom`, from an enabled Bloom component on the volume, so a frame without bloom keeps the tone-map-only plan. It records several render passes into the encoder:
 
 ```text
 prefilter    input (full size)  -> mip 0 (1/2)   13-tap downsample, soft-knee threshold, then / N
@@ -199,7 +199,7 @@ composite    input + mip 0      -> output        input + tent(mip 0) * intensity
 
 ## Colour Grading And Vignette
 
-`ColorGradingPass` (`crates/calyx_engine/src/render/postprocess/color_grading.rs`) is one `Ldr` pass that grades the tone-mapped image and then applies a vignette. It runs while `color_grading.enabled` or `vignette.enabled` is on, neither of which is by default, so a frame without them keeps the tone-map-only plan. A disabled half reaches the shader as neutral values, which leave the color unchanged.
+`ColorGradingPass` (`crates/calyx_engine/src/render/postprocess/color_grading.rs`) is one `Ldr` pass that grades the tone-mapped image and then applies a vignette. It runs while the settings hold a `color_grading` or a `vignette`, from enabled Colour Grading and Vignette components on the volume, so a frame without them keeps the tone-map-only plan. A missing half reaches the shader as neutral values, which leave the color unchanged.
 
 It runs on display-linear color, in this order:
 
@@ -215,7 +215,7 @@ Alpha is read with the pixel and passes through, so transparent views such as th
 
 ## Anti-Aliasing
 
-`FxaaPass` (`crates/calyx_engine/src/render/postprocess/fxaa.rs`) is an `Ldr` pass that runs FXAA 3.11 Quality, preset 12, after tone mapping. It runs while `PostProcessSettings::anti_aliasing.fxaa` is on, which it is not by default, so a frame without it keeps the tone-map-only plan.
+`FxaaPass` (`crates/calyx_engine/src/render/postprocess/fxaa.rs`) is an `Ldr` pass that runs FXAA 3.11 Quality, preset 12, after tone mapping. It runs while the settings hold an `anti_aliasing`, from an enabled Anti-Aliasing (FXAA) component on the volume, so a frame without it keeps the tone-map-only plan.
 
 - `assets/shaders/postprocess/fxaa.wgsl` ports the PC quality path of Timothy Lottes' `FxaaPixelShader`: early exit below the local contrast threshold, horizontal or vertical edge choice, a five-step search along the edge (1, 1.5, 2, 4 and 12 pixels), and the sub-pixel blend. It samples its input with a linear, clamp-to-edge sampler the pass owns.
 - It runs after tone mapping because its luma edge detection needs display-range values. Its input is display-linear, so luma is the square root of linear Rec. 601 luma, close to the gamma-encoded luma the reference expects.
@@ -225,41 +225,39 @@ Alpha is read with the pixel and passes through, so transparent views such as th
 
 ## Settings And Volumes
 
+A volume decides where post-processing applies and with what priority. Each effect's settings are their own component on the volume's game object.
+
 ```rust
+pub struct ComponentGlobalPostProcessVolume { pub priority: i32 }  // 0
+
+// Effect components, each `#[serde(default)]` and switchable (`can_disable`).
+pub struct TonemapSettings { pub preset: TonemappingPreset, pub exposure_ev: f32 }  // Aces, 0.0
+pub enum TonemappingPreset { Aces }
+pub struct AmbientOcclusionSettings { pub radius: f32, pub intensity: f32, pub bias: f32, pub sample_count: u32 }  // 0.5, 1.0, 0.025, 16
+pub struct DepthOfFieldSettings { pub focus_distance: f32, pub focus_range: f32, pub max_blur: f32 }  // 10.0, 10.0, 8.0
+pub struct BloomSettings { pub threshold: f32, pub knee: f32, pub intensity: f32, pub radius: u32 }  // 1.0, 0.5, 0.5, 6
+pub struct ColorGradingSettings { pub contrast: f32, pub saturation: f32, pub temperature: f32, pub tint: f32 }  // 1, 1, 0, 0
+pub struct VignetteSettings { pub intensity: f32, pub smoothness: f32, pub color: Color32 }  // 0.4, 0.2, black
+pub struct AntiAliasingSettings { pub edge_threshold: f32, pub subpixel: f32 }  // 0.166, 0.75
+
+// What the chain reads for one frame: not a component and not saved.
 pub struct PostProcessSettings {
     pub tonemapping: TonemapSettings,
-    pub ambient_occlusion: AmbientOcclusionSettings,
-    pub depth_of_field: DepthOfFieldSettings,
-    pub bloom: BloomSettings,
-    pub color_grading: ColorGradingSettings,
-    pub vignette: VignetteSettings,
-    pub anti_aliasing: AntiAliasingSettings,
-}
-pub struct TonemapSettings { pub preset: TonemappingPreset, pub exposure_ev: f32 }  // Aces, 0.0
-pub struct AmbientOcclusionSettings {                         // off, 0.5, 1.0, 0.025, 16
-    pub enabled: bool, pub radius: f32, pub intensity: f32, pub bias: f32, pub sample_count: u32,
-}
-pub struct BloomSettings {                                    // off, 1.0, 0.5, 0.5, 6
-    pub enabled: bool, pub threshold: f32, pub knee: f32, pub intensity: f32, pub radius: u32,
-}
-pub enum TonemappingPreset { Aces }
-pub struct DepthOfFieldSettings {                             // off, 10.0, 10.0, 8.0
-    pub enabled: bool, pub focus_distance: f32, pub focus_range: f32, pub max_blur: f32,
-}
-pub struct ColorGradingSettings { pub enabled: bool, pub contrast: f32, pub saturation: f32, pub temperature: f32, pub tint: f32 }  // false, 1, 1, 0, 0
-pub struct VignetteSettings { pub enabled: bool, pub intensity: f32, pub smoothness: f32, pub color: Color32 }  // false, 0.4, 0.2, black
-pub struct AntiAliasingSettings { pub fxaa: bool, pub edge_threshold: f32, pub subpixel: f32 }  // false, 0.166, 0.75
-
-pub struct ComponentGlobalPostProcessVolume {
-    pub enabled: bool,
-    pub priority: i32,
-    pub settings: PostProcessSettings,
+    pub ambient_occlusion: Option<AmbientOcclusionSettings>,
+    pub depth_of_field: Option<DepthOfFieldSettings>,
+    pub bloom: Option<BloomSettings>,
+    pub color_grading: Option<ColorGradingSettings>,
+    pub vignette: Option<VignetteSettings>,
+    pub anti_aliasing: Option<AntiAliasingSettings>,
 }
 ```
 
-- The component is reflected and serialized like the other built-in components, so the inspector edits it with its default field inspectors.
-- Every settings struct is `#[serde(default)]`. Effects added later become optional sub-structs of `PostProcessSettings`, so saved scenes stay compatible.
-- **Selection**: the enabled volume with the highest priority. On a priority tie the renderer warns once and uses the first found. With no enabled volume it uses `PostProcessSettings::default()`.
+- **Effect components**: each effect's settings struct is itself the component, with its own type UUID, so a pass reads exactly the values the inspector edits and #114 can blend the same types. None carries an `enabled` field: an effect is on when its component is present on the volume's game object and the scene holds it enabled (`Scene::is_component_enabled`, #415). The volume's own enabled state lives in the scene the same way.
+- **Gathering**: `PostProcessSettings::resolve(scene)` is the one entry point. `PostProcessSettings::selected_volume(scene)` picks the volume's game object, and `PostProcessSettings::from_game_object(scene, game_object)` reads the enabled effect components on it: each present and enabled component becomes `Some`, every other effect is `None` and its pass is off. Tone mapping is never `None`; without an enabled Tone Mapping component it takes `TonemapSettings::default()`. Any view that renders a scene, such as thumbnails, calls `resolve` the same way the renderer does.
+- **Selection**: the enabled volume with the highest priority. On a priority tie the renderer warns once and uses the first found. With no enabled volume it uses `PostProcessSettings::default()`, tone mapping alone. Effect components on other game objects, or on a disabled or losing volume's object, are never read.
+- **Passes**: each pass's `enabled` is whether its field is `Some`, and `prepare` reads the values from it. The chain and the passes read nothing else from the scene.
+- **Inspector**: the volume and the effect components carry `category = "Post Processing"`, and the add-component menu lists components without a category first, then each category under its heading, in name order. Each effect edits with the default field inspectors and switches on and off through the component header's checkbox.
+- **Saved scenes**: a volume saves only `priority`, and each effect saves its fields under its own type UUID on the same object. The committed scenes were converted once from the old layout, a `settings` struct inside the volume; loading has no migration path. `sandbox/tests/saved_data.rs` fails if a committed scene or prefab still holds the old layout.
 - Prefab mode and thumbnails render scenes with no volume, so they get the defaults with no special case.
 - #114's local volumes blend `PostProcessSettings` values before the chain runs; the chain only ever sees one resolved value.
 
@@ -306,12 +304,12 @@ Headless tests in `crates/calyx_engine/src/render/postprocess/`:
 - ACES maps known HDR inputs to the reference fit within tolerance.
 - The display-encoding test above.
 - Depth reaches a pass that requests it, single-sample at one and four samples; normals and velocity report unavailable.
-- Volume selection picks the highest enabled priority, warns on a tie, and falls back to the defaults.
-- SSAO leaves a flat plane facing the camera unoccluded, darkens an inside corner most at its crease, does not darken a one-pixel post standing in front of that crease, and leaves the sky, at a cleared or skybox depth, bit for bit unchanged. With it disabled the renderer's plan is tone mapping alone. Its targets are half the chain's size and freed on release, and settings saved before it load with it off.
-- Depth of field (`dof.rs`): `CameraPlanes` inverts the render projection; pixels at the focus distance are unchanged; far pixels blur more than pixels near focus, and pixels in front of it blur too; a blurred background stays behind a sharp edge while a blurred foreground spreads over it; the pass reads depth at one and four samples with the same result; with it disabled the plan is the tone-map-only plan and its texture is not allocated, follows the chain's size, and is freed when disabled and on resize. Settings saved before it load with it off.
+- Volume selection picks the highest enabled priority, warns on a tie, and falls back to the defaults. A volume with no effect components resolves to tone mapping alone, only the selected volume's effect components are gathered, a disabled tone-mapping component falls back to the defaults, and adding, disabling or removing each effect component switches its pass on or off in the renderer's plan.
+- SSAO leaves a flat plane facing the camera unoccluded, darkens an inside corner most at its crease, does not darken a one-pixel post standing in front of that crease, and leaves the sky, at a cleared or skybox depth, bit for bit unchanged. With it disabled the renderer's plan is tone mapping alone. Its targets are half the chain's size and freed on release, and a partial component loads with the defaults.
+- Depth of field (`dof.rs`): `CameraPlanes` inverts the render projection; pixels at the focus distance are unchanged; far pixels blur more than pixels near focus, and pixels in front of it blur too; a blurred background stays behind a sharp edge while a blurred foreground spreads over it; the pass reads depth at one and four samples with the same result; with it disabled the plan is the tone-map-only plan and its texture is not allocated, follows the chain's size, and is freed when disabled and on resize. A partial component loads with the defaults.
 - Bloom (`bloom.rs`): a single pixel above the threshold spreads energy into its neighbours, fading with distance, and keeps alpha; an image entirely below the threshold passes through unchanged; a flat image of 20,000 blooms to the expected value without overflowing the half-float mips; a composite past the half-float maximum saturates at it; with bloom disabled the renderer's plan is the tone-map-only plan; the mip chain follows the chain's size and the radius and is freed on release; the chain releases a pass's targets on resize and on frames the pass does not run.
-- Colour grading (`color_grading/tests.rs`): neutral settings return the input, zero saturation gives grey at the input's luminance, contrast keeps mid grey, positive temperature warms and positive tint adds magenta, the vignette darkens the corners and leaves the centre unchanged, and alpha is preserved. With both effects off the pass is left out of the plan, the scene renderer plans it before FXAA, and settings saved before it load with both off.
-- FXAA smooths a hard diagonal edge and keeps each pixel's alpha, leaves a flat colour and its alpha unchanged, and leaves the plan unchanged while disabled. Settings saved before it load with it off.
+- Colour grading (`color_grading/tests.rs`): neutral settings return the input, zero saturation gives grey at the input's luminance, contrast keeps mid grey, positive temperature warms and positive tint adds magenta, the vignette darkens the corners and leaves the centre unchanged, and alpha is preserved. With both effects off the pass is left out of the plan, the scene renderer plans it before FXAA, and partial components load with the defaults.
+- FXAA smooths a hard diagonal edge and keeps each pixel's alpha, leaves a flat colour and its alpha unchanged, and leaves the plan unchanged while disabled. A partial component loads with the defaults.
 
 Headless tests in `crates/calyx_engine/src/render/overlay/` and `scene_renderer.rs`:
 
@@ -322,7 +320,7 @@ Headless tests in `crates/calyx_engine/src/render/overlay/` and `scene_renderer.
 
 ## Roadmap
 
-- **#113** adds effects as `Hdr` and `Ldr` passes, each with an optional settings sub-struct.
+- **#113** adds effects as `Hdr` and `Ldr` passes, each with its own effect component (#416).
 - **#114** adds local volumes that blend `PostProcessSettings` before the chain runs.
 - **#115** adds editor UI for post-processing profiles.
 - **#378** adds a showcase scene that validates the look end to end.

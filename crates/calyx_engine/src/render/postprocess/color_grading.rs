@@ -3,23 +3,23 @@
 
 use super::{PassContext, PassIo, PostProcessPass, PostProcessSettings, PostProcessStage};
 use crate as calyx_engine;
+use crate::component::{Component, ReflectComponent};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::reflect::{Reflect, ReflectDefault};
 use crate::render::{CachedBindGroup, PipelineOptions, RenderUtils, SceneRendererError, Shader};
-use crate::utils::TypeUuid;
+use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use egui::Color32;
 use egui_wgpu::wgpu;
 use serde::{Deserialize, Serialize};
 
 /// White balance, contrast and saturation, after tone mapping.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
-#[uuid = "5d0e7a3c-41b2-4f7e-9c86-2a1f0b9e6d47"]
-#[reflect(Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect)]
+#[uuid = "d2694fb5-4815-471e-9537-4ab502c580f0"]
+#[reflect(Default, TypeUuidDynamic, Component)]
+#[reflect_attr(name = "Colour Grading", category = "Post Processing")]
 #[serde(default)]
 pub struct ColorGradingSettings {
-    /// Whether the grading runs.
-    pub enabled: bool,
     /// Contrast around mid grey (linear 0.18): 1 leaves the image as it is,
     /// 0 flattens it to mid grey, above 1 spreads it out.
     #[reflect_attr(min = 0.0, max = 2.0, speed = 0.01)]
@@ -35,10 +35,16 @@ pub struct ColorGradingSettings {
     pub tint: f32,
 }
 
+impl Component for ColorGradingSettings {
+    /// A disabled effect component switches its pass off.
+    fn can_disable(&self) -> bool {
+        true
+    }
+}
+
 impl Default for ColorGradingSettings {
     fn default() -> Self {
         Self {
-            enabled: false,
             contrast: 1.0,
             saturation: 1.0,
             temperature: 0.0,
@@ -48,13 +54,12 @@ impl Default for ColorGradingSettings {
 }
 
 /// Darkens, or tints, the edges of the screen.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
-#[uuid = "b7c4e2f1-0a93-4d6b-8e25-6f1a3c9d0b82"]
-#[reflect(Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect)]
+#[uuid = "61efa204-ed0d-4d1f-86a4-b226be940b13"]
+#[reflect(Default, TypeUuidDynamic, Component)]
+#[reflect_attr(name = "Vignette", category = "Post Processing")]
 #[serde(default)]
 pub struct VignetteSettings {
-    /// Whether the vignette runs.
-    pub enabled: bool,
     /// How far the vignette reaches in from the edges, from 0 (none) to 1.
     #[reflect_attr(min = 0.0, max = 1.0, speed = 0.01)]
     pub intensity: f32,
@@ -65,10 +70,16 @@ pub struct VignetteSettings {
     pub color: Color32,
 }
 
+impl Component for VignetteSettings {
+    /// A disabled effect component switches its pass off.
+    fn can_disable(&self) -> bool {
+        true
+    }
+}
+
 impl Default for VignetteSettings {
     fn default() -> Self {
         Self {
-            enabled: false,
             intensity: 0.4,
             smoothness: 0.2,
             color: Color32::BLACK,
@@ -140,21 +151,17 @@ struct ColorGradingUniform {
 
 impl ColorGradingUniform {
     fn new(settings: &PostProcessSettings) -> Self {
-        let neutral = ColorGradingSettings::default();
-        let grading = if settings.color_grading.enabled {
-            &settings.color_grading
-        } else {
-            &neutral
-        };
+        // A missing effect reaches the shader as neutral values.
+        let grading = settings.color_grading.unwrap_or_default();
         let matrix = white_balance(grading.temperature, grading.tint);
-        let vignette = &settings.vignette;
+        let vignette = settings.vignette.unwrap_or_default();
         Self {
             white_balance: std::array::from_fn(|column| {
                 [matrix[0][column], matrix[1][column], matrix[2][column], 0.0]
             }),
             contrast: grading.contrast,
             saturation: grading.saturation,
-            vignette_intensity: if vignette.enabled {
+            vignette_intensity: if settings.vignette.is_some() {
                 vignette.intensity
             } else {
                 0.0
@@ -208,7 +215,7 @@ impl PostProcessPass for ColorGradingPass {
     }
 
     fn enabled(&self, settings: &PostProcessSettings) -> bool {
-        settings.color_grading.enabled || settings.vignette.enabled
+        settings.color_grading.is_some() || settings.vignette.is_some()
     }
 
     fn prepare(&mut self, context: &PassContext, settings: &PostProcessSettings) {
