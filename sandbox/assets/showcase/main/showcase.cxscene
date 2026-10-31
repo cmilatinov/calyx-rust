@@ -792,7 +792,6 @@
         }
       },
       "eb42f81f-45ab-428c-9d07-961696edc5fa": {
-        "active": true,
         "intensity": 0.800000011920929,
         "skybox": "f9da6a04-19a6-1f65-dbf9-0a779459c814"
       }
@@ -1191,7 +1190,6 @@
         "visible": true
       },
       "5fd24d64-6661-40ba-94a5-4fca0d06ead1": {
-        "active": true,
         "color": [
           255,
           240,
@@ -1306,7 +1304,6 @@
         "visible": true
       },
       "5fd24d64-6661-40ba-94a5-4fca0d06ead1": {
-        "active": true,
         "color": [
           255,
           140,
@@ -1344,7 +1341,6 @@
         "visible": true
       },
       "5fd24d64-6661-40ba-94a5-4fca0d06ead1": {
-        "active": true,
         "color": [
           255,
           70,
@@ -1674,7 +1670,6 @@
         "visible": true
       },
       "72b2568a-2ea0-4f58-ae76-e3f655006f0f": {
-        "active": true,
         "color": [
           255,
           228,
@@ -1912,7 +1907,6 @@
         "visible": true
       },
       "5fd24d64-6661-40ba-94a5-4fca0d06ead1": {
-        "active": true,
         "color": [
           255,
           150,
@@ -2257,7 +2251,6 @@
         "visible": true
       },
       "5fd24d64-6661-40ba-94a5-4fca0d06ead1": {
-        "active": true,
         "color": [
           60,
           200,

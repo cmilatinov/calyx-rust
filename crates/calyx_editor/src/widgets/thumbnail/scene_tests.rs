@@ -110,7 +110,6 @@ fn add_directional_light(scene: &mut Scene) {
     scene.add_component(
         light,
         ComponentDirectionalLight {
-            active: true,
             color: Color32::WHITE,
             intensity: 4.0,
         },

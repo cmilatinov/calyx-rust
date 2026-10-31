@@ -3,8 +3,9 @@
 //! These tests read every committed one and fail if a crate-qualified type
 //! name appears in them, if a component they hold has no registered type, or
 //! if a component that the scene now switches on and off still carries its
-//! own `enabled` field, or if a post-process volume still holds the combined
-//! settings its effect components replaced.
+//! own `enabled` field, or a light its own `active` field, or if a
+//! post-process volume still holds the combined settings its effect
+//! components replaced.
 
 // Matches the crates under test: the particle system component nests deep
 // enough that proving it `Send`/`Sync` passes the default limit.
@@ -13,9 +14,11 @@
 use std::path::{Path, PathBuf};
 
 use calyx_engine::component::{
-    ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom, ComponentCamera,
-    ComponentCollider, ComponentColorGrading, ComponentDepthOfField,
-    ComponentGlobalPostProcessVolume, ComponentRigidBody, ComponentTonemap, ComponentVignette,
+    ComponentAmbientLight, ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom,
+    ComponentCamera, ComponentCollider, ComponentColorGrading, ComponentDepthOfField,
+    ComponentDirectionalLight, ComponentGlobalPostProcessVolume, ComponentParticleSystem,
+    ComponentPointLight, ComponentRigidBody, ComponentSkyLight, ComponentTonemap,
+    ComponentVignette,
 };
 use calyx_engine::context::AssetContext;
 use calyx_engine::scene::{Prefab, Scene};
@@ -231,6 +234,65 @@ fn saved_scenes_and_prefabs_hold_no_legacy_enabled_fields() {
             "{} holds `enabled` fields that the scene's disabled_components map \
              now keeps and loading no longer reads (object, component type): \
              {found:?}",
+            file.display()
+        );
+    }
+}
+
+/// The `(object, component type)` pairs in a saved scene whose light payload
+/// still holds the top-level `active` field that the scene's enabled state
+/// replaced.
+fn legacy_light_active_fields(scene: &Value) -> Vec<(String, Uuid)> {
+    let lights = [
+        ComponentPointLight::type_uuid(),
+        ComponentDirectionalLight::type_uuid(),
+        ComponentAmbientLight::type_uuid(),
+        ComponentSkyLight::type_uuid(),
+    ];
+    let mut found = Vec::new();
+    for (object, components) in scene["components"]
+        .as_object()
+        .expect("a saved scene has a components map")
+    {
+        for type_uuid in lights {
+            if components[type_uuid.to_string()].get("active").is_some() {
+                found.push((object.clone(), type_uuid));
+            }
+        }
+    }
+    found
+}
+
+#[test]
+fn legacy_light_active_fields_flags_only_lights() {
+    let object = "07b17e3d-9b73-411b-9d08-c56698a37556";
+    let light = ComponentPointLight::type_uuid().to_string();
+    let particles = ComponentParticleSystem::type_uuid().to_string();
+    let mut scene = serde_json::json!({ "components": { object: {
+        light.clone(): { "radius": 1.0 },
+        // The particle system keeps `active` as its emission switch.
+        particles: { "active": false },
+    } } });
+    assert!(legacy_light_active_fields(&scene).is_empty());
+
+    scene["components"][object][&light]["active"] = Value::Bool(true);
+    assert_eq!(
+        legacy_light_active_fields(&scene),
+        [(object.to_string(), ComponentPointLight::type_uuid())]
+    );
+}
+
+#[test]
+fn saved_scenes_and_prefabs_hold_no_legacy_light_active_fields() {
+    let root = repository_root();
+    for (index, path) in saved_files(&["cxscene", "cxprefab"]) {
+        let file = root.join(ASSET_ROOTS[index]).join(&path);
+        let source: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap())
+            .unwrap_or_else(|e| panic!("{} is not JSON: {e}", file.display()));
+        let found = legacy_light_active_fields(scene_data(&source, &path));
+        assert!(
+            found.is_empty(),
+            "{} holds light `active` fields that the scene's disabled_components              map now keeps and loading no longer reads (object, component type):              {found:?}",
             file.display()
         );
     }

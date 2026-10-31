@@ -140,10 +140,10 @@ mod tests {
             go,
             ComponentDirectionalLight {
                 intensity: 0.42,
-                active: false,
                 ..Default::default()
             },
         );
+        assert!(scene.set_component_enabled::<ComponentDirectionalLight>(go, false));
         scene.add_component(
             go,
             ComponentAmbientLight {
@@ -164,10 +164,10 @@ mod tests {
             go,
             ComponentSkyLight {
                 intensity: 0.7,
-                active: false,
                 ..Default::default()
             },
         );
+        assert!(scene.set_component_enabled::<ComponentSkyLight>(go, false));
 
         let mesh_id = Uuid::new_v4();
         scene.add_component(
@@ -261,12 +261,10 @@ mod tests {
             Some((1.5, 999.0))
         );
         assert_eq!(
-            restored.read_component::<ComponentDirectionalLight, _, _>(rgo, |c| (
-                c.active,
-                c.intensity
-            )),
-            Some((false, 0.42))
+            restored.read_component::<ComponentDirectionalLight, _, _>(rgo, |c| c.intensity),
+            Some(0.42)
         );
+        assert!(!restored.is_component_enabled::<ComponentDirectionalLight>(rgo));
         assert_eq!(
             restored.read_component::<ComponentAmbientLight, _, _>(rgo, |c| (c.color, c.intensity)),
             Some((Color32::BLUE, 0.33))
@@ -276,9 +274,10 @@ mod tests {
             Some((25.0, 1.25))
         );
         assert_eq!(
-            restored.read_component::<ComponentSkyLight, _, _>(rgo, |c| (c.active, c.intensity)),
-            Some((false, 0.7))
+            restored.read_component::<ComponentSkyLight, _, _>(rgo, |c| c.intensity),
+            Some(0.7)
         );
+        assert!(!restored.is_component_enabled::<ComponentSkyLight>(rgo));
         assert_eq!(
             restored.read_component::<ComponentMesh, _, _>(rgo, |c| c.mesh.id()),
             Some(mesh_id)

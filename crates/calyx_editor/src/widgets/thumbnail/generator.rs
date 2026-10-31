@@ -346,27 +346,28 @@ pub(super) fn scene_thumbnail_view(
     SceneThumbnailView::fit(&camera_fit, frame_margin)
 }
 
-/// Whether `scene` holds a light that lights it: an active ambient,
-/// directional, point or sky light.
+/// Whether `scene` holds a light that lights it: an enabled ambient,
+/// directional or point light, or an enabled sky light with a skybox.
 pub(super) fn scene_has_light(scene: &Scene) -> bool {
     scene.objects().any(|game_object| {
-        scene
-            .read_component::<ComponentAmbientLight, _, _>(game_object, |light| light.active)
-            .unwrap_or(false)
-            || scene
-                .read_component::<ComponentDirectionalLight, _, _>(game_object, |light| {
-                    light.active
-                })
-                .unwrap_or(false)
-            || scene
-                .read_component::<ComponentPointLight, _, _>(game_object, |light| light.active)
-                .unwrap_or(false)
-            || scene
-                .read_component::<ComponentSkyLight, _, _>(game_object, |light| {
-                    light.active && !light.skybox.id().is_nil()
-                })
-                .unwrap_or(false)
+        has_enabled::<ComponentAmbientLight>(scene, game_object)
+            || has_enabled::<ComponentDirectionalLight>(scene, game_object)
+            || has_enabled::<ComponentPointLight>(scene, game_object)
+            || (scene.is_component_enabled::<ComponentSkyLight>(game_object)
+                && scene
+                    .read_component::<ComponentSkyLight, _, _>(game_object, |light| {
+                        !light.skybox.id().is_nil()
+                    })
+                    .unwrap_or(false))
     })
+}
+
+/// Whether `game_object` has a component `T` the scene holds enabled.
+fn has_enabled<T: Component>(scene: &Scene, game_object: GameObject) -> bool {
+    scene
+        .read_component::<T, _, _>(game_object, |_| ())
+        .is_some()
+        && scene.is_component_enabled::<T>(game_object)
 }
 
 /// Gives the default material to each mesh that has none. The scene renderer
@@ -419,10 +420,8 @@ fn load_scene_sky_lights(context: &ReadOnlyAssetContext, scene: &Scene) {
         .objects()
         .filter_map(|game_object| {
             scene
-                .read_component::<ComponentSkyLight, _, _>(game_object, |light| {
-                    light.active.then(|| light.skybox.id())
-                })
-                .flatten()
+                .read_component::<ComponentSkyLight, _, _>(game_object, |light| light.skybox.id())
+                .filter(|_| scene.is_component_enabled::<ComponentSkyLight>(game_object))
         })
         .filter(|id| !id.is_nil())
         .collect::<HashSet<_>>();
@@ -648,7 +647,6 @@ fn add_preview_lighting(scene: &mut Scene) {
     scene.add_component(
         ambient,
         ComponentAmbientLight {
-            active: true,
             color: Color32::from_rgb(185, 196, 210),
             intensity: 0.8,
         },
@@ -661,7 +659,6 @@ fn add_preview_lighting(scene: &mut Scene) {
     scene.add_component(
         directional,
         ComponentDirectionalLight {
-            active: true,
             color: Color32::WHITE,
             intensity: 6.0,
         },
@@ -672,7 +669,6 @@ fn add_preview_lighting(scene: &mut Scene) {
     scene.add_component(
         point,
         ComponentPointLight {
-            active: true,
             radius: 7.0,
             color: Color32::WHITE,
             intensity: 0.8,

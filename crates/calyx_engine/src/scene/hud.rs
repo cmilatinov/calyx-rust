@@ -6,16 +6,19 @@ use crate::ui::{
 
 impl Scene {
     /// Builds the HUD of every [`ComponentHud`](crate::component::ComponentHud)
-    /// in the scene into `ui`, stacked over `viewport`. Returns `None` when no
-    /// component draws anything.
+    /// in the scene into `ui`, stacked over `viewport`, skipping the components
+    /// the scene holds disabled. Returns `None` when no component draws
+    /// anything.
     pub fn build_hud(&self, ui: &mut UiArena, viewport: UiRect) -> Option<UiNodeHandle> {
         let registry = self.registries().components.read();
         let objects: Vec<_> = self.objects().collect();
         let layers: Vec<UiNodeHandle> = registry
             .components_with_hud()
-            .flat_map(|(_, hud)| {
+            .flat_map(|(type_uuid, hud)| {
+                let prototype = registry.component(type_uuid);
                 objects
                     .iter()
+                    .filter(|&&game_object| self.runs_hooks(game_object, prototype))
                     .filter_map(|&game_object| hud.build_hud(self, game_object, ui, viewport))
                     .collect::<Vec<_>>()
             })

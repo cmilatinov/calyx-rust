@@ -749,13 +749,13 @@ mod tests {
     use crate::scene_history::{InspectorValueEdit, SceneHistory, SceneHistoryRestore};
     use crate::widgets::ListContainer;
     use calyx_engine::component::{
-        Component, ComponentCamera, ComponentParticleSystem, ComponentPointLight,
+        Component, ComponentBone, ComponentCamera, ComponentParticleSystem, ComponentPointLight,
     };
     use calyx_engine::reflect::type_registry::TypeRegistry;
     use calyx_engine::reflect::{ListInfo, Reflect, TypeInfo};
     use calyx_engine::utils::TypeUuid;
     use egui::accesskit::Role;
-    use egui::{Id, Ui, Vec2};
+    use egui::{Id, Rect, Ui, Vec2};
     use serde::{Deserialize, Serialize};
     use uuid::Uuid;
 
@@ -1206,44 +1206,62 @@ mod tests {
     }
 
     /// The inspector panel passes an enabled state only for a component type
-    /// that opts in to disabling, so a point light's header, pinned or not,
-    /// has no checkbox.
+    /// that opts in to disabling, so a bone's header, pinned or not, has no
+    /// checkbox, while a point light's, which opts in, has one.
     #[test]
-    fn components_that_cannot_be_disabled_have_no_checkbox() {
+    fn only_components_that_can_be_disabled_have_a_header_checkbox() {
+        assert!(!ComponentBone::default().can_disable());
+        assert!(ComponentPointLight::default().can_disable());
+        for pinned in [false, true] {
+            let (_, checkboxes) = header_checkboxes::<ComponentBone>("Bone", pinned);
+            assert!(checkboxes.is_empty(), "{checkboxes:#?}");
+
+            let (header, checkboxes) =
+                header_checkboxes::<ComponentPointLight>("Point Light", pinned);
+            assert_eq!(checkboxes.len(), 1, "{checkboxes:#?}");
+            assert!(
+                header.intersects(checkboxes[0]),
+                "the checkbox {:?} sits in the header {header:?}",
+                checkboxes[0]
+            );
+        }
+    }
+
+    /// Draws a default `T`'s inspector the way the inspector panel does, with
+    /// an enabled state only when `T` opts in to disabling. Returns the rect of
+    /// the header labelled `label` and the rect of every checkbox drawn.
+    fn header_checkboxes<T: Component + Default + TypeUuid>(
+        label: &str,
+        pinned: bool,
+    ) -> (Rect, Vec<Rect>) {
         let mut h = InspectorHarness::new();
         let registry = h.inspector_registry();
         let inspector = ComponentInspector::new(&registry);
-        let mut light = ComponentPointLight::default();
-        assert!(!light.can_disable());
-        h.type_info = ComponentPointLight::type_uuid();
-        for pinned in [false, true] {
-            let enabled = light.can_disable().then_some(true);
-            let pin = PinState {
-                pinned,
-                ..PinState::default()
-            };
-            let mut draw = |ui: &mut Ui, ctx: &InspectorContext| {
-                inspector
-                    .show(ui, ctx, light.as_reflect_mut(), pin, enabled)
-                    .edit
-            };
-            h.idle(3, &mut draw);
-            let header = h
-                .nodes()
-                .iter()
-                .find(|node| node.label.as_deref() == Some("Point Light"))
-                .unwrap_or_else(|| panic!("no Point Light header in {:#?}", h.nodes()))
-                .rect;
-            // The light's own Active field is a checkbox in the body.
-            let checkboxes = h.widgets(Role::CheckBox);
-            assert_eq!(checkboxes.len(), 1, "{:#?}", h.nodes());
-            assert!(
-                checkboxes
-                    .iter()
-                    .all(|checkbox| !header.intersects(checkbox.rect)),
-                "no checkbox in the header {header:?}: {checkboxes:#?}"
-            );
-        }
+        let mut component = T::default();
+        h.type_info = T::type_uuid();
+        let enabled = component.can_disable().then_some(true);
+        let pin = PinState {
+            pinned,
+            ..PinState::default()
+        };
+        let mut draw = |ui: &mut Ui, ctx: &InspectorContext| {
+            inspector
+                .show(ui, ctx, component.as_reflect_mut(), pin, enabled)
+                .edit
+        };
+        h.idle(3, &mut draw);
+        let header = h
+            .nodes()
+            .iter()
+            .find(|node| node.label.as_deref() == Some(label))
+            .unwrap_or_else(|| panic!("no {label} header in {:#?}", h.nodes()))
+            .rect;
+        let checkboxes = h
+            .widgets(Role::CheckBox)
+            .iter()
+            .map(|checkbox| checkbox.rect)
+            .collect();
+        (header, checkboxes)
     }
 
     /// The particle system's size module shows its curve in the curve editor,

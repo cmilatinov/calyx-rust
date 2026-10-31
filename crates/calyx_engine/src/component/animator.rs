@@ -118,6 +118,13 @@ pub struct ComponentAnimator {
 }
 
 impl Component for ComponentAnimator {
+    /// A disabled animator skips its update hook, so it neither advances nor
+    /// writes a pose: its skinned meshes keep the last pose it wrote, or the
+    /// rest pose when it never wrote one.
+    fn can_disable(&self) -> bool {
+        true
+    }
+
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {
         if self.draw_debug_skeleton {
             gizmos.set_color(&Vec4::new(1.0, 1.0, 0.0, 1.0));
@@ -879,11 +886,16 @@ mod tests {
         assert_eq!(result.scale, bind_pose().scale);
     }
 
-    #[test]
-    fn skinned_meshes_ordering_bones_differently_each_follow_their_own_bones() {
-        // Two meshes skinned by one joint tree: the body's skin lists [Hip, Spine], the arm's
-        // [Arm, Spine, Hip]. Halfway through the clip the hip has moved 1 along z and the spine
-        // has turned 45 degrees about z; the arm on the spine has no channel and turns with it.
+    /// The `TwoSkins` model: two meshes skinned by one joint tree, the body's skin listing
+    /// [Hip, Spine] and the arm's [Arm, Spine, Hip], instantiated with an animator playing its
+    /// one-second bend clip. Returns the assets, which own the registries, and the scene with
+    /// its root.
+    fn two_skins_scene() -> (
+        crate::test_support::TestAssets,
+        ReadOnlyRegistryContext,
+        Scene,
+        GameObject,
+    ) {
         let test_assets = crate::test_support::TestAssets::models();
         let assets = test_assets.registries();
         let path = test_assets.fixtures_root().join("gltf/TwoSkins.gltf");
@@ -924,6 +936,75 @@ mod tests {
                 ..Default::default()
             },
         );
+        (test_assets, assets, scene, root)
+    }
+
+    /// The animator's time and each skinned mesh's palette, as bytes so poses compare.
+    fn pose_of(scene: &Scene, root: GameObject) -> (TimeType, Vec<Vec<u8>>) {
+        let time = scene
+            .read_component::<ComponentAnimator, _, _>(root, |c| c.time)
+            .unwrap();
+        let poses = scene
+            .descendants_with::<ComponentSkinnedMesh>(root)
+            .map(|mesh| {
+                scene
+                    .read_component::<ComponentSkinnedMesh, _, _>(mesh, |c| {
+                        bytemuck::cast_slice::<BoneTransform, u8>(&c.bone_transforms).to_vec()
+                    })
+                    .unwrap()
+            })
+            .collect();
+        (time, poses)
+    }
+
+    #[test]
+    fn a_disabled_animator_neither_advances_nor_poses_until_re_enabled() {
+        let (_test_assets, _assets, mut scene, root) = two_skins_scene();
+        assert!(scene.set_component_enabled::<ComponentAnimator>(root, false));
+        let mut runner = crate::test_support::HeadlessSceneRunner::from_scene(scene);
+        runner.step_many(2);
+        let (time, poses) = pose_of(runner.scene(), root);
+        assert_eq!(time, 0.0);
+        assert!(
+            poses.iter().all(Vec::is_empty),
+            "a mesh never posed keeps drawing its rest pose"
+        );
+
+        assert!(runner
+            .scene_mut()
+            .set_component_enabled::<ComponentAnimator>(root, true));
+        runner.step();
+        let (posed_time, posed) = pose_of(runner.scene(), root);
+        assert!(posed_time > 0.0);
+        assert!(posed.iter().all(|pose| !pose.is_empty()));
+
+        assert!(runner
+            .scene_mut()
+            .set_component_enabled::<ComponentAnimator>(root, false));
+        runner.step_many(3);
+        assert_eq!(
+            pose_of(runner.scene(), root),
+            (posed_time, posed.clone()),
+            "a disabled animator keeps its meshes in the last pose it wrote"
+        );
+
+        assert!(runner
+            .scene_mut()
+            .set_component_enabled::<ComponentAnimator>(root, true));
+        runner.step();
+        let (time, poses) = pose_of(runner.scene(), root);
+        assert!(
+            time > posed_time,
+            "enabled again, it advances from where it stopped"
+        );
+        assert_ne!(poses, posed);
+    }
+
+    #[test]
+    fn skinned_meshes_ordering_bones_differently_each_follow_their_own_bones() {
+        // Halfway through the clip the hip has moved 1 along z and the spine has turned 45
+        // degrees about z; the arm on the spine has no channel and turns with it.
+        let (_test_assets, assets, mut scene, root) = two_skins_scene();
         scene.write_component::<ComponentAnimator, _>(root, |c| {
             c.init(&assets);
             c.advance(0.5);

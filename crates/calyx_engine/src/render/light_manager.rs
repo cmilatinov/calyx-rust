@@ -137,10 +137,10 @@ impl LightManager {
         let mut query = <(Entity, &ComponentPointLight)>::query();
         for (game_object, light) in query
             .iter(scene.world())
-            .filter(|(_, light)| light.active)
             .filter_map(|(entity, light)| {
                 scene.game_object_from_entity(*entity).map(|go| (go, light))
             })
+            .filter(|(go, _)| scene.is_component_enabled::<ComponentPointLight>(*go))
         {
             let color = light.color.to_normalized_gamma_f32();
             point_lights.push(PointLight {
@@ -158,10 +158,10 @@ impl LightManager {
         let mut query = <(Entity, &ComponentDirectionalLight)>::query();
         for (game_object, light) in query
             .iter(scene.world())
-            .filter(|(_, light)| light.active)
             .filter_map(|(entity, light)| {
                 scene.game_object_from_entity(*entity).map(|go| (go, light))
             })
+            .filter(|(go, _)| scene.is_component_enabled::<ComponentDirectionalLight>(*go))
         {
             let color = light.color.to_normalized_gamma_f32();
             directional_lights.push(DirectionalLight {
@@ -179,8 +179,12 @@ impl LightManager {
 
     fn collect_ambient_light(scene: &Scene) -> [f32; 4] {
         let mut ambient = [0.0, 0.0, 0.0, 1.0];
-        let mut query = <&ComponentAmbientLight>::query();
-        for light in query.iter(scene.world()).filter(|light| light.active) {
+        let mut query = <(Entity, &ComponentAmbientLight)>::query();
+        for (_, light) in query.iter(scene.world()).filter(|(entity, _)| {
+            scene
+                .game_object_from_entity(**entity)
+                .is_some_and(|go| scene.is_component_enabled::<ComponentAmbientLight>(go))
+        }) {
             let color = light.color.to_normalized_gamma_f32();
             let intensity = light.intensity.max(0.0);
             ambient[0] += color[0] * intensity;
@@ -200,30 +204,29 @@ mod tests {
     use nalgebra_glm::{translation, vec3};
 
     #[test]
-    fn collect_point_lights_includes_active_lights() {
+    fn collect_point_lights_skips_disabled_lights_until_re_enabled() {
         let mut scene = test_scene();
-        let active = scene.create(None, None);
-        scene.set_world_transform(active, translation(&vec3(1.0, 2.0, 3.0)));
+        let enabled = scene.create(None, None);
+        scene.set_world_transform(enabled, translation(&vec3(1.0, 2.0, 3.0)));
         scene.add_component(
-            active,
+            enabled,
             ComponentPointLight {
                 radius: 7.5,
                 color: Color32::RED,
                 intensity: 0.25,
-                ..Default::default()
             },
         );
 
-        let inactive = scene.create(None, None);
+        let disabled = scene.create(None, None);
         scene.add_component(
-            inactive,
+            disabled,
             ComponentPointLight {
-                active: false,
                 radius: 99.0,
                 color: Color32::BLUE,
                 ..Default::default()
             },
         );
+        assert!(scene.set_component_enabled::<ComponentPointLight>(disabled, false));
 
         let lights = LightManager::collect_point_lights(&scene);
 
@@ -232,30 +235,34 @@ mod tests {
         assert_eq!(lights[0].radius, 7.5);
         assert_eq!(lights[0].color, [1.0, 0.0, 0.0]);
         assert_eq!(lights[0].intensity, 0.25);
+
+        assert!(scene.set_component_enabled::<ComponentPointLight>(disabled, true));
+        let lights = LightManager::collect_point_lights(&scene);
+        assert_eq!(lights.len(), 2);
+        assert!(lights.iter().any(|light| light.radius == 99.0));
     }
 
     #[test]
-    fn collect_directional_lights_includes_active_lights() {
+    fn collect_directional_lights_skips_disabled_lights_until_re_enabled() {
         let mut scene = test_scene();
-        let active = scene.create(None, None);
+        let enabled = scene.create(None, None);
         scene.add_component(
-            active,
+            enabled,
             ComponentDirectionalLight {
                 color: Color32::GREEN,
                 intensity: 0.5,
-                ..Default::default()
             },
         );
 
-        let inactive = scene.create(None, None);
+        let disabled = scene.create(None, None);
         scene.add_component(
-            inactive,
+            disabled,
             ComponentDirectionalLight {
-                active: false,
                 color: Color32::BLUE,
                 ..Default::default()
             },
         );
+        assert!(scene.set_component_enabled::<ComponentDirectionalLight>(disabled, false));
 
         let lights = LightManager::collect_directional_lights(&scene);
 
@@ -263,10 +270,13 @@ mod tests {
         assert_eq!(lights[0].direction, [0.0, 0.0, 1.0]);
         assert_eq!(lights[0].color, [0.0, 1.0, 0.0]);
         assert_eq!(lights[0].intensity, 0.5);
+
+        assert!(scene.set_component_enabled::<ComponentDirectionalLight>(disabled, true));
+        assert_eq!(LightManager::collect_directional_lights(&scene).len(), 2);
     }
 
     #[test]
-    fn collect_ambient_light_sums_active_lights() {
+    fn collect_ambient_light_sums_enabled_lights_until_re_enabled() {
         let mut scene = test_scene();
         let first = scene.create(None, None);
         scene.add_component(
@@ -274,7 +284,6 @@ mod tests {
             ComponentAmbientLight {
                 color: Color32::RED,
                 intensity: 0.25,
-                ..Default::default()
             },
         );
         let second = scene.create(None, None);
@@ -283,21 +292,27 @@ mod tests {
             ComponentAmbientLight {
                 color: Color32::BLUE,
                 intensity: 0.5,
-                ..Default::default()
             },
         );
-        let inactive = scene.create(None, None);
+        let disabled = scene.create(None, None);
         scene.add_component(
-            inactive,
+            disabled,
             ComponentAmbientLight {
-                active: false,
                 color: Color32::GREEN,
                 intensity: 1.0,
             },
         );
+        assert!(scene.set_component_enabled::<ComponentAmbientLight>(disabled, false));
 
-        let ambient = LightManager::collect_ambient_light(&scene);
+        assert_eq!(
+            LightManager::collect_ambient_light(&scene),
+            [0.25, 0.0, 0.5, 1.0]
+        );
 
-        assert_eq!(ambient, [0.25, 0.0, 0.5, 1.0]);
+        assert!(scene.set_component_enabled::<ComponentAmbientLight>(disabled, true));
+        assert_eq!(
+            LightManager::collect_ambient_light(&scene),
+            [0.25, 1.0, 0.5, 1.0]
+        );
     }
 }

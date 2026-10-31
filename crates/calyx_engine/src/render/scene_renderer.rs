@@ -737,7 +737,9 @@ impl SceneRenderer {
             let Some(game_object) = scene.game_object_from_entity(*entity) else {
                 continue;
             };
-            if !scene.is_visible_in_hierarchy(game_object) {
+            if !scene.is_visible_in_hierarchy(game_object)
+                || !scene.is_component_enabled::<ComponentMesh>(game_object)
+            {
                 continue;
             }
             let Some(mesh_ref) = c_mesh.mesh.get_ref(&self.asset_context.registries) else {
@@ -764,7 +766,9 @@ impl SceneRenderer {
             let Some(game_object) = scene.game_object_from_entity(*entity) else {
                 continue;
             };
-            if !scene.is_visible_in_hierarchy(game_object) {
+            if !scene.is_visible_in_hierarchy(game_object)
+                || !scene.is_component_enabled::<ComponentSkinnedMesh>(game_object)
+            {
                 continue;
             }
             let Some(mesh_ref) = c_skinned_mesh.mesh.get_ref(&self.asset_context.registries) else {
@@ -822,7 +826,7 @@ impl SceneRenderer {
                 transform.matrix().into(),
             );
         }
-        let mut query = <&ComponentSkyLight>::query();
+        let mut query = <(Entity, &ComponentSkyLight)>::query();
         let mut skybox = None;
         let mut sky_light_intensity = 0.0;
         // A view's own environment replaces the scene's sky lights.
@@ -835,7 +839,13 @@ impl SceneRenderer {
         });
         let scene_sky_lights = query
             .iter(world)
-            .filter(|s| s.active && view_environment.is_none());
+            .filter(|(entity, _)| {
+                view_environment.is_none()
+                    && scene
+                        .game_object_from_entity(**entity)
+                        .is_some_and(|go| scene.is_component_enabled::<ComponentSkyLight>(go))
+            })
+            .map(|(_, sky_light)| sky_light);
         if let Some((skybox_ref, intensity, _)) = &view_environment {
             let skybox_id = skybox_ref.id();
             self.assets
@@ -2027,6 +2037,79 @@ mod tests {
             renderer.pick_game_object(SIZE.0 / 2, SIZE.1 / 2),
             Some(mesh_uuid),
             "the skinned mesh should draw in its rest pose at the origin"
+        );
+    }
+
+    /// Renders `scene` and picks the pixel at each of `pixels`.
+    fn render_and_pick<const N: usize>(
+        renderer: &mut SceneRenderer,
+        scene: &Scene,
+        (camera, transform): &(Camera, Transform),
+        pixels: [(u32, u32); N],
+    ) -> [Option<Uuid>; N] {
+        renderer.render_scene_base(camera, transform, scene, None, None);
+        renderer.finalize_scene();
+        pixels.map(|(x, y)| renderer.pick_game_object(x, y))
+    }
+
+    #[test]
+    fn disabled_meshes_are_neither_drawn_nor_picked_until_re_enabled() {
+        const SIZE: (u32, u32) = (128, 64);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let material = pbr_material(&read_only_context, "test/disabled_meshes");
+        let bind = glm::translation(&vec3(1.0, 0.0, 0.0));
+        let skinned = skinned_cube(&read_only_context, "test/disabled_skinned", "hip", bind);
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        let left = vec3(-3.0, 0.0, 0.0);
+        let mesh_uuid = spawn_mesh(&mut builder, "mesh", &cube, &material, left);
+        // The skinned cube draws in its rest pose at the origin.
+        let (_, _, skinned_object) = spawn_skinned_model(
+            &mut builder,
+            &skinned,
+            &material,
+            Mat4::identity(),
+            bind,
+            Vec::new(),
+        );
+        let skinned_uuid = builder.scene().uuid(skinned_object);
+        let mut scene = builder.finish();
+        let mesh_object = scene.find(mesh_uuid).unwrap();
+        let view = front_camera(2.0, 10.0);
+        let pixels = [
+            project(&view.0, &view.1, left, SIZE),
+            project(&view.0, &view.1, Vec3::zeros(), SIZE),
+        ];
+        let mut renderer = renderer(&read_only_context, 1, SIZE);
+
+        assert_eq!(
+            render_and_pick(&mut renderer, &scene, &view, pixels),
+            [Some(mesh_uuid), Some(skinned_uuid)]
+        );
+
+        assert!(scene.set_component_enabled::<ComponentMesh>(mesh_object, false));
+        assert!(scene.set_component_enabled::<ComponentSkinnedMesh>(skinned_object, false));
+        assert_eq!(
+            render_and_pick(&mut renderer, &scene, &view, pixels),
+            [None, None]
+        );
+        assert!(
+            renderer.draw_list.is_empty(),
+            "a disabled mesh queues no draw, so it is neither drawn nor outlined"
+        );
+
+        assert!(scene.set_component_enabled::<ComponentMesh>(mesh_object, true));
+        assert!(scene.set_component_enabled::<ComponentSkinnedMesh>(skinned_object, true));
+        assert_eq!(
+            render_and_pick(&mut renderer, &scene, &view, pixels),
+            [Some(mesh_uuid), Some(skinned_uuid)]
         );
     }
 

@@ -821,6 +821,64 @@ fn a_destroyed_system_is_released_and_an_undrawn_one_is_kept() {
     );
 }
 
+/// A disabled system neither simulates nor draws, which drops its
+/// particles; enabled again, it starts over from its seed, as a newly added
+/// system does.
+#[test]
+fn a_disabled_system_is_cleared_and_starts_over_once_re_enabled() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context().lock_read();
+    let render_context = context.render_context.clone();
+    let mut scene = context.scene();
+    let kept = spawn_system(
+        &mut scene,
+        Uuid::new_v4(),
+        &Transform::default(),
+        still_burst(2),
+    );
+    let switched = spawn_system(
+        &mut scene,
+        Uuid::new_v4(),
+        &Transform::default(),
+        still_burst(2),
+    );
+    let (camera, transform) = camera_at(vec3(0.0, 0.0, 5.0));
+    let mut renderer = renderer(&context);
+    let mut simulation = ParticleSimulation::new();
+    let both = HashSet::from([kept, switched]);
+
+    simulation.simulate(&scene, &render_context, 0.0);
+    renderer.render_scene_base(&camera, &transform, &scene, Some(&simulation), None);
+    assert_eq!(simulation.live_count(switched), Some(2));
+    assert_eq!(renderer.particle_renderer().tracked_systems(), both);
+
+    assert!(scene.set_component_enabled::<ComponentParticleSystem>(switched, false));
+    simulation.prepare(&scene, &render_context);
+    assert_eq!(
+        simulation.live_count(switched),
+        None,
+        "a paused frame drops a disabled system too"
+    );
+    simulation.simulate(&scene, &render_context, 0.2);
+    renderer.render_scene_base(&camera, &transform, &scene, Some(&simulation), None);
+    assert_eq!(simulation.live_count(switched), None);
+    assert_eq!(simulation.live_count(kept), Some(2));
+    assert_eq!(
+        renderer.particle_renderer().tracked_systems(),
+        HashSet::from([kept])
+    );
+
+    assert!(scene.set_component_enabled::<ComponentParticleSystem>(switched, true));
+    simulation.simulate(&scene, &render_context, 0.0);
+    renderer.render_scene_base(&camera, &transform, &scene, Some(&simulation), None);
+    assert_eq!(
+        simulation.live_count(switched),
+        Some(2),
+        "re-enabled, the system bursts again from a fresh start"
+    );
+    assert_eq!(renderer.particle_renderer().tracked_systems(), both);
+}
+
 /// A game context over the engine assets whose authoring scene holds one
 /// particle system.
 fn game_with_particles(assets: &TestAssets) -> GameContext {

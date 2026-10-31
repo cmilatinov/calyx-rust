@@ -20,4 +20,10 @@ pub struct ComponentMesh {
     pub material: AssetRef<Material>,
 }
 
-impl Component for ComponentMesh {}
+impl Component for ComponentMesh {
+    /// The scene renderer skips a disabled mesh: it is neither drawn nor
+    /// picked.
+    fn can_disable(&self) -> bool {
+        true
+    }
+}
