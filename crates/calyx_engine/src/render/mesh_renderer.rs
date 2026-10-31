@@ -27,7 +27,7 @@ pub struct MeshRenderer {
     environment_uniform_buffer: wgpu::Buffer,
     material_bind_group_cache: HashMap<AssetId, CachedMaterialBindGroups>,
     scene_bind_group: CachedBindGroup<SceneBindGroupKey>,
-    light_storage_bind_group: CachedBindGroup<(wgpu::BindGroupLayout, [wgpu::Buffer; 2])>,
+    light_storage_bind_group: CachedBindGroup<(wgpu::BindGroupLayout, [wgpu::Buffer; 3])>,
     object_id_camera_bind_group: CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer)>,
 }
 

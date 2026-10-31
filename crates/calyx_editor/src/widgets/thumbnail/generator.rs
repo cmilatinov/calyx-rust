@@ -347,12 +347,14 @@ pub(super) fn scene_thumbnail_view(
 }
 
 /// Whether `scene` holds a light that lights it: an enabled ambient,
-/// directional or point light, or an enabled sky light with a skybox.
+/// directional, point or spot light, or an enabled sky light with a
+/// skybox.
 pub(super) fn scene_has_light(scene: &Scene) -> bool {
     scene.objects().any(|game_object| {
         has_enabled::<ComponentAmbientLight>(scene, game_object)
             || has_enabled::<ComponentDirectionalLight>(scene, game_object)
             || has_enabled::<ComponentPointLight>(scene, game_object)
+            || has_enabled::<ComponentSpotLight>(scene, game_object)
             || (scene.is_component_enabled::<ComponentSkyLight>(game_object)
                 && scene
                     .read_component::<ComponentSkyLight, _, _>(game_object, |light| {

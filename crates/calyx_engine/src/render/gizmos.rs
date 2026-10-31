@@ -66,6 +66,46 @@ impl Gizmos<'_> {
         self.circle_list.push(self.gizmo_instance(t, false));
     }
 
+    /// Emits a wireframe cone with its apex at `apex`, opening along
+    /// `direction` with the half-angle `angle` in radians. Its slant edges
+    /// are `length` long, so the base circle sits where a sphere of radius
+    /// `length` around the apex cuts the cone; four edges join the apex to
+    /// the base circle.
+    pub fn wire_cone(&mut self, apex: &Vec3, direction: &Vec3, angle: f32, length: f32) {
+        if !length.is_finite() || length <= 0.0 || !angle.is_finite() {
+            return;
+        }
+        let axis = safe_normalize(*direction, vec3(0.0, 0.0, 1.0));
+        let (right, up) = orthonormal_basis(&axis);
+        let angle = angle.clamp(0.0, std::f32::consts::FRAC_PI_2);
+        let center = apex + axis * (length * angle.cos());
+        let radius = length * angle.sin();
+        if radius > f32::EPSILON {
+            let basis = Mat4::new(
+                right.x * radius,
+                up.x * radius,
+                axis.x * radius,
+                center.x,
+                right.y * radius,
+                up.y * radius,
+                axis.y * radius,
+                center.y,
+                right.z * radius,
+                up.z * radius,
+                axis.z * radius,
+                center.z,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+            );
+            self.circle_list.push(self.gizmo_instance(basis, false));
+        }
+        for edge in [right, up, -right, -up] {
+            self.line(apex, &(center + edge * radius));
+        }
+    }
+
     /// Emits a wireframe cube centered at `position`.
     pub fn wire_cube(&mut self, position: &Vec3, size: &Vec3) {
         self.wire_cube_transform(compose_transform(
@@ -236,6 +276,19 @@ fn safe_normalize(value: Vec3, fallback: Vec3) -> Vec3 {
     }
 }
 
+/// Two unit vectors that, with `axis`, form a right-handed orthonormal basis
+/// `(right, up, axis)`.
+fn orthonormal_basis(axis: &Vec3) -> (Vec3, Vec3) {
+    let reference = if axis.y.abs() < 0.99 {
+        vec3(0.0, 1.0, 0.0)
+    } else {
+        vec3(1.0, 0.0, 0.0)
+    };
+    let right = glm::normalize(&glm::cross(&reference, axis));
+    let up = glm::cross(axis, &right);
+    (right, up)
+}
+
 fn icon_uv_rect(icon: GizmoIcon) -> [glm::Vec2; 2] {
     match icon {
         GizmoIcon::Camera => [vec2(0.0, 0.0), vec2(0.5, 1.0)],
@@ -320,5 +373,60 @@ mod tests {
 
         assert_eq!(gizmos.icons_mesh.uvs[3].len(), 4);
         assert!(gizmos.icons_mesh.uvs[3].iter().all(|uv| uv.x == 17.0));
+    }
+    #[test]
+    fn wire_cone_places_its_base_circle_and_edges_at_the_slant_length() {
+        let assets = TestAssets::engine();
+        let asset_context = assets.asset_context();
+        let context = asset_context.lock_read();
+        let camera = Camera::default();
+        let camera_transform = Transform::default();
+        let mut circle_list = Vec::new();
+        let mut cube_list = Vec::new();
+        let mut lines_mesh = Mesh::new(&context.render_context);
+        let mut points_mesh = Mesh::new(&context.render_context);
+        let mut icons_mesh = Mesh::new(&context.render_context);
+        let mut gizmos = Gizmos {
+            camera: &camera,
+            camera_transform: &camera_transform,
+            viewport_size: [1920.0, 1080.0],
+            object_id: 0,
+            color: vec4(1.0, 1.0, 1.0, 1.0),
+            opacity: 1.0,
+            depth_test_enabled: true,
+            circle_list: &mut circle_list,
+            cube_list: &mut cube_list,
+            lines_mesh: &mut lines_mesh,
+            points_mesh: &mut points_mesh,
+            icons_mesh: &mut icons_mesh,
+        };
+        let apex = vec3(1.0, 2.0, 3.0);
+
+        gizmos.wire_cone(&apex, &vec3(0.0, -2.0, 0.0), 30f32.to_radians(), 4.0);
+
+        assert_eq!(gizmos.circle_list.len(), 1);
+        let circle: Mat4 = gizmos.circle_list[0].transform.into();
+        let center = circle.column(3).xyz();
+        let expected_center = apex + vec3(0.0, -4.0 * 30f32.to_radians().cos(), 0.0);
+        assert!((center - expected_center).norm() < 1e-5, "{center}");
+        let normal = circle.column(2).xyz();
+        assert!(
+            (normal.norm() - 2.0).abs() < 1e-5,
+            "the circle radius is 4 sin 30"
+        );
+        assert!((glm::normalize(&normal) - vec3(0.0, -1.0, 0.0)).norm() < 1e-5);
+        assert_eq!(gizmos.lines_mesh.vertices.len(), 8);
+        for edge in gizmos.lines_mesh.vertices.chunks(2) {
+            assert_eq!(edge[0], apex);
+            assert!(((edge[1] - apex).norm() - 4.0).abs() < 1e-4);
+        }
+
+        gizmos.wire_cone(&apex, &vec3(0.0, 0.0, 1.0), 0.0, 4.0);
+        assert_eq!(
+            gizmos.circle_list.len(),
+            1,
+            "a zero angle cone has no base circle"
+        );
+        assert_eq!(gizmos.lines_mesh.vertices.len(), 16);
     }
 }

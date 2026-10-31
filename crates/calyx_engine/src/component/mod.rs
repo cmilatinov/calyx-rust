@@ -14,6 +14,7 @@ pub use post_process::*;
 pub use rigid_body::*;
 pub use skinned_mesh::*;
 pub use sky_light::*;
+pub use spot_light::*;
 pub use transform::*;
 
 mod ambient_light;
@@ -32,6 +33,7 @@ mod post_process;
 mod rigid_body;
 mod skinned_mesh;
 mod sky_light;
+mod spot_light;
 mod tps_camera;
 mod transform;
 
