@@ -1089,16 +1089,19 @@ impl AssetRegistry {
         self.mark_dependents_dirty(path);
     }
 
-    /// Marks dirty every asset whose load reads the file at `path`, such as
-    /// a shader including it or a model reading it as an image.
+    /// Marks dirty every asset whose load reads the file at `path`, or a
+    /// file beneath it when it is a folder, such as a shader including it or
+    /// a model reading it as an image. A deleted folder arrives as one event
+    /// for the folder alone.
     fn mark_dependents_dirty(&self, path: &Path) {
         let dependency_path = Self::dependency_path(path);
-        let dependent_ids = self
+        let dependent_ids: HashSet<Uuid> = self
             .asset_data()
             .dependencies
-            .get(&dependency_path)
-            .cloned()
-            .unwrap_or_default();
+            .iter()
+            .filter(|(dependency, _)| dependency.starts_with(&dependency_path))
+            .flat_map(|(_, dependents)| dependents.iter().copied())
+            .collect();
         for id in dependent_ids {
             log::trace!(
                 "Marking dependent asset {} dirty after change to {}",
@@ -2226,6 +2229,37 @@ mod tests {
         );
         assert!(take_dirty(), "deleting the image marks the model");
 
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    /// A deleted folder arrives as one event for the folder, so the models
+    /// reading images inside it are marked dirty by that path alone.
+    #[test]
+    fn deleting_the_folder_of_an_external_image_marks_the_gltf_model_dirty() {
+        let root = temp_asset_root("calyx-gltf-image-folder");
+        let model_path = root.join("model.gltf");
+        std::fs::write(
+            &model_path,
+            r#"{"asset":{"version":"2.0"},"images":[{"uri":"textures/nested/base.png"}]}"#,
+        )
+        .expect("failed to write the model");
+        let textures = root.join("textures");
+        std::fs::create_dir_all(textures.join("nested")).expect("failed to create textures");
+        std::fs::write(textures.join("nested/base.png"), b"png").expect("failed to write image");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        let model_id = registry
+            .asset_id_from_path(&model_path)
+            .expect("the model is registered");
+
+        std::fs::remove_dir_all(&textures).expect("failed to delete the folder");
+        registry.recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::Folder))
+                .add_path(textures.clone()),
+        );
+
+        assert!(registry.asset_data().dirty.contains_key(&model_id));
         drop(registry);
         std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
