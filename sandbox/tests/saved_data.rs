@@ -1,7 +1,9 @@
 //! Saved scenes, prefabs and `.meta` files name types by UUID, never by a
 //! Rust path, so renaming or moving a crate leaves them loading unchanged.
 //! These tests read every committed one and fail if a crate-qualified type
-//! name appears in them, or if a component they hold has no registered type.
+//! name appears in them, if a component they hold has no registered type, or
+//! if a component that the scene now switches on and off still carries its
+//! own `enabled` field.
 
 // Matches the crates under test: the particle system component nests deep
 // enough that proving it `Send`/`Sync` passes the default limit.
@@ -9,10 +11,13 @@
 
 use std::path::{Path, PathBuf};
 
+use calyx_engine::component::{
+    ComponentCamera, ComponentCollider, ComponentGlobalPostProcessVolume, ComponentRigidBody,
+};
 use calyx_engine::context::AssetContext;
 use calyx_engine::scene::{Prefab, Scene};
 use calyx_engine::test_support::TestAssets;
-use calyx_engine::utils::Uuid;
+use calyx_engine::utils::{TypeUuid, Uuid};
 use serde_json::Value;
 
 /// The asset roots with saved data, relative to the repository root.
@@ -135,6 +140,91 @@ fn component_types(scene: &Value) -> Vec<Uuid> {
     types
 }
 
+/// The saved scene's scene data: a prefab file nests it under `data`.
+fn scene_data<'a>(source: &'a Value, path: &Path) -> &'a Value {
+    let is_prefab = path
+        .extension()
+        .is_some_and(|extension| extension == "cxprefab");
+    if is_prefab {
+        &source["data"]
+    } else {
+        source
+    }
+}
+
+/// The `(object, component type)` pairs in a saved scene whose payload still
+/// holds a top-level `enabled` field, for the component types that carried
+/// one before the scene kept the enabled state. Only the payload's own field
+/// counts; a nested one, such as a post-process effect's, is not the
+/// component's.
+fn legacy_enabled_fields(scene: &Value) -> Vec<(String, Uuid)> {
+    let legacy = [
+        ComponentCamera::type_uuid(),
+        ComponentCollider::type_uuid(),
+        ComponentRigidBody::type_uuid(),
+        ComponentGlobalPostProcessVolume::type_uuid(),
+    ];
+    let mut found = Vec::new();
+    for (object, components) in scene["components"]
+        .as_object()
+        .expect("a saved scene has a components map")
+    {
+        for type_uuid in legacy {
+            let payload = &components[type_uuid.to_string()];
+            if payload.get("enabled").is_some() {
+                found.push((object.clone(), type_uuid));
+            }
+        }
+    }
+    found
+}
+
+#[test]
+fn legacy_enabled_fields_flags_only_the_payloads_own_field() {
+    let object = "07b17e3d-9b73-411b-9d08-c56698a37556";
+    let camera = ComponentCamera::type_uuid().to_string();
+    let volume = ComponentGlobalPostProcessVolume::type_uuid().to_string();
+    let mut scene = serde_json::json!({ "components": { object: {
+        camera.clone(): { "fov": 1.0 },
+        volume.clone(): { "priority": 0, "settings": { "bloom": { "enabled": true } } },
+        // A type that never had the field, holding one of its own.
+        Uuid::new_v4().to_string(): { "enabled": true },
+    } } });
+    assert!(legacy_enabled_fields(&scene).is_empty());
+
+    scene["components"][object][&camera]["enabled"] = Value::Bool(true);
+    scene["components"][object][&volume]["enabled"] = Value::Bool(false);
+    let mut found = legacy_enabled_fields(&scene);
+    found.sort();
+    let mut expected = vec![
+        (object.to_string(), ComponentCamera::type_uuid()),
+        (
+            object.to_string(),
+            ComponentGlobalPostProcessVolume::type_uuid(),
+        ),
+    ];
+    expected.sort();
+    assert_eq!(found, expected);
+}
+
+#[test]
+fn saved_scenes_and_prefabs_hold_no_legacy_enabled_fields() {
+    let root = repository_root();
+    for (index, path) in saved_files(&["cxscene", "cxprefab"]) {
+        let file = root.join(ASSET_ROOTS[index]).join(&path);
+        let source: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap())
+            .unwrap_or_else(|e| panic!("{} is not JSON: {e}", file.display()));
+        let found = legacy_enabled_fields(scene_data(&source, &path));
+        assert!(
+            found.is_empty(),
+            "{} holds `enabled` fields that the scene's disabled_components map \
+             now keeps and loading no longer reads (object, component type): \
+             {found:?}",
+            file.display()
+        );
+    }
+}
+
 fn sandbox_assets() -> (TestAssets, AssetContext) {
     let copy = TestAssets::game();
     let assets = copy.asset_context();
@@ -158,8 +248,7 @@ fn saved_scenes_and_prefabs_load_with_every_component_type_registered() {
         let is_prefab = path
             .extension()
             .is_some_and(|extension| extension == "cxprefab");
-        let scene = if is_prefab { &source["data"] } else { &source };
-        for type_uuid in component_types(scene) {
+        for type_uuid in component_types(scene_data(&source, &path)) {
             assert!(
                 assets
                     .registries

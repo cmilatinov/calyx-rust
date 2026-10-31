@@ -6,6 +6,7 @@ use crate::math::Transform;
 use crate::physics::events::{CollisionEvents, ContactKind};
 use crate::physics::PhysicsConfiguration;
 use crate::scene::{GameObject, Scene};
+use legion::storage::ComponentTypeId;
 use legion::{Entity, IntoQuery};
 use nalgebra::{Point3, Translation3, UnitQuaternion, Vector3};
 use nalgebra_glm::Mat4;
@@ -73,13 +74,16 @@ impl PhysicsContext {
         Isometry::from_parts(Translation3::from(transform.position), transform.rotation)
     }
 
+    /// A Rapier body for `rigid_body`, enabled as the scene holds the
+    /// component.
     pub(super) fn rigid_body_from_component(
         transform: &Transform,
         rigid_body: &ComponentRigidBody,
+        enabled: bool,
     ) -> RigidBody {
         RigidBodyBuilder::new(rigid_body.ty)
             .position(Self::isometry(transform))
-            .enabled(rigid_body.enabled)
+            .enabled(enabled)
             .additional_mass(rigid_body.mass)
             .gravity_scale(rigid_body.gravity_scale)
             .can_sleep(rigid_body.can_sleep)
@@ -105,13 +109,16 @@ impl PhysicsContext {
         }
     }
 
+    /// A Rapier collider for `collider`, enabled as the scene holds the
+    /// component.
     pub(super) fn collider_from_component(
         transform: &Transform,
         collider: &ComponentCollider,
+        enabled: bool,
     ) -> Collider {
         ColliderBuilder::new(Self::collider_shape(collider.shape))
             .position(Self::isometry(transform))
-            .enabled(collider.enabled)
+            .enabled(enabled)
             .friction(collider.friction)
             .density(collider.density)
             .active_events(ActiveEvents::COLLISION_EVENTS | ActiveEvents::CONTACT_FORCE_EVENTS)
@@ -302,24 +309,27 @@ impl PhysicsContext {
             let Some(go) = scene.game_object_from_entity(*entity) else {
                 continue;
             };
+            let enabled =
+                scene.is_type_enabled(*entity, ComponentTypeId::of::<ComponentRigidBody>());
             match scene.physics.entity_rigid_body.get(&go.entity) {
                 None => {
                     let transform = scene.world_transform(go);
-                    let rigid_body = Self::rigid_body_from_component(&transform, c_rb);
+                    let rigid_body = Self::rigid_body_from_component(&transform, c_rb, enabled);
                     let handle = scene.physics.bodies.insert(rigid_body);
                     scene.physics.entity_rigid_body.insert(go.entity, handle);
                 }
                 Some(&handle) if written.contains(entity) => {
-                    Self::apply_rigid_body(&mut scene.physics.bodies[handle], c_rb);
+                    Self::apply_rigid_body(&mut scene.physics.bodies[handle], c_rb, enabled);
                 }
                 Some(_) => {}
             }
         }
     }
 
-    /// Applies `component`'s properties to an existing Rapier body.
-    fn apply_rigid_body(rb: &mut RigidBody, component: &ComponentRigidBody) {
-        rb.set_enabled(component.enabled);
+    /// Applies `component`'s properties, and whether the scene holds it
+    /// enabled, to an existing Rapier body.
+    fn apply_rigid_body(rb: &mut RigidBody, component: &ComponentRigidBody, enabled: bool) {
+        rb.set_enabled(enabled);
         rb.set_body_type(component.ty, true);
         rb.set_additional_mass(component.mass, true);
         rb.set_gravity_scale(component.gravity_scale, true);
@@ -345,6 +355,8 @@ impl PhysicsContext {
             let Some(go) = scene.game_object_from_entity(*entity) else {
                 continue;
             };
+            let enabled =
+                scene.is_type_enabled(*entity, ComponentTypeId::of::<ComponentCollider>());
             match scene.physics.entity_collider.get(&go.entity) {
                 None => {
                     let parent = Self::collider_body(scene, go);
@@ -353,7 +365,7 @@ impl PhysicsContext {
                     let transform = parent
                         .map(|p| scene.transform_relative_to(go, p))
                         .unwrap_or_else(|| scene.world_transform(go));
-                    let collider = Self::collider_from_component(&transform, c_collider);
+                    let collider = Self::collider_from_component(&transform, c_collider, enabled);
                     let handle = match rb_handle {
                         None => scene.physics.colliders.insert(collider),
                         Some(rb_handle) => scene.physics.colliders.insert_with_parent(
@@ -366,16 +378,17 @@ impl PhysicsContext {
                     scene.physics.collider_entity.insert(handle, go.entity);
                 }
                 Some(&handle) if written.contains(entity) => {
-                    Self::apply_collider(&mut scene.physics.colliders[handle], c_collider);
+                    Self::apply_collider(&mut scene.physics.colliders[handle], c_collider, enabled);
                 }
                 Some(_) => {}
             }
         }
     }
 
-    /// Applies `component`'s properties to an existing Rapier collider.
-    fn apply_collider(collider: &mut Collider, component: &ComponentCollider) {
-        collider.set_enabled(component.enabled);
+    /// Applies `component`'s properties, and whether the scene holds it
+    /// enabled, to an existing Rapier collider.
+    fn apply_collider(collider: &mut Collider, component: &ComponentCollider, enabled: bool) {
+        collider.set_enabled(enabled);
         collider.set_shape(Self::collider_shape(component.shape));
         collider.set_friction(component.friction);
         collider.set_density(component.density);

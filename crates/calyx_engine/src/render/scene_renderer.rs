@@ -2260,7 +2260,6 @@ mod tests {
         builder.add_component(
             volume,
             ComponentGlobalPostProcessVolume {
-                enabled: true,
                 priority: 0,
                 settings: PostProcessSettings {
                     tonemapping: TonemapSettings {

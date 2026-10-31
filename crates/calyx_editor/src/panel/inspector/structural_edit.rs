@@ -46,6 +46,34 @@ pub(super) fn remove(
     }
 }
 
+/// The label of the undo step that switches the component of type
+/// `type_uuid` to `enabled`.
+pub(super) fn enabled_label(game: &GameContext, type_uuid: Uuid, enabled: bool) -> String {
+    let verb = if enabled { "Enable" } else { "Disable" };
+    format!("{verb} {}", component_name(game, type_uuid))
+}
+
+/// Enables or disables `game_object`'s component of type `type_uuid` through
+/// `edit`.
+pub(super) fn set_enabled(
+    edit: &mut SceneEdit,
+    game: &mut GameContext,
+    game_object: GameObject,
+    type_uuid: Uuid,
+    enabled: bool,
+) {
+    let component_name = component_name(game, type_uuid);
+    let object_label = object_label(game.scenes.simulation_scene(), game_object);
+    if edit
+        .scene_mut(game)
+        .set_component_enabled_dyn(game_object, type_uuid, enabled)
+    {
+        log::info!(
+            "Set component enabled: component={component_name} type_uuid={type_uuid} object={object_label} enabled={enabled}"
+        );
+    }
+}
+
 fn component_name(game: &GameContext, type_uuid: Uuid) -> String {
     type_display_name(&game.assets.registries.types.read(), type_uuid)
         .unwrap_or_else(|| type_uuid.to_string())
@@ -57,7 +85,7 @@ fn object_label(scene: &Scene, game_object: GameObject) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{add, remove, LABEL};
+    use super::{add, enabled_label, remove, set_enabled, LABEL};
     use crate::scene_document::SceneDocument;
     use crate::scene_edit::SceneEdit;
     use calyx_engine::component::{ComponentCamera, ComponentPointLight};
@@ -113,6 +141,42 @@ mod tests {
             .expect("undo puts the camera back");
         assert!(!has::<ComponentPointLight>(&game, object));
         assert!(!document.can_undo(&game), "the edit was one step");
+    }
+
+    fn camera_enabled(game: &GameContext) -> bool {
+        let scene = game.scenes.current_scene();
+        let object = scene
+            .objects()
+            .find(|&object| has::<ComponentCamera>(game, object))
+            .expect("the object keeps its camera");
+        scene.is_component_enabled::<ComponentCamera>(object)
+    }
+
+    #[test]
+    fn a_toggle_is_one_undo_step() {
+        let mut game = test_game_context();
+        let mut document = document();
+        let object = object_with_camera(&mut game);
+
+        let label = enabled_label(&game, ComponentCamera::type_uuid(), false);
+        assert_eq!(label, "Disable Camera");
+        let mut edit = SceneEdit::begin(label);
+        set_enabled(
+            &mut edit,
+            &mut game,
+            object,
+            ComponentCamera::type_uuid(),
+            false,
+        );
+        edit.commit(&mut document, &game);
+        assert!(!camera_enabled(&game));
+        assert!(document.is_dirty());
+
+        document.undo(&mut game);
+        assert!(camera_enabled(&game), "undo enables the camera again");
+        assert!(!document.can_undo(&game), "the toggle was one step");
+        document.redo(&mut game);
+        assert!(!camera_enabled(&game), "redo disables it again");
     }
 
     #[test]

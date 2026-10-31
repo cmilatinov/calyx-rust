@@ -8,7 +8,8 @@ use egui::Color32;
 use nalgebra_glm::Vec4;
 use serde::{Deserialize, Serialize};
 
-/// Scene component that marks a game object as a render camera.
+/// Scene component that marks a game object as a render camera. A disabled
+/// camera is never selected as the scene's main camera.
 #[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "a85867d2-3e68-42b2-b943-ea78c7c6ddb5"]
 #[reflect(Default, TypeUuidDynamic, Component)]
@@ -26,8 +27,6 @@ pub struct ComponentCamera {
     pub far_plane: f32,
     /// Clear color used when this camera renders.
     pub clear_color: Color32,
-    /// Whether this camera may be selected as the active scene camera.
-    pub enabled: bool,
 }
 
 impl Default for ComponentCamera {
@@ -37,12 +36,16 @@ impl Default for ComponentCamera {
             near_plane: 0.1,
             far_plane: 100.0,
             clear_color: Color32::BLACK,
-            enabled: true,
         }
     }
 }
 
 impl Component for ComponentCamera {
+    /// Main camera selection skips a disabled camera.
+    fn can_disable(&self) -> bool {
+        true
+    }
+
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {
         let transform = scene.world_transform(game_object);
         gizmos.set_color(&Vec4::new(1.0, 1.0, 1.0, 1.0));

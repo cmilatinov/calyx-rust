@@ -723,7 +723,6 @@
       },
       "53a682cb-a207-4c4c-8795-63f38351c7ef": {
         "density": 1.0,
-        "enabled": true,
         "friction": 0.6000000238418579,
         "shape": {
           "Cuboid": {
@@ -737,7 +736,6 @@
       },
       "8cac1bae-e3c3-4ee6-b672-7689e9c10f7e": {
         "can_sleep": true,
-        "enabled": true,
         "gravity_scale": 1.0,
         "mass": 1.0,
         "ty": "Dynamic"
@@ -927,7 +925,6 @@
       },
       "53a682cb-a207-4c4c-8795-63f38351c7ef": {
         "density": 100.0,
-        "enabled": true,
         "friction": 0.800000011920929,
         "shape": {
           "Cuboid": {
@@ -968,7 +965,6 @@
       },
       "53a682cb-a207-4c4c-8795-63f38351c7ef": {
         "density": 100.0,
-        "enabled": true,
         "friction": 0.6000000238418579,
         "shape": {
           "Cuboid": {
@@ -1265,7 +1261,6 @@
       },
       "53a682cb-a207-4c4c-8795-63f38351c7ef": {
         "density": 1.0,
-        "enabled": true,
         "friction": 0.6000000238418579,
         "shape": {
           "Sphere": {
@@ -1275,7 +1270,6 @@
       },
       "8cac1bae-e3c3-4ee6-b672-7689e9c10f7e": {
         "can_sleep": true,
-        "enabled": true,
         "gravity_scale": 1.0,
         "mass": 1.0,
         "ty": "Dynamic"
@@ -1389,7 +1383,6 @@
       },
       "53a682cb-a207-4c4c-8795-63f38351c7ef": {
         "density": 100.0,
-        "enabled": true,
         "friction": 0.6000000238418579,
         "shape": {
           "Cuboid": {
@@ -1434,7 +1427,6 @@
       },
       "53a682cb-a207-4c4c-8795-63f38351c7ef": {
         "density": 1.0,
-        "enabled": true,
         "friction": 0.6000000238418579,
         "shape": {
           "Cuboid": {
@@ -1448,7 +1440,6 @@
       },
       "8cac1bae-e3c3-4ee6-b672-7689e9c10f7e": {
         "can_sleep": true,
-        "enabled": true,
         "gravity_scale": 1.0,
         "mass": 1.0,
         "ty": "Dynamic"
@@ -1486,7 +1477,6 @@
       },
       "53a682cb-a207-4c4c-8795-63f38351c7ef": {
         "density": 1.0,
-        "enabled": true,
         "friction": 0.6000000238418579,
         "shape": {
           "Sphere": {
@@ -1496,7 +1486,6 @@
       },
       "8cac1bae-e3c3-4ee6-b672-7689e9c10f7e": {
         "can_sleep": true,
-        "enabled": true,
         "gravity_scale": 1.0,
         "mass": 1.0,
         "ty": "Dynamic"
@@ -1534,7 +1523,6 @@
       },
       "53a682cb-a207-4c4c-8795-63f38351c7ef": {
         "density": 100.0,
-        "enabled": true,
         "friction": 0.6000000238418579,
         "shape": {
           "Cuboid": {
@@ -1579,7 +1567,6 @@
       },
       "53a682cb-a207-4c4c-8795-63f38351c7ef": {
         "density": 1.0,
-        "enabled": true,
         "friction": 0.6000000238418579,
         "shape": {
           "Sphere": {
@@ -1589,7 +1576,6 @@
       },
       "8cac1bae-e3c3-4ee6-b672-7689e9c10f7e": {
         "can_sleep": true,
-        "enabled": true,
         "gravity_scale": 1.0,
         "mass": 1.0,
         "ty": "Dynamic"
@@ -1757,7 +1743,6 @@
       },
       "53a682cb-a207-4c4c-8795-63f38351c7ef": {
         "density": 1.0,
-        "enabled": true,
         "friction": 0.6000000238418579,
         "shape": {
           "Sphere": {
@@ -1767,7 +1752,6 @@
       },
       "8cac1bae-e3c3-4ee6-b672-7689e9c10f7e": {
         "can_sleep": true,
-        "enabled": true,
         "gravity_scale": 1.0,
         "mass": 1.0,
         "ty": "Dynamic"
@@ -2467,7 +2451,6 @@
       },
       "53a682cb-a207-4c4c-8795-63f38351c7ef": {
         "density": 1.0,
-        "enabled": true,
         "friction": 0.6000000238418579,
         "shape": {
           "Sphere": {
@@ -2477,7 +2460,6 @@
       },
       "8cac1bae-e3c3-4ee6-b672-7689e9c10f7e": {
         "can_sleep": true,
-        "enabled": true,
         "gravity_scale": 1.0,
         "mass": 1.0,
         "ty": "Dynamic"
@@ -2515,7 +2497,6 @@
       },
       "53a682cb-a207-4c4c-8795-63f38351c7ef": {
         "density": 100.0,
-        "enabled": true,
         "friction": 0.6000000238418579,
         "shape": {
           "Cuboid": {
@@ -2622,7 +2603,6 @@
       },
       "53a682cb-a207-4c4c-8795-63f38351c7ef": {
         "density": 1.0,
-        "enabled": true,
         "friction": 0.6000000238418579,
         "shape": {
           "Cuboid": {
@@ -2636,7 +2616,6 @@
       },
       "8cac1bae-e3c3-4ee6-b672-7689e9c10f7e": {
         "can_sleep": true,
-        "enabled": true,
         "gravity_scale": 1.0,
         "mass": 1.0,
         "ty": "Dynamic"
@@ -2693,7 +2672,6 @@
         }
       },
       "cdbfef3f-81a5-4ccb-a0f6-098bc5a26979": {
-        "enabled": true,
         "priority": 0,
         "settings": {
           "ambient_occlusion": {
@@ -2973,7 +2951,6 @@
           0,
           255
         ],
-        "enabled": true,
         "far_plane": 150.0,
         "fov": 0.9599310755729675,
         "near_plane": 0.10000000149011612
@@ -3159,7 +3136,6 @@
       },
       "53a682cb-a207-4c4c-8795-63f38351c7ef": {
         "density": 1.0,
-        "enabled": true,
         "friction": 0.6000000238418579,
         "shape": {
           "Cuboid": {
@@ -3173,7 +3149,6 @@
       },
       "8cac1bae-e3c3-4ee6-b672-7689e9c10f7e": {
         "can_sleep": true,
-        "enabled": true,
         "gravity_scale": 1.0,
         "mass": 1.0,
         "ty": "Dynamic"
@@ -3331,7 +3306,6 @@
       },
       "53a682cb-a207-4c4c-8795-63f38351c7ef": {
         "density": 1.0,
-        "enabled": true,
         "friction": 0.6000000238418579,
         "shape": {
           "Cuboid": {
@@ -3345,7 +3319,6 @@
       },
       "8cac1bae-e3c3-4ee6-b672-7689e9c10f7e": {
         "can_sleep": true,
-        "enabled": true,
         "gravity_scale": 1.0,
         "mass": 1.0,
         "ty": "Dynamic"
@@ -3445,7 +3418,6 @@
       },
       "53a682cb-a207-4c4c-8795-63f38351c7ef": {
         "density": 1.0,
-        "enabled": true,
         "friction": 0.6000000238418579,
         "shape": {
           "Cuboid": {
@@ -3459,7 +3431,6 @@
       },
       "8cac1bae-e3c3-4ee6-b672-7689e9c10f7e": {
         "can_sleep": true,
-        "enabled": true,
         "gravity_scale": 1.0,
         "mass": 1.0,
         "ty": "Dynamic"

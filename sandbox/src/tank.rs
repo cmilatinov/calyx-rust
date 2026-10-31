@@ -743,7 +743,6 @@ pub(crate) fn spawn_round(
     scene.add_component(
         projectile_object,
         ComponentRigidBody {
-            enabled: true,
             gravity_scale: 0.0,
             can_sleep: false,
             ..Default::default()

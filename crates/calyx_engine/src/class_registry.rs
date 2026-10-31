@@ -42,6 +42,12 @@ impl ComponentRegistry {
         self.components.get(&id).map(|b| b.deref())
     }
 
+    /// Whether components of type `id` can be disabled: the type is
+    /// registered and opts in through [`Component::can_disable`].
+    pub fn can_disable(&self, id: Uuid) -> bool {
+        self.component(id).is_some_and(Component::can_disable)
+    }
+
     /// Iterates components that implement [`ComponentUpdate`].
     pub fn components_with_update(&self) -> impl Iterator<Item = (Uuid, &dyn ComponentUpdate)> {
         self.update_components

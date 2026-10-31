@@ -6,7 +6,8 @@ use crate::component::ComponentGlobalPostProcessVolume;
 use crate::reflect::{Reflect, ReflectDefault};
 use crate::scene::Scene;
 use crate::utils::TypeUuid;
-use legion::IntoQuery;
+use legion::storage::ComponentTypeId;
+use legion::{Entity, IntoQuery};
 use serde::{Deserialize, Serialize};
 
 /// Everything the post-processing chain reads for one frame.
@@ -94,13 +95,17 @@ pub(crate) struct VolumeSelection {
 }
 
 /// Picks the enabled volume with the highest priority, the first found on a
-/// tie, or the default settings when no volume is enabled.
+/// tie, or the default settings when no volume is enabled. Each volume comes
+/// with whether the scene holds it enabled.
 pub(crate) fn select_volume<'a>(
-    volumes: impl IntoIterator<Item = &'a ComponentGlobalPostProcessVolume>,
+    volumes: impl IntoIterator<Item = (bool, &'a ComponentGlobalPostProcessVolume)>,
 ) -> VolumeSelection {
     let mut selected: Option<&ComponentGlobalPostProcessVolume> = None;
     let mut tie = None;
-    for volume in volumes.into_iter().filter(|volume| volume.enabled) {
+    let enabled = volumes
+        .into_iter()
+        .filter_map(|(enabled, volume)| enabled.then_some(volume));
+    for volume in enabled {
         match selected {
             Some(best) if volume.priority < best.priority => {}
             Some(best) if volume.priority == best.priority => tie = Some(best.priority),
@@ -120,8 +125,14 @@ impl PostProcessSettings {
     /// The settings `scene`'s global volumes select, as [`select_volume`]
     /// picks them. Warns once per priority on a tie.
     pub fn resolve(scene: &Scene) -> Self {
-        let mut query = <&ComponentGlobalPostProcessVolume>::query();
-        let selection = select_volume(query.iter(scene.world()));
+        let mut query = <(Entity, &ComponentGlobalPostProcessVolume)>::query();
+        let selection = select_volume(query.iter(scene.world()).map(|(entity, volume)| {
+            let enabled = scene.is_type_enabled(
+                *entity,
+                ComponentTypeId::of::<ComponentGlobalPostProcessVolume>(),
+            );
+            (enabled, volume)
+        }));
         if let Some(priority) = selection.tie {
             crate::logging::warn_once(format!("post-process-volume-tie:{priority}"), || {
                 format!(

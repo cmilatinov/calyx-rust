@@ -230,18 +230,13 @@ fn transform_context_menu_reports_a_reset() {
 }
 
 #[test]
-fn collider_inspector_reports_a_toggle_and_a_drag() {
+fn collider_inspector_reports_a_drag() {
     let mut h = InspectorHarness::new();
     let registry = h.inspector_registry();
     let inspector = lookup(&registry, ComponentCollider::type_uuid());
     let mut value = ComponentCollider::default();
-    let enabled = value.enabled;
 
     assert_idle(&h.idle(3, draw!(inspector, &mut value)));
-    let checkbox = h.widget(Role::CheckBox, 0);
-    assert_discrete(&h.click(checkbox, draw!(inspector, &mut value)));
-    assert_eq!(value.enabled, !enabled);
-
     let friction = value.friction;
     let field = h.widget(Role::SpinButton, 0);
     assert_drag(&h.drag(field, Vec2::new(40.0, 0.0), draw!(inspector, &mut value)));
@@ -258,7 +253,7 @@ fn rigid_body_inspector_reports_a_toggle_and_a_type_choice() {
     assert_idle(&h.idle(3, draw!(inspector, &mut value)));
     let checkbox = h.widget(Role::CheckBox, 0);
     assert_discrete(&h.click(checkbox, draw!(inspector, &mut value)));
-    assert!(!value.enabled);
+    assert!(!value.can_sleep);
 
     let combo = h.widget(Role::ComboBox, 0);
     assert!(!any_changed(&h.click(combo, draw!(inspector, &mut value))));

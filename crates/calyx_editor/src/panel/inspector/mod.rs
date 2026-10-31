@@ -61,6 +61,15 @@ impl Panel for PanelInspector {
     }
 }
 
+/// What the components drawn for one object asked for in a frame.
+struct ComponentsShown {
+    /// The components whose removal was asked for.
+    removals: Vec<Uuid>,
+    /// The components whose header checkbox was switched, with the state it
+    /// was switched to.
+    toggles: Vec<(Uuid, bool)>,
+}
+
 impl PanelInspector {
     /// Draws whatever is selected: a game object takes precedence over an
     /// asset, then an animation graph node or transition.
@@ -97,10 +106,26 @@ impl PanelInspector {
         if let Some(type_uuid) = component_to_add {
             structural_edit::add(&mut structure, &mut state.game, game_object, type_uuid);
         }
-        for type_uuid in Self::components_ui(ui, state, game_object) {
+        let shown = Self::components_ui(ui, state, game_object);
+        for type_uuid in shown.removals {
             structural_edit::remove(&mut structure, &mut state.game, game_object, type_uuid);
         }
         state.commit_scene_edit(structure);
+        for (type_uuid, enabled) in shown.toggles {
+            let mut edit = SceneEdit::begin(structural_edit::enabled_label(
+                &state.game,
+                type_uuid,
+                enabled,
+            ));
+            structural_edit::set_enabled(
+                &mut edit,
+                &mut state.game,
+                game_object,
+                type_uuid,
+                enabled,
+            );
+            state.commit_scene_edit(edit);
+        }
     }
 
     /// The type UUIDs of the registered components `game_object` has.
@@ -125,12 +150,12 @@ impl PanelInspector {
     /// Draws each registered component `game_object` has through the scene
     /// document's edit tracker, pinned components first, then the rest by
     /// name. Applies the pin edit asked for from a header's menu. Returns the
-    /// components whose removal was asked for, in display order.
+    /// removals and header checkbox toggles asked for, in display order.
     fn components_ui(
         ui: &mut Ui,
         state: &mut EditorAppState,
         game_object: GameObject,
-    ) -> Vec<Uuid> {
+    ) -> ComponentsShown {
         // Play mode records no undo history, so the inspector keeps no
         // baselines there.
         let track_edits = state.scene_document.track_inspector_edits(&state.game);
@@ -150,6 +175,7 @@ impl PanelInspector {
         );
         let pin_states = state.pinned_components.states(&order);
         let mut removals = Vec::new();
+        let mut toggles = Vec::new();
         let mut pin_edit = None;
         for (type_uuid, pin) in order.iter().zip(pin_states) {
             let Some(component) = component_registry.component(*type_uuid) else {
@@ -159,6 +185,13 @@ impl PanelInspector {
             else {
                 continue;
             };
+            let enabled = component.can_disable().then(|| {
+                state
+                    .game
+                    .scenes
+                    .simulation_scene()
+                    .is_component_enabled_dyn(game_object, component)
+            });
             let assets = state.game.assets.lock_read();
             let Some(shown) = state.scene_document.inspector_edits_mut().show_component(
                 state.game.scenes.simulation_scene_mut(),
@@ -175,16 +208,23 @@ impl PanelInspector {
                         type_info,
                         field_name: None,
                     };
-                    let response = inspector.show(ui, &ctx, instance.as_reflect_mut(), pin);
-                    (response.edit, (response.remove, response.pin))
+                    let response =
+                        inspector.show(ui, &ctx, instance.as_reflect_mut(), pin, enabled);
+                    (
+                        response.edit,
+                        (response.remove, response.pin, response.enabled),
+                    )
                 },
             ) else {
                 continue;
             };
             drop(assets);
-            let (remove, pin) = shown.value;
+            let (remove, pin, toggled) = shown.value;
             if remove {
                 removals.push(*type_uuid);
+            }
+            if let Some(enabled) = toggled {
+                toggles.push((*type_uuid, enabled));
             }
             if let Some(edit) = pin {
                 pin_edit = Some((*type_uuid, edit));
@@ -201,7 +241,7 @@ impl PanelInspector {
                 .pinned_components
                 .edit(&type_registry, type_uuid, edit, &order);
         }
-        removals
+        ComponentsShown { removals, toggles }
     }
 
     fn asset_ui(ui: &mut Ui, state: &mut EditorAppState, asset_id: Uuid) {

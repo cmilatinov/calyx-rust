@@ -1,7 +1,7 @@
 use std::cell::Cell;
 
 use calyx_engine::component::{
-    Component, ComponentCollider, ComponentID, ComponentTransform, ReflectComponent,
+    Component, ComponentID, ComponentRigidBody, ComponentTransform, ReflectComponent,
 };
 use calyx_engine::reflect::{Reflect, ReflectDefault};
 use calyx_engine::scene::{GameObject, GameObjectRef, Scene};
@@ -192,20 +192,20 @@ fn each_discrete_edit_records_one_undo_step() {
     let mut h = InspectorHarness::new();
     let registry = h.inspector_registry();
     let inspector = registry
-        .type_inspector_lookup(ComponentCollider::type_uuid())
+        .type_inspector_lookup(ComponentRigidBody::type_uuid())
         .unwrap();
     let mut session = Session::new(&h);
     session
         .scene
-        .bind_component_dyn(session.game_object, ComponentCollider::type_uuid());
-    let component = ComponentCollider::default();
+        .bind_component_dyn(session.game_object, ComponentRigidBody::type_uuid());
+    let component = ComponentRigidBody::default();
 
     {
         let mut draw = session.draw(&component, inspector, whole);
         h.idle(3, &mut draw);
-        let enabled = h.widget(Role::CheckBox, 0);
-        h.click(enabled, &mut draw);
-        h.click(enabled, &mut draw);
+        let can_sleep = h.widget(Role::CheckBox, 0);
+        h.click(can_sleep, &mut draw);
+        h.click(can_sleep, &mut draw);
     }
 
     assert_eq!(session.commits.len(), 2, "{:?}", session.commits);
@@ -213,7 +213,7 @@ fn each_discrete_edit_records_one_undo_step() {
         assert!(commit
             .changes
             .iter()
-            .any(|change| change.value_path.last().map(String::as_str) == Some("enabled")));
+            .any(|change| change.value_path.last().map(String::as_str) == Some("can_sleep")));
     }
 }
 

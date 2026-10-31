@@ -57,8 +57,6 @@ pub enum ColliderShape {
 #[reflect_attr(name = "Collider")]
 #[serde(default)]
 pub struct ComponentCollider {
-    /// Whether the collider participates in physics.
-    pub enabled: bool,
     /// Primitive shape used to build the collider.
     pub shape: ColliderShape,
     /// Surface friction coefficient.
@@ -70,7 +68,6 @@ pub struct ComponentCollider {
 impl Default for ComponentCollider {
     fn default() -> Self {
         Self {
-            enabled: true,
             shape: ColliderShape::Sphere { radius: 1.0 },
             friction: 0.5,
             density: 100.0,
@@ -78,7 +75,12 @@ impl Default for ComponentCollider {
     }
 }
 
-impl Component for ComponentCollider {}
+impl Component for ComponentCollider {
+    /// Physics leaves a disabled collider out of the simulation.
+    fn can_disable(&self) -> bool {
+        true
+    }
+}
 
 #[cfg(test)]
 mod tests {

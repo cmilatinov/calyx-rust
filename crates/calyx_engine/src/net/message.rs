@@ -90,6 +90,13 @@ pub enum GameMessage {
         network_object_id: NetworkObjectId,
         from_client_id: ClientId,
     },
+    /// Enables or disables one component of a replicated object.
+    SetComponentEnabled {
+        network_object_id: NetworkObjectId,
+        from_client_id: ClientId,
+        component_uuid: Uuid,
+        enabled: bool,
+    },
 }
 
 impl GameMessage {
@@ -107,7 +114,9 @@ impl GameMessage {
         "from_client_id:ClientId,to_client_id:ClientId),",
         "SpawnPrefab(network_object_ids:HashMap<u32,NetworkObjectId>,",
         "from_client_id:ClientId,prefab_id:Uuid),",
-        "DestroyGameObject(network_object_id:NetworkObjectId,from_client_id:ClientId)}",
+        "DestroyGameObject(network_object_id:NetworkObjectId,from_client_id:ClientId),",
+        "SetComponentEnabled(network_object_id:NetworkObjectId,from_client_id:ClientId,",
+        "component_uuid:Uuid,enabled:bool)}",
     );
 
     /// Stable FNV-1a hash of the protocol schema string.
@@ -122,7 +131,8 @@ impl GameMessage {
             Self::SyncComponent { from_client_id, .. }
             | Self::TransferOwnership { from_client_id, .. }
             | Self::SpawnPrefab { from_client_id, .. }
-            | Self::DestroyGameObject { from_client_id, .. } => Some(*from_client_id),
+            | Self::DestroyGameObject { from_client_id, .. }
+            | Self::SetComponentEnabled { from_client_id, .. } => Some(*from_client_id),
             Self::ServerEvent(_)
             | Self::SelfConnected { .. }
             | Self::ClientConnected { .. }
@@ -157,7 +167,8 @@ impl GameMessage {
             | Self::ClientDisconnected { .. }
             | Self::TransferOwnership { .. }
             | Self::SpawnPrefab { .. }
-            | Self::DestroyGameObject { .. } => GameChannel::ReliableOrdered,
+            | Self::DestroyGameObject { .. }
+            | Self::SetComponentEnabled { .. } => GameChannel::ReliableOrdered,
         }
     }
 }

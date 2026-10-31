@@ -757,9 +757,14 @@ fn tone_mapping_matches_the_aces_fit_and_keeps_alpha() {
     );
 }
 
-fn volume(enabled: bool, priority: i32, exposure_ev: f32) -> ComponentGlobalPostProcessVolume {
-    ComponentGlobalPostProcessVolume {
-        enabled,
+/// A volume of `priority` setting `exposure_ev`, with whether the scene
+/// holds it enabled.
+fn volume(
+    enabled: bool,
+    priority: i32,
+    exposure_ev: f32,
+) -> (bool, ComponentGlobalPostProcessVolume) {
+    let volume = ComponentGlobalPostProcessVolume {
         priority,
         settings: PostProcessSettings {
             tonemapping: TonemapSettings {
@@ -768,7 +773,13 @@ fn volume(enabled: bool, priority: i32, exposure_ev: f32) -> ComponentGlobalPost
             },
             ..Default::default()
         },
-    }
+    };
+    (enabled, volume)
+}
+
+/// [`select_volume`] over `volumes` as [`volume`] builds them.
+fn select(volumes: &[(bool, ComponentGlobalPostProcessVolume)]) -> VolumeSelection {
+    select_volume(volumes.iter().map(|(enabled, volume)| (*enabled, volume)))
 }
 
 #[test]
@@ -779,7 +790,7 @@ fn the_enabled_volume_with_the_highest_priority_is_selected() {
         volume(true, 3, 3.0),
         volume(true, 2, 2.0),
     ];
-    let selection = select_volume(&volumes);
+    let selection = select(&volumes);
     assert_eq!(selection.settings.tonemapping.exposure_ev, 3.0);
     assert_eq!(selection.tie, None);
 }
@@ -791,7 +802,7 @@ fn a_priority_tie_selects_the_first_found_and_reports_it() {
         volume(true, 2, 2.0),
         volume(true, 0, 3.0),
     ];
-    let selection = select_volume(&volumes);
+    let selection = select(&volumes);
     assert_eq!(selection.settings.tonemapping.exposure_ev, 1.0);
     assert_eq!(selection.tie, Some(2));
 
@@ -801,7 +812,7 @@ fn a_priority_tie_selects_the_first_found_and_reports_it() {
         volume(true, 2, 2.0),
         volume(true, 5, 3.0),
     ];
-    let selection = select_volume(&volumes);
+    let selection = select(&volumes);
     assert_eq!(selection.settings.tonemapping.exposure_ev, 3.0);
     assert_eq!(selection.tie, None);
 }
@@ -812,7 +823,7 @@ fn no_enabled_volume_selects_the_default_settings() {
         select_volume(std::iter::empty()).settings,
         PostProcessSettings::default()
     );
-    let selection = select_volume(&[volume(false, 5, 4.0)]);
+    let selection = select(&[volume(false, 5, 4.0)]);
     assert_eq!(selection.settings, PostProcessSettings::default());
     assert_eq!(selection.tie, None);
     let default = PostProcessSettings::default().tonemapping;
@@ -825,12 +836,15 @@ fn no_enabled_volume_selects_the_default_settings() {
 fn render_cleared_scene(
     context: &crate::context::ReadOnlyAssetContext,
     clear: Color32,
-    volumes: &[ComponentGlobalPostProcessVolume],
+    volumes: &[(bool, ComponentGlobalPostProcessVolume)],
 ) -> SceneRenderer {
     let mut builder = SceneBuilder::new(context.registries.clone());
-    for (index, volume) in volumes.iter().enumerate() {
+    for (index, (enabled, volume)) in volumes.iter().enumerate() {
         let game_object = builder.spawn(format!("volume_{index}"));
         builder.add_component(game_object, volume.clone());
+        builder
+            .scene_mut()
+            .set_component_enabled::<ComponentGlobalPostProcessVolume>(game_object, *enabled);
     }
     let scene = builder.finish();
     let mut renderer = SceneRenderer::new(

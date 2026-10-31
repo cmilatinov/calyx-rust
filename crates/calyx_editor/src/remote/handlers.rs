@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use calyx_engine::class_registry::ComponentRegistry;
 use calyx_engine::component::{Component, ComponentID};
 use calyx_engine::scene::{GameObject, Scene};
 use calyx_engine::utils::TypeUuid;
@@ -295,6 +296,9 @@ impl EditorApp {
                 self.remote_get_component(&object, &component)
             }
             Command::ListComponentTypes => Ok(Some(self.remote_list_component_types())),
+            Command::GetComponentEnabled { object, component } => {
+                self.remote_get_component_enabled(&object, &component)
+            }
             Command::GetSelection => {
                 let selection = &self.state.selection;
                 Ok(Some(serde_json::json!({
@@ -309,6 +313,11 @@ impl EditorApp {
                 component,
                 value,
             } => self.remote_set_component(&object, &component, &value),
+            Command::SetComponentEnabled {
+                object,
+                component,
+                enabled,
+            } => self.remote_set_component_enabled(&object, &component, enabled),
             Command::SetTransform {
                 object,
                 position,
@@ -666,6 +675,7 @@ impl EditorApp {
             "local_transform": transform_json(&scene.transform(game_object)),
             "world_transform": transform_json(&scene.world_transform(game_object)),
             "components": component_names,
+            "disabled_components": disabled_component_names(scene, &components, &types, game_object),
             "prefab_link": scene.prefab_link(game_object).map(|link| serde_json::json!({
                 "prefab": link.prefab.to_string(),
                 "object": link.object.to_string(),
@@ -695,6 +705,54 @@ impl EditorApp {
         serialized
             .map(Some)
             .ok_or_else(|| (ErrorKind::Internal, "component is not serializable".into()))
+    }
+
+    fn remote_get_component_enabled(&self, object: &str, component: &str) -> CommandResult {
+        let type_uuid = resolve_component_type(&self.state, component)?;
+        let scene = self.state.game.scenes.simulation_scene();
+        let game_object = resolve_object(scene, object)?;
+        let registry = self.state.game.assets.registries.components.read();
+        let prototype = registry.component(type_uuid).ok_or_else(|| {
+            (
+                ErrorKind::NotFound,
+                format!("unknown component {type_uuid}"),
+            )
+        })?;
+        if scene
+            .read_component_dyn(game_object, prototype, |_| ())
+            .is_none()
+        {
+            return Err((
+                ErrorKind::NotFound,
+                format!("object has no {component} component"),
+            ));
+        }
+        Ok(Some(serde_json::json!({
+            "enabled": scene.is_component_enabled_dyn(game_object, prototype),
+        })))
+    }
+
+    fn remote_set_component_enabled(
+        &mut self,
+        object: &str,
+        component: &str,
+        enabled: bool,
+    ) -> CommandResult {
+        let type_uuid = resolve_component_type(&self.state, component)?;
+        ensure_can_disable(
+            &self.state.game.assets.registries.components.read(),
+            type_uuid,
+            component,
+        )?;
+        let scene = self.state.game.scenes.simulation_scene_mut();
+        let game_object = resolve_object(scene, object)?;
+        if !scene.set_component_enabled_dyn(game_object, type_uuid, enabled) {
+            return Err((
+                ErrorKind::NotFound,
+                format!("object has no {component} component"),
+            ));
+        }
+        Ok(Some(serde_json::Value::Null))
     }
 
     fn remote_list_component_types(&self) -> serde_json::Value {
@@ -1006,6 +1064,8 @@ fn scene_edit_label(command: &Command) -> Option<&'static str> {
         Command::CreateObject { .. } => Some("Remote create game object"),
         Command::DeleteObject { .. } => Some("Remote delete game object"),
         Command::AddComponent { .. } => Some("Remote add component"),
+        Command::SetComponentEnabled { enabled: true, .. } => Some("Remote enable component"),
+        Command::SetComponentEnabled { enabled: false, .. } => Some("Remote disable component"),
         _ => None,
     }
 }
@@ -1109,6 +1169,25 @@ fn object_component_names(
     components
         .components()
         .filter(|(_, component)| component_types.contains(&component.component_type_id()))
+        .map(|(uuid, _)| component_type_name(types, *uuid))
+        .collect()
+}
+
+/// Returns the type names of the registered components `game_object` holds
+/// disabled.
+fn disabled_component_names(
+    scene: &Scene,
+    components: &calyx_engine::class_registry::ComponentRegistry,
+    types: &calyx_engine::reflect::type_registry::TypeRegistry,
+    game_object: GameObject,
+) -> Vec<String> {
+    let component_types = scene.component_types(game_object);
+    components
+        .components()
+        .filter(|(_, component)| {
+            component_types.contains(&component.component_type_id())
+                && !scene.is_component_enabled_dyn(game_object, component.as_ref())
+        })
         .map(|(uuid, _)| component_type_name(types, *uuid))
         .collect()
 }
@@ -1307,11 +1386,31 @@ fn pointer_button_event(pos: egui::Pos2, button: PointerButtonSpec, pressed: boo
     }
 }
 
+/// Refuses, as a bad request, a component type `component` (type UUID
+/// `type_uuid`) that does not opt in to disabling.
+fn ensure_can_disable(
+    registry: &ComponentRegistry,
+    type_uuid: Uuid,
+    component: &str,
+) -> Result<(), (ErrorKind, String)> {
+    if registry.can_disable(type_uuid) {
+        return Ok(());
+    }
+    Err((
+        ErrorKind::BadRequest,
+        format!(
+            "{component} cannot be disabled: only components whose systems honor the enabled state support it"
+        ),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::remote::runtime::tests::test_runtime;
-    use calyx_engine::component::ComponentTransform;
+    use calyx_engine::component::{
+        ComponentCamera, ComponentMesh, ComponentPointLight, ComponentTransform,
+    };
 
     #[test]
     fn a_game_capture_renders_only_while_the_game_panel_has_no_size() {
@@ -1372,6 +1471,25 @@ mod tests {
             (child_world - Vec3::new(5.0, 1.0, 0.0)).norm() < 1e-5,
             "child world position {child_world:?}"
         );
+    }
+
+    #[test]
+    fn disabling_a_component_that_cannot_be_disabled_is_a_bad_request() {
+        let registries = calyx_engine::test_support::test_registries();
+        let components = registries.components.read();
+        assert!(ensure_can_disable(&components, ComponentCamera::type_uuid(), "camera").is_ok());
+        for (type_uuid, name) in [
+            (ComponentMesh::type_uuid(), "mesh"),
+            (ComponentPointLight::type_uuid(), "point light"),
+            (ComponentTransform::type_uuid(), "transform"),
+        ] {
+            let (kind, message) = ensure_can_disable(&components, type_uuid, name).unwrap_err();
+            assert_eq!(kind, ErrorKind::BadRequest);
+            assert!(
+                message.contains(&format!("{name} cannot be disabled")),
+                "{message}"
+            );
+        }
     }
 
     #[test]

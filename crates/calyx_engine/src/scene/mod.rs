@@ -17,12 +17,13 @@ pub use self::scene_manager::*;
 pub use self::scene_view::SceneView;
 pub use self::transform_cache::*;
 
+pub(crate) mod disabled_components;
 mod dropped_components;
 mod error;
 pub(crate) mod game_object_ref;
 mod hud;
 mod prefab;
-mod prefab_link;
+pub(crate) mod prefab_link;
 mod scene_manager;
 mod scene_view;
 
@@ -37,5 +38,7 @@ pub(crate) mod scene;
 pub(crate) mod scene_graph;
 pub(crate) mod transform_cache;
 
+#[cfg(test)]
+mod disabled_components_tests;
 #[cfg(test)]
 mod tests;

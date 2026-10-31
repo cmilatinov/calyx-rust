@@ -3,8 +3,10 @@
 //! A component is drawn under a collapsing header with its type inspector,
 //! or, without one, field by field from its registered type info: nested
 //! structs, lists and the fields' own type inspectors, with fields that name
-//! a `group` gathered into collapsible sections. The header's context menu
-//! offers removing the component, which the caller applies.
+//! a `group` gathered into collapsible sections. A component that can be
+//! disabled has a checkbox left of its title, and its body is greyed out and
+//! read-only while it is off. The header's context menu offers removing the
+//! component; the caller applies that and the checkbox.
 
 use calyx_engine::component::{ComponentID, ComponentTransform};
 use calyx_engine::reflect::type_registry::TypeRegistry;
@@ -14,8 +16,9 @@ use calyx_engine::reflect::{
 };
 use calyx_engine::utils::TypeUuid;
 use convert_case::{Case, Casing};
-use egui::{Id, RichText, Ui};
+use egui::{Id, Rect, Response, RichText, TextStyle, Ui, Vec2};
 use re_ui::list_item::{LabelContent, ListItem, PropertyContent, ShowCollapsingResponse};
+use re_ui::UiExt;
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -25,6 +28,23 @@ use super::type_inspector::{InspectorContext, InspectorResponse};
 use super::widgets::Widgets;
 use crate::icons;
 use crate::widgets::{List, ListContainer, ListItemContext};
+
+/// Draws the checkbox of a component header in `slot`, the header's icon
+/// slot. The box is as tall as the header's text and centred in the slot, and
+/// it keeps its size while hovered, so it never grows past the slot into the
+/// arrow or the title. Its click area is the box.
+fn header_checkbox(ui: &mut Ui, slot: Rect, checked: &mut bool) -> Response {
+    ui.scope(|ui| {
+        let size = TextStyle::Body.resolve(ui.style()).size.min(slot.height());
+        let spacing = ui.spacing_mut();
+        spacing.icon_width_inner *= size / spacing.icon_width;
+        spacing.icon_width = size;
+        spacing.interact_size.y = size;
+        let rect = Rect::from_center_size(slot.center(), Vec2::splat(size));
+        ui.put(rect, |ui: &mut Ui| ui.re_checkbox(checked, ""))
+    })
+    .inner
+}
 
 /// A structural change the inspector made to a reflected list.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -225,6 +245,8 @@ pub struct ComponentResponse {
     pub remove: bool,
     /// The pin edit the header's context menu asked for.
     pub pin: Option<PinEdit>,
+    /// The enabled state the header's checkbox was switched to.
+    pub enabled: Option<bool>,
 }
 
 /// Draws components with the type inspectors of `registry`, falling back to
@@ -240,39 +262,74 @@ impl<'a> ComponentInspector<'a> {
     }
 
     /// Draws `instance` under a collapsing header, marked with a pin icon
-    /// when `pin` says it is pinned. The header's context menu offers the pin
-    /// edits `pin` allows and removing it, except for the components every
-    /// object keeps.
+    /// when `pin` says it is pinned. `enabled` is the component's enabled
+    /// state, or `None` for a component that cannot be disabled: the header
+    /// then has no checkbox, and the pin icon takes the icon slot the
+    /// checkbox would; otherwise the pin sits right of the title. While the component is disabled, its body is
+    /// greyed out and cannot be edited. The header's context menu offers the
+    /// pin edits `pin` allows and removing it, except for the components
+    /// every object keeps.
     pub fn show(
         &self,
         ui: &mut Ui,
         ctx: &InspectorContext,
         instance: &mut dyn Reflect,
         pin: PinState,
+        enabled: Option<bool>,
     ) -> ComponentResponse {
         let name = display_name(&ctx.assets.types.read(), instance);
         let id = ui.make_persistent_id(name);
         let type_uuid = instance.uuid();
         let mut response = ComponentResponse::default();
+        let mut toggled = None;
         let mut label = LabelContent::new(name).truncate(true);
-        if pin.pinned {
-            label = label.with_icon(&icons::PIN);
+        if let Some(enabled) = enabled {
+            // The checkbox sits on top of the header row, so a click on it
+            // reaches the checkbox and leaves the header as it is.
+            let toggled = &mut toggled;
+            label =
+                label.with_icon_fn(move |ui, rect, _| {
+                    let mut checked = enabled;
+                    let checkbox = header_checkbox(ui, rect, &mut checked)
+                        .on_hover_text(if enabled { "Disable" } else { "Enable" });
+                    if checkbox.changed() {
+                        *toggled = Some(checked);
+                    }
+                });
         }
+        if pin.pinned && enabled.is_none() {
+            label = label.with_icon(&icons::PIN);
+        } else if pin.pinned {
+            // The checkbox takes the icon slot, so the pin moves right.
+            label = label
+                .with_buttons(|ui| {
+                    ui.add(
+                        icons::PIN
+                            .as_image()
+                            .fit_to_exact_size(re_ui::DesignTokens::small_icon_size()),
+                    )
+                })
+                .always_show_buttons(true);
+        }
+        let body_enabled = enabled.unwrap_or(true);
         let res = ListItem::new()
             .interactive(true)
             .force_background(re_ui::design_tokens().section_collapsing_header_color())
             .show_hierarchical_with_children_unindented(ui, id, true, label, |ui| {
-                response.edit |= match self.registry.type_inspector_lookup(type_uuid) {
-                    Some(inspector) => inspector.show_inspector(ui, ctx, instance),
-                    None => self.show_fields(
-                        ui,
-                        ctx,
-                        instance,
-                        &FieldTrail::root(Id::new((ctx.game_object.node, type_uuid))),
-                    ),
-                };
+                ui.add_enabled_ui(body_enabled, |ui| {
+                    response.edit |= match self.registry.type_inspector_lookup(type_uuid) {
+                        Some(inspector) => inspector.show_inspector(ui, ctx, instance),
+                        None => self.show_fields(
+                            ui,
+                            ctx,
+                            instance,
+                            &FieldTrail::root(Id::new((ctx.game_object.node, type_uuid))),
+                        ),
+                    };
+                });
             })
             .item_response;
+        response.enabled = toggled;
         if res.clicked() {
             if let Some(mut state) = egui::collapsing_header::CollapsingState::load(ui.ctx(), id) {
                 state.toggle(ui);
@@ -670,11 +727,13 @@ mod tests {
     };
     use crate::inspector::edit_tracker::{ComponentKey, InspectorEditTracker};
     use crate::inspector::pinned_components::PinState;
-    use crate::inspector::test_harness::{any_changed, combined, InspectorHarness};
+    use crate::inspector::test_harness::{any_changed, combined, Draw, InspectorHarness};
     use crate::inspector::type_inspector::{InspectorContext, InspectorResponse};
     use crate::scene_history::{InspectorValueEdit, SceneHistory, SceneHistoryRestore};
     use crate::widgets::ListContainer;
-    use calyx_engine::component::{ComponentCamera, ComponentParticleSystem};
+    use calyx_engine::component::{
+        Component, ComponentCamera, ComponentParticleSystem, ComponentPointLight,
+    };
     use calyx_engine::reflect::type_registry::TypeRegistry;
     use calyx_engine::reflect::{ListInfo, Reflect, TypeInfo};
     use calyx_engine::utils::TypeUuid;
@@ -1005,7 +1064,8 @@ mod tests {
         let mut camera = ComponentCamera::default();
         let before = serde_json::to_value(&camera).unwrap();
         let mut draw = |ui: &mut Ui, ctx: &InspectorContext| {
-            let response = inspector.show(ui, ctx, camera.as_reflect_mut(), PinState::default());
+            let response =
+                inspector.show(ui, ctx, camera.as_reflect_mut(), PinState::default(), None);
             assert!(!response.remove);
             response.edit
         };
@@ -1018,18 +1078,155 @@ mod tests {
             drag.changed && drag.drag_started && drag.drag_stopped,
             "{drag:?}"
         );
-        let checkbox = h.widget(Role::CheckBox, 0);
-        let click = h.click(checkbox, &mut draw);
-        assert_eq!(click.iter().filter(|r| r.changed).count(), 1, "{click:?}");
         assert!(!any_changed(&h.idle(2, &mut draw)));
 
         let after = serde_json::to_value(&camera).unwrap();
-        assert_ne!(before["enabled"], after["enabled"]);
         let numbers_changed = ["fov", "near_plane", "far_plane"]
             .iter()
             .filter(|field| before[**field] != after[**field])
             .count();
         assert_eq!(numbers_changed, 1, "{before} -> {after}");
+    }
+
+    /// Draws a camera with the header checkbox in `enabled`'s state, applying
+    /// each toggle the header reports to it, as the inspector panel does.
+    fn show_toggleable_camera(
+        h: &mut InspectorHarness,
+        enabled: &std::cell::Cell<bool>,
+        toggles: &std::cell::Cell<usize>,
+        frames: impl FnOnce(&mut InspectorHarness, &mut Draw),
+    ) -> ComponentCamera {
+        h.type_info = ComponentCamera::type_uuid();
+        let registry = h.inspector_registry();
+        let inspector = ComponentInspector::new(&registry);
+        let mut camera = ComponentCamera::default();
+        let mut draw = |ui: &mut Ui, ctx: &InspectorContext| {
+            let response = inspector.show(
+                ui,
+                ctx,
+                camera.as_reflect_mut(),
+                PinState::default(),
+                Some(enabled.get()),
+            );
+            if let Some(state) = response.enabled {
+                enabled.set(state);
+                toggles.set(toggles.get() + 1);
+            }
+            response.edit
+        };
+        frames(h, &mut draw);
+        drop(draw);
+        camera
+    }
+
+    #[test]
+    fn header_checkbox_toggles_without_collapsing_the_header() {
+        let mut h = InspectorHarness::new();
+        let enabled = std::cell::Cell::new(true);
+        let toggles = std::cell::Cell::new(0);
+        show_toggleable_camera(&mut h, &enabled, &toggles, |h, draw| {
+            h.idle(3, draw);
+            let labels = h.labels().len();
+            assert!(h.labels().contains(&"Fov"), "{:?}", h.labels());
+
+            let checkbox = h.widget(Role::CheckBox, 0);
+            h.click(checkbox, draw);
+            h.idle(10, draw);
+            assert!(!enabled.get(), "the click switched the component off");
+            assert_eq!(toggles.get(), 1);
+            assert_eq!(h.labels().len(), labels, "the header stayed expanded");
+
+            let checkbox = h.widget(Role::CheckBox, 0);
+            h.click(checkbox, draw);
+            h.idle(10, draw);
+            assert!(enabled.get(), "a second click switched it back on");
+            assert_eq!(toggles.get(), 2);
+            assert_eq!(h.labels().len(), labels, "the header stayed expanded");
+        });
+    }
+
+    #[test]
+    fn header_checkbox_fits_the_header_row() {
+        let mut h = InspectorHarness::new();
+        let enabled = std::cell::Cell::new(true);
+        let toggles = std::cell::Cell::new(0);
+        show_toggleable_camera(&mut h, &enabled, &toggles, |h, draw| {
+            h.idle(3, draw);
+            let checkbox = h.widgets(Role::CheckBox)[0].rect;
+            let header = h
+                .nodes()
+                .iter()
+                .find(|node| node.label.as_deref() == Some("Camera"))
+                .unwrap_or_else(|| panic!("no Camera header in {:#?}", h.nodes()))
+                .rect;
+            let text_size = h.ctx.style().text_styles[&egui::TextStyle::Body].size;
+            assert_eq!(checkbox.size(), Vec2::splat(text_size), "{checkbox:?}");
+            assert!(
+                (checkbox.center().y - header.center().y).abs() < 0.5,
+                "{checkbox:?} is centred in {header:?}"
+            );
+            assert!(header.contains_rect(checkbox), "{checkbox:?} in {header:?}");
+        });
+    }
+
+    #[test]
+    fn a_disabled_component_cannot_be_edited() {
+        let mut h = InspectorHarness::new();
+        let enabled = std::cell::Cell::new(false);
+        let toggles = std::cell::Cell::new(0);
+        let camera = show_toggleable_camera(&mut h, &enabled, &toggles, |h, draw| {
+            h.idle(3, draw);
+            assert!(h.labels().contains(&"Fov"), "the fields still show");
+            let field = h.widget(Role::SpinButton, 0);
+            let drag = h.drag(field, Vec2::new(40.0, 0.0), draw);
+            assert!(!any_changed(&drag), "{drag:?}");
+        });
+        let defaults = ComponentCamera::default();
+        assert_eq!(camera.fov, defaults.fov);
+        assert_eq!(camera.near_plane, defaults.near_plane);
+        assert_eq!(camera.far_plane, defaults.far_plane);
+        assert_eq!(toggles.get(), 0);
+    }
+
+    /// The inspector panel passes an enabled state only for a component type
+    /// that opts in to disabling, so a point light's header, pinned or not,
+    /// has no checkbox.
+    #[test]
+    fn components_that_cannot_be_disabled_have_no_checkbox() {
+        let mut h = InspectorHarness::new();
+        let registry = h.inspector_registry();
+        let inspector = ComponentInspector::new(&registry);
+        let mut light = ComponentPointLight::default();
+        assert!(!light.can_disable());
+        h.type_info = ComponentPointLight::type_uuid();
+        for pinned in [false, true] {
+            let enabled = light.can_disable().then_some(true);
+            let pin = PinState {
+                pinned,
+                ..PinState::default()
+            };
+            let mut draw = |ui: &mut Ui, ctx: &InspectorContext| {
+                inspector
+                    .show(ui, ctx, light.as_reflect_mut(), pin, enabled)
+                    .edit
+            };
+            h.idle(3, &mut draw);
+            let header = h
+                .nodes()
+                .iter()
+                .find(|node| node.label.as_deref() == Some("Point Light"))
+                .unwrap_or_else(|| panic!("no Point Light header in {:#?}", h.nodes()))
+                .rect;
+            // The light's own Active field is a checkbox in the body.
+            let checkboxes = h.widgets(Role::CheckBox);
+            assert_eq!(checkboxes.len(), 1, "{:#?}", h.nodes());
+            assert!(
+                checkboxes
+                    .iter()
+                    .all(|checkbox| !header.intersects(checkbox.rect)),
+                "no checkbox in the header {header:?}: {checkboxes:#?}"
+            );
+        }
     }
 
     /// The particle system's size module shows its curve in the curve editor,
