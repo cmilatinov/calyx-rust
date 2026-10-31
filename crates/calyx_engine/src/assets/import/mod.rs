@@ -1,13 +1,14 @@
 //! Model import: turns a model file into an [`ImportedScene`], the library-independent form the
-//! mesh, prefab and animation assets are built from.
+//! mesh, prefab, animation, material and texture assets are built from.
 
 mod gltf;
 mod tangents;
 mod ufbx;
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use image::DynamicImage;
 use nalgebra_glm::{Mat4, Quat, Vec2, Vec3, Vec4};
 
 use crate::assets::animation::AnimationKeyFrames;
@@ -16,11 +17,100 @@ use crate::assets::error::AssetError;
 /// Number of UV channels an imported mesh carries.
 pub(crate) const MAX_UV_CHANNELS: usize = 4;
 
-/// A model file's meshes, node tree and animations.
+/// A model file's meshes, node tree, animations, materials and textures.
 pub(crate) struct ImportedScene {
     pub meshes: Vec<ImportedMesh>,
     pub root: ImportedNode,
     pub animations: Vec<ImportedAnimation>,
+    /// Materials the meshes use, by [`ImportedMesh::material`].
+    pub materials: Vec<ImportedMaterial>,
+    /// Textures the materials sample, by the index each [`ImportedMaterial`] slot holds.
+    pub textures: Vec<ImportedTexture>,
+}
+
+/// A metallic-roughness material, as glTF describes one. Each texture slot holds an index into
+/// [`ImportedScene::textures`], or `None` for the slot's default.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ImportedMaterial {
+    /// Name of the material in the file, or a name made from its index when it has none.
+    pub name: String,
+    /// Linear RGBA multiplied into the base color texture.
+    pub base_color_factor: [f32; 4],
+    /// sRGB base color, with alpha in A.
+    pub base_color_texture: Option<usize>,
+    pub metallic_factor: f32,
+    pub roughness_factor: f32,
+    /// Roughness in G and metallic in B, multiplied by their factors.
+    pub metallic_roughness_texture: Option<usize>,
+    /// Tangent-space normals.
+    pub normal_texture: Option<usize>,
+    /// Scales the normal texture's X and Y.
+    pub normal_scale: f32,
+    /// Linear RGB emission multiplied into the emissive texture.
+    pub emissive_factor: [f32; 3],
+    /// sRGB emission.
+    pub emissive_texture: Option<usize>,
+    /// Ambient occlusion in R.
+    pub occlusion_texture: Option<usize>,
+    /// How much of the occlusion texture applies.
+    pub occlusion_strength: f32,
+    /// Base color alpha below which a fragment is discarded, for an alpha-masked material.
+    /// `None` for an opaque one.
+    pub alpha_cutoff: Option<f32>,
+}
+
+/// A texture: an image and how it is sampled. Textures of one image share its decoded pixels.
+pub(crate) struct ImportedTexture {
+    /// Name of the image in the file, the file name of an external image, or a name made from
+    /// the image's index. Textures of one image with different samplers share it.
+    pub name: String,
+    /// Decoded pixels, shared by the textures of one image. An image that is missing or does
+    /// not decode makes no texture: the slots that name it keep their default.
+    pub image: std::sync::Arc<DynamicImage>,
+    pub sampler: ImportedSampler,
+}
+
+/// How a texture is filtered and what happens outside the unit square.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct ImportedSampler {
+    /// Wrap mode along U.
+    pub wrap_u: TextureWrap,
+    /// Wrap mode along V.
+    pub wrap_v: TextureWrap,
+    /// Filter when the texture is magnified.
+    pub mag_filter: TextureFilter,
+    /// Filter within a mip when the texture is minified.
+    pub min_filter: TextureFilter,
+    /// Filter between mips, or `None` to sample only the full-size image.
+    pub mipmap_filter: Option<TextureFilter>,
+}
+
+impl Default for ImportedSampler {
+    /// glTF's default sampler: repeating, and linear between texels and mips.
+    fn default() -> Self {
+        Self {
+            wrap_u: TextureWrap::Repeat,
+            wrap_v: TextureWrap::Repeat,
+            mag_filter: TextureFilter::Linear,
+            min_filter: TextureFilter::Linear,
+            mipmap_filter: Some(TextureFilter::Linear),
+        }
+    }
+}
+
+/// What a texture sample outside the unit square reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum TextureWrap {
+    Repeat,
+    MirroredRepeat,
+    ClampToEdge,
+}
+
+/// How neighbouring texels or mips are combined.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum TextureFilter {
+    Nearest,
+    Linear,
 }
 
 /// One triangle mesh, split per material, with its skin.
@@ -38,10 +128,13 @@ pub(crate) struct ImportedMesh {
     /// Triangle list, three indices per triangle, in the winding the renderer expects.
     pub indices: Vec<u32>,
     pub bones: Vec<ImportedBone>,
+    /// Index into [`ImportedScene::materials`], or `None` for the default material.
+    pub material: Option<usize>,
 }
 
 impl ImportedMesh {
-    /// Merges `meshes` into one mesh named after the first, in the space each mesh is given in.
+    /// Merges `meshes` into one mesh named after the first, with its material, in the space
+    /// each mesh is given in.
     /// UV channels missing from a mesh are filled with zeros, and bones of the same name are
     /// merged into one. Returns `None` when there are no meshes.
     pub(crate) fn merge(meshes: Vec<ImportedMesh>) -> Option<ImportedMesh> {
@@ -115,6 +208,19 @@ pub(crate) struct ImportedAnimation {
     pub channels: HashMap<String, AnimationKeyFrames>,
 }
 
+/// The files besides the model file at `path` that importing it reads, such as a glTF's
+/// external images, whether they exist or not.
+pub(crate) fn dependencies(path: &Path) -> Vec<PathBuf> {
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase);
+    match extension.as_deref() {
+        Some("gltf" | "glb") => gltf::external_image_paths(path),
+        _ => Vec::new(),
+    }
+}
+
 /// Imports the model file at `path`.
 pub(crate) fn import(path: &Path) -> Result<ImportedScene, AssetError> {
     let extension = path
@@ -178,6 +284,7 @@ impl MeshBuilder {
                 tangents: Vec::new(),
                 indices: Vec::new(),
                 bones: Vec::new(),
+                material: None,
             },
             corners: HashMap::new(),
             control_points: Vec::new(),

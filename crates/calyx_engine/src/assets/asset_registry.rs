@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 use crate::assets::animation_graph::AnimationGraph;
 use crate::assets::error::AssetError;
+use crate::assets::import;
 use crate::assets::material::{Material, MaterialTexture};
 use crate::assets::mesh::Mesh;
 use crate::assets::texture::Texture;
@@ -1085,14 +1086,22 @@ impl AssetRegistry {
             );
             self.mark_asset_dirty(id);
         }
+        self.mark_dependents_dirty(path);
+    }
 
+    /// Marks dirty every asset whose load reads the file at `path`, or a
+    /// file beneath it when it is a folder, such as a shader including it or
+    /// a model reading it as an image. A deleted folder arrives as one event
+    /// for the folder alone.
+    fn mark_dependents_dirty(&self, path: &Path) {
         let dependency_path = Self::dependency_path(path);
-        let dependent_ids = self
+        let dependent_ids: HashSet<Uuid> = self
             .asset_data()
             .dependencies
-            .get(&dependency_path)
-            .cloned()
-            .unwrap_or_default();
+            .iter()
+            .filter(|(dependency, _)| dependency.starts_with(&dependency_path))
+            .flat_map(|(_, dependents)| dependents.iter().copied())
+            .collect();
         for id in dependent_ids {
             log::trace!(
                 "Marking dependent asset {} dirty after change to {}",
@@ -1177,6 +1186,7 @@ impl AssetRegistry {
                 // `notify_event_paths` drops, so forget by path prefix here.
                 for removed in event.paths.iter().filter(|path| !path.exists()) {
                     self.forget_assets_under(removed);
+                    self.mark_dependents_dirty(removed);
                 }
                 for file in paths_iter {
                     if file.is_file() {
@@ -1215,6 +1225,8 @@ impl AssetRegistry {
     /// Registers the file the watcher reported as new, warning when it lies
     /// outside every asset root or its metadata cannot be built.
     fn register_created_file(&self, file: &Path) {
+        // A file an asset already read, but found missing, is new to it too.
+        self.mark_dependents_dirty(file);
         let Some(asset_path) = self.owning_asset_root(file) else {
             log::warn!(
                 "Ignoring created file outside every asset root: {}",
@@ -1275,11 +1287,19 @@ impl AssetRegistry {
     /// `path` canonical when it exists, else made absolute against the working
     /// directory below its canonical nearest existing ancestor.
     fn normalized_path(path: &Path) -> Option<PathBuf> {
-        if let Ok(path) = dunce::canonicalize(path) {
+        Self::canonical_through_ancestor(path, |path| dunce::canonicalize(path))
+    }
+
+    /// `path` passed through `canonicalize` when it exists. Otherwise its
+    /// nearest existing ancestor is, and the missing rest is appended to it,
+    /// so the path matches the canonical path it gets once created.
+    fn canonical_through_ancestor(
+        path: &Path,
+        canonicalize: impl Fn(&Path) -> std::io::Result<PathBuf>,
+    ) -> Option<PathBuf> {
+        if let Ok(path) = canonicalize(path) {
             return Some(path);
         }
-        // The file may not exist yet: canonicalize its nearest existing
-        // ancestor, so its root matches the canonical asset roots.
         let absolute = path.absolutize().ok()?.into_owned();
         let mut existing = absolute.as_path();
         let mut rest = Vec::new();
@@ -1287,7 +1307,7 @@ impl AssetRegistry {
             rest.push(existing.file_name()?.to_os_string());
             existing = existing.parent()?;
         }
-        let mut normalized = dunce::canonicalize(existing).ok()?;
+        let mut normalized = canonicalize(existing).ok()?;
         normalized.extend(rest.iter().rev());
         Some(normalized)
     }
@@ -1539,6 +1559,9 @@ impl AssetRegistry {
         let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
             return Err(format!("{} has no file extension to type it by", path.display()).into());
         };
+        // Resolved before a new `.meta` is written, so the file records the
+        // real type. An extension with no registered type stays nil.
+        let type_uuid = self.asset_type_uuid_from_ext(ext).unwrap_or(Uuid::nil());
         let name_path = Self::relative_asset_path(asset_path, path)?;
         // The asset this name resolves to now, captured before the metadata
         // read below replaces it, in case this file takes over its id.
@@ -1562,7 +1585,7 @@ impl AssetRegistry {
             let meta = AssetMetaData {
                 main: AssetMeta {
                     id: utils::uuid_from_str(relative_path.as_str()),
-                    type_uuid: Uuid::nil(),
+                    type_uuid,
                     name: relative_path.with_extension("").to_string(),
                     display_name,
                     parent: None,
@@ -1574,7 +1597,7 @@ impl AssetRegistry {
             self.write_meta_file(meta_path, &meta)?;
             meta.main
         };
-        meta.type_uuid = self.asset_type_uuid_from_ext(ext).unwrap_or(Uuid::nil());
+        meta.type_uuid = type_uuid;
         meta.path = Some(match path.absolutize().map_err(Box::new)? {
             Cow::Borrowed(p) => p.to_path_buf(),
             Cow::Owned(p) => p,
@@ -1648,6 +1671,15 @@ impl AssetRegistry {
         drop(data);
 
         if path.extension().and_then(|ext| ext.to_str()) != Some("wgsl") {
+            // A model reads files besides its own, such as a glTF's images.
+            let dependencies = import::dependencies(path);
+            let mut data = self.asset_data_mut();
+            for dependency in dependencies {
+                data.dependencies
+                    .entry(Self::dependency_path(&dependency))
+                    .or_default()
+                    .insert(id);
+            }
             return;
         }
 
@@ -1666,8 +1698,13 @@ impl AssetRegistry {
         }
     }
 
+    /// The key `path` has in the dependencies: its canonical path, in the
+    /// [`std::fs::canonicalize`] form that shader includes are keyed by. A
+    /// file that does not exist yet goes through its nearest existing
+    /// ancestor, so it keys the same once it and its folders are created.
     fn dependency_path(path: &Path) -> PathBuf {
-        std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+        Self::canonical_through_ancestor(path, |path| std::fs::canonicalize(path))
+            .unwrap_or_else(|| path.to_path_buf())
     }
 
     /// Returns `path` relative to `asset_path` without its extension, or an
@@ -2123,6 +2160,51 @@ mod tests {
         (asset_path, meta_path, asset_id)
     }
 
+    fn written_meta_type_uuid(meta_path: &Path) -> Uuid {
+        let meta: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(meta_path).expect("failed to read written metadata"),
+        )
+        .expect("failed to parse written metadata");
+        meta["main"]["type_uuid"]
+            .as_str()
+            .and_then(|uuid| Uuid::parse_str(uuid).ok())
+            .expect("written metadata has no type UUID")
+    }
+
+    #[test]
+    fn new_meta_written_at_startup_records_the_extension_type() {
+        let root = temp_asset_root("calyx-new-meta-startup-type");
+        std::fs::write(root.join("scene.cxscene"), b"{}").expect("failed to write scene asset");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+
+        assert_eq!(
+            written_meta_type_uuid(&root.join("scene.meta")),
+            Scene::type_uuid()
+        );
+        drop(registries);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn new_meta_written_for_created_file_records_the_extension_type() {
+        let root = temp_asset_root("calyx-new-meta-created-type");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        let asset_path = root.join("scene.cxscene");
+        std::fs::write(&asset_path, b"{}").expect("failed to write scene asset");
+        let event =
+            Event::new(EventKind::Create(notify::event::CreateKind::File)).add_path(asset_path);
+
+        registry.recv_notify_event(event);
+
+        assert_eq!(
+            written_meta_type_uuid(&root.join("scene.meta")),
+            Scene::type_uuid()
+        );
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
     #[test]
     fn remove_event_for_replaced_asset_preserves_metadata() {
         let root = temp_asset_root("calyx-asset-replacement-event");
@@ -2154,6 +2236,114 @@ mod tests {
             original_meta
         );
         assert!(registry.asset_data().dirty.contains_key(&asset_id));
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    /// A glTF model reads its external images when it imports, so creating, editing or
+    /// deleting one marks the model dirty, as an edited include does a shader.
+    #[test]
+    fn external_image_events_mark_the_gltf_model_dirty() {
+        let root = temp_asset_root("calyx-gltf-image-dependency");
+        let model_path = root.join("model.gltf");
+        std::fs::write(
+            &model_path,
+            r#"{"asset":{"version":"2.0"},"images":[{"uri":"textures/base%20color.png"}]}"#,
+        )
+        .expect("failed to write the model");
+        std::fs::create_dir_all(root.join("textures")).expect("failed to create textures");
+        let image_path = root.join("textures/base color.png");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        let model_id = registry
+            .asset_id_from_path(&model_path)
+            .expect("the model is registered");
+        let take_dirty = || registry.asset_data_mut().dirty.remove(&model_id).is_some();
+
+        std::fs::write(&image_path, b"png").expect("failed to create the image");
+        registry.recv_notify_event(
+            Event::new(EventKind::Create(notify::event::CreateKind::File))
+                .add_path(image_path.clone()),
+        );
+        assert!(take_dirty(), "creating the missing image marks the model");
+
+        registry.recv_notify_event(
+            Event::new(EventKind::Modify(notify::event::ModifyKind::Data(
+                notify::event::DataChange::Content,
+            )))
+            .add_path(image_path.clone()),
+        );
+        assert!(take_dirty(), "editing the image marks the model");
+
+        std::fs::remove_file(&image_path).expect("failed to delete the image");
+        registry.recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File))
+                .add_path(image_path.clone()),
+        );
+        assert!(take_dirty(), "deleting the image marks the model");
+
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    /// A deleted folder arrives as one event for the folder, so the models
+    /// reading images inside it are marked dirty by that path alone.
+    #[test]
+    fn deleting_the_folder_of_an_external_image_marks_the_gltf_model_dirty() {
+        let root = temp_asset_root("calyx-gltf-image-folder");
+        let model_path = root.join("model.gltf");
+        std::fs::write(
+            &model_path,
+            r#"{"asset":{"version":"2.0"},"images":[{"uri":"textures/nested/base.png"}]}"#,
+        )
+        .expect("failed to write the model");
+        let textures = root.join("textures");
+        std::fs::create_dir_all(textures.join("nested")).expect("failed to create textures");
+        std::fs::write(textures.join("nested/base.png"), b"png").expect("failed to write image");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        let model_id = registry
+            .asset_id_from_path(&model_path)
+            .expect("the model is registered");
+
+        std::fs::remove_dir_all(&textures).expect("failed to delete the folder");
+        registry.recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::Folder))
+                .add_path(textures.clone()),
+        );
+
+        assert!(registry.asset_data().dirty.contains_key(&model_id));
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    /// An image in a sibling folder that does not exist yet is keyed through
+    /// the nearest existing ancestor, so creating the folder and the image
+    /// marks the model dirty.
+    #[test]
+    fn creating_a_missing_image_folder_outside_the_model_folder_marks_the_gltf_model_dirty() {
+        let root = temp_asset_root("calyx-gltf-image-missing-folder");
+        std::fs::create_dir_all(root.join("models")).expect("failed to create models");
+        let model_path = root.join("models/model.gltf");
+        std::fs::write(
+            &model_path,
+            r#"{"asset":{"version":"2.0"},"images":[{"uri":"../textures/base.png"}]}"#,
+        )
+        .expect("failed to write the model");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        let model_id = registry
+            .asset_id_from_path(&model_path)
+            .expect("the model is registered");
+
+        std::fs::create_dir_all(root.join("textures")).expect("failed to create textures");
+        let image_path = root.join("textures/base.png");
+        std::fs::write(&image_path, b"png").expect("failed to create the image");
+        registry.recv_notify_event(
+            Event::new(EventKind::Create(notify::event::CreateKind::File)).add_path(image_path),
+        );
+
+        assert!(registry.asset_data().dirty.contains_key(&model_id));
         drop(registry);
         std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }

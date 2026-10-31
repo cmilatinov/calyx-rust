@@ -212,6 +212,7 @@ mod tests {
             tangents: Vec::new(),
             indices: vec![0, 2, 1, 0, 3, 2],
             bones: Vec::new(),
+            material: None,
         }
     }
 
@@ -289,6 +290,7 @@ mod tests {
                 inverse_bind_transform: Default::default(),
                 weights: vec![(1, 0.5), (2, 1.0)],
             }],
+            material: None,
         };
 
         generate(&mut mesh);

@@ -29,6 +29,18 @@
       "name": "Run",
       "display_name": "Run",
       "type_uuid": "627dee5d-c2d6-4e3e-9b9e-80e3e601848d"
+    },
+    {
+      "id": "07868104-5116-a797-7868-b9a44c1beb3a",
+      "name": "fox_material",
+      "display_name": "fox_material",
+      "type_uuid": "f98a7f41-84d4-482d-b7af-a670b07035ae"
+    },
+    {
+      "id": "40270523-0908-48ee-c47a-c16dd7b9fe4c",
+      "name": "image_0",
+      "display_name": "image_0",
+      "type_uuid": "8ba4ccec-85ab-45f5-b4ee-2e803ef548a2"
     }
   ]
 }
