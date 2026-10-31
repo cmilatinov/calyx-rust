@@ -72,8 +72,8 @@ impl AddComponentButton {
                     }
                     for (category, entries) in groups {
                         if let Some(category) = category {
-                            ui.add_space(4.0);
-                            ui.label(egui::RichText::new(category).small().weak());
+                            ui.separator();
+                            ui.label(egui::RichText::new(category).strong());
                         }
                         for entry in entries {
                             if ui.selectable_label(false, entry.name).clicked() {
