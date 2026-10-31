@@ -38,3 +38,15 @@ Hip, Spine and Arm joint tree, whose skins list the joints in different orders a
 body's `[Hip, Spine]`, the arm's `[Arm, Spine, Hip]`), and a one-second clip that moves the hip
 and turns the spine but has no channel for the arm. It checks that each skinned mesh follows its
 own bones.
+
+## Materials
+
+`gltf/Materials.gltf` and `gltf/Materials_orm.png` are hand-built, written by a script: one node
+`Panel` whose mesh has three quad primitives, using the material `Painted`, an unnamed `MASK`
+material with `alphaCutoff` 0.3, and no material. `Painted` sets every metallic-roughness input:
+a base color image embedded in a buffer view, an emissive image in a data URI, an external
+occlusion-roughness-metallic image used by two slots, and a normal texture whose image
+`Missing.png` does not exist. The masked material samples the buffer view image with a second
+sampler (mirrored repeat, clamp, nearest), and a third material, `Unused`, is used by no
+primitive. It checks the material and texture sub-assets, their ids across a reimport, the
+per-primitive material in the prefab and an override surviving a reimport.

@@ -1,18 +1,39 @@
-//! glTF and GLB import. Materials, textures, cameras, lights and morph targets are not imported.
-//! Vertex tangents are read from `TANGENT` when the primitive has them.
+//! glTF and GLB import.
+//!
+//! Each glTF material becomes an [`ImportedMaterial`] on the metallic-roughness inputs: base
+//! color factor and texture, metallic and roughness factors and texture, normal texture and
+//! scale, emissive factor and texture, and occlusion texture and strength. `OPAQUE` and `MASK`
+//! alpha modes are imported, `MASK` with its `alphaCutoff`; a `BLEND` material is imported as
+//! opaque. Each pair of an image and a sampler a material samples becomes an
+//! [`ImportedTexture`], so an image several slots or materials use is decoded once. Images are
+//! read from a buffer view, a data URI or an external file, and one that is missing or does not
+//! decode is logged and left for the slot's default. Sampler wrap modes and filters are kept.
+//! Each primitive keeps the index of its material. Vertex tangents are read from `TANGENT` when
+//! the primitive has them.
+//!
+//! Not imported: cameras, lights, morph targets, vertex colours, `doubleSided`, the `BLEND`
+//! alpha mode and transparency sorting, texture coordinate sets other than `TEXCOORD_0` (a slot
+//! that names another set samples `TEXCOORD_0`), and the `KHR_materials_*`,
+//! `KHR_texture_transform` and `KHR_texture_basisu` extensions.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::Arc;
 
 use gltf::animation::util::ReadOutputs;
 use gltf::animation::{Interpolation, Property};
+use gltf::image::Format;
+use gltf::material::AlphaMode;
 use gltf::mesh::Mode;
+use gltf::texture::{MagFilter, MinFilter, WrappingMode};
+use image::DynamicImage;
 use nalgebra::Unit;
 use nalgebra_glm::{Mat4, Vec2, Vec3, Vec4};
 
 use super::{
-    quat, smooth_normals, Corner, ImportedAnimation, ImportedBone, ImportedMesh, ImportedNode,
-    ImportedScene, MeshBuilder, MAX_UV_CHANNELS,
+    quat, smooth_normals, Corner, ImportedAnimation, ImportedBone, ImportedMaterial, ImportedMesh,
+    ImportedNode, ImportedSampler, ImportedScene, ImportedTexture, MeshBuilder, TextureFilter,
+    TextureWrap, MAX_UV_CHANNELS,
 };
 use crate::assets::animation::{AnimationKeyFrames, QuatKeyFrame, VectorKeyFrame};
 use crate::assets::error::AssetError;
@@ -31,6 +52,7 @@ pub(super) fn import(path: &Path) -> Result<ImportedScene, AssetError> {
     let gltf::Gltf { document, blob } = gltf::Gltf::open(path).map_err(load_error)?;
     let buffers = gltf::import_buffers(&document, path.parent(), blob).map_err(load_error)?;
     let names = unique_names(document.nodes().map(|node| node.name()));
+    let (materials, textures) = import_materials(&document, path.parent(), &buffers);
 
     // A mesh is imported once per skin it is used with, named after the first node that uses it
     // with that skin, so each node shows the mesh with its own joints, or unskinned.
@@ -82,7 +104,266 @@ pub(super) fn import(path: &Path) -> Result<ImportedScene, AssetError> {
         meshes,
         root,
         animations,
+        materials,
+        textures,
     })
+}
+
+/// Imports every material of `document`, in document order, with the textures they sample.
+/// External images are read relative to `base`.
+fn import_materials(
+    document: &gltf::Document,
+    base: Option<&Path>,
+    buffers: &[gltf::buffer::Data],
+) -> (Vec<ImportedMaterial>, Vec<ImportedTexture>) {
+    let mut textures = TextureImporter {
+        base,
+        buffers,
+        images: HashMap::new(),
+        indices: HashMap::new(),
+        textures: Vec::new(),
+    };
+    let materials = document
+        .materials()
+        .enumerate()
+        .map(|(index, material)| import_material(index, &material, &mut textures))
+        .collect();
+    (materials, textures.textures)
+}
+
+fn import_material(
+    index: usize,
+    material: &gltf::Material,
+    textures: &mut TextureImporter,
+) -> ImportedMaterial {
+    let name = material
+        .name()
+        .filter(|name| !name.is_empty())
+        .map_or_else(|| format!("material_{index}"), str::to_string);
+    let pbr = material.pbr_metallic_roughness();
+    let normal = material.normal_texture();
+    let occlusion = material.occlusion_texture();
+    let alpha_cutoff = match material.alpha_mode() {
+        AlphaMode::Opaque => None,
+        AlphaMode::Mask => Some(material.alpha_cutoff().unwrap_or(0.5)),
+        AlphaMode::Blend => {
+            log::warn!(
+                "glTF material {name} uses the BLEND alpha mode, which is not supported; it is \
+                 imported as opaque"
+            );
+            None
+        }
+    };
+    let mut slot = |info: Option<(gltf::Texture, u32)>| {
+        info.and_then(|(texture, tex_coord)| textures.import(&name, texture, tex_coord))
+    };
+    ImportedMaterial {
+        base_color_factor: pbr.base_color_factor(),
+        base_color_texture: slot(
+            pbr.base_color_texture()
+                .map(|info| (info.texture(), info.tex_coord())),
+        ),
+        metallic_factor: pbr.metallic_factor(),
+        roughness_factor: pbr.roughness_factor(),
+        metallic_roughness_texture: slot(
+            pbr.metallic_roughness_texture()
+                .map(|info| (info.texture(), info.tex_coord())),
+        ),
+        normal_scale: normal.as_ref().map_or(1.0, |normal| normal.scale()),
+        normal_texture: slot(
+            normal
+                .as_ref()
+                .map(|normal| (normal.texture(), normal.tex_coord())),
+        ),
+        emissive_factor: material.emissive_factor(),
+        emissive_texture: slot(
+            material
+                .emissive_texture()
+                .map(|info| (info.texture(), info.tex_coord())),
+        ),
+        occlusion_strength: occlusion
+            .as_ref()
+            .map_or(1.0, |occlusion| occlusion.strength()),
+        occlusion_texture: slot(
+            occlusion
+                .as_ref()
+                .map(|occlusion| (occlusion.texture(), occlusion.tex_coord())),
+        ),
+        alpha_cutoff,
+        name,
+    }
+}
+
+/// Collects the textures materials sample, one per pair of an image and a sampler, decoding
+/// each image once.
+struct TextureImporter<'a> {
+    base: Option<&'a Path>,
+    buffers: &'a [gltf::buffer::Data],
+    /// Decoded pixels by image index, `None` for an image that could not be read.
+    images: HashMap<usize, Option<Arc<DynamicImage>>>,
+    /// Texture index by image index and sampler.
+    indices: HashMap<(usize, ImportedSampler), usize>,
+    textures: Vec<ImportedTexture>,
+}
+
+impl TextureImporter<'_> {
+    /// The index of the texture `texture` names, for a slot of the material named `material`,
+    /// or `None` when its image is missing or does not decode.
+    fn import(&mut self, material: &str, texture: gltf::Texture, tex_coord: u32) -> Option<usize> {
+        if tex_coord != 0 {
+            log::warn!(
+                "glTF material {material} samples a texture with TEXCOORD_{tex_coord}, which is \
+                 not supported; it samples TEXCOORD_0"
+            );
+        }
+        let image = texture.source();
+        let sampler = import_sampler(&texture.sampler());
+        let key = (image.index(), sampler);
+        if let Some(&index) = self.indices.get(&key) {
+            return Some(index);
+        }
+        let (base, buffers) = (self.base, self.buffers);
+        let pixels = self
+            .images
+            .entry(image.index())
+            .or_insert_with(|| match decode_image(&image, base, buffers) {
+                Ok(pixels) => Some(Arc::new(pixels)),
+                Err(error) => {
+                    log::warn!(
+                        "glTF image {} of material {material} could not be read, so the slot \
+                         samples its default: {error}",
+                        image_name(&image)
+                    );
+                    None
+                }
+            })
+            .clone()?;
+        let index = self.textures.len();
+        self.textures.push(ImportedTexture {
+            name: image_name(&image),
+            image: pixels,
+            sampler,
+        });
+        self.indices.insert(key, index);
+        Some(index)
+    }
+}
+
+/// The name of `image`: its own, else the file name of an external image without its
+/// extension, else a name made from its index.
+fn image_name(image: &gltf::Image) -> String {
+    if let Some(name) = image.name().filter(|name| !name.is_empty()) {
+        return name.to_string();
+    }
+    if let gltf::image::Source::Uri { uri, .. } = image.source() {
+        if !uri.starts_with("data:") {
+            let stem = Path::new(uri)
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .filter(|stem| !stem.is_empty());
+            if let Some(stem) = stem {
+                return stem.to_string();
+            }
+        }
+    }
+    format!("image_{}", image.index())
+}
+
+/// Decodes `image` from its buffer view, its data URI or its file relative to `base`.
+fn decode_image(
+    image: &gltf::Image,
+    base: Option<&Path>,
+    buffers: &[gltf::buffer::Data],
+) -> Result<DynamicImage, String> {
+    if let gltf::image::Source::View { view, .. } = image.source() {
+        let length = buffers
+            .get(view.buffer().index())
+            .map_or(0, |data| data.0.len());
+        if view.offset() + view.length() > length {
+            return Err(format!(
+                "its buffer view ends at byte {} of a {length} byte buffer",
+                view.offset() + view.length()
+            ));
+        }
+    }
+    let data = gltf::image::Data::from_source(image.source(), base, buffers)
+        .map_err(|error| error.to_string())?;
+    let (width, height, pixels) = (data.width, data.height, data.pixels);
+    let wide = || {
+        pixels
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&bytes| u16::from_ne_bytes(bytes))
+            .collect::<Vec<_>>()
+    };
+    let float = || {
+        pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&bytes| f32::from_ne_bytes(bytes))
+            .collect::<Vec<_>>()
+    };
+    let image = match data.format {
+        Format::R8 => image::GrayImage::from_raw(width, height, pixels.clone()).map(Into::into),
+        Format::R8G8 => {
+            image::GrayAlphaImage::from_raw(width, height, pixels.clone()).map(Into::into)
+        }
+        Format::R8G8B8 => image::RgbImage::from_raw(width, height, pixels.clone()).map(Into::into),
+        Format::R8G8B8A8 => {
+            image::RgbaImage::from_raw(width, height, pixels.clone()).map(Into::into)
+        }
+        Format::R16 => image::ImageBuffer::<image::Luma<u16>, _>::from_raw(width, height, wide())
+            .map(Into::into),
+        Format::R16G16 => {
+            image::ImageBuffer::<image::LumaA<u16>, _>::from_raw(width, height, wide())
+                .map(Into::into)
+        }
+        Format::R16G16B16 => {
+            image::ImageBuffer::<image::Rgb<u16>, _>::from_raw(width, height, wide())
+                .map(Into::into)
+        }
+        Format::R16G16B16A16 => {
+            image::ImageBuffer::<image::Rgba<u16>, _>::from_raw(width, height, wide())
+                .map(Into::into)
+        }
+        Format::R32G32B32FLOAT => {
+            image::Rgb32FImage::from_raw(width, height, float()).map(Into::into)
+        }
+        Format::R32G32B32A32FLOAT => {
+            image::Rgba32FImage::from_raw(width, height, float()).map(Into::into)
+        }
+    };
+    image.ok_or_else(|| "its decoded pixels do not fill its size".to_string())
+}
+
+/// The wrap modes and filters of a glTF sampler. An unset filter is linear, with mips.
+fn import_sampler(sampler: &gltf::texture::Sampler) -> ImportedSampler {
+    use TextureFilter::{Linear, Nearest};
+    let wrap = |mode: WrappingMode| match mode {
+        WrappingMode::Repeat => TextureWrap::Repeat,
+        WrappingMode::MirroredRepeat => TextureWrap::MirroredRepeat,
+        WrappingMode::ClampToEdge => TextureWrap::ClampToEdge,
+    };
+    let (min_filter, mipmap_filter) = match sampler.min_filter() {
+        Some(MinFilter::Nearest) => (Nearest, None),
+        Some(MinFilter::Linear) => (Linear, None),
+        Some(MinFilter::NearestMipmapNearest) => (Nearest, Some(Nearest)),
+        Some(MinFilter::LinearMipmapNearest) => (Linear, Some(Nearest)),
+        Some(MinFilter::NearestMipmapLinear) => (Nearest, Some(Linear)),
+        Some(MinFilter::LinearMipmapLinear) | None => (Linear, Some(Linear)),
+    };
+    ImportedSampler {
+        wrap_u: wrap(sampler.wrap_s()),
+        wrap_v: wrap(sampler.wrap_t()),
+        mag_filter: match sampler.mag_filter() {
+            Some(MagFilter::Nearest) => Nearest,
+            Some(MagFilter::Linear) | None => Linear,
+        },
+        min_filter,
+        mipmap_filter,
+    }
 }
 
 fn buffer_data<'a>(buffers: &'a [gltf::buffer::Data], buffer: gltf::Buffer) -> Option<&'a [u8]> {
@@ -261,6 +542,7 @@ fn import_primitive(
         }));
     }
     let (mut mesh, control_points) = builder.finish();
+    mesh.material = primitive.material().index();
     if let Some(skin) = skin {
         mesh.bones = import_skin(skin, &influences, &control_points, buffers, names);
     }
@@ -473,6 +755,73 @@ mod tests {
                 "joint_1",
                 "node_2"
             ]
+        );
+    }
+
+    #[test]
+    fn materials_textures_and_samplers_are_read_from_every_image_source() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/models/gltf/Materials.gltf");
+        let scene = import(&path).expect("the material fixture imports");
+
+        let names = scene
+            .materials
+            .iter()
+            .map(|material| material.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["Painted", "material_1", "Unused"]);
+        let painted = &scene.materials[0];
+        assert_eq!(painted.alpha_cutoff, None);
+        assert_eq!(painted.normal_texture, None, "the missing image is skipped");
+        assert_eq!(
+            painted.metallic_roughness_texture, painted.occlusion_texture,
+            "one texture serves both slots of the ORM image"
+        );
+        assert_eq!(scene.materials[1].alpha_cutoff, Some(0.3));
+        assert_eq!(
+            scene
+                .meshes
+                .iter()
+                .map(|mesh| mesh.material)
+                .collect::<Vec<_>>(),
+            [Some(0), Some(1), None]
+        );
+
+        let textures = scene
+            .textures
+            .iter()
+            .map(|texture| {
+                (
+                    texture.name.as_str(),
+                    (texture.image.width(), texture.image.height()),
+                )
+            })
+            .collect::<Vec<_>>();
+        // The buffer view image twice, with two samplers, then the external and data URI
+        // images.
+        assert_eq!(
+            textures,
+            [
+                ("image_0", (2, 2)),
+                ("Materials_orm", (2, 2)),
+                ("Emissive", (1, 1)),
+                ("image_0", (2, 2)),
+            ]
+        );
+        assert!(std::sync::Arc::ptr_eq(
+            &scene.textures[0].image,
+            &scene.textures[3].image
+        ));
+        assert_eq!(scene.textures[0].sampler, ImportedSampler::default());
+        assert_eq!(
+            scene.textures[3].sampler,
+            ImportedSampler {
+                wrap_u: TextureWrap::MirroredRepeat,
+                wrap_v: TextureWrap::ClampToEdge,
+                mag_filter: TextureFilter::Nearest,
+                min_filter: TextureFilter::Nearest,
+                mipmap_filter: Some(TextureFilter::Linear),
+            }
         );
     }
 

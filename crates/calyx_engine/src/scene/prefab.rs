@@ -3,6 +3,7 @@ use crate::assets::error::AssetError;
 use crate::assets::import::{self, ImportedNode};
 use crate::assets::material::Material;
 use crate::assets::mesh::Mesh;
+use crate::assets::texture::Texture;
 use crate::assets::{Asset, AssetRegistry, LoadedAsset};
 use crate::component::{
     ComponentBone, ComponentID, ComponentMesh, ComponentSkinnedMesh, ComponentTransform,
@@ -10,6 +11,7 @@ use crate::component::{
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::math::Transform;
+use crate::render::Shader;
 use crate::scene::SceneData;
 use crate::utils::TypeUuid;
 use crate::{self as calyx_engine, utils};
@@ -21,9 +23,17 @@ use std::io::BufReader;
 use std::path::Path;
 use uuid::Uuid;
 
+/// Material of an imported mesh whose primitive names no material.
 const DEFAULT_MATERIAL_NAME: &str = "materials/default";
+/// Shader of the materials imported from a model file.
+const IMPORTED_MATERIAL_SHADER_NAME: &str = "shaders/mesh/pbr";
 
 /// Serialized subtree asset that can be instantiated into a [`crate::scene::Scene`].
+///
+/// A model file (FBX, glTF or GLB) loads as a prefab of its node tree. Its meshes, animations,
+/// and for glTF its materials and textures, become sub-assets of the model, named after their
+/// source names and made unique, with ids that stay the same while the names do. Each mesh
+/// component takes the material its primitive names, or `materials/default`.
 #[derive(Serialize, TypeUuid)]
 #[uuid = "960f1d60-3ad4-4f1d-92d3-cceb0e0623d7"]
 pub struct Prefab {
@@ -86,32 +96,90 @@ impl Asset for Prefab {
         if ext != "cxprefab" {
             let scene = import::import(path).map_err(|err| err.with_type(Self::asset_name()))?;
 
+            // Every sub-asset of the model shares one namespace, so names are taken in a fixed
+            // order, meshes first, and each keeps its id across reimports of the same file.
+            let mut used_names = HashSet::new();
+            let mut names = |source_names: Vec<&str>, fallback: &str| {
+                source_names
+                    .into_iter()
+                    .map(|name| imported_sub_asset_name(name, fallback, &mut used_names))
+                    .collect::<Vec<_>>()
+            };
+            let mesh_names = names(
+                scene.meshes.iter().map(|m| m.name.as_str()).collect(),
+                "mesh",
+            );
+            let animation_names = names(
+                scene.animations.iter().map(|a| a.name.as_str()).collect(),
+                "animation",
+            );
+            let material_names = names(
+                scene.materials.iter().map(|m| m.name.as_str()).collect(),
+                "material",
+            );
+            let texture_names = names(
+                scene.textures.iter().map(|t| t.name.as_str()).collect(),
+                "texture",
+            );
+
+            let mut textures = Vec::new();
+            for (texture, name) in scene.textures.iter().zip(&texture_names) {
+                textures.push(match Texture::from_imported(game, name, texture) {
+                    Ok(texture) => Some(
+                        asset_registry
+                            .create_or_update_sub_asset(meta.id, &meta.name, name, texture)?
+                            .id(),
+                    ),
+                    Err(error) => {
+                        log::warn!(
+                            "Texture {name} of {} did not upload, so the slots sampling it keep \
+                             their default: {error}",
+                            meta.name
+                        );
+                        None
+                    }
+                });
+            }
+
+            let mut materials = Vec::new();
+            if !scene.materials.is_empty() {
+                let shader = asset_registry.load::<Shader>(IMPORTED_MATERIAL_SHADER_NAME)?;
+                for (material, name) in scene.materials.iter().zip(&material_names) {
+                    let material =
+                        Material::from_imported(game, shader.clone(), material, &textures);
+                    materials.push(
+                        asset_registry
+                            .create_or_update_sub_asset(meta.id, &meta.name, name, material)?
+                            .id(),
+                    );
+                }
+            }
+
             let mut bones = HashSet::new();
-            let mut mesh_names = HashSet::new();
             let mut meshes = Vec::new();
-            for mesh in &scene.meshes {
-                let name = imported_sub_asset_name(&mesh.name, "mesh", &mut mesh_names);
+            for (mesh, name) in scene.meshes.iter().zip(&mesh_names) {
                 let mesh_ref = asset_registry.create_or_update_sub_asset(
                     meta.id,
                     &meta.name,
-                    &name,
+                    name,
                     Mesh::from_imported(&game.render_context, mesh),
                 )?;
-                meshes.push(mesh_ref.clone());
+                let material_id = match mesh.material.and_then(|index| materials.get(index)) {
+                    Some(id) => *id,
+                    None => default_material_id(&asset_registry)?,
+                };
+                meshes.push((mesh_ref, material_id));
                 bones.extend(mesh.bones.iter().map(|bone| bone.name.clone()));
             }
 
-            let (data, root) = Self::scene_data(&asset_registry, &bones, &meshes, &scene.root)?;
+            let (data, root) = Self::scene_data(&bones, &meshes, &scene.root);
 
-            let mut animation_names = HashSet::new();
             let mut animations = Vec::new();
-            for anim in scene.animations {
-                let name =
-                    imported_sub_asset_name(anim.name.as_str(), "animation", &mut animation_names);
+            for (anim, name) in scene.animations.into_iter().zip(&animation_names) {
                 let anim_ref = asset_registry.create_or_update_sub_asset(
                     meta.id,
                     &meta.name,
-                    &name,
+                    name,
                     Animation::from_imported(anim),
                 )?;
                 animations.push(anim_ref.id());
@@ -121,8 +189,10 @@ impl Asset for Prefab {
                 asset: Self { data, root },
                 sub_assets: meshes
                     .into_iter()
-                    .map(|mesh_ref| mesh_ref.id())
+                    .map(|(mesh_ref, _)| mesh_ref.id())
                     .chain(animations)
+                    .chain(materials)
+                    .chain(textures.into_iter().flatten())
                     .collect(),
             })
         } else {
@@ -178,15 +248,14 @@ fn default_material_id(registry: &AssetRegistry) -> Result<Uuid, AssetError> {
 }
 
 impl Prefab {
-    /// The component showing `mesh_ref` with the default material: a skinned mesh driven by the
-    /// bones under `root_id` when the mesh has bones, else a static mesh.
+    /// The component showing `mesh_ref` with the material `material_id`: a skinned mesh driven
+    /// by the bones under `root_id` when the mesh has bones, else a static mesh.
     fn mesh_component(
-        registry: &AssetRegistry,
         mesh_ref: &Ref<Mesh>,
+        material_id: Uuid,
         root_id: Uuid,
-    ) -> Result<(Uuid, serde_json::Value), AssetError> {
-        let material_id = default_material_id(registry)?;
-        Ok(if mesh_ref.read().bones.is_empty() {
+    ) -> (Uuid, serde_json::Value) {
+        if mesh_ref.read().bones.is_empty() {
             (
                 ComponentMesh::type_uuid(),
                 json!({
@@ -203,40 +272,36 @@ impl Prefab {
                     "root_bone": root_id
                 }),
             )
-        })
+        }
     }
 
-    /// Builds the scene data of an imported node tree and returns it with the root's id. Each
-    /// object's id is seeded from its node's path, so nodes that share a name or have none stay
-    /// distinct, and the same file always produces the same ids.
+    /// Builds the scene data of an imported node tree and returns it with the root's id.
+    /// `meshes` holds each imported mesh with the id of its material. Each object's id is
+    /// seeded from its node's path, so nodes that share a name or have none stay distinct, and
+    /// the same file always produces the same ids.
     fn scene_data(
-        registry: &AssetRegistry,
         bones: &HashSet<String>,
-        meshes: &[Ref<Mesh>],
+        meshes: &[(Ref<Mesh>, Uuid)],
         root: &ImportedNode,
-    ) -> Result<(SceneData, Uuid), AssetError> {
+    ) -> (SceneData, Uuid) {
         let root_id = utils::uuid_from_str(&root.name);
         let mut data = SceneData {
             roots: vec![root_id],
             ..Default::default()
         };
-        Self::traverse(
-            registry, bones, meshes, root_id, root, &root.name, None, &mut data,
-        )?;
-        Ok((data, root_id))
+        Self::traverse(bones, meshes, root_id, root, &root.name, None, &mut data);
+        (data, root_id)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn traverse(
-        registry: &AssetRegistry,
         bones: &HashSet<String>,
-        meshes: &[Ref<Mesh>],
+        meshes: &[(Ref<Mesh>, Uuid)],
         root_id: Uuid,
         node: &ImportedNode,
         path: &str,
         mut parent: Option<Uuid>,
         data: &mut SceneData,
-    ) -> Result<(), AssetError> {
+    ) {
         let matrix: Mat4 = node.transform;
         let id = utils::uuid_from_str(path);
         if let Some(parent_id) = parent {
@@ -264,14 +329,14 @@ impl Prefab {
             .iter()
             .filter_map(|&index| meshes.get(index))
             .collect::<Vec<_>>();
-        if let Some(mesh_ref) = node_meshes.first() {
-            let (type_uuid, component) = Self::mesh_component(registry, mesh_ref, root_id)?;
+        if let Some((mesh_ref, material_id)) = node_meshes.first() {
+            let (type_uuid, component) = Self::mesh_component(mesh_ref, *material_id, root_id);
             entry.insert(type_uuid, component);
         }
-        for (part, mesh_ref) in node_meshes.iter().enumerate().skip(1) {
+        for (part, (mesh_ref, material_id)) in node_meshes.iter().enumerate().skip(1) {
             let part_id = utils::uuid_from_str(&format!("{path}#{part}"));
             data.hierarchy.entry(id).or_default().push(part_id);
-            let (type_uuid, component) = Self::mesh_component(registry, mesh_ref, root_id)?;
+            let (type_uuid, component) = Self::mesh_component(mesh_ref, *material_id, root_id);
             data.components.insert(
                 part_id,
                 [
@@ -303,25 +368,19 @@ impl Prefab {
         }
         for (index, child) in node.children.iter().enumerate() {
             let child_path = format!("{path}/{index}:{}", child.name);
-            Self::traverse(
-                registry,
-                bones,
-                meshes,
-                root_id,
-                child,
-                &child_path,
-                parent,
-                data,
-            )?;
+            Self::traverse(bones, meshes, root_id, child, &child_path, parent, data);
         }
-        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::assets::material::{MaterialTexture, ShaderVariableValue};
+    use crate::assets::texture::TextureColorSpace;
+    use crate::assets::AssetAccess;
     use crate::test_support::test_game_context;
+    use egui_wgpu::wgpu;
 
     #[test]
     fn from_file_returns_error_for_path_without_extension() {
@@ -387,8 +446,6 @@ mod tests {
 
     #[test]
     fn nodes_with_shared_or_empty_names_stay_distinct_and_stable() {
-        let context = test_game_context().assets.lock_read();
-        let registry = context.registries.assets.read();
         let root = node(
             "RootNode",
             vec![
@@ -398,9 +455,8 @@ mod tests {
             ],
         );
 
-        let (data, root_id) = Prefab::scene_data(&registry, &HashSet::new(), &[], &root).unwrap();
-        let (again, again_root_id) =
-            Prefab::scene_data(&registry, &HashSet::new(), &[], &root).unwrap();
+        let (data, root_id) = Prefab::scene_data(&HashSet::new(), &[], &root);
+        let (again, again_root_id) = Prefab::scene_data(&HashSet::new(), &[], &root);
 
         assert_eq!(data.components.len(), 5);
         assert_eq!(data.hierarchy[&root_id].len(), 3);
@@ -506,6 +562,344 @@ mod tests {
                 ("Static".to_string(), false),
                 ("Static_1".to_string(), false),
             ]
+        );
+    }
+
+    /// The material fixture's canonical asset name.
+    const MATERIALS_MODEL: &str = "gltf/Materials";
+
+    /// The id of the sub-asset `local_name` of the material fixture, as the registry names it.
+    fn materials_sub_asset(registry: &AssetRegistry, local_name: &str) -> Uuid {
+        registry
+            .asset_id(&format!("{MATERIALS_MODEL}/{local_name}"))
+            .unwrap_or_else(|| panic!("the fixture has no sub-asset {local_name}"))
+    }
+
+    /// The material on the mesh component of the prefab object named `name`.
+    fn material_of(prefab: &Prefab, name: &str) -> Uuid {
+        let components = prefab
+            .data
+            .components
+            .values()
+            .find(|components| components[&ComponentID::type_uuid()]["name"] == name)
+            .unwrap_or_else(|| panic!("the prefab has no object {name}"));
+        let mesh = &components[&ComponentMesh::type_uuid()];
+        Uuid::parse_str(mesh["material"].as_str().unwrap()).unwrap()
+    }
+
+    fn texture_slot(material: &Material, name: &str) -> Option<Uuid> {
+        let variable = material
+            .variables
+            .iter()
+            .find(|variable| variable.name == name)
+            .unwrap_or_else(|| panic!("the material has no {name}"));
+        match &variable.value {
+            ShaderVariableValue::Texture2D(MaterialTexture::Asset(texture)) => Some(texture.id()),
+            ShaderVariableValue::Texture2D(MaterialTexture::Color(_)) => None,
+            _ => panic!("{name} is not a texture"),
+        }
+    }
+
+    fn float_value(material: &Material, name: &str) -> f32 {
+        match material
+            .variables
+            .iter()
+            .find(|variable| variable.name == name)
+            .map(|variable| &variable.value)
+        {
+            Some(ShaderVariableValue::Float(value)) => *value,
+            _ => panic!("{name} is not a float"),
+        }
+    }
+
+    fn color_value(material: &Material, name: &str) -> [f32; 4] {
+        match material
+            .variables
+            .iter()
+            .find(|variable| variable.name == name)
+            .map(|variable| &variable.value)
+        {
+            Some(ShaderVariableValue::Color(value)) => *value,
+            Some(ShaderVariableValue::Texture2D(MaterialTexture::Color(value))) => *value,
+            _ => panic!("{name} is not a color"),
+        }
+    }
+
+    #[test]
+    fn gltf_materials_import_as_sub_assets_on_the_pbr_inputs() {
+        let assets = crate::test_support::TestAssets::models();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let registry = context.registries.assets.read();
+        let path = assets.fixtures_root().join("gltf/Materials.gltf");
+        let loaded = Prefab::from_file(&context, &path)
+            .unwrap_or_else(|e| panic!("failed to import the material fixture: {e}"));
+
+        let painted_id = materials_sub_asset(&registry, "Painted");
+        let painted = registry.load_by_id::<Material>(painted_id).unwrap();
+        let painted = painted.read();
+        let base_color = materials_sub_asset(&registry, "image_0");
+        let orm = materials_sub_asset(&registry, "Materials_orm");
+        let emissive = materials_sub_asset(&registry, "Emissive");
+        assert_eq!(
+            color_value(&painted, "base_color_factor"),
+            [0.5, 0.25, 1.0, 1.0]
+        );
+        assert_eq!(
+            texture_slot(&painted, "base_color_texture"),
+            Some(base_color)
+        );
+        assert_eq!(float_value(&painted, "metallic"), 0.25);
+        assert_eq!(float_value(&painted, "roughness"), 0.75);
+        assert_eq!(
+            texture_slot(&painted, "metallic_roughness_texture"),
+            Some(orm)
+        );
+        assert_eq!(float_value(&painted, "normal_scale"), 0.5);
+        assert_eq!(
+            texture_slot(&painted, "normal_texture"),
+            None,
+            "the missing normal image leaves the slot's default"
+        );
+        assert_eq!(
+            color_value(&painted, "normal_texture"),
+            [0.5, 0.5, 1.0, 1.0]
+        );
+        assert_eq!(
+            color_value(&painted, "emission_color"),
+            [1.0, 0.5, 0.0, 1.0]
+        );
+        assert_eq!(float_value(&painted, "emission_strength"), 1.0);
+        assert_eq!(texture_slot(&painted, "emissive_texture"), Some(emissive));
+        assert_eq!(texture_slot(&painted, "occlusion_texture"), Some(orm));
+        assert_eq!(float_value(&painted, "occlusion_strength"), 0.8);
+        assert_eq!(float_value(&painted, "ambient_occlusion"), 1.0);
+        assert_eq!(float_value(&painted, "alpha_cutoff"), 0.0, "opaque");
+        assert_eq!(
+            painted.shader.id(),
+            registry.asset_id(IMPORTED_MATERIAL_SHADER_NAME).unwrap()
+        );
+
+        let masked = registry
+            .load_by_id::<Material>(materials_sub_asset(&registry, "material_1"))
+            .unwrap();
+        let masked = masked.read();
+        assert_eq!(float_value(&masked, "alpha_cutoff"), 0.3);
+        assert_eq!(
+            texture_slot(&masked, "base_color_texture"),
+            Some(materials_sub_asset(&registry, "image_0_1")),
+            "the base color image with another sampler is its own texture"
+        );
+        assert_eq!(color_value(&masked, "base_color_factor"), [1.0; 4]);
+        assert_eq!(float_value(&masked, "roughness"), 1.0);
+
+        let unused = registry
+            .load_by_id::<Material>(materials_sub_asset(&registry, "Unused"))
+            .unwrap();
+        assert_eq!(
+            color_value(&unused.read(), "base_color_factor"),
+            [0.1, 0.2, 0.3, 1.0]
+        );
+
+        // One texture per image and sampler: the ORM image serves two slots once, and the
+        // missing image makes none.
+        let textures = loaded
+            .sub_assets
+            .iter()
+            .filter(|id| {
+                registry.asset_meta_from_id(**id).map(|meta| meta.type_uuid)
+                    == Some(Texture::type_uuid())
+            })
+            .count();
+        assert_eq!(textures, 4);
+    }
+
+    #[test]
+    fn imported_textures_read_color_slots_as_srgb_and_data_slots_as_linear() {
+        let assets = crate::test_support::TestAssets::models();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let registry = context.registries.assets.read();
+        let path = assets.fixtures_root().join("gltf/Materials.gltf");
+        Prefab::from_file(&context, &path).unwrap();
+
+        let painted = registry
+            .load_by_id::<Material>(materials_sub_asset(&registry, "Painted"))
+            .unwrap();
+        let painted = painted.read();
+        let slot = |name: &str| {
+            painted
+                .variables
+                .iter()
+                .find(|variable| variable.name == name)
+                .map(|variable| painted.texture_color_space(variable.group, variable.binding))
+                .unwrap()
+        };
+        assert_eq!(slot("base_color_texture"), TextureColorSpace::Srgb);
+        assert_eq!(slot("emissive_texture"), TextureColorSpace::Srgb);
+        assert_eq!(
+            slot("metallic_roughness_texture"),
+            TextureColorSpace::Linear
+        );
+        assert_eq!(slot("occlusion_texture"), TextureColorSpace::Linear);
+        assert_eq!(slot("normal_texture"), TextureColorSpace::Linear);
+
+        for name in ["image_0", "Emissive", "Materials_orm"] {
+            let texture = registry
+                .load_by_id::<Texture>(materials_sub_asset(&registry, name))
+                .unwrap();
+            let texture = texture.read();
+            assert_eq!(
+                texture.descriptor.format,
+                wgpu::TextureFormat::Rgba8Unorm,
+                "{name} is stored as read"
+            );
+            assert_eq!(
+                texture.srgb_texture.as_ref().map(wgpu::Texture::format),
+                Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+                "{name} has an sRGB copy for color slots"
+            );
+        }
+    }
+
+    #[test]
+    fn imported_sub_asset_ids_are_stable_across_reimports_and_listed_in_the_meta() {
+        let assets = crate::test_support::TestAssets::models();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let registry = context.registries.assets.read();
+        let path = assets.fixtures_root().join("gltf/Materials.gltf");
+
+        let first = registry.load_by_path::<Prefab>(&path).unwrap();
+        let first_ids = registry.asset_meta_from_path(&path).unwrap().children;
+        let first_root = first.read().root;
+        registry.reload_by_path::<Prefab>(&path).unwrap();
+        let again_ids = registry.asset_meta_from_path(&path).unwrap().children;
+
+        assert_eq!(again_ids, first_ids);
+        assert_eq!(first.read().root, first_root);
+        let meta: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path.with_extension("meta")).unwrap())
+                .unwrap();
+        let listed = meta["inner"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|child| {
+                (
+                    child["name"].as_str().unwrap().to_string(),
+                    Uuid::parse_str(child["id"].as_str().unwrap()).unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let expected = [
+            ("Panel", Mesh::type_uuid()),
+            ("Panel_1", Mesh::type_uuid()),
+            ("Panel_2", Mesh::type_uuid()),
+            ("Painted", Material::type_uuid()),
+            ("material_1", Material::type_uuid()),
+            ("Unused", Material::type_uuid()),
+            ("image_0", Texture::type_uuid()),
+            ("Materials_orm", Texture::type_uuid()),
+            ("Emissive", Texture::type_uuid()),
+            ("image_0_1", Texture::type_uuid()),
+        ];
+        assert_eq!(
+            listed,
+            expected
+                .iter()
+                .map(|(name, _)| (
+                    name.to_string(),
+                    utils::uuid_from_str(&format!("{MATERIALS_MODEL}/{name}"))
+                ))
+                .collect::<Vec<_>>(),
+            "each sub-asset is listed with the id hashed from its name"
+        );
+        for ((name, type_uuid), id) in expected.iter().zip(&first_ids) {
+            assert_eq!(
+                registry.asset_meta_from_id(*id).map(|meta| meta.type_uuid),
+                Some(*type_uuid),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            first_ids,
+            listed.iter().map(|(_, id)| *id).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn each_primitive_s_mesh_component_takes_its_imported_material() {
+        let assets = crate::test_support::TestAssets::models();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let registry = context.registries.assets.read();
+        let path = assets.fixtures_root().join("gltf/Materials.gltf");
+        let prefab = Prefab::from_file(&context, &path).unwrap().asset;
+
+        assert_eq!(
+            material_of(&prefab, "Panel"),
+            materials_sub_asset(&registry, "Painted")
+        );
+        assert_eq!(
+            material_of(&prefab, "Panel_1"),
+            materials_sub_asset(&registry, "material_1"),
+            "a further primitive's child object takes its own material"
+        );
+        assert_eq!(
+            material_of(&prefab, "Panel_2"),
+            default_material_id(&registry).unwrap(),
+            "a primitive without a material keeps the default"
+        );
+    }
+
+    #[test]
+    fn a_material_assigned_to_an_instance_survives_a_reimport() {
+        let assets = crate::test_support::TestAssets::models();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let registry = context.registries.assets.read();
+        let path = assets.fixtures_root().join("gltf/Materials.gltf");
+        let prefab_ref = registry.load_by_path::<Prefab>(&path).unwrap();
+        let prefab_id = prefab_ref.id();
+        let mut level = context.scene();
+        let (instance, _) = level
+            .instantiate_linked_prefab(prefab_id, &prefab_ref.read(), None)
+            .unwrap();
+        let object = |level: &crate::scene::Scene, name: &str| {
+            level
+                .objects()
+                .find(|object| level.name(*object) == name)
+                .unwrap()
+        };
+        let material = |level: &crate::scene::Scene, name: &str| {
+            level
+                .read_component::<ComponentMesh, _, _>(object(level, name), |mesh| {
+                    mesh.material.id()
+                })
+                .unwrap()
+        };
+        let unused = materials_sub_asset(&registry, "Unused");
+        let panel = object(&level, "Panel");
+        level
+            .write_component::<ComponentMesh, _>(panel, |mesh| {
+                mesh.material = crate::assets::AssetRef::from_id(unused);
+            })
+            .unwrap();
+
+        registry.reload_by_path::<Prefab>(&path).unwrap();
+        let update = level
+            .update_prefab_instances(prefab_id, &prefab_ref.read())
+            .unwrap();
+
+        assert_eq!(update.instances, 1);
+        assert_eq!(update.kept_overrides, 1);
+        assert_eq!(level.prefab_instances(prefab_id), [instance]);
+        assert_eq!(material(&level, "Panel"), unused, "the override is kept");
+        assert_eq!(
+            material(&level, "Panel_1"),
+            materials_sub_asset(&registry, "material_1"),
+            "a mesh without an override keeps the imported material"
         );
     }
 
