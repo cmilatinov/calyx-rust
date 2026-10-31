@@ -54,6 +54,17 @@ pub trait Asset: Any + Send + Sync {
     ) -> Result<LoadedAsset<Self>, AssetError>
     where
         Self: Sized;
+    /// Decides whether a hot reload may replace `previous`, the live value,
+    /// with `self`, freshly loaded from the changed source. An error refuses
+    /// the reload: the registry keeps `previous` and records the error. It
+    /// may also carry state over from `previous`. Accepts every reload by
+    /// default.
+    fn accept_reload(&mut self, _previous: &Self) -> Result<(), AssetError>
+    where
+        Self: Sized,
+    {
+        Ok(())
+    }
     /// Writes the asset back to disk when supported.
     fn to_file(&self, _path: &Path) -> Result<(), std::io::Error> {
         Ok(())

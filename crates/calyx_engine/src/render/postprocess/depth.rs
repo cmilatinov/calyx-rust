@@ -69,14 +69,16 @@ impl DepthResolve {
         let target = self.target.as_ref().expect("the target was just created");
 
         let shader = self.shader.read();
-        let pipeline = shader.pipeline(
+        let Some(pipeline) = shader.pipeline(
             &PipelineOptions::fullscreen_builder()
                 .depth_stencil(wgpu::DepthStencilState {
                     depth_compare: wgpu::CompareFunction::Always,
                     ..RenderUtils::depth_default(wgpu::TextureFormat::Depth32Float)
                 })
                 .build(),
-        );
+        ) else {
+            return target;
+        };
         let layout = shader.bind_group_layouts[0].clone();
         drop(shader);
         let device = render_context.device();

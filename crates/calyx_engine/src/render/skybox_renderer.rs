@@ -146,7 +146,10 @@ impl SkyboxRenderer {
                 .samples(samples)
                 .cull_mode(Some(wgpu::Face::Front))
                 .build();
-            render_pass.set_pipeline(&shader.pipeline(&options));
+            let Some(pipeline) = shader.pipeline(&options) else {
+                return;
+            };
+            render_pass.set_pipeline(&pipeline);
             render_pass.set_bind_group(0, camera_bind_group, &[]);
             render_pass.set_bind_group(1, bind_group, &[]);
             RenderUtils::bind_mesh_buffers(&mut render_pass, &cube_mesh);

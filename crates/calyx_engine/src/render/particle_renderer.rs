@@ -502,7 +502,11 @@ impl ParticleRenderer {
         for draw in draws {
             drawn_textures.insert(draw.texture.id());
             let texture_bind_group = self.texture_bind_group(device, &draw.texture);
-            let pipeline = self.pipeline(draw.blend_mode, samples, color_format, depth_format);
+            let Some(pipeline) =
+                self.pipeline(draw.blend_mode, samples, color_format, depth_format)
+            else {
+                continue;
+            };
             let instances = &self.particle_systems[&draw.game_object].instances;
 
             let mut render_pass = RenderUtils::overlay_pass(
@@ -554,14 +558,15 @@ impl ParticleRenderer {
     }
 
     /// Returns the particle shader's pipeline for `blend_mode` and the given
-    /// targets. The shader builds it on first use and drops it on hot reload.
+    /// targets, or `None` when wgpu rejects it. The shader builds it on first use
+    /// and drops it on hot reload.
     fn pipeline(
         &self,
         blend_mode: ParticleBlendMode,
         samples: u32,
         color_format: wgpu::TextureFormat,
         depth_format: wgpu::TextureFormat,
-    ) -> wgpu::RenderPipeline {
+    ) -> Option<wgpu::RenderPipeline> {
         self.shader.read().pipeline(&Self::pipeline_options(
             blend_mode,
             samples,

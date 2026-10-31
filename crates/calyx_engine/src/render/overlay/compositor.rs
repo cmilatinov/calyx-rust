@@ -217,7 +217,7 @@ impl OverlayCompositor {
     ) {
         let targets = self.targets.as_ref().expect("the overlays drew a target");
         let shader = self.shader.read();
-        let pipeline = shader.pipeline(
+        let Some(pipeline) = shader.pipeline(
             &PipelineOptions::fullscreen_builder()
                 .target(wgpu::ColorTargetState {
                     format: output.descriptor.format,
@@ -225,7 +225,9 @@ impl OverlayCompositor {
                     write_mask: wgpu::ColorWrites::ALL,
                 })
                 .build(),
-        );
+        ) else {
+            return;
+        };
         let layout = shader.bind_group_layouts[0].clone();
         drop(shader);
         let device = render_context.device();
