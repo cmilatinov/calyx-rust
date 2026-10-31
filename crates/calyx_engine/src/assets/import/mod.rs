@@ -6,7 +6,7 @@ mod tangents;
 mod ufbx;
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use image::DynamicImage;
 use nalgebra_glm::{Mat4, Quat, Vec2, Vec3, Vec4};
@@ -206,6 +206,19 @@ pub(crate) struct ImportedAnimation {
     pub duration_seconds: f64,
     /// Keyframes by node name.
     pub channels: HashMap<String, AnimationKeyFrames>,
+}
+
+/// The files besides the model file at `path` that importing it reads, such as a glTF's
+/// external images, whether they exist or not.
+pub(crate) fn dependencies(path: &Path) -> Vec<PathBuf> {
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase);
+    match extension.as_deref() {
+        Some("gltf" | "glb") => gltf::external_image_paths(path),
+        _ => Vec::new(),
+    }
 }
 
 /// Imports the model file at `path`.

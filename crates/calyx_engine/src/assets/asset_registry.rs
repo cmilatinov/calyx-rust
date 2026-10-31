@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 use crate::assets::animation_graph::AnimationGraph;
 use crate::assets::error::AssetError;
+use crate::assets::import;
 use crate::assets::material::{Material, MaterialTexture};
 use crate::assets::mesh::Mesh;
 use crate::assets::texture::Texture;
@@ -1085,7 +1086,12 @@ impl AssetRegistry {
             );
             self.mark_asset_dirty(id);
         }
+        self.mark_dependents_dirty(path);
+    }
 
+    /// Marks dirty every asset whose load reads the file at `path`, such as
+    /// a shader including it or a model reading it as an image.
+    fn mark_dependents_dirty(&self, path: &Path) {
         let dependency_path = Self::dependency_path(path);
         let dependent_ids = self
             .asset_data()
@@ -1177,6 +1183,7 @@ impl AssetRegistry {
                 // `notify_event_paths` drops, so forget by path prefix here.
                 for removed in event.paths.iter().filter(|path| !path.exists()) {
                     self.forget_assets_under(removed);
+                    self.mark_dependents_dirty(removed);
                 }
                 for file in paths_iter {
                     if file.is_file() {
@@ -1215,6 +1222,8 @@ impl AssetRegistry {
     /// Registers the file the watcher reported as new, warning when it lies
     /// outside every asset root or its metadata cannot be built.
     fn register_created_file(&self, file: &Path) {
+        // A file an asset already read, but found missing, is new to it too.
+        self.mark_dependents_dirty(file);
         let Some(asset_path) = self.owning_asset_root(file) else {
             log::warn!(
                 "Ignoring created file outside every asset root: {}",
@@ -1648,6 +1657,15 @@ impl AssetRegistry {
         drop(data);
 
         if path.extension().and_then(|ext| ext.to_str()) != Some("wgsl") {
+            // A model reads files besides its own, such as a glTF's images.
+            let dependencies = import::dependencies(path);
+            let mut data = self.asset_data_mut();
+            for dependency in dependencies {
+                data.dependencies
+                    .entry(Self::dependency_path(&dependency))
+                    .or_default()
+                    .insert(id);
+            }
             return;
         }
 
@@ -1666,8 +1684,16 @@ impl AssetRegistry {
         }
     }
 
+    /// The key `path` has in the dependencies: its canonical path. A file
+    /// that does not exist yet takes its canonical folder's path, so it keys
+    /// the same once it is created.
     fn dependency_path(path: &Path) -> PathBuf {
-        std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+        std::fs::canonicalize(path).unwrap_or_else(|_| match (path.parent(), path.file_name()) {
+            (Some(parent), Some(name)) => std::fs::canonicalize(parent)
+                .map(|parent| parent.join(name))
+                .unwrap_or_else(|_| path.to_path_buf()),
+            _ => path.to_path_buf(),
+        })
     }
 
     /// Returns `path` relative to `asset_path` without its extension, or an
@@ -2154,6 +2180,52 @@ mod tests {
             original_meta
         );
         assert!(registry.asset_data().dirty.contains_key(&asset_id));
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    /// A glTF model reads its external images when it imports, so creating, editing or
+    /// deleting one marks the model dirty, as an edited include does a shader.
+    #[test]
+    fn external_image_events_mark_the_gltf_model_dirty() {
+        let root = temp_asset_root("calyx-gltf-image-dependency");
+        let model_path = root.join("model.gltf");
+        std::fs::write(
+            &model_path,
+            r#"{"asset":{"version":"2.0"},"images":[{"uri":"textures/base%20color.png"}]}"#,
+        )
+        .expect("failed to write the model");
+        std::fs::create_dir_all(root.join("textures")).expect("failed to create textures");
+        let image_path = root.join("textures/base color.png");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        let model_id = registry
+            .asset_id_from_path(&model_path)
+            .expect("the model is registered");
+        let take_dirty = || registry.asset_data_mut().dirty.remove(&model_id).is_some();
+
+        std::fs::write(&image_path, b"png").expect("failed to create the image");
+        registry.recv_notify_event(
+            Event::new(EventKind::Create(notify::event::CreateKind::File))
+                .add_path(image_path.clone()),
+        );
+        assert!(take_dirty(), "creating the missing image marks the model");
+
+        registry.recv_notify_event(
+            Event::new(EventKind::Modify(notify::event::ModifyKind::Data(
+                notify::event::DataChange::Content,
+            )))
+            .add_path(image_path.clone()),
+        );
+        assert!(take_dirty(), "editing the image marks the model");
+
+        std::fs::remove_file(&image_path).expect("failed to delete the image");
+        registry.recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File))
+                .add_path(image_path.clone()),
+        );
+        assert!(take_dirty(), "deleting the image marks the model");
+
         drop(registry);
         std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }

@@ -17,7 +17,8 @@
 //! `KHR_texture_transform` and `KHR_texture_basisu` extensions.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use gltf::animation::util::ReadOutputs;
@@ -247,6 +248,62 @@ impl TextureImporter<'_> {
         self.indices.insert(key, index);
         Some(index)
     }
+}
+
+/// The files the external images of the glTF or GLB file at `path` are read from, whether they
+/// exist or not, so the registry can reimport the model when one changes. Only the JSON is read:
+/// a GLB's binary chunk is skipped. A file that does not parse names none.
+pub(super) fn external_image_paths(path: &Path) -> Vec<PathBuf> {
+    let json = match glb_json(path) {
+        Ok(json) => json,
+        Err(error) => {
+            log::warn!("Failed to read the images of {}: {error}", path.display());
+            return Vec::new();
+        }
+    };
+    let document = match gltf::Gltf::from_slice(&json) {
+        Ok(gltf) => gltf.document,
+        Err(error) => {
+            log::warn!("Failed to read the images of {}: {error}", path.display());
+            return Vec::new();
+        }
+    };
+    let base = path.parent().unwrap_or(Path::new(""));
+    document
+        .images()
+        .filter_map(|image| match image.source() {
+            gltf::image::Source::Uri { uri, .. } => image_file(base, uri),
+            gltf::image::Source::View { .. } => None,
+        })
+        .collect()
+}
+
+/// The JSON of the glTF or GLB file at `path`: a GLB's JSON chunk, else the whole file.
+fn glb_json(path: &Path) -> std::io::Result<Vec<u8>> {
+    let mut file = std::fs::File::open(path)?;
+    let mut header = [0u8; 20];
+    let read = file.read(&mut header)?;
+    if read < header.len() || &header[..4] != b"glTF" {
+        let mut json = header[..read].to_vec();
+        file.read_to_end(&mut json)?;
+        return Ok(json);
+    }
+    // The 12-byte header, then the JSON chunk's length and type.
+    let length = u32::from_le_bytes([header[12], header[13], header[14], header[15]]);
+    let mut json = vec![0; length as usize];
+    file.read_exact(&mut json)?;
+    Ok(json)
+}
+
+/// The file `uri` names relative to `base`, as the glTF importer resolves it, or `None` for a
+/// data URI or an unsupported scheme.
+fn image_file(base: &Path, uri: &str) -> Option<PathBuf> {
+    if !uri.contains(':') {
+        return Some(base.join(&*urlencoding::decode(uri).ok()?));
+    }
+    uri.strip_prefix("file://")
+        .or_else(|| uri.strip_prefix("file:"))
+        .map(PathBuf::from)
 }
 
 /// The name of `image`: its own, else the file name of an external image without its
@@ -823,6 +880,36 @@ mod tests {
                 mipmap_filter: Some(TextureFilter::Linear),
             }
         );
+    }
+
+    #[test]
+    fn external_images_are_read_from_the_glb_json_chunk() {
+        let json = br#"{"asset":{"version":"2.0"},"images":[
+            {"uri":"textures/base%20color.png"},
+            {"uri":"data:image/png;base64,AAAA"},
+            {"bufferView":0,"mimeType":"image/png"}],
+            "buffers":[{"byteLength":4}],"bufferViews":[{"buffer":0,"byteLength":4}]}  "#;
+        let binary = [0u8; 4];
+        let length = 12 + 8 + json.len() + 8 + binary.len();
+        let mut glb = Vec::new();
+        glb.extend_from_slice(b"glTF");
+        glb.extend_from_slice(&2u32.to_le_bytes());
+        glb.extend_from_slice(&(length as u32).to_le_bytes());
+        glb.extend_from_slice(&(json.len() as u32).to_le_bytes());
+        glb.extend_from_slice(b"JSON");
+        glb.extend_from_slice(json);
+        glb.extend_from_slice(&(binary.len() as u32).to_le_bytes());
+        glb.extend_from_slice(b"BIN\0");
+        glb.extend_from_slice(&binary);
+        let root = std::env::temp_dir().join(format!("calyx-glb-images-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("the folder is created");
+        let path = root.join("model.glb");
+        std::fs::write(&path, glb).expect("the GLB is written");
+
+        let images = external_image_paths(&path);
+
+        std::fs::remove_dir_all(&root).expect("the folder is removed");
+        assert_eq!(images, [root.join("textures/base color.png")]);
     }
 
     #[test]
