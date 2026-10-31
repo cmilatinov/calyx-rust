@@ -2646,10 +2646,45 @@
       }
     },
     "ce2b5864-2214-4637-a737-f5636a290977": {
+      "01a950bc-d431-4495-8b86-7d51c5f2b4b0": {
+        "bias": 0.02500000037252903,
+        "intensity": 0.800000011920929,
+        "radius": 0.5,
+        "sample_count": 16
+      },
       "02289c92-3412-406e-a7e5-3bbb15d7041e": {
         "id": "ce2b5864-2214-4637-a737-f5636a290977",
         "name": "Post Process",
         "visible": true
+      },
+      "61efa204-ed0d-4d1f-86a4-b226be940b13": {
+        "color": [
+          0,
+          0,
+          0,
+          255
+        ],
+        "intensity": 0.30000001192092896,
+        "smoothness": 0.44999998807907104
+      },
+      "68ac12ac-fc9a-489e-b305-363eaf593966": {
+        "exposure_ev": 0.0,
+        "preset": "Aces"
+      },
+      "7e09858d-fd71-4729-bb90-8ed76c0bda9a": {
+        "intensity": 0.25,
+        "knee": 0.5,
+        "radius": 6,
+        "threshold": 1.0
+      },
+      "ac9e495b-1859-42d8-b1c5-0d35f113c089": {
+        "focus_distance": 11.5,
+        "focus_range": 16.0,
+        "max_blur": 2.5
+      },
+      "c19ff2b7-c3ed-4f04-9dfa-e026efdedf82": {
+        "edge_threshold": 0.16599999368190765,
+        "subpixel": 0.75
       },
       "c5b3b71f-1f14-4b5b-9881-436118684d29": {
         "transform": {
@@ -2672,56 +2707,13 @@
         }
       },
       "cdbfef3f-81a5-4ccb-a0f6-098bc5a26979": {
-        "priority": 0,
-        "settings": {
-          "ambient_occlusion": {
-            "bias": 0.02500000037252903,
-            "enabled": true,
-            "intensity": 0.800000011920929,
-            "radius": 0.5,
-            "sample_count": 16
-          },
-          "anti_aliasing": {
-            "edge_threshold": 0.16599999368190765,
-            "fxaa": true,
-            "subpixel": 0.75
-          },
-          "bloom": {
-            "enabled": true,
-            "intensity": 0.25,
-            "knee": 0.5,
-            "radius": 6,
-            "threshold": 1.0
-          },
-          "color_grading": {
-            "contrast": 1.059999942779541,
-            "enabled": true,
-            "saturation": 1.0800000429153442,
-            "temperature": 0.05999999865889549,
-            "tint": 0.0
-          },
-          "depth_of_field": {
-            "enabled": true,
-            "focus_distance": 11.5,
-            "focus_range": 16.0,
-            "max_blur": 2.5
-          },
-          "tonemapping": {
-            "exposure_ev": 0.0,
-            "preset": "Aces"
-          },
-          "vignette": {
-            "color": [
-              0,
-              0,
-              0,
-              255
-            ],
-            "enabled": true,
-            "intensity": 0.30000001192092896,
-            "smoothness": 0.44999998807907104
-          }
-        }
+        "priority": 0
+      },
+      "d2694fb5-4815-471e-9537-4ab502c580f0": {
+        "contrast": 1.059999942779541,
+        "saturation": 1.0800000429153442,
+        "temperature": 0.05999999865889549,
+        "tint": 0.0
       }
     },
     "cf55680f-b204-43a1-a46d-5e5f3eb18178": {

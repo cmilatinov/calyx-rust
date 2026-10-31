@@ -1,146 +1,127 @@
-//! Post-processing settings and the global volume that selects them.
+//! Post-processing settings, gathered from the effect components beside the
+//! global volume that selects them.
 
-use super::BloomSettings;
-use crate as calyx_engine;
-use crate::component::ComponentGlobalPostProcessVolume;
-use crate::reflect::{Reflect, ReflectDefault};
-use crate::scene::Scene;
-use crate::utils::TypeUuid;
+use crate::component::{
+    Component, ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom,
+    ComponentColorGrading, ComponentDepthOfField, ComponentGlobalPostProcessVolume,
+    ComponentTonemap, ComponentVignette,
+};
+use crate::scene::{GameObject, Scene};
 use legion::storage::ComponentTypeId;
 use legion::{Entity, IntoQuery};
-use serde::{Deserialize, Serialize};
 
-/// Everything the post-processing chain reads for one frame.
+/// Everything the post-processing chain reads for one frame, gathered from
+/// the effect components on the selected volume's game object.
 ///
-/// Effects added later become optional sub-structs, so scenes saved before
-/// them still load with those effects off.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
-#[uuid = "ee22c2ed-999e-400e-b348-64abf7294b9c"]
-#[reflect(Default)]
-#[serde(default)]
+/// An effect is `None`, and its pass off, when the volume's object has no
+/// enabled component for it. Tone mapping always runs, with its defaults
+/// when there is no enabled tone-mapping component.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PostProcessSettings {
     /// Tone mapping, the display transform. It always runs.
-    pub tonemapping: TonemapSettings,
-    /// Screen-space ambient occlusion, first in the `Hdr` stage. Off by
-    /// default.
-    pub ambient_occlusion: super::AmbientOcclusionSettings,
-    /// Depth of field, in the `Hdr` stage. Off by default.
-    pub depth_of_field: super::DepthOfFieldSettings,
-    /// Bloom, in the `Hdr` stage. Off by default.
-    pub bloom: BloomSettings,
-    /// White balance, contrast and saturation, after tone mapping. Off by
-    /// default.
-    pub color_grading: super::ColorGradingSettings,
-    /// Darkened screen edges, after tone mapping. Off by default.
-    pub vignette: super::VignetteSettings,
-    /// Screen-space anti-aliasing, after tone mapping. Off by default.
-    pub anti_aliasing: super::AntiAliasingSettings,
+    pub tonemapping: ComponentTonemap,
+    /// Screen-space ambient occlusion, first in the `Hdr` stage.
+    pub ambient_occlusion: Option<ComponentAmbientOcclusion>,
+    /// Depth of field, in the `Hdr` stage.
+    pub depth_of_field: Option<ComponentDepthOfField>,
+    /// Bloom, in the `Hdr` stage.
+    pub bloom: Option<ComponentBloom>,
+    /// White balance, contrast and saturation, after tone mapping.
+    pub color_grading: Option<ComponentColorGrading>,
+    /// Darkened screen edges, after tone mapping.
+    pub vignette: Option<ComponentVignette>,
+    /// Screen-space anti-aliasing (FXAA), after tone mapping.
+    pub anti_aliasing: Option<ComponentAntiAliasing>,
 }
 
-/// Tone-mapping curve and exposure.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
-#[uuid = "9a7db307-2c75-4b38-ae50-cea01d7f32af"]
-#[reflect(Default)]
-#[serde(default)]
-pub struct TonemapSettings {
-    /// Curve that maps linear HDR color to the display range.
-    pub preset: TonemappingPreset,
-    /// Exposure in stops: the scene is scaled by `2^exposure_ev` before the
-    /// curve.
-    #[reflect_attr(speed = 0.05)]
-    pub exposure_ev: f32,
-}
-
-impl Default for TonemapSettings {
-    fn default() -> Self {
-        Self {
-            preset: TonemappingPreset::Aces,
-            exposure_ev: 0.0,
-        }
-    }
-}
-
-impl TonemapSettings {
-    /// The linear factor the scene is scaled by before the curve.
-    pub fn exposure_scale(&self) -> f32 {
-        self.exposure_ev.exp2()
-    }
-}
-
-/// Tone-mapping curves.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TypeUuid, Reflect)]
-#[uuid = "a4d6b439-bdc2-4aeb-aaf7-1f14f147255b"]
-pub enum TonemappingPreset {
-    /// Stephen Hill's fit of the ACES reference rendering and output
-    /// transforms.
-    #[default]
-    Aces,
-}
-
-impl TonemappingPreset {
-    /// The value the tone-map shader switches on.
-    pub(crate) fn shader_index(self) -> u32 {
-        match self {
-            Self::Aces => 0,
-        }
-    }
-}
-
-/// The settings [`select_volume`] picked, and the priority several enabled
+/// The item [`select_volume`] picked, and the priority several enabled
 /// volumes tied at when it had to pick the first of them.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct VolumeSelection {
-    pub settings: PostProcessSettings,
+pub(crate) struct VolumeSelection<T> {
+    pub selected: Option<T>,
     pub tie: Option<i32>,
 }
 
-/// Picks the enabled volume with the highest priority, the first found on a
-/// tie, or the default settings when no volume is enabled. Each volume comes
-/// with whether the scene holds it enabled.
-pub(crate) fn select_volume<'a>(
-    volumes: impl IntoIterator<Item = (bool, &'a ComponentGlobalPostProcessVolume)>,
-) -> VolumeSelection {
-    let mut selected: Option<&ComponentGlobalPostProcessVolume> = None;
+/// Picks the enabled volume with the highest priority, or the first found
+/// on a tie, from `(enabled, priority, item)` triples. `selected` is `None`
+/// when no volume is enabled.
+pub(crate) fn select_volume<T>(
+    volumes: impl IntoIterator<Item = (bool, i32, T)>,
+) -> VolumeSelection<T> {
+    let mut selected: Option<(i32, T)> = None;
     let mut tie = None;
     let enabled = volumes
         .into_iter()
-        .filter_map(|(enabled, volume)| enabled.then_some(volume));
-    for volume in enabled {
-        match selected {
-            Some(best) if volume.priority < best.priority => {}
-            Some(best) if volume.priority == best.priority => tie = Some(best.priority),
+        .filter_map(|(enabled, priority, item)| enabled.then_some((priority, item)));
+    for (priority, item) in enabled {
+        match &selected {
+            Some((best, _)) if priority < *best => {}
+            Some((best, _)) if priority == *best => tie = Some(*best),
             _ => {
-                selected = Some(volume);
+                selected = Some((priority, item));
                 tie = None;
             }
         }
     }
     VolumeSelection {
-        settings: selected.map(|volume| volume.settings).unwrap_or_default(),
+        selected: selected.map(|(_, item)| item),
         tie,
     }
 }
 
+/// `game_object`'s effect component `T`, or `None` when it has none or the
+/// scene holds it disabled.
+fn effect<T: Component + Copy + 'static>(scene: &Scene, game_object: GameObject) -> Option<T> {
+    scene
+        .read_component::<T, _, _>(game_object, |effect| *effect)
+        .filter(|_| scene.is_component_enabled::<T>(game_object))
+}
+
 impl PostProcessSettings {
-    /// The settings `scene`'s global volumes select, as [`select_volume`]
-    /// picks them. Warns once per priority on a tie.
+    /// The settings `scene` renders with: those of [`Self::selected_volume`],
+    /// or the defaults, tone mapping alone, when no volume is enabled.
     pub fn resolve(scene: &Scene) -> Self {
+        Self::selected_volume(scene)
+            .map(|volume| Self::from_game_object(scene, volume))
+            .unwrap_or_default()
+    }
+
+    /// The game object of `scene`'s enabled global volume with the highest
+    /// priority, the first found on a tie, or `None` when no volume is
+    /// enabled. Warns once per priority on a tie.
+    pub fn selected_volume(scene: &Scene) -> Option<GameObject> {
         let mut query = <(Entity, &ComponentGlobalPostProcessVolume)>::query();
         let selection = select_volume(query.iter(scene.world()).map(|(entity, volume)| {
             let enabled = scene.is_type_enabled(
                 *entity,
                 ComponentTypeId::of::<ComponentGlobalPostProcessVolume>(),
             );
-            (enabled, volume)
+            (enabled, volume.priority, *entity)
         }));
         if let Some(priority) = selection.tie {
             crate::logging::warn_once(format!("post-process-volume-tie:{priority}"), || {
                 format!(
-                    "Several enabled global post-process volumes share priority {priority}; \
-                     using the first found"
+                    "Several enabled global post-process volumes share priority {priority};                      using the first found"
                 )
             });
         }
-        selection.settings
+        selection
+            .selected
+            .and_then(|entity| scene.game_object_from_entity(entity))
+    }
+
+    /// The settings the enabled effect components on `game_object` describe.
+    /// A missing or disabled effect is off, and tone mapping falls back to
+    /// its defaults.
+    pub fn from_game_object(scene: &Scene, game_object: GameObject) -> Self {
+        Self {
+            tonemapping: effect(scene, game_object).unwrap_or_default(),
+            ambient_occlusion: effect(scene, game_object),
+            depth_of_field: effect(scene, game_object),
+            bloom: effect(scene, game_object),
+            color_grading: effect(scene, game_object),
+            vignette: effect(scene, game_object),
+            anti_aliasing: effect(scene, game_object),
+        }
     }
 }

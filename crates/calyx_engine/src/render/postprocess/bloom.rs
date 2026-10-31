@@ -1,69 +1,14 @@
 //! The bloom pass: bright HDR light bleeds into its surroundings.
 
 use super::{PassContext, PassIo, PostProcessPass, PostProcessSettings, PostProcessStage};
-use crate as calyx_engine;
 use crate::assets::texture::Texture;
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
-use crate::reflect::{Reflect, ReflectDefault};
 use crate::render::{
     CachedBindGroup, PipelineOptions, RenderContext, RenderUtils, SceneRendererError, Shader,
 };
-use crate::utils::TypeUuid;
 use egui_wgpu::wgpu;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-
-/// Bloom: light above a threshold is blurred and added back onto the scene.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
-#[uuid = "09244af2-9225-4a2d-bb1b-8ba6ee47e297"]
-#[reflect(Default)]
-#[serde(default)]
-pub struct BloomSettings {
-    /// Whether bloom runs. Off by default, so scenes saved before bloom
-    /// existed look the same.
-    pub enabled: bool,
-    /// Linear HDR brightness, of a pixel's brightest channel, above which
-    /// light blooms.
-    #[reflect_attr(min = 0.0, speed = 0.05)]
-    pub threshold: f32,
-    /// Softness of the threshold, as a fraction of it: light starts to bloom
-    /// at `threshold * (1 - knee)` and blooms fully from
-    /// `threshold * (1 + knee)`. Zero is a hard cut.
-    #[reflect_attr(min = 0.0, max = 1.0, speed = 0.01)]
-    pub knee: f32,
-    /// How much of the blurred light is added back onto the scene.
-    #[reflect_attr(min = 0.0, speed = 0.01)]
-    pub intensity: f32,
-    /// How many half-size mips the light is blurred through. Each one doubles
-    /// how far the glow spreads. Clamped to `1..=8`.
-    pub radius: u32,
-}
-
-impl Default for BloomSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            threshold: 1.0,
-            knee: 0.5,
-            intensity: 0.5,
-            radius: 6,
-        }
-    }
-}
-
-impl BloomSettings {
-    /// Most mips `radius` selects.
-    pub const MAX_RADIUS: u32 = 8;
-
-    /// How many mips bloom blurs through at `size`: `radius`, clamped
-    /// to `1..=MAX_RADIUS` and to the halvings `size` allows before a side
-    /// reaches one pixel.
-    pub fn mip_count(&self, size: (u32, u32)) -> usize {
-        let halvings = size.0.min(size.1).max(2).ilog2();
-        self.radius.clamp(1, Self::MAX_RADIUS).min(halvings) as usize
-    }
-}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -302,11 +247,13 @@ impl PostProcessPass for BloomPass {
     }
 
     fn enabled(&self, settings: &PostProcessSettings) -> bool {
-        settings.bloom.enabled
+        settings.bloom.is_some()
     }
 
     fn prepare(&mut self, context: &PassContext, settings: &PostProcessSettings) {
-        let bloom = &settings.bloom;
+        let Some(bloom) = &settings.bloom else {
+            return;
+        };
         self.mip_count = bloom.mip_count(context.size);
         let threshold = bloom.threshold.max(0.0);
         let uniform = BloomUniform {
@@ -456,7 +403,7 @@ impl PostProcessPass for BloomPass {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::component::ComponentGlobalPostProcessVolume;
+    use crate::component::{ComponentBloom, ComponentGlobalPostProcessVolume};
     use crate::render::postprocess::{
         CameraPlanes, ChainPlan, ChainTargets, PassTarget, PlannedPass, PostProcessChain,
     };
@@ -646,12 +593,11 @@ mod tests {
 
     fn bloom(intensity: f32, radius: u32) -> PostProcessSettings {
         PostProcessSettings {
-            bloom: BloomSettings {
-                enabled: true,
+            bloom: Some(ComponentBloom {
                 intensity,
                 radius,
                 ..Default::default()
-            },
+            }),
             ..Default::default()
         }
     }
@@ -919,12 +865,17 @@ mod tests {
     }
 
     #[test]
-    fn settings_saved_before_bloom_load_with_bloom_off() {
-        let saved = r#"{ "tonemapping": { "exposure_ev": 1.5, "preset": "Aces" } }"#;
-        let settings: PostProcessSettings = serde_json::from_str(saved).expect("settings load");
-        assert_eq!(settings.tonemapping.exposure_ev, 1.5);
-        assert_eq!(settings.bloom, BloomSettings::default());
-        assert!(!settings.bloom.enabled, "bloom is off by default");
+    fn bloom_is_off_by_default_and_a_partial_component_loads_with_defaults() {
+        assert_eq!(PostProcessSettings::default().bloom, None);
+        let saved = r#"{ "intensity": 0.25 }"#;
+        let bloom: ComponentBloom = serde_json::from_str(saved).expect("bloom loads");
+        assert_eq!(
+            bloom,
+            ComponentBloom {
+                intensity: 0.25,
+                ..Default::default()
+            }
+        );
     }
 
     /// Counts how often the chain asks it to release its targets.
@@ -940,7 +891,7 @@ mod tests {
             PostProcessStage::Hdr
         }
         fn enabled(&self, settings: &PostProcessSettings) -> bool {
-            settings.bloom.enabled
+            settings.bloom.is_some()
         }
         fn prepare(&mut self, _: &PassContext, _: &PostProcessSettings) {}
         fn record(&mut self, _: &PassContext, _: &mut wgpu::CommandEncoder, _: PassIo) {}

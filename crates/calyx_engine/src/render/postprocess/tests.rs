@@ -1,11 +1,16 @@
 use super::*;
 use crate::assets::texture::Texture;
-use crate::component::ComponentGlobalPostProcessVolume;
+use crate::component::{
+    Component, ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom,
+    ComponentColorGrading, ComponentDepthOfField, ComponentGlobalPostProcessVolume,
+    ComponentTonemap, ComponentVignette, TonemappingPreset,
+};
 use crate::render::scene_renderer::{half_to_f32, linear_to_srgb};
 use crate::render::{
     Camera, ReadbackPoll, RenderContext, RenderUtils, SceneRenderer, SceneRendererOptions,
 };
-use crate::test_support::{test_adapter, SceneBuilder, TestAssets};
+use crate::scene::{GameObject, Scene};
+use crate::test_support::{test_adapter, test_registries, SceneBuilder, TestAssets};
 use egui::Color32;
 use egui_wgpu::wgpu;
 use std::sync::{Arc, Mutex};
@@ -736,7 +741,7 @@ fn tone_mapping_matches_the_aces_fit_and_keeps_alpha() {
 
     // Exposure scales the input by 2^EV before the curve.
     let settings = PostProcessSettings {
-        tonemapping: TonemapSettings {
+        tonemapping: ComponentTonemap {
             exposure_ev: 2.0,
             ..Default::default()
         },
@@ -757,78 +762,234 @@ fn tone_mapping_matches_the_aces_fit_and_keeps_alpha() {
     );
 }
 
-/// A volume of `priority` setting `exposure_ev`, with whether the scene
-/// holds it enabled.
-fn volume(
+/// A volume of `priority` whose tone-mapping component sets `exposure_ev`,
+/// with whether the scene holds the volume enabled.
+#[derive(Clone, Copy)]
+struct VolumeSpec {
     enabled: bool,
     priority: i32,
     exposure_ev: f32,
-) -> (bool, ComponentGlobalPostProcessVolume) {
-    let volume = ComponentGlobalPostProcessVolume {
-        priority,
-        settings: PostProcessSettings {
-            tonemapping: TonemapSettings {
-                exposure_ev,
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-    };
-    (enabled, volume)
 }
 
-/// [`select_volume`] over `volumes` as [`volume`] builds them.
-fn select(volumes: &[(bool, ComponentGlobalPostProcessVolume)]) -> VolumeSelection {
-    select_volume(volumes.iter().map(|(enabled, volume)| (*enabled, volume)))
+fn volume(enabled: bool, priority: i32, exposure_ev: f32) -> VolumeSpec {
+    VolumeSpec {
+        enabled,
+        priority,
+        exposure_ev,
+    }
+}
+
+/// Adds a game object to `scene` for each of `volumes`, holding the volume
+/// and its tone-mapping component, and returns them in order.
+fn spawn_volumes(scene: &mut Scene, volumes: &[VolumeSpec]) -> Vec<GameObject> {
+    volumes
+        .iter()
+        .map(|spec| {
+            let game_object = scene.create(None, None);
+            scene.add_component(
+                game_object,
+                ComponentGlobalPostProcessVolume::new(spec.priority),
+            );
+            scene.add_component(
+                game_object,
+                ComponentTonemap {
+                    exposure_ev: spec.exposure_ev,
+                    ..Default::default()
+                },
+            );
+            scene.set_component_enabled::<ComponentGlobalPostProcessVolume>(
+                game_object,
+                spec.enabled,
+            );
+            game_object
+        })
+        .collect()
+}
+
+/// [`select_volume`] over `(enabled, priority)` pairs, picking an index.
+fn select(volumes: &[(bool, i32)]) -> VolumeSelection<usize> {
+    select_volume(
+        volumes
+            .iter()
+            .enumerate()
+            .map(|(index, (enabled, priority))| (*enabled, *priority, index)),
+    )
 }
 
 #[test]
 fn the_enabled_volume_with_the_highest_priority_is_selected() {
-    let volumes = [
-        volume(true, 1, 1.0),
-        volume(false, 9, 9.0),
-        volume(true, 3, 3.0),
-        volume(true, 2, 2.0),
-    ];
-    let selection = select(&volumes);
-    assert_eq!(selection.settings.tonemapping.exposure_ev, 3.0);
+    let selection = select(&[(true, 1), (false, 9), (true, 3), (true, 2)]);
+    assert_eq!(selection.selected, Some(2));
     assert_eq!(selection.tie, None);
 }
 
 #[test]
 fn a_priority_tie_selects_the_first_found_and_reports_it() {
-    let volumes = [
-        volume(true, 2, 1.0),
-        volume(true, 2, 2.0),
-        volume(true, 0, 3.0),
-    ];
-    let selection = select(&volumes);
-    assert_eq!(selection.settings.tonemapping.exposure_ev, 1.0);
+    let selection = select(&[(true, 2), (true, 2), (true, 0)]);
+    assert_eq!(selection.selected, Some(0));
     assert_eq!(selection.tie, Some(2));
 
     // A higher priority after a tie wins outright.
-    let volumes = [
-        volume(true, 2, 1.0),
-        volume(true, 2, 2.0),
-        volume(true, 5, 3.0),
-    ];
-    let selection = select(&volumes);
-    assert_eq!(selection.settings.tonemapping.exposure_ev, 3.0);
+    let selection = select(&[(true, 2), (true, 2), (true, 5)]);
+    assert_eq!(selection.selected, Some(2));
     assert_eq!(selection.tie, None);
 }
 
 #[test]
-fn no_enabled_volume_selects_the_default_settings() {
+fn no_enabled_volume_selects_nothing_and_the_defaults_tone_map_alone() {
+    assert_eq!(select(&[]).selected, None);
+    let selection = select(&[(false, 5)]);
+    assert_eq!(selection.selected, None);
+    assert_eq!(selection.tie, None);
+
+    let defaults = PostProcessSettings::default();
+    assert_eq!(defaults.tonemapping.preset, TonemappingPreset::Aces);
+    assert_eq!(defaults.tonemapping.exposure_ev, 0.0);
     assert_eq!(
-        select_volume(std::iter::empty()).settings,
+        defaults,
+        PostProcessSettings {
+            tonemapping: ComponentTonemap::default(),
+            ambient_occlusion: None,
+            depth_of_field: None,
+            bloom: None,
+            color_grading: None,
+            vignette: None,
+            anti_aliasing: None,
+        },
+        "every effect but tone mapping is off"
+    );
+}
+
+#[test]
+fn a_volume_without_effect_components_resolves_to_tone_mapping_alone() {
+    let registries = test_registries();
+    let mut scene = registries.scene();
+    let game_object = scene.create(None, None);
+    scene.add_component(game_object, ComponentGlobalPostProcessVolume::default());
+    assert_eq!(
+        PostProcessSettings::selected_volume(&scene),
+        Some(game_object)
+    );
+    assert_eq!(
+        PostProcessSettings::resolve(&scene),
         PostProcessSettings::default()
     );
-    let selection = select(&[volume(false, 5, 4.0)]);
-    assert_eq!(selection.settings, PostProcessSettings::default());
-    assert_eq!(selection.tie, None);
-    let default = PostProcessSettings::default().tonemapping;
-    assert_eq!(default.preset, TonemappingPreset::Aces);
-    assert_eq!(default.exposure_ev, 0.0);
+}
+
+#[test]
+fn effects_are_gathered_from_the_selected_volumes_game_object_only() {
+    let registries = test_registries();
+    let mut scene = registries.scene();
+    let objects = spawn_volumes(&mut scene, &[volume(true, 1, 1.0), volume(true, 4, -1.0)]);
+    let (low, high) = (objects[0], objects[1]);
+    let bloom = ComponentBloom {
+        intensity: 0.3,
+        ..Default::default()
+    };
+    scene.add_component(low, bloom);
+    scene.add_component(high, ComponentAntiAliasing::default());
+    // An effect on an object without a volume is never gathered.
+    let stray = scene.create(None, None);
+    scene.add_component(stray, ComponentVignette::default());
+
+    let settings = PostProcessSettings::resolve(&scene);
+    assert_eq!(settings.tonemapping.exposure_ev, -1.0);
+    assert_eq!(
+        settings.anti_aliasing,
+        Some(ComponentAntiAliasing::default())
+    );
+    assert_eq!(settings.bloom, None, "the lower volume's bloom is not used");
+    assert_eq!(settings.vignette, None);
+
+    // Disabling the winning volume hands the frame to the other one.
+    scene.set_component_enabled::<ComponentGlobalPostProcessVolume>(high, false);
+    let settings = PostProcessSettings::resolve(&scene);
+    assert_eq!(settings.tonemapping.exposure_ev, 1.0);
+    assert_eq!(settings.bloom, Some(bloom));
+    assert_eq!(settings.anti_aliasing, None);
+}
+
+#[test]
+fn a_disabled_tone_mapping_component_falls_back_to_the_defaults() {
+    let registries = test_registries();
+    let mut scene = registries.scene();
+    let game_object = spawn_volumes(&mut scene, &[volume(true, 0, 2.0)])[0];
+    assert_eq!(
+        PostProcessSettings::resolve(&scene).tonemapping.exposure_ev,
+        2.0
+    );
+    assert!(scene.set_component_enabled::<ComponentTonemap>(game_object, false));
+    assert_eq!(
+        PostProcessSettings::resolve(&scene).tonemapping,
+        ComponentTonemap::default()
+    );
+}
+
+/// The names of the passes `passes` plans for `scene`'s settings.
+fn planned(passes: &[Box<dyn PostProcessPass>], scene: &Scene) -> Vec<String> {
+    ChainPlan::build(passes, &PostProcessSettings::resolve(scene))
+        .passes
+        .iter()
+        .map(|planned| passes[planned.pass].name().to_string())
+        .collect()
+}
+
+/// Adds effect `T` to `volume`, checks that it runs `pass` after tone
+/// mapping or before it, that disabling the component switches the pass off
+/// and enabling it back on again, and removes it.
+fn check_effect<T: Component + Default + Send + Sync + 'static>(
+    passes: &[Box<dyn PostProcessPass>],
+    scene: &mut Scene,
+    volume: GameObject,
+    pass: &str,
+) {
+    assert_eq!(planned(passes, scene), ["tonemap"], "{pass}: before");
+    scene.add_component(volume, T::default());
+    let mut names = planned(passes, scene);
+    names.sort();
+    let mut expected = vec![pass.to_string(), "tonemap".to_string()];
+    expected.sort();
+    assert_eq!(
+        names, expected,
+        "{pass}: adding the component runs its pass"
+    );
+
+    assert!(scene.set_component_enabled::<T>(volume, false));
+    assert_eq!(
+        planned(passes, scene),
+        ["tonemap"],
+        "{pass}: disabling the component switches its pass off"
+    );
+    assert!(scene.set_component_enabled::<T>(volume, true));
+    assert_eq!(planned(passes, scene).len(), 2, "{pass}: enabled again");
+    scene.remove_component::<T>(volume);
+    assert_eq!(planned(passes, scene), ["tonemap"], "{pass}: removed");
+}
+
+#[test]
+fn adding_or_disabling_an_effect_component_switches_its_pass_in_the_plan() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let context = context.lock_read();
+    let renderer = SceneRenderer::new(&context, Default::default(), (SIZE, SIZE))
+        .expect("scene renderer should load its assets");
+    let passes = renderer.post_process().passes();
+
+    let mut scene = context.registries.scene();
+    let volume = scene.create(None, None);
+    scene.add_component(volume, ComponentGlobalPostProcessVolume::default());
+    check_effect::<ComponentAmbientOcclusion>(passes, &mut scene, volume, "ssao");
+    check_effect::<ComponentDepthOfField>(passes, &mut scene, volume, "depth_of_field");
+    check_effect::<ComponentBloom>(passes, &mut scene, volume, "bloom");
+    check_effect::<ComponentColorGrading>(passes, &mut scene, volume, "color_grading");
+    check_effect::<ComponentVignette>(passes, &mut scene, volume, "color_grading");
+    check_effect::<ComponentAntiAliasing>(passes, &mut scene, volume, "fxaa");
+
+    // A disabled volume's effects are off too.
+    scene.add_component(volume, ComponentBloom::default());
+    assert_eq!(planned(passes, &scene), ["bloom", "tonemap"]);
+    scene.set_component_enabled::<ComponentGlobalPostProcessVolume>(volume, false);
+    assert_eq!(planned(passes, &scene), ["tonemap"]);
 }
 
 /// Renders an empty scene cleared to `clear` through a full
@@ -836,16 +997,10 @@ fn no_enabled_volume_selects_the_default_settings() {
 fn render_cleared_scene(
     context: &crate::context::ReadOnlyAssetContext,
     clear: Color32,
-    volumes: &[(bool, ComponentGlobalPostProcessVolume)],
+    volumes: &[VolumeSpec],
 ) -> SceneRenderer {
     let mut builder = SceneBuilder::new(context.registries.clone());
-    for (index, (enabled, volume)) in volumes.iter().enumerate() {
-        let game_object = builder.spawn(format!("volume_{index}"));
-        builder.add_component(game_object, volume.clone());
-        builder
-            .scene_mut()
-            .set_component_enabled::<ComponentGlobalPostProcessVolume>(game_object, *enabled);
-    }
+    spawn_volumes(builder.scene_mut(), volumes);
     let scene = builder.finish();
     let mut renderer = SceneRenderer::new(
         context,
@@ -1056,10 +1211,7 @@ fn read_image(render_context: &RenderContext, texture: &Texture) -> Image {
 
 fn fxaa_on() -> PostProcessSettings {
     PostProcessSettings {
-        anti_aliasing: AntiAliasingSettings {
-            fxaa: true,
-            ..Default::default()
-        },
+        anti_aliasing: Some(ComponentAntiAliasing::default()),
         ..Default::default()
     }
 }
@@ -1092,21 +1244,16 @@ fn run_fxaa(context: &crate::context::ReadOnlyAssetContext, image: &Image) -> Im
 }
 
 #[test]
-fn fxaa_is_off_by_default_and_settings_saved_before_it_still_load() {
-    let defaults = AntiAliasingSettings::default();
-    assert!(!defaults.fxaa, "FXAA is off by default");
+fn fxaa_is_off_by_default_and_a_partial_component_loads_with_defaults() {
+    assert_eq!(PostProcessSettings::default().anti_aliasing, None);
+    let defaults = ComponentAntiAliasing::default();
     assert_eq!(defaults.edge_threshold, 0.166);
     assert_eq!(defaults.subpixel, 0.75);
 
-    let saved = r#"{"tonemapping":{"preset":"Aces","exposure_ev":1.5}}"#;
-    let settings: PostProcessSettings = serde_json::from_str(saved).expect("old settings load");
-    assert_eq!(settings.tonemapping.exposure_ev, 1.5);
-    assert_eq!(settings.anti_aliasing, AntiAliasingSettings::default());
-
-    let partial = r#"{"anti_aliasing":{"fxaa":true}}"#;
-    let settings: PostProcessSettings = serde_json::from_str(partial).expect("partial loads");
-    assert!(settings.anti_aliasing.fxaa);
-    assert_eq!(settings.anti_aliasing.subpixel, 0.75);
+    let partial = r#"{"edge_threshold":0.1}"#;
+    let settings: ComponentAntiAliasing = serde_json::from_str(partial).expect("partial loads");
+    assert_eq!(settings.edge_threshold, 0.1);
+    assert_eq!(settings.subpixel, 0.75);
 }
 
 #[test]

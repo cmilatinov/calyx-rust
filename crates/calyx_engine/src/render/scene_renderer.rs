@@ -1529,11 +1529,10 @@ mod tests {
     use crate::assets::AssetRef;
     use crate::component::{
         ComponentGlobalPostProcessVolume, ComponentID, ComponentMesh, ComponentParticleSystem,
-        ParticleColorOverLifetime, ParticleEmission, ParticleForces, ParticleScalarRange,
-        ParticleSizeOverLifetime, ParticleSpawnShape, ParticleVelocity,
+        ComponentTonemap, ParticleColorOverLifetime, ParticleEmission, ParticleForces,
+        ParticleScalarRange, ParticleSizeOverLifetime, ParticleSpawnShape, ParticleVelocity,
     };
     use crate::math::Transform;
-    use crate::render::postprocess::TonemapSettings;
     use crate::render::{Camera, Shader};
     use crate::test_support::{
         test_adapter, test_asset_context_with_assets, SceneBuilder, TestAssets,
@@ -2257,17 +2256,12 @@ mod tests {
         let uuid = spawn_mesh(&mut builder, "cube", &cube, &material, Vec3::zeros());
         // +3 EV through ACES would change any color the chain touched.
         let volume = builder.spawn("volume");
+        builder.add_component(volume, ComponentGlobalPostProcessVolume::default());
         builder.add_component(
             volume,
-            ComponentGlobalPostProcessVolume {
-                priority: 0,
-                settings: PostProcessSettings {
-                    tonemapping: TonemapSettings {
-                        exposure_ev: 3.0,
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                },
+            ComponentTonemap {
+                exposure_ev: 3.0,
+                ..Default::default()
             },
         );
         let scene = builder.finish();

@@ -2,79 +2,10 @@
 //! vignette, on display-linear color after tone mapping.
 
 use super::{PassContext, PassIo, PostProcessPass, PostProcessSettings, PostProcessStage};
-use crate as calyx_engine;
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
-use crate::reflect::{Reflect, ReflectDefault};
 use crate::render::{CachedBindGroup, PipelineOptions, RenderUtils, SceneRendererError, Shader};
-use crate::utils::TypeUuid;
-use egui::Color32;
 use egui_wgpu::wgpu;
-use serde::{Deserialize, Serialize};
-
-/// White balance, contrast and saturation, after tone mapping.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
-#[uuid = "5d0e7a3c-41b2-4f7e-9c86-2a1f0b9e6d47"]
-#[reflect(Default)]
-#[serde(default)]
-pub struct ColorGradingSettings {
-    /// Whether the grading runs.
-    pub enabled: bool,
-    /// Contrast around mid grey (linear 0.18): 1 leaves the image as it is,
-    /// 0 flattens it to mid grey, above 1 spreads it out.
-    #[reflect_attr(min = 0.0, max = 2.0, speed = 0.01)]
-    pub contrast: f32,
-    /// Saturation: 1 leaves the image as it is, 0 turns it grey.
-    #[reflect_attr(min = 0.0, max = 2.0, speed = 0.01)]
-    pub saturation: f32,
-    /// White balance along the blue (negative) to orange (positive) axis.
-    #[reflect_attr(min = -1.0, max = 1.0, speed = 0.01)]
-    pub temperature: f32,
-    /// White balance along the green (negative) to magenta (positive) axis.
-    #[reflect_attr(min = -1.0, max = 1.0, speed = 0.01)]
-    pub tint: f32,
-}
-
-impl Default for ColorGradingSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            contrast: 1.0,
-            saturation: 1.0,
-            temperature: 0.0,
-            tint: 0.0,
-        }
-    }
-}
-
-/// Darkens, or tints, the edges of the screen.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
-#[uuid = "b7c4e2f1-0a93-4d6b-8e25-6f1a3c9d0b82"]
-#[reflect(Default)]
-#[serde(default)]
-pub struct VignetteSettings {
-    /// Whether the vignette runs.
-    pub enabled: bool,
-    /// How far the vignette reaches in from the edges, from 0 (none) to 1.
-    #[reflect_attr(min = 0.0, max = 1.0, speed = 0.01)]
-    pub intensity: f32,
-    /// How soft its falloff is, from sharp (near 0) to soft (1).
-    #[reflect_attr(min = 0.01, max = 1.0, speed = 0.01)]
-    pub smoothness: f32,
-    /// The color the edges fade to.
-    pub color: Color32,
-}
-
-impl Default for VignetteSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            intensity: 0.4,
-            smoothness: 0.2,
-            color: Color32::BLACK,
-        }
-    }
-}
 
 /// Linear sRGB to LMS (CAT02).
 const LINEAR_TO_LMS: [[f32; 3]; 3] = [
@@ -140,21 +71,17 @@ struct ColorGradingUniform {
 
 impl ColorGradingUniform {
     fn new(settings: &PostProcessSettings) -> Self {
-        let neutral = ColorGradingSettings::default();
-        let grading = if settings.color_grading.enabled {
-            &settings.color_grading
-        } else {
-            &neutral
-        };
+        // A missing effect reaches the shader as neutral values.
+        let grading = settings.color_grading.unwrap_or_default();
         let matrix = white_balance(grading.temperature, grading.tint);
-        let vignette = &settings.vignette;
+        let vignette = settings.vignette.unwrap_or_default();
         Self {
             white_balance: std::array::from_fn(|column| {
                 [matrix[0][column], matrix[1][column], matrix[2][column], 0.0]
             }),
             contrast: grading.contrast,
             saturation: grading.saturation,
-            vignette_intensity: if vignette.enabled {
+            vignette_intensity: if settings.vignette.is_some() {
                 vignette.intensity
             } else {
                 0.0
@@ -208,7 +135,7 @@ impl PostProcessPass for ColorGradingPass {
     }
 
     fn enabled(&self, settings: &PostProcessSettings) -> bool {
-        settings.color_grading.enabled || settings.vignette.enabled
+        settings.color_grading.is_some() || settings.vignette.is_some()
     }
 
     fn prepare(&mut self, context: &PassContext, settings: &PostProcessSettings) {

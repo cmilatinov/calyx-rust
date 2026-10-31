@@ -681,6 +681,23 @@ pub fn display_name(type_registry: &TypeRegistry, instance: &dyn Reflect) -> &'s
         .unwrap_or(instance.type_name_short())
 }
 
+/// The add-component menu category `instance`'s type names in its
+/// `category` attribute, such as `"Post Processing"`, if any.
+pub fn component_category(
+    type_registry: &TypeRegistry,
+    instance: &dyn Reflect,
+) -> Option<&'static str> {
+    let attr = match type_registry.type_info_by_id(instance.uuid())? {
+        TypeInfo::Struct(info) => info.attr("category"),
+        TypeInfo::Enum(info) => info.attr("category"),
+        _ => None,
+    };
+    match attr {
+        Some(AttributeValue::String(category)) => Some(category),
+        _ => None,
+    }
+}
+
 /// The name the inspector shows for the type registered as `type_uuid`, or
 /// `None` when no such type is registered.
 pub fn type_display_name(type_registry: &TypeRegistry, type_uuid: Uuid) -> Option<String> {

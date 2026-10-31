@@ -5,9 +5,11 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::component::{
-    ComponentCamera, ComponentCollider, ComponentDirectionalLight,
+    ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom, ComponentCamera,
+    ComponentCollider, ComponentColorGrading, ComponentDepthOfField, ComponentDirectionalLight,
     ComponentGlobalPostProcessVolume, ComponentID, ComponentMesh, ComponentPointLight,
-    ComponentRigidBody, ComponentSkinnedMesh, ComponentTransform,
+    ComponentRigidBody, ComponentSkinnedMesh, ComponentTonemap, ComponentTransform,
+    ComponentVignette,
 };
 use crate::context::ReadOnlyRegistryContext;
 use crate::scene::{GameObject, Scene, SceneData};
@@ -81,6 +83,13 @@ fn only_types_whose_systems_honor_the_state_opt_in() {
         ComponentCollider::type_uuid(),
         ComponentRigidBody::type_uuid(),
         ComponentGlobalPostProcessVolume::type_uuid(),
+        ComponentTonemap::type_uuid(),
+        ComponentAmbientOcclusion::type_uuid(),
+        ComponentDepthOfField::type_uuid(),
+        ComponentBloom::type_uuid(),
+        ComponentColorGrading::type_uuid(),
+        ComponentVignette::type_uuid(),
+        ComponentAntiAliasing::type_uuid(),
     ] {
         assert!(components.can_disable(type_uuid), "{type_uuid}");
     }
