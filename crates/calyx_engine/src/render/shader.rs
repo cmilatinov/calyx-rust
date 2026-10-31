@@ -232,20 +232,37 @@ impl Asset for Shader {
 }
 
 /// A wgpu validation error scope on a device, so an error is returned
-/// rather than reaching the device's default handler, which panics.
+/// rather than reaching the device's default handler, which panics. The
+/// scope is popped when the guard is dropped, so an early return or a panic
+/// between push and pop never leaves it on the device's stack.
 struct ValidationScope<'a> {
-    device: &'a wgpu::Device,
+    device: Option<&'a wgpu::Device>,
 }
 
 impl<'a> ValidationScope<'a> {
     fn push(device: &'a wgpu::Device) -> Self {
         device.push_error_scope(wgpu::ErrorFilter::Validation);
-        Self { device }
+        Self {
+            device: Some(device),
+        }
     }
 
     /// Pops the scope, returning the first validation error raised in it.
-    fn pop(self) -> Option<wgpu::Error> {
-        pollster::block_on(self.device.pop_error_scope())
+    fn pop(mut self) -> Option<wgpu::Error> {
+        Self::pop_from(self.device.take()?)
+    }
+
+    fn pop_from(device: &wgpu::Device) -> Option<wgpu::Error> {
+        pollster::block_on(device.pop_error_scope())
+    }
+}
+
+impl Drop for ValidationScope<'_> {
+    /// Pops a scope that was not popped explicitly, logging its error.
+    fn drop(&mut self) {
+        if let Some(error) = self.device.take().and_then(Self::pop_from) {
+            log::error!("wgpu validation error in an abandoned error scope: {error}");
+        }
     }
 }
 
@@ -1264,5 +1281,22 @@ fn fs_main() -> @location(0) vec4f {
             .expect("the shader loads")
             .asset;
         assert!(fresh.pipeline(&options()).is_none());
+    }
+
+    /// A scope dropped without `pop` is popped by its guard, taking its
+    /// error with it, so the scope pushed before it is the one popped next.
+    #[test]
+    fn a_dropped_validation_scope_pops_itself() {
+        let render_context = crate::test_support::test_render_context();
+        let device = render_context.device();
+        let outer = super::ValidationScope::push(device);
+        {
+            let _inner = super::ValidationScope::push(device);
+            device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("invalid_probe"),
+                source: wgpu::ShaderSource::Wgsl("fn main() { let x: u32 = 1.0; }".into()),
+            });
+        }
+        assert!(outer.pop().is_none());
     }
 }
