@@ -18,6 +18,9 @@ pub(super) struct ThumbnailShared {
     /// Memoized requests for UI lookups by asset; see [`ThumbnailHandle`].
     pub(super) requests: Mutex<ThumbnailRequestMemo>,
     wake: Condvar,
+    /// Signalled when a job that builds a scene finishes, for
+    /// [`ThumbnailService::pause_scene_jobs`].
+    scene_job_done: Condvar,
     state_poisoned: AtomicBool,
 }
 
@@ -30,6 +33,12 @@ pub(super) struct ThumbnailState {
     /// Whether the project assemblies are loaded. Jobs that need them, see
     /// [`ThumbnailRequest::needs_project_assemblies`], stay queued until then.
     project_assemblies_loaded: bool,
+    /// Live [`SceneJobsPaused`] guards. While any is held, no job that
+    /// builds a scene starts.
+    scene_job_pauses: usize,
+    /// Whether the worker is running a job that builds a scene. Cleared
+    /// only once that scene is dropped.
+    scene_job_in_progress: bool,
     invalidate_cache: bool,
     stop: bool,
 }
@@ -59,6 +68,7 @@ impl ThumbnailService {
                 }),
                 requests: Mutex::new(ThumbnailRequestMemo::default()),
                 wake: Condvar::new(),
+                scene_job_done: Condvar::new(),
                 state_poisoned: AtomicBool::new(false),
             }),
             worker: None,
@@ -133,6 +143,15 @@ impl ThumbnailService {
         }
     }
 
+    /// Holds back every job that builds a scene, and waits for the one in
+    /// progress, if any, to drop its scene. A worker's scene holds component
+    /// storages whose code is in the project assembly, and the scene manager
+    /// cannot suspend it, so the assembly is replaced only while the returned
+    /// guard is held. Dropping the guard lets those jobs start again.
+    pub fn pause_scene_jobs(&self) -> SceneJobsPaused {
+        pause_scene_jobs(&self.shared)
+    }
+
     fn ensure_worker(&mut self, context: ReadOnlyAssetContext) {
         if self
             .worker
@@ -171,6 +190,64 @@ impl Drop for ThumbnailService {
                 log::warn!("Thumbnail generation worker exited with a panic");
             }
         }
+    }
+}
+
+/// Holds back thumbnail jobs that build a scene while it lives; see
+/// [`ThumbnailService::pause_scene_jobs`].
+#[must_use = "scene jobs resume as soon as the guard is dropped"]
+pub struct SceneJobsPaused {
+    shared: Arc<ThumbnailShared>,
+}
+
+impl Drop for SceneJobsPaused {
+    fn drop(&mut self) {
+        let mut state = lock_thumbnail_state(&self.shared);
+        state.scene_job_pauses = state.scene_job_pauses.saturating_sub(1);
+        drop(state);
+        self.shared.wake.notify_one();
+    }
+}
+
+pub(super) fn pause_scene_jobs(shared: &Arc<ThumbnailShared>) -> SceneJobsPaused {
+    let mut state = lock_thumbnail_state(shared);
+    state.scene_job_pauses += 1;
+    while state.scene_job_in_progress {
+        state = match shared.scene_job_done.wait(state) {
+            Ok(state) => state,
+            Err(poisoned) => {
+                log_thumbnail_state_poison(shared);
+                poisoned.into_inner()
+            }
+        };
+    }
+    SceneJobsPaused {
+        shared: shared.clone(),
+    }
+}
+
+/// Starts the next job the worker may run now: a job that needs the project
+/// assemblies waits until they are loaded, and a job that builds a scene
+/// waits while scene jobs are paused. A job that builds a scene is marked in
+/// progress until [`finish_worker_job`].
+pub(super) fn start_worker_job(state: &mut ThumbnailState) -> Option<ThumbnailJob> {
+    let assemblies_loaded = state.project_assemblies_loaded;
+    let scene_jobs_paused = state.scene_job_pauses > 0;
+    let job = state.pipeline.start_next_where(|job| {
+        (assemblies_loaded || !job.request.needs_project_assemblies())
+            && !(scene_jobs_paused && job.request.builds_scene())
+    })?;
+    state.scene_job_in_progress = job.request.builds_scene();
+    Some(job)
+}
+
+/// Marks the worker's job finished, its scene, if it built one, dropped,
+/// and wakes a [`pause_scene_jobs`] waiting on it.
+pub(super) fn finish_worker_job(shared: &ThumbnailShared) {
+    let mut state = lock_thumbnail_state(shared);
+    if std::mem::take(&mut state.scene_job_in_progress) {
+        drop(state);
+        shared.scene_job_done.notify_all();
     }
 }
 
@@ -251,10 +328,7 @@ fn thumbnail_worker_loop(
                     state.invalidate_cache = false;
                     break ThumbnailWorkerCommand::InvalidateCache;
                 }
-                let assemblies_loaded = state.project_assemblies_loaded;
-                if let Some(job) = state.pipeline.start_next_where(|job| {
-                    assemblies_loaded || !job.request.needs_project_assemblies()
-                }) {
+                if let Some(job) = start_worker_job(&mut state) {
                     break ThumbnailWorkerCommand::Generate {
                         job,
                         render_settings: state.render_settings,
@@ -292,6 +366,8 @@ fn thumbnail_worker_loop(
                 started_at,
             );
         }));
+        // The job's scene, if any, is dropped by now, unwound or not.
+        finish_worker_job(&shared);
         if let Err(payload) = result {
             let message = format!(
                 "thumbnail generation panicked: {}",

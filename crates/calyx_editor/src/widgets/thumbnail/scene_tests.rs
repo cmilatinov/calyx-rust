@@ -501,3 +501,72 @@ fn a_skinned_mesh_is_fitted_where_the_renderer_draws_it() {
         fit.bounds
     );
 }
+
+#[test]
+fn pausing_scene_jobs_waits_for_the_scene_in_progress_and_holds_back_new_ones() {
+    use super::service::{finish_worker_job, start_worker_job};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let mut service = ThumbnailService::default();
+    let shared = service.shared.clone();
+    let scene = scene_request(1);
+    let prefab = ThumbnailRequest {
+        asset_id: Uuid::from_u128(0x9f),
+        asset_type: Prefab::type_uuid(),
+        ..scene_request(1)
+    };
+    let texture = ThumbnailRequest {
+        asset_id: Uuid::from_u128(0x7e),
+        asset_type: Texture::type_uuid(),
+        ..scene_request(1)
+    };
+    {
+        let mut state = shared.state.lock().unwrap();
+        state
+            .pipeline
+            .request(scene.clone(), ThumbnailPriority::High);
+        state
+            .pipeline
+            .request(prefab.clone(), ThumbnailPriority::High);
+        state
+            .pipeline
+            .request(texture.clone(), ThumbnailPriority::Low);
+    }
+    service.set_project_assemblies_loaded(true);
+    let started = start_worker_job(&mut shared.state.lock().unwrap()).unwrap();
+    assert!(started.request.builds_scene());
+
+    // An assembly reload pauses scene jobs while the worker holds a scene.
+    let (paused_tx, paused_rx) = mpsc::channel();
+    let pauser = {
+        let shared = shared.clone();
+        thread::spawn(move || {
+            let paused = super::service::pause_scene_jobs(&shared);
+            paused_tx.send(()).unwrap();
+            paused
+        })
+    };
+    assert!(
+        paused_rx.recv_timeout(Duration::from_millis(200)).is_err(),
+        "the pause waits while the worker's scene is alive"
+    );
+    finish_worker_job(&shared);
+    paused_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the pause returns once the worker's scene is dropped");
+    let paused = pauser.join().unwrap();
+
+    // While paused, only jobs that build no scene start.
+    let next = start_worker_job(&mut shared.state.lock().unwrap()).unwrap();
+    assert_eq!(next.key(), texture.key());
+    finish_worker_job(&shared);
+    assert!(start_worker_job(&mut shared.state.lock().unwrap()).is_none());
+
+    drop(paused);
+    let next = start_worker_job(&mut shared.state.lock().unwrap()).unwrap();
+    assert!(
+        next.request.builds_scene(),
+        "scene jobs resume after the pause"
+    );
+}

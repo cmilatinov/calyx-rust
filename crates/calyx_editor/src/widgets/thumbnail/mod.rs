@@ -172,6 +172,14 @@ impl ThumbnailRequest {
         self.asset_type == Scene::type_uuid()
     }
 
+    /// Whether this request's job builds a scene of its own, a prefab's or a
+    /// scene file's, that can hold project components. Their storages run
+    /// project assembly code when dropped, so such a job must not run while
+    /// the assembly is replaced; see [`ThumbnailService::pause_scene_jobs`].
+    pub fn builds_scene(&self) -> bool {
+        self.asset_type == Scene::type_uuid() || self.asset_type == Prefab::type_uuid()
+    }
+
     pub fn key(&self) -> ThumbnailKey {
         ThumbnailKey {
             asset_id: self.asset_id,

@@ -520,6 +520,9 @@ impl EditorApp {
         // The load rebuilds every open scene, so commit the inspector's
         // pending edits first and take its baselines again afterwards.
         self.state.refresh_inspector_baselines();
+        // A thumbnail worker's scene is not one the load can suspend, so no
+        // such job may hold one while the assembly is replaced.
+        let _scene_thumbnails_paused = self.state.thumbnails.pause_scene_jobs();
         self.project_manager
             .write()
             .load_build(load, &mut self.state.game.scenes);
