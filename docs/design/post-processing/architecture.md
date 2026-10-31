@@ -154,7 +154,7 @@ blur    input + coc     -> output                  scatter-as-gather disc blur
 
 ## Tone Mapping
 
-`TonemapPass` is the `Tonemap` stage. It always runs: a missing or disabled volume, or a missing or disabled Tone Mapping component, leaves `TonemapSettings::default()`, never untone-mapped output.
+`TonemapPass` is the `Tonemap` stage. It always runs: a missing or disabled volume, or a missing or disabled Tone Mapping component, leaves `ComponentTonemap::default()`, never untone-mapped output.
 
 - Its uniform holds the exposure scale `2^EV` and the preset.
 - It draws one full-screen triangle (`shaders/common/fullscreen.wgsl`, no vertex buffers).
@@ -225,35 +225,35 @@ Alpha is read with the pixel and passes through, so transparent views such as th
 
 ## Settings And Volumes
 
-A volume decides where post-processing applies and with what priority. Each effect's settings are their own component on the volume's game object.
+A volume decides where post-processing applies and with what priority. Each effect's settings are their own component on the volume's game object. The volume and the effect components live in `crates/calyx_engine/src/component/`, the effects in `component/post_process/`, one file each, and hold authoring data only; the passes in `render/postprocess/` read them through `PostProcessSettings`.
 
 ```rust
 pub struct ComponentGlobalPostProcessVolume { pub priority: i32 }  // 0
 
 // Effect components, each `#[serde(default)]` and switchable (`can_disable`).
-pub struct TonemapSettings { pub preset: TonemappingPreset, pub exposure_ev: f32 }  // Aces, 0.0
+pub struct ComponentTonemap { pub preset: TonemappingPreset, pub exposure_ev: f32 }  // Aces, 0.0
 pub enum TonemappingPreset { Aces }
-pub struct AmbientOcclusionSettings { pub radius: f32, pub intensity: f32, pub bias: f32, pub sample_count: u32 }  // 0.5, 1.0, 0.025, 16
-pub struct DepthOfFieldSettings { pub focus_distance: f32, pub focus_range: f32, pub max_blur: f32 }  // 10.0, 10.0, 8.0
-pub struct BloomSettings { pub threshold: f32, pub knee: f32, pub intensity: f32, pub radius: u32 }  // 1.0, 0.5, 0.5, 6
-pub struct ColorGradingSettings { pub contrast: f32, pub saturation: f32, pub temperature: f32, pub tint: f32 }  // 1, 1, 0, 0
-pub struct VignetteSettings { pub intensity: f32, pub smoothness: f32, pub color: Color32 }  // 0.4, 0.2, black
-pub struct AntiAliasingSettings { pub edge_threshold: f32, pub subpixel: f32 }  // 0.166, 0.75
+pub struct ComponentAmbientOcclusion { pub radius: f32, pub intensity: f32, pub bias: f32, pub sample_count: u32 }  // 0.5, 1.0, 0.025, 16
+pub struct ComponentDepthOfField { pub focus_distance: f32, pub focus_range: f32, pub max_blur: f32 }  // 10.0, 10.0, 8.0
+pub struct ComponentBloom { pub threshold: f32, pub knee: f32, pub intensity: f32, pub radius: u32 }  // 1.0, 0.5, 0.5, 6
+pub struct ComponentColorGrading { pub contrast: f32, pub saturation: f32, pub temperature: f32, pub tint: f32 }  // 1, 1, 0, 0
+pub struct ComponentVignette { pub intensity: f32, pub smoothness: f32, pub color: Color32 }  // 0.4, 0.2, black
+pub struct ComponentAntiAliasing { pub edge_threshold: f32, pub subpixel: f32 }  // 0.166, 0.75
 
 // What the chain reads for one frame: not a component and not saved.
 pub struct PostProcessSettings {
-    pub tonemapping: TonemapSettings,
-    pub ambient_occlusion: Option<AmbientOcclusionSettings>,
-    pub depth_of_field: Option<DepthOfFieldSettings>,
-    pub bloom: Option<BloomSettings>,
-    pub color_grading: Option<ColorGradingSettings>,
-    pub vignette: Option<VignetteSettings>,
-    pub anti_aliasing: Option<AntiAliasingSettings>,
+    pub tonemapping: ComponentTonemap,
+    pub ambient_occlusion: Option<ComponentAmbientOcclusion>,
+    pub depth_of_field: Option<ComponentDepthOfField>,
+    pub bloom: Option<ComponentBloom>,
+    pub color_grading: Option<ComponentColorGrading>,
+    pub vignette: Option<ComponentVignette>,
+    pub anti_aliasing: Option<ComponentAntiAliasing>,
 }
 ```
 
 - **Effect components**: each effect's settings struct is itself the component, with its own type UUID, so a pass reads exactly the values the inspector edits and #114 can blend the same types. None carries an `enabled` field: an effect is on when its component is present on the volume's game object and the scene holds it enabled (`Scene::is_component_enabled`, #415). The volume's own enabled state lives in the scene the same way.
-- **Gathering**: `PostProcessSettings::resolve(scene)` is the one entry point. `PostProcessSettings::selected_volume(scene)` picks the volume's game object, and `PostProcessSettings::from_game_object(scene, game_object)` reads the enabled effect components on it: each present and enabled component becomes `Some`, every other effect is `None` and its pass is off. Tone mapping is never `None`; without an enabled Tone Mapping component it takes `TonemapSettings::default()`. Any view that renders a scene, such as thumbnails, calls `resolve` the same way the renderer does.
+- **Gathering**: `PostProcessSettings::resolve(scene)` is the one entry point. `PostProcessSettings::selected_volume(scene)` picks the volume's game object, and `PostProcessSettings::from_game_object(scene, game_object)` reads the enabled effect components on it: each present and enabled component becomes `Some`, every other effect is `None` and its pass is off. Tone mapping is never `None`; without an enabled Tone Mapping component it takes `ComponentTonemap::default()`. Any view that renders a scene, such as thumbnails, calls `resolve` the same way the renderer does.
 - **Selection**: the enabled volume with the highest priority. On a priority tie the renderer warns once and uses the first found. With no enabled volume it uses `PostProcessSettings::default()`, tone mapping alone. Effect components on other game objects, or on a disabled or losing volume's object, are never read.
 - **Passes**: each pass's `enabled` is whether its field is `Some`, and `prepare` reads the values from it. The chain and the passes read nothing else from the scene.
 - **Inspector**: the volume and the effect components carry `category = "Post Processing"`, and the add-component menu lists components without a category first, then each category under its heading, in name order. Each effect edits with the default field inspectors and switches on and off through the component header's checkbox.

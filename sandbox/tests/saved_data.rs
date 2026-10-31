@@ -13,13 +13,11 @@
 use std::path::{Path, PathBuf};
 
 use calyx_engine::component::{
-    ComponentCamera, ComponentCollider, ComponentGlobalPostProcessVolume, ComponentRigidBody,
+    ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom, ComponentCamera,
+    ComponentCollider, ComponentColorGrading, ComponentDepthOfField,
+    ComponentGlobalPostProcessVolume, ComponentRigidBody, ComponentTonemap, ComponentVignette,
 };
 use calyx_engine::context::AssetContext;
-use calyx_engine::render::postprocess::{
-    AmbientOcclusionSettings, AntiAliasingSettings, BloomSettings, ColorGradingSettings,
-    DepthOfFieldSettings, TonemapSettings, VignetteSettings,
-};
 use calyx_engine::scene::{Prefab, Scene};
 use calyx_engine::test_support::TestAssets;
 use calyx_engine::utils::{TypeUuid, Uuid};
@@ -169,13 +167,13 @@ fn legacy_enabled_fields(scene: &Value) -> Vec<(String, Uuid)> {
         ComponentRigidBody::type_uuid(),
         ComponentGlobalPostProcessVolume::type_uuid(),
         // Effect components, whose fields were the volume's sub-structs.
-        TonemapSettings::type_uuid(),
-        AmbientOcclusionSettings::type_uuid(),
-        DepthOfFieldSettings::type_uuid(),
-        BloomSettings::type_uuid(),
-        ColorGradingSettings::type_uuid(),
-        VignetteSettings::type_uuid(),
-        AntiAliasingSettings::type_uuid(),
+        ComponentTonemap::type_uuid(),
+        ComponentAmbientOcclusion::type_uuid(),
+        ComponentDepthOfField::type_uuid(),
+        ComponentBloom::type_uuid(),
+        ComponentColorGrading::type_uuid(),
+        ComponentVignette::type_uuid(),
+        ComponentAntiAliasing::type_uuid(),
     ];
     let mut found = Vec::new();
     for (object, components) in scene["components"]
@@ -244,7 +242,7 @@ fn saved_scenes_and_prefabs_hold_no_legacy_enabled_fields() {
 /// scene would silently lose its effects.
 fn combined_post_process_settings(scene: &Value) -> Vec<String> {
     let volume = ComponentGlobalPostProcessVolume::type_uuid().to_string();
-    let anti_aliasing = AntiAliasingSettings::type_uuid().to_string();
+    let anti_aliasing = ComponentAntiAliasing::type_uuid().to_string();
     scene["components"]
         .as_object()
         .expect("a saved scene has a components map")
@@ -261,7 +259,7 @@ fn combined_post_process_settings(scene: &Value) -> Vec<String> {
 fn combined_post_process_settings_flags_only_the_old_layout() {
     let object = "07b17e3d-9b73-411b-9d08-c56698a37556";
     let volume = ComponentGlobalPostProcessVolume::type_uuid().to_string();
-    let bloom = BloomSettings::type_uuid().to_string();
+    let bloom = ComponentBloom::type_uuid().to_string();
     let mut scene = serde_json::json!({ "components": { object: {
         volume.clone(): { "priority": 0 },
         bloom: { "intensity": 0.25 },

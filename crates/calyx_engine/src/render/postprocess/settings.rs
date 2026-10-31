@@ -1,18 +1,14 @@
-//! Post-processing settings, the effect components they are gathered from,
-//! and the global volume that selects them.
+//! Post-processing settings, gathered from the effect components beside the
+//! global volume that selects them.
 
-use super::{
-    AmbientOcclusionSettings, AntiAliasingSettings, BloomSettings, ColorGradingSettings,
-    DepthOfFieldSettings, VignetteSettings,
+use crate::component::{
+    Component, ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom,
+    ComponentColorGrading, ComponentDepthOfField, ComponentGlobalPostProcessVolume,
+    ComponentTonemap, ComponentVignette,
 };
-use crate as calyx_engine;
-use crate::component::{Component, ComponentGlobalPostProcessVolume, ReflectComponent};
-use crate::reflect::{Reflect, ReflectDefault};
 use crate::scene::{GameObject, Scene};
-use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use legion::storage::ComponentTypeId;
 use legion::{Entity, IntoQuery};
-use serde::{Deserialize, Serialize};
 
 /// Everything the post-processing chain reads for one frame, gathered from
 /// the effect components on the selected volume's game object.
@@ -23,77 +19,19 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PostProcessSettings {
     /// Tone mapping, the display transform. It always runs.
-    pub tonemapping: TonemapSettings,
+    pub tonemapping: ComponentTonemap,
     /// Screen-space ambient occlusion, first in the `Hdr` stage.
-    pub ambient_occlusion: Option<AmbientOcclusionSettings>,
+    pub ambient_occlusion: Option<ComponentAmbientOcclusion>,
     /// Depth of field, in the `Hdr` stage.
-    pub depth_of_field: Option<DepthOfFieldSettings>,
+    pub depth_of_field: Option<ComponentDepthOfField>,
     /// Bloom, in the `Hdr` stage.
-    pub bloom: Option<BloomSettings>,
+    pub bloom: Option<ComponentBloom>,
     /// White balance, contrast and saturation, after tone mapping.
-    pub color_grading: Option<ColorGradingSettings>,
+    pub color_grading: Option<ComponentColorGrading>,
     /// Darkened screen edges, after tone mapping.
-    pub vignette: Option<VignetteSettings>,
+    pub vignette: Option<ComponentVignette>,
     /// Screen-space anti-aliasing (FXAA), after tone mapping.
-    pub anti_aliasing: Option<AntiAliasingSettings>,
-}
-
-/// Tone-mapping curve and exposure, as an effect component on a
-/// post-process volume's game object.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect)]
-#[uuid = "68ac12ac-fc9a-489e-b305-363eaf593966"]
-#[reflect(Default, TypeUuidDynamic, Component)]
-#[reflect_attr(name = "Tone Mapping", category = "Post Processing")]
-#[serde(default)]
-pub struct TonemapSettings {
-    /// Curve that maps linear HDR color to the display range.
-    pub preset: TonemappingPreset,
-    /// Exposure in stops: the scene is scaled by `2^exposure_ev` before the
-    /// curve.
-    #[reflect_attr(speed = 0.05)]
-    pub exposure_ev: f32,
-}
-
-impl Default for TonemapSettings {
-    fn default() -> Self {
-        Self {
-            preset: TonemappingPreset::Aces,
-            exposure_ev: 0.0,
-        }
-    }
-}
-
-impl Component for TonemapSettings {
-    /// A disabled tone-mapping component leaves the defaults in effect.
-    fn can_disable(&self) -> bool {
-        true
-    }
-}
-
-impl TonemapSettings {
-    /// The linear factor the scene is scaled by before the curve.
-    pub fn exposure_scale(&self) -> f32 {
-        self.exposure_ev.exp2()
-    }
-}
-
-/// Tone-mapping curves.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TypeUuid, Reflect)]
-#[uuid = "a4d6b439-bdc2-4aeb-aaf7-1f14f147255b"]
-pub enum TonemappingPreset {
-    /// Stephen Hill's fit of the ACES reference rendering and output
-    /// transforms.
-    #[default]
-    Aces,
-}
-
-impl TonemappingPreset {
-    /// The value the tone-map shader switches on.
-    pub(crate) fn shader_index(self) -> u32 {
-        match self {
-            Self::Aces => 0,
-        }
-    }
+    pub anti_aliasing: Option<ComponentAntiAliasing>,
 }
 
 /// The item [`select_volume`] picked, and the priority several enabled

@@ -1529,11 +1529,10 @@ mod tests {
     use crate::assets::AssetRef;
     use crate::component::{
         ComponentGlobalPostProcessVolume, ComponentID, ComponentMesh, ComponentParticleSystem,
-        ParticleColorOverLifetime, ParticleEmission, ParticleForces, ParticleScalarRange,
-        ParticleSizeOverLifetime, ParticleSpawnShape, ParticleVelocity,
+        ComponentTonemap, ParticleColorOverLifetime, ParticleEmission, ParticleForces,
+        ParticleScalarRange, ParticleSizeOverLifetime, ParticleSpawnShape, ParticleVelocity,
     };
     use crate::math::Transform;
-    use crate::render::postprocess::TonemapSettings;
     use crate::render::{Camera, Shader};
     use crate::test_support::{
         test_adapter, test_asset_context_with_assets, SceneBuilder, TestAssets,
@@ -2260,7 +2259,7 @@ mod tests {
         builder.add_component(volume, ComponentGlobalPostProcessVolume::default());
         builder.add_component(
             volume,
-            TonemapSettings {
+            ComponentTonemap {
                 exposure_ev: 3.0,
                 ..Default::default()
             },

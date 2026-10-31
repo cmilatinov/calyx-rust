@@ -4,71 +4,11 @@ use super::{
     PassContext, PassInputs, PassIo, PostProcessPass, PostProcessSettings, PostProcessStage,
     SceneInput,
 };
-use crate as calyx_engine;
 use crate::assets::texture::Texture;
-use crate::component::{Component, ReflectComponent};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
-use crate::reflect::{Reflect, ReflectDefault};
 use crate::render::{CachedBindGroup, PipelineOptions, RenderUtils, SceneRendererError, Shader};
-use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use egui_wgpu::wgpu;
-use serde::{Deserialize, Serialize};
-
-/// Depth of field: the scene blurs with distance from a focus plane.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect)]
-#[uuid = "ac9e495b-1859-42d8-b1c5-0d35f113c089"]
-#[reflect(Default, TypeUuidDynamic, Component)]
-#[reflect_attr(name = "Depth Of Field", category = "Post Processing")]
-#[serde(default)]
-pub struct DepthOfFieldSettings {
-    /// View distance, in world units, that is sharp.
-    #[reflect_attr(min = 0.0, speed = 0.05)]
-    pub focus_distance: f32,
-    /// Distance in front of and behind the focus plane, in world units, over
-    /// which the blur grows from none to `max_blur`.
-    #[reflect_attr(min = 0.01, speed = 0.05)]
-    pub focus_range: f32,
-    /// Largest blur radius, in pixels.
-    #[reflect_attr(min = 0.0, max = 32.0, speed = 0.1)]
-    pub max_blur: f32,
-}
-
-impl DepthOfFieldSettings {
-    /// The largest `max_blur` the pass honors, in pixels. The gather's tap
-    /// count grows with the radius, so it is capped.
-    pub const MAX_BLUR_LIMIT: f32 = 32.0;
-
-    /// The blur radius the pass uses: `max_blur` within
-    /// `[0, MAX_BLUR_LIMIT]`.
-    pub fn blur_radius(&self) -> f32 {
-        self.max_blur.clamp(0.0, Self::MAX_BLUR_LIMIT)
-    }
-
-    /// Spacing of the gather's spiral. Taps number about
-    /// `radius^2 / (2 * spacing)`, so the spacing grows past 8 pixels to
-    /// keep the count at most about 256.
-    fn radius_scale(&self) -> f32 {
-        (self.blur_radius() / 16.0).max(0.5)
-    }
-}
-
-impl Component for DepthOfFieldSettings {
-    /// A disabled effect component switches its pass off.
-    fn can_disable(&self) -> bool {
-        true
-    }
-}
-
-impl Default for DepthOfFieldSettings {
-    fn default() -> Self {
-        Self {
-            focus_distance: 10.0,
-            focus_range: 10.0,
-            max_blur: 8.0,
-        }
-    }
-}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -85,7 +25,7 @@ struct DofUniform {
 /// Depth of field in the `Hdr` stage. It computes each pixel's signed circle
 /// of confusion from linear depth into a texture it owns, then gathers a disc
 /// blur scaled by it, for both the near and the far field. It runs while the
-/// settings hold a [`DepthOfFieldSettings`].
+/// settings hold a [`ComponentDepthOfField`](crate::component::ComponentDepthOfField).
 pub struct DepthOfFieldPass {
     coc_shader: Ref<Shader>,
     blur_shader: Ref<Shader>,
@@ -309,6 +249,7 @@ impl PostProcessPass for DepthOfFieldPass {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::component::ComponentDepthOfField;
     use crate::render::postprocess::{
         CameraPlanes, ChainPlan, ChainTargets, PassTarget, PostProcessChain, TonemapPass,
     };
@@ -333,7 +274,7 @@ mod tests {
 
     fn dof_on() -> PostProcessSettings {
         PostProcessSettings {
-            depth_of_field: Some(DepthOfFieldSettings {
+            depth_of_field: Some(ComponentDepthOfField {
                 focus_distance: FOCUS,
                 focus_range: RANGE,
                 max_blur: MAX_BLUR,
@@ -679,9 +620,9 @@ mod tests {
     #[test]
     fn depth_of_field_is_off_by_default_and_a_partial_component_loads_with_defaults() {
         assert_eq!(PostProcessSettings::default().depth_of_field, None);
-        let defaults = DepthOfFieldSettings::default();
+        let defaults = ComponentDepthOfField::default();
         let partial = r#"{"focus_distance":4.0}"#;
-        let dof: DepthOfFieldSettings = serde_json::from_str(partial).expect("partial loads");
+        let dof: ComponentDepthOfField = serde_json::from_str(partial).expect("partial loads");
         assert_eq!(dof.focus_distance, 4.0);
         assert_eq!(dof.max_blur, defaults.max_blur);
     }

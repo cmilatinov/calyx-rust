@@ -5,71 +5,17 @@ use super::{
     PassContext, PassInputs, PassIo, PostProcessPass, PostProcessSettings, PostProcessStage,
     SceneInput,
 };
-use crate as calyx_engine;
 use crate::assets::texture::Texture;
-use crate::component::{Component, ReflectComponent};
+use crate::component::ComponentAmbientOcclusion;
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
-use crate::reflect::{Reflect, ReflectDefault};
 use crate::render::{
     CachedBindGroup, PipelineOptions, RenderContext, RenderUtils, SceneRendererError, Shader,
 };
-use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use egui_wgpu::wgpu;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// Screen-space ambient occlusion.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect)]
-#[uuid = "01a950bc-d431-4495-8b86-7d51c5f2b4b0"]
-#[reflect(Default, TypeUuidDynamic, Component)]
-#[reflect_attr(name = "Ambient Occlusion", category = "Post Processing")]
-#[serde(default)]
-pub struct AmbientOcclusionSettings {
-    /// Radius of the hemisphere tested around each pixel, in world units.
-    #[reflect_attr(min = 0.01, speed = 0.01)]
-    pub radius: f32,
-    /// Strength of the darkening: the unoccluded fraction is raised to this
-    /// power. Zero turns the effect off.
-    #[reflect_attr(min = 0.0, speed = 0.05)]
-    pub intensity: f32,
-    /// Depth difference, in world units, below which a sample does not count
-    /// as occluded. Raise it if flat surfaces show speckles.
-    #[reflect_attr(min = 0.0, speed = 0.001)]
-    pub bias: f32,
-    /// Samples tested per pixel. Clamped to `1..=64`.
-    pub sample_count: u32,
-}
-
-impl Component for AmbientOcclusionSettings {
-    /// A disabled effect component switches its pass off.
-    fn can_disable(&self) -> bool {
-        true
-    }
-}
-
-impl Default for AmbientOcclusionSettings {
-    fn default() -> Self {
-        Self {
-            radius: 0.5,
-            intensity: 1.0,
-            bias: 0.025,
-            sample_count: 16,
-        }
-    }
-}
-
-impl AmbientOcclusionSettings {
-    /// Most samples `sample_count` selects.
-    pub const MAX_SAMPLES: u32 = 64;
-
-    /// `sample_count`, clamped to `1..=MAX_SAMPLES`.
-    pub fn samples(&self) -> u32 {
-        self.sample_count.clamp(1, Self::MAX_SAMPLES)
-    }
-}
-
-const MAX_SAMPLES: usize = AmbientOcclusionSettings::MAX_SAMPLES as usize;
+const MAX_SAMPLES: usize = ComponentAmbientOcclusion::MAX_SAMPLES as usize;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -440,14 +386,14 @@ mod tests {
     }
 
     fn ssao() -> PostProcessSettings {
-        ssao_with_radius(AmbientOcclusionSettings::default().radius)
+        ssao_with_radius(ComponentAmbientOcclusion::default().radius)
     }
 
     /// SSAO on with `radius`. The test images are small, so the corner
     /// tests use a radius several pixels wide.
     fn ssao_with_radius(radius: f32) -> PostProcessSettings {
         PostProcessSettings {
-            ambient_occlusion: Some(AmbientOcclusionSettings {
+            ambient_occlusion: Some(ComponentAmbientOcclusion {
                 radius,
                 ..Default::default()
             }),
@@ -723,7 +669,7 @@ mod tests {
         let context = context.lock_read();
         let depth = scene_depth(&context.render_context, |_, _| Some(4.0), 1.0);
 
-        for radius in [AmbientOcclusionSettings::default().radius, CORNER_RADIUS] {
+        for radius in [ComponentAmbientOcclusion::default().radius, CORNER_RADIUS] {
             let output = run_ssao(&context, &ssao_with_radius(radius), &depth);
 
             for (index, texel) in output.iter().enumerate() {
@@ -954,10 +900,10 @@ mod tests {
     fn ssao_is_off_by_default_and_a_partial_component_loads_with_defaults() {
         assert_eq!(PostProcessSettings::default().ambient_occlusion, None);
         let partial = r#"{ "radius": 2.0 }"#;
-        let ao: AmbientOcclusionSettings = serde_json::from_str(partial).expect("ssao loads");
+        let ao: ComponentAmbientOcclusion = serde_json::from_str(partial).expect("ssao loads");
         assert_eq!(
             ao,
-            AmbientOcclusionSettings {
+            ComponentAmbientOcclusion {
                 radius: 2.0,
                 ..Default::default()
             }

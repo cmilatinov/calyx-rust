@@ -1,49 +1,10 @@
 //! The FXAA pass: smooths aliased edges after tone mapping.
 
 use super::{PassContext, PassIo, PostProcessPass, PostProcessSettings, PostProcessStage};
-use crate as calyx_engine;
-use crate::component::{Component, ReflectComponent};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
-use crate::reflect::{Reflect, ReflectDefault};
 use crate::render::{CachedBindGroup, PipelineOptions, RenderUtils, SceneRendererError, Shader};
-use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use egui_wgpu::wgpu;
-use serde::{Deserialize, Serialize};
-
-/// Screen-space anti-aliasing.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect)]
-#[uuid = "c19ff2b7-c3ed-4f04-9dfa-e026efdedf82"]
-#[reflect(Default, TypeUuidDynamic, Component)]
-#[reflect_attr(name = "Anti-Aliasing (FXAA)", category = "Post Processing")]
-#[serde(default)]
-pub struct AntiAliasingSettings {
-    /// Minimum local contrast, relative to the brightest neighbour, that FXAA
-    /// treats as an edge. Lower smooths more edges and costs more.
-    #[reflect_attr(min = 0.063, max = 0.333, speed = 0.001)]
-    pub edge_threshold: f32,
-    /// How much sub-pixel aliasing FXAA removes, from 0 (none) to 1
-    /// (softest).
-    #[reflect_attr(min = 0.0, max = 1.0, speed = 0.01)]
-    pub subpixel: f32,
-}
-
-impl Component for AntiAliasingSettings {
-    /// A disabled effect component switches its pass off.
-    fn can_disable(&self) -> bool {
-        true
-    }
-}
-
-impl Default for AntiAliasingSettings {
-    fn default() -> Self {
-        // FXAA 3.11's default quality settings.
-        Self {
-            edge_threshold: 0.166,
-            subpixel: 0.75,
-        }
-    }
-}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -55,7 +16,7 @@ struct FxaaUniform {
 
 /// FXAA 3.11 Quality on display-linear color, in the `Ldr` stage. Alpha
 /// passes through. It runs while the settings hold an
-/// [`AntiAliasingSettings`].
+/// [`ComponentAntiAliasing`](crate::component::ComponentAntiAliasing).
 pub struct FxaaPass {
     shader: Ref<Shader>,
     sampler: wgpu::Sampler,

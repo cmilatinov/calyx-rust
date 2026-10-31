@@ -1,6 +1,10 @@
 use super::*;
 use crate::assets::texture::Texture;
-use crate::component::{Component, ComponentGlobalPostProcessVolume};
+use crate::component::{
+    Component, ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom,
+    ComponentColorGrading, ComponentDepthOfField, ComponentGlobalPostProcessVolume,
+    ComponentTonemap, ComponentVignette, TonemappingPreset,
+};
 use crate::render::scene_renderer::{half_to_f32, linear_to_srgb};
 use crate::render::{
     Camera, ReadbackPoll, RenderContext, RenderUtils, SceneRenderer, SceneRendererOptions,
@@ -737,7 +741,7 @@ fn tone_mapping_matches_the_aces_fit_and_keeps_alpha() {
 
     // Exposure scales the input by 2^EV before the curve.
     let settings = PostProcessSettings {
-        tonemapping: TonemapSettings {
+        tonemapping: ComponentTonemap {
             exposure_ev: 2.0,
             ..Default::default()
         },
@@ -788,7 +792,7 @@ fn spawn_volumes(scene: &mut Scene, volumes: &[VolumeSpec]) -> Vec<GameObject> {
             );
             scene.add_component(
                 game_object,
-                TonemapSettings {
+                ComponentTonemap {
                     exposure_ev: spec.exposure_ev,
                     ..Default::default()
                 },
@@ -844,7 +848,7 @@ fn no_enabled_volume_selects_nothing_and_the_defaults_tone_map_alone() {
     assert_eq!(
         defaults,
         PostProcessSettings {
-            tonemapping: TonemapSettings::default(),
+            tonemapping: ComponentTonemap::default(),
             ambient_occlusion: None,
             depth_of_field: None,
             bloom: None,
@@ -878,21 +882,21 @@ fn effects_are_gathered_from_the_selected_volumes_game_object_only() {
     let mut scene = registries.scene();
     let objects = spawn_volumes(&mut scene, &[volume(true, 1, 1.0), volume(true, 4, -1.0)]);
     let (low, high) = (objects[0], objects[1]);
-    let bloom = BloomSettings {
+    let bloom = ComponentBloom {
         intensity: 0.3,
         ..Default::default()
     };
     scene.add_component(low, bloom);
-    scene.add_component(high, AntiAliasingSettings::default());
+    scene.add_component(high, ComponentAntiAliasing::default());
     // An effect on an object without a volume is never gathered.
     let stray = scene.create(None, None);
-    scene.add_component(stray, VignetteSettings::default());
+    scene.add_component(stray, ComponentVignette::default());
 
     let settings = PostProcessSettings::resolve(&scene);
     assert_eq!(settings.tonemapping.exposure_ev, -1.0);
     assert_eq!(
         settings.anti_aliasing,
-        Some(AntiAliasingSettings::default())
+        Some(ComponentAntiAliasing::default())
     );
     assert_eq!(settings.bloom, None, "the lower volume's bloom is not used");
     assert_eq!(settings.vignette, None);
@@ -914,10 +918,10 @@ fn a_disabled_tone_mapping_component_falls_back_to_the_defaults() {
         PostProcessSettings::resolve(&scene).tonemapping.exposure_ev,
         2.0
     );
-    assert!(scene.set_component_enabled::<TonemapSettings>(game_object, false));
+    assert!(scene.set_component_enabled::<ComponentTonemap>(game_object, false));
     assert_eq!(
         PostProcessSettings::resolve(&scene).tonemapping,
-        TonemapSettings::default()
+        ComponentTonemap::default()
     );
 }
 
@@ -974,15 +978,15 @@ fn adding_or_disabling_an_effect_component_switches_its_pass_in_the_plan() {
     let mut scene = context.registries.scene();
     let volume = scene.create(None, None);
     scene.add_component(volume, ComponentGlobalPostProcessVolume::default());
-    check_effect::<AmbientOcclusionSettings>(passes, &mut scene, volume, "ssao");
-    check_effect::<DepthOfFieldSettings>(passes, &mut scene, volume, "depth_of_field");
-    check_effect::<BloomSettings>(passes, &mut scene, volume, "bloom");
-    check_effect::<ColorGradingSettings>(passes, &mut scene, volume, "color_grading");
-    check_effect::<VignetteSettings>(passes, &mut scene, volume, "color_grading");
-    check_effect::<AntiAliasingSettings>(passes, &mut scene, volume, "fxaa");
+    check_effect::<ComponentAmbientOcclusion>(passes, &mut scene, volume, "ssao");
+    check_effect::<ComponentDepthOfField>(passes, &mut scene, volume, "depth_of_field");
+    check_effect::<ComponentBloom>(passes, &mut scene, volume, "bloom");
+    check_effect::<ComponentColorGrading>(passes, &mut scene, volume, "color_grading");
+    check_effect::<ComponentVignette>(passes, &mut scene, volume, "color_grading");
+    check_effect::<ComponentAntiAliasing>(passes, &mut scene, volume, "fxaa");
 
     // A disabled volume's effects are off too.
-    scene.add_component(volume, BloomSettings::default());
+    scene.add_component(volume, ComponentBloom::default());
     assert_eq!(planned(passes, &scene), ["bloom", "tonemap"]);
     scene.set_component_enabled::<ComponentGlobalPostProcessVolume>(volume, false);
     assert_eq!(planned(passes, &scene), ["tonemap"]);
@@ -1207,7 +1211,7 @@ fn read_image(render_context: &RenderContext, texture: &Texture) -> Image {
 
 fn fxaa_on() -> PostProcessSettings {
     PostProcessSettings {
-        anti_aliasing: Some(AntiAliasingSettings::default()),
+        anti_aliasing: Some(ComponentAntiAliasing::default()),
         ..Default::default()
     }
 }
@@ -1242,12 +1246,12 @@ fn run_fxaa(context: &crate::context::ReadOnlyAssetContext, image: &Image) -> Im
 #[test]
 fn fxaa_is_off_by_default_and_a_partial_component_loads_with_defaults() {
     assert_eq!(PostProcessSettings::default().anti_aliasing, None);
-    let defaults = AntiAliasingSettings::default();
+    let defaults = ComponentAntiAliasing::default();
     assert_eq!(defaults.edge_threshold, 0.166);
     assert_eq!(defaults.subpixel, 0.75);
 
     let partial = r#"{"edge_threshold":0.1}"#;
-    let settings: AntiAliasingSettings = serde_json::from_str(partial).expect("partial loads");
+    let settings: ComponentAntiAliasing = serde_json::from_str(partial).expect("partial loads");
     assert_eq!(settings.edge_threshold, 0.1);
     assert_eq!(settings.subpixel, 0.75);
 }

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 /// Marks its game object as a scene-wide post-processing volume.
 ///
 /// The volume holds no settings: each effect is its own component on the
-/// same game object, such as [`BloomSettings`](crate::render::postprocess::BloomSettings).
+/// same game object, such as [`ComponentBloom`].
 /// The renderer uses the enabled volume with the highest priority and the
 /// enabled effect components beside it, and tone mapping alone when the
 /// scene has no enabled volume. See

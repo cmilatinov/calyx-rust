@@ -1,74 +1,14 @@
 //! The bloom pass: bright HDR light bleeds into its surroundings.
 
 use super::{PassContext, PassIo, PostProcessPass, PostProcessSettings, PostProcessStage};
-use crate as calyx_engine;
 use crate::assets::texture::Texture;
-use crate::component::{Component, ReflectComponent};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
-use crate::reflect::{Reflect, ReflectDefault};
 use crate::render::{
     CachedBindGroup, PipelineOptions, RenderContext, RenderUtils, SceneRendererError, Shader,
 };
-use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use egui_wgpu::wgpu;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-
-/// Bloom: light above a threshold is blurred and added back onto the scene.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect)]
-#[uuid = "7e09858d-fd71-4729-bb90-8ed76c0bda9a"]
-#[reflect(Default, TypeUuidDynamic, Component)]
-#[reflect_attr(name = "Bloom", category = "Post Processing")]
-#[serde(default)]
-pub struct BloomSettings {
-    /// Linear HDR brightness, of a pixel's brightest channel, above which
-    /// light blooms.
-    #[reflect_attr(min = 0.0, speed = 0.05)]
-    pub threshold: f32,
-    /// Softness of the threshold, as a fraction of it: light starts to bloom
-    /// at `threshold * (1 - knee)` and blooms fully from
-    /// `threshold * (1 + knee)`. Zero is a hard cut.
-    #[reflect_attr(min = 0.0, max = 1.0, speed = 0.01)]
-    pub knee: f32,
-    /// How much of the blurred light is added back onto the scene.
-    #[reflect_attr(min = 0.0, speed = 0.01)]
-    pub intensity: f32,
-    /// How many half-size mips the light is blurred through. Each one doubles
-    /// how far the glow spreads. Clamped to `1..=8`.
-    pub radius: u32,
-}
-
-impl Component for BloomSettings {
-    /// A disabled effect component switches its pass off.
-    fn can_disable(&self) -> bool {
-        true
-    }
-}
-
-impl Default for BloomSettings {
-    fn default() -> Self {
-        Self {
-            threshold: 1.0,
-            knee: 0.5,
-            intensity: 0.5,
-            radius: 6,
-        }
-    }
-}
-
-impl BloomSettings {
-    /// Most mips `radius` selects.
-    pub const MAX_RADIUS: u32 = 8;
-
-    /// How many mips bloom blurs through at `size`: `radius`, clamped
-    /// to `1..=MAX_RADIUS` and to the halvings `size` allows before a side
-    /// reaches one pixel.
-    pub fn mip_count(&self, size: (u32, u32)) -> usize {
-        let halvings = size.0.min(size.1).max(2).ilog2();
-        self.radius.clamp(1, Self::MAX_RADIUS).min(halvings) as usize
-    }
-}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -463,7 +403,7 @@ impl PostProcessPass for BloomPass {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::component::ComponentGlobalPostProcessVolume;
+    use crate::component::{ComponentBloom, ComponentGlobalPostProcessVolume};
     use crate::render::postprocess::{
         CameraPlanes, ChainPlan, ChainTargets, PassTarget, PlannedPass, PostProcessChain,
     };
@@ -653,7 +593,7 @@ mod tests {
 
     fn bloom(intensity: f32, radius: u32) -> PostProcessSettings {
         PostProcessSettings {
-            bloom: Some(BloomSettings {
+            bloom: Some(ComponentBloom {
                 intensity,
                 radius,
                 ..Default::default()
@@ -928,10 +868,10 @@ mod tests {
     fn bloom_is_off_by_default_and_a_partial_component_loads_with_defaults() {
         assert_eq!(PostProcessSettings::default().bloom, None);
         let saved = r#"{ "intensity": 0.25 }"#;
-        let bloom: BloomSettings = serde_json::from_str(saved).expect("bloom loads");
+        let bloom: ComponentBloom = serde_json::from_str(saved).expect("bloom loads");
         assert_eq!(
             bloom,
-            BloomSettings {
+            ComponentBloom {
                 intensity: 0.25,
                 ..Default::default()
             }

@@ -2,90 +2,10 @@
 //! vignette, on display-linear color after tone mapping.
 
 use super::{PassContext, PassIo, PostProcessPass, PostProcessSettings, PostProcessStage};
-use crate as calyx_engine;
-use crate::component::{Component, ReflectComponent};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
-use crate::reflect::{Reflect, ReflectDefault};
 use crate::render::{CachedBindGroup, PipelineOptions, RenderUtils, SceneRendererError, Shader};
-use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
-use egui::Color32;
 use egui_wgpu::wgpu;
-use serde::{Deserialize, Serialize};
-
-/// White balance, contrast and saturation, after tone mapping.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect)]
-#[uuid = "d2694fb5-4815-471e-9537-4ab502c580f0"]
-#[reflect(Default, TypeUuidDynamic, Component)]
-#[reflect_attr(name = "Colour Grading", category = "Post Processing")]
-#[serde(default)]
-pub struct ColorGradingSettings {
-    /// Contrast around mid grey (linear 0.18): 1 leaves the image as it is,
-    /// 0 flattens it to mid grey, above 1 spreads it out.
-    #[reflect_attr(min = 0.0, max = 2.0, speed = 0.01)]
-    pub contrast: f32,
-    /// Saturation: 1 leaves the image as it is, 0 turns it grey.
-    #[reflect_attr(min = 0.0, max = 2.0, speed = 0.01)]
-    pub saturation: f32,
-    /// White balance along the blue (negative) to orange (positive) axis.
-    #[reflect_attr(min = -1.0, max = 1.0, speed = 0.01)]
-    pub temperature: f32,
-    /// White balance along the green (negative) to magenta (positive) axis.
-    #[reflect_attr(min = -1.0, max = 1.0, speed = 0.01)]
-    pub tint: f32,
-}
-
-impl Component for ColorGradingSettings {
-    /// A disabled effect component switches its pass off.
-    fn can_disable(&self) -> bool {
-        true
-    }
-}
-
-impl Default for ColorGradingSettings {
-    fn default() -> Self {
-        Self {
-            contrast: 1.0,
-            saturation: 1.0,
-            temperature: 0.0,
-            tint: 0.0,
-        }
-    }
-}
-
-/// Darkens, or tints, the edges of the screen.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect)]
-#[uuid = "61efa204-ed0d-4d1f-86a4-b226be940b13"]
-#[reflect(Default, TypeUuidDynamic, Component)]
-#[reflect_attr(name = "Vignette", category = "Post Processing")]
-#[serde(default)]
-pub struct VignetteSettings {
-    /// How far the vignette reaches in from the edges, from 0 (none) to 1.
-    #[reflect_attr(min = 0.0, max = 1.0, speed = 0.01)]
-    pub intensity: f32,
-    /// How soft its falloff is, from sharp (near 0) to soft (1).
-    #[reflect_attr(min = 0.01, max = 1.0, speed = 0.01)]
-    pub smoothness: f32,
-    /// The color the edges fade to.
-    pub color: Color32,
-}
-
-impl Component for VignetteSettings {
-    /// A disabled effect component switches its pass off.
-    fn can_disable(&self) -> bool {
-        true
-    }
-}
-
-impl Default for VignetteSettings {
-    fn default() -> Self {
-        Self {
-            intensity: 0.4,
-            smoothness: 0.2,
-            color: Color32::BLACK,
-        }
-    }
-}
 
 /// Linear sRGB to LMS (CAT02).
 const LINEAR_TO_LMS: [[f32; 3]; 3] = [
