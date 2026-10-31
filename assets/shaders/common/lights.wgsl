@@ -1,35 +1,11 @@
-struct PointLight {
-    position: vec3f,
-    radius: f32,
-    color: vec3f,
-    intensity: f32,
-};
-
-struct PointLightStorage {
-    size: u32,
-    lights: array<PointLight>,
-};
-
-@group(2) @binding(0)
-var<storage, read> point_lights: PointLightStorage;
-
-struct DirectionalLight {
-    direction: vec3f,
-    color: vec3f,
-    intensity: f32,
-};
-
-struct DirectionalLightStorage {
-    size: u32,
-    lights: array<DirectionalLight>,
-};
-
-@group(2) @binding(1)
-var<storage, read> directional_lights: DirectionalLightStorage;
-
-// A light limited to a cone. Its direction is a unit vector, and the cone cosines are computed
-// on the CPU, with cos_inner >= cos_outer.
-struct SpotLight {
+// Every enabled light, as `LightManager` uploads it. One struct carries every kind; each kind
+// reads only the fields it uses, and the CPU zeroes the rest:
+// - directional: direction, color, intensity
+// - point: position, range, color, intensity
+// - spot: position, range, direction, cos_inner, cos_outer, color, intensity
+// A direction is a unit vector the light travels along. A spot light's cone cosines are
+// computed on the CPU, with cos_inner >= cos_outer.
+struct Light {
     position: vec3f,
     range: f32,
     direction: vec3f,
@@ -37,18 +13,31 @@ struct SpotLight {
     color: vec3f,
     intensity: f32,
     cos_outer: f32,
-    _padding0: f32,
-    _padding1: f32,
-    _padding2: f32,
+    // The light's shadow map, or -1 for none. Reserved for shadow mapping; nothing reads it yet.
+    shadow_index: i32,
+    _pad: vec2f,
 };
 
-struct SpotLightStorage {
-    size: u32,
-    lights: array<SpotLight>,
+// The lights grouped by kind in contiguous ranges, in this order: `directional_count`
+// directional lights, then `point_count` point lights, then `spot_count` spot lights. The range
+// a light sits in is its kind, so a light carries no kind field and each kind's loop is
+// branch-free over its own range.
+struct LightStorage {
+    directional_count: u32,
+    point_count: u32,
+    spot_count: u32,
+    lights: array<Light>,
 };
 
-@group(2) @binding(2)
-var<storage, read> spot_lights: SpotLightStorage;
+@group(2) @binding(0)
+var<storage, read> light_storage: LightStorage;
+
+// The direction towards a light from the shaded point, and the radiance reaching it, zero when
+// none does.
+struct LightIncidence {
+    l: vec3f,
+    radiance: vec3f,
+};
 
 // Distance attenuation of a point or spot light `dist` away, within its range `r`.
 fn light_distance_attenuation(dist: f32, r: f32) -> f32 {
@@ -66,15 +55,25 @@ fn spot_cone_factor(cos_angle: f32, cos_inner: f32, cos_outer: f32) -> f32 {
     return smoothstep(cos_outer, cos_inner, cos_angle);
 }
 
-// The direction towards a spot light from `world_position` in xyz, and how much of the light
-// reaches it in w: distance attenuation times the cone factor, 0 out of range.
-fn spot_light_incidence(light: SpotLight, world_position: vec3f) -> vec4f {
+fn directional_radiance(light: Light) -> LightIncidence {
+    return LightIncidence(normalize(-light.direction), light.color * light.intensity);
+}
+
+// A point light reaches `world_position` within its range, attenuated by distance.
+fn point_radiance(light: Light, world_position: vec3f) -> LightIncidence {
     let to_light = light.position - world_position;
     let dist = length(to_light);
     if dist > light.range || dist <= 1e-6 {
-        return vec4f(0.0);
+        return LightIncidence(vec3f(0.0), vec3f(0.0));
     }
-    let l = to_light / dist;
-    let cone = spot_cone_factor(dot(-l, light.direction), light.cos_inner, light.cos_outer);
-    return vec4f(l, light_distance_attenuation(dist, light.range) * cone);
+    let attenuation = light_distance_attenuation(dist, light.range);
+    return LightIncidence(to_light / dist, light.color * light.intensity * attenuation);
+}
+
+// A spot light is a point light limited to its cone.
+fn spot_radiance(light: Light, world_position: vec3f) -> LightIncidence {
+    var incidence = point_radiance(light, world_position);
+    incidence.radiance *=
+        spot_cone_factor(dot(-incidence.l, light.direction), light.cos_inner, light.cos_outer);
+    return incidence;
 }
