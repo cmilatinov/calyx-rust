@@ -14,7 +14,7 @@ use naga::front::wgsl::ParseError;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 /// Bind-group layout entries grouped by bind-group index.
 pub type BindGroupEntries = BTreeMap<u32, Vec<wgpu::BindGroupLayoutEntry>>;
@@ -235,15 +235,25 @@ impl Asset for Shader {
 /// rather than reaching the device's default handler, which panics. The
 /// scope is popped when the guard is dropped, so an early return or a panic
 /// between push and pop never leaves it on the device's stack.
+///
+/// wgpu keeps one error-scope stack per device, shared by every thread, so a
+/// scope also holds [`SCOPE_LOCK`] from push to pop. Without it, scopes opened
+/// on two threads at once could pop each other's errors. Scopes do not nest.
 struct ValidationScope<'a> {
     device: Option<&'a wgpu::Device>,
+    // Released after `drop` pops the scope.
+    _lock: MutexGuard<'static, ()>,
 }
+
+static SCOPE_LOCK: Mutex<()> = Mutex::new(());
 
 impl<'a> ValidationScope<'a> {
     fn push(device: &'a wgpu::Device) -> Self {
+        let lock = SCOPE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
         device.push_error_scope(wgpu::ErrorFilter::Validation);
         Self {
             device: Some(device),
+            _lock: lock,
         }
     }
 
@@ -1283,20 +1293,55 @@ fn fs_main() -> @location(0) vec4f {
         assert!(fresh.pipeline(&options()).is_none());
     }
 
+    const INVALID: &str = "fn main() { let x: u32 = 1.0; }";
+    const VALID: &str = "@compute @workgroup_size(1) fn main() {}";
+
+    fn create_module(device: &wgpu::Device, source: &'static str) {
+        let _module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("scope_probe"),
+            source: wgpu::ShaderSource::Wgsl(source.into()),
+        });
+    }
+
     /// A scope dropped without `pop` is popped by its guard, taking its
     /// error with it, so the scope pushed before it is the one popped next.
     #[test]
     fn a_dropped_validation_scope_pops_itself() {
         let render_context = crate::test_support::test_render_context();
         let device = render_context.device();
-        let outer = super::ValidationScope::push(device);
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
         {
-            let _inner = super::ValidationScope::push(device);
-            device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("invalid_probe"),
-                source: wgpu::ShaderSource::Wgsl("fn main() { let x: u32 = 1.0; }".into()),
-            });
+            let _scope = super::ValidationScope::push(device);
+            create_module(device, INVALID);
         }
-        assert!(outer.pop().is_none());
+        assert!(pollster::block_on(device.pop_error_scope()).is_none());
+    }
+
+    /// Scopes opened on two threads at once each see only their own errors.
+    #[test]
+    fn validation_scopes_on_two_threads_keep_their_own_errors() {
+        let render_context = crate::test_support::test_render_context();
+        let device = render_context.device();
+        std::thread::scope(|threads| {
+            let invalid = threads.spawn(|| {
+                (0..200).all(|_| {
+                    let scope = super::ValidationScope::push(device);
+                    create_module(device, INVALID);
+                    scope.pop().is_some()
+                })
+            });
+            let valid = threads.spawn(|| {
+                (0..200).all(|_| {
+                    let scope = super::ValidationScope::push(device);
+                    create_module(device, VALID);
+                    scope.pop().is_none()
+                })
+            });
+            assert!(
+                invalid.join().unwrap(),
+                "an invalid module's error was lost"
+            );
+            assert!(valid.join().unwrap(), "a valid module got another's error");
+        });
     }
 }
