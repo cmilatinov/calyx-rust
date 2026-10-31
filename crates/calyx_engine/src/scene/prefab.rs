@@ -98,33 +98,46 @@ impl Asset for Prefab {
 
             // Every sub-asset of the model shares one namespace, so names are taken in a fixed
             // order, meshes first, and each keeps its id across reimports of the same file.
-            let mut sub_asset_names = SubAssetNames::new(&asset_registry, &meta);
-            let mut names = |source_names: Vec<&str>, fallback: &str, type_uuid: Uuid| {
-                source_names
-                    .into_iter()
-                    .map(|name| sub_asset_names.allocate(name, fallback, type_uuid))
-                    .collect::<Vec<_>>()
-            };
-            let mesh_names = names(
-                scene.meshes.iter().map(|m| m.name.as_str()).collect(),
-                "mesh",
-                Mesh::type_uuid(),
+            let groups = [
+                (
+                    scene
+                        .meshes
+                        .iter()
+                        .map(|m| m.name.as_str())
+                        .collect::<Vec<_>>(),
+                    "mesh",
+                    Mesh::type_uuid(),
+                ),
+                (
+                    scene.animations.iter().map(|a| a.name.as_str()).collect(),
+                    "animation",
+                    Animation::type_uuid(),
+                ),
+                (
+                    scene.materials.iter().map(|m| m.name.as_str()).collect(),
+                    "material",
+                    Material::type_uuid(),
+                ),
+                (
+                    scene.textures.iter().map(|t| t.name.as_str()).collect(),
+                    "texture",
+                    Texture::type_uuid(),
+                ),
+            ];
+            let mut sub_asset_names = SubAssetNames::new(
+                &asset_registry,
+                &meta,
+                groups.iter().flat_map(|(names, fallback, _)| {
+                    names.iter().map(|name| sub_asset_stem(name, fallback))
+                }),
             );
-            let animation_names = names(
-                scene.animations.iter().map(|a| a.name.as_str()).collect(),
-                "animation",
-                Animation::type_uuid(),
-            );
-            let material_names = names(
-                scene.materials.iter().map(|m| m.name.as_str()).collect(),
-                "material",
-                Material::type_uuid(),
-            );
-            let texture_names = names(
-                scene.textures.iter().map(|t| t.name.as_str()).collect(),
-                "texture",
-                Texture::type_uuid(),
-            );
+            let [mesh_names, animation_names, material_names, texture_names] =
+                groups.map(|(names, fallback, type_uuid)| {
+                    names
+                        .into_iter()
+                        .map(|name| sub_asset_names.allocate(name, fallback, type_uuid))
+                        .collect::<Vec<_>>()
+                });
 
             let mut textures = Vec::new();
             for (texture, name) in scene.textures.iter().zip(&texture_names) {
@@ -221,23 +234,41 @@ impl Asset for Prefab {
     }
 }
 
+/// The name a sub-asset takes before it is made unique: its source name, or `fallback_name`.
+fn sub_asset_stem<'a>(source_name: &'a str, fallback_name: &'a str) -> &'a str {
+    if source_name.is_empty() {
+        fallback_name
+    } else {
+        source_name
+    }
+}
+
 /// Allocates the unique local names of a model's sub-assets for one import.
 ///
-/// A name comes from the source name, or `fallback` when that is empty, with the lowest `_N`
-/// suffix that makes it unique. A sub-asset the model already had keeps its name, and so its id,
-/// when its type matches: a texture suffixed `Paint_1` because a material held `Paint` stays
-/// `Paint_1` after the material is renamed. A name the registry holds as another type, or under
-/// another parent, is skipped, since the registry would refuse it.
+/// A name is the [`sub_asset_stem`] with the lowest `_N` suffix that no earlier sub-asset of this
+/// import took and that the registry does not hold as another type, under another parent, or as
+/// a file asset, since the registry would refuse it. When that name is new to the model, a
+/// sub-asset of the same type that the model had under a suffix of this stem keeps that name, and
+/// so its id: a texture suffixed `Paint_1` because a material held `Paint` stays `Paint_1` after
+/// the material is renamed. A suffixed name that is also the stem of another sub-asset in this
+/// import is left to that sub-asset. When the model's sub-assets already have the names this
+/// import gives them, every one keeps its name.
 struct SubAssetNames<'a> {
     registry: &'a AssetRegistry,
     parent: &'a AssetMeta,
     /// The model's sub-assets before this import.
     previous: Vec<AssetMeta>,
+    /// The stem of every sub-asset in this import.
+    stems: HashSet<String>,
     used: HashSet<String>,
 }
 
 impl<'a> SubAssetNames<'a> {
-    fn new(registry: &'a AssetRegistry, parent: &'a AssetMeta) -> Self {
+    fn new<'s>(
+        registry: &'a AssetRegistry,
+        parent: &'a AssetMeta,
+        stems: impl IntoIterator<Item = &'s str>,
+    ) -> Self {
         Self {
             registry,
             parent,
@@ -246,40 +277,44 @@ impl<'a> SubAssetNames<'a> {
                 .iter()
                 .filter_map(|id| registry.asset_meta_from_id(*id))
                 .collect(),
+            stems: stems.into_iter().map(str::to_string).collect(),
             used: HashSet::new(),
         }
     }
 
     fn allocate(&mut self, source_name: &str, fallback_name: &str, type_uuid: Uuid) -> String {
-        let stem = if source_name.is_empty() {
-            fallback_name
+        let stem = sub_asset_stem(source_name, fallback_name);
+        let available = (0..)
+            .map(|suffix| match suffix {
+                0 => stem.to_string(),
+                suffix => format!("{stem}_{suffix}"),
+            })
+            .find(|name| !self.used.contains(name) && self.is_free(name, type_uuid))
+            .expect("some suffix is free");
+        let is_previous = |name: &str| {
+            self.previous
+                .iter()
+                .any(|meta| meta.type_uuid == type_uuid && meta.name == name)
+        };
+        let name = if is_previous(&available) {
+            available
         } else {
-            source_name
-        };
-        let suffix = |name: &str| -> Option<usize> {
-            if name == stem {
-                return Some(0);
-            }
-            let digits = name.strip_prefix(stem)?.strip_prefix('_')?;
-            let suffix = digits.parse::<usize>().ok()?;
-            (suffix > 0 && suffix.to_string() == digits).then_some(suffix)
-        };
-        let kept = self
-            .previous
-            .iter()
-            .filter(|meta| meta.type_uuid == type_uuid && !self.used.contains(&meta.name))
-            .filter_map(|meta| suffix(&meta.name).map(|suffix| (suffix, &meta.name)))
-            .min_by_key(|(suffix, _)| *suffix)
-            .map(|(_, name)| name.clone());
-        let name = kept.unwrap_or_else(|| {
-            (0..)
-                .map(|suffix| match suffix {
-                    0 => stem.to_string(),
-                    suffix => format!("{stem}_{suffix}"),
+            let suffix = |name: &str| -> Option<usize> {
+                let digits = name.strip_prefix(stem)?.strip_prefix('_')?;
+                let suffix = digits.parse::<usize>().ok()?;
+                (suffix > 0 && suffix.to_string() == digits).then_some(suffix)
+            };
+            self.previous
+                .iter()
+                .filter(|meta| {
+                    meta.type_uuid == type_uuid
+                        && !self.used.contains(&meta.name)
+                        && !self.stems.contains(&meta.name)
                 })
-                .find(|name| !self.used.contains(name) && self.is_free(name, type_uuid))
-                .expect("some suffix is free")
-        });
+                .filter_map(|meta| suffix(&meta.name).map(|suffix| (suffix, &meta.name)))
+                .min_by_key(|(suffix, _)| *suffix)
+                .map_or(available, |(_, name)| name.clone())
+        };
         self.used.insert(name.clone());
         name
     }
@@ -493,7 +528,7 @@ mod tests {
             children: Vec::new(),
             path: None,
         };
-        let mut names = SubAssetNames::new(&registry, &parent);
+        let mut names = SubAssetNames::new(&registry, &parent, ["Tracks", "mesh"]);
         let mesh = Mesh::type_uuid();
 
         assert_eq!(names.allocate("Tracks", "mesh", mesh), "Tracks");
@@ -943,6 +978,38 @@ mod tests {
             .unwrap()
             .children
             .contains(&texture_id));
+    }
+
+    #[test]
+    fn a_new_source_name_does_not_take_the_suffixed_name_of_an_existing_sub_asset() {
+        let assets = crate::test_support::TestAssets::models();
+        let path = assets.fixtures_root().join("gltf/Materials.gltf");
+        let source = std::fs::read_to_string(&path).unwrap();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let registry = context.registries.assets.read();
+        registry.load_by_path::<Prefab>(&path).unwrap();
+        let masked = materials_sub_asset(&registry, "material_1");
+
+        // The first material is renamed to the stem of the unnamed second one's name.
+        std::fs::write(
+            &path,
+            source.replace("\"name\": \"Painted\"", "\"name\": \"material\""),
+        )
+        .unwrap();
+        registry.reload_by_path::<Prefab>(&path).unwrap();
+
+        assert_eq!(
+            materials_sub_asset(&registry, "material_1"),
+            masked,
+            "the unnamed material keeps its name and id"
+        );
+        let masked = registry.load_by_id::<Material>(masked).unwrap();
+        assert_eq!(float_value(&masked.read(), "alpha_cutoff"), 0.3);
+        let renamed = registry
+            .load_by_id::<Material>(materials_sub_asset(&registry, "material"))
+            .unwrap();
+        assert_eq!(float_value(&renamed.read(), "alpha_cutoff"), 0.0);
     }
 
     #[test]
