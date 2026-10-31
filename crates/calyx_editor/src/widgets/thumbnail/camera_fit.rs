@@ -153,6 +153,9 @@ pub(super) fn scene_bounds_camera_fit(
     let mut local_bounds = HashMap::<Uuid, Option<Bounds>>::new();
     let mut points = Vec::new();
     for game_object in scene.objects() {
+        if !scene.is_visible_in_hierarchy(game_object) {
+            continue;
+        }
         let mesh_ids = [
             scene.read_component::<ComponentMesh, _, _>(game_object, |component| {
                 component.mesh.id()

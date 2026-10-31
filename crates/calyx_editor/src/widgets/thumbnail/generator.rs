@@ -226,6 +226,7 @@ impl ThumbnailGenerator {
             .map_err(|err| format!("failed to load scene thumbnail source: {err}"))?
             .asset;
         load_scene_sky_lights(context, &scene);
+        fill_missing_materials(context, &mut scene)?;
         let loaded_at = Instant::now();
 
         let view = scene_thumbnail_view(context, &scene, self.render_settings.frame_margin);
@@ -366,6 +367,48 @@ pub(super) fn scene_has_light(scene: &Scene) -> bool {
                 })
                 .unwrap_or(false)
     })
+}
+
+/// Gives the default material to each mesh that has none. The scene renderer
+/// skips a mesh without a material, so a scene authored that way, such as an
+/// animation demo, would otherwise render an empty thumbnail. Only the
+/// worker's own copy of the scene changes, never the file.
+fn fill_missing_materials(context: &ReadOnlyAssetContext, scene: &mut Scene) -> Result<(), String> {
+    let objects = scene.objects().collect::<Vec<_>>();
+    let mut default_material = None;
+    for game_object in objects {
+        let missing_mesh_material = scene
+            .read_component::<ComponentMesh, _, _>(game_object, |mesh| mesh.material.id().is_nil())
+            .unwrap_or(false);
+        let missing_skinned_material = scene
+            .read_component::<ComponentSkinnedMesh, _, _>(game_object, |mesh| {
+                mesh.material.id().is_nil()
+            })
+            .unwrap_or(false);
+        if !missing_mesh_material && !missing_skinned_material {
+            continue;
+        }
+        let material = match &default_material {
+            Some(material) => AssetRef::<Material>::from_id(*material),
+            None => {
+                let material = default_material_ref(context)?;
+                default_material = Some(material.id());
+                material
+            }
+        };
+        if missing_mesh_material {
+            let material = AssetRef::from_id(material.id());
+            scene.write_component::<ComponentMesh, _>(game_object, |mesh| {
+                mesh.material = material;
+            });
+        }
+        if missing_skinned_material {
+            scene.write_component::<ComponentSkinnedMesh, _>(game_object, |mesh| {
+                mesh.material = material;
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Loads the skyboxes of the scene's sky lights now. The scene renderer

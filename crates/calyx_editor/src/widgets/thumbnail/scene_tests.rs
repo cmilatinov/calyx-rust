@@ -416,3 +416,23 @@ fn repeated_saves_collapse_into_one_job_for_the_newest_version() {
     assert_eq!(state.pipeline.queued_len(), 1);
     assert_eq!(state.pipeline.start_next().unwrap().key(), newest);
 }
+
+#[test]
+fn a_mesh_without_a_material_renders_with_the_default_material() {
+    let fixture = SceneFixture::new();
+    let mut scene = fixture.scene();
+    let sphere = fixture.add_sphere(&mut scene, Vec3::zeros());
+    scene.write_component::<ComponentMesh, _>(sphere, |mesh| {
+        mesh.material = AssetRef::from_id(Uuid::nil());
+    });
+    add_directional_light(&mut scene);
+    let scene_id = fixture.write("no_material.cxscene", &scene);
+
+    let pixels = fixture.render(scene_id);
+
+    let center = pixel(&pixels, SIZE_PX / 2, SIZE_PX / 2);
+    assert!(
+        center[3] > 0,
+        "the sphere draws even though the scene gives it no material"
+    );
+}
