@@ -6,7 +6,7 @@ use std::path::Path;
 use super::{AssetAccess, AssetRef, LoadedAsset};
 use crate as calyx_engine;
 use crate::assets::error::AssetError;
-use crate::assets::texture::Texture;
+use crate::assets::texture::{Texture, TextureColorSpace};
 use crate::assets::{Asset, AssetId};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
@@ -68,6 +68,11 @@ impl Ord for ShaderVariable {
 }
 
 /// Texture source stored by material texture slots.
+///
+/// The slot decides how the texture's channels are read, not the source: a slot whose shader
+/// variable names a color, base color or emissive, samples an image as sRGB, and every other
+/// slot samples it as linear (see [`Material::texture_color_space`]). A [`Self::Color`] holds
+/// linear values and samples as given in any slot.
 #[derive(Clone, Serialize, Deserialize)]
 pub enum MaterialTexture {
     /// Sample from a texture asset on disk.
@@ -174,6 +179,11 @@ impl ShaderVariableValue {
 }
 
 /// Material asset that binds a shader and its editable variables.
+///
+/// A material file stores the variables it had when it was saved. When it loads, every
+/// variable its shader declares that the file lacks is added with its reflected default (see
+/// [`Material::from_shader`]), so a material saved before its shader gained an input renders
+/// as it did then.
 #[derive(TypeUuid, Serialize)]
 #[uuid = "f98a7f41-84d4-482d-b7af-a670b07035ae"]
 pub struct Material {
@@ -183,6 +193,10 @@ pub struct Material {
     pub variables: Vec<ShaderVariable>,
     #[serde(skip)]
     variable_indices: HashMap<(u32, u32), usize>,
+    /// Color space of each texture slot, keyed by group and binding, from the shader's
+    /// variable names.
+    #[serde(skip)]
+    texture_color_spaces: HashMap<(u32, u32), TextureColorSpace>,
     #[serde(skip)]
     /// Cached bind-group entry metadata keyed by group and binding.
     pub bind_group_entries: BTreeMap<u32, BTreeMap<u32, BindGroupEntry>>,
@@ -222,6 +236,7 @@ enum MaterialBindGroupCacheValue {
     },
     Texture {
         texture_id: AssetId,
+        color_space: TextureColorSpace,
     },
     Sampler {
         texture_id: AssetId,
@@ -278,35 +293,99 @@ impl Asset for Material {
 
 impl Material {
     /// Builds a default material from a shader asset by reflecting its exposed
-    /// variables.
+    /// variables. Each variable takes its reflected default: zero, except white for a color
+    /// and for a texture, the flat normal for a normal texture, and one for the multipliers
+    /// `normal_scale` and `occlusion_strength`.
     pub fn from_shader(assets: &ReadOnlyAssetContext, shader_ref: Ref<Shader>) -> Self {
         let mut material = Self {
-            shader: Some(shader_ref.clone()).into(),
+            shader: Some(shader_ref).into(),
             variables: Default::default(),
             variable_indices: Default::default(),
+            texture_color_spaces: Default::default(),
             bind_group_entries: Default::default(),
             buffers: Default::default(),
         };
-        {
-            let shader = shader_ref.read();
-            for (_, variable) in shader.module.global_variables.iter() {
-                if let Some(binding) = &variable.binding {
-                    let ty = &shader.module.types[variable.ty];
-                    if binding.group >= 3 {
-                        Self::shader_variable(
-                            &shader.module,
-                            ty,
-                            binding,
-                            variable.name.clone().unwrap_or_default(),
-                            None,
-                            &mut material.variables,
-                        );
-                    }
+        material.init(assets);
+        material
+    }
+
+    /// The editable variables `module` declares, each with its reflected default.
+    fn reflect_variables(module: &naga::Module) -> Vec<ShaderVariable> {
+        let mut variables = Vec::new();
+        for (_, variable) in module.global_variables.iter() {
+            if let Some(binding) = &variable.binding {
+                let ty = &module.types[variable.ty];
+                if binding.group >= 3 {
+                    Self::shader_variable(
+                        module,
+                        ty,
+                        binding,
+                        variable.name.clone().unwrap_or_default(),
+                        None,
+                        &mut variables,
+                    );
                 }
             }
         }
-        material.init(assets);
-        material
+        variables
+    }
+
+    /// Adds each variable the shader declares that the material lacks, with its reflected
+    /// default, keeps the variables in binding order, and records each texture slot's color
+    /// space.
+    fn reconcile_with_shader(&mut self, context: &ReadOnlyAssetContext) {
+        let Some(shader_ref) = self.shader.get_ref(&context.registries) else {
+            return;
+        };
+        let shader = shader_ref.read();
+        for variable in Self::reflect_variables(&shader.module) {
+            if !self.variables.contains(&variable) {
+                self.variables.push(variable);
+            }
+        }
+        self.variables.sort();
+        self.texture_color_spaces = shader
+            .module
+            .global_variables
+            .iter()
+            .filter_map(|(_, variable)| {
+                let binding = variable.binding.as_ref()?;
+                matches!(
+                    shader.module.types[variable.ty].inner,
+                    TypeInner::Image { .. }
+                )
+                .then(|| {
+                    let name = variable.name.as_deref().unwrap_or_default();
+                    (
+                        (binding.group, binding.binding),
+                        Self::slot_color_space(name),
+                    )
+                })
+            })
+            .collect();
+    }
+
+    /// Color space of a texture slot named `name` in its shader: sRGB for a color image,
+    /// named as a base color, albedo, diffuse or emissive texture, and linear for data such
+    /// as normals, metallic-roughness and occlusion.
+    fn slot_color_space(name: &str) -> TextureColorSpace {
+        let name = name.to_ascii_lowercase();
+        let is_color = ["color", "albedo", "diffuse", "emissive", "emission"]
+            .iter()
+            .any(|word| name.contains(word));
+        if is_color {
+            TextureColorSpace::Srgb
+        } else {
+            TextureColorSpace::Linear
+        }
+    }
+
+    /// Color space the texture slot at `group` and `binding` samples in.
+    pub fn texture_color_space(&self, group: u32, binding: u32) -> TextureColorSpace {
+        self.texture_color_spaces
+            .get(&(group, binding))
+            .copied()
+            .unwrap_or_default()
     }
 
     pub(crate) fn collect_textures(
@@ -349,7 +428,9 @@ impl Material {
                                         .value
                                         .as_texture(asset_context, default_texture.clone());
                                     wgpu::BindingResource::TextureView(
-                                        &assets.texture(texture.id())?.view,
+                                        assets
+                                            .texture(texture.id())?
+                                            .view_as(self.texture_color_space(*group, *binding)),
                                     )
                                 }
                                 BindingType::Sampler => {
@@ -399,7 +480,10 @@ impl Material {
                                 .value
                                 .as_texture(asset_context, default_texture.clone())
                                 .id();
-                            MaterialBindGroupCacheValue::Texture { texture_id }
+                            MaterialBindGroupCacheValue::Texture {
+                                texture_id,
+                                color_space: self.texture_color_space(*group, *binding),
+                            }
                         }
                         BindingType::Sampler => {
                             let texture_id = self
@@ -460,28 +544,22 @@ impl Material {
         binding: u32,
         default_texture: Ref<Texture>,
     ) -> Ref<Texture> {
-        let mut closest = u32::MAX;
-        let mut closest_index: isize = -1;
-        for (i, var) in self
+        // The nearest texture binding, the lower one on a tie: a sampler declared after its
+        // texture samples that texture.
+        let closest = self
             .variables
             .iter()
-            .enumerate()
-            .filter(|(_, v)| v.group == group)
-        {
-            if let BindingType::Texture = var.value.binding_type() {
-                let diff = (binding as i32 - var.binding as i32).unsigned_abs();
-                if diff < closest {
-                    closest = diff;
-                    closest_index = i as isize;
-                }
-            }
+            .filter(|v| v.group == group && v.value.binding_type() == BindingType::Texture)
+            .min_by_key(|v| {
+                (
+                    (binding as i32 - v.binding as i32).unsigned_abs(),
+                    v.binding,
+                )
+            });
+        match closest {
+            Some(var) => var.value.as_texture(assets, default_texture),
+            None => default_texture,
         }
-        if closest_index < 0 {
-            return default_texture;
-        }
-        self.variables[closest_index as usize]
-            .value
-            .as_texture(assets, default_texture)
     }
 
     fn shader_variable(
@@ -552,13 +630,23 @@ impl Material {
                     _ => None,
                 } {
                     var.span = Some(span as u32);
-                    var.value = value;
+                    var.value = match value {
+                        ShaderVariableValue::Float(_) if Self::is_unit_multiplier(&var.name) => {
+                            ShaderVariableValue::Float(1.0)
+                        }
+                        value => value,
+                    };
                     variables.push(var);
                 }
             }
             TypeInner::Image { dim, arrayed, .. } => {
                 if (*dim, *arrayed) == (ImageDimension::D2, false) {
-                    var.value = ShaderVariableValue::Texture2D(Default::default());
+                    var.value =
+                        ShaderVariableValue::Texture2D(if Self::is_normal_texture(&var.name) {
+                            MaterialTexture::Color(Self::FLAT_NORMAL)
+                        } else {
+                            MaterialTexture::default()
+                        });
                     variables.push(var);
                 }
             }
@@ -583,16 +671,31 @@ impl Material {
         }
     }
 
+    /// Texel of a tangent-space normal texture that leaves the normal as it is.
+    const FLAT_NORMAL: [f32; 4] = [0.5, 0.5, 1.0, 1.0];
+
     fn is_color_variable(name: &str) -> bool {
         let name = name.to_ascii_lowercase();
         name == "color"
             || name.ends_with("_color")
             || name.ends_with(" color")
+            || name.ends_with("_color_factor")
             || name.contains("albedo")
+    }
+
+    /// Whether the float variable `name` multiplies another input, so its neutral default is
+    /// one rather than zero.
+    fn is_unit_multiplier(name: &str) -> bool {
+        matches!(name, "normal_scale" | "occlusion_strength")
+    }
+
+    fn is_normal_texture(name: &str) -> bool {
+        name.to_ascii_lowercase().contains("normal")
     }
 
     #[inline]
     fn init(&mut self, assets: &ReadOnlyAssetContext) {
+        self.reconcile_with_shader(assets);
         self.rebuild_variable_indices();
         self.update_entries(assets);
         self.create_buffers(assets);
@@ -682,6 +785,7 @@ impl From<(&ReadOnlyAssetContext, MaterialData)> for Material {
             shader: value.shader,
             variables: value.variables,
             variable_indices: Default::default(),
+            texture_color_spaces: Default::default(),
             bind_group_entries: Default::default(),
             buffers: Default::default(),
         };
@@ -692,10 +796,205 @@ impl From<(&ReadOnlyAssetContext, MaterialData)> for Material {
 
 #[cfg(test)]
 mod tests {
-    use super::{Material, MaterialTexture, ShaderVariableValue};
+    use super::{Material, MaterialData, MaterialTexture, ShaderVariableValue};
+    use crate::assets::texture::TextureColorSpace;
     use crate::assets::AssetAccess;
+    use crate::context::ReadOnlyAssetContext;
+    use crate::render::Shader;
+    use crate::test_support::TestAssets;
     use serde_json::json;
     use uuid::Uuid;
+
+    /// The PBR scene shader's asset id.
+    const PBR_SHADER: &str = "869cbd32-a789-f19d-3e24-5207f558d1c2";
+
+    fn pbr_from_shader(context: &ReadOnlyAssetContext) -> Material {
+        let shader = context
+            .registries
+            .assets
+            .read()
+            .load::<Shader>("shaders/mesh/pbr")
+            .expect("missing pbr shader");
+        Material::from_shader(context, shader)
+    }
+
+    fn value<'a>(material: &'a Material, name: &str) -> &'a ShaderVariableValue {
+        &material
+            .variables
+            .iter()
+            .find(|variable| variable.name == name)
+            .unwrap_or_else(|| panic!("the material has no {name}"))
+            .value
+    }
+
+    fn float(material: &Material, name: &str) -> f32 {
+        match value(material, name) {
+            ShaderVariableValue::Float(value) => *value,
+            _ => panic!("{name} is not a float"),
+        }
+    }
+
+    fn color_texture(material: &Material, name: &str) -> [f32; 4] {
+        match value(material, name) {
+            ShaderVariableValue::Texture2D(MaterialTexture::Color(color)) => *color,
+            _ => panic!("{name} is not a solid color texture"),
+        }
+    }
+
+    #[test]
+    fn the_pbr_material_reflects_the_gltf_inputs_with_neutral_defaults() {
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+
+        let material = pbr_from_shader(&context);
+
+        let white = [1.0; 4];
+        assert!(matches!(
+            value(&material, "base_color_factor"),
+            ShaderVariableValue::Color(color) if *color == white
+        ));
+        assert_eq!(float(&material, "normal_scale"), 1.0);
+        assert_eq!(float(&material, "occlusion_strength"), 1.0);
+        assert_eq!(float(&material, "alpha_cutoff"), 0.0);
+        assert_eq!(float(&material, "emission_strength"), 0.0);
+        for texture in [
+            "base_color_texture",
+            "metallic_roughness_texture",
+            "emissive_texture",
+            "occlusion_texture",
+        ] {
+            assert_eq!(color_texture(&material, texture), white, "{texture}");
+        }
+        assert_eq!(
+            color_texture(&material, "normal_texture"),
+            [0.5, 0.5, 1.0, 1.0],
+            "the normal texture defaults to the flat normal"
+        );
+        for sampler in [
+            "base_color_sampler",
+            "metallic_roughness_sampler",
+            "normal_sampler",
+            "emissive_sampler",
+            "occlusion_sampler",
+        ] {
+            assert!(matches!(
+                value(&material, sampler),
+                ShaderVariableValue::Sampler
+            ));
+        }
+    }
+
+    #[test]
+    fn color_slots_sample_as_srgb_and_data_slots_as_linear() {
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+
+        let material = pbr_from_shader(&context);
+
+        let expected = [
+            (0, TextureColorSpace::Srgb),
+            (3, TextureColorSpace::Linear),
+            (5, TextureColorSpace::Linear),
+            (7, TextureColorSpace::Srgb),
+            (9, TextureColorSpace::Linear),
+        ];
+        for (binding, color_space) in expected {
+            assert_eq!(
+                material.texture_color_space(3, binding),
+                color_space,
+                "binding {binding}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_material_saved_before_the_gltf_inputs_loads_unchanged_and_gains_their_defaults() {
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let texture = "5a4bf5cf-b76a-65ce-5035-327f358f8017";
+        // The showcase Fox's material as PR #424 saved it.
+        let data: MaterialData = serde_json::from_value(json!({
+            "shader": PBR_SHADER,
+            "variables": [
+                { "group": 3, "binding": 0, "offset": null, "name": "texture_diffuse",
+                  "span": null, "value": { "Texture2D": { "Asset": texture } } },
+                { "group": 3, "binding": 1, "offset": null, "name": "sampler_diffuse",
+                  "span": null, "value": "Sampler" },
+                { "group": 3, "binding": 2, "offset": 0, "name": "metallic", "span": 4,
+                  "value": { "Float": 0.0 } },
+                { "group": 3, "binding": 2, "offset": 4, "name": "roughness", "span": 4,
+                  "value": { "Float": 0.8 } },
+                { "group": 3, "binding": 2, "offset": 8, "name": "ambient_occlusion", "span": 4,
+                  "value": { "Float": 1.0 } }
+            ]
+        }))
+        .expect("the saved material parses");
+
+        let material = Material::from((&context, data));
+
+        assert!(matches!(
+            value(&material, "texture_diffuse"),
+            ShaderVariableValue::Texture2D(MaterialTexture::Asset(asset))
+                if asset.id() == Uuid::parse_str(texture).unwrap()
+        ));
+        assert_eq!(float(&material, "roughness"), 0.8);
+        assert_eq!(float(&material, "ambient_occlusion"), 1.0);
+        assert_eq!(
+            float(&material, "emission_strength"),
+            0.0,
+            "a material saved without emission does not emit"
+        );
+        assert_eq!(float(&material, "normal_scale"), 1.0);
+        assert_eq!(
+            color_texture(&material, "normal_texture"),
+            [0.5, 0.5, 1.0, 1.0]
+        );
+        let reflected = pbr_from_shader(&context);
+        assert_eq!(
+            material.variables.len(),
+            reflected.variables.len(),
+            "every input the shader declares is present once"
+        );
+        assert!(
+            material.variables.is_sorted(),
+            "variables are kept in binding order"
+        );
+        assert_eq!(
+            material.texture_color_space(3, 0),
+            TextureColorSpace::Srgb,
+            "the saved base color slot samples as sRGB"
+        );
+        // Every binding the shader declares has a resource, so the bind groups build.
+        let bindings = material
+            .bind_group_entries
+            .get(&3)
+            .map(|entries| entries.keys().copied().collect::<Vec<_>>());
+        assert_eq!(bindings, Some((0..=10).collect()));
+    }
+
+    #[test]
+    fn the_default_material_file_loads_with_its_saved_values() {
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+
+        let material = context
+            .registries
+            .assets
+            .read()
+            .load::<Material>("materials/default")
+            .expect("the default material loads");
+        let material = material.read();
+
+        assert_eq!(color_texture(&material, "texture_diffuse"), [1.0; 4]);
+        assert_eq!(float(&material, "roughness"), 0.0);
+        assert_eq!(float(&material, "ambient_occlusion"), 0.15);
+        assert_eq!(float(&material, "emission_strength"), 0.0);
+        assert_eq!(float(&material, "occlusion_strength"), 1.0);
+    }
 
     #[test]
     fn color_values_are_buffer_backed_as_vec4_f32() {

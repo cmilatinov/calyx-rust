@@ -1517,7 +1517,7 @@ fn register_object_id(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assets::material::ShaderVariableValue;
+    use crate::assets::material::{MaterialTexture, ShaderVariableValue};
     use crate::assets::skybox::Skybox;
     use crate::assets::AssetRef;
     use crate::component::{
@@ -1930,6 +1930,7 @@ mod tests {
             mesh.indices = cube.indices.clone();
             mesh.vertices = cube.vertices.clone();
             mesh.normals = cube.normals.clone();
+            mesh.tangents = cube.tangents.clone();
             mesh.uvs = cube.uvs.clone();
         }
         mesh.bone_indices = vec![glm::IVec4::new(0, -1, -1, -1); mesh.vertices.len()];
@@ -2026,6 +2027,116 @@ mod tests {
             renderer.pick_game_object(SIZE.0 / 2, SIZE.1 / 2),
             Some(mesh_uuid),
             "the skinned mesh should draw in its rest pose at the origin"
+        );
+    }
+
+    #[test]
+    fn a_skinned_normal_mapped_mesh_skins_its_tangents() {
+        const SIZE: (u32, u32) = (32, 32);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        // A normal texture that bends every normal far along the tangent, lit from one side,
+        // so the shading of the face towards the camera follows where its tangent points.
+        let material = {
+            let registry = read_only_context.registries.assets.read();
+            let shader = registry
+                .load::<Shader>("shaders/mesh/pbr")
+                .expect("missing pbr shader");
+            let mut material = Material::from_shader(&read_only_context, shader);
+            for variable in material.variables.iter_mut() {
+                match variable.name.as_str() {
+                    "normal_texture" => {
+                        variable.value = ShaderVariableValue::Texture2D(MaterialTexture::Color([
+                            0.85, 0.5, 0.7, 1.0,
+                        ]))
+                    }
+                    "roughness" => variable.value = ShaderVariableValue::Float(1.0),
+                    _ => {}
+                }
+            }
+            registry
+                .create_or_update("test/bent_normals".into(), material)
+                .expect("material should be created")
+        };
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let skinned = skinned_cube(
+            &read_only_context,
+            "test/skinned_tangents",
+            "hip",
+            Mat4::identity(),
+        );
+        let turn = glm::rotation(90f32.to_radians(), &Vec3::z());
+        let light = glm::rotation(40f32.to_radians(), &Vec3::y());
+        let (camera, transform) = front_camera(1.0, 5.0);
+        let center = |build: &dyn Fn(&mut SceneBuilder)| {
+            let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+            let sun = builder.spawn("sun");
+            builder.add_component(
+                sun,
+                crate::component::ComponentDirectionalLight {
+                    intensity: 1.0,
+                    ..Default::default()
+                },
+            );
+            builder.set_transform(sun, light);
+            build(&mut builder);
+            let scene = builder.finish();
+            let mut renderer = renderer(&read_only_context, 1, SIZE);
+            renderer.render_scene_base(&camera, &transform, &scene, None, None);
+            renderer.finalize_scene();
+            read_scene_texture(&renderer, &render_context)
+                .get_pixel(SIZE.0 / 2, SIZE.1 / 2)
+                .0
+        };
+
+        let still = center(&|builder| {
+            spawn_mesh(builder, "cube", &cube, &material, Vec3::zeros());
+        });
+        let turned = center(&|builder| {
+            let object = builder.spawn("cube");
+            builder.add_component(
+                object,
+                ComponentMesh {
+                    mesh: AssetRef::from_id(cube.id()),
+                    material: AssetRef::from_id(material.id()),
+                },
+            );
+            builder.set_transform(object, turn);
+        });
+        // The bone holds the quarter turn, so the rest pose turns the cube as the object above.
+        let skinned_turned = center(&|builder| {
+            spawn_skinned_model(
+                builder,
+                &skinned,
+                &material,
+                Mat4::identity(),
+                turn,
+                Vec::new(),
+            );
+        });
+
+        let difference = |a: [u8; 4], b: [u8; 4]| {
+            a.iter()
+                .zip(b)
+                .map(|(a, b)| a.abs_diff(b))
+                .max()
+                .unwrap_or(0)
+        };
+        assert!(
+            difference(still, turned) > 10,
+            "turning the tangents changes the shading: {still:?} and {turned:?}"
+        );
+        assert!(
+            difference(turned, skinned_turned) <= 2,
+            "skinning turns the tangents as the object transform does: {turned:?} and \
+             {skinned_turned:?}"
         );
     }
 
@@ -2312,6 +2423,110 @@ mod tests {
                 "the outline is not pickable at {samples} samples"
             );
         }
+    }
+
+    /// A PBR material registered as `name`, emitting white at strength one through `emissive`
+    /// in its emissive slot.
+    fn emissive_material(
+        context: &ReadOnlyAssetContext,
+        name: &str,
+        emissive: MaterialTexture,
+    ) -> Ref<Material> {
+        let registry = context.registries.assets.read();
+        let shader = registry
+            .load::<Shader>("shaders/mesh/pbr")
+            .expect("missing pbr shader");
+        let mut material = Material::from_shader(context, shader);
+        for variable in material.variables.iter_mut() {
+            match variable.name.as_str() {
+                "emission_color" => variable.value = ShaderVariableValue::Color([1.0; 4]),
+                "emission_strength" => variable.value = ShaderVariableValue::Float(1.0),
+                "emissive_texture" => {
+                    variable.value = ShaderVariableValue::Texture2D(emissive.clone())
+                }
+                _ => {}
+            }
+        }
+        registry
+            .create_or_update(name.into(), material)
+            .expect("material should be created")
+    }
+
+    #[test]
+    fn an_image_in_the_emissive_slot_decodes_as_srgb_and_a_solid_color_stays_linear() {
+        const SIZE: (u32, u32) = (96, 64);
+        // sRGB 188 decodes to linear 0.503.
+        const ENCODED: u8 = 188;
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        let registry = read_only_context.registries.assets.read();
+        let cube = registry.cube().expect("missing cube mesh");
+        let image = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            4,
+            4,
+            image::Rgba([ENCODED, ENCODED, ENCODED, 255]),
+        ));
+        let texture = Texture::from_image(&read_only_context, "test/srgb_gray", image)
+            .expect("the image uploads");
+        let texture = registry
+            .create_or_update("test/srgb_gray".into(), texture)
+            .expect("texture should be created");
+        drop(registry);
+        let decoded = ((f32::from(ENCODED) / 255.0 + 0.055) / 1.055).powf(2.4);
+        let image_material = emissive_material(
+            &read_only_context,
+            "test/emissive_image",
+            MaterialTexture::Asset(AssetRef::from_id(texture.id())),
+        );
+        let decoded_material = emissive_material(
+            &read_only_context,
+            "test/emissive_decoded",
+            MaterialTexture::Color([decoded, decoded, decoded, 1.0]),
+        );
+        let raw = f32::from(ENCODED) / 255.0;
+        let raw_material = emissive_material(
+            &read_only_context,
+            "test/emissive_raw",
+            MaterialTexture::Color([raw, raw, raw, 1.0]),
+        );
+        let left = vec3(-1.6, 0.0, 0.0);
+        let middle = vec3(0.0, 0.0, 0.0);
+        let right = vec3(1.6, 0.0, 0.0);
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        spawn_mesh(&mut builder, "image", &cube, &image_material, left);
+        spawn_mesh(&mut builder, "decoded", &cube, &decoded_material, middle);
+        spawn_mesh(&mut builder, "raw", &cube, &raw_material, right);
+        let scene = builder.finish();
+        let (camera, transform) = front_camera(SIZE.0 as f32 / SIZE.1 as f32, 5.0);
+
+        let mut renderer = SceneRenderer::new(
+            &read_only_context,
+            SceneRendererOptions {
+                clear_color: Color32::BLACK,
+                ..Default::default()
+            },
+            SIZE,
+        )
+        .expect("scene renderer should load its assets");
+        renderer.render_scene_base(&camera, &transform, &scene, None, None);
+        renderer.finalize_scene();
+        let image = read_scene_texture(&renderer, &render_context);
+        let pixel = |position| {
+            let (x, y) = project(&camera, &transform, position, SIZE);
+            image.get_pixel(x, y).0[0]
+        };
+
+        let (image, decoded, raw) = (pixel(left), pixel(middle), pixel(right));
+        assert!(
+            image.abs_diff(decoded) <= 2,
+            "the image emits its decoded value: image {image}, decoded {decoded}"
+        );
+        assert!(
+            raw > decoded + 10,
+            "the raw value is brighter than the decoded one: raw {raw}, decoded {decoded}"
+        );
     }
 
     #[test]

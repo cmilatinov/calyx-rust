@@ -2,12 +2,13 @@
 //! mesh, prefab and animation assets are built from.
 
 mod gltf;
+mod tangents;
 mod ufbx;
 
 use std::collections::HashMap;
 use std::path::Path;
 
-use nalgebra_glm::{Mat4, Quat, Vec2, Vec3};
+use nalgebra_glm::{Mat4, Quat, Vec2, Vec3, Vec4};
 
 use crate::assets::animation::AnimationKeyFrames;
 use crate::assets::error::AssetError;
@@ -29,6 +30,11 @@ pub(crate) struct ImportedMesh {
     pub normals: Vec<Vec3>,
     /// UV channels in use, at most [`MAX_UV_CHANNELS`].
     pub uvs: Vec<Vec<Vec2>>,
+    /// Tangent of each vertex for normal mapping: `xyz` follows increasing U, and `w` is the
+    /// handedness, so the bitangent `cross(normal, tangent.xyz) * w` points to decreasing V, up
+    /// the image, as glTF's tangents do. [`import`] generates them for a mesh whose file has
+    /// none.
+    pub tangents: Vec<Vec4>,
     /// Triangle list, three indices per triangle, in the winding the renderer expects.
     pub indices: Vec<u32>,
     pub bones: Vec<ImportedBone>,
@@ -52,6 +58,8 @@ impl ImportedMesh {
                     None => uvs.resize(uvs.len() + mesh.positions.len(), Vec2::zeros()),
                 }
             }
+            merged.tangents.resize(offset as usize, Vec4::zeros());
+            merged.tangents.extend(mesh.tangents);
             merged.positions.extend(mesh.positions);
             merged.normals.extend(mesh.normals);
             merged
@@ -113,11 +121,17 @@ pub(crate) fn import(path: &Path) -> Result<ImportedScene, AssetError> {
         .extension()
         .and_then(|extension| extension.to_str())
         .map(str::to_ascii_lowercase);
-    match extension.as_deref() {
+    let mut scene = match extension.as_deref() {
         Some("gltf" | "glb") => gltf::import(path),
         _ => ufbx::import(path),
     }
-    .map_err(|error| error.with_path(path))
+    .map_err(|error| error.with_path(path))?;
+    for mesh in &mut scene.meshes {
+        if mesh.tangents.len() != mesh.positions.len() {
+            tangents::generate(mesh);
+        }
+    }
+    Ok(scene)
 }
 
 /// Builds an [`ImportedMesh`] from triangle corners, merging corners whose attributes are
@@ -135,6 +149,7 @@ struct CornerKey {
     position: [u32; 3],
     normal: [u32; 3],
     uvs: [[u32; 2]; MAX_UV_CHANNELS],
+    tangent: Option<[u32; 4]>,
 }
 
 /// One triangle corner before merging.
@@ -147,6 +162,9 @@ struct Corner {
     normal: Vec3,
     /// UVs with the origin at the top left, as the renderer samples them.
     uvs: [Vec2; MAX_UV_CHANNELS],
+    /// Tangent given by the file, as [`ImportedMesh::tangents`] holds it. A mesh's corners all
+    /// carry one or none.
+    tangent: Option<Vec4>,
 }
 
 impl MeshBuilder {
@@ -157,6 +175,7 @@ impl MeshBuilder {
                 positions: Vec::new(),
                 normals: Vec::new(),
                 uvs: vec![Vec::new(); uv_channels.min(MAX_UV_CHANNELS)],
+                tangents: Vec::new(),
                 indices: Vec::new(),
                 bones: Vec::new(),
             },
@@ -179,6 +198,7 @@ impl MeshBuilder {
             position: corner.position.map(value_bits).into(),
             normal: corner.normal.map(value_bits).into(),
             uvs: uvs.map(|uv| uv.map(value_bits).into()),
+            tangent: corner.tangent.map(|tangent| tangent.map(value_bits).into()),
         };
         let next = self.mesh.positions.len() as u32;
         *self.corners.entry(key).or_insert_with(|| {
@@ -186,6 +206,9 @@ impl MeshBuilder {
             self.mesh.normals.push(corner.normal);
             for (channel, uv) in self.mesh.uvs.iter_mut().zip(uvs) {
                 channel.push(uv);
+            }
+            if let Some(tangent) = corner.tangent {
+                self.mesh.tangents.push(tangent);
             }
             self.control_points.push(corner.control_point);
             next

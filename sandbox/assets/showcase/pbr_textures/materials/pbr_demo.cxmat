@@ -1,0 +1,93 @@
+{
+  "shader": "869cbd32-a789-f19d-3e24-5207f558d1c2",
+  "variables": [
+    {
+      "group": 3,
+      "binding": 0,
+      "offset": null,
+      "name": "base_color_texture",
+      "span": null,
+      "value": {
+        "Texture2D": {
+          "Color": [1.0, 1.0, 1.0, 1.0]
+        }
+      }
+    },
+    {
+      "group": 3,
+      "binding": 2,
+      "offset": 0,
+      "name": "metallic",
+      "span": 4,
+      "value": {
+        "Float": 1.0
+      }
+    },
+    {
+      "group": 3,
+      "binding": 2,
+      "offset": 4,
+      "name": "roughness",
+      "span": 4,
+      "value": {
+        "Float": 1.0
+      }
+    },
+    {
+      "group": 3,
+      "binding": 2,
+      "offset": 8,
+      "name": "ambient_occlusion",
+      "span": 4,
+      "value": {
+        "Float": 1.0
+      }
+    },
+    {
+      "group": 3,
+      "binding": 2,
+      "offset": 32,
+      "name": "base_color_factor",
+      "span": 16,
+      "value": {
+        "Color": [0.95, 0.64, 0.54, 1.0]
+      }
+    },
+    {
+      "group": 3,
+      "binding": 3,
+      "offset": null,
+      "name": "metallic_roughness_texture",
+      "span": null,
+      "value": {
+        "Texture2D": {
+          "Asset": "d62dce2f-f937-4f84-bb2e-c61f68108bf9"
+        }
+      }
+    },
+    {
+      "group": 3,
+      "binding": 5,
+      "offset": null,
+      "name": "normal_texture",
+      "span": null,
+      "value": {
+        "Texture2D": {
+          "Asset": "49dabd13-b627-4a8a-b103-8dc278a7444b"
+        }
+      }
+    },
+    {
+      "group": 3,
+      "binding": 9,
+      "offset": null,
+      "name": "occlusion_texture",
+      "span": null,
+      "value": {
+        "Texture2D": {
+          "Asset": "d62dce2f-f937-4f84-bb2e-c61f68108bf9"
+        }
+      }
+    }
+  ]
+}

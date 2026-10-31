@@ -42,17 +42,18 @@ fn pbr(
     l: vec3f,
     albedo: vec3f,
     radiance: vec3f,
-    material: MaterialProperties
+    metallic: f32,
+    roughness: f32
 ) -> vec3f {
     let h = normalize(v + l);
-    let f0 = mix(vec3f(0.04), albedo, material.metallic);
+    let f0 = mix(vec3f(0.04), albedo, metallic);
 
-    let ndf = d(n, h, material.roughness);
-    let g = g(n, v, l, material.roughness);
+    let ndf = d(n, h, roughness);
+    let g = g(n, v, l, roughness);
     let f = f(f0, v, h, 0.0);
 
     let ks = f;
-    let kd = (vec3f(1.0) - ks) * (1.0 - material.metallic);
+    let kd = (vec3f(1.0) - ks) * (1.0 - metallic);
 
     let n_dot_l = max(dot(n, l), 0.0);
     let n_dot_v = max(dot(n, v), 0.0);

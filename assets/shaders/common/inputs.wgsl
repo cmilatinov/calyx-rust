@@ -7,5 +7,8 @@ struct VertexIn {
     @location(4) uv2: vec2f,
     @location(5) uv3: vec2f,
     @location(6) bone_indices: vec4i,
-    @location(7) bone_weights: vec4f
+    @location(7) bone_weights: vec4f,
+    // xyz along increasing U; w is the handedness of cross(normal, tangent.xyz), which points
+    // up the image.
+    @location(8) tangent: vec4f
 };

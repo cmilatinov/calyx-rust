@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "d62dce2f-f937-4f84-bb2e-c61f68108bf9",
+    "name": "showcase/pbr_textures/textures/pbr_demo_orm",
+    "display_name": "pbr_demo_orm",
+    "type_uuid": "8ba4ccec-85ab-45f5-b4ee-2e803ef548a2"
+  },
+  "inner": []
+}
