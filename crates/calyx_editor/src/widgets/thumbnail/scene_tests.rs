@@ -259,6 +259,22 @@ fn preview_lighting_is_only_for_scenes_without_lights() {
 }
 
 #[test]
+fn an_enabled_spot_light_counts_as_a_scene_light() {
+    let fixture = SceneFixture::new();
+    let mut scene = fixture.scene();
+    fixture.add_sphere(&mut scene, Vec3::zeros());
+    let light = scene.create(None, None);
+    scene.add_component(light, ComponentSpotLight::default());
+    assert!(scene_has_light(&scene));
+
+    assert!(scene.set_component_enabled::<ComponentSpotLight>(light, false));
+    assert!(
+        !scene_has_light(&scene),
+        "a disabled spot light lights nothing"
+    );
+}
+
+#[test]
 fn an_empty_scene_still_yields_a_valid_thumbnail() {
     let fixture = SceneFixture::new();
     let scene_id = fixture.write("empty.cxscene", &fixture.scene());

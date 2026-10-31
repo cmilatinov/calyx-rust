@@ -198,36 +198,24 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
 
     var color = vec3f(0.0);
 
-    // Point lights
-    for (var i = 0u; i < point_lights.size; i++) {
-        let light = point_lights.lights[i];
-        let to_light = light.position - in.world_position;
-        let dist = length(to_light);
-        if dist > light.radius {
-            continue;
-        }
-        let l = normalize(to_light);
+    // The lights are grouped by kind (see `LightStorage`): one loop per kind over its range.
+    let directional_end = light_storage.directional_count;
+    let point_end = directional_end + light_storage.point_count;
+    let spot_end = point_end + light_storage.spot_count;
 
-        let r = light.radius;
-        let a = max((999.0 - r) / (r * r), 0.0);
-        let attenuation = 1.0 / ((a * dist * dist) + dist + 1.0);
-
-        color += pbr(
-            n,
-            v,
-            l,
-            albedo.rgb,
-            light.color * light.intensity * attenuation,
-            metallic,
-            roughness
-        );
+    for (var i = 0u; i < directional_end; i++) {
+        let incidence = directional_radiance(light_storage.lights[i]);
+        color += pbr(n, v, incidence.l, albedo.rgb, incidence.radiance, metallic, roughness);
     }
 
-    // Directional lights
-    for (var i = 0u; i < directional_lights.size; i++) {
-        let light = directional_lights.lights[i];
-        let l = normalize(-light.direction);
-        color += pbr(n, v, l, albedo.rgb, light.color * light.intensity, metallic, roughness);
+    for (var i = directional_end; i < point_end; i++) {
+        let incidence = point_radiance(light_storage.lights[i], in.world_position);
+        color += pbr(n, v, incidence.l, albedo.rgb, incidence.radiance, metallic, roughness);
+    }
+
+    for (var i = point_end; i < spot_end; i++) {
+        let incidence = spot_radiance(light_storage.lights[i], in.world_position);
+        color += pbr(n, v, incidence.l, albedo.rgb, incidence.radiance, metallic, roughness);
     }
 
     // Ambient light

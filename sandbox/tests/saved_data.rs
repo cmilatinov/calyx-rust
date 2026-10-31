@@ -17,8 +17,8 @@ use calyx_engine::component::{
     ComponentAmbientLight, ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom,
     ComponentCamera, ComponentCollider, ComponentColorGrading, ComponentDepthOfField,
     ComponentDirectionalLight, ComponentGlobalPostProcessVolume, ComponentParticleSystem,
-    ComponentPointLight, ComponentRigidBody, ComponentSkyLight, ComponentTonemap,
-    ComponentVignette,
+    ComponentPointLight, ComponentRigidBody, ComponentSkyLight, ComponentSpotLight,
+    ComponentTonemap, ComponentVignette,
 };
 use calyx_engine::context::AssetContext;
 use calyx_engine::scene::{Prefab, Scene};
@@ -245,6 +245,7 @@ fn saved_scenes_and_prefabs_hold_no_legacy_enabled_fields() {
 fn legacy_light_active_fields(scene: &Value) -> Vec<(String, Uuid)> {
     let lights = [
         ComponentPointLight::type_uuid(),
+        ComponentSpotLight::type_uuid(),
         ComponentDirectionalLight::type_uuid(),
         ComponentAmbientLight::type_uuid(),
         ComponentSkyLight::type_uuid(),

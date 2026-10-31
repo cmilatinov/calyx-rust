@@ -2682,6 +2682,154 @@ mod tests {
         );
     }
 
+    /// Renders a wide flat box facing the camera, lit only by a spot light 2 units in front of
+    /// it pointing straight at it, and returns the red channel at each of `points` on its face.
+    /// With `other_lights`, the scene also holds a black directional light shining at the face
+    /// and a point light out of range of it, which light nothing but come before the spot light
+    /// in the light storage buffer.
+    fn spot_lit_plane<const N: usize>(
+        inner_angle: f32,
+        outer_angle: f32,
+        other_lights: bool,
+        points: [Vec3; N],
+    ) -> [u8; N] {
+        const SIZE: (u32, u32) = (96, 96);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let material = pbr_material(&read_only_context, "test/spot_lit_plane");
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        let plane = builder.spawn("plane");
+        builder.add_component(
+            plane,
+            ComponentMesh {
+                mesh: AssetRef::from_id(cube.id()),
+                material: AssetRef::from_id(material.id()),
+            },
+        );
+        // The cube spans -1..1, so the face towards the camera sits at z = -0.05.
+        builder.set_transform(plane, glm::scaling(&vec3(3.0, 3.0, 0.05)));
+        let light = builder.spawn("spot");
+        builder.add_component(
+            light,
+            crate::component::ComponentSpotLight {
+                intensity: 20.0,
+                range: 10.0,
+                inner_angle,
+                outer_angle,
+                ..Default::default()
+            },
+        );
+        // An identity rotation points the light along +Z, at the plane.
+        builder.set_transform(light, glm::translation(&vec3(0.0, 0.0, -2.05)));
+        if other_lights {
+            let sun = builder.spawn("sun");
+            builder.add_component(
+                sun,
+                crate::component::ComponentDirectionalLight {
+                    color: Color32::BLACK,
+                    intensity: 20.0,
+                },
+            );
+            let lamp = builder.spawn("lamp");
+            builder.add_component(
+                lamp,
+                crate::component::ComponentPointLight {
+                    intensity: 20.0,
+                    radius: 1.0,
+                    ..Default::default()
+                },
+            );
+            builder.set_transform(lamp, glm::translation(&vec3(0.0, 0.0, -20.0)));
+        }
+        let scene = builder.finish();
+        let (camera, transform) = front_camera(1.0, 5.0);
+        let mut renderer = SceneRenderer::new(
+            &read_only_context,
+            SceneRendererOptions {
+                clear_color: Color32::BLACK,
+                ..Default::default()
+            },
+            SIZE,
+        )
+        .expect("scene renderer should load its assets");
+        renderer.render_scene_base(&camera, &transform, &scene, None, None);
+        renderer.finalize_scene();
+        let image = read_scene_texture(&renderer, &render_context);
+        points.map(|point| {
+            let (x, y) = project(&camera, &transform, point, SIZE);
+            image.get_pixel(x, y).0[0]
+        })
+    }
+
+    /// The point on the plane's face `degrees` off the spot light's axis.
+    fn off_axis(degrees: f32) -> Vec3 {
+        vec3(2.0 * degrees.to_radians().tan(), 0.0, -0.05)
+    }
+
+    #[test]
+    fn a_spot_light_lights_its_inner_cone_fully_fades_across_the_band_and_stops_outside() {
+        let [axis, inner, band, outside] = spot_lit_plane(
+            10.0,
+            30.0,
+            false,
+            [off_axis(0.0), off_axis(6.0), off_axis(20.0), off_axis(40.0)],
+        );
+        assert!(axis > 40, "the plane is lit on the cone axis, got {axis}");
+        assert!(
+            inner.abs_diff(axis) <= 12,
+            "inside the inner cone the light is full: axis {axis}, inner {inner}"
+        );
+        assert!(
+            band > 0 && band + 10 < inner,
+            "the falloff band is dimmer than the inner cone but lit: inner {inner}, band {band}"
+        );
+        assert_eq!(outside, 0, "outside the outer cone the plane is dark");
+    }
+
+    #[test]
+    fn a_spot_light_with_equal_cones_has_a_hard_edge() {
+        let [axis, edge_inside, edge_outside] = spot_lit_plane(
+            25.0,
+            25.0,
+            false,
+            [off_axis(0.0), off_axis(22.0), off_axis(28.0)],
+        );
+        assert!(axis > 40, "the plane is lit on the cone axis, got {axis}");
+        assert!(
+            edge_inside > 20,
+            "just inside the cone is lit, not NaN black: {edge_inside}"
+        );
+        assert_eq!(edge_outside, 0, "just outside the cone is dark");
+    }
+
+    #[test]
+    fn a_spot_light_after_directional_and_point_lights_shades_from_its_own_range() {
+        let [alone_axis, alone_outside] =
+            spot_lit_plane(10.0, 30.0, false, [off_axis(0.0), off_axis(40.0)]);
+        let [axis, outside] = spot_lit_plane(10.0, 30.0, true, [off_axis(0.0), off_axis(40.0)]);
+        assert!(
+            axis > 40,
+            "the spot light still lights its axis, got {axis}"
+        );
+        assert!(
+            axis.abs_diff(alone_axis) <= 2,
+            "the other lights add nothing on the axis: {alone_axis} alone, {axis} with them"
+        );
+        assert_eq!(
+            (alone_outside, outside),
+            (0, 0),
+            "outside the cone stays dark, so no loop read the spot light as another kind"
+        );
+    }
+
     #[test]
     fn only_views_that_show_an_overlay_allocate_the_overlay_target() {
         let assets = TestAssets::engine();
