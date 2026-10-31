@@ -11,14 +11,14 @@ use calyx_engine::assets::material::Material;
 use calyx_engine::assets::mesh::Mesh;
 use calyx_engine::assets::skybox::Skybox;
 use calyx_engine::assets::texture::Texture;
-use calyx_engine::assets::{AssetRef, AssetRegistry};
+use calyx_engine::assets::{Asset, AssetAccess, AssetRef, AssetRegistry};
 use calyx_engine::component::{
     ComponentAmbientLight, ComponentDirectionalLight, ComponentMesh, ComponentPointLight,
-    ComponentSkinnedMesh,
+    ComponentSkinnedMesh, ComponentSkyLight,
 };
 use calyx_engine::context::ReadOnlyAssetContext;
 use calyx_engine::math::Transform;
-use calyx_engine::render::{Camera, SceneRenderer, SceneRendererOptions, Shader};
+use calyx_engine::render::{Camera, RenderContext, SceneRenderer, SceneRendererOptions, Shader};
 use calyx_engine::scene::{GameObject, Prefab, Scene};
 use calyx_engine::utils::TypeUuid;
 use eframe::wgpu;
@@ -37,6 +37,8 @@ mod handle;
 #[cfg(test)]
 mod handle_tests;
 mod pipeline;
+#[cfg(test)]
+mod scene_tests;
 mod service;
 #[cfg(test)]
 mod tests;
@@ -160,6 +162,14 @@ impl ThumbnailRequest {
             || asset_type == Mesh::type_uuid()
             || asset_type == Prefab::type_uuid()
             || asset_type == Skybox::type_uuid()
+            || asset_type == Scene::type_uuid()
+    }
+
+    /// Whether this request needs the project assemblies loaded before it
+    /// can render. A scene holds project components, which a load before
+    /// the assemblies would silently drop, so its job waits for them.
+    pub fn needs_project_assemblies(&self) -> bool {
+        self.asset_type == Scene::type_uuid()
     }
 
     pub fn key(&self) -> ThumbnailKey {
@@ -228,51 +238,82 @@ fn asset_source_version(
     u64::from_le_bytes(digest[0..8].try_into().unwrap_or_default())
 }
 
+/// The registered assets the asset file at `path` references, for the file
+/// types whose thumbnails show other assets: materials, prefabs and scenes.
+///
+/// The UUIDs a file holds are memoized by its path and file version, so the
+/// UI's periodic source-version checks parse a large scene file again only
+/// after it changes.
 fn referenced_asset_ids(registry: &AssetRegistry, path: Option<&Path>) -> Vec<Uuid> {
     let Some(path) = path else {
         return Vec::new();
     };
     if !matches!(
         path.extension().and_then(|ext| ext.to_str()),
-        Some("cxmat" | "cxprefab")
+        Some("cxmat" | "cxprefab" | "cxscene")
     ) {
         return Vec::new();
     }
-    let Ok(file) = fs::File::open(path) else {
-        return Vec::new();
-    };
-    let Ok(value) = serde_json::from_reader::<_, serde_json::Value>(file) else {
-        return Vec::new();
-    };
-
-    let mut ids = Vec::new();
-    collect_asset_ids_from_json(registry, &value, &mut ids);
-    ids.sort_unstable();
-    ids.dedup();
+    let file_version = source_version(Some(path));
+    let mut ids = file_uuids(path, file_version);
+    ids.retain(|id| registry.asset_meta_from_id(*id).is_some());
     ids
 }
 
-fn collect_asset_ids_from_json(
-    registry: &AssetRegistry,
-    value: &serde_json::Value,
-    ids: &mut Vec<Uuid>,
-) {
+/// Every UUID string in the JSON file at `path`, sorted and deduplicated,
+/// memoized by `(path, file_version)`.
+fn file_uuids(path: &Path, file_version: u64) -> Vec<Uuid> {
+    type FileUuidMemo = HashMap<PathBuf, (u64, Arc<Vec<Uuid>>)>;
+    static MEMO: Mutex<Option<FileUuidMemo>> = Mutex::new(None);
+    const MEMO_LIMIT: usize = 4096;
+
+    if let Some((version, ids)) = MEMO
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .as_ref()
+        .and_then(|memo| memo.get(path))
+    {
+        if *version == file_version {
+            return ids.as_ref().clone();
+        }
+    }
+
+    let ids = fs::File::open(path)
+        .ok()
+        .and_then(|file| serde_json::from_reader::<_, serde_json::Value>(file).ok())
+        .map(|value| {
+            let mut ids = Vec::new();
+            collect_uuids_from_json(&value, &mut ids);
+            ids.sort_unstable();
+            ids.dedup();
+            ids
+        })
+        .unwrap_or_default();
+
+    let mut memo = MEMO.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let memo = memo.get_or_insert_with(HashMap::new);
+    if memo.len() >= MEMO_LIMIT {
+        memo.clear();
+    }
+    memo.insert(path.to_path_buf(), (file_version, Arc::new(ids.clone())));
+    ids
+}
+
+fn collect_uuids_from_json(value: &serde_json::Value, ids: &mut Vec<Uuid>) {
     match value {
         serde_json::Value::String(value) => {
             if let Ok(id) = Uuid::parse_str(value) {
-                if registry.asset_meta_from_id(id).is_some() {
-                    ids.push(id);
-                }
+                ids.push(id);
             }
         }
         serde_json::Value::Array(values) => {
             for value in values {
-                collect_asset_ids_from_json(registry, value, ids);
+                collect_uuids_from_json(value, ids);
             }
         }
         serde_json::Value::Object(values) => {
             for value in values.values() {
-                collect_asset_ids_from_json(registry, value, ids);
+                collect_uuids_from_json(value, ids);
             }
         }
         _ => {}
@@ -290,6 +331,8 @@ fn thumbnail_asset_type_name(asset_type: Uuid) -> &'static str {
         "prefab"
     } else if asset_type == Skybox::type_uuid() {
         "skybox"
+    } else if asset_type == Scene::type_uuid() {
+        "scene"
     } else {
         "unknown"
     }

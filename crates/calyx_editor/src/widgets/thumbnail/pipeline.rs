@@ -99,10 +99,22 @@ impl ThumbnailPipeline {
     }
 
     pub fn start_next(&mut self) -> Option<ThumbnailJob> {
+        self.start_next_where(|_| true)
+    }
+
+    /// Starts the highest-priority queued job `can_start` accepts. The jobs
+    /// it refuses stay queued with their priority, so a job waiting on
+    /// something, such as a scene waiting on the project assemblies, is
+    /// deferred rather than failed.
+    pub fn start_next_where(
+        &mut self,
+        can_start: impl Fn(&ThumbnailJob) -> bool,
+    ) -> Option<ThumbnailJob> {
         let index = self
             .queued
             .iter()
             .enumerate()
+            .filter(|(_, job)| can_start(job))
             .max_by_key(|(_, job)| (job.priority, std::cmp::Reverse(job.requested_at)))
             .map(|(index, _)| index)?;
         let job = self.queued.remove(index);

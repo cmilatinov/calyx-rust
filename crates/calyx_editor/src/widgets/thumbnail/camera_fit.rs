@@ -142,6 +142,46 @@ pub(super) fn scene_mesh_camera_fit(
     CameraFit::from_points(points)
 }
 
+/// Fits the bounds of every mesh in `scene`: the corners of each mesh's
+/// local bounds in world space. A scene can hold far more vertices than a
+/// prefab, and the fit searches over every point, so it frames the boxes
+/// rather than the vertices. `None` when the scene has no mesh.
+pub(super) fn scene_bounds_camera_fit(
+    context: &ReadOnlyAssetContext,
+    scene: &Scene,
+) -> Option<CameraFit> {
+    let mut local_bounds = HashMap::<Uuid, Option<Bounds>>::new();
+    let mut points = Vec::new();
+    for game_object in scene.objects() {
+        let mesh_ids = [
+            scene.read_component::<ComponentMesh, _, _>(game_object, |component| {
+                component.mesh.id()
+            }),
+            scene.read_component::<ComponentSkinnedMesh, _, _>(game_object, |component| {
+                component.mesh.id()
+            }),
+        ];
+        for mesh_id in mesh_ids.into_iter().flatten() {
+            let bounds = *local_bounds.entry(mesh_id).or_insert_with(|| {
+                AssetRef::<Mesh>::from_id(mesh_id)
+                    .get_ref(&context.registries)
+                    .and_then(|mesh| Bounds::from_points(&mesh.read().vertices))
+            });
+            let Some(bounds) = bounds else {
+                continue;
+            };
+            let transform = scene.world_transform(game_object);
+            points.extend(
+                bounds
+                    .corners()
+                    .iter()
+                    .map(|corner| transform.transform_position(corner)),
+            );
+        }
+    }
+    CameraFit::from_points(points)
+}
+
 fn append_transformed_mesh_points(points: &mut Vec<Vec3>, mesh: &Mesh, transform: &Transform) {
     points.reserve(mesh.vertices.len());
     for vertex in &mesh.vertices {

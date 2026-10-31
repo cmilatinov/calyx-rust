@@ -181,14 +181,23 @@ impl ThumbnailRequestMemo {
             }
         }
 
-        if self.entries.len() >= Self::PRUNE_THRESHOLD {
+        self.insert(asset_id, now, compute())
+    }
+
+    /// Replaces the memoized request for `asset_id` with `request`, computed
+    /// at `now`, and returns it.
+    pub(super) fn insert(
+        &mut self,
+        asset_id: Uuid,
+        now: Instant,
+        request: Option<ThumbnailRequest>,
+    ) -> Option<ThumbnailRequest> {
+        if self.entries.len() >= Self::PRUNE_THRESHOLD && !self.entries.contains_key(&asset_id) {
             let refresh_interval = self.refresh_interval;
             self.entries.retain(|_, entry| {
                 now.saturating_duration_since(entry.computed_at) < refresh_interval
             });
         }
-
-        let request = compute();
         self.entries.insert(
             asset_id,
             ThumbnailRequestMemoEntry {
@@ -228,6 +237,34 @@ impl ThumbnailHandle {
     /// Whether both handles point at the same service.
     pub fn ptr_eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.shared, &other.shared)
+    }
+
+    /// Requests the thumbnail of the asset `asset_id` again for its current
+    /// source, at `priority`, for an asset that just changed, such as a scene
+    /// the editor saved. The request is computed now instead of reusing the
+    /// memoized one, and it replaces the queued job for any older version of
+    /// the asset, so repeated changes leave one job for the newest version.
+    /// Returns the request's key, or `None` when the asset is unknown or has
+    /// no thumbnail.
+    pub fn refresh_asset(
+        &self,
+        registry: &AssetRegistry,
+        asset_id: Uuid,
+        priority: ThumbnailPriority,
+    ) -> Option<ThumbnailKey> {
+        let request = self
+            .shared
+            .requests
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(
+                asset_id,
+                Instant::now(),
+                ThumbnailRequest::from_asset_id(registry, asset_id),
+            )?;
+        let key = request.key();
+        request_thumbnail(&self.shared, request, priority);
+        Some(key)
     }
 
     /// Requests the thumbnail of the asset at `path` and returns what to draw.

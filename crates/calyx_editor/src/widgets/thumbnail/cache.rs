@@ -83,11 +83,11 @@ impl ThumbnailCache {
 
     pub(super) fn store(
         &self,
-        render_state: &RenderState,
+        gpu: &RenderContext,
         request: &ThumbnailRequest,
         texture: &Texture,
     ) -> Result<(), String> {
-        let pixels = read_texture_rgba8(render_state, texture, self.size_px)?;
+        let pixels = read_texture_rgba8(gpu, texture, self.size_px)?;
         let image: RgbaImage = ImageBuffer::from_vec(self.size_px, self.size_px, pixels)
             .ok_or_else(|| "thumbnail readback returned an unexpected byte count".to_string())?;
         let path = self.path(request);
@@ -297,8 +297,8 @@ pub(super) fn thumbnail_storage_view(texture: &Texture) -> wgpu::TextureView {
     })
 }
 
-fn read_texture_rgba8(
-    render_state: &RenderState,
+pub(super) fn read_texture_rgba8(
+    gpu: &RenderContext,
     texture: &Texture,
     expected_size_px: u32,
 ) -> Result<Vec<u8>, String> {
@@ -327,15 +327,15 @@ fn read_texture_rgba8(
     let unpadded_bytes_per_row = width * bytes_per_pixel;
     let padded_bytes_per_row = align_to(unpadded_bytes_per_row, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
     let output_buffer_size = padded_bytes_per_row as u64 * height as u64;
-    let output_buffer = render_state.device.create_buffer(&wgpu::BufferDescriptor {
+    let output_buffer = gpu.device().create_buffer(&wgpu::BufferDescriptor {
         label: Some("thumbnail_cache_readback"),
         size: output_buffer_size,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
 
-    let mut encoder = render_state
-        .device
+    let mut encoder = gpu
+        .device()
         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("thumbnail_cache_readback"),
         });
@@ -360,7 +360,7 @@ fn read_texture_rgba8(
             depth_or_array_layers: 1,
         },
     );
-    render_state.queue.submit(Some(encoder.finish()));
+    gpu.queue().submit(Some(encoder.finish()));
 
     let slice = output_buffer.slice(..);
     let (tx, rx) = mpsc::channel();
@@ -369,7 +369,7 @@ fn read_texture_rgba8(
     });
 
     loop {
-        let _ = render_state.device.poll(wgpu::Maintain::Poll);
+        let _ = gpu.device().poll(wgpu::Maintain::Poll);
         match rx.try_recv() {
             Ok(Ok(())) => break,
             Ok(Err(err)) => return Err(format!("thumbnail cache readback failed: {err:?}")),

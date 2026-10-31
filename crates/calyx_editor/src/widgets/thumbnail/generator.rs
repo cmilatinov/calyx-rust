@@ -21,23 +21,26 @@ impl ThumbnailGenerator {
     pub(super) fn generate(
         &mut self,
         context: &ReadOnlyAssetContext,
-        render_state: &RenderState,
+        gpu: &RenderContext,
         request: &ThumbnailRequest,
     ) -> Result<Texture, String> {
         if request.asset_type == Texture::type_uuid() {
-            return self.generate_texture_thumbnail(context, render_state, request.asset_id);
+            return self.generate_texture_thumbnail(context, gpu, request.asset_id);
         }
         if request.asset_type == Material::type_uuid() {
-            return self.generate_material_thumbnail(context, render_state, request.asset_id);
+            return self.generate_material_thumbnail(context, gpu, request.asset_id);
         }
         if request.asset_type == Mesh::type_uuid() {
-            return self.generate_mesh_thumbnail(context, render_state, request.asset_id);
+            return self.generate_mesh_thumbnail(context, gpu, request.asset_id);
         }
         if request.asset_type == Prefab::type_uuid() {
-            return self.generate_prefab_thumbnail(context, render_state, request.asset_id);
+            return self.generate_prefab_thumbnail(context, gpu, request.asset_id);
         }
         if request.asset_type == Skybox::type_uuid() {
-            return self.generate_skybox_thumbnail(context, render_state, request);
+            return self.generate_skybox_thumbnail(context, gpu, request);
+        }
+        if request.asset_type == Scene::type_uuid() {
+            return self.generate_scene_thumbnail(context, gpu, request);
         }
         Err(format!(
             "unsupported thumbnail asset type {}",
@@ -48,7 +51,7 @@ impl ThumbnailGenerator {
     fn generate_texture_thumbnail(
         &mut self,
         context: &ReadOnlyAssetContext,
-        render_state: &RenderState,
+        gpu: &RenderContext,
         asset_id: Uuid,
     ) -> Result<Texture, String> {
         let texture_ref = context
@@ -69,18 +72,13 @@ impl ThumbnailGenerator {
         let Some(downscaler) = &self.texture_downscaler else {
             return Err("texture thumbnail downscaler was not initialized".into());
         };
-        Ok(downscaler.downscale(
-            context,
-            render_state,
-            &texture,
-            self.render_settings.size_px,
-        ))
+        Ok(downscaler.downscale(context, gpu, &texture, self.render_settings.size_px))
     }
 
     fn generate_material_thumbnail(
         &mut self,
         context: &ReadOnlyAssetContext,
-        render_state: &RenderState,
+        gpu: &RenderContext,
         asset_id: Uuid,
     ) -> Result<Texture, String> {
         let material_ref = context
@@ -111,7 +109,7 @@ impl ThumbnailGenerator {
         add_preview_lighting(&mut scene);
         self.render_scene_thumbnail(
             context,
-            render_state,
+            gpu,
             &scene,
             camera_fit,
             self.render_settings.frame_margin,
@@ -121,7 +119,7 @@ impl ThumbnailGenerator {
     fn generate_mesh_thumbnail(
         &mut self,
         context: &ReadOnlyAssetContext,
-        render_state: &RenderState,
+        gpu: &RenderContext,
         asset_id: Uuid,
     ) -> Result<Texture, String> {
         let mesh_ref = context
@@ -147,7 +145,7 @@ impl ThumbnailGenerator {
         add_preview_lighting(&mut scene);
         self.render_scene_thumbnail(
             context,
-            render_state,
+            gpu,
             &scene,
             camera_fit,
             self.render_settings.frame_margin,
@@ -157,7 +155,7 @@ impl ThumbnailGenerator {
     fn generate_skybox_thumbnail(
         &mut self,
         context: &ReadOnlyAssetContext,
-        render_state: &RenderState,
+        gpu: &RenderContext,
         request: &ThumbnailRequest,
     ) -> Result<Texture, String> {
         let source_path = request
@@ -177,18 +175,13 @@ impl ThumbnailGenerator {
         let Some(downscaler) = &self.skybox_front_face_downscaler else {
             return Err("skybox thumbnail downscaler was not initialized".into());
         };
-        Ok(downscaler.downscale_front_face(
-            context,
-            render_state,
-            &source,
-            self.render_settings.size_px,
-        ))
+        Ok(downscaler.downscale_front_face(context, gpu, &source, self.render_settings.size_px))
     }
 
     fn generate_prefab_thumbnail(
         &mut self,
         context: &ReadOnlyAssetContext,
-        render_state: &RenderState,
+        gpu: &RenderContext,
         asset_id: Uuid,
     ) -> Result<Texture, String> {
         let prefab_ref = context
@@ -208,23 +201,69 @@ impl ThumbnailGenerator {
         add_preview_lighting(&mut scene);
         self.render_scene_thumbnail(
             context,
-            render_state,
+            gpu,
             &scene,
             camera_fit,
             self.render_settings.frame_margin,
         )
     }
 
+    /// Renders the scene at the request's `.cxscene` file as authored: loaded
+    /// straight from the file, never through the registry's shared copy, so
+    /// a scene open and edited in the editor is never replaced.
+    fn generate_scene_thumbnail(
+        &mut self,
+        context: &ReadOnlyAssetContext,
+        gpu: &RenderContext,
+        request: &ThumbnailRequest,
+    ) -> Result<Texture, String> {
+        let source_path = request
+            .source_path
+            .as_deref()
+            .ok_or_else(|| "scene thumbnail source has no file path".to_string())?;
+        let started_at = Instant::now();
+        let mut scene = Scene::from_file(context, source_path)
+            .map_err(|err| format!("failed to load scene thumbnail source: {err}"))?
+            .asset;
+        load_scene_sky_lights(context, &scene);
+        let loaded_at = Instant::now();
+
+        let view = scene_thumbnail_view(context, &scene, self.render_settings.frame_margin);
+        if !scene_has_light(&scene) {
+            add_preview_lighting(&mut scene);
+        }
+        let texture = self.render_scene_view(context, gpu, &scene, &view)?;
+        log::debug!(
+            "Rendered scene thumbnail path={} objects={} camera={} load_ms={} render_ms={}",
+            source_path.display(),
+            scene.objects().count(),
+            if view.from_main_camera { "main" } else { "fit" },
+            loaded_at.duration_since(started_at).as_millis(),
+            loaded_at.elapsed().as_millis()
+        );
+        Ok(texture)
+    }
+
     fn render_scene_thumbnail(
         &mut self,
         context: &ReadOnlyAssetContext,
-        render_state: &RenderState,
+        gpu: &RenderContext,
         scene: &Scene,
         camera_fit: CameraFit,
         frame_margin: f32,
     ) -> Result<Texture, String> {
+        let view = SceneThumbnailView::fit(&camera_fit, frame_margin);
+        self.render_scene_view(context, gpu, scene, &view)
+    }
+
+    fn render_scene_view(
+        &mut self,
+        context: &ReadOnlyAssetContext,
+        gpu: &RenderContext,
+        scene: &Scene,
+        view: &SceneThumbnailView,
+    ) -> Result<Texture, String> {
         let size_px = self.render_settings.size_px;
-        let (camera, camera_transform) = camera_for_fit(&camera_fit, frame_margin);
         {
             if self.scene_renderer.is_none() {
                 self.scene_renderer = Some(
@@ -246,8 +285,9 @@ impl ThumbnailGenerator {
             let Some(renderer) = self.scene_renderer.as_mut() else {
                 return Err("thumbnail scene renderer was not initialized".into());
             };
+            renderer.options_mut().clear_color = view.clear_color;
             renderer.resize_textures(size_px, size_px);
-            renderer.render_scene_base(&camera, &camera_transform, scene, None, None);
+            renderer.render_scene_base(&view.camera, &view.camera_transform, scene, None, None);
             renderer.finalize_scene();
         }
 
@@ -260,7 +300,98 @@ impl ThumbnailGenerator {
         let Some(renderer) = &self.scene_renderer else {
             return Err("thumbnail scene renderer was not initialized".into());
         };
-        Ok(downscaler.downscale(context, render_state, renderer.scene_texture(), size_px))
+        Ok(downscaler.downscale(context, gpu, renderer.scene_texture(), size_px))
+    }
+}
+
+/// Where a scene thumbnail is rendered from and what shows behind it.
+pub(super) struct SceneThumbnailView {
+    pub(super) camera: Camera,
+    pub(super) camera_transform: Transform,
+    pub(super) clear_color: Color32,
+    /// Whether the view is the scene's main camera rather than a bounds fit.
+    pub(super) from_main_camera: bool,
+}
+
+impl SceneThumbnailView {
+    fn fit(camera_fit: &CameraFit, frame_margin: f32) -> Self {
+        let (camera, camera_transform) = camera_for_fit(camera_fit, frame_margin);
+        Self {
+            camera,
+            camera_transform,
+            clear_color: Color32::TRANSPARENT,
+            from_main_camera: false,
+        }
+    }
+}
+
+/// The view a scene thumbnail renders from: the scene's enabled main camera,
+/// with its world transform, field of view, planes and clear color at a
+/// square aspect, else a fit of the bounds of the scene's meshes.
+pub(super) fn scene_thumbnail_view(
+    context: &ReadOnlyAssetContext,
+    scene: &Scene,
+    frame_margin: f32,
+) -> SceneThumbnailView {
+    if let Some((game_object, camera)) = scene.main_camera() {
+        return SceneThumbnailView {
+            camera: Camera::new(1.0, camera.fov, camera.near_plane, camera.far_plane),
+            camera_transform: scene.world_transform(game_object),
+            clear_color: camera.clear_color,
+            from_main_camera: true,
+        };
+    }
+    let camera_fit = scene_bounds_camera_fit(context, scene).unwrap_or_default();
+    SceneThumbnailView::fit(&camera_fit, frame_margin)
+}
+
+/// Whether `scene` holds a light that lights it: an active ambient,
+/// directional, point or sky light.
+pub(super) fn scene_has_light(scene: &Scene) -> bool {
+    scene.objects().any(|game_object| {
+        scene
+            .read_component::<ComponentAmbientLight, _, _>(game_object, |light| light.active)
+            .unwrap_or(false)
+            || scene
+                .read_component::<ComponentDirectionalLight, _, _>(game_object, |light| {
+                    light.active
+                })
+                .unwrap_or(false)
+            || scene
+                .read_component::<ComponentPointLight, _, _>(game_object, |light| light.active)
+                .unwrap_or(false)
+            || scene
+                .read_component::<ComponentSkyLight, _, _>(game_object, |light| {
+                    light.active && !light.skybox.id().is_nil()
+                })
+                .unwrap_or(false)
+    })
+}
+
+/// Loads the skyboxes of the scene's sky lights now. The scene renderer
+/// loads a skybox in the background and draws without it until it is ready,
+/// which a single thumbnail render would never wait for.
+fn load_scene_sky_lights(context: &ReadOnlyAssetContext, scene: &Scene) {
+    let skybox_ids = scene
+        .objects()
+        .filter_map(|game_object| {
+            scene
+                .read_component::<ComponentSkyLight, _, _>(game_object, |light| {
+                    light.active.then(|| light.skybox.id())
+                })
+                .flatten()
+        })
+        .filter(|id| !id.is_nil())
+        .collect::<HashSet<_>>();
+    for skybox_id in skybox_ids {
+        if let Err(err) = context
+            .registries
+            .assets
+            .read()
+            .load_by_id::<Skybox>(skybox_id)
+        {
+            log::warn!("Scene thumbnail sky light skybox {skybox_id} failed to load: {err}");
+        }
     }
 }
 
@@ -297,39 +428,36 @@ impl SkyboxFrontFaceDownscaler {
     fn downscale_front_face(
         &self,
         context: &ReadOnlyAssetContext,
-        render_state: &RenderState,
+        gpu: &RenderContext,
         source: &Texture,
         size_px: u32,
     ) -> Texture {
         let thumbnail =
             thumbnail_output_texture(context, "thumbnail_skybox_front_face_output", size_px);
         let thumbnail_storage_view = thumbnail_storage_view(&thumbnail);
-        let bind_group = render_state
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("thumbnail_skybox_front_face_bind_group"),
-                layout: &self.bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&source.view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&source.sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(&thumbnail_storage_view),
-                    },
-                ],
+        let bind_group = gpu.device().create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("thumbnail_skybox_front_face_bind_group"),
+            layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&source.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&source.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&thumbnail_storage_view),
+                },
+            ],
+        });
+        let mut encoder = gpu
+            .device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("thumbnail_skybox_front_face_encoder"),
             });
-        let mut encoder =
-            render_state
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("thumbnail_skybox_front_face_encoder"),
-                });
         {
             let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("thumbnail_skybox_front_face_pass"),
@@ -339,7 +467,7 @@ impl SkyboxFrontFaceDownscaler {
             compute_pass.set_bind_group(0, &bind_group, &[]);
             compute_pass.dispatch_workgroups(size_px.div_ceil(8), size_px.div_ceil(8), 1);
         }
-        render_state.queue.submit(Some(encoder.finish()));
+        gpu.queue().submit(Some(encoder.finish()));
         thumbnail
     }
 }
@@ -406,23 +534,17 @@ impl TextureDownscaler {
     fn downscale(
         &self,
         context: &ReadOnlyAssetContext,
-        render_state: &RenderState,
+        gpu: &RenderContext,
         source: &Texture,
         size_px: u32,
     ) -> Texture {
-        self.downscale_view(
-            context,
-            render_state,
-            &source.view,
-            &source.sampler,
-            size_px,
-        )
+        self.downscale_view(context, gpu, &source.view, &source.sampler, size_px)
     }
 
     fn downscale_view(
         &self,
         context: &ReadOnlyAssetContext,
-        render_state: &RenderState,
+        gpu: &RenderContext,
         source_view: &wgpu::TextureView,
         source_sampler: &wgpu::Sampler,
         size_px: u32,
@@ -430,32 +552,29 @@ impl TextureDownscaler {
         let thumbnail =
             thumbnail_output_texture(context, "thumbnail_texture_downscale_output", size_px);
         let thumbnail_storage_view = thumbnail_storage_view(&thumbnail);
-        let bind_group = render_state
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("thumbnail_downscale_bind_group"),
-                layout: &self.bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(source_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(source_sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(&thumbnail_storage_view),
-                    },
-                ],
+        let bind_group = gpu.device().create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("thumbnail_downscale_bind_group"),
+            layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(source_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(source_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&thumbnail_storage_view),
+                },
+            ],
+        });
+        let mut encoder = gpu
+            .device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("thumbnail_downscale_encoder"),
             });
-        let mut encoder =
-            render_state
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("thumbnail_downscale_encoder"),
-                });
         {
             let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("thumbnail_downscale_pass"),
@@ -465,7 +584,7 @@ impl TextureDownscaler {
             compute_pass.set_bind_group(0, &bind_group, &[]);
             compute_pass.dispatch_workgroups(size_px.div_ceil(8), size_px.div_ceil(8), 1);
         }
-        render_state.queue.submit(Some(encoder.finish()));
+        gpu.queue().submit(Some(encoder.finish()));
         thumbnail
     }
 }
