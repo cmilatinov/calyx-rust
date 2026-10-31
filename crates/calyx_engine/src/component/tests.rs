@@ -162,6 +162,15 @@ mod tests {
         );
         scene.add_component(
             go,
+            ComponentSpotLight {
+                range: 12.0,
+                inner_angle: 15.0,
+                outer_angle: 35.0,
+                ..Default::default()
+            },
+        );
+        scene.add_component(
+            go,
             ComponentSkyLight {
                 intensity: 0.7,
                 ..Default::default()
@@ -272,6 +281,14 @@ mod tests {
         assert_eq!(
             restored.read_component::<ComponentPointLight, _, _>(rgo, |c| (c.radius, c.intensity)),
             Some((25.0, 1.25))
+        );
+        assert_eq!(
+            restored.read_component::<ComponentSpotLight, _, _>(rgo, |c| (
+                c.range,
+                c.inner_angle,
+                c.outer_angle
+            )),
+            Some((12.0, 15.0, 35.0))
         );
         assert_eq!(
             restored.read_component::<ComponentSkyLight, _, _>(rgo, |c| c.intensity),

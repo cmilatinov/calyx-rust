@@ -207,10 +207,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
             continue;
         }
         let l = normalize(to_light);
-
-        let r = light.radius;
-        let a = max((999.0 - r) / (r * r), 0.0);
-        let attenuation = 1.0 / ((a * dist * dist) + dist + 1.0);
+        let attenuation = light_distance_attenuation(dist, light.radius);
 
         color += pbr(
             n,
@@ -228,6 +225,24 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
         let light = directional_lights.lights[i];
         let l = normalize(-light.direction);
         color += pbr(n, v, l, albedo.rgb, light.color * light.intensity, metallic, roughness);
+    }
+
+    // Spot lights
+    for (var i = 0u; i < spot_lights.size; i++) {
+        let light = spot_lights.lights[i];
+        let incidence = spot_light_incidence(light, in.world_position);
+        if incidence.w <= 0.0 {
+            continue;
+        }
+        color += pbr(
+            n,
+            v,
+            incidence.xyz,
+            albedo.rgb,
+            light.color * light.intensity * incidence.w,
+            metallic,
+            roughness
+        );
     }
 
     // Ambient light

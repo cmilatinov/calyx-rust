@@ -14,7 +14,7 @@ use calyx_engine::assets::texture::Texture;
 use calyx_engine::assets::{Asset, AssetAccess, AssetRef, AssetRegistry};
 use calyx_engine::component::{
     Component, ComponentAmbientLight, ComponentDirectionalLight, ComponentMesh,
-    ComponentPointLight, ComponentSkinnedMesh, ComponentSkyLight,
+    ComponentPointLight, ComponentSkinnedMesh, ComponentSkyLight, ComponentSpotLight,
 };
 use calyx_engine::context::ReadOnlyAssetContext;
 use calyx_engine::math::Transform;
