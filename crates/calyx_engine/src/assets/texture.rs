@@ -32,8 +32,11 @@ pub struct Texture {
     pub texture: wgpu::Texture,
     /// Default view used for sampling, reading the stored channels as they are.
     pub view: wgpu::TextureView,
-    /// View decoding the channels from sRGB, for a texture created with the sRGB form of its
-    /// format among its view formats. See [`Texture::view_as`].
+    /// Copy of an 8-bit image in the sRGB form of its format, whose mips are filtered in
+    /// linear light. [`Texture::texture`] keeps the mips averaged as stored, for data slots.
+    pub srgb_texture: Option<wgpu::Texture>,
+    /// View of [`Texture::srgb_texture`], decoding the channels from sRGB. See
+    /// [`Texture::view_as`].
     pub srgb_view: Option<wgpu::TextureView>,
     /// Default sampler used for sampling.
     pub sampler: wgpu::Sampler,
@@ -108,20 +111,22 @@ impl Texture {
             depth_or_array_layers: 1,
         };
         let mip_level_count = Self::mip_level_count(texture_size.width, texture_size.height);
-        let texture = Self::new(
+        let descriptor = wgpu::TextureDescriptor {
+            label: Some(texture_name),
+            size: texture_size,
+            mip_level_count,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: texture_format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        };
+        let mut texture = Self::new(
             game.render_context.clone(),
-            &wgpu::TextureDescriptor {
-                label: Some(texture_name),
-                size: texture_size,
-                mip_level_count,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: texture_format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::COPY_DST,
-                view_formats: Self::srgb_view_formats(texture_format),
-            },
+            &descriptor,
             Some(wgpu::SamplerDescriptor {
                 label: Some(texture_name),
                 address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -135,33 +140,42 @@ impl Texture {
             None,
             texture_format == wgpu::TextureFormat::Rgba8Unorm,
         );
+        // An 8-bit image also gets a copy in the sRGB form of its format: its mips are filtered
+        // after decoding, so a color image keeps its brightness when minified, while the stored
+        // chain keeps the data channels averaged as they are.
+        let srgb_format = texture_format.add_srgb_suffix();
+        let srgb_texture = (srgb_format != texture_format).then(|| {
+            game.render_context
+                .device()
+                .create_texture(&wgpu::TextureDescriptor {
+                    format: srgb_format,
+                    ..descriptor.clone()
+                })
+        });
         let queue = game.render_context.queue();
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            texture_data.as_bytes(),
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(texture_depth * texture_data.width()),
-                rows_per_image: Some(texture_data.height()),
-            },
-            texture_size,
-        );
+        for target in std::iter::once(&texture.texture).chain(&srgb_texture) {
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: target,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                texture_data.as_bytes(),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(texture_depth * texture_data.width()),
+                    rows_per_image: Some(texture_data.height()),
+                },
+                texture_size,
+            );
+        }
+        texture.srgb_view = srgb_texture
+            .as_ref()
+            .map(|srgb_texture| srgb_texture.create_view(&texture.view_descriptor));
+        texture.srgb_texture = srgb_texture;
         texture.generate_2d_mips(game)?;
         Ok(texture)
-    }
-
-    /// View formats that let a texture of `format` also be sampled as sRGB: the sRGB form of
-    /// an 8-bit RGBA format, none for any other.
-    fn srgb_view_formats(format: wgpu::TextureFormat) -> &'static [wgpu::TextureFormat] {
-        match format {
-            wgpu::TextureFormat::Rgba8Unorm => &[wgpu::TextureFormat::Rgba8UnormSrgb],
-            _ => &[],
-        }
     }
 
     /// The view a slot sampling in `color_space` binds: the sRGB view for
@@ -213,15 +227,6 @@ impl Texture {
         let texture = device.create_texture(texture_desc);
         let sampler = device.create_sampler(&sampler_desc);
         let view = texture.create_view(&view_desc);
-        let srgb_format = texture_desc.format.add_srgb_suffix();
-        let srgb_view = (srgb_format != texture_desc.format
-            && texture_desc.view_formats.contains(&srgb_format))
-        .then(|| {
-            texture.create_view(&wgpu::TextureViewDescriptor {
-                format: Some(srgb_format),
-                ..view_desc.clone()
-            })
-        });
         let handle = if create_handle && !render_context.is_headless() {
             let renderer = render_context.renderer();
             let tex_mgr = render_context.texture_manager();
@@ -237,7 +242,8 @@ impl Texture {
             render_context,
             texture,
             view,
-            srgb_view,
+            srgb_texture: None,
+            srgb_view: None,
             sampler,
             handle,
             descriptor: wgpu::TextureDescriptor {
@@ -355,26 +361,50 @@ impl Texture {
             .assets
             .read()
             .load::<Shader>("shaders/utility/mip_generator_2d")?;
+        let mip_shader = mip_shader_ref.read();
+        self.generate_2d_mip_chain(context, &mip_shader, &self.texture);
+        if let Some(srgb_texture) = &self.srgb_texture {
+            self.generate_2d_mip_chain(context, &mip_shader, srgb_texture);
+        }
+        Ok(())
+    }
+
+    /// Fills mips 1 and up of `texture`, which has this texture's size and mip count, each
+    /// from the one above. Views take `texture`'s own format, so an sRGB texture is filtered
+    /// after decoding and its results encoded back.
+    fn generate_2d_mip_chain(
+        &self,
+        context: &ReadOnlyAssetContext,
+        mip_shader: &Shader,
+        texture: &wgpu::Texture,
+    ) {
         let device = context.render_context.device();
         let queue = context.render_context.queue();
-        let mip_shader = mip_shader_ref.read();
         let pipeline = mip_shader.pipeline(
             &PipelineOptions::fullscreen_builder()
-                .target(RenderUtils::color_default(self.descriptor.format))
+                .target(RenderUtils::color_default(texture.format()))
                 .build(),
         );
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("texture_mip_encoder"),
         });
-        let mut src_view = self.create_mip_view(0);
+        let mip_view = |mip: u32| {
+            texture.create_view(&wgpu::TextureViewDescriptor {
+                base_mip_level: mip,
+                mip_level_count: Some(1),
+                ..Default::default()
+            })
+        };
+        let mut src_view = mip_view(0);
 
         for mip_level in 1..self.descriptor.mip_level_count {
             log::trace!(
-                "Generating 2D mip level {} for texture {:?}",
+                "Generating 2D mip level {} for texture {:?} ({:?})",
                 mip_level,
-                self.descriptor.label
+                self.descriptor.label,
+                texture.format()
             );
-            let dst_view = self.create_mip_view(mip_level);
+            let dst_view = mip_view(mip_level);
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("texture_mip_bind_group"),
                 layout: &mip_shader.bind_group_layouts[0],
@@ -403,7 +433,6 @@ impl Texture {
         }
 
         queue.submit(Some(encoder.finish()));
-        Ok(())
     }
 
     /// Creates a D2-array view suitable for cubemap compute passes.
@@ -549,14 +578,15 @@ mod tests {
     const TOP: [u8; 4] = [255, 0, 0, 255];
     const BOTTOM: [u8; 4] = [0, 0, 255, 255];
 
-    /// Reads the first texel of each row of `mip` of an `Rgba8Unorm` texture.
-    fn read_mip_rows(texture: &Texture, mip: u32) -> Vec<[u8; 4]> {
-        let device = texture.render_context.device();
-        let queue = texture.render_context.queue();
-        let size = texture
+    /// Reads the first texel of each row of `mip` of `texture`, an 8-bit RGBA texture of
+    /// `owner`'s size: its stored texture or its sRGB copy.
+    fn read_mip_rows(owner: &Texture, texture: &wgpu::Texture, mip: u32) -> Vec<[u8; 4]> {
+        let device = owner.render_context.device();
+        let queue = owner.render_context.queue();
+        let size = owner
             .descriptor
             .size
-            .mip_level_size(mip, texture.descriptor.dimension);
+            .mip_level_size(mip, owner.descriptor.dimension);
         let bytes_per_row = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("mip_test_readback"),
@@ -567,7 +597,7 @@ mod tests {
         let mut encoder = device.create_command_encoder(&Default::default());
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
-                texture: &texture.texture,
+                texture,
                 mip_level: mip,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
@@ -650,13 +680,53 @@ mod tests {
             .generate_2d_mips(&context)
             .expect("mip generation runs");
 
-        let rows = read_mip_rows(&texture, 1);
+        let rows = read_mip_rows(&texture, &texture.texture, 1);
         assert_eq!(rows.first(), Some(&TOP), "mip 1's top row must stay on top");
         assert_eq!(
             rows.last(),
             Some(&BOTTOM),
             "mip 1's bottom row must stay below"
         );
+    }
+
+    #[test]
+    fn an_image_s_srgb_mips_average_in_linear_light_and_its_stored_mips_average_as_stored() {
+        const SIZE: u32 = 4;
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        // A black and white checkerboard: every 2x2 block of mip 0 averages to half.
+        let image =
+            image::DynamicImage::ImageRgba8(image::RgbaImage::from_fn(SIZE, SIZE, |x, y| {
+                let value = if (x + y) % 2 == 0 { 255 } else { 0 };
+                image::Rgba([value, value, value, 255])
+            }));
+
+        let texture =
+            Texture::from_image(&context, "test/checker", image).expect("the image uploads");
+
+        let srgb_texture = texture
+            .srgb_texture
+            .as_ref()
+            .expect("an 8-bit image has an sRGB copy");
+        // Linear 0.5 encodes to sRGB 188; averaging the encoded channels gives 128.
+        for [r, g, b, a] in read_mip_rows(&texture, srgb_texture, 1) {
+            for channel in [r, g, b] {
+                assert!(
+                    channel.abs_diff(188) <= 2,
+                    "the sRGB mip holds linear half, got {channel}"
+                );
+            }
+            assert_eq!(a, 255);
+        }
+        for [r, g, b, _] in read_mip_rows(&texture, &texture.texture, 1) {
+            for channel in [r, g, b] {
+                assert!(
+                    channel.abs_diff(128) <= 2,
+                    "the stored mip holds the stored half, got {channel}"
+                );
+            }
+        }
     }
 
     #[test]
