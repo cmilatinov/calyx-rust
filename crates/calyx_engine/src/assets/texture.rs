@@ -12,6 +12,17 @@ use crate::render::{PipelineOptions, RenderContext, RenderUtils, Shader};
 use crate::utils::TypeUuid;
 use crate::{self as calyx_engine};
 
+/// How a shader slot reads a texture's 8-bit channels.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TextureColorSpace {
+    /// Channels are data, read as stored: normals, roughness, metallic, occlusion.
+    #[default]
+    Linear,
+    /// Channels are sRGB-encoded colors, decoded to linear when sampled: base color and
+    /// emissive images.
+    Srgb,
+}
+
 /// GPU texture asset with optional egui handle and mip helpers.
 #[derive(TypeUuid)]
 #[uuid = "8ba4ccec-85ab-45f5-b4ee-2e803ef548a2"]
@@ -19,8 +30,11 @@ pub struct Texture {
     render_context: Arc<RenderContext>,
     /// Backing wgpu texture.
     pub texture: wgpu::Texture,
-    /// Default view used for sampling.
+    /// Default view used for sampling, reading the stored channels as they are.
     pub view: wgpu::TextureView,
+    /// View decoding the channels from sRGB, for a texture created with the sRGB form of its
+    /// format among its view formats. See [`Texture::view_as`].
+    pub srgb_view: Option<wgpu::TextureView>,
     /// Default sampler used for sampling.
     pub sampler: wgpu::Sampler,
     /// Optional egui texture handle for UI rendering.
@@ -58,11 +72,34 @@ impl Asset for Texture {
             })?;
         let reader = ImageReader::open(path)
             .map_err(|err| AssetError::LoadError.with_path(path).with_source(err))?;
-        let texture_data = Self::transform_texture(
-            reader
-                .decode()
-                .map_err(|err| AssetError::LoadError.with_path(path).with_source(err))?,
+        let image = reader
+            .decode()
+            .map_err(|err| AssetError::LoadError.with_path(path).with_source(err))?;
+        let texture = Self::from_image(game, texture_name, image)
+            .map_err(|err| err.with_path(path).with_type(Self::asset_name()))?;
+        log::info!(
+            "Loaded texture {} ({}x{}, {:?}, {} mips)",
+            path.display(),
+            texture.descriptor.size.width,
+            texture.descriptor.size.height,
+            texture.descriptor.format,
+            texture.descriptor.mip_level_count
         );
+        Ok(LoadedAsset::new(texture))
+    }
+}
+
+impl Texture {
+    const WORKGROUP_SIZE: f32 = 8.0;
+
+    /// Uploads `image` as a mipmapped 2D texture. An 8-bit image can be sampled both as
+    /// stored and decoded from sRGB, as each material slot chooses (see [`Texture::view_as`]).
+    pub fn from_image(
+        game: &ReadOnlyAssetContext,
+        texture_name: &str,
+        image: DynamicImage,
+    ) -> Result<Self, AssetError> {
+        let texture_data = Self::transform_texture(image);
         let texture_depth = texture_data.color().bytes_per_pixel() as u32;
         let texture_format = Self::texture_format(texture_data.color());
         let texture_size = wgpu::Extent3d {
@@ -71,14 +108,6 @@ impl Asset for Texture {
             depth_or_array_layers: 1,
         };
         let mip_level_count = Self::mip_level_count(texture_size.width, texture_size.height);
-        log::info!(
-            "Loaded texture {} ({}x{}, {:?}, {} mips)",
-            path.display(),
-            texture_size.width,
-            texture_size.height,
-            texture_format,
-            mip_level_count
-        );
         let texture = Self::new(
             game.render_context.clone(),
             &wgpu::TextureDescriptor {
@@ -91,7 +120,7 @@ impl Asset for Texture {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                     | wgpu::TextureUsages::TEXTURE_BINDING
                     | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
+                view_formats: Self::srgb_view_formats(texture_format),
             },
             Some(wgpu::SamplerDescriptor {
                 label: Some(texture_name),
@@ -123,12 +152,27 @@ impl Asset for Texture {
             texture_size,
         );
         texture.generate_2d_mips(game)?;
-        Ok(LoadedAsset::new(texture))
+        Ok(texture)
     }
-}
 
-impl Texture {
-    const WORKGROUP_SIZE: f32 = 8.0;
+    /// View formats that let a texture of `format` also be sampled as sRGB: the sRGB form of
+    /// an 8-bit RGBA format, none for any other.
+    fn srgb_view_formats(format: wgpu::TextureFormat) -> &'static [wgpu::TextureFormat] {
+        match format {
+            wgpu::TextureFormat::Rgba8Unorm => &[wgpu::TextureFormat::Rgba8UnormSrgb],
+            _ => &[],
+        }
+    }
+
+    /// The view a slot sampling in `color_space` binds: the sRGB view for
+    /// [`TextureColorSpace::Srgb`] when the texture has one, else the default view. A texture
+    /// without an sRGB view, such as a solid color one, holds linear values either way.
+    pub fn view_as(&self, color_space: TextureColorSpace) -> &wgpu::TextureView {
+        match (color_space, &self.srgb_view) {
+            (TextureColorSpace::Srgb, Some(view)) => view,
+            _ => &self.view,
+        }
+    }
 
     /// Returns true when this texture can be sampled as a single 2D texture.
     pub fn is_2d(&self) -> bool {
@@ -169,6 +213,15 @@ impl Texture {
         let texture = device.create_texture(texture_desc);
         let sampler = device.create_sampler(&sampler_desc);
         let view = texture.create_view(&view_desc);
+        let srgb_format = texture_desc.format.add_srgb_suffix();
+        let srgb_view = (srgb_format != texture_desc.format
+            && texture_desc.view_formats.contains(&srgb_format))
+        .then(|| {
+            texture.create_view(&wgpu::TextureViewDescriptor {
+                format: Some(srgb_format),
+                ..view_desc.clone()
+            })
+        });
         let handle = if create_handle && !render_context.is_headless() {
             let renderer = render_context.renderer();
             let tex_mgr = render_context.texture_manager();
@@ -184,6 +237,7 @@ impl Texture {
             render_context,
             texture,
             view,
+            srgb_view,
             sampler,
             handle,
             descriptor: wgpu::TextureDescriptor {

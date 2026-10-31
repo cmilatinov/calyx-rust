@@ -1,4 +1,5 @@
 //! glTF and GLB import. Materials, textures, cameras, lights and morph targets are not imported.
+//! Vertex tangents are read from `TANGENT` when the primitive has them.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -7,7 +8,7 @@ use gltf::animation::util::ReadOutputs;
 use gltf::animation::{Interpolation, Property};
 use gltf::mesh::Mode;
 use nalgebra::Unit;
-use nalgebra_glm::{Mat4, Vec2, Vec3};
+use nalgebra_glm::{Mat4, Vec2, Vec3, Vec4};
 
 use super::{
     quat, smooth_normals, Corner, ImportedAnimation, ImportedBone, ImportedMesh, ImportedNode,
@@ -202,6 +203,12 @@ fn import_primitive(
                 .collect::<Vec<_>>(),
         ),
     };
+    // Tangents are only read with normals: they are given relative to them.
+    let tangents = reader
+        .read_tangents()
+        .filter(|_| reader.read_normals().is_some())
+        .map(|tangents| tangents.map(Vec4::from).collect::<Vec<_>>())
+        .filter(|tangents| tangents.len() == positions.len());
     let uv_sets = (0..MAX_UV_CHANNELS as u32)
         .map_while(|set| reader.read_tex_coords(set))
         .map(|uvs| uvs.into_f32().map(Vec2::from).collect::<Vec<_>>())
@@ -249,6 +256,7 @@ fn import_primitive(
                 position: positions[index as usize],
                 normal: normals[i],
                 uvs,
+                tangent: tangents.as_ref().map(|tangents| tangents[index as usize]),
             }
         }));
     }

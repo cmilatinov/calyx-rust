@@ -29,10 +29,11 @@ pub struct Vertex {
     uv3: [f32; 2],
     bone_indices: [i32; 4],
     bone_weights: [f32; 4],
+    tangent: [f32; 4],
 }
 
 impl Vertex {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![
+    const ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array![
         0 => Float32x3,
         1 => Float32x3,
         2 => Float32x2,
@@ -40,7 +41,8 @@ impl Vertex {
         4 => Float32x2,
         5 => Float32x2,
         6 => Sint32x4,
-        7 => Float32x4
+        7 => Float32x4,
+        8 => Float32x4
     ];
 }
 
@@ -99,6 +101,10 @@ pub struct Mesh {
     pub vertices: Vec<Vec3>,
     /// Vertex normals.
     pub normals: Vec<Vec3>,
+    /// Vertex tangents for normal mapping: `xyz` along increasing U, `w` the handedness of the
+    /// bitangent `cross(normal, tangent.xyz) * w`, which points up the image. Imported meshes
+    /// carry the file's or generated ones; a vertex without one gets [`Mesh::DEFAULT_TANGENT`].
+    pub tangents: Vec<Vec4>,
     /// Up to four UV channels.
     pub uvs: [Vec<Vec2>; CX_MESH_NUM_UV_CHANNELS],
     /// Bone indices per vertex.
@@ -128,6 +134,8 @@ pub struct Mesh {
 impl Mesh {
     /// Maximum number of bones expected by the skinning path.
     pub const MAX_BONES: usize = 100;
+    /// Tangent given to a vertex that has none.
+    pub const DEFAULT_TANGENT: Vec4 = Vec4::new(1.0, 0.0, 0.0, 1.0);
     // const ATTRIBUTE_VERTEX: u32 = 0;
     // const ATTRIBUTE_NORMAL: u32 = 1;
     // const ATTRIBUTE_UV0: u32 = 2;
@@ -179,6 +187,7 @@ impl Mesh {
             indices: Default::default(),
             vertices: Default::default(),
             normals: Default::default(),
+            tangents: Default::default(),
             uvs: [
                 Default::default(),
                 Default::default(),
@@ -302,6 +311,7 @@ impl Mesh {
         let indices = mesh.indices.clone();
         let vertices = mesh.positions.clone();
         let normals = mesh.normals.clone();
+        let tangents = mesh.tangents.clone();
         let mut uvs: [Vec<Vec2>; CX_MESH_NUM_UV_CHANNELS] =
             std::array::from_fn(|_| vec![Vec2::zeros(); mesh.positions.len()]);
         for (channel, imported) in uvs.iter_mut().zip(&mesh.uvs) {
@@ -331,6 +341,7 @@ impl Mesh {
             indices,
             vertices,
             normals,
+            tangents,
             uvs,
             bones,
             bone_indices,
@@ -347,6 +358,7 @@ impl Mesh {
         self.indices.clear();
         self.vertices.clear();
         self.normals.clear();
+        self.tangents.clear();
         self.instances.clear();
         for uv in &mut self.uvs {
             uv.clear();
@@ -374,6 +386,7 @@ impl Mesh {
             vertex.uv3 = self.uvs[3][i].into();
             vertex.bone_indices = self.bone_indices[i].into();
             vertex.bone_weights = self.bone_weights[i].into();
+            vertex.tangent = self.tangents[i].into();
         }
         self.vertex_buffer = Some(device.create_buffer_init(&wgpu_buffer_init_desc(
             wgpu::BufferUsages::VERTEX,
@@ -415,6 +428,7 @@ impl Mesh {
     fn normalize_mesh_data(&mut self) {
         let vertex_count = self.vertices.len();
         self.normals.resize(vertex_count, Vec3::zeros());
+        self.tangents.resize(vertex_count, Self::DEFAULT_TANGENT);
         for uvs in &mut self.uvs {
             uvs.resize(vertex_count, Vec2::zeros());
         }
@@ -526,6 +540,14 @@ mod tests {
         );
         assert_eq!((min, max), (Vec3::zeros(), Vec3::new(3.0, 1.0, 1.0)));
         assert_eq!(mesh.normals.len(), mesh.vertices.len());
+        // The OBJ carries no tangents: they are generated, unit length and perpendicular to
+        // the normals, with a handedness.
+        assert_eq!(mesh.tangents.len(), mesh.vertices.len());
+        for (tangent, normal) in mesh.tangents.iter().zip(&mesh.normals) {
+            assert!((tangent.xyz().norm() - 1.0).abs() < 1e-4);
+            assert!(tangent.xyz().dot(normal).abs() < 1e-4);
+            assert_eq!(tangent.w.abs(), 1.0);
+        }
         assert!(mesh
             .uvs
             .iter()

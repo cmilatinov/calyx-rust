@@ -162,6 +162,7 @@ fn import_mesh(mesh: &ufbx::Mesh) -> Vec<ImportedMesh> {
                         position: position(index),
                         normal: normals[i],
                         uvs,
+                        tangent: None,
                     }
                 }));
             }
