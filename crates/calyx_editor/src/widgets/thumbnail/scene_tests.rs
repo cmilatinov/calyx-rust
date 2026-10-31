@@ -436,3 +436,68 @@ fn a_mesh_without_a_material_renders_with_the_default_material() {
         "the sphere draws even though the scene gives it no material"
     );
 }
+
+#[test]
+fn a_skinned_mesh_is_fitted_where_the_renderer_draws_it() {
+    use calyx_engine::assets::mesh::BoneInfo;
+    use calyx_engine::component::ComponentBone;
+    use calyx_engine::scene::GameObjectRef;
+    use nalgebra_glm as glm;
+
+    // A model root, a node converting axes and units, and the skinned mesh
+    // below it, as imported models are laid out. The bone lifts the mesh.
+    let fixture = SceneFixture::new();
+    let context = fixture.context();
+    let mut scene = fixture.scene();
+    let root = scene.create(None, None);
+    scene.set_transform(root, &glm::translation(&vec3(5.0, 0.0, 0.0)));
+    let converter = scene.create(None, Some(root));
+    scene.set_transform(
+        converter,
+        &(glm::rotation(-90f32.to_radians(), &Vec3::x()) * glm::scaling(&Vec3::repeat(100.0))),
+    );
+    let bone = scene.create(None, Some(root));
+    scene.set_transform(bone, &glm::translation(&vec3(0.0, 2.0, 0.0)));
+    scene.add_component(
+        bone,
+        ComponentBone {
+            name: "hip".into(),
+            ..Default::default()
+        },
+    );
+    let mesh_object = scene.create(None, Some(converter));
+    scene.add_component(
+        mesh_object,
+        ComponentSkinnedMesh {
+            root_bone: GameObjectRef::new(scene.uuid(root)),
+            ..Default::default()
+        },
+    );
+    let mut mesh = Mesh::new(context.render_context.as_ref());
+    mesh.vertices = vec![vec3(-0.5, 0.0, 0.0), vec3(0.5, 0.0, 0.0)];
+    mesh.bone_indices = vec![glm::IVec4::new(0, -1, -1, -1); 2];
+    mesh.bone_weights = vec![glm::vec4(1.0, 0.0, 0.0, 0.0); 2];
+    mesh.bones.insert(
+        "hip".into(),
+        BoneInfo {
+            index: 0,
+            inverse_bind_transform: glm::Mat4::identity(),
+        },
+    );
+
+    let fit = CameraFit::from_points(skinned_mesh_fit_points(&scene, mesh_object, &mesh))
+        .expect("the skinned mesh has vertices");
+
+    // The renderer places the posed vertices by the root bone, at x = 5,
+    // lifted 2 by the bone: not 100 times larger and turned by the converter.
+    assert!(
+        (fit.bounds.min - vec3(4.5, 2.0, 0.0)).norm() < 1e-4,
+        "{:?}",
+        fit.bounds
+    );
+    assert!(
+        (fit.bounds.max - vec3(5.5, 2.0, 0.0)).norm() < 1e-4,
+        "{:?}",
+        fit.bounds
+    );
+}

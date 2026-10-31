@@ -229,20 +229,13 @@ fn skinning_instance_index(uploaded_bone_transforms: usize, num_bones: usize) ->
     uploaded_bone_transforms.checked_div(num_bones)
 }
 
-/// World transform that places a skinned mesh. The animator skins its vertices into the space of
-/// its root bone, so the root bone's world transform places them; the mesh object's own world
-/// transform would apply every node between the root bone and the mesh a second time. A mesh
-/// whose root bone is not in the scene keeps its own transform.
+/// World transform that places a skinned mesh, as [`ComponentSkinnedMesh::world_transform`] says.
 fn skinned_mesh_world_transform(
     scene: &Scene,
     game_object: GameObject,
     skinned_mesh: &ComponentSkinnedMesh,
 ) -> Transform {
-    let placement = skinned_mesh
-        .root_bone
-        .game_object(scene)
-        .unwrap_or(game_object);
-    scene.world_transform(placement)
+    skinned_mesh.world_transform(scene, game_object)
 }
 
 impl SceneRenderer {

@@ -3,6 +3,7 @@ use crate as calyx_engine;
 use crate::assets::material::Material;
 use crate::assets::mesh::{BoneTransform, Mesh};
 use crate::assets::AssetRef;
+use crate::math::Transform;
 use crate::reflect::{Reflect, ReflectDefault};
 use crate::scene::{GameObject, GameObjectRef, Scene};
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
@@ -32,6 +33,15 @@ pub struct ComponentSkinnedMesh {
 impl Component for ComponentSkinnedMesh {}
 
 impl ComponentSkinnedMesh {
+    /// World transform that places this mesh on `game_object`. The animator skins its vertices
+    /// into the space of its root bone, so the root bone's world transform places them; the mesh
+    /// object's own world transform would apply every node between the root bone and the mesh a
+    /// second time. A mesh whose root bone is not in the scene keeps its own transform.
+    pub fn world_transform(&self, scene: &Scene, game_object: GameObject) -> Transform {
+        let placement = self.root_bone.game_object(scene).unwrap_or(game_object);
+        scene.world_transform(placement)
+    }
+
     /// Root-space transform of each bone object under `root`, by bone name, as the scene holds
     /// them. Reads the scene only, so it poses a skinned mesh without running its animator.
     ///
