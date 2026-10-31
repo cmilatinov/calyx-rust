@@ -9,14 +9,15 @@ use nalgebra_glm::Vec4;
 use serde::{Deserialize, Serialize};
 
 /// Local point-light component.
+///
+/// The scene's enabled state switches it on and off; see
+/// [`Scene::set_component_enabled`].
 #[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "5fd24d64-6661-40ba-94a5-4fca0d06ead1"]
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Point Light")]
 #[serde(default)]
 pub struct ComponentPointLight {
-    /// Whether the light contributes to scene lighting.
-    pub active: bool,
     /// Light influence radius.
     #[reflect_attr(min = 0.0, speed = 0.1)]
     pub radius: f32,
@@ -30,7 +31,6 @@ pub struct ComponentPointLight {
 impl Default for ComponentPointLight {
     fn default() -> Self {
         Self {
-            active: true,
             radius: 10.0,
             color: Color32::WHITE,
             intensity: 1.0,
@@ -39,6 +39,11 @@ impl Default for ComponentPointLight {
 }
 
 impl Component for ComponentPointLight {
+    /// Light gathering skips a disabled point light.
+    fn can_disable(&self) -> bool {
+        true
+    }
+
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {
         let transform = scene.world_transform(game_object);
         let color = self.color.to_normalized_gamma_f32();

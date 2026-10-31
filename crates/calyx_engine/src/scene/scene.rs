@@ -1310,6 +1310,19 @@ impl Scene {
         self.disabled.is_enabled(entity, component)
     }
 
+    /// Whether the hooks of `game_object`'s component of type `prototype`, the
+    /// component registry's prototype, run: they are skipped while the scene
+    /// holds that component disabled. Only types that opt in through
+    /// [`Component::can_disable`] can be disabled, so every other type's
+    /// hooks always run.
+    pub(crate) fn runs_hooks(
+        &self,
+        game_object: GameObject,
+        prototype: Option<&dyn Component>,
+    ) -> bool {
+        prototype.is_none_or(|prototype| self.is_component_enabled_dyn(game_object, prototype))
+    }
+
     /// Flushes pending deletions and prepares the physics scene for the next
     /// frame.
     pub fn prepare(&mut self) {
@@ -1317,7 +1330,9 @@ impl Scene {
         PhysicsContext::prepare(self);
     }
 
-    /// Invokes one-time start hooks for all components currently in the scene.
+    /// Invokes one-time start hooks for all components currently in the scene,
+    /// except the components the scene holds disabled. A component disabled
+    /// when the scene starts never runs its start hook, even once enabled.
     pub fn start(&mut self) {
         if self.started {
             return;
@@ -1333,8 +1348,12 @@ impl Scene {
             .filter(|go| *go != self.root)
             .collect();
 
-        for (_type_uuid, starter) in component_registry.components_with_start() {
+        for (type_uuid, starter) in component_registry.components_with_start() {
+            let prototype = component_registry.component(type_uuid);
             for &game_object in &game_objects {
+                if !self.runs_hooks(game_object, prototype) {
+                    continue;
+                }
                 starter.start(ComponentEventContext {
                     registries: &registries,
                     scene: self,
@@ -1345,7 +1364,7 @@ impl Scene {
     }
 
     /// Advances physics and all registered component update hooks for one
-    /// frame.
+    /// frame. A component the scene holds disabled skips its update hook.
     pub fn update(
         &mut self,
         registries: &ReadOnlyRegistryContext,
@@ -1367,8 +1386,12 @@ impl Scene {
             .filter(|go| *go != self.root)
             .collect();
 
-        for (_type_uuid, updater) in component_registry.components_with_update() {
+        for (type_uuid, updater) in component_registry.components_with_update() {
+            let prototype = component_registry.component(type_uuid);
             for &game_object in &game_objects {
+                if !self.runs_hooks(game_object, prototype) {
+                    continue;
+                }
                 updater.update(
                     ComponentEventContext {
                         registries,

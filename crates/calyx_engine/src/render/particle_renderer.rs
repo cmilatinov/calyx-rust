@@ -5,9 +5,9 @@ use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::buffer::{wgpu_buffer_init_desc, BufferLayout};
 use crate::render::{
-    buffer_entry, workgroups, CachedBindGroup, ComputeKernel, GpuCurveRange, GpuGradientRange,
-    ParticleSimulation, PipelineOptions, RenderContext, RenderUtils, SceneRendererError, Shader,
-    SystemKeys, VertexLayout, PARTICLE_KERNELS,
+    buffer_entry, enabled_system, workgroups, CachedBindGroup, ComputeKernel, GpuCurveRange,
+    GpuGradientRange, ParticleSimulation, PipelineOptions, RenderContext, RenderUtils,
+    SceneRendererError, Shader, SystemKeys, VertexLayout, PARTICLE_KERNELS,
 };
 use crate::scene::{GameObject, Scene, SceneId};
 use egui_wgpu::wgpu;
@@ -394,7 +394,7 @@ impl ParticleRenderer {
         let mut draws = Vec::new();
         let mut query = <(Entity, &ComponentParticleSystem)>::query();
         for (entity, system) in query.iter(scene.world()) {
-            let Some(game_object) = scene.game_object_from_entity(*entity) else {
+            let Some(game_object) = enabled_system(scene, *entity) else {
                 continue;
             };
             let Some(simulated) = simulation.system(game_object) else {

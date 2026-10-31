@@ -153,7 +153,8 @@ pub struct ComponentEventContext<'a> {
 /// 3. If the type reflects `ComponentReset`, `reset` runs once after binding.
 /// 4. If the type reflects `ComponentStart`, `start` runs once when the scene starts.
 /// 5. Each simulation frame runs `Scene::prepare`, then `Scene::update`, which
-///    calls reflected `ComponentUpdate` hooks for active components.
+///    calls reflected `ComponentUpdate` hooks for the components the scene
+///    holds enabled; see [`Component::can_disable`].
 /// 6. When removed, `destroy` runs before the component leaves the object.
 ///
 /// Physics is stepped inside scene preparation/update code before component
@@ -171,7 +172,10 @@ pub trait Component: TypeUuidDynamic + ComponentInstance {
     ///
     /// A component type opts in by returning `true` once every system that
     /// consumes it skips a disabled instance, as camera selection and
-    /// physics do. Only then does the inspector show its enabled checkbox,
+    /// physics do. The scene skips the [`ComponentStart`], [`ComponentUpdate`]
+    /// and [`ComponentHud`] hooks of a disabled component, so a project
+    /// component whose hooks are its only consumers can opt in from its own
+    /// `impl Component`. Only then does the inspector show its enabled checkbox,
     /// and only then do [`Scene::set_component_enabled`] and `calyx_ctl
     /// component disable` accept it. The method is on the prototype the
     /// component registry keeps, so callers holding only a type UUID ask
@@ -200,6 +204,8 @@ pub trait Component: TypeUuidDynamic + ComponentInstance {
 /// The `&self` receiver is the prototype instance from the registry. Read the
 /// actual component through `ctx.scene`, matching [`ComponentUpdate`]. Start
 /// hooks run before the scene's first physics preparation and frame update.
+/// A component the scene holds disabled when it starts skips the hook, and
+/// does not run it later once enabled.
 #[allow(missing_docs)]
 #[reflect_trait]
 pub trait ComponentStart: Send + Sync {
@@ -243,7 +249,7 @@ pub trait ComponentStart: Send + Sync {
 #[reflect_trait]
 pub trait ComponentUpdate: Send + Sync {
     /// Runs once per simulated frame for components whose type reflects this
-    /// trait.
+    /// trait, except a component the scene holds disabled.
     ///
     /// `resources` contains global runtime state such as time and networking.
     /// `input` is the active frame input view. Update hooks are skipped when the
@@ -258,7 +264,8 @@ pub trait ComponentUpdate: Send + Sync {
 /// `scene` and build its HUD into `ui`, laid out for `viewport`, or return
 /// `None` to draw nothing this frame.
 ///
-/// The hook runs once per frame after the scene update, for every game object.
+/// The hook runs once per frame after the scene update, for every game object
+/// except one whose component the scene holds disabled.
 /// The player and the editor's Game panel paint the result over the game view
 /// through [`SceneHud`](crate::scene::SceneHud), so the HUD reads the same
 /// frame the view shows. It receives `&Scene`: gameplay belongs in

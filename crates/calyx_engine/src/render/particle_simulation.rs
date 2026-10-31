@@ -377,6 +377,15 @@ impl SimulatedSystem {
     }
 }
 
+/// The game object of `entity`'s particle system, when the scene holds that
+/// system enabled. The simulation and the renderer treat a disabled system as
+/// absent.
+pub(crate) fn enabled_system(scene: &Scene, entity: Entity) -> Option<GameObject> {
+    scene
+        .game_object_from_entity(entity)
+        .filter(|go| scene.is_component_enabled::<ComponentParticleSystem>(*go))
+}
+
 pub(crate) fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
     wgpu::BindGroupEntry {
         binding,
@@ -395,7 +404,9 @@ pub(crate) fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGro
 ///
 /// Each system's state is created the first time the simulation sees its
 /// [`ComponentParticleSystem`], seeded from its object's id, and dropped on
-/// the first frame its object no longer has one.
+/// the first frame its object no longer has one or the scene holds it
+/// disabled. Disabling a system therefore clears its particles, and enabling
+/// it again starts it over from its seed, as a newly added one starts.
 #[derive(Default)]
 pub struct ParticleSimulation {
     scene: Option<SceneId>,
@@ -464,7 +475,7 @@ impl ParticleSimulation {
         let mut seen = HashSet::new();
         let mut query = <(Entity, &ComponentParticleSystem)>::query();
         for (entity, component) in query.iter(scene.world()) {
-            let Some(game_object) = scene.game_object_from_entity(*entity) else {
+            let Some(game_object) = enabled_system(scene, *entity) else {
                 continue;
             };
             seen.insert(game_object);
@@ -528,7 +539,7 @@ impl ParticleSimulation {
         let mut seen = HashSet::new();
         let mut query = <(Entity, &ComponentParticleSystem)>::query();
         for (entity, component) in query.iter(scene.world()) {
-            let Some(game_object) = scene.game_object_from_entity(*entity) else {
+            let Some(game_object) = enabled_system(scene, *entity) else {
                 continue;
             };
             seen.insert(game_object);

@@ -13,8 +13,8 @@ use calyx_engine::assets::skybox::Skybox;
 use calyx_engine::assets::texture::Texture;
 use calyx_engine::assets::{Asset, AssetAccess, AssetRef, AssetRegistry};
 use calyx_engine::component::{
-    ComponentAmbientLight, ComponentDirectionalLight, ComponentMesh, ComponentPointLight,
-    ComponentSkinnedMesh, ComponentSkyLight,
+    Component, ComponentAmbientLight, ComponentDirectionalLight, ComponentMesh,
+    ComponentPointLight, ComponentSkinnedMesh, ComponentSkyLight,
 };
 use calyx_engine::context::ReadOnlyAssetContext;
 use calyx_engine::math::Transform;

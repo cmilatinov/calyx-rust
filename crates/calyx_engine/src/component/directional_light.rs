@@ -9,14 +9,15 @@ use serde::{Deserialize, Serialize};
 use super::{Component, ReflectComponent};
 
 /// Infinite directional light component.
+///
+/// The scene's enabled state switches it on and off; see
+/// [`Scene::set_component_enabled`](crate::scene::Scene::set_component_enabled).
 #[derive(TypeUuid, Serialize, Component, Deserialize, Reflect)]
 #[uuid = "72b2568a-2ea0-4f58-ae76-e3f655006f0f"]
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Directional Light")]
 #[serde(default)]
 pub struct ComponentDirectionalLight {
-    /// Whether the light contributes to scene lighting.
-    pub active: bool,
     /// Light color.
     pub color: Color32,
     /// Scalar intensity multiplier.
@@ -27,11 +28,15 @@ pub struct ComponentDirectionalLight {
 impl Default for ComponentDirectionalLight {
     fn default() -> Self {
         Self {
-            active: true,
             color: Color32::WHITE,
             intensity: 0.75,
         }
     }
 }
 
-impl Component for ComponentDirectionalLight {}
+impl Component for ComponentDirectionalLight {
+    /// Light gathering skips a disabled directional light.
+    fn can_disable(&self) -> bool {
+        true
+    }
+}

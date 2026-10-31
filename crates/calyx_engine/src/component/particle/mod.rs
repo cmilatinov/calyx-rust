@@ -57,7 +57,9 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct ComponentParticleSystem {
     /// Whether the emitter is currently spawning particles. Live particles
-    /// keep simulating either way.
+    /// keep simulating either way. Unlike disabling the component in the
+    /// scene, which stops the simulation and drops every particle, this only
+    /// pauses emission.
     pub active: bool,
     /// Whether particles simulate in emitter-local space.
     pub local_space: bool,
@@ -103,6 +105,12 @@ impl Default for ComponentParticleSystem {
 }
 
 impl Component for ComponentParticleSystem {
+    /// The particle simulation and renderer skip a disabled system, which
+    /// drops its particles; enabled again, it starts over from its seed.
+    fn can_disable(&self) -> bool {
+        true
+    }
+
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {
         let transform = scene.world_transform(game_object);
         gizmos.set_color(&Vec4::new(1.0, 0.6, 0.2, 1.0));

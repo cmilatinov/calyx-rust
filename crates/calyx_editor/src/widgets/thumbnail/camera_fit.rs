@@ -126,6 +126,7 @@ pub(super) fn scene_mesh_camera_fit(
                 component.mesh.get_ref(&context.registries)
             })
             .flatten()
+            .filter(|_| scene.is_component_enabled::<ComponentMesh>(game_object))
         {
             let mesh = mesh_ref.read();
             append_transformed_mesh_points(&mut points, &mesh, &transform);
@@ -135,6 +136,7 @@ pub(super) fn scene_mesh_camera_fit(
                 component.mesh.get_ref(&context.registries)
             })
             .flatten()
+            .filter(|_| scene.is_component_enabled::<ComponentSkinnedMesh>(game_object))
         {
             let mesh = mesh_ref.read();
             append_transformed_mesh_points(&mut points, &mesh, &transform);
@@ -143,7 +145,7 @@ pub(super) fn scene_mesh_camera_fit(
     CameraFit::from_points(points)
 }
 
-/// Fits the bounds of every mesh in `scene`: the corners of each mesh's
+/// Fits the bounds of every enabled mesh in `scene`: the corners of each mesh's
 /// local bounds in world space. A scene can hold far more vertices than a
 /// prefab, and the fit searches over every point, so it frames the boxes
 /// rather than the vertices. `None` when the scene has no mesh.
@@ -162,11 +164,13 @@ pub(super) fn scene_bounds_camera_fit(
                 component.mesh.get_ref(&context.registries)
             })
             .flatten()
+            .filter(|_| scene.is_component_enabled::<ComponentSkinnedMesh>(game_object))
         {
             points.extend(skinned_mesh_fit_points(scene, game_object, &mesh.read()));
         }
         let mesh_id = scene
-            .read_component::<ComponentMesh, _, _>(game_object, |component| component.mesh.id());
+            .read_component::<ComponentMesh, _, _>(game_object, |component| component.mesh.id())
+            .filter(|_| scene.is_component_enabled::<ComponentMesh>(game_object));
         if let Some(mesh_id) = mesh_id {
             let bounds = *local_bounds.entry(mesh_id).or_insert_with(|| {
                 AssetRef::<Mesh>::from_id(mesh_id)

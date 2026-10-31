@@ -1409,7 +1409,7 @@ mod tests {
     use super::*;
     use crate::remote::runtime::tests::test_runtime;
     use calyx_engine::component::{
-        ComponentCamera, ComponentMesh, ComponentPointLight, ComponentTransform,
+        ComponentBone, ComponentCamera, ComponentMesh, ComponentPointLight, ComponentTransform,
     };
 
     #[test]
@@ -1477,10 +1477,15 @@ mod tests {
     fn disabling_a_component_that_cannot_be_disabled_is_a_bad_request() {
         let registries = calyx_engine::test_support::test_registries();
         let components = registries.components.read();
-        assert!(ensure_can_disable(&components, ComponentCamera::type_uuid(), "camera").is_ok());
         for (type_uuid, name) in [
+            (ComponentCamera::type_uuid(), "camera"),
             (ComponentMesh::type_uuid(), "mesh"),
             (ComponentPointLight::type_uuid(), "point light"),
+        ] {
+            assert!(ensure_can_disable(&components, type_uuid, name).is_ok());
+        }
+        for (type_uuid, name) in [
+            (ComponentBone::type_uuid(), "bone"),
             (ComponentTransform::type_uuid(), "transform"),
         ] {
             let (kind, message) = ensure_can_disable(&components, type_uuid, name).unwrap_err();

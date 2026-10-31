@@ -30,7 +30,13 @@ pub struct ComponentSkinnedMesh {
     pub bone_transforms: Vec<BoneTransform>,
 }
 
-impl Component for ComponentSkinnedMesh {}
+impl Component for ComponentSkinnedMesh {
+    /// The scene renderer skips a disabled skinned mesh: it is neither drawn
+    /// nor picked.
+    fn can_disable(&self) -> bool {
+        true
+    }
+}
 
 impl ComponentSkinnedMesh {
     /// World transform that places this mesh on `game_object`. The animator skins its vertices
