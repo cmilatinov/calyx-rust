@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use super::LoadedAsset;
 use crate::assets::error::AssetError;
+use crate::assets::import::{ImportedSampler, ImportedTexture, TextureFilter, TextureWrap};
 use crate::assets::Asset;
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
@@ -178,6 +179,58 @@ impl Texture {
         Ok(texture)
     }
 
+    /// Uploads an imported texture's image, sampled with its wrap modes and filters. Its mips
+    /// are generated with the default linear sampler, whatever its own filters are.
+    pub(crate) fn from_imported(
+        game: &ReadOnlyAssetContext,
+        texture_name: &str,
+        imported: &ImportedTexture,
+    ) -> Result<Self, AssetError> {
+        let mut texture = Self::from_image(game, texture_name, (*imported.image).clone())?;
+        texture.set_sampler(&Self::sampler_descriptor(texture_name, &imported.sampler));
+        Ok(texture)
+    }
+
+    /// The sampler descriptor of an imported sampler. A sampler without a mip filter samples
+    /// only the full-size image.
+    fn sampler_descriptor<'a>(
+        label: &'a str,
+        sampler: &ImportedSampler,
+    ) -> wgpu::SamplerDescriptor<'a> {
+        let address_mode = |wrap: TextureWrap| match wrap {
+            TextureWrap::Repeat => wgpu::AddressMode::Repeat,
+            TextureWrap::MirroredRepeat => wgpu::AddressMode::MirrorRepeat,
+            TextureWrap::ClampToEdge => wgpu::AddressMode::ClampToEdge,
+        };
+        let filter = |filter: TextureFilter| match filter {
+            TextureFilter::Nearest => wgpu::FilterMode::Nearest,
+            TextureFilter::Linear => wgpu::FilterMode::Linear,
+        };
+        wgpu::SamplerDescriptor {
+            label: Some(label),
+            address_mode_u: address_mode(sampler.wrap_u),
+            address_mode_v: address_mode(sampler.wrap_v),
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: filter(sampler.mag_filter),
+            min_filter: filter(sampler.min_filter),
+            mipmap_filter: sampler
+                .mipmap_filter
+                .map_or(wgpu::FilterMode::Nearest, filter),
+            lod_max_clamp: if sampler.mipmap_filter.is_some() {
+                32.0
+            } else {
+                0.0
+            },
+            ..Default::default()
+        }
+    }
+
+    /// Samples the texture with a sampler made from `descriptor` from now on. Mips already
+    /// generated keep the filtering they were made with.
+    pub fn set_sampler(&mut self, descriptor: &wgpu::SamplerDescriptor) {
+        self.sampler = self.render_context.device().create_sampler(descriptor);
+    }
+
     /// The view a slot sampling in `color_space` binds: the sRGB view for
     /// [`TextureColorSpace::Srgb`] when the texture has one, else the default view. A texture
     /// without an sRGB view, such as a solid color one, holds linear values either way.
@@ -331,11 +384,13 @@ impl Texture {
         }
     }
 
+    /// `image` in a layout [`Self::texture_format`] uploads: 32-bit float RGBA for a float
+    /// image, and 8-bit RGBA for every other, such as a grayscale or 16-bit one.
     fn transform_texture(texture_data: DynamicImage) -> DynamicImage {
         match texture_data.color() {
-            ColorType::Rgb8 => texture_data.to_rgba8().into(),
+            ColorType::Rgba8 | ColorType::Rgba32F => texture_data,
             ColorType::Rgb32F => texture_data.to_rgba32f().into(),
-            _ => texture_data,
+            _ => texture_data.to_rgba8().into(),
         }
     }
 
@@ -727,6 +782,37 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn imported_samplers_keep_their_wrap_modes_and_filters() {
+        use crate::assets::import::{ImportedSampler, TextureFilter, TextureWrap};
+
+        let repeating = Texture::sampler_descriptor("repeat", &ImportedSampler::default());
+        assert_eq!(repeating.address_mode_u, wgpu::AddressMode::Repeat);
+        assert_eq!(repeating.address_mode_v, wgpu::AddressMode::Repeat);
+        assert_eq!(repeating.min_filter, wgpu::FilterMode::Linear);
+        assert_eq!(repeating.mipmap_filter, wgpu::FilterMode::Linear);
+        assert!(repeating.lod_max_clamp > 0.0);
+
+        let unmipped = Texture::sampler_descriptor(
+            "nearest",
+            &ImportedSampler {
+                wrap_u: TextureWrap::MirroredRepeat,
+                wrap_v: TextureWrap::ClampToEdge,
+                mag_filter: TextureFilter::Nearest,
+                min_filter: TextureFilter::Nearest,
+                mipmap_filter: None,
+            },
+        );
+        assert_eq!(unmipped.address_mode_u, wgpu::AddressMode::MirrorRepeat);
+        assert_eq!(unmipped.address_mode_v, wgpu::AddressMode::ClampToEdge);
+        assert_eq!(unmipped.mag_filter, wgpu::FilterMode::Nearest);
+        assert_eq!(unmipped.min_filter, wgpu::FilterMode::Nearest);
+        assert_eq!(
+            unmipped.lod_max_clamp, 0.0,
+            "only the full-size image is sampled"
+        );
     }
 
     #[test]

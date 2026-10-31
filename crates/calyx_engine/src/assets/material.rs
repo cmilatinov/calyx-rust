@@ -6,6 +6,7 @@ use std::path::Path;
 use super::{AssetAccess, AssetRef, LoadedAsset};
 use crate as calyx_engine;
 use crate::assets::error::AssetError;
+use crate::assets::import::ImportedMaterial;
 use crate::assets::texture::{Texture, TextureColorSpace};
 use crate::assets::{Asset, AssetId};
 use crate::context::ReadOnlyAssetContext;
@@ -309,6 +310,76 @@ impl Material {
         material
     }
 
+    /// Builds a material on `shader`, the PBR scene shader, from an imported glTF-style
+    /// material. `textures` holds the texture asset id of each imported texture, or `None` for
+    /// one that did not upload; a slot naming none keeps the shader's default. The ambient
+    /// occlusion multiplier is one, so only the occlusion texture darkens the ambient light.
+    pub(crate) fn from_imported(
+        assets: &ReadOnlyAssetContext,
+        shader: Ref<Shader>,
+        imported: &ImportedMaterial,
+        textures: &[Option<AssetId>],
+    ) -> Self {
+        let mut material = Self::from_shader(assets, shader);
+        let texture = |slot: Option<usize>| {
+            slot.and_then(|index| textures.get(index).copied().flatten())
+                .map(|id| {
+                    ShaderVariableValue::Texture2D(MaterialTexture::Asset(AssetRef::from_id(id)))
+                })
+        };
+        let [r, g, b] = imported.emissive_factor;
+        let values = [
+            (
+                "base_color_factor",
+                Some(ShaderVariableValue::Color(imported.base_color_factor)),
+            ),
+            ("base_color_texture", texture(imported.base_color_texture)),
+            (
+                "metallic",
+                Some(ShaderVariableValue::Float(imported.metallic_factor)),
+            ),
+            (
+                "roughness",
+                Some(ShaderVariableValue::Float(imported.roughness_factor)),
+            ),
+            (
+                "metallic_roughness_texture",
+                texture(imported.metallic_roughness_texture),
+            ),
+            ("normal_texture", texture(imported.normal_texture)),
+            (
+                "normal_scale",
+                Some(ShaderVariableValue::Float(imported.normal_scale)),
+            ),
+            (
+                "emission_color",
+                Some(ShaderVariableValue::Color([r, g, b, 1.0])),
+            ),
+            ("emission_strength", Some(ShaderVariableValue::Float(1.0))),
+            ("emissive_texture", texture(imported.emissive_texture)),
+            ("occlusion_texture", texture(imported.occlusion_texture)),
+            (
+                "occlusion_strength",
+                Some(ShaderVariableValue::Float(imported.occlusion_strength)),
+            ),
+            ("ambient_occlusion", Some(ShaderVariableValue::Float(1.0))),
+            (
+                "alpha_cutoff",
+                Some(ShaderVariableValue::Float(
+                    imported.alpha_cutoff.unwrap_or(0.0),
+                )),
+            ),
+        ];
+        for (name, value) in values {
+            if let Some(value) = value {
+                if !material.set_variable(name, value) {
+                    log::warn!("The PBR shader has no {name} input for imported materials");
+                }
+            }
+        }
+        material
+    }
+
     /// The editable variables `module` declares, each with its reflected default.
     fn reflect_variables(module: &naga::Module) -> Vec<ShaderVariable> {
         let mut variables = Vec::new();
@@ -386,6 +457,22 @@ impl Material {
             .get(&(group, binding))
             .copied()
             .unwrap_or_default()
+    }
+
+    /// Sets the variable named `name` to `value`. Returns false, and changes nothing, when the
+    /// material has no variable of that name.
+    pub fn set_variable(&mut self, name: &str, value: ShaderVariableValue) -> bool {
+        match self
+            .variables
+            .iter_mut()
+            .find(|variable| variable.name == name)
+        {
+            Some(variable) => {
+                variable.value = value;
+                true
+            }
+            None => false,
+        }
     }
 
     pub(crate) fn collect_textures(
