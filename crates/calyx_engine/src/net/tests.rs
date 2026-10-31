@@ -1,18 +1,20 @@
 #[cfg(test)]
 mod tests {
-    use crate::component::ComponentCamera;
+    use crate::component::{ComponentCamera, ComponentEventContext};
     use crate::context::GameContext;
     use crate::core::Ref;
+    use crate::net::sync::{SynchronizationOptions, Synchronized};
     use crate::net::{
         handle_component_enabled, handle_destroy, network_id_range, Client, ComponentNetworkObject,
         GameChannel, GameMessage, MessageHandler, MessageHandlerResult, MessageQueue, MessageRoute,
-        MessageSender, Network, NetworkIdAllocator, NetworkSceneSync, Server, ServerEvent,
+        MessageSender, Network, NetworkIdAllocator, NetworkSceneSync, ReplicationRecord,
+        RoutedMessage, Server, ServerEvent, SnapshotEntry, SnapshotPlan, SNAPSHOT_CHUNK_BYTES,
     };
     use crate::scene::{ComponentEdit, GameObject, Prefab, Scene};
     use crate::test_support::NetworkTestHarness as TestHarness;
     use crate::test_support::{test_game_context, test_scene};
     use crate::utils::TypeUuid;
-    use std::collections::HashSet;
+    use std::collections::{BTreeMap, HashSet};
     use std::time::Duration;
 
     const TICK: Duration = Duration::from_millis(16);
@@ -310,7 +312,7 @@ mod tests {
     #[test]
     fn protocol_id_is_schema_derived() {
         assert_ne!(GameMessage::PROTOCOL_ID, 42069);
-        assert_eq!(GameMessage::PROTOCOL_ID, 0x1128_b1fc_55bb_dedd);
+        assert_eq!(GameMessage::PROTOCOL_ID, 0x8428_159d_3985_9fab);
     }
 
     #[test]
@@ -338,7 +340,7 @@ mod tests {
                 id_range: 1,
             }
             .channel(),
-            GameChannel::ReliableUnordered
+            GameChannel::ReliableOrdered
         );
 
         assert_eq!(
@@ -1897,6 +1899,591 @@ mod tests {
             count_network_objects(harness.client(0).scenes.current_scene()),
             before + 1,
             "client 0 instantiated a spawn whose objects came without ids"
+        );
+    }
+
+    // --- Join snapshot ---
+
+    #[test]
+    fn join_snapshot_messages_travel_ordered_and_only_from_the_server() {
+        let messages = [
+            GameMessage::SelfConnected {
+                client_ids: Vec::new(),
+                id_range: 1,
+            },
+            GameMessage::JoinSnapshot {
+                entries: Vec::new(),
+            },
+            GameMessage::SnapshotComponent {
+                network_object_id: 7,
+                component_uuid: uuid::Uuid::nil(),
+                data: Vec::new(),
+            },
+        ];
+        for message in &messages {
+            assert_eq!(message.channel(), GameChannel::ReliableOrdered);
+            assert!(
+                message.check_client_origin(1).is_err(),
+                "a client may not send {message:?}"
+            );
+        }
+        assert_eq!(
+            messages[2].route(),
+            Some(MessageRoute {
+                network_object_id: 7,
+                component_uuid: uuid::Uuid::nil(),
+            }),
+            "a snapshot payload goes to its synchronized component"
+        );
+    }
+
+    #[test]
+    fn replication_record_orders_the_snapshot() {
+        let (spawner, receiver) = (1u64 << 32 | 5, 9u64);
+        let component = uuid::Uuid::from_u128(0xc0);
+        let (root, child) = ((1u64 << 32) | 1, (1u64 << 32) | 2);
+        let ids = std::collections::HashMap::from([(0u32, root), (1u32, child)]);
+        let prefab_id = uuid::Uuid::from_u128(0xfab);
+
+        let mut record = ReplicationRecord::default();
+        record.spawn(spawner, prefab_id, &ids);
+        record.component_sync(child, component, &[1]);
+        record.destroy(child, false);
+        record.destroy(7, true);
+        // An id no peer holds leaves no destroy behind.
+        record.destroy(99, false);
+        record.transfer(root, receiver);
+        record.transfer(8, receiver);
+        record.set_component_enabled(root, component, false);
+        record.component_sync(root, component, &[1, 2]);
+        record.component_sync(root, component, &[3]);
+
+        assert_eq!(
+            record.entries(),
+            vec![
+                SnapshotEntry::Destroy {
+                    network_object_id: 7
+                },
+                SnapshotEntry::Spawn {
+                    prefab_id,
+                    network_object_ids: ids.clone(),
+                    owner_id: spawner,
+                },
+                SnapshotEntry::Destroy {
+                    network_object_id: child
+                },
+                SnapshotEntry::Owner {
+                    network_object_id: 8,
+                    owner_id: receiver,
+                },
+                SnapshotEntry::Owner {
+                    network_object_id: root,
+                    owner_id: receiver,
+                },
+                SnapshotEntry::ComponentEnabled {
+                    network_object_id: root,
+                    component_uuid: component,
+                    enabled: false,
+                },
+            ]
+        );
+        let messages = record.messages(SNAPSHOT_CHUNK_BYTES);
+        assert!(
+            matches!(
+                messages.last(),
+                Some(GameMessage::SnapshotComponent { network_object_id, data, .. })
+                    if *network_object_id == root && data == &[3]
+            ),
+            "the snapshot ends with the latest payload of each component, got {messages:?}"
+        );
+        assert_eq!(messages.len(), 2, "the destroyed child kept its payload");
+
+        // Destroying the last object of a spawn drops it altogether.
+        record.destroy(root, false);
+        assert_eq!(
+            record.entries(),
+            vec![
+                SnapshotEntry::Destroy {
+                    network_object_id: 7
+                },
+                SnapshotEntry::Owner {
+                    network_object_id: 8,
+                    owner_id: receiver,
+                },
+            ]
+        );
+        assert!(!record.is_spawned(root));
+    }
+
+    #[test]
+    fn join_snapshot_is_split_into_chunks_and_cut_to_its_budget() {
+        let mut record = ReplicationRecord::default();
+        let range = 1u64 << 32;
+        for i in 1..=2000u64 {
+            let ids = std::collections::HashMap::from([(0u32, range | i)]);
+            record.spawn(1, uuid::Uuid::from_u128(u128::from(i)), &ids);
+        }
+        record.component_sync(range | 1, uuid::Uuid::nil(), &vec![0; 64 * 1024]);
+        let messages = record.messages(SNAPSHOT_CHUNK_BYTES);
+
+        let mut chunks = 0;
+        let mut entries = Vec::new();
+        for message in &messages {
+            let size = bincode::serde::encode_to_vec(message, bincode::config::standard())
+                .unwrap()
+                .len();
+            if let GameMessage::JoinSnapshot { entries: chunk } = message {
+                chunks += 1;
+                // The message adds its variant tag and length to the entries.
+                assert!(
+                    size <= SNAPSHOT_CHUNK_BYTES + 16,
+                    "a {size}-byte chunk exceeds the chunk size"
+                );
+                entries.extend(chunk.iter().cloned());
+            }
+        }
+        assert!(chunks > 1, "the snapshot was not split");
+        assert_eq!(
+            entries,
+            record.entries(),
+            "chunking lost or reordered entries"
+        );
+
+        let plan = SnapshotPlan::new(&messages, usize::MAX);
+        assert!(!plan.is_truncated());
+        assert_eq!(plan.messages.len(), messages.len());
+
+        // The large payload is the tail; a budget that misses it cuts only it.
+        let budget = plan.total_bytes - 1024;
+        let plan = SnapshotPlan::new(&messages, budget);
+        assert!(plan.is_truncated());
+        assert!(plan.sent_bytes <= budget);
+        assert_eq!(plan.messages.len(), messages.len() - 1);
+    }
+
+    /// Network object id of a scene-file object, which every peer loads.
+    const SCENE_DESTROYED: u64 = 7;
+    const SCENE_TRANSFERRED: u64 = 8;
+    const SCENE_TOGGLED: u64 = 9;
+
+    /// Component id of the [`Synchronized`] value the join tests sync.
+    const SYNCED_COMPONENT: uuid::Uuid = uuid::Uuid::from_u128(0x5eed_0437);
+
+    /// Prefab built by the join tests: a network object with a camera to
+    /// toggle.
+    fn add_camera(scene: &mut Scene, root: GameObject) {
+        scene.add_component(root, ComponentCamera::default());
+    }
+
+    /// Registers the join tests' prefab on `ctx` under `name`, as
+    /// [`setup_spawn_harness_with`] does on the peers it creates.
+    fn register_camera_prefab(ctx: &mut GameContext, name: &str) -> Ref<Prefab> {
+        let scene = ctx.scenes.current_scene_mut();
+        let root = scene.create(None, None);
+        scene.add_component(root, ComponentNetworkObject::default());
+        add_camera(scene, root);
+        let prefab: Prefab = scene.create_prefab(root);
+        scene.delete(root);
+        scene.flush_deletes();
+        ctx.assets
+            .registries
+            .assets
+            .read()
+            .create(name.to_string(), prefab)
+            .expect("failed to register prefab")
+    }
+
+    /// Adds the scene-file network objects `(id, owner)` to `ctx`'s scene,
+    /// each with a camera, as loading the same scene file on every peer does.
+    fn add_scene_objects(ctx: &mut GameContext, objects: &[(u64, u64)]) {
+        let scene = ctx.scenes.current_scene_mut();
+        for &(id, owner_id) in objects {
+            let go = scene.create(None, None);
+            scene.add_component(go, ComponentNetworkObject { id, owner_id });
+            scene.add_component(go, ComponentCamera::default());
+        }
+    }
+
+    /// Replicated state of `scene`: the owner of each network object and
+    /// whether its camera is enabled.
+    fn replicated_state(scene: &Scene) -> BTreeMap<u64, (u64, bool)> {
+        scene
+            .objects()
+            .filter_map(|go| {
+                let (id, owner_id) = scene
+                    .read_component::<ComponentNetworkObject, _, _>(go, |c| (c.id, c.owner_id))?;
+                Some((
+                    id,
+                    (owner_id, scene.is_component_enabled::<ComponentCamera>(go)),
+                ))
+            })
+            .collect()
+    }
+
+    /// Whether every peer of `harness` holds the same replicated state.
+    fn states_agree(harness: &TestHarness) -> bool {
+        let host = replicated_state(harness.host().scenes.current_scene());
+        harness.contexts[1..]
+            .iter()
+            .all(|ctx| replicated_state(ctx.scenes.current_scene()) == host)
+    }
+
+    /// Runs `sync` for network object `network_object_id` on `ctx` as its
+    /// synchronized component does each update, with `value` as the local
+    /// value, and returns the value it holds for a remote owner.
+    fn run_sync(
+        ctx: &mut GameContext,
+        sync: &mut Synchronized<f32>,
+        network_object_id: u64,
+        value: f32,
+    ) -> Option<f32> {
+        let GameContext {
+            assets,
+            scenes,
+            resources,
+            ..
+        } = ctx;
+        let assets = assets.lock_read();
+        let scene = scenes.current_scene_mut();
+        let game_object = network_object(scene, network_object_id)?;
+        let mut event_ctx = ComponentEventContext {
+            registries: &assets.registries,
+            scene,
+            game_object,
+        };
+        sync.update(&mut event_ctx, resources, |_| value)
+    }
+
+    fn synced_value() -> Synchronized<f32> {
+        Synchronized::new(
+            SynchronizationOptions::builder()
+                .interpolate(false)
+                .component_uuid(SYNCED_COMPONENT)
+                .build(),
+        )
+    }
+
+    /// Records, without consuming it, whether a join snapshot reached a peer.
+    struct SnapshotSeen;
+    impl MessageHandler<bool, GameMessage> for SnapshotSeen {
+        fn handle_message(
+            &mut self,
+            seen: &mut bool,
+            _: MessageSender,
+            message: &GameMessage,
+        ) -> MessageHandlerResult {
+            if matches!(message, GameMessage::JoinSnapshot { .. }) {
+                *seen = true;
+            }
+            MessageHandlerResult::Ignore
+        }
+    }
+
+    /// Pumps the harness once and flushes deletions on every peer, as the
+    /// game loop does.
+    fn pump_and_flush(harness: &mut TestHarness) {
+        harness.pump();
+        for ctx in &mut harness.contexts {
+            ctx.scenes.current_scene_mut().flush_deletes();
+        }
+    }
+
+    #[test]
+    fn late_joiner_receives_the_replicated_state() {
+        let name = "net_join_snapshot_test_prefab";
+        let (mut harness, prefab_refs) = setup_spawn_harness_with(name, add_camera);
+        let host_id = harness.host().resources.network().local_id.unwrap();
+        let first_id = harness.client(0).resources.network().local_id.unwrap();
+        let second_id = harness.client(1).resources.network().local_id.unwrap();
+        let scene_objects = [
+            (SCENE_DESTROYED, host_id),
+            (SCENE_TRANSFERRED, first_id),
+            (SCENE_TOGGLED, first_id),
+        ];
+        for ctx in &mut harness.contexts {
+            add_scene_objects(ctx, &scene_objects);
+        }
+
+        // Scene-file objects: the host destroys one, client 0 hands one to
+        // client 1 and disables the camera of another.
+        let host = harness.host_mut();
+        let scene = host.scenes.current_scene_mut();
+        let destroyed = network_object(scene, SCENE_DESTROYED).unwrap();
+        assert!(host
+            .resources
+            .network_mut()
+            .destroy_game_object(scene, destroyed));
+        let first = harness.client_mut(0);
+        first
+            .resources
+            .network_mut()
+            .client
+            .send_message(&GameMessage::TransferOwnership {
+                network_object_id: SCENE_TRANSFERRED,
+                from_client_id: first_id,
+                to_client_id: second_id,
+            })
+            .unwrap();
+        let scene = first.scenes.current_scene_mut();
+        let toggled = network_object(scene, SCENE_TOGGLED).unwrap();
+        assert!(first.resources.network_mut().set_component_enabled(
+            scene,
+            toggled,
+            ComponentCamera::type_uuid(),
+            false
+        ));
+
+        // Runtime spawns from client 0 and from the host.
+        let (_, kept_id) = spawn_from_client(&mut harness, 0, prefab_refs[1].clone());
+        let (destroyed_spawn, destroyed_spawn_id) =
+            spawn_from_client(&mut harness, 0, prefab_refs[1].clone());
+        let (_, transferred_id) = spawn_from_client(&mut harness, 0, prefab_refs[1].clone());
+        let host = harness.host_mut();
+        let scene = host.scenes.current_scene_mut();
+        let host_spawn = host
+            .resources
+            .network_mut()
+            .instantiate_prefab(scene, prefab_refs[0].clone())
+            .unwrap();
+        let host_spawn_id = scene
+            .read_component::<ComponentNetworkObject, _, _>(host_spawn, |c| c.id)
+            .unwrap();
+        assert!(
+            pump_until(&mut harness, |h| [
+                kept_id,
+                destroyed_spawn_id,
+                transferred_id
+            ]
+            .iter()
+            .all(|&id| has_network_object(h.client(1).scenes.current_scene(), id))),
+            "the spawns did not reach client 1"
+        );
+
+        // Changes to the spawned objects.
+        let first = harness.client_mut(0);
+        let scene = first.scenes.current_scene_mut();
+        assert!(first
+            .resources
+            .network_mut()
+            .destroy_game_object(scene, destroyed_spawn));
+        let kept = network_object(scene, kept_id).unwrap();
+        assert!(first.resources.network_mut().set_component_enabled(
+            scene,
+            kept,
+            ComponentCamera::type_uuid(),
+            false
+        ));
+        first
+            .resources
+            .network_mut()
+            .client
+            .send_message(&GameMessage::TransferOwnership {
+                network_object_id: transferred_id,
+                from_client_id: first_id,
+                to_client_id: second_id,
+            })
+            .unwrap();
+        let host = harness.host_mut();
+        let scene = host.scenes.current_scene_mut();
+        assert!(host.resources.network_mut().set_component_enabled(
+            scene,
+            host_spawn,
+            ComponentCamera::type_uuid(),
+            false
+        ));
+
+        // One sync each from client 0 and from the host, never resent.
+        let mut client_sync = synced_value();
+        run_sync(harness.client_mut(0), &mut client_sync, kept_id, 5.0);
+        let mut host_sync = synced_value();
+        run_sync(harness.host_mut(), &mut host_sync, host_spawn_id, 9.0);
+
+        assert!(
+            pump_until(&mut harness, |h| states_agree(h)
+                && !has_network_object(
+                    h.client(1).scenes.current_scene(),
+                    destroyed_spawn_id
+                )
+                && network_object_owner(
+                    h.client(1).scenes.current_scene(),
+                    transferred_id
+                ) == Some(second_id)),
+            "the connected peers never agreed"
+        );
+
+        // A client joins, holding the same scene file and prefab.
+        let late = harness.add_client();
+        let late_ctx = harness.client_mut(late);
+        register_camera_prefab(late_ctx, name);
+        add_scene_objects(late_ctx, &scene_objects);
+        // The loop below connects it too: its snapshot payloads wait for the
+        // synchronized components only until the next update, as in a game
+        // loop, so they must run from the first pump.
+        let mut late_kept = synced_value();
+        let mut late_host_spawn = synced_value();
+        let mut values = (None, None);
+        let mut host_saw_snapshot = false;
+        let mut converged = false;
+        for _ in 0..400 {
+            pump_and_flush(&mut harness);
+            harness
+                .host_mut()
+                .resources
+                .network_mut()
+                .queue
+                .receive_messages(None, &mut host_saw_snapshot, &mut SnapshotSeen);
+            let late_ctx = harness.client_mut(late);
+            values.0 = run_sync(late_ctx, &mut late_kept, kept_id, 0.0).or(values.0);
+            values.1 = run_sync(late_ctx, &mut late_host_spawn, host_spawn_id, 0.0).or(values.1);
+            if states_agree(&harness) && values == (Some(5.0), Some(9.0)) {
+                converged = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let host_state = replicated_state(harness.host().scenes.current_scene());
+        let late_state = replicated_state(harness.client(late).scenes.current_scene());
+        assert_eq!(late_state, host_state, "the late client's state differs");
+        assert!(
+            converged,
+            "the late client never got the synced values: {values:?}"
+        );
+        assert!(!host_saw_snapshot, "the host sent itself a snapshot");
+
+        // The comparison covers each kind of change.
+        assert!(!late_state.contains_key(&SCENE_DESTROYED));
+        assert!(!late_state.contains_key(&destroyed_spawn_id));
+        assert_eq!(late_state[&SCENE_TRANSFERRED].0, second_id);
+        assert!(!late_state[&SCENE_TOGGLED].1);
+        assert_eq!(late_state[&kept_id], (first_id, false));
+        assert_eq!(late_state[&transferred_id].0, second_id);
+        assert_eq!(late_state[&host_spawn_id], (host_id, false));
+    }
+
+    #[test]
+    fn join_snapshot_does_not_race_with_live_changes() {
+        let name = "net_join_race_test_prefab";
+        let (mut harness, prefab_refs) = setup_spawn_harness_with(name, add_camera);
+
+        // Enough state that the snapshot spans several server ticks: renet
+        // sends at most 60 000 bytes per connection per tick.
+        let mut spawned = Vec::new();
+        for _ in 0..40 {
+            spawned.push(spawn_from_client(&mut harness, 0, prefab_refs[1].clone()));
+        }
+        assert!(
+            pump_until(&mut harness, |h| spawned.iter().all(|(_, id)| {
+                has_network_object(h.host().scenes.current_scene(), *id)
+            })),
+            "the spawns did not reach the host"
+        );
+        let first_id = harness.client(0).resources.network().local_id.unwrap();
+        // Syncs are unreliable and renet drops what exceeds a tick's byte
+        // budget, so they go a few per round until the host kept them all.
+        let kept_payloads = |h: &TestHarness| {
+            h.host()
+                .resources
+                .network()
+                .server
+                .as_ref()
+                .unwrap()
+                .record()
+                .messages(SNAPSHOT_CHUNK_BYTES)
+                .iter()
+                .filter(|m| matches!(m, GameMessage::SnapshotComponent { .. }))
+                .count()
+        };
+        for _ in 0..20 {
+            if kept_payloads(&harness) == spawned.len() {
+                break;
+            }
+            for batch in spawned.chunks(4) {
+                for (_, id) in batch {
+                    harness
+                        .client_mut(0)
+                        .resources
+                        .network_mut()
+                        .client
+                        .send_message(&GameMessage::SyncComponent {
+                            time: 0.0,
+                            network_object_id: *id,
+                            from_client_id: first_id,
+                            component_uuid: SYNCED_COMPONENT,
+                            data: vec![0; 8 * 1024],
+                        })
+                        .unwrap();
+                }
+                for _ in 0..3 {
+                    pump_and_flush(&mut harness);
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }
+        }
+        assert_eq!(kept_payloads(&harness), spawned.len());
+        let snapshot_bytes = SnapshotPlan::new(
+            &harness
+                .host()
+                .resources
+                .network()
+                .server
+                .as_ref()
+                .unwrap()
+                .record()
+                .messages(SNAPSHOT_CHUNK_BYTES),
+            usize::MAX,
+        )
+        .total_bytes;
+        assert!(
+            snapshot_bytes > 4 * 60_000,
+            "the snapshot of {snapshot_bytes} bytes fits in a few ticks"
+        );
+
+        let late = harness.add_client();
+        register_camera_prefab(harness.client_mut(late), name);
+
+        // Client 0 keeps changing the scene, every round, while the late
+        // client connects and receives its snapshot, and for a while after.
+        let mut changes_after_id = 0;
+        let mut round = 0;
+        while changes_after_id < 30 {
+            assert!(round < 1000, "the late client never learned its id");
+            round += 1;
+            let first = harness.client_mut(0);
+            let scene = first.scenes.current_scene_mut();
+            let network = first.resources.network_mut();
+            let (go, id) = spawned.remove(0);
+            match round % 3 {
+                0 => {
+                    network.destroy_game_object(scene, go);
+                }
+                1 => {
+                    network.set_component_enabled(scene, go, ComponentCamera::type_uuid(), false);
+                    spawned.push((go, id));
+                }
+                _ => {
+                    let spawn = network
+                        .instantiate_prefab(scene, prefab_refs[1].clone())
+                        .unwrap();
+                    let spawn_id = scene
+                        .read_component::<ComponentNetworkObject, _, _>(spawn, |c| c.id)
+                        .unwrap();
+                    spawned.push((go, id));
+                    spawned.push((spawn, spawn_id));
+                }
+            }
+            pump_and_flush(&mut harness);
+            if harness.client(late).resources.network().local_id.is_some() {
+                changes_after_id += 1;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        assert!(
+            pump_until(&mut harness, states_agree),
+            "the late client's state differs: {:?} vs {:?}",
+            replicated_state(harness.client(late).scenes.current_scene()),
+            replicated_state(harness.host().scenes.current_scene())
         );
     }
 }
