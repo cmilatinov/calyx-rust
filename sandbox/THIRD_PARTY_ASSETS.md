@@ -15,12 +15,11 @@
 - Source: Khronos glTF Sample Assets, https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/Fox
 - Files:
   - `assets/showcase/main/models/fox/Fox.glb`
-  - `assets/showcase/main/textures/fox.png` (the model's `Texture.png`)
 - License and credit:
   - Model by PixelMannen, CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/).
   - Rigging and animation by tomkranis, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).
   - Conversion to glTF by @AsoboStudio and @scurest, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).
-- Notes: used unchanged. The Calyx glTF importer does not import materials, so `assets/showcase/main/materials/fox.cxmat` applies the texture.
+- Notes: used unchanged. The showcase renders it with the material and texture the glTF importer makes from the file.
 
 ## Industrial Sunset (Pure Sky) HDRI
 

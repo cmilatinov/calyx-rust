@@ -51,10 +51,13 @@ pub(super) fn import(path: &Path) -> Result<ImportedScene, AssetError> {
         .filter_map(|stack| import_animation(&scene, stack).transpose())
         .collect::<Result<_, _>>()?;
 
+    // Materials are not imported from FBX: every part uses the default material.
     Ok(ImportedScene {
         meshes,
         root,
         animations,
+        materials: Vec::new(),
+        textures: Vec::new(),
     })
 }
 

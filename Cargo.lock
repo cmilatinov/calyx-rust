@@ -1309,6 +1309,7 @@ dependencies = [
  "transform-gizmo-egui",
  "typed-builder",
  "ufbx",
+ "urlencoding",
  "uuid 1.22.0",
 ]
 
