@@ -18,15 +18,27 @@ pub(super) struct ThumbnailShared {
     /// Memoized requests for UI lookups by asset; see [`ThumbnailHandle`].
     pub(super) requests: Mutex<ThumbnailRequestMemo>,
     wake: Condvar,
+    /// Signalled when a job that builds a scene finishes, for
+    /// [`ThumbnailService::pause_scene_jobs`].
+    scene_job_done: Condvar,
     state_poisoned: AtomicBool,
 }
 
 #[derive(Default)]
 pub(super) struct ThumbnailState {
-    pipeline: ThumbnailPipeline,
+    pub(super) pipeline: ThumbnailPipeline,
     textures: HashMap<ThumbnailKey, Texture>,
     pub(super) render_settings: ThumbnailRenderSettings,
     pub(super) cache_epoch: u64,
+    /// Whether the project assemblies are loaded. Jobs that need them, see
+    /// [`ThumbnailRequest::needs_project_assemblies`], stay queued until then.
+    project_assemblies_loaded: bool,
+    /// Live [`SceneJobsPaused`] guards. While any is held, no job that
+    /// builds a scene starts.
+    scene_job_pauses: usize,
+    /// Whether the worker is running a job that builds a scene. Cleared
+    /// only once that scene is dropped.
+    scene_job_in_progress: bool,
     invalidate_cache: bool,
     stop: bool,
 }
@@ -56,6 +68,7 @@ impl ThumbnailService {
                 }),
                 requests: Mutex::new(ThumbnailRequestMemo::default()),
                 wake: Condvar::new(),
+                scene_job_done: Condvar::new(),
                 state_poisoned: AtomicBool::new(false),
             }),
             worker: None,
@@ -116,6 +129,29 @@ impl ThumbnailService {
         self.ensure_worker(context.clone());
     }
 
+    /// Tells the service whether the project assemblies are loaded. Scene
+    /// thumbnails wait in the queue until they are, then render.
+    pub fn set_project_assemblies_loaded(&mut self, loaded: bool) {
+        let mut state = lock_thumbnail_state(&self.shared);
+        if state.project_assemblies_loaded == loaded {
+            return;
+        }
+        state.project_assemblies_loaded = loaded;
+        drop(state);
+        if loaded {
+            self.shared.wake.notify_one();
+        }
+    }
+
+    /// Holds back every job that builds a scene, and waits for the one in
+    /// progress, if any, to drop its scene. A worker's scene holds component
+    /// storages whose code is in the project assembly, and the scene manager
+    /// cannot suspend it, so the assembly is replaced only while the returned
+    /// guard is held. Dropping the guard lets those jobs start again.
+    pub fn pause_scene_jobs(&self) -> SceneJobsPaused {
+        pause_scene_jobs(&self.shared)
+    }
+
     fn ensure_worker(&mut self, context: ReadOnlyAssetContext) {
         if self
             .worker
@@ -154,6 +190,64 @@ impl Drop for ThumbnailService {
                 log::warn!("Thumbnail generation worker exited with a panic");
             }
         }
+    }
+}
+
+/// Holds back thumbnail jobs that build a scene while it lives; see
+/// [`ThumbnailService::pause_scene_jobs`].
+#[must_use = "scene jobs resume as soon as the guard is dropped"]
+pub struct SceneJobsPaused {
+    shared: Arc<ThumbnailShared>,
+}
+
+impl Drop for SceneJobsPaused {
+    fn drop(&mut self) {
+        let mut state = lock_thumbnail_state(&self.shared);
+        state.scene_job_pauses = state.scene_job_pauses.saturating_sub(1);
+        drop(state);
+        self.shared.wake.notify_one();
+    }
+}
+
+pub(super) fn pause_scene_jobs(shared: &Arc<ThumbnailShared>) -> SceneJobsPaused {
+    let mut state = lock_thumbnail_state(shared);
+    state.scene_job_pauses += 1;
+    while state.scene_job_in_progress {
+        state = match shared.scene_job_done.wait(state) {
+            Ok(state) => state,
+            Err(poisoned) => {
+                log_thumbnail_state_poison(shared);
+                poisoned.into_inner()
+            }
+        };
+    }
+    SceneJobsPaused {
+        shared: shared.clone(),
+    }
+}
+
+/// Starts the next job the worker may run now: a job that needs the project
+/// assemblies waits until they are loaded, and a job that builds a scene
+/// waits while scene jobs are paused. A job that builds a scene is marked in
+/// progress until [`finish_worker_job`].
+pub(super) fn start_worker_job(state: &mut ThumbnailState) -> Option<ThumbnailJob> {
+    let assemblies_loaded = state.project_assemblies_loaded;
+    let scene_jobs_paused = state.scene_job_pauses > 0;
+    let job = state.pipeline.start_next_where(|job| {
+        (assemblies_loaded || !job.request.needs_project_assemblies())
+            && !(scene_jobs_paused && job.request.builds_scene())
+    })?;
+    state.scene_job_in_progress = job.request.builds_scene();
+    Some(job)
+}
+
+/// Marks the worker's job finished, its scene, if it built one, dropped,
+/// and wakes a [`pause_scene_jobs`] waiting on it.
+pub(super) fn finish_worker_job(shared: &ThumbnailShared) {
+    let mut state = lock_thumbnail_state(shared);
+    if std::mem::take(&mut state.scene_job_in_progress) {
+        drop(state);
+        shared.scene_job_done.notify_all();
     }
 }
 
@@ -234,7 +328,7 @@ fn thumbnail_worker_loop(
                     state.invalidate_cache = false;
                     break ThumbnailWorkerCommand::InvalidateCache;
                 }
-                if let Some(job) = state.pipeline.start_next() {
+                if let Some(job) = start_worker_job(&mut state) {
                     break ThumbnailWorkerCommand::Generate {
                         job,
                         render_settings: state.render_settings,
@@ -272,6 +366,8 @@ fn thumbnail_worker_loop(
                 started_at,
             );
         }));
+        // The job's scene, if any, is dropped by now, unwound or not.
+        finish_worker_job(&shared);
         if let Err(payload) = result {
             let message = format!(
                 "thumbnail generation panicked: {}",
@@ -295,7 +391,7 @@ fn process_thumbnail_job(
     generator.render_settings = render_settings;
     let cache = ThumbnailCache::new(context, render_settings);
     let key = job.key();
-    let render_state = context.render_context.render_state();
+    let gpu = context.render_context.as_ref();
     if let Ok(Some(texture)) = cache.load(context, &job.request) {
         let mut state = lock_thumbnail_state(shared);
         let status_updated = state.cache_epoch == cache_epoch && state.pipeline.complete(key);
@@ -305,7 +401,7 @@ fn process_thumbnail_job(
         return;
     }
 
-    match generator.generate(context, render_state, &job.request) {
+    match generator.generate(context, gpu, &job.request) {
         Ok(texture) => {
             let should_store = {
                 let state = lock_thumbnail_state(shared);
@@ -313,7 +409,7 @@ fn process_thumbnail_job(
                     && matches!(state.pipeline.status(key), ThumbnailStatus::InProgress)
             };
             if should_store {
-                if let Err(err) = cache.store(render_state, &job.request, &texture) {
+                if let Err(err) = cache.store(gpu, &job.request, &texture) {
                     log::warn!(
                             "Failed to store thumbnail cache asset={} type={} version={} path={} error={}",
                             job.request.asset_id,
@@ -327,17 +423,25 @@ fn process_thumbnail_job(
             let mut state = lock_thumbnail_state(shared);
             let status_updated = state.cache_epoch == cache_epoch && state.pipeline.complete(key);
             if status_updated {
-                log::trace!(
-                        "Generated thumbnail asset={} type={} version={} path={} texture_size={}x{} format={:?} elapsed_ms={}",
-                        job.request.asset_id,
-                        thumbnail_asset_type_name(job.request.asset_type),
-                        job.request.source_version,
-                        thumbnail_source_label(&job.request),
-                        texture.descriptor.size.width,
-                        texture.descriptor.size.height,
-                        texture.descriptor.format,
-                        started_at.elapsed().as_millis()
-                    );
+                // Scene thumbnails are the expensive ones, so their time is
+                // worth seeing at debug level.
+                let level = if job.request.asset_type == Scene::type_uuid() {
+                    log::Level::Debug
+                } else {
+                    log::Level::Trace
+                };
+                log::log!(
+                    level,
+                    "Generated thumbnail asset={} type={} version={} path={} texture_size={}x{} format={:?} elapsed_ms={}",
+                    job.request.asset_id,
+                    thumbnail_asset_type_name(job.request.asset_type),
+                    job.request.source_version,
+                    thumbnail_source_label(&job.request),
+                    texture.descriptor.size.width,
+                    texture.descriptor.size.height,
+                    texture.descriptor.format,
+                    started_at.elapsed().as_millis()
+                );
                 state.textures.insert(key, texture);
             }
         }

@@ -22,6 +22,7 @@ use crate::scene_file::{scene_fingerprint, write_scene_file};
 use crate::scene_history::{
     InspectorValueChange, InspectorValueEdit, SceneEditSnapshot, SceneHistory, SceneHistoryRestore,
 };
+use crate::widgets::{ThumbnailHandle, ThumbnailPriority};
 
 pub struct SceneDocument {
     history: SceneHistory,
@@ -30,6 +31,8 @@ pub struct SceneDocument {
     autosave: EditorSceneAutosave,
     /// Counts the changes to the undo history and the saved state.
     revision: u64,
+    /// Where a save asks for the saved scene's new thumbnail.
+    thumbnails: Option<ThumbnailHandle>,
 }
 
 /// The simulation guard: `game` while its authoring scene may be edited, that
@@ -51,7 +54,15 @@ impl SceneDocument {
             inspector_edits: InspectorEditTracker::default(),
             autosave: EditorSceneAutosave::new(project_path),
             revision: 0,
+            thumbnails: None,
         }
+    }
+
+    /// A document whose saves request the saved scene's thumbnail from
+    /// `thumbnails`.
+    pub(crate) fn with_thumbnails(mut self, thumbnails: ThumbnailHandle) -> Self {
+        self.thumbnails = Some(thumbnails);
+        self
     }
 
     /// Whether the authoring scene differs from its saved file.
@@ -302,11 +313,24 @@ impl SceneDocument {
         log::info!("Saved scene {} ({object_count} objects)", file.display());
         // The watcher registers a new file too, but later and on its own
         // thread, so a scene opened right after its save could miss it.
-        if let Err(error) = game.assets.registries.assets.read().register_file(file) {
-            log::warn!(
+        let registered = game.assets.registries.assets.read().register_file(file);
+        match registered {
+            // The new file version is a new thumbnail key; ask for it ahead
+            // of the thumbnails the browser asks for. A newer save replaces
+            // the queued job, so repeated saves render once.
+            Ok(asset_id) => {
+                if let Some(thumbnails) = &self.thumbnails {
+                    thumbnails.refresh_asset(
+                        &game.assets.registries.assets.read(),
+                        asset_id,
+                        ThumbnailPriority::High,
+                    );
+                }
+            }
+            Err(error) => log::warn!(
                 "Saved scene {} is not registered as an asset until the editor restarts: {error}",
                 file.display()
-            );
+            ),
         }
 
         let previous_file = game.scenes.current_scene_meta().file.clone();
@@ -589,6 +613,7 @@ mod tests {
     use crate::inspector::type_inspector::InspectorResponse;
     use crate::scene_edit::SceneEdit;
     use crate::scene_history::InspectorValueChange;
+    use crate::widgets::{ThumbnailPriority, ThumbnailRequest, ThumbnailService, ThumbnailStatus};
     use calyx_engine::component::ComponentTransform;
     use calyx_engine::context::GameContext;
     use calyx_engine::test_support::{test_asset_context_with_assets, test_game_context};
@@ -720,6 +745,32 @@ mod tests {
         // Undoing past the save leaves the scene different from its file.
         document.undo(&mut game);
         assert!(document.is_dirty());
+    }
+
+    #[test]
+    fn save_requests_the_saved_scene_thumbnail_at_high_priority() {
+        let root = AssetRoot::new();
+        let mut game = GameContext::new(test_asset_context_with_assets(vec![root.0.clone()]));
+        let thumbnails = ThumbnailService::default();
+        let mut document = document().with_thumbnails(thumbnails.handle());
+        add_object(&mut document, &mut game);
+
+        document
+            .save(&mut game, root.scene_file())
+            .expect("the scene saves");
+
+        let key = {
+            let registry = game.assets.registries.assets.read();
+            ThumbnailRequest::from_asset_path(&registry, &root.scene_file())
+                .expect("a saved scene has a thumbnail")
+                .key()
+        };
+        assert_eq!(
+            thumbnails.status(key),
+            ThumbnailStatus::Queued {
+                priority: ThumbnailPriority::High
+            }
+        );
     }
 
     #[test]

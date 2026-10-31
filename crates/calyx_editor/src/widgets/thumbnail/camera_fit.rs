@@ -1,4 +1,5 @@
 use super::*;
+use nalgebra_glm::{Mat4, Vec4};
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Bounds {
@@ -140,6 +141,126 @@ pub(super) fn scene_mesh_camera_fit(
         }
     }
     CameraFit::from_points(points)
+}
+
+/// Fits the bounds of every mesh in `scene`: the corners of each mesh's
+/// local bounds in world space. A scene can hold far more vertices than a
+/// prefab, and the fit searches over every point, so it frames the boxes
+/// rather than the vertices. `None` when the scene has no mesh.
+pub(super) fn scene_bounds_camera_fit(
+    context: &ReadOnlyAssetContext,
+    scene: &Scene,
+) -> Option<CameraFit> {
+    let mut local_bounds = HashMap::<Uuid, Option<Bounds>>::new();
+    let mut points = Vec::new();
+    for game_object in scene.objects() {
+        if !scene.is_visible_in_hierarchy(game_object) {
+            continue;
+        }
+        if let Some(mesh) = scene
+            .read_component::<ComponentSkinnedMesh, _, _>(game_object, |component| {
+                component.mesh.get_ref(&context.registries)
+            })
+            .flatten()
+        {
+            points.extend(skinned_mesh_fit_points(scene, game_object, &mesh.read()));
+        }
+        let mesh_id = scene
+            .read_component::<ComponentMesh, _, _>(game_object, |component| component.mesh.id());
+        if let Some(mesh_id) = mesh_id {
+            let bounds = *local_bounds.entry(mesh_id).or_insert_with(|| {
+                AssetRef::<Mesh>::from_id(mesh_id)
+                    .get_ref(&context.registries)
+                    .and_then(|mesh| Bounds::from_points(&mesh.read().vertices))
+            });
+            let Some(bounds) = bounds else {
+                continue;
+            };
+            let transform = scene.world_transform(game_object);
+            points.extend(
+                bounds
+                    .corners()
+                    .iter()
+                    .map(|corner| transform.transform_position(corner)),
+            );
+        }
+    }
+    CameraFit::from_points(points)
+}
+
+/// The world-space corners of the skinned mesh on `game_object`, as the
+/// scene renderer draws it: each vertex skinned by the palette the animator
+/// filled, or by the rest pose the bone objects hold, then placed by the
+/// root bone's world transform. Empty when the object has no skinned mesh,
+/// or its mesh has no bones or vertices, since the renderer skips those.
+pub(super) fn skinned_mesh_fit_points(
+    scene: &Scene,
+    game_object: GameObject,
+    mesh: &Mesh,
+) -> Vec<Vec3> {
+    let num_bones = mesh.bones.len();
+    if num_bones == 0 {
+        return Vec::new();
+    }
+    let Some((placement, palette)) =
+        scene.read_component::<ComponentSkinnedMesh, _, _>(game_object, |component| {
+            let mut palette = Vec::new();
+            if component.bone_transforms.len() >= num_bones {
+                palette.extend_from_slice(&component.bone_transforms[..num_bones]);
+            } else {
+                let bones = component
+                    .root_bone
+                    .game_object(scene)
+                    .map(|root| ComponentSkinnedMesh::bone_poses(scene, root))
+                    .unwrap_or_default();
+                ComponentSkinnedMesh::skinning_palette(mesh, &bones, &mut palette);
+            }
+            (component.world_transform(scene, game_object), palette)
+        })
+    else {
+        return Vec::new();
+    };
+    let palette = palette
+        .iter()
+        .map(|bone| Mat4::from(bone.transform))
+        .collect::<Vec<_>>();
+    let skinned = mesh
+        .vertices
+        .iter()
+        .enumerate()
+        .map(|(index, vertex)| skin_position(mesh, index, vertex, &palette))
+        .collect::<Vec<_>>();
+    let Some(bounds) = Bounds::from_points(&skinned) else {
+        return Vec::new();
+    };
+    let placement = placement.matrix();
+    bounds
+        .corners()
+        .iter()
+        .map(|corner| (placement * vec4(corner.x, corner.y, corner.z, 1.0)).xyz())
+        .collect()
+}
+
+/// `vertex` skinned the way the mesh shaders skin it: the weighted sum of
+/// each influencing bone's transform of the vertex, skipping a negative or
+/// out-of-range bone index.
+fn skin_position(mesh: &Mesh, index: usize, vertex: &Vec3, palette: &[Mat4]) -> Vec3 {
+    let (Some(bone_indices), Some(bone_weights)) =
+        (mesh.bone_indices.get(index), mesh.bone_weights.get(index))
+    else {
+        return Vec3::zeros();
+    };
+    let position = vec4(vertex.x, vertex.y, vertex.z, 1.0);
+    let mut total = Vec4::zeros();
+    for influence in 0..4 {
+        let Ok(bone) = usize::try_from(bone_indices[influence]) else {
+            continue;
+        };
+        if let Some(transform) = palette.get(bone) {
+            total += transform * position * bone_weights[influence];
+        }
+    }
+    total.xyz()
 }
 
 fn append_transformed_mesh_points(points: &mut Vec<Vec3>, mesh: &Mesh, transform: &Transform) {

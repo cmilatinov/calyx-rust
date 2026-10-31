@@ -188,6 +188,8 @@ impl EditorAppState {
             initial_render_size,
         )?;
         drop(asset_context);
+        let thumbnails = ThumbnailService::default();
+        let scene_document = SceneDocument::new(&project_path).with_thumbnails(thumbnails.handle());
         Ok(Self {
             game,
             camera: Default::default(),
@@ -201,9 +203,9 @@ impl EditorAppState {
             gizmo_modes: GizmoMode::all_translate(),
             gizmo_orientation: GizmoOrientation::Global,
             preview_particles: true,
-            thumbnails: ThumbnailService::default(),
+            thumbnails,
             inspector_rect: None,
-            scene_document: SceneDocument::new(&project_path),
+            scene_document,
             pinned_components: PinnedComponents::load(&project_path),
             active_scene: Default::default(),
             window_title: String::new(),
@@ -518,6 +520,9 @@ impl EditorApp {
         // The load rebuilds every open scene, so commit the inspector's
         // pending edits first and take its baselines again afterwards.
         self.state.refresh_inspector_baselines();
+        // A thumbnail worker's scene is not one the load can suspend, so no
+        // such job may hold one while the assembly is replaced.
+        let _scene_thumbnails_paused = self.state.thumbnails.pause_scene_jobs();
         self.project_manager
             .write()
             .load_build(load, &mut self.state.game.scenes);
@@ -527,6 +532,15 @@ impl EditorApp {
         let Some(render_state) = frame.wgpu_render_state() else {
             return;
         };
+        let assemblies_loaded = self
+            .state
+            .game
+            .resources
+            .resource::<Ref<ProjectAssemblyStatus>>()
+            .is_some_and(|status| status.read().is_loaded());
+        self.state
+            .thumbnails
+            .set_project_assemblies_loaded(assemblies_loaded);
         let asset_context = self.state.game.assets.lock_read();
         self.state.thumbnails.process(&asset_context, render_state);
     }
