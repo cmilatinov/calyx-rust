@@ -213,11 +213,11 @@ impl BloomPass {
     fn pipeline(
         shader: &Ref<Shader>,
         target: wgpu::ColorTargetState,
-    ) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
+    ) -> Option<(wgpu::RenderPipeline, wgpu::BindGroupLayout)> {
         let shader = shader.read();
         let pipeline =
             shader.pipeline(&PipelineOptions::fullscreen_builder().target(target).build());
-        (pipeline, shader.bind_group_layouts[0].clone())
+        Some((pipeline?, shader.bind_group_layouts[0].clone()))
     }
 
     /// Adds the source color onto what the target holds.
@@ -287,10 +287,16 @@ impl PostProcessPass for BloomPass {
 
         // Threshold and downsample the input into the first mip, then each
         // mip into the next.
-        let (prefilter, prefilter_layout) =
-            Self::pipeline(prefilter, RenderUtils::color_default(format));
-        let (downsample, downsample_layout) =
-            Self::pipeline(downsample, RenderUtils::color_default(format));
+        let Some((prefilter, prefilter_layout)) =
+            Self::pipeline(prefilter, RenderUtils::color_default(format))
+        else {
+            return;
+        };
+        let Some((downsample, downsample_layout)) =
+            Self::pipeline(downsample, RenderUtils::color_default(format))
+        else {
+            return;
+        };
         for level in 0..mips.len() {
             let (pipeline, layout, source, uniform) = if level == 0 {
                 (
@@ -327,7 +333,11 @@ impl PostProcessPass for BloomPass {
         // Upsample each mip and add it onto the next larger one. A single mip
         // has nothing to upsample, so it needs no blending pipeline.
         if mips.len() > 1 {
-            let (upsample, upsample_layout) = Self::pipeline(upsample, Self::additive(format));
+            let Some((upsample, upsample_layout)) =
+                Self::pipeline(upsample, Self::additive(format))
+            else {
+                return;
+            };
             for level in (1..mips.len()).rev() {
                 let source = mips[level].texture.view.clone();
                 let layout = upsample_layout.clone();
@@ -358,7 +368,11 @@ impl PostProcessPass for BloomPass {
         }
 
         // Add the first mip, holding every mip's blur, onto the input.
-        let (composite, layout) = Self::pipeline(composite, RenderUtils::color_default(format));
+        let Some((composite, layout)) =
+            Self::pipeline(composite, RenderUtils::color_default(format))
+        else {
+            return;
+        };
         let bloom = &mips[0].texture.view;
         let bind_group = composite_bind_group.get_or_create(
             (layout.clone(), io.input.view.clone(), bloom.clone()),

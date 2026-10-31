@@ -163,11 +163,13 @@ impl PostProcessPass for DepthOfFieldPass {
 
         // Circle of confusion.
         let shader = self.coc_shader.read();
-        let pipeline = shader.pipeline(
+        let Some(pipeline) = shader.pipeline(
             &PipelineOptions::fullscreen_builder()
                 .target(RenderUtils::color_default(Self::COC_FORMAT))
                 .build(),
-        );
+        ) else {
+            return;
+        };
         let layout = shader.bind_group_layouts[0].clone();
         drop(shader);
         let bind_group =
@@ -197,11 +199,13 @@ impl PostProcessPass for DepthOfFieldPass {
 
         // Gather blur.
         let shader = self.blur_shader.read();
-        let pipeline = shader.pipeline(
+        let Some(pipeline) = shader.pipeline(
             &PipelineOptions::fullscreen_builder()
                 .target(RenderUtils::color_default(io.output.descriptor.format))
                 .build(),
-        );
+        ) else {
+            return;
+        };
         let layout = shader.bind_group_layouts[0].clone();
         drop(shader);
         let sampler = &self.sampler;

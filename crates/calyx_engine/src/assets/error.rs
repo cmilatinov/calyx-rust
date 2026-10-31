@@ -12,6 +12,9 @@ pub enum AssetErrorKind {
     AlreadyExists,
     /// Loaded asset type did not match the expected type.
     TypeMismatch,
+    /// The asset source is mid-write, such as a file truncated before its new
+    /// contents arrive. A hot reload skips it and waits for the next change.
+    Incomplete,
 }
 
 /// Structured asset error with optional path, type, and source context.
@@ -44,6 +47,8 @@ impl AssetError {
     pub const AlreadyExists: Self = Self::new(AssetErrorKind::AlreadyExists);
     /// Prebuilt `TypeMismatch` error value.
     pub const TypeMismatch: Self = Self::new(AssetErrorKind::TypeMismatch);
+    /// Prebuilt `Incomplete` error value.
+    pub const Incomplete: Self = Self::new(AssetErrorKind::Incomplete);
 
     /// Creates a new asset error of `kind`.
     pub const fn new(kind: AssetErrorKind) -> Self {
@@ -81,6 +86,7 @@ fn describe(error: &AssetError) -> String {
         AssetErrorKind::LoadError => "asset load failed",
         AssetErrorKind::AlreadyExists => "asset already exists",
         AssetErrorKind::TypeMismatch => "asset type mismatch",
+        AssetErrorKind::Incomplete => "asset source incomplete",
     });
     if let Some(asset_type) = error.asset_type {
         let _ = write!(message, " for {asset_type}");
@@ -99,11 +105,12 @@ mod tests {
     use super::{AssetError, AssetErrorKind};
     use std::error::Error;
 
-    const KINDS: [(AssetErrorKind, &str); 4] = [
+    const KINDS: [(AssetErrorKind, &str); 5] = [
         (AssetErrorKind::NotFound, "asset not found"),
         (AssetErrorKind::LoadError, "asset load failed"),
         (AssetErrorKind::AlreadyExists, "asset already exists"),
         (AssetErrorKind::TypeMismatch, "asset type mismatch"),
+        (AssetErrorKind::Incomplete, "asset source incomplete"),
     ];
 
     #[test]
@@ -142,6 +149,10 @@ mod tests {
             "asset already exists"
         );
         assert_eq!(AssetError::TypeMismatch.to_string(), "asset type mismatch");
+        assert_eq!(
+            AssetError::Incomplete.to_string(),
+            "asset source incomplete"
+        );
     }
 
     #[test]
