@@ -1539,6 +1539,9 @@ impl AssetRegistry {
         let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
             return Err(format!("{} has no file extension to type it by", path.display()).into());
         };
+        // Resolved before a new `.meta` is written, so the file records the
+        // real type. An extension with no registered type stays nil.
+        let type_uuid = self.asset_type_uuid_from_ext(ext).unwrap_or(Uuid::nil());
         let name_path = Self::relative_asset_path(asset_path, path)?;
         // The asset this name resolves to now, captured before the metadata
         // read below replaces it, in case this file takes over its id.
@@ -1562,7 +1565,7 @@ impl AssetRegistry {
             let meta = AssetMetaData {
                 main: AssetMeta {
                     id: utils::uuid_from_str(relative_path.as_str()),
-                    type_uuid: Uuid::nil(),
+                    type_uuid,
                     name: relative_path.with_extension("").to_string(),
                     display_name,
                     parent: None,
@@ -1574,7 +1577,7 @@ impl AssetRegistry {
             self.write_meta_file(meta_path, &meta)?;
             meta.main
         };
-        meta.type_uuid = self.asset_type_uuid_from_ext(ext).unwrap_or(Uuid::nil());
+        meta.type_uuid = type_uuid;
         meta.path = Some(match path.absolutize().map_err(Box::new)? {
             Cow::Borrowed(p) => p.to_path_buf(),
             Cow::Owned(p) => p,
@@ -2121,6 +2124,51 @@ mod tests {
         )
         .expect("failed to write scene meta");
         (asset_path, meta_path, asset_id)
+    }
+
+    fn written_meta_type_uuid(meta_path: &Path) -> Uuid {
+        let meta: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(meta_path).expect("failed to read written metadata"),
+        )
+        .expect("failed to parse written metadata");
+        meta["main"]["type_uuid"]
+            .as_str()
+            .and_then(|uuid| Uuid::parse_str(uuid).ok())
+            .expect("written metadata has no type UUID")
+    }
+
+    #[test]
+    fn new_meta_written_at_startup_records_the_extension_type() {
+        let root = temp_asset_root("calyx-new-meta-startup-type");
+        std::fs::write(root.join("scene.cxscene"), b"{}").expect("failed to write scene asset");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+
+        assert_eq!(
+            written_meta_type_uuid(&root.join("scene.meta")),
+            Scene::type_uuid()
+        );
+        drop(registries);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn new_meta_written_for_created_file_records_the_extension_type() {
+        let root = temp_asset_root("calyx-new-meta-created-type");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        let asset_path = root.join("scene.cxscene");
+        std::fs::write(&asset_path, b"{}").expect("failed to write scene asset");
+        let event =
+            Event::new(EventKind::Create(notify::event::CreateKind::File)).add_path(asset_path);
+
+        registry.recv_notify_event(event);
+
+        assert_eq!(
+            written_meta_type_uuid(&root.join("scene.meta")),
+            Scene::type_uuid()
+        );
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
 
     #[test]
