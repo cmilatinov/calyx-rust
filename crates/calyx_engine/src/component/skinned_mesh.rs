@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Mesh renderer component driven by a bone hierarchy.
-#[derive(Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
+#[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "bb784426-a5ec-4995-a86a-c40e7e2cb3ab"]
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Skinned Mesh Renderer")]
@@ -24,10 +24,25 @@ pub struct ComponentSkinnedMesh {
     pub mesh: AssetRef<Mesh>,
     /// Root bone object for the skeleton.
     pub root_bone: GameObjectRef,
+    /// Whether the mesh draws into the shadow maps of shadowed lights, in
+    /// its posed shape.
+    pub cast_shadows: bool,
     /// Runtime bone matrices uploaded to the renderer.
     #[reflect_skip]
     #[serde(skip)]
     pub bone_transforms: Vec<BoneTransform>,
+}
+
+impl Default for ComponentSkinnedMesh {
+    fn default() -> Self {
+        Self {
+            material: Default::default(),
+            mesh: Default::default(),
+            root_bone: Default::default(),
+            cast_shadows: true,
+            bone_transforms: Default::default(),
+        }
+    }
 }
 
 impl Component for ComponentSkinnedMesh {

@@ -459,6 +459,19 @@ impl Material {
             .unwrap_or_default()
     }
 
+    /// The material's `alpha_cutoff`, below which the PBR shader discards a fragment, or 0 (never
+    /// discards) for a material without one.
+    pub(crate) fn alpha_cutoff(&self) -> f32 {
+        self.variables
+            .iter()
+            .find(|variable| variable.name == "alpha_cutoff")
+            .and_then(|variable| match variable.value {
+                ShaderVariableValue::Float(cutoff) => Some(cutoff),
+                _ => None,
+            })
+            .unwrap_or(0.0)
+    }
+
     /// Sets the variable named `name` to `value`. Returns false, and changes nothing, when the
     /// material has no variable of that name.
     pub fn set_variable(&mut self, name: &str, value: ShaderVariableValue) -> bool {

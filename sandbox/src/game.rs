@@ -179,6 +179,9 @@ impl eframe::App for GameApp {
 fn renderer_options() -> SceneRendererOptions {
     SceneRendererOptions {
         samples: 8,
+        // Lights that cast shadows keep them in the player, as in the
+        // editor's game view.
+        shadows: true,
         ..Default::default()
     }
 }
@@ -233,6 +236,11 @@ mod tests {
         let options = renderer_options();
         assert!(!options.grid);
         assert!(!options.gizmos);
+    }
+
+    #[test]
+    fn player_renders_shadows() {
+        assert!(renderer_options().shadows);
     }
 
     #[test]

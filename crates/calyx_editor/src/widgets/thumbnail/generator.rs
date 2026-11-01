@@ -104,6 +104,7 @@ impl ThumbnailGenerator {
             ComponentMesh {
                 mesh: Some(sphere_ref).into(),
                 material: Some(material_ref).into(),
+                ..Default::default()
             },
         );
         add_preview_lighting(&mut scene);
@@ -140,6 +141,7 @@ impl ThumbnailGenerator {
             ComponentMesh {
                 mesh: AssetRef::from_id(asset_id),
                 material,
+                ..Default::default()
             },
         );
         add_preview_lighting(&mut scene);
@@ -277,6 +279,8 @@ impl ThumbnailGenerator {
                             clear_color: Color32::TRANSPARENT,
                             mesh_cull_mode: None,
                             environment: None,
+                            // Thumbnails skip the shadow pass and its maps.
+                            shadows: false,
                         },
                         (size_px, size_px),
                     )
@@ -663,6 +667,7 @@ fn add_preview_lighting(scene: &mut Scene) {
         ComponentDirectionalLight {
             color: Color32::WHITE,
             intensity: 6.0,
+            ..Default::default()
         },
     );
 

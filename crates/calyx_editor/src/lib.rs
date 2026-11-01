@@ -175,6 +175,7 @@ impl EditorAppState {
                 gizmos: true,
                 samples: 1,
                 clear_color: prefab_mode::SCENE_VIEW_BACKDROP,
+                shadows: true,
                 ..Default::default()
             },
             initial_render_size,
@@ -183,6 +184,7 @@ impl EditorAppState {
             &asset_context,
             SceneRendererOptions {
                 clear_color: Color32::from_rgb(0, 0, 0),
+                shadows: true,
                 ..Default::default()
             },
             initial_render_size,

@@ -701,6 +701,7 @@ fn spawn_projectile(
     let visual = scene.read_component::<ComponentMesh, _, _>(barrel_object, |mesh| ComponentMesh {
         mesh: mesh.mesh.clone(),
         material: mesh.material.clone(),
+        cast_shadows: mesh.cast_shadows,
     });
     spawn_round(
         scene,

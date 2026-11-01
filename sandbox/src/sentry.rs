@@ -104,6 +104,7 @@ fn fire_at_target(scene: &mut Scene, game_object: GameObject, sentry: &mut Compo
     let visual = scene.read_component::<ComponentMesh, _, _>(game_object, |mesh| ComponentMesh {
         mesh: mesh.mesh.clone(),
         material: mesh.material.clone(),
+        cast_shadows: mesh.cast_shadows,
     });
     spawn_round(
         scene,

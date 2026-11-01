@@ -96,6 +96,7 @@ impl SceneFixture {
             ComponentMesh {
                 mesh: AssetRef::from_id(self.asset_id("meshes/sphere")),
                 material: AssetRef::from_id(self.asset_id("materials/default")),
+                ..Default::default()
             },
         );
         sphere
@@ -112,6 +113,7 @@ fn add_directional_light(scene: &mut Scene) {
         ComponentDirectionalLight {
             color: Color32::WHITE,
             intensity: 4.0,
+            ..Default::default()
         },
     );
 }
@@ -321,6 +323,7 @@ fn changing_the_scene_file_or_an_asset_it_references_changes_its_key() {
         ComponentMesh {
             mesh: AssetRef::from_id(fixture.asset_id("meshes/sphere")),
             material: AssetRef::from_id(material_id),
+            ..Default::default()
         },
     );
     fixture.write("referencing.cxscene", &scene);

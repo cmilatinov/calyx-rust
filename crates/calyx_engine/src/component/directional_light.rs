@@ -23,6 +23,22 @@ pub struct ComponentDirectionalLight {
     /// Scalar intensity multiplier.
     #[reflect_attr(min = 0.0, max = 1.0, speed = 0.01)]
     pub intensity: f32,
+    /// Whether the light casts shadows. Only the first enabled directional
+    /// light that casts shadows gets them; the others light unoccluded.
+    pub cast_shadows: bool,
+    /// View depth from the camera, in world units, that the shadow cascades
+    /// cover. Past it the light falls unoccluded.
+    #[reflect_attr(min = 1.0, speed = 0.5)]
+    pub shadow_distance: f32,
+    /// Slope-scaled and constant depth bias of the shadow pass, in units of
+    /// the default. Raise it against shadow acne, lower it against light
+    /// leaking under casters.
+    #[reflect_attr(min = 0.0, max = 10.0, speed = 0.05)]
+    pub depth_bias: f32,
+    /// How far, in shadow texels, a shaded point moves along its normal
+    /// before it looks up its shadow.
+    #[reflect_attr(min = 0.0, max = 10.0, speed = 0.05)]
+    pub normal_bias: f32,
 }
 
 impl Default for ComponentDirectionalLight {
@@ -30,6 +46,10 @@ impl Default for ComponentDirectionalLight {
         Self {
             color: Color32::WHITE,
             intensity: 0.75,
+            cast_shadows: false,
+            shadow_distance: 50.0,
+            depth_bias: 1.0,
+            normal_bias: 1.0,
         }
     }
 }

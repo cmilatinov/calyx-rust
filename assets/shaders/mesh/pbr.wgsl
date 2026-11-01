@@ -2,7 +2,9 @@
 //#include "shaders/common/inputs.wgsl"
 //#include "shaders/common/camera.wgsl"
 //#include "shaders/mesh/mesh.wgsl"
+//#include "shaders/mesh/pbr_material.wgsl"
 //#include "shaders/common/lights.wgsl"
+//#include "shaders/common/shadows.wgsl"
 //#include "shaders/common/pbr_utils.wgsl"
 
 struct VertexOut {
@@ -12,32 +14,6 @@ struct VertexOut {
     @location(2) uv: vec2f,
     // World-space tangent along increasing U; w is the bitangent's handedness.
     @location(3) tangent: vec4f,
-};
-
-// glTF metallic-roughness inputs. Fields are only ever appended, so the offsets a saved
-// material stores stay valid. A material saved before a field existed gets the field's
-// default when it loads (see `Material`), and every default renders as the material did
-// before the field existed.
-struct MaterialProperties {
-    // Metallic and roughness factors, multiplied by the metallic-roughness texture's B and G.
-    metallic: f32,
-    roughness: f32,
-    // Multiplies the ambient light, on top of the occlusion texture.
-    ambient_occlusion: f32,
-    // Linear HDR radiance added on top of the lit color:
-    // emission_color * emission_strength * emissive_texture.
-    emission_strength: f32,
-    emission_color: vec4f,
-    // Multiplied into the base color texture. Defaults to white.
-    base_color_factor: vec4f,
-    // Scales the normal texture's X and Y, as glTF's normalTexture.scale. Defaults to 1.
-    normal_scale: f32,
-    // How much of the occlusion texture's R applies, as glTF's occlusionTexture.strength.
-    // Defaults to 1.
-    occlusion_strength: f32,
-    // Fragments whose base color alpha is below this are discarded, as glTF's alphaCutoff in
-    // MASK mode. Defaults to 0, which never discards.
-    alpha_cutoff: f32,
 };
 
 struct EnvironmentProperties {
@@ -109,39 +85,12 @@ var occlusion_sampler: sampler;
 fn vs_main(vertex: VertexIn) -> VertexOut {
     let instance = mesh.instances[vertex.instance];
     var out: VertexOut;
-    if instance.bone_transform_index >= 0 {
-        var total_position: vec4f;
-        var total_normal: vec4f;
-        var total_tangent: vec4f;
-        for (var i = 0u; i < MAX_BONE_INFLUENCE; i++) {
-            let bone_index = vertex.bone_indices[i];
-            let bone_weight = vertex.bone_weights[i];
-            if (bone_index < 0) {
-                continue;
-            }
-            let transform_index = u32(instance.bone_transform_index) * mesh.num_bones + u32(bone_index);
-            if (transform_index >= bones.bones_size) {
-                continue;
-            }
-            let bone_transform = bones.bones[transform_index].transform;
-            let local_position = bone_transform * vec4f(vertex.position, 1.0);
-            total_position += local_position * bone_weight;
-            let local_normal = bone_transform * vec4f(vertex.normal, 0.0);
-            total_normal += local_normal * bone_weight;
-            let local_tangent = bone_transform * vec4f(vertex.tangent.xyz, 0.0);
-            total_tangent += local_tangent * bone_weight;
-        }
-        out.world_position = (instance.transform * total_position).xyz;
-        out.normal = (instance.transform * total_normal).xyz;
-        out.tangent = vec4f((instance.transform * total_tangent).xyz, vertex.tangent.w);
-    } else {
-        out.world_position = (instance.transform * vec4f(vertex.position, 1.0)).xyz;
-        out.normal = (instance.transform * vec4f(vertex.normal, 0.0)).xyz;
-        out.tangent = vec4f(
-            (instance.transform * vec4f(vertex.tangent.xyz, 0.0)).xyz,
-            vertex.tangent.w
-        );
-    }
+    let local_position = skinned_local(vertex, instance, vec4f(vertex.position, 1.0));
+    let local_normal = skinned_local(vertex, instance, vec4f(vertex.normal, 0.0));
+    let local_tangent = skinned_local(vertex, instance, vec4f(vertex.tangent.xyz, 0.0));
+    out.world_position = (instance.transform * local_position).xyz;
+    out.normal = (instance.transform * local_normal).xyz;
+    out.tangent = vec4f((instance.transform * local_tangent).xyz, vertex.tangent.w);
     out.position =
         camera.projection *
         camera.view *
@@ -203,9 +152,16 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     let point_end = directional_end + light_storage.point_count;
     let spot_end = point_end + light_storage.spot_count;
 
+    // Shadows dim each light's direct term only, never the ambient and image-based light. They
+    // are looked up with the geometric normal, which the normal offset follows.
+    let geometric_normal = normalize(in.normal);
+
     for (var i = 0u; i < directional_end; i++) {
-        let incidence = directional_radiance(light_storage.lights[i]);
-        color += pbr(n, v, incidence.l, albedo.rgb, incidence.radiance, metallic, roughness);
+        let light = light_storage.lights[i];
+        let incidence = directional_radiance(light);
+        let shadow = directional_shadow(light, in.world_position, geometric_normal);
+        color += shadow *
+            pbr(n, v, incidence.l, albedo.rgb, incidence.radiance, metallic, roughness);
     }
 
     for (var i = directional_end; i < point_end; i++) {
@@ -214,8 +170,11 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     }
 
     for (var i = point_end; i < spot_end; i++) {
-        let incidence = spot_radiance(light_storage.lights[i], in.world_position);
-        color += pbr(n, v, incidence.l, albedo.rgb, incidence.radiance, metallic, roughness);
+        let light = light_storage.lights[i];
+        let incidence = spot_radiance(light, in.world_position);
+        let shadow = spot_shadow(light, in.world_position, geometric_normal);
+        color += shadow *
+            pbr(n, v, incidence.l, albedo.rgb, incidence.radiance, metallic, roughness);
     }
 
     // Ambient light

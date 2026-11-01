@@ -13,7 +13,7 @@ struct Light {
     color: vec3f,
     intensity: f32,
     cos_outer: f32,
-    // The light's shadow map, or -1 for none. Reserved for shadow mapping; nothing reads it yet.
+    // The light's shadow, or -1 for none: its cascades or atlas tile in `shaders/common/shadows.wgsl`.
     shadow_index: i32,
     _pad: vec2f,
 };

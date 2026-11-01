@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "29a3a115-d062-6d24-ded8-414aa3d0b7cd",
+    "name": "shaders/common/shadows",
+    "display_name": "shadows",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

@@ -7,6 +7,7 @@ use crate::render::asset_render_state::LockedAssetRenderState;
 use crate::render::render_utils::RenderUtils;
 use crate::render::{
     CachedBindGroup, GizmoRenderer, LightManager, PipelineOptions, SceneRendererError, Shader,
+    ShadowBindings,
 };
 use egui::Color32;
 use egui_wgpu::wgpu;
@@ -21,13 +22,37 @@ struct EnvironmentUniform {
     ambient_light: [f32; 4],
 }
 
+/// One draw of the scene's draw list: `instances` of a mesh's instance
+/// buffer, drawn with one shader and material. The scene pass, the object id
+/// pass and the shadow pass all draw from the same list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DrawBatch {
+    pub shader_id: AssetId,
+    pub mat_id: AssetId,
+    pub mesh_id: AssetId,
+    pub instances: Range<u32>,
+    /// Whether the batch's meshes draw into shadow maps.
+    pub cast_shadows: bool,
+}
+
+/// What the light storage bind group binds: the scene shader's group 2
+/// layout, the light buffer, then the shadow data buffer, cascade and atlas
+/// views and sampler.
+type LightStorageBindGroupKey = (
+    wgpu::BindGroupLayout,
+    wgpu::Buffer,
+    wgpu::Buffer,
+    [wgpu::TextureView; 2],
+    wgpu::Sampler,
+);
+
 pub struct MeshRenderer {
     scene_shader: Ref<Shader>,
     object_id_shader: Ref<Shader>,
     environment_uniform_buffer: wgpu::Buffer,
     material_bind_group_cache: HashMap<AssetId, CachedMaterialBindGroups>,
     scene_bind_group: CachedBindGroup<SceneBindGroupKey>,
-    light_storage_bind_group: CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer)>,
+    light_storage_bind_group: CachedBindGroup<LightStorageBindGroupKey>,
     object_id_camera_bind_group: CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer)>,
 }
 
@@ -40,6 +65,9 @@ type SceneBindGroupKey = (
     [wgpu::Sampler; 3],
 );
 
+/// Each material's bind groups, by material, then by group index.
+pub(crate) type MaterialBindGroups = HashMap<AssetId, HashMap<u32, wgpu::BindGroup>>;
+
 struct CachedMaterialBindGroups {
     key: MaterialBindGroupCacheKey,
     groups: HashMap<u32, wgpu::BindGroup>,
@@ -51,7 +79,6 @@ pub struct MeshRenderTargets<'a> {
 }
 
 pub struct MeshRenderDefaults<'a> {
-    pub material_texture: Ref<Texture>,
     pub black_texture_2d: &'a Texture,
     pub black_texture_cube: &'a Texture,
 }
@@ -83,26 +110,21 @@ impl MeshRenderer {
         &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
-        asset_context: &ReadOnlyAssetContext,
         assets: &LockedAssetRenderState,
+        material_bind_groups: &MaterialBindGroups,
         defaults: MeshRenderDefaults<'_>,
         targets: MeshRenderTargets<'_>,
         queue: &wgpu::Queue,
         light_manager: &LightManager,
+        shadows: &ShadowBindings<'_>,
         camera_uniform_buffer: &wgpu::Buffer,
         clear_color: Color32,
         pipeline_options: &PipelineOptions,
         skybox_id: Option<AssetId>,
         sky_light_intensity: f32,
         ambient_light: [f32; 4],
-        draw_list: &[(AssetId, AssetId, AssetId, Range<u32>)],
+        draw_list: &[DrawBatch],
     ) {
-        let material_bind_groups = self.build_material_bind_groups(
-            device,
-            asset_context,
-            defaults.material_texture,
-            assets,
-        );
         let (irradiance_map, prefilter_map, brdf_map) = skybox_id
             .and_then(|id| assets.skybox(id)?.environment_maps())
             .unwrap_or((
@@ -130,10 +152,13 @@ impl MeshRenderer {
             let key = (
                 scene_shader.bind_group_layouts[2].clone(),
                 light_manager.storage_buffer(),
+                shadows.data.clone(),
+                [shadows.cascades.clone(), shadows.atlas.clone()],
+                shadows.sampler.clone(),
             );
             self.light_storage_bind_group
                 .get_or_create(key, || {
-                    light_manager.storage_bind_group(device, &scene_shader)
+                    light_manager.storage_bind_group(device, &scene_shader, shadows)
                 })
                 .clone()
         };
@@ -157,7 +182,14 @@ impl MeshRenderer {
         });
 
         let mut last: (AssetId, AssetId, AssetId) = Default::default();
-        for &(shader_id, mat_id, mesh_id, ref instances) in draw_list {
+        for &DrawBatch {
+            shader_id,
+            mat_id,
+            mesh_id,
+            ref instances,
+            ..
+        } in draw_list
+        {
             let Some(shader) = assets.shader(shader_id) else {
                 continue;
             };
@@ -267,7 +299,7 @@ impl MeshRenderer {
         assets: &LockedAssetRenderState,
         targets: MeshRenderTargets<'_>,
         camera_uniform_buffer: &wgpu::Buffer,
-        draw_list: &[(AssetId, AssetId, AssetId, Range<u32>)],
+        draw_list: &[DrawBatch],
         gizmo_renderer: Option<&mut GizmoRenderer>,
     ) {
         let options = PipelineOptions::builder()
@@ -321,7 +353,12 @@ impl MeshRenderer {
         render_pass.set_bind_group(0, &camera_bind_group, &[]);
 
         let mut last_mesh_id = AssetId::default();
-        for &(_, _, mesh_id, ref instances) in draw_list {
+        for &DrawBatch {
+            mesh_id,
+            ref instances,
+            ..
+        } in draw_list
+        {
             let Some(mesh) = assets.mesh(mesh_id) else {
                 continue;
             };
@@ -342,13 +379,16 @@ impl MeshRenderer {
         }
     }
 
-    fn build_material_bind_groups(
+    /// Each drawn material's bind groups, by group index, reusing those built
+    /// in earlier frames while the material binds the same resources. The
+    /// scene pass and the masked shadow pass bind them.
+    pub fn build_material_bind_groups(
         &mut self,
         device: &wgpu::Device,
         asset_context: &ReadOnlyAssetContext,
         default_texture: Ref<Texture>,
         assets: &LockedAssetRenderState,
-    ) -> HashMap<AssetId, HashMap<u32, wgpu::BindGroup>> {
+    ) -> MaterialBindGroups {
         let live_materials: HashSet<AssetId> = assets.materials.keys().copied().collect();
         self.prune_material_bind_group_cache(&live_materials);
 
