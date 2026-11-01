@@ -4271,6 +4271,69 @@ mod tests {
     }
 
     #[test]
+    fn coplanar_meshes_keep_the_surface_the_lit_image_shows() {
+        const SIZE: (u32, u32) = (32, 32);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        // Two boxes in the same place, so every fragment of one ties in
+        // depth with the other's. Each glows in its own base color, so the
+        // lit image shows which one the forward pass kept.
+        let glowing = |name: &str, color: [f32; 4]| {
+            let material = pbr_material(&read_only_context, name);
+            {
+                let mut material = material.write();
+                for (variable, value) in [
+                    ("base_color_factor", ShaderVariableValue::Color(color)),
+                    ("emission_color", ShaderVariableValue::Color(color)),
+                    ("emission_strength", ShaderVariableValue::Float(1.0)),
+                ] {
+                    assert!(material.set_variable(variable, value), "{variable}");
+                }
+            }
+            material
+        };
+        let red = glowing("test/gbuffer_tie_red", [1.0, 0.0, 0.0, 1.0]);
+        let green = glowing("test/gbuffer_tie_green", [0.0, 1.0, 0.0, 1.0]);
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        spawn_mesh(&mut builder, "red", &cube, &red, Vec3::zeros());
+        spawn_mesh(&mut builder, "green", &cube, &green, Vec3::zeros());
+        let scene = builder.finish();
+        let center = (SIZE.0 / 2, SIZE.1 / 2);
+
+        let lit = render_gbuffer(&read_only_context, &scene, 1, SIZE, None);
+        let lit = read_scene_texture(&lit, &render_context)
+            .get_pixel(center.0, center.1)
+            .0;
+        let renderer = render_gbuffer(
+            &read_only_context,
+            &scene,
+            1,
+            SIZE,
+            Some(GBufferView::Albedo),
+        );
+        let gbuffer = renderer.gbuffer().expect("the G-buffer is drawn");
+        let albedo = read_texel(&render_context, &gbuffer.albedo, center);
+        assert_ne!(
+            lit[0] > lit[1],
+            lit[1] > lit[0],
+            "the lit image is red or green: {lit:?}"
+        );
+        assert_eq!(
+            albedo[0] > albedo[1],
+            lit[0] > lit[1],
+            "the G-buffer holds the box the lit image shows: lit {lit:?}, albedo {albedo:?}"
+        );
+    }
+
+    #[test]
     fn the_gbuffer_discards_the_fragments_an_alpha_cutoff_discards() {
         const SIZE: (u32, u32) = (32, 32);
         let assets = TestAssets::engine();
