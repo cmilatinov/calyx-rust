@@ -327,16 +327,18 @@ impl GBufferRenderer {
         };
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &camera_bind_group, &[]);
-        // The pass tests `LessEqual` without writing depth, so of fragments
-        // that tie in depth the last drawn lands, where the forward pass's
-        // `Less` keeps the first drawn. Drawing the batches in reverse keeps
-        // the forward winner across batches; the instances and triangles of
+        // Of fragments that tie in depth, the forward pass's `Less` keeps the
+        // first drawn. On its own depth this pass tests `Less` too and draws
+        // in the forward order. On the forward depth it tests `LessEqual`
+        // without writing, so the last drawn lands: it draws the batches in
+        // reverse to keep the forward winner. The instances and triangles of
         // one batch share its material.
-        for batch in draw_list
-            .iter()
-            .rev()
-            .filter(|batch| batch.shader_id == self.pbr_shader_id)
-        {
+        let batches: Box<dyn Iterator<Item = &DrawBatch>> = if own_depth {
+            Box::new(draw_list.iter())
+        } else {
+            Box::new(draw_list.iter().rev())
+        };
+        for batch in batches.filter(|batch| batch.shader_id == self.pbr_shader_id) {
             let Some(material_group) = material_bind_groups
                 .get(&batch.mat_id)
                 .and_then(|groups| groups.get(&3))

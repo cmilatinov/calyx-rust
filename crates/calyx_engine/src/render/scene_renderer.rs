@@ -4308,29 +4308,42 @@ mod tests {
         let scene = builder.finish();
         let center = (SIZE.0 / 2, SIZE.1 / 2);
 
-        let lit = render_gbuffer(&read_only_context, &scene, 1, SIZE, None);
-        let lit = read_scene_texture(&lit, &render_context)
-            .get_pixel(center.0, center.1)
-            .0;
-        let renderer = render_gbuffer(
-            &read_only_context,
-            &scene,
-            1,
-            SIZE,
-            Some(GBufferView::Albedo),
-        );
-        let gbuffer = renderer.gbuffer().expect("the G-buffer is drawn");
-        let albedo = read_texel(&render_context, &gbuffer.albedo, center);
-        assert_ne!(
-            lit[0] > lit[1],
-            lit[1] > lit[0],
-            "the lit image is red or green: {lit:?}"
-        );
-        assert_eq!(
-            albedo[0] > albedo[1],
-            lit[0] > lit[1],
-            "the G-buffer holds the box the lit image shows: lit {lit:?}, albedo {albedo:?}"
-        );
+        // At one sample the pass shares the forward depth; above one it
+        // draws against its own.
+        for samples in [1, 4] {
+            if !supports_samples(
+                &render_context,
+                wgpu::TextureFormat::Rgba16Float,
+                samples,
+                true,
+            ) {
+                continue;
+            }
+            let lit = render_gbuffer(&read_only_context, &scene, samples, SIZE, None);
+            let lit = read_scene_texture(&lit, &render_context)
+                .get_pixel(center.0, center.1)
+                .0;
+            let renderer = render_gbuffer(
+                &read_only_context,
+                &scene,
+                samples,
+                SIZE,
+                Some(GBufferView::Albedo),
+            );
+            let gbuffer = renderer.gbuffer().expect("the G-buffer is drawn");
+            let albedo = read_texel(&render_context, &gbuffer.albedo, center);
+            assert_ne!(
+                lit[0] > lit[1],
+                lit[1] > lit[0],
+                "the lit image is red or green at {samples} samples: {lit:?}"
+            );
+            assert_eq!(
+                albedo[0] > albedo[1],
+                lit[0] > lit[1],
+                "{samples} samples: the G-buffer holds the box the lit image shows: lit {lit:?}, \
+                 albedo {albedo:?}"
+            );
+        }
     }
 
     #[test]

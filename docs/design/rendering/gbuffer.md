@@ -94,7 +94,9 @@ forward mesh pass, on the same command encoder and draw list.
   shows, occluded by every opaque mesh, PBR or not. Of fragments that tie in
   depth, such as two coplanar meshes, the forward pass keeps the first drawn
   and this pass the last, so it draws the batches in reverse order and keeps
-  the forward winner. A tie within one batch shares its material.
+  the forward winner. A tie within one batch shares its material. On its own
+  depth, above one sample, it tests `Less` as forward does and draws in the
+  forward order.
 
 ## MSAA
 
@@ -158,7 +160,8 @@ Headless tests in `crates/calyx_engine/src/render/scene_renderer.rs`:
   geometric normal.
 - A box discarded by its alpha cutoff leaves the box behind it in the
   G-buffer.
-- Of two coplanar boxes, the G-buffer holds the one the lit image shows.
+- Of two coplanar boxes, the G-buffer holds the one the lit image shows, at
+  one and four samples.
 - A skinned mesh in its rest pose writes its posed normal.
 - The geometry pass runs and allocates its targets only while a view is
   selected, and the targets resize with the scene.
