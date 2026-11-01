@@ -105,7 +105,9 @@ pub(crate) enum ShadowCaster {
 /// The camera a frame's shadows are fitted to.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct ShadowCamera {
-    /// Camera to world, without scale.
+    /// Camera to world: the inverse of the scene camera's view, scale
+    /// included, so a slice holds the view depths `directional_shadow`
+    /// reads from that view.
     world: Mat4,
     position: Vec3,
     tan_half_fov_x: f32,
@@ -116,7 +118,7 @@ pub(crate) struct ShadowCamera {
 
 impl ShadowCamera {
     pub fn new(camera: &Camera, transform: &Transform) -> Self {
-        let world = glm::translation(&transform.position) * glm::quat_to_mat4(&transform.rotation);
+        let world = transform.matrix();
         let fov_y = math::to_fov_y(camera.aspect, camera.fov_x);
         Self {
             world,
@@ -1007,6 +1009,41 @@ mod tests {
                         ndc.x.abs() <= 1.0 && ndc.y.abs() <= 1.0 && (0.0..=1.0).contains(&ndc.z),
                         "{name}: cascade {i} misses corner {corner} of [{start}, {}]: {ndc}",
                         splits[i]
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_scaled_camera_fits_each_cascade_to_the_view_depths_that_select_it() {
+        // `directional_shadow` picks a cascade by the Z of `camera.view`, the
+        // inverse of the camera's whole world transform, scale included. So
+        // the world points at each cascade's view depths, through that same
+        // view, must land inside the cascade.
+        let camera = Camera::new(16.0 / 9.0, 70f32.to_radians(), 0.1, 1000.0);
+        let transform = Transform::from_components(
+            vec3(1.0, 2.0, -3.0),
+            UnitQuaternion::face_towards(&vec3(0.2, -0.3, 1.0).normalize(), &Vec3::y()),
+            vec3(2.0, 2.0, 2.0),
+        );
+        let shadow_camera = ShadowCamera::new(&camera, &transform);
+        let (plan, _) = ShadowPlan::new(&[sun(30.0)], Some(&shadow_camera));
+        let cascades = plan.directional.unwrap();
+        let splits = cascades.split_far;
+        let inverse_view = glm::inverse(&transform.inverse_matrix());
+        let tan_x = (camera.fov_x * 0.5).tan();
+        let tan_y = (math::to_fov_y(camera.aspect, camera.fov_x) * 0.5).tan();
+        for i in 0..SHADOW_CASCADE_COUNT {
+            let start = cascade_fit_start(shadow_camera.near, &splits, i);
+            for depth in [start, splits[i]] {
+                for (x, y) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+                    let view_point = vec4(x * depth * tan_x, y * depth * tan_y, depth, 1.0);
+                    let corner = (inverse_view * view_point).xyz();
+                    let ndc = clip(&cascades.views[i].view_projection(), corner);
+                    assert!(
+                        ndc.x.abs() <= 1.0 && ndc.y.abs() <= 1.0 && (0.0..=1.0).contains(&ndc.z),
+                        "cascade {i} misses the point at view depth {depth}: {ndc}"
                     );
                 }
             }
