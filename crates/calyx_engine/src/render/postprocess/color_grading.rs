@@ -1,7 +1,9 @@
 //! The colour grading pass: white balance, contrast and saturation, then a
 //! vignette, on display-linear color after tone mapping.
 
-use super::{PassContext, PassIo, PostProcessPass, PostProcessSettings, PostProcessStage};
+use super::{
+    NoPipeline, PassContext, PassIo, PostProcessPass, PostProcessSettings, PostProcessStage,
+};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::{CachedBindGroup, PipelineOptions, RenderUtils, SceneRendererError, Shader};
@@ -146,14 +148,19 @@ impl PostProcessPass for ColorGradingPass {
         );
     }
 
-    fn record(&mut self, context: &PassContext, encoder: &mut wgpu::CommandEncoder, io: PassIo) {
+    fn record(
+        &mut self,
+        context: &PassContext,
+        encoder: &mut wgpu::CommandEncoder,
+        io: PassIo,
+    ) -> Result<(), NoPipeline> {
         let shader = self.shader.read();
         let Some(pipeline) = shader.pipeline(
             &PipelineOptions::fullscreen_builder()
                 .target(RenderUtils::color_default(io.output.descriptor.format))
                 .build(),
         ) else {
-            return;
+            return Err(NoPipeline::of(&shader));
         };
         let layout = shader.bind_group_layouts[0].clone();
         drop(shader);
@@ -182,6 +189,7 @@ impl PostProcessPass for ColorGradingPass {
         render_pass.set_pipeline(&pipeline);
         render_pass.set_bind_group(0, bind_group, &[]);
         RenderUtils::draw_fullscreen(&mut render_pass);
+        Ok(())
     }
 }
 

@@ -1,8 +1,8 @@
 //! The depth of field pass: blurs the scene by distance from a focus plane.
 
 use super::{
-    PassContext, PassInputs, PassIo, PostProcessPass, PostProcessSettings, PostProcessStage,
-    SceneInput,
+    NoPipeline, PassContext, PassInputs, PassIo, PostProcessPass, PostProcessSettings,
+    PostProcessStage, SceneInput,
 };
 use crate::assets::texture::Texture;
 use crate::context::ReadOnlyAssetContext;
@@ -155,7 +155,12 @@ impl PostProcessPass for DepthOfFieldPass {
         );
     }
 
-    fn record(&mut self, context: &PassContext, encoder: &mut wgpu::CommandEncoder, io: PassIo) {
+    fn record(
+        &mut self,
+        context: &PassContext,
+        encoder: &mut wgpu::CommandEncoder,
+        io: PassIo,
+    ) -> Result<(), NoPipeline> {
         let depth = io
             .particle_depth
             .expect("the chain gives particle depth to a pass that asks for it");
@@ -170,7 +175,7 @@ impl PostProcessPass for DepthOfFieldPass {
                 .target(RenderUtils::color_default(Self::COC_FORMAT))
                 .build(),
         ) else {
-            return;
+            return Err(NoPipeline::of(&shader));
         };
         let layout = shader.bind_group_layouts[0].clone();
         drop(shader);
@@ -206,7 +211,7 @@ impl PostProcessPass for DepthOfFieldPass {
                 .target(RenderUtils::color_default(io.output.descriptor.format))
                 .build(),
         ) else {
-            return;
+            return Err(NoPipeline::of(&shader));
         };
         let layout = shader.bind_group_layouts[0].clone();
         drop(shader);
@@ -243,6 +248,7 @@ impl PostProcessPass for DepthOfFieldPass {
         render_pass.set_pipeline(&pipeline);
         render_pass.set_bind_group(0, bind_group, &[]);
         RenderUtils::draw_fullscreen(&mut render_pass);
+        Ok(())
     }
 
     fn release_targets(&mut self) {
@@ -313,8 +319,8 @@ mod tests {
             context: &PassContext,
             encoder: &mut wgpu::CommandEncoder,
             io: PassIo,
-        ) {
-            self.0.lock().unwrap().record(context, encoder, io);
+        ) -> Result<(), NoPipeline> {
+            self.0.lock().unwrap().record(context, encoder, io)
         }
         fn release_targets(&mut self) {
             self.0.lock().unwrap().release_targets();

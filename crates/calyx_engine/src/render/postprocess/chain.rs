@@ -182,7 +182,9 @@ impl PostProcessChain {
     /// Records the frame's enabled passes into `encoder`, from
     /// `targets.source` to `targets.output`, and returns the plan it ran.
     ///
-    /// With no pass enabled, the source is copied to the output.
+    /// With no pass enabled, the source is copied to the output. A pass that
+    /// has no pipeline has its input copied to its output, and is logged
+    /// once.
     pub fn run(
         &mut self,
         render_context: &Arc<RenderContext>,
@@ -202,11 +204,7 @@ impl PostProcessChain {
             });
         }
         if plan.passes.is_empty() {
-            encoder.copy_texture_to_texture(
-                targets.source.texture.as_image_copy(),
-                targets.output.texture.as_image_copy(),
-                targets.output.descriptor.size,
-            );
+            copy(encoder, targets.source, targets.output);
             return plan;
         }
 
@@ -268,8 +266,29 @@ impl PostProcessChain {
                     .then_some(particle_depth)
                     .flatten(),
             };
-            pass.record(&context, encoder, io);
+            let (input, output) = (io.input, io.output);
+            if let Err(error) = pass.record(&context, encoder, io) {
+                crate::logging::warn_once(
+                    format!("post-process-no-pipeline:{}:{error}", pass.name()),
+                    || {
+                        format!(
+                            "Post-process pass `{}` passes its input through: {error}",
+                            pass.name()
+                        )
+                    },
+                );
+                copy(encoder, input, output);
+            }
         }
         plan
     }
+}
+
+/// Copies `source` to `destination`, which has its size and format.
+fn copy(encoder: &mut wgpu::CommandEncoder, source: &Texture, destination: &Texture) {
+    encoder.copy_texture_to_texture(
+        source.texture.as_image_copy(),
+        destination.texture.as_image_copy(),
+        destination.descriptor.size,
+    );
 }

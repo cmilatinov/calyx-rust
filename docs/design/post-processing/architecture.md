@@ -97,7 +97,8 @@ pub trait PostProcessPass {
     fn inputs(&self) -> PassInputs;                          // default: none
     fn enabled(&self, settings: &PostProcessSettings) -> bool;
     fn prepare(&mut self, context: &PassContext, settings: &PostProcessSettings);
-    fn record(&mut self, context: &PassContext, encoder: &mut wgpu::CommandEncoder, io: PassIo);
+    fn record(&mut self, context: &PassContext, encoder: &mut wgpu::CommandEncoder, io: PassIo)
+        -> Result<(), NoPipeline>;
     fn release_targets(&mut self) {}                         // default: owns none
 }
 
@@ -117,6 +118,7 @@ pub struct PassIo<'a> {
 - Passes run in stage order (`Hdr`, `Tonemap`, `Ldr`), then insertion order within a stage.
 - Each frame the chain keeps the passes whose `enabled` returns true and whose inputs are available, then wires them: the first reads the chain's source, the last writes the chain's output, and each pass between writes the pool target the next one reads. Intermediates alternate between two pool targets (A, B), so a pass never reads the texture it writes.
 - The pool is fetched from only when two or more passes run. The tone-map-only chain never touches it.
+- A pass whose shader has no pipeline (wgpu rejected it, and no earlier version of the shader built one) records nothing and returns `NoPipeline`. The chain then copies the pass's input to its output, so the target never keeps a stale frame, and logs a warning once per pass and shader. Pool targets carry `COPY_SRC` and `COPY_DST` for that copy. The copy is a plain texture copy, not a shader, so no hot reload can take it away.
 - The chain calls `release_targets` on every pass when the renderer resizes, and on each pass that does not run in a frame, so a disabled effect holds no texture.
 - `TargetPool` holds at most the two slots, A and B. It creates each on first use at the chain's size and format, recreates one whose size or format differ, reuses them across frames and frees both when the renderer resizes.
 
