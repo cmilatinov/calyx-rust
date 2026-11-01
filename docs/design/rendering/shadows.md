@@ -48,7 +48,9 @@ The directional light's shadow is 4 cascades, the 4 layers of one
   `min(shadow_distance, far plane)` splits by the practical scheme: each split
   is 0.75 of the logarithmic split plus 0.25 of the even split.
 - **Fit.** Each cascade is an orthographic projection fitted to the bounding
-  sphere of its frustum slice: the sphere's center is the slice corners'
+  sphere of its frustum slice, which starts where the previous cascade begins
+  blending into it (see Sampling), so the blend band reads both maps. The
+  sphere's center is the slice corners'
   centroid and its radius the farthest corner, rounded up to 1/16 world unit.
   The slice's shape is fixed relative to the camera, so the radius, and with it
   the texel size, does not change as the camera turns or moves.
