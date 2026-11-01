@@ -44,6 +44,8 @@ pub struct ChainPlan {
     pub intermediates: usize,
     /// Whether a planned pass reads depth.
     pub depth: bool,
+    /// Whether a planned pass reads [`SceneInput::ParticleDepth`].
+    pub particle_depth: bool,
 }
 
 impl ChainPlan {
@@ -62,6 +64,7 @@ impl ChainPlan {
             match check_inputs(pass.name(), inputs) {
                 Ok(()) => {
                     plan.depth |= inputs.contains(SceneInput::Depth);
+                    plan.particle_depth |= inputs.contains(SceneInput::ParticleDepth);
                     running.push(index);
                 }
                 Err(error) => plan.skipped.push(error),
@@ -99,6 +102,10 @@ pub struct ChainTargets<'a> {
     pub output: &'a Texture,
     /// The scene's depth, multisampled or not.
     pub depth: &'a Texture,
+    /// The scene's depth with every particle drawn in, nearest wins, at the
+    /// same sample count, or `None` when the renderer drew none and it would
+    /// equal `depth`.
+    pub particle_depth: Option<&'a Texture>,
 }
 
 /// Post-processing passes in stage order, then insertion order, with the
@@ -107,6 +114,7 @@ pub struct PostProcessChain {
     passes: Vec<Box<dyn PostProcessPass>>,
     pool: TargetPool,
     depth: DepthResolve,
+    particle_depth: DepthResolve,
     camera: CameraPlanes,
 }
 
@@ -117,6 +125,7 @@ impl PostProcessChain {
             passes: Vec::new(),
             pool: TargetPool::default(),
             depth: DepthResolve::new(context)?,
+            particle_depth: DepthResolve::new(context)?,
             camera: CameraPlanes::default(),
         })
     }
@@ -148,11 +157,23 @@ impl PostProcessChain {
         &self.pool
     }
 
-    /// Frees intermediate targets, the depth copy and the textures passes
+    /// Whether a pass that runs with `settings` reads `input`, so the
+    /// renderer builds it only then.
+    pub fn reads(&self, settings: &PostProcessSettings, input: SceneInput) -> bool {
+        let plan = ChainPlan::build(&self.passes, settings);
+        match input {
+            SceneInput::Depth => plan.depth,
+            SceneInput::ParticleDepth => plan.particle_depth,
+            SceneInput::Normals | SceneInput::Velocity => false,
+        }
+    }
+
+    /// Frees intermediate targets, the depth copies and the textures passes
     /// own, as a resize needs.
     pub fn clear_targets(&mut self) {
         self.pool.clear();
         self.depth.clear();
+        self.particle_depth.clear();
         for pass in &mut self.passes {
             pass.release_targets();
         }
@@ -193,6 +214,7 @@ impl PostProcessChain {
             passes,
             pool,
             depth,
+            particle_depth,
             camera,
         } = self;
         let size = (
@@ -205,9 +227,19 @@ impl PostProcessChain {
             targets.output.descriptor.format,
             plan.intermediates,
         );
-        let depth = plan
-            .depth
+        // Without a particle depth of its own, particle depth is the scene
+        // depth, resolved once for both.
+        let depth = (plan.depth || (plan.particle_depth && targets.particle_depth.is_none()))
             .then(|| depth.resolve(render_context, encoder, targets.depth));
+        if targets.particle_depth.is_none() || !plan.particle_depth {
+            particle_depth.clear();
+        }
+        let particle_depth = match targets.particle_depth {
+            Some(texture) if plan.particle_depth => {
+                Some(particle_depth.resolve(render_context, encoder, texture))
+            }
+            _ => plan.particle_depth.then_some(depth).flatten(),
+        };
         let context = PassContext {
             render_context,
             size,
@@ -223,13 +255,17 @@ impl PostProcessChain {
         };
         for planned in &plan.passes {
             let pass = &mut passes[planned.pass];
+            let inputs = pass.inputs();
             let io = PassIo {
                 input: texture(planned.input),
                 output: texture(planned.output),
-                depth: pass
-                    .inputs()
+                depth: inputs
                     .contains(SceneInput::Depth)
                     .then_some(depth)
+                    .flatten(),
+                particle_depth: inputs
+                    .contains(SceneInput::ParticleDepth)
+                    .then_some(particle_depth)
                     .flatten(),
             };
             pass.record(&context, encoder, io);

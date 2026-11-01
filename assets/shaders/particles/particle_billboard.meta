@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "081f2f59-daea-4127-bce0-90ce75a7e87e",
+    "name": "shaders/particles/particle_billboard",
+    "display_name": "particle_billboard",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

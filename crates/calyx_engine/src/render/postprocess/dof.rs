@@ -125,8 +125,10 @@ impl PostProcessPass for DepthOfFieldPass {
         PostProcessStage::Hdr
     }
 
+    /// Every visible particle blurs by its own distance, so the circle of
+    /// confusion reads the depth that holds them all.
     fn inputs(&self) -> PassInputs {
-        SceneInput::Depth.into()
+        SceneInput::ParticleDepth.into()
     }
 
     fn enabled(&self, settings: &PostProcessSettings) -> bool {
@@ -155,8 +157,8 @@ impl PostProcessPass for DepthOfFieldPass {
 
     fn record(&mut self, context: &PassContext, encoder: &mut wgpu::CommandEncoder, io: PassIo) {
         let depth = io
-            .depth
-            .expect("the chain gives depth to a pass that asks for it");
+            .particle_depth
+            .expect("the chain gives particle depth to a pass that asks for it");
         let device = context.render_context.device();
         let coc_target = self.coc_target(context).view.clone();
         let uniform_buffer = &self.uniform_buffer;
@@ -576,11 +578,12 @@ mod tests {
                 source: &source,
                 output: &output,
                 depth,
+                particle_depth: None,
             },
         );
         render_context.queue().submit(Some(encoder.finish()));
         assert_eq!(plan.passes.len(), 1, "depth of field runs");
-        assert!(plan.depth, "depth of field reads depth");
+        assert!(plan.particle_depth, "depth of field reads particle depth");
         read(&render_context, &output)
     }
 
@@ -811,6 +814,7 @@ mod tests {
                     source: &source,
                     output: &output,
                     depth: &depth,
+                    particle_depth: None,
                 },
             );
             render_context.queue().submit(Some(encoder.finish()));

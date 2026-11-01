@@ -91,6 +91,7 @@ pub struct SsaoPass {
         wgpu::TextureView,
         wgpu::TextureView,
         wgpu::TextureView,
+        wgpu::TextureView,
     )>,
 }
 
@@ -209,8 +210,11 @@ impl PostProcessPass for SsaoPass {
         PostProcessStage::Hdr
     }
 
+    /// Occlusion comes from the scene depth. The particle depth tells the
+    /// composite which pixels a particle in front of the scene covers, which it
+    /// leaves undarkened.
     fn inputs(&self) -> PassInputs {
-        SceneInput::Depth.into()
+        SceneInput::Depth | SceneInput::ParticleDepth
     }
 
     fn enabled(&self, settings: &PostProcessSettings) -> bool {
@@ -243,6 +247,9 @@ impl PostProcessPass for SsaoPass {
         let depth = io
             .depth
             .expect("the chain hands depth to a pass that asks for it");
+        let particle_depth = io
+            .particle_depth
+            .expect("the chain hands particle depth to a pass that asks for it");
         self.fit_targets(context.render_context, context.size);
         let device = context.render_context.device();
         let Self {
@@ -320,6 +327,7 @@ impl PostProcessPass for SsaoPass {
                 io.input.view.clone(),
                 blurred.clone(),
                 depth.view.clone(),
+                particle_depth.view.clone(),
             ),
             || {
                 device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -341,6 +349,10 @@ impl PostProcessPass for SsaoPass {
                         wgpu::BindGroupEntry {
                             binding: 3,
                             resource: uniform_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: wgpu::BindingResource::TextureView(&particle_depth.view),
                         },
                     ],
                 })
@@ -622,6 +634,17 @@ mod tests {
         settings: &PostProcessSettings,
         depth: &Texture,
     ) -> Vec<[f32; 4]> {
+        run_ssao_with_particles(context, settings, depth, None)
+    }
+
+    /// [`run_ssao`] with `particle_depth` as the scene depth with the
+    /// particles drawn in.
+    fn run_ssao_with_particles(
+        context: &ReadOnlyAssetContext,
+        settings: &PostProcessSettings,
+        depth: &Texture,
+        particle_depth: Option<&Texture>,
+    ) -> Vec<[f32; 4]> {
         let render_context = context.render_context.clone();
         let mut chain = PostProcessChain::new(context).expect("chain shaders load");
         chain.push(Box::new(SsaoPass::new(context).expect("ssao loads")));
@@ -658,6 +681,7 @@ mod tests {
                 source: &source,
                 output: &output,
                 depth,
+                particle_depth,
             },
         );
         assert_eq!(plan.passes.len(), 1, "ssao runs");
@@ -779,6 +803,60 @@ mod tests {
     }
 
     #[test]
+    fn a_particle_out_of_depth_is_not_darkened_by_the_geometry_behind_it() {
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        // The inside corner, with an additive particle 2 units in front of
+        // the camera covering the middle of the lower half of the image. It
+        // is in the particle depth only, as the particle renderer draws it.
+        let corner = |x: f32| 4.0 / (1.0 + x.abs());
+        let depth = scene_depth(&context.render_context, |x, _| Some(corner(x)), 1.0);
+        let p00 = camera().projection[(0, 0)];
+        let p11 = camera().projection[(1, 1)];
+        let column = |x: f32| ((x * p00 + 1.0) * 0.5 * SIZE.0 as f32).floor() as u32;
+        let row = |y: f32| ((1.0 - y * p11) * 0.5 * SIZE.1 as f32).floor() as u32;
+        let covered = |x: u32, y: u32| (12..20).contains(&x) && y >= 16;
+        let particle_depth = scene_depth(
+            &context.render_context,
+            |x, y| {
+                Some(if covered(column(x), row(y)) {
+                    2.0
+                } else {
+                    corner(x)
+                })
+            },
+            1.0,
+        );
+
+        let output = run_ssao_with_particles(
+            &context,
+            &ssao_with_radius(CORNER_RADIUS),
+            &depth,
+            Some(&particle_depth),
+        );
+
+        let visibility = visibility(&output);
+        let at = |x: u32, y: u32| visibility[(y * SIZE.0 + x) as usize];
+        for y in 6..12 {
+            assert!(
+                at(15, y) < 0.9,
+                "the crease above the particle at (15, {y}) is occluded: visibility {}",
+                at(15, y)
+            );
+        }
+        for y in 16..SIZE.1 {
+            for x in 12..20 {
+                assert_eq!(
+                    output[(y * SIZE.0 + x) as usize],
+                    COLOR,
+                    "the particle at ({x}, {y}) is not darkened"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn the_sky_is_untouched() {
         let assets = TestAssets::engine();
         let context = assets.asset_context();
@@ -853,6 +931,7 @@ mod tests {
                 skipped: vec![],
                 intermediates: 0,
                 depth: false,
+                particle_depth: false,
             },
             "with ssao off the frame is tone mapping alone and builds no depth"
         );
@@ -888,6 +967,7 @@ mod tests {
                     input: &input,
                     output: &output,
                     depth: Some(&depth),
+                    particle_depth: Some(&depth),
                 },
             );
             render_context.queue().submit(Some(encoder.finish()));

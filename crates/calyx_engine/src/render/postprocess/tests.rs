@@ -538,6 +538,7 @@ fn run_chain(
             source: &source,
             output: &output,
             depth,
+            particle_depth: None,
         },
     );
     render_context.queue().submit(Some(encoder.finish()));
@@ -1236,6 +1237,7 @@ fn run_fxaa(context: &crate::context::ReadOnlyAssetContext, image: &Image) -> Im
             source: &source,
             output: &output,
             depth: &depth,
+            particle_depth: None,
         },
     );
     render_context.queue().submit(Some(encoder.finish()));
