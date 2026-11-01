@@ -8,7 +8,8 @@ implemented.
 
 Code: `crates/calyx_engine/src/render/shadows.rs` (`ShadowPlan`,
 `ShadowRenderer`), `crates/calyx_engine/src/render/light_manager.rs`,
-`assets/shaders/mesh/shadow.wgsl` (the shadow pass) and
+`assets/shaders/mesh/shadow.wgsl` and `assets/shaders/mesh/shadow_masked.wgsl`
+(the shadow pass) and
 `assets/shaders/common/shadows.wgsl` (the lookups).
 
 ## Authoring
@@ -90,6 +91,13 @@ pass, on the same command encoder.
   scene skips, disabled or hidden, is never drawn into a shadow either. Batches
   split on `cast_shadows` as well as shader, material and mesh, and the pass
   skips the batches that do not cast.
+- A batch whose material is a PBR material with an `alpha_cutoff` above 0
+  draws with `assets/shaders/mesh/shadow_masked.wgsl` instead. It binds the
+  material's own bind group, built for group 3 of `pbr.wgsl`, as its group 2
+  (it declares every binding as `pbr.wgsl` does, and both share
+  `shaders/mesh/pbr_material.wgsl`). It discards a fragment whose base color
+  alpha is below the cutoff, as the scene pass does, so cutout surfaces cast
+  cutout shadows. Every other batch keeps the empty fragment stage.
 - Each cascade is its own pass on its layer. The atlas is one pass, cleared
   once, with the viewport and scissor set to each light's tile.
 

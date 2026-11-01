@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "b4313a46-56b9-e094-bfe0-29c780dc93cd",
+    "name": "shaders/mesh/pbr_material",
+    "display_name": "pbr_material",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

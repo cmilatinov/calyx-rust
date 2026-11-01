@@ -65,6 +65,9 @@ type SceneBindGroupKey = (
     [wgpu::Sampler; 3],
 );
 
+/// Each material's bind groups, by material, then by group index.
+pub(crate) type MaterialBindGroups = HashMap<AssetId, HashMap<u32, wgpu::BindGroup>>;
+
 struct CachedMaterialBindGroups {
     key: MaterialBindGroupCacheKey,
     groups: HashMap<u32, wgpu::BindGroup>,
@@ -76,7 +79,6 @@ pub struct MeshRenderTargets<'a> {
 }
 
 pub struct MeshRenderDefaults<'a> {
-    pub material_texture: Ref<Texture>,
     pub black_texture_2d: &'a Texture,
     pub black_texture_cube: &'a Texture,
 }
@@ -108,8 +110,8 @@ impl MeshRenderer {
         &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
-        asset_context: &ReadOnlyAssetContext,
         assets: &LockedAssetRenderState,
+        material_bind_groups: &MaterialBindGroups,
         defaults: MeshRenderDefaults<'_>,
         targets: MeshRenderTargets<'_>,
         queue: &wgpu::Queue,
@@ -123,12 +125,6 @@ impl MeshRenderer {
         ambient_light: [f32; 4],
         draw_list: &[DrawBatch],
     ) {
-        let material_bind_groups = self.build_material_bind_groups(
-            device,
-            asset_context,
-            defaults.material_texture,
-            assets,
-        );
         let (irradiance_map, prefilter_map, brdf_map) = skybox_id
             .and_then(|id| assets.skybox(id)?.environment_maps())
             .unwrap_or((
@@ -383,13 +379,16 @@ impl MeshRenderer {
         }
     }
 
-    fn build_material_bind_groups(
+    /// Each drawn material's bind groups, by group index, reusing those built
+    /// in earlier frames while the material binds the same resources. The
+    /// scene pass and the masked shadow pass bind them.
+    pub fn build_material_bind_groups(
         &mut self,
         device: &wgpu::Device,
         asset_context: &ReadOnlyAssetContext,
         default_texture: Ref<Texture>,
         assets: &LockedAssetRenderState,
-    ) -> HashMap<AssetId, HashMap<u32, wgpu::BindGroup>> {
+    ) -> MaterialBindGroups {
         let live_materials: HashSet<AssetId> = assets.materials.keys().copied().collect();
         self.prune_material_bind_group_cache(&live_materials);
 

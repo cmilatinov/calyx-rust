@@ -484,6 +484,12 @@ impl SceneRenderer {
         self.skybox_renderer
             .prepare(&render_context, &mut encoder, &self.assets);
         let assets = self.assets.lock();
+        let material_bind_groups = self.mesh_renderer.build_material_bind_groups(
+            device,
+            &self.asset_context,
+            self.default_assets.white_texture.clone(),
+            &assets,
+        );
         // Shadow maps render before the scene pass that samples them.
         self.shadow_renderer.render(
             device,
@@ -491,6 +497,7 @@ impl SceneRenderer {
             &mut encoder,
             self.light_manager.shadow_plan(),
             &assets,
+            &material_bind_groups,
             &draw_list,
         );
         {
@@ -499,10 +506,9 @@ impl SceneRenderer {
             self.mesh_renderer.render(
                 device,
                 &mut encoder,
-                &self.asset_context,
                 &assets,
+                &material_bind_groups,
                 MeshRenderDefaults {
-                    material_texture: self.default_assets.white_texture.clone(),
                     black_texture_2d: &black_texture_2d,
                     black_texture_cube: &black_texture_cube,
                 },
@@ -3705,6 +3711,52 @@ mod tests {
         let off = &shadow_frames(false, sun_over_box, [BOX_SHADOW], vec![])[0];
         assert_eq!(off.allocated, (false, false));
         assert_eq!(off.stats, ShadowFrameStats::default());
+    }
+
+    /// The box of `sun_over_box` in a PBR material that discards fragments
+    /// whose alpha is below 0.5, with base color alpha `alpha`.
+    fn masked_box_shadow(alpha: f32) -> u8 {
+        let frames = shadow_frames(
+            true,
+            move |builder, context, cube, _| {
+                let sun = spawn_sun(builder, vec3(1.0, -1.0, 0.0));
+                let material = pbr_material(context, &format!("test/masked_{alpha}"));
+                {
+                    let mut material = material.write();
+                    assert!(material.set_variable(
+                        "base_color_factor",
+                        ShaderVariableValue::Color([1.0, 1.0, 1.0, alpha])
+                    ));
+                    assert!(material.set_variable("alpha_cutoff", ShaderVariableValue::Float(0.5)));
+                }
+                spawn_box(
+                    builder,
+                    "box",
+                    cube,
+                    &material,
+                    vec3(0.0, 1.5, 0.0),
+                    Vec3::repeat(1.0),
+                );
+                vec![sun]
+            },
+            [BOX_SHADOW],
+            vec![],
+        );
+        frames[0].pixels[0]
+    }
+
+    #[test]
+    fn an_alpha_masked_material_casts_no_shadow_where_it_is_discarded() {
+        let opaque = masked_box_shadow(1.0);
+        let discarded = masked_box_shadow(0.25);
+        assert!(
+            opaque <= 2,
+            "a kept masked surface casts its shadow, got {opaque}"
+        );
+        assert!(
+            discarded > 40,
+            "a fully discarded surface casts no shadow, got {discarded}"
+        );
     }
 
     #[test]

@@ -10,12 +10,14 @@
 //!
 //! `docs/design/rendering/shadows.md` describes the design.
 
+use crate::assets::AssetId;
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::math::{self, Transform};
 use crate::render::asset_render_state::LockedAssetRenderState;
 use crate::render::{
-    CachedBindGroup, Camera, DrawBatch, PipelineOptions, RenderUtils, SceneRendererError, Shader,
+    CachedBindGroup, Camera, DrawBatch, MaterialBindGroups, PipelineOptions, RenderUtils,
+    SceneRendererError, Shader,
 };
 use egui_wgpu::wgpu;
 use nalgebra_glm as glm;
@@ -542,6 +544,11 @@ pub(crate) struct ShadowBindings<'a> {
 /// renderer has its own, since cascades follow its camera.
 pub(crate) struct ShadowRenderer {
     shader: Ref<Shader>,
+    /// The shadow pass of alpha-masked PBR materials, which discards where
+    /// the scene pass does.
+    masked_shader: Ref<Shader>,
+    /// The PBR shader, whose materials' bind groups the masked pass binds.
+    pbr_shader_id: AssetId,
     data_buffer: wgpu::Buffer,
     /// One light-space matrix per cascade, then per atlas tile.
     view_buffers: Vec<wgpu::Buffer>,
@@ -562,6 +569,9 @@ impl ShadowRenderer {
     pub fn new(context: &ReadOnlyAssetContext) -> Result<Self, SceneRendererError> {
         let device = context.render_context.device();
         let shader = SceneRendererError::load::<Shader>(context, "shaders/mesh/shadow")?;
+        let masked_shader =
+            SceneRendererError::load::<Shader>(context, "shaders/mesh/shadow_masked")?;
+        let pbr_shader_id = SceneRendererError::load::<Shader>(context, "shaders/mesh/pbr")?.id();
         let uniform = |label: &str, size: usize| {
             device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
@@ -573,6 +583,8 @@ impl ShadowRenderer {
         let views = SHADOW_CASCADE_COUNT + MAX_SPOT_SHADOWS;
         Ok(Self {
             shader,
+            masked_shader,
+            pbr_shader_id,
             data_buffer: uniform("shadow_data", size_of::<GpuShadowData>()),
             view_buffers: (0..views)
                 .map(|_| uniform("shadow_view", size_of::<[[f32; 4]; 4]>()))
@@ -636,6 +648,7 @@ impl ShadowRenderer {
         encoder: &mut wgpu::CommandEncoder,
         plan: &ShadowPlan,
         assets: &LockedAssetRenderState,
+        material_bind_groups: &MaterialBindGroups,
         draw_list: &[DrawBatch],
     ) {
         self.stats = Default::default();
@@ -655,6 +668,20 @@ impl ShadowRenderer {
         }
 
         let shader = self.shader.read();
+        let masked_shader = self.masked_shader.read();
+        let casters = Casters {
+            assets,
+            material_bind_groups,
+            pbr_shader_id: self.pbr_shader_id,
+            draw_list,
+        };
+        let pipelines = |settings: &ShadowSettings| {
+            let options = Self::pipeline_options(settings);
+            CasterPipelines {
+                plain: shader.pipeline(&options),
+                masked: masked_shader.pipeline(&options),
+            }
+        };
         let layout = shader.bind_group_layouts[0].clone();
         let mut view_bind_group = |index: usize, view_projection: &Mat4| {
             let matrix: [[f32; 4]; 4] = (*view_projection).into();
@@ -692,16 +719,13 @@ impl ShadowRenderer {
                     true,
                 )
             });
-            let pipeline = shader.pipeline(&Self::pipeline_options(&cascade_plan.settings));
+            let pipelines = pipelines(&cascade_plan.settings);
             for (i, view_projection) in cascade_plan.view_projection.iter().enumerate() {
                 let bind_group = view_bind_group(i, view_projection);
                 let mut pass =
                     Self::begin_pass(encoder, &cascades.layer_views[i], "Shadow Cascade");
-                if let Some(pipeline) = &pipeline {
-                    pass.set_pipeline(pipeline);
-                    pass.set_bind_group(0, &bind_group, &[]);
-                    self.stats.caster_instances += Self::draw_casters(&mut pass, assets, draw_list);
-                }
+                pass.set_bind_group(0, &bind_group, &[]);
+                self.stats.caster_instances += casters.draw(&mut pass, &pipelines);
                 self.stats.cascades += 1;
             }
         }
@@ -726,17 +750,12 @@ impl ShadowRenderer {
                 .collect();
             let mut pass = Self::begin_pass(encoder, &atlas.layer_views[0], "Spot Shadow Atlas");
             for (spot, bind_group) in plan.spots.iter().zip(&bind_groups) {
-                let Some(pipeline) = shader.pipeline(&Self::pipeline_options(&spot.settings))
-                else {
-                    continue;
-                };
                 let (x, y) = spot.tile_origin();
                 let tile = SHADOW_ATLAS_TILE;
                 pass.set_viewport(x as f32, y as f32, tile as f32, tile as f32, 0.0, 1.0);
                 pass.set_scissor_rect(x, y, tile, tile);
-                pass.set_pipeline(&pipeline);
                 pass.set_bind_group(0, bind_group, &[]);
-                self.stats.caster_instances += Self::draw_casters(&mut pass, assets, draw_list);
+                self.stats.caster_instances += casters.draw(&mut pass, &pipelines(&spot.settings));
                 self.stats.spot_tiles += 1;
             }
         }
@@ -770,22 +789,69 @@ impl ShadowRenderer {
             occlusion_query_set: None,
         })
     }
+}
 
-    /// Draws every shadow-casting batch of `draw_list`, and returns how many
-    /// instances it drew.
-    fn draw_casters(
-        pass: &mut wgpu::RenderPass<'_>,
-        assets: &LockedAssetRenderState,
-        draw_list: &[DrawBatch],
-    ) -> u32 {
+/// The shadow pipelines of one light's depth bias.
+struct CasterPipelines {
+    /// `shaders/mesh/shadow.wgsl`, for every caster but masked ones.
+    plain: Option<wgpu::RenderPipeline>,
+    /// `shaders/mesh/shadow_masked.wgsl`, for PBR materials with an
+    /// `alpha_cutoff`.
+    masked: Option<wgpu::RenderPipeline>,
+}
+
+/// What every cascade and tile draws: the shadow-casting batches of the
+/// scene pass's draw list.
+struct Casters<'a> {
+    assets: &'a LockedAssetRenderState<'a>,
+    material_bind_groups: &'a MaterialBindGroups,
+    pbr_shader_id: AssetId,
+    draw_list: &'a [DrawBatch],
+}
+
+impl Casters<'_> {
+    /// The material bind group a batch's masked shadow binds as group 2, or
+    /// `None` when the batch draws without masking: its shader is not the
+    /// PBR shader, whose material layout the masked shader shares, or its
+    /// material never discards.
+    fn mask(&self, batch: &DrawBatch) -> Option<&wgpu::BindGroup> {
+        if batch.shader_id != self.pbr_shader_id {
+            return None;
+        }
+        let material = self.assets.material(batch.mat_id)?;
+        if material.alpha_cutoff() <= 0.0 {
+            return None;
+        }
+        self.material_bind_groups.get(&batch.mat_id)?.get(&3)
+    }
+
+    /// Draws every shadow-casting batch into `pass`, whose group 0 is bound
+    /// to a light view, and returns how many instances it drew. A batch
+    /// whose pipeline failed to build is skipped.
+    fn draw(&self, pass: &mut wgpu::RenderPass<'_>, pipelines: &CasterPipelines) -> u32 {
         let mut drawn = 0;
-        for batch in draw_list.iter().filter(|batch| batch.cast_shadows) {
-            let Some(mesh) = assets.mesh(batch.mesh_id) else {
+        let mut masked_bound = None;
+        for batch in self.draw_list.iter().filter(|batch| batch.cast_shadows) {
+            let Some(mesh) = self.assets.mesh(batch.mesh_id) else {
                 continue;
             };
             let Some(instance_group) = mesh.instance_bind_group() else {
                 continue;
             };
+            let mask = self.mask(batch);
+            let Some(pipeline) = (match mask {
+                Some(_) => &pipelines.masked,
+                None => &pipelines.plain,
+            }) else {
+                continue;
+            };
+            if masked_bound != Some(mask.is_some()) {
+                pass.set_pipeline(pipeline);
+                masked_bound = Some(mask.is_some());
+            }
+            if let Some(material_group) = mask {
+                pass.set_bind_group(2, material_group, &[]);
+            }
             pass.set_bind_group(1, instance_group, &[]);
             RenderUtils::bind_mesh_buffers(pass, mesh);
             RenderUtils::draw_mesh_instanced(pass, mesh, batch.instances.clone());
