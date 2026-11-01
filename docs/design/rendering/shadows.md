@@ -81,7 +81,9 @@ pass, on the same command encoder.
 - The pipeline comes from `assets/shaders/mesh/shadow.wgsl`, depth only, with
   no color target and an empty fragment stage. It reads the mesh vertex
   inputs, the instance buffer and the bone palette of group 1 exactly as
-  `pbr.wgsl` does, so a skinned mesh casts its posed shadow. Group 0 is one
+  `pbr.wgsl` does, and poses a skinned vertex with the same `skinned_local`
+  of `assets/shaders/mesh/mesh.wgsl`, so a skinned mesh casts its posed
+  shadow. Group 0 is one
   light-space matrix per cascade or tile.
 - It is single-sample, whatever the scene's MSAA, and draws both faces (no
   culling), so open meshes such as planes and cards cast too. The light's

@@ -85,39 +85,12 @@ var occlusion_sampler: sampler;
 fn vs_main(vertex: VertexIn) -> VertexOut {
     let instance = mesh.instances[vertex.instance];
     var out: VertexOut;
-    if instance.bone_transform_index >= 0 {
-        var total_position: vec4f;
-        var total_normal: vec4f;
-        var total_tangent: vec4f;
-        for (var i = 0u; i < MAX_BONE_INFLUENCE; i++) {
-            let bone_index = vertex.bone_indices[i];
-            let bone_weight = vertex.bone_weights[i];
-            if (bone_index < 0) {
-                continue;
-            }
-            let transform_index = u32(instance.bone_transform_index) * mesh.num_bones + u32(bone_index);
-            if (transform_index >= bones.bones_size) {
-                continue;
-            }
-            let bone_transform = bones.bones[transform_index].transform;
-            let local_position = bone_transform * vec4f(vertex.position, 1.0);
-            total_position += local_position * bone_weight;
-            let local_normal = bone_transform * vec4f(vertex.normal, 0.0);
-            total_normal += local_normal * bone_weight;
-            let local_tangent = bone_transform * vec4f(vertex.tangent.xyz, 0.0);
-            total_tangent += local_tangent * bone_weight;
-        }
-        out.world_position = (instance.transform * total_position).xyz;
-        out.normal = (instance.transform * total_normal).xyz;
-        out.tangent = vec4f((instance.transform * total_tangent).xyz, vertex.tangent.w);
-    } else {
-        out.world_position = (instance.transform * vec4f(vertex.position, 1.0)).xyz;
-        out.normal = (instance.transform * vec4f(vertex.normal, 0.0)).xyz;
-        out.tangent = vec4f(
-            (instance.transform * vec4f(vertex.tangent.xyz, 0.0)).xyz,
-            vertex.tangent.w
-        );
-    }
+    let local_position = skinned_local(vertex, instance, vec4f(vertex.position, 1.0));
+    let local_normal = skinned_local(vertex, instance, vec4f(vertex.normal, 0.0));
+    let local_tangent = skinned_local(vertex, instance, vec4f(vertex.tangent.xyz, 0.0));
+    out.world_position = (instance.transform * local_position).xyz;
+    out.normal = (instance.transform * local_normal).xyz;
+    out.tangent = vec4f((instance.transform * local_tangent).xyz, vertex.tangent.w);
     out.position =
         camera.projection *
         camera.view *
