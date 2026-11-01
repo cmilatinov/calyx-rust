@@ -95,7 +95,7 @@ Example game project. Compiles as dynamic library (plugin) with `plugin_main` en
 - `.fbx`, `.gltf`, `.glb` — Models, imported as prefabs
 - `.cxscene` — Scenes
 - `.cxanim` — Animations
-- `.meta` — Asset metadata (UUID, name, type)
+- `.meta` — Asset metadata (UUID, name, type). Only a file whose extension is a registered asset type gets one; other files in an asset root are listed in the content browser but are not assets.
 - `project.toml` — Project configuration
 
 ## Shader Layout

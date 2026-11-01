@@ -554,7 +554,12 @@ impl PanelContentBrowser {
                 .read()
                 .asset_id_from_path(path)
                 .map(|id| state.selection.contains(SelectionType::Asset, id))
-                .unwrap_or(false)
+                // A file that is not an asset has no selection of its own; it
+                // stays highlighted until something else is selected.
+                .unwrap_or_else(|| {
+                    self.selected_file.as_ref() == Some(path)
+                        && state.selection.is(SelectionType::None)
+                })
         }
     }
 }

@@ -1201,6 +1201,11 @@ impl AssetRegistry {
                         self.mark_path_dirty(file);
                         continue;
                     }
+                    // Only an asset file has a `.meta`. One beside a deleted
+                    // file of another type belongs to a same-stem asset.
+                    if !self.is_asset_file(file) {
+                        continue;
+                    }
                     let meta_path = file.with_extension("meta");
                     match std::fs::remove_file(&meta_path) {
                         Ok(()) => log::info!("Removed asset metadata {}", meta_path.display()),
@@ -1238,6 +1243,10 @@ impl AssetRegistry {
             );
             return;
         };
+        if !self.is_asset_file(file) {
+            log::trace!("Ignoring created file of no asset type: {}", file.display());
+            return;
+        }
         if let Err(err) = self.build_asset_meta(asset_path, file, &file.with_extension("meta")) {
             log::warn!(
                 "Failed to build asset metadata for {}: {}",
@@ -1426,10 +1435,7 @@ impl AssetRegistry {
                 };
                 for candidate in entries.filter_map(|entry| entry.ok().map(|e| e.path())) {
                     // The same files `build_meta` registers at startup.
-                    let ext = candidate
-                        .extension()
-                        .map_or("", |ext| ext.to_str().unwrap_or(""));
-                    if ext.is_empty() || ext == "meta" || ext == "rs" || !candidate.is_file() {
+                    if !self.is_asset_file(&candidate) || !candidate.is_file() {
                         continue;
                     }
                     if self.owning_asset_root(&candidate) != Some(root.as_path())
@@ -1502,6 +1508,14 @@ impl AssetRegistry {
         }
     }
 
+    /// Whether the file at `path` is an asset: its extension names a
+    /// registered asset type. Only an asset file gets a `.meta`.
+    fn is_asset_file(&self, path: &Path) -> bool {
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| self.asset_type_uuid_from_ext(ext).is_some())
+    }
+
     /// Returns the registered asset type UUID for a file extension.
     pub fn asset_type_uuid_from_ext(&self, ext: &str) -> Option<Uuid> {
         self.asset_data()
@@ -1526,10 +1540,8 @@ impl AssetRegistry {
                         continue;
                     }
                 };
-                let ext = path
-                    .extension()
-                    .map_or("", |ext| ext.to_str().unwrap_or(""));
-                if ext.is_empty() || ext == "meta" || ext == "rs" {
+                // Only a file of a registered asset type gets a `.meta`.
+                if !self.is_asset_file(&path) {
                     continue;
                 }
                 if self.owning_asset_root(&path) != Some(asset_path.as_path()) {
@@ -1564,8 +1576,14 @@ impl AssetRegistry {
             return Err(format!("{} has no file extension to type it by", path.display()).into());
         };
         // Resolved before a new `.meta` is written, so the file records the
-        // real type. An extension with no registered type stays nil.
-        let type_uuid = self.asset_type_uuid_from_ext(ext).unwrap_or(Uuid::nil());
+        // real type, and a file of no registered type gets none.
+        let Some(type_uuid) = self.asset_type_uuid_from_ext(ext) else {
+            return Err(format!(
+                "{} has no registered asset type for its `.{ext}` extension",
+                path.display()
+            )
+            .into());
+        };
         let name_path = Self::relative_asset_path(asset_path, path)?;
         // The asset this name resolves to now, captured before the metadata
         // read below replaces it, in case this file takes over its id.
@@ -2220,6 +2238,82 @@ mod tests {
     }
 
     #[test]
+    fn startup_writes_no_meta_beside_a_file_of_an_unregistered_type() {
+        let root = temp_asset_root("calyx-startup-unregistered-ext");
+        let path = root.join("notes.txt");
+        std::fs::write(&path, b"notes").expect("failed to write text file");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+
+        assert!(!root.join("notes.meta").exists(), "no .meta is written");
+        assert_eq!(registry.asset_id_from_path(&path), None);
+        assert_eq!(registry.asset_id("notes"), None);
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn created_file_of_an_unregistered_type_gets_no_meta() {
+        let root = temp_asset_root("calyx-created-unregistered-ext");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        let path = root.join("notes.txt");
+        std::fs::write(&path, b"notes").expect("failed to write text file");
+
+        registry.recv_notify_event(
+            Event::new(EventKind::Create(notify::event::CreateKind::File)).add_path(path.clone()),
+        );
+
+        assert!(!root.join("notes.meta").exists(), "no .meta is written");
+        assert_eq!(registry.asset_id_from_path(&path), None);
+        assert_eq!(registry.asset_id("notes"), None);
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn registering_a_file_of_an_unregistered_type_is_refused() {
+        let root = temp_asset_root("calyx-register-unregistered-ext");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        let path = root.join("notes.txt");
+        std::fs::write(&path, b"notes").expect("failed to write text file");
+
+        let error = registry
+            .register_file(&path)
+            .expect_err("a .txt file has no registered asset type");
+
+        assert!(
+            error.to_string().contains("no registered asset type"),
+            "{error}"
+        );
+        assert_eq!(registry.asset_id_from_path(&path), None);
+        assert!(!root.join("notes.meta").exists(), "no .meta is written");
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn deleting_a_file_of_an_unregistered_type_keeps_a_same_stem_assets_meta() {
+        let root = temp_asset_root("calyx-remove-unregistered-ext");
+        let (asset_path, meta_path, asset_id) = write_scene_with_meta(&root);
+        let text_path = root.join("scene.txt");
+        std::fs::write(&text_path, b"notes").expect("failed to write text file");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+
+        std::fs::remove_file(&text_path).expect("failed to delete text file");
+        registry.recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(text_path),
+        );
+
+        assert!(meta_path.exists(), "the scene keeps its .meta");
+        assert_eq!(registry.asset_id_from_path(&asset_path), Some(asset_id));
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
     fn remove_event_for_replaced_asset_preserves_metadata() {
         let root = temp_asset_root("calyx-asset-replacement-event");
         let (asset_path, meta_path, asset_id) = write_scene_with_meta(&root);
@@ -2631,37 +2725,6 @@ mod tests {
         assert!(registry.reload_errors().is_empty());
         drop(registry);
         std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
-    }
-
-    #[test]
-    fn remove_event_restores_same_name_asset_with_unregistered_extension() {
-        let first_root = temp_asset_root("calyx-unregistered-ext-first-root");
-        let second_root = temp_asset_root("calyx-unregistered-ext-second-root");
-        let first_path = first_root.join("scene.custom");
-        let second_path = second_root.join("scene.custom");
-        std::fs::write(&first_path, b"").expect("failed to write first file");
-        std::fs::write(&second_path, b"").expect("failed to write second file");
-        let registries = test_registries_with_assets(vec![first_root.clone(), second_root.clone()]);
-        let registry = registries.assets.read();
-        assert!(registry.asset_id("scene").is_some());
-
-        std::fs::remove_file(&second_path).expect("failed to delete second file");
-        registry.recv_notify_event(
-            Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(second_path),
-        );
-
-        let restored = registry
-            .asset_id("scene")
-            .expect("the first root's file takes the name back");
-        assert_eq!(
-            registry
-                .asset_meta_from_id(restored)
-                .and_then(|meta| meta.path),
-            Some(first_path)
-        );
-        drop(registry);
-        std::fs::remove_dir_all(first_root).expect("failed to remove first temp asset root");
-        std::fs::remove_dir_all(second_root).expect("failed to remove second temp asset root");
     }
 
     #[test]
