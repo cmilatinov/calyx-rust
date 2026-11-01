@@ -292,6 +292,21 @@ pub(crate) fn cascade_splits(near: f32, far: f32) -> [f32; SHADOW_CASCADE_COUNT]
     })
 }
 
+/// The view depth from which cascade `index` is fitted: the camera's `near`
+/// plane for the first, and for the others where the previous cascade starts
+/// blending into it. `directional_shadow` in `shaders/common/shadows.wgsl`
+/// blends over the last [`CASCADE_BLEND`] of a cascade's range, measured
+/// from the split before it (0 for the first cascade), so the band reads both
+/// maps.
+fn cascade_fit_start(near: f32, splits: &[f32; SHADOW_CASCADE_COUNT], index: usize) -> f32 {
+    if index == 0 {
+        return near;
+    }
+    let far = splits[index - 1];
+    let previous = if index >= 2 { splits[index - 2] } else { 0.0 };
+    (far - (far - previous) * CASCADE_BLEND).max(near)
+}
+
 /// An up axis that is never parallel to `direction`.
 fn up_for(direction: &Vec3) -> Vec3 {
     if direction.y.abs() > 0.99 {
@@ -310,9 +325,9 @@ fn fit_cascades(camera: &ShadowCamera, direction: Vec3, settings: ShadowSettings
     let light_view = glm::look_at_lh(&Vec3::zeros(), &direction, &up_for(&direction));
     let mut view_projection = [Mat4::identity(); SHADOW_CASCADE_COUNT];
     let mut texel_size = [0.0; SHADOW_CASCADE_COUNT];
-    let mut near = camera.near;
     for i in 0..SHADOW_CASCADE_COUNT {
-        let corners = camera.slice_corners(near, split_far[i]);
+        let corners =
+            camera.slice_corners(cascade_fit_start(camera.near, &split_far, i), split_far[i]);
         let center = corners.iter().sum::<Vec3>() / corners.len() as f32;
         let radius = corners
             .iter()
@@ -340,7 +355,6 @@ fn fit_cascades(camera: &ShadowCamera, direction: Vec3, settings: ShadowSettings
         );
         view_projection[i] = projection * light_view;
         texel_size[i] = texel;
-        near = split_far[i];
     }
     CascadeShadow {
         view_projection,
@@ -861,20 +875,50 @@ mod tests {
     }
 
     #[test]
-    fn each_cascade_holds_its_whole_frustum_slice() {
-        let camera = camera_at(vec3(3.0, 2.0, -4.0), vec3(0.3, -0.2, 1.0).normalize());
-        let (plan, _) = ShadowPlan::new(&[sun(30.0)], Some(&camera));
-        let cascades = plan.directional.unwrap();
-        let mut near = camera.near;
-        for i in 0..SHADOW_CASCADE_COUNT {
-            for corner in camera.slice_corners(near, cascades.split_far[i]) {
-                let ndc = clip(&cascades.view_projection[i], corner);
-                assert!(
-                    ndc.x.abs() <= 1.0 && ndc.y.abs() <= 1.0 && (0.0..=1.0).contains(&ndc.z),
-                    "cascade {i} misses corner {corner}: {ndc}"
-                );
+    fn each_cascade_holds_its_slice_and_the_blend_band_before_it() {
+        // `directional_shadow` blends a point over the last `CASCADE_BLEND`
+        // of cascade i - 1, measured from the split before that (0 for the
+        // first), into cascade i, so cascade i must hold that band too. A
+        // narrow field of view makes the slices short and wide, where a fit
+        // from the split alone misses part of the band.
+        let narrow = {
+            let camera = Camera::new(16.0 / 9.0, 10f32.to_radians(), 0.1, 1000.0);
+            let transform = Transform::from_components(
+                Vec3::zeros(),
+                UnitQuaternion::face_towards(&Vec3::z(), &Vec3::y()),
+                vec3(1.0, 1.0, 1.0),
+            );
+            ShadowCamera::new(&camera, &transform)
+        };
+        let wide = camera_at(vec3(3.0, 2.0, -4.0), vec3(0.3, -0.2, 1.0).normalize());
+        let side_sun = Some(ShadowCaster::Directional {
+            direction: Vec3::x(),
+            settings: settings(50.0),
+        });
+        for (name, camera, caster) in [
+            ("wide", wide, sun(30.0)),
+            ("narrow", narrow, sun(50.0)),
+            ("narrow, side light", narrow, side_sun),
+        ] {
+            let (plan, _) = ShadowPlan::new(&[caster], Some(&camera));
+            let cascades = plan.directional.unwrap();
+            let splits = cascades.split_far;
+            for i in 0..SHADOW_CASCADE_COUNT {
+                let start = if i == 0 {
+                    camera.near
+                } else {
+                    let before = if i >= 2 { splits[i - 2] } else { 0.0 };
+                    splits[i - 1] - (splits[i - 1] - before) * CASCADE_BLEND
+                };
+                for corner in camera.slice_corners(start, splits[i]) {
+                    let ndc = clip(&cascades.view_projection[i], corner);
+                    assert!(
+                        ndc.x.abs() <= 1.0 && ndc.y.abs() <= 1.0 && (0.0..=1.0).contains(&ndc.z),
+                        "{name}: cascade {i} misses corner {corner} of [{start}, {}]: {ndc}",
+                        splits[i]
+                    );
+                }
             }
-            near = cascades.split_far[i];
         }
     }
 
