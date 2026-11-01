@@ -108,12 +108,13 @@ pass, on the same command encoder.
 
 ## Sampling
 
-`assets/shaders/common/shadows.wgsl` binds, in group 2 beside the light
-buffer at binding 0:
+`assets/shaders/common/shadows.wgsl` includes
+`assets/shaders/common/camera.wgsl`, the scene camera in group 0, and binds, in
+group 2 beside the light buffer at binding 0:
 
 | Binding | Resource |
 | --- | --- |
-| 1 | `ShadowData` uniform: the cascades' matrices, far splits and texel sizes; the spot shadows' matrices, tile offsets and texel scales; the camera the cascades were fitted to; the normal biases |
+| 1 | `ShadowData` uniform: the cascades' matrices, far splits and texel sizes; the spot shadows' matrices, tile offsets and texel scales; the cascade blend fraction; the normal biases; the atlas and cascade texel sizes |
 | 2 | `texture_depth_2d_array`, the cascades |
 | 3 | `texture_depth_2d`, the atlas |
 | 4 | `sampler_comparison`, `LessEqual` with linear filtering |
@@ -122,8 +123,9 @@ buffer at binding 0:
 `spot_shadow(light, world_position, normal)` return how lit the point is, 1
 lit and 0 in shadow, and 1 for a light whose `shadow_index` is -1.
 
-- **Cascade selection.** The point's view depth along the camera's forward
-  axis picks the first cascade whose far split is past it. Over the last 10% of
+- **Cascade selection.** The point's view depth, the Z of
+  `camera.view * world_position` (the camera looks down +Z of its view space),
+  picks the first cascade whose far split is past it. Over the last 10% of
   a cascade's depth range the result blends into the next cascade, and the
   last cascade fades out to lit, so neither the cascade seams nor the shadow's
   end show a line.
@@ -139,14 +141,14 @@ lit and 0 in shadow, and 1 for a light whose `shadow_index` is -1.
 ## Render paths
 
 The lookups need only the world position and the geometric normal of the
-shaded point, and read the camera from `ShadowData` rather than from the
-forward pass's camera uniform, so a deferred lighting pass includes
+shaded point, and the scene camera's `CameraUniforms` in group 0, which every
+lighting pass binds, so a deferred lighting pass includes
 `shaders/common/shadows.wgsl` unchanged.
 
 - Forward: `pbr.wgsl` multiplies each directional and spot light's direct term
   by its shadow factor. Ambient light and image-based lighting are never
   shadowed.
-- Deferred (#446, not landed yet): its lighting pass binds the same group 2 resources and
+- Deferred (#446, not landed yet): its lighting pass binds the camera in group 0, the same group 2 resources and
   calls the same two functions with the G-buffer's world position and normal.
 
 ## Budget

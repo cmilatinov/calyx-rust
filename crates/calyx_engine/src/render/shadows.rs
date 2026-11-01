@@ -108,8 +108,6 @@ pub(crate) struct ShadowCamera {
     /// Camera to world, without scale.
     world: Mat4,
     position: Vec3,
-    /// Unit world axis the camera looks along.
-    forward: Vec3,
     tan_half_fov_x: f32,
     tan_half_fov_y: f32,
     near: f32,
@@ -119,12 +117,10 @@ pub(crate) struct ShadowCamera {
 impl ShadowCamera {
     pub fn new(camera: &Camera, transform: &Transform) -> Self {
         let world = glm::translation(&transform.position) * glm::quat_to_mat4(&transform.rotation);
-        let forward = transform.rotation * Vec3::z();
         let fov_y = math::to_fov_y(camera.aspect, camera.fov_x);
         Self {
             world,
             position: transform.position,
-            forward,
             tan_half_fov_x: (camera.fov_x * 0.5).tan(),
             tan_half_fov_y: (fov_y * 0.5).tan(),
             near: camera.near_plane.max(1e-3),
@@ -227,8 +223,6 @@ pub(crate) fn tile_origin(tile: u32) -> (u32, u32) {
 pub(crate) struct ShadowPlan {
     pub directional: Option<CascadeShadow>,
     pub spots: Vec<SpotShadowView>,
-    pub camera_position: Vec3,
-    pub camera_forward: Vec3,
 }
 
 impl ShadowPlan {
@@ -248,11 +242,7 @@ impl ShadowPlan {
         let Some(camera) = camera else {
             return (Self::default(), indices);
         };
-        let mut plan = Self {
-            camera_position: camera.position,
-            camera_forward: camera.forward,
-            ..Default::default()
-        };
+        let mut plan = Self::default();
 
         if let Some((index, direction, settings)) =
             casters
@@ -457,22 +447,18 @@ struct GpuSpotShadow {
 struct GpuShadowData {
     cascades: [GpuShadowCascade; SHADOW_CASCADE_COUNT],
     spots: [GpuSpotShadow; MAX_SPOT_SHADOWS],
-    camera_position: [f32; 3],
     cascade_blend: f32,
-    camera_forward: [f32; 3],
     directional_normal_bias: f32,
     atlas_tile_size: f32,
     atlas_texel: f32,
     cascade_texel: f32,
-    _padding: f32,
+    _padding: [f32; 3],
 }
 
 impl From<&ShadowPlan> for GpuShadowData {
     fn from(plan: &ShadowPlan) -> Self {
         let mut data = GpuShadowData {
-            camera_position: plan.camera_position.into(),
             cascade_blend: CASCADE_BLEND,
-            camera_forward: plan.camera_forward.into(),
             atlas_tile_size: SHADOW_ATLAS_TILE as f32 / SHADOW_ATLAS_RESOLUTION as f32,
             atlas_texel: 1.0 / SHADOW_ATLAS_RESOLUTION as f32,
             cascade_texel: 1.0 / SHADOW_CASCADE_RESOLUTION as f32,
@@ -1162,10 +1148,16 @@ mod tests {
         assert_eq!(size_of::<GpuShadowCascade>(), 80);
         assert_eq!(size_of::<GpuSpotShadow>(), 80);
         assert_eq!(std::mem::offset_of!(GpuShadowData, spots), 320);
-        assert_eq!(std::mem::offset_of!(GpuShadowData, camera_position), 960);
-        assert_eq!(std::mem::offset_of!(GpuShadowData, camera_forward), 976);
-        assert_eq!(std::mem::offset_of!(GpuShadowData, atlas_tile_size), 992);
-        assert_eq!(size_of::<GpuShadowData>(), 1008);
+        assert_eq!(std::mem::offset_of!(GpuShadowData, cascade_blend), 960);
+        assert_eq!(
+            std::mem::offset_of!(GpuShadowData, directional_normal_bias),
+            964
+        );
+        assert_eq!(std::mem::offset_of!(GpuShadowData, atlas_tile_size), 968);
+        assert_eq!(std::mem::offset_of!(GpuShadowData, atlas_texel), 972);
+        assert_eq!(std::mem::offset_of!(GpuShadowData, cascade_texel), 976);
+        // The shader rounds the struct up to its 16-byte alignment.
+        assert_eq!(size_of::<GpuShadowData>(), 992);
     }
 
     #[test]

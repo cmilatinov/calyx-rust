@@ -1,9 +1,11 @@
+//#include "shaders/common/camera.wgsl"
 //#include "shaders/common/lights.wgsl"
 
 // Shadow lookups for the lights in `light_storage`, as `ShadowRenderer` renders and uploads
-// them. A lookup needs only the world position and normal of the shaded point, so the forward
-// PBR pass and a deferred lighting pass include this file unchanged; neither passes the camera,
-// since `ShadowData` carries the one the cascades were fitted to.
+// them. A lookup needs only the world position and normal of the shaded point, and reads the
+// view depth that picks a cascade from `camera` of `shaders/common/camera.wgsl`, the camera
+// the cascades were fitted to. So any lighting pass that binds that camera in group 0, the
+// forward PBR pass or a deferred one, includes this file unchanged.
 //
 // - The first shadowed directional light has `shadow_index` 0 and reads `SHADOW_CASCADE_COUNT`
 //   cascades, one layer each of `shadow_cascades`, chosen by view depth.
@@ -40,20 +42,16 @@ struct SpotShadow {
 struct ShadowData {
     cascades: array<ShadowCascade, SHADOW_CASCADE_COUNT>,
     spots: array<SpotShadow, SHADOW_MAX_SPOTS>,
-    // The camera the cascades were fitted to: its position and unit forward axis.
-    camera_position: vec3f,
     // The fraction of each cascade's depth range, at its far end, over which it blends into the
     // next one.
     cascade_blend: f32,
-    camera_forward: vec3f,
     // The directional light's normal offset, in shadow texels.
     directional_normal_bias: f32,
     // The atlas UV size of one tile, and of one atlas texel.
     atlas_tile_size: f32,
     atlas_texel: f32,
-    // The UV size of one cascade texel.
+    // The UV size of one cascade texel. The struct rounds up to 992 bytes, its 16-byte alignment.
     cascade_texel: f32,
-    _pad: f32,
 };
 
 @group(2) @binding(1)
@@ -127,7 +125,8 @@ fn directional_shadow(light: Light, world_position: vec3f, normal: vec3f) -> f32
     if light.shadow_index < 0 {
         return 1.0;
     }
-    let depth = dot(world_position - shadow_data.camera_position, shadow_data.camera_forward);
+    // The camera looks down +Z of its view space, so view depth is the view-space Z.
+    let depth = (camera.view * vec4f(world_position, 1.0)).z;
     var near = 0.0;
     for (var i = 0u; i < SHADOW_CASCADE_COUNT; i++) {
         let far = shadow_data.cascades[i].split_far;
