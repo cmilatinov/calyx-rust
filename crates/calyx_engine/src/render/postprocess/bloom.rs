@@ -640,6 +640,7 @@ mod tests {
                 source,
                 output: &output,
                 depth: &depth,
+                particle_depth: None,
             },
         );
         assert_eq!(plan.passes.len(), 1, "bloom runs");
@@ -823,6 +824,7 @@ mod tests {
                 skipped: vec![],
                 intermediates: 0,
                 depth: false,
+                particle_depth: false,
             }
         );
         assert_eq!(renderer.post_process().pool().allocated(), 0);
@@ -856,6 +858,7 @@ mod tests {
                     input: &input,
                     output: &output,
                     depth: None,
+                    particle_depth: None,
                 },
             );
             render_context.queue().submit(Some(encoder.finish()));
@@ -940,6 +943,7 @@ mod tests {
                     source: &source,
                     output: &output,
                     depth: &depth,
+                    particle_depth: None,
                 },
             );
         };

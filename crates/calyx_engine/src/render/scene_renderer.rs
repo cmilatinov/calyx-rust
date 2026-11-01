@@ -13,7 +13,7 @@ use crate::render::asset_render_state::AssetRenderState;
 use crate::render::overlay::{OverlayCompositor, OverlayContext, OverlayPass};
 use crate::render::postprocess::{
     BloomPass, CameraPlanes, ChainPlan, ChainTargets, ColorGradingPass, DepthOfFieldPass, FxaaPass,
-    PostProcessChain, PostProcessSettings, SsaoPass, TonemapPass,
+    PostProcessChain, PostProcessSettings, SceneInput, SsaoPass, TonemapPass,
 };
 use crate::render::render_utils::RenderUtils;
 use crate::render::{
@@ -522,6 +522,8 @@ impl SceneRenderer {
             &self.scene_texture_msaa,
             &self.scene_depth_texture,
             self.options.samples,
+            self.post_process
+                .reads(&self.post_process_settings, SceneInput::ParticleDepth),
         );
         queue.submit(Some(encoder.finish()));
     }
@@ -558,6 +560,7 @@ impl SceneRenderer {
                 source,
                 output: &self.scene_texture,
                 depth: &self.scene_depth_texture,
+                particle_depth: self.particle_renderer.particle_depth(),
             },
         );
         self.render_overlays(&render_context, &mut encoder);
@@ -1211,9 +1214,11 @@ impl SceneRenderer {
                 sample_count: samples,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Depth32Float,
-                // Post-processing passes that read depth bind it.
+                // Post-processing passes that read depth bind it, and the
+                // particle depth starts as a copy of it.
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             },
             None,
@@ -1531,9 +1536,10 @@ mod tests {
     use crate::assets::skybox::Skybox;
     use crate::assets::AssetRef;
     use crate::component::{
-        ComponentGlobalPostProcessVolume, ComponentID, ComponentMesh, ComponentParticleSystem,
-        ComponentTonemap, ParticleColorOverLifetime, ParticleEmission, ParticleForces,
-        ParticleScalarRange, ParticleSizeOverLifetime, ParticleSpawnShape, ParticleVelocity,
+        ComponentDepthOfField, ComponentGlobalPostProcessVolume, ComponentID, ComponentMesh,
+        ComponentParticleSystem, ComponentTonemap, ParticleBlendMode, ParticleColorOverLifetime,
+        ParticleEmission, ParticleForces, ParticleScalarRange, ParticleSizeOverLifetime,
+        ParticleSpawnShape, ParticleVelocity,
     };
     use crate::math::Transform;
     use crate::render::{Camera, Shader};
@@ -1715,6 +1721,128 @@ mod tests {
             pixel[1] > 200 && pixel[1] > pixel[0] + 100,
             "the green system should draw its particle on the right, got {pixel:?}"
         );
+    }
+
+    /// Renders a white particle of diameter 2 at the origin, 5 units in front
+    /// of the camera, over the cleared background at the far plane, with
+    /// depth of field focused on the particle when `focus` is set and no
+    /// post-process volume otherwise.
+    fn render_particle_over_far_background(
+        context: &ReadOnlyAssetContext,
+        blend_mode: ParticleBlendMode,
+        samples: u32,
+        focus: bool,
+    ) -> image::RgbaImage {
+        let render_context = context.render_context.clone();
+        let mut builder = SceneBuilder::new(context.registries.clone());
+        let particle = spawn_particle(&mut builder, "particle", Vec3::zeros(), Color32::WHITE, 2.0);
+        builder
+            .scene_mut()
+            .write_component(particle, |system: &mut ComponentParticleSystem| {
+                system.rendering.blend_mode = blend_mode;
+            })
+            .expect("the particle has a system");
+        if focus {
+            let volume = builder.spawn("volume");
+            builder.add_component(volume, ComponentGlobalPostProcessVolume::default());
+            builder.add_component(
+                volume,
+                ComponentDepthOfField {
+                    focus_distance: 5.0,
+                    focus_range: 1.0,
+                    max_blur: 8.0,
+                },
+            );
+        }
+        let scene = builder.finish();
+        let (camera, transform) = front_camera(1.0, 5.0);
+        let mut particles = ParticleSimulation::new();
+        particles.simulate(&scene, &render_context, 0.0);
+
+        let mut renderer = SceneRenderer::new(
+            context,
+            SceneRendererOptions {
+                samples,
+                clear_color: Color32::BLACK,
+                ..Default::default()
+            },
+            (64, 64),
+        )
+        .expect("scene renderer should load its assets");
+        renderer.render_scene_base(&camera, &transform, &scene, Some(&particles), None);
+        renderer.finalize_scene();
+        if focus {
+            let names: Vec<_> = renderer
+                .last_post_process_plan()
+                .passes
+                .iter()
+                .map(|planned| renderer.post_process().passes()[planned.pass].name())
+                .collect();
+            assert!(names.contains(&"depth_of_field"), "{names:?}");
+        }
+        read_scene_texture(&renderer, &render_context)
+    }
+
+    #[test]
+    fn a_particle_in_focus_is_not_blurred_as_the_background_behind_it() {
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        let (camera, transform) = front_camera(1.0, 5.0);
+        let center = project(&camera, &transform, Vec3::zeros(), (64, 64));
+        let edge = project(&camera, &transform, vec3(1.0, 0.0, 0.0), (64, 64));
+        let radius = center.0.abs_diff(edge.0) as f32;
+        assert!(radius > 8.0, "the particle is wider than the blur");
+
+        for samples in [1, 4] {
+            if samples > 1
+                && (!supports_samples(
+                    &render_context,
+                    wgpu::TextureFormat::Rgba16Float,
+                    samples,
+                    true,
+                ) || !supports_samples(
+                    &render_context,
+                    wgpu::TextureFormat::Depth32Float,
+                    samples,
+                    false,
+                ))
+            {
+                eprintln!("skipping {samples}x MSAA: the test adapter does not support it");
+                continue;
+            }
+            for blend_mode in [ParticleBlendMode::Alpha, ParticleBlendMode::Additive] {
+                let sharp = render_particle_over_far_background(
+                    &read_only_context,
+                    blend_mode,
+                    samples,
+                    false,
+                );
+                let focused = render_particle_over_far_background(
+                    &read_only_context,
+                    blend_mode,
+                    samples,
+                    true,
+                );
+                // The background is fully blurred, the particle is on the
+                // focus plane: inside its disc the image matches the frame
+                // without depth of field.
+                for (x, y, pixel) in focused.enumerate_pixels() {
+                    let dx = x as f32 + 0.5 - center.0 as f32;
+                    let dy = y as f32 + 0.5 - center.1 as f32;
+                    if (dx * dx + dy * dy).sqrt() > radius - 2.0 {
+                        continue;
+                    }
+                    let expected = sharp.get_pixel(x, y);
+                    assert!(
+                        (0..3).all(|channel| pixel[channel].abs_diff(expected[channel]) <= 2),
+                        "{blend_mode:?} particle at {samples}x: pixel ({x}, {y}) is blurred: \
+                         {pixel:?}, sharp {expected:?}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

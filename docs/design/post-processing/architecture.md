@@ -64,7 +64,7 @@ pub trait OverlayPass {
 - Every enabled overlay records into one shared render pass over the overlay target, cleared to transparent, and the scene's still-multisampled depth, both at the scene's sample count. Overlay edges and overlay-against-geometry intersections keep their MSAA anti-aliasing. The same pass resolves the target.
 - The overlay target is `Rgba16Float`, display-linear like `scene_texture`. It exists only while an overlay is enabled: the editor viewport shows the grid and gizmos, and the outline is enabled while an object is hovered or selected. The Game tab, the player and thumbnails show none, so they allocate nothing for it.
 - Overlays alpha blend (`RenderUtils::color_alpha_blending`) into the transparent target, which leaves premultiplied color with coverage alpha. The composite therefore blends the resolved target over `scene_texture` as premultiplied alpha, `rgb + dst * (1 - a)` (`shaders/editor/overlay_composite.wgsl`). Blending it as `rgb * a + dst * (1 - a)` would multiply by alpha twice and darken anti-aliased edges.
-- Particles stay in the scene pass and are tone mapped with it.
+- Particles stay in the scene pass and are tone mapped with it. Alpha-blended particles past half coverage write the scene depth, so they hide overlays behind them (see Particles And Depth).
 
 `OverlayPass` mirrors `PostProcessPass` but stays separate. Post-process passes take the encoder because some record several render passes, such as bloom's downsample and upsample chain, while overlays all draw into one shared multisampled pass. The shared code lives in the full-screen helpers below instead.
 
@@ -127,16 +127,34 @@ The wiring is a pure plan (`ChainPlan`) built before any GPU work, which keeps o
 A pass declares the scene inputs it reads in `inputs()`. The chain builds each one only when an enabled pass asks for it.
 
 - **Depth**: without MSAA the scene's depth texture is passed through. With MSAA a small pass copies sample 0 of the multisampled depth into a single-sample `Depth32Float` texture, built once per frame for every pass that asks.
+- **Particle depth**: the scene depth with every particle drawn in, including those that stay out of the scene depth, nearest wins (see Particles And Depth). The particle renderer writes it at the scene's sample count only when a pass that runs asks for it and a particle is drawn; the chain resolves it like depth. Otherwise it is the scene depth, resolved once for both.
 - **Normals, velocity**: not produced yet. A pass that asks for one is skipped with a `PostProcessError::InputUnavailable` warning naming the pass and input.
 
 Tone mapping asks for nothing.
 
 `PassContext::camera` carries the near and far planes of the camera the frame was drawn with, as `CameraPlanes`. `render_scene_base` hands them to the chain with `PostProcessChain::set_camera`, so `finalize_scene` still needs no camera. `CameraPlanes::linear_depth` turns a depth-buffer value into view distance: the projection is `perspective_lh` with OpenGL's `[-1, 1]` depth range, of which the depth buffer keeps `[0, 1]`, so `distance = 2nf / (f + n - d (f - n))`.
 
+## Particles And Depth
+
+Particles draw in the scene pass, after the meshes and the skybox, sorted back to front within each system. Their colour draws never write depth, so particles blend against each other in that order. What reaches depth depends on the blend mode (#419):
+
+| Blend mode | Scene depth | Particle depth | Depth of field | SSAO |
+|---|---|---|---|---|
+| `Alpha` | written where coverage is at least 0.5 | written where coverage is at least 0.1 | blurred by its own distance | reconstructed as its own surface past 0.5, left undarkened below |
+| `Additive` | never written | written where coverage is at least 0.1 | blurred by its own distance | left undarkened |
+
+- **Coverage** is the texture's alpha times the particle's alpha, inside the billboard's disc. `ParticleRenderer::SCENE_DEPTH_COVERAGE` and `PARTICLE_DEPTH_COVERAGE` hold the thresholds.
+- **Alpha-blended particles write depth**: past half coverage a particle hides more of what is behind it than it shows, so it occludes like geometry. A depth-only pass (`shaders/particles/particles_depth.wgsl`) draws every alpha system's particles into the scene depth after all particle colour has drawn, so a depth write never hides a particle from one drawn after it. Every reader of the scene depth sees them: depth of field focuses on them, SSAO treats them as a surface, and the grid and gizmos behind dense smoke are hidden. Their fringe below half coverage stays out of the scene depth, like an additive particle.
+- **Additive particles stay out of depth**: they add light and hide nothing, so the scene depth, the grid, gizmos and SSAO's occlusion never see them, nor the faint fringe of alpha-blended particles. For the passes that must not treat them as background, the renderer copies the scene depth into the particle depth and the same depth-only pass draws every particle into it, at a low threshold so the visible glow and fringe count.
+- **Depth of field** reads the particle depth, so every visible particle gets the circle of confusion of its own distance, never the background's. Through a particle the background takes the particle's circle too, which a single depth per pixel cannot avoid.
+- **SSAO** computes occlusion from the scene depth, so additive particles never occlude geometry. Its composite leaves a pixel undarkened where the particle depth is nearer than the scene depth: the particle's light is not the geometry's ambient light. Alpha particles past half coverage are in the scene depth, so SSAO reconstructs them as a camera-facing surface, which is unoccluded; the range check fades the occlusion they cast on geometry far behind them.
+- Soft particles, which fade where they meet geometry, do not exist yet. They would be additive or below the alpha threshold, so they would stay out of the scene depth the same way.
+- A deferred G-buffer (#410) supplies opaque depth before the forward particles draw, so the same depth-only pass writes into it unchanged.
+
 `CameraPlanes::tan_half_fov` holds the tangents of half the horizontal and vertical fields of view, taken from the projection matrix (`1 / P[0][0]`, `1 / P[1][1]`), so a pass can rebuild view-space positions: the pixel at normalized device coordinates `ndc` and view distance `z` lies at `(ndc * tan_half_fov * z, z)`, and a view-space point projects back to `ndc = xy / (tan_half_fov * z)`.
 ## Depth Of Field
 
-`DepthOfFieldPass` (`postprocess/dof.rs`) is an `Hdr` pass that reads `SceneInput::Depth`. It runs while the settings hold a `depth_of_field`, which they do only when the volume has an enabled Depth Of Field component, so a frame without it keeps the tone-map-only plan. It runs after SSAO and before bloom, so bloom spreads highlights that are already out of focus, as a lens would. It records two render passes:
+`DepthOfFieldPass` (`postprocess/dof.rs`) is an `Hdr` pass that reads `SceneInput::ParticleDepth`, so particles blur by their own distance (see Particles And Depth). It runs while the settings hold a `depth_of_field`, which they do only when the volume has an enabled Depth Of Field component, so a frame without it keeps the tone-map-only plan. It runs after SSAO and before bloom, so bloom spreads highlights that are already out of focus, as a lens would. It records two render passes:
 
 ```text
 coc     depth           -> coc (R16Float, owned)   signed circle of confusion, in pixels
@@ -163,19 +181,20 @@ blur    input + coc     -> output                  scatter-as-gather disc blur
 
 ## Ambient Occlusion
 
-`SsaoPass` (`postprocess/ssao.rs`) is an `Hdr` pass that reads `SceneInput::Depth`. It runs while the settings hold an `ambient_occlusion`, from an enabled Ambient Occlusion component on the volume, so a frame without it keeps the tone-map-only plan and builds no depth copy. The renderer registers it before every other `Hdr` pass, so it darkens the scene before depth of field blurs it and before bloom spreads light. It records three render passes:
+`SsaoPass` (`postprocess/ssao.rs`) is an `Hdr` pass that reads `SceneInput::Depth` for occlusion and `SceneInput::ParticleDepth` for the pixels that particles out of the scene depth cover. It runs while the settings hold an `ambient_occlusion`, from an enabled Ambient Occlusion component on the volume, so a frame without it keeps the tone-map-only plan and builds no depth copy. The renderer registers it before every other `Hdr` pass, so it darkens the scene before depth of field blurs it and before bloom spreads light. It records three render passes:
 
 ```text
 occlusion   depth (full size)            -> occlusion (1/2)   visibility in r, view z in g
 blur        occlusion                    -> blurred (1/2)     depth-aware 4x4
-composite   input, blurred, depth        -> output            input.rgb * visibility, alpha kept
+composite   input, blurred, depth,       -> output            input.rgb * visibility, alpha kept
+            particle depth
 ```
 
 - **Reconstruction**: the renderer produces no normals (`SceneInput::Normals` is unavailable), so each occlusion texel rebuilds its view-space position from depth with `PassContext::camera` (linear depth and `tan_half_fov`), and its normal from the cross product of the position differences to its horizontal and vertical neighbours. On each axis it takes the neighbour closer in depth, so normals do not bend at silhouettes, and it turns the normal toward the camera.
 - **Hemisphere**: up to 64 kernel offsets in the unit hemisphere around +z, generated once per sample count from a fixed seed. They cluster toward the center and keep at least 0.15 of their length along the normal, so a flat surface does not occlude itself. Each texel turns the kernel around its normal by one of 16 angles from a 4x4 tile in Bayer order, then scales it by `radius`.
 - **Occlusion**: each sample is projected back to the screen and compared with the depth there. A surface more than `bias` in front of the sample occludes it, faded out by `smoothstep(radius / |dz|)` when that surface lies far in front of the pixel, so a foreground object does not darken the wall behind it. Samples off screen or on the sky do not count. Visibility is `(1 - occluded / samples) ^ intensity`.
 - **Blur**: a 4x4 box over exactly one tile of the noise, which cancels the rotation pattern, weighting each texel by how close its view depth is to the center's (zero at a 10% difference).
-- **Composite**: reads the input and depth with `textureLoad`, upsamples the blurred visibility from its four nearest texels, weighted bilinearly and by depth, and multiplies it into the color. A pixel whose four texels all lie on other surfaces, such as a thin object between them, keeps a visibility of 1. Sky pixels, at depth `0.9999999` (what the skybox writes) or beyond, pass through bit for bit, and so does alpha.
+- **Composite**: reads the input and depth with `textureLoad`, upsamples the blurred visibility from its four nearest texels, weighted bilinearly and by depth, and multiplies it into the color. A pixel whose four texels all lie on other surfaces, such as a thin object between them, keeps a visibility of 1. Sky pixels, at depth `0.9999999` (what the skybox writes) or beyond, pass through bit for bit, and so do pixels whose particle depth is nearer than the scene depth, and alpha.
 - **Targets**: two `Rg16Float` textures at half the chain's size, rounded up. The pass creates them on the first frame SSAO runs, recreates them when the size changes, and frees them in `release_targets`, so a disabled or resized SSAO holds no texture.
 - **Approximation**: the occlusion multiplies the final HDR color, which already holds direct light, so it also darkens creases a light shines straight into. Ambient occlusion should only attenuate indirect light. This stands until the renderer produces normals or a G-buffer, so the forward pass can apply occlusion to its ambient and image-based terms alone.
 
@@ -274,7 +293,7 @@ pub struct PostProcessSettings {
 - `assets/shaders/editor/overlay_composite.wgsl`: blends the resolved overlay target over the scene texture.
 - `pbr.wgsl` drops Reinhard, gamma 1.4 and the `* 5.0` on albedo. It adds linear HDR emission, `emission_color * emission_strength`, after the lighting. A material saved before those fields existed reads zero strength and does not emit.
 - `skybox.wgsl` drops its exposure and gamma and scales the sky by the sky light's intensity, the same factor that scales its image-based lighting.
-- Particles already write linear color.
+- Particles already write linear color. `shaders/particles/particle_billboard.wgsl` holds the billboard vertex stage that `particles.wgsl` and the depth-only `particles_depth.wgsl` share.
 
 Post shaders use `//#include` modules, which carry over unchanged to the `calyx_shader` crate.
 
@@ -305,7 +324,7 @@ Headless tests in `crates/calyx_engine/src/render/postprocess/`:
 - The display-encoding test above.
 - Depth reaches a pass that requests it, single-sample at one and four samples; normals and velocity report unavailable.
 - Volume selection picks the highest enabled priority, warns on a tie, and falls back to the defaults. A volume with no effect components resolves to tone mapping alone, only the selected volume's effect components are gathered, a disabled tone-mapping component falls back to the defaults, and adding, disabling or removing each effect component switches its pass on or off in the renderer's plan.
-- SSAO leaves a flat plane facing the camera unoccluded, darkens an inside corner most at its crease, does not darken a one-pixel post standing in front of that crease, and leaves the sky, at a cleared or skybox depth, bit for bit unchanged. With it disabled the renderer's plan is tone mapping alone. Its targets are half the chain's size and freed on release, and a partial component loads with the defaults.
+- SSAO leaves a flat plane facing the camera unoccluded, darkens an inside corner most at its crease, does not darken a one-pixel post standing in front of that crease, leaves the sky, at a cleared or skybox depth, bit for bit unchanged, and leaves a particle out of the scene depth in front of the crease unchanged while the crease above it stays occluded. With it disabled the renderer's plan is tone mapping alone. Its targets are half the chain's size and freed on release, and a partial component loads with the defaults.
 - Depth of field (`dof.rs`): `CameraPlanes` inverts the render projection; pixels at the focus distance are unchanged; far pixels blur more than pixels near focus, and pixels in front of it blur too; a blurred background stays behind a sharp edge while a blurred foreground spreads over it; the pass reads depth at one and four samples with the same result; with it disabled the plan is the tone-map-only plan and its texture is not allocated, follows the chain's size, and is freed when disabled and on resize. A partial component loads with the defaults.
 - Bloom (`bloom.rs`): a single pixel above the threshold spreads energy into its neighbours, fading with distance, and keeps alpha; an image entirely below the threshold passes through unchanged; a flat image of 20,000 blooms to the expected value without overflowing the half-float mips; a composite past the half-float maximum saturates at it; with bloom disabled the renderer's plan is the tone-map-only plan; the mip chain follows the chain's size and the radius and is freed on release; the chain releases a pass's targets on resize and on frames the pass does not run.
 - Colour grading (`color_grading/tests.rs`): neutral settings return the input, zero saturation gives grey at the input's luminance, contrast keeps mid grey, positive temperature warms and positive tint adds magenta, the vignette darkens the corners and leaves the centre unchanged, and alpha is preserved. With both effects off the pass is left out of the plan, the scene renderer plans it before FXAA, and partial components load with the defaults.
@@ -317,6 +336,7 @@ Headless tests in `crates/calyx_engine/src/render/overlay/` and `scene_renderer.
 - Enabled overlays record in order, and the overlay target exists only while one is enabled.
 - The selection outline keeps its exact authored color at +3 EV, at one and four samples, and picking is unchanged.
 - Views without overlays allocate no overlay target.
+- A particle focused by depth of field in front of the far-plane background is not blurred, alpha-blended and additive, at one and four samples (`a_particle_in_focus_is_not_blurred_as_the_background_behind_it`).
 
 ## Roadmap
 

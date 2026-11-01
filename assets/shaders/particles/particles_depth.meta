@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "ce38363e-8266-4036-aaba-d7b3972cdb52",
+    "name": "shaders/particles/particles_depth",
+    "display_name": "particles_depth",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

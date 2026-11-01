@@ -25,12 +25,17 @@ pub enum PostProcessStage {
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SceneInput {
-    /// Scene depth, single-sample.
-    Depth = 0b001,
+    /// Scene depth, single-sample: opaque geometry and the particles that
+    /// write depth.
+    Depth = 0b0001,
     /// View-space normals. Not produced yet.
-    Normals = 0b010,
+    Normals = 0b0010,
     /// Screen-space motion vectors. Not produced yet.
-    Velocity = 0b100,
+    Velocity = 0b0100,
+    /// Scene depth with every particle drawn in, including those that stay
+    /// out of the scene depth, nearest wins, single-sample. Where no
+    /// particle covers a pixel it equals [`Self::Depth`].
+    ParticleDepth = 0b1000,
 }
 
 impl fmt::Display for SceneInput {
@@ -39,6 +44,7 @@ impl fmt::Display for SceneInput {
             Self::Depth => "depth",
             Self::Normals => "normals",
             Self::Velocity => "velocity",
+            Self::ParticleDepth => "particle depth",
         })
     }
 }
@@ -48,7 +54,7 @@ impl fmt::Display for SceneInput {
 pub type PassInputs = BitFlags<SceneInput>;
 
 /// The scene inputs the renderer produces.
-pub const PRODUCED_INPUTS: PassInputs = make_bitflags!(SceneInput::{Depth});
+pub const PRODUCED_INPUTS: PassInputs = make_bitflags!(SceneInput::{Depth | ParticleDepth});
 
 /// Checks the inputs `pass` reads against what the renderer produces, and
 /// reports the first one it does not.
@@ -144,6 +150,9 @@ pub struct PassIo<'a> {
     pub output: &'a Texture,
     /// Single-sample scene depth, when the pass asked for it.
     pub depth: Option<&'a Texture>,
+    /// Single-sample scene depth with every particle in it, when the pass
+    /// asked for [`SceneInput::ParticleDepth`].
+    pub particle_depth: Option<&'a Texture>,
 }
 
 /// One full-screen pass of the post-processing chain.

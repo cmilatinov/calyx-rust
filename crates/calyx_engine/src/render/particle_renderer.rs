@@ -15,6 +15,7 @@ use egui_wgpu::wgpu::util::DeviceExt;
 use legion::{Entity, IntoQuery};
 use nalgebra_glm::Vec3;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -278,6 +279,31 @@ impl ViewSystem {
     }
 }
 
+/// `ParticleDepthUniform` of `particles_depth.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct ParticleDepthUniform {
+    coverage: f32,
+    _padding: [f32; 3],
+}
+
+/// The depth a depth-only pass writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DepthTarget {
+    /// The scene depth, at [`ParticleRenderer::SCENE_DEPTH_COVERAGE`].
+    Scene,
+    /// [`ParticleRenderer::particle_depth`], at
+    /// [`ParticleRenderer::PARTICLE_DEPTH_COVERAGE`].
+    Particle,
+}
+
+/// Which of the particle shaders a bind group belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum ParticleShader {
+    Color,
+    Depth,
+}
+
 /// One system's draw this frame.
 struct ParticleDraw {
     game_object: GameObject,
@@ -293,8 +319,22 @@ struct ParticleDraw {
 /// It keeps only per-view state: for each simulated system the buffers its
 /// particles are evaluated, sorted back to front and gathered through, kept
 /// until the system leaves the simulation.
+///
+/// Every particle's colour draws without writing depth, so particles blend
+/// against each other in their sorted order. After them, depth-only passes
+/// write the depth of the particles that cover their pixel, as
+/// `docs/design/post-processing/architecture.md` decides:
+///
+/// - alpha-blended particles write the scene depth where their coverage
+///   reaches [`Self::SCENE_DEPTH_COVERAGE`], so they occlude like geometry.
+///   Additive particles, and the fringe of alpha-blended ones, stay out of
+///   it;
+/// - when asked, every particle writes [`Self::particle_depth`] where its
+///   coverage reaches [`Self::PARTICLE_DEPTH_COVERAGE`]: a copy of the scene
+///   depth that only depth-based post-processing reads.
 pub struct ParticleRenderer {
     shader: Ref<Shader>,
+    depth_shader: Ref<Shader>,
     kernels: Ref<Shader>,
     default_texture: Ref<Texture>,
     vertex_buffer: wgpu::Buffer,
@@ -304,17 +344,36 @@ pub struct ParticleRenderer {
     /// Per-view state of each simulated system drawn so far.
     particle_systems: HashMap<GameObject, ViewSystem>,
     sort_params: Option<SortPassParams>,
-    camera_bind_group: CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer)>,
-    /// Texture bind groups of the textures drawn last frame, by texture id.
-    texture_bind_groups: HashMap<AssetId, CachedBindGroup<TextureBindGroupKey>>,
+    camera_bind_groups: HashMap<ParticleShader, BufferBindGroup>,
+    /// Texture bind groups of the textures drawn last frame, by texture id
+    /// and shader.
+    texture_bind_groups: HashMap<(AssetId, ParticleShader), CachedBindGroup<TextureBindGroupKey>>,
+    /// The coverage threshold of the scene and the particle depth passes,
+    /// with their bind groups.
+    depth_uniforms: [(wgpu::Buffer, BufferBindGroup); 2],
+    /// The scene depth with every particle drawn in, when asked for.
+    particle_depth: Option<Texture>,
+    /// Whether the last frame wrote [`Self::particle_depth`].
+    particle_depth_written: bool,
 }
+
+type BufferBindGroup = CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer)>;
 
 type TextureBindGroupKey = (wgpu::BindGroupLayout, wgpu::TextureView, wgpu::Sampler);
 
 impl ParticleRenderer {
+    /// Coverage at which an alpha-blended particle writes the scene depth:
+    /// where it hides more of what is behind it than it shows.
+    pub const SCENE_DEPTH_COVERAGE: f32 = 0.5;
+    /// Coverage at which any particle writes [`Self::particle_depth`]:
+    /// wherever it visibly adds to its pixel.
+    pub const PARTICLE_DEPTH_COVERAGE: f32 = 0.1;
+
     pub fn new(context: &ReadOnlyAssetContext) -> Result<Self, SceneRendererError> {
         let device = context.render_context.device();
         let shader = SceneRendererError::load::<Shader>(context, "shaders/particles/particles")?;
+        let depth_shader =
+            SceneRendererError::load::<Shader>(context, "shaders/particles/particles_depth")?;
         let kernels = SceneRendererError::load::<Shader>(context, PARTICLE_KERNELS)?;
         let default_texture = SceneRendererError::load::<Texture>(context, "textures/white")?;
         let vertices = [
@@ -337,8 +396,22 @@ impl ParticleRenderer {
         ];
         let indices = [0u16, 1, 2, 2, 3, 0];
 
+        let depth_uniforms =
+            [Self::SCENE_DEPTH_COVERAGE, Self::PARTICLE_DEPTH_COVERAGE].map(|coverage| {
+                let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("particle_depth_uniform"),
+                    contents: bytemuck::bytes_of(&ParticleDepthUniform {
+                        coverage,
+                        _padding: [0.0; 3],
+                    }),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+                (buffer, Default::default())
+            });
+
         Ok(Self {
             shader,
+            depth_shader,
             kernels,
             default_texture,
             vertex_buffer: device.create_buffer_init(&wgpu_buffer_init_desc(
@@ -350,18 +423,34 @@ impl ParticleRenderer {
             simulation_scene: None,
             particle_systems: HashMap::new(),
             sort_params: None,
-            camera_bind_group: Default::default(),
+            camera_bind_groups: Default::default(),
             texture_bind_groups: Default::default(),
+            depth_uniforms,
+            particle_depth: None,
+            particle_depth_written: false,
         })
+    }
+
+    /// The scene depth with every particle drawn in, as the last
+    /// [`Self::render`] wrote it, or `None` when it wrote none: it was not
+    /// asked to or drew no particle, so the scene depth is all there is.
+    pub fn particle_depth(&self) -> Option<&Texture> {
+        self.particle_depth
+            .as_ref()
+            .filter(|_| self.particle_depth_written)
     }
 
     /// Draws `simulation`'s particles when it simulates `scene`, sorted back
     /// to front from `camera_position`. Draws nothing for another scene or
     /// without a simulation.
+    ///
+    /// Alpha-blended particles then write `depth_target` where they cover
+    /// their pixel. With `particle_depth` set, every particle then writes
+    /// [`Self::particle_depth`]; without it, that texture is freed.
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
-        render_context: &RenderContext,
+        render_context: &Arc<RenderContext>,
         encoder: &mut wgpu::CommandEncoder,
         asset_context: &ReadOnlyAssetContext,
         scene: &Scene,
@@ -371,7 +460,12 @@ impl ParticleRenderer {
         color_target: &Texture,
         depth_target: &Texture,
         samples: u32,
+        particle_depth: bool,
     ) {
+        self.particle_depth_written = false;
+        if !particle_depth {
+            self.particle_depth = None;
+        }
         let Some(simulation) = simulation else {
             return;
         };
@@ -480,28 +574,15 @@ impl ParticleRenderer {
             }
         }
 
-        let camera_bind_group = {
-            let shader = self.shader.read();
-            let layout = &shader.bind_group_layouts[0];
-            self.camera_bind_group
-                .get_or_create((layout.clone(), camera_uniform_buffer.clone()), || {
-                    device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("particle_camera_bind_group"),
-                        layout,
-                        entries: &[wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: camera_uniform_buffer.as_entire_binding(),
-                        }],
-                    })
-                })
-                .clone()
-        };
+        let camera_bind_group =
+            self.camera_bind_group(device, ParticleShader::Color, camera_uniform_buffer);
         let color_format = color_target.descriptor.format;
         let depth_format = depth_target.descriptor.format;
         let mut drawn_textures = HashSet::new();
-        for draw in draws {
+        for draw in &draws {
             drawn_textures.insert(draw.texture.id());
-            let texture_bind_group = self.texture_bind_group(device, &draw.texture);
+            let texture_bind_group =
+                self.texture_bind_group(device, ParticleShader::Color, &draw.texture);
             let Some(pipeline) =
                 self.pipeline(draw.blend_mode, samples, color_format, depth_format)
             else {
@@ -523,8 +604,184 @@ impl ParticleRenderer {
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
             render_pass.draw_indexed(0..6, 0, 0..draw.live_count);
         }
+
+        // Depth only after every colour draw, so it never hides a particle
+        // from the ones drawn after it.
+        let alpha: Vec<_> = draws
+            .iter()
+            .filter(|draw| draw.blend_mode == ParticleBlendMode::Alpha)
+            .collect();
+        self.render_depth(
+            device,
+            encoder,
+            camera_uniform_buffer,
+            &alpha,
+            (depth_target, DepthTarget::Scene),
+            samples,
+        );
+        if particle_depth {
+            let target = self
+                .particle_depth
+                .take()
+                .filter(|target| {
+                    target.descriptor.size == depth_target.descriptor.size
+                        && target.descriptor.sample_count == depth_target.descriptor.sample_count
+                        && target.descriptor.format == depth_target.descriptor.format
+                })
+                .unwrap_or_else(|| Self::create_particle_depth(render_context, depth_target));
+            encoder.copy_texture_to_texture(
+                depth_target.texture.as_image_copy(),
+                target.texture.as_image_copy(),
+                depth_target.descriptor.size,
+            );
+            self.render_depth(
+                device,
+                encoder,
+                camera_uniform_buffer,
+                &draws.iter().collect::<Vec<_>>(),
+                (&target, DepthTarget::Particle),
+                samples,
+            );
+            self.particle_depth = Some(target);
+            self.particle_depth_written = true;
+        }
         self.texture_bind_groups
-            .retain(|id, _| drawn_textures.contains(id));
+            .retain(|(id, _), _| drawn_textures.contains(id));
+    }
+
+    /// Records one depth-only pass into `depth_target` that writes the depth
+    /// of `draws`' particles where they cover their pixel, at the coverage of
+    /// the kind of depth it is.
+    fn render_depth(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        camera_uniform_buffer: &wgpu::Buffer,
+        draws: &[&ParticleDraw],
+        (depth_target, kind): (&Texture, DepthTarget),
+        samples: u32,
+    ) {
+        if draws.is_empty() {
+            return;
+        }
+        let options = Self::depth_pipeline_options(samples, depth_target.descriptor.format);
+        let Some(pipeline) = self.depth_shader.read().pipeline(&options) else {
+            return;
+        };
+        let camera_bind_group =
+            self.camera_bind_group(device, ParticleShader::Depth, camera_uniform_buffer);
+        let depth_bind_group = self.depth_bind_group(device, kind);
+        let bound: Vec<_> = draws
+            .iter()
+            .map(|draw| {
+                (
+                    self.texture_bind_group(device, ParticleShader::Depth, &draw.texture),
+                    self.particle_systems[&draw.game_object].instances.clone(),
+                    draw.live_count,
+                )
+            })
+            .collect();
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Particle Depth Pass"),
+            color_attachments: &[],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth_target.view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        render_pass.set_pipeline(&pipeline);
+        render_pass.set_bind_group(0, &camera_bind_group, &[]);
+        render_pass.set_bind_group(2, &depth_bind_group, &[]);
+        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+        for (texture_bind_group, instances, live_count) in &bound {
+            render_pass.set_bind_group(1, texture_bind_group, &[]);
+            render_pass.set_vertex_buffer(1, instances.slice(..));
+            render_pass.draw_indexed(0..6, 0, 0..*live_count);
+        }
+    }
+
+    /// A texture like `depth_target` that it can be copied into, that depth
+    /// can be drawn into and that post-processing can read.
+    fn create_particle_depth(
+        render_context: &Arc<RenderContext>,
+        depth_target: &Texture,
+    ) -> Texture {
+        let descriptor = &depth_target.descriptor;
+        Texture::new(
+            render_context.clone(),
+            &wgpu::TextureDescriptor {
+                label: Some("particle_depth"),
+                size: descriptor.size,
+                mip_level_count: 1,
+                sample_count: descriptor.sample_count,
+                dimension: wgpu::TextureDimension::D2,
+                format: descriptor.format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            None,
+            None,
+            false,
+        )
+    }
+
+    fn shader_of(&self, which: ParticleShader) -> &Ref<Shader> {
+        match which {
+            ParticleShader::Color => &self.shader,
+            ParticleShader::Depth => &self.depth_shader,
+        }
+    }
+
+    fn camera_bind_group(
+        &mut self,
+        device: &wgpu::Device,
+        which: ParticleShader,
+        camera_uniform_buffer: &wgpu::Buffer,
+    ) -> wgpu::BindGroup {
+        let shader = self.shader_of(which).clone();
+        let shader = shader.read();
+        let layout = &shader.bind_group_layouts[0];
+        self.camera_bind_groups
+            .entry(which)
+            .or_default()
+            .get_or_create((layout.clone(), camera_uniform_buffer.clone()), || {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("particle_camera_bind_group"),
+                    layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: camera_uniform_buffer.as_entire_binding(),
+                    }],
+                })
+            })
+            .clone()
+    }
+
+    fn depth_bind_group(&mut self, device: &wgpu::Device, kind: DepthTarget) -> wgpu::BindGroup {
+        let shader = self.depth_shader.read();
+        let layout = &shader.bind_group_layouts[2];
+        let (buffer, bind_group) = &mut self.depth_uniforms[kind as usize];
+        bind_group
+            .get_or_create((layout.clone(), buffer.clone()), || {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("particle_depth_bind_group"),
+                    layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buffer.as_entire_binding(),
+                    }],
+                })
+            })
+            .clone()
     }
 
     fn view_kernels(&self) -> Option<ViewKernels> {
@@ -575,6 +832,20 @@ impl ParticleRenderer {
         ))
     }
 
+    /// The depth passes' pipeline: no colour, and a less-than test that
+    /// writes depth.
+    fn depth_pipeline_options(samples: u32, depth_format: wgpu::TextureFormat) -> PipelineOptions {
+        PipelineOptions::builder()
+            .samples(samples)
+            .cull_mode(None)
+            .depth_stencil(Some(RenderUtils::depth_default(depth_format)))
+            .vertex_layouts(vec![
+                VertexLayout::of::<ParticleVertex>(wgpu::VertexStepMode::Vertex),
+                VertexLayout::of::<ParticleRenderInstance>(wgpu::VertexStepMode::Instance),
+            ])
+            .build()
+    }
+
     fn pipeline_options(
         blend_mode: ParticleBlendMode,
         samples: u32,
@@ -602,9 +873,11 @@ impl ParticleRenderer {
     fn texture_bind_group(
         &mut self,
         device: &wgpu::Device,
+        which: ParticleShader,
         texture_ref: &Ref<Texture>,
     ) -> wgpu::BindGroup {
-        let shader = self.shader.read();
+        let shader = self.shader_of(which).clone();
+        let shader = shader.read();
         let texture = texture_ref.read();
         let layout = &shader.bind_group_layouts[1];
         let key = (
@@ -613,7 +886,7 @@ impl ParticleRenderer {
             texture.sampler.clone(),
         );
         self.texture_bind_groups
-            .entry(texture_ref.id())
+            .entry((texture_ref.id(), which))
             .or_default()
             .get_or_create(key, || {
                 device.create_bind_group(&wgpu::BindGroupDescriptor {

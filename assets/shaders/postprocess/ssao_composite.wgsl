@@ -6,7 +6,8 @@
 // nearest texels, weighted bilinearly and by how close their view depth is
 // to this pixel's, so it does not bleed across silhouettes. A pixel whose
 // four texels all lie on other surfaces, such as a thin object between them,
-// takes no occlusion. Sky pixels and alpha pass through untouched.
+// takes no occlusion. Sky pixels, pixels a particle in front of the scene
+// depth covers, and alpha pass through untouched.
 
 @group(0) @binding(0)
 var input_texture: texture_2d<f32>;
@@ -20,12 +21,20 @@ var depth_texture: texture_depth_2d;
 @group(0) @binding(3)
 var<uniform> ssao: SsaoUniform;
 
+// The scene depth with every particle drawn in. Nearer than the scene depth
+// where a particle that stays out of the scene depth covers the pixel.
+@group(0) @binding(4)
+var particle_depth_texture: texture_depth_2d;
+
 @fragment
 fn fs_main(in: FullscreenVertexOut) -> @location(0) vec4f {
     let pixel = vec2i(in.position.xy);
     let texel = textureLoad(input_texture, pixel, 0);
     let depth = textureLoad(depth_texture, pixel, 0);
-    if ssao_is_sky(depth) {
+    // A particle in front of the geometry adds its own light: the
+    // geometry's occlusion behind it does not darken it.
+    let particle_depth = textureLoad(particle_depth_texture, pixel, 0);
+    if ssao_is_sky(depth) || particle_depth < depth {
         return texel;
     }
     let z = ssao_linear_depth(ssao.near, ssao.far, depth);
