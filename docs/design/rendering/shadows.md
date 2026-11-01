@@ -83,8 +83,11 @@ pass, on the same command encoder.
   inputs, the instance buffer and the bone palette of group 1 exactly as
   `pbr.wgsl` does, and poses a skinned vertex with the same `skinned_local`
   of `assets/shaders/mesh/mesh.wgsl`, so a skinned mesh casts its posed
-  shadow. Group 0 is one
-  light-space matrix per cascade or tile.
+  shadow. Group 0 is the `CameraUniforms` of
+  `assets/shaders/common/camera.wgsl`, one per cascade or tile in its own small
+  buffer: the light's view and projection with their inverses, the
+  projection's near and far planes in light view space, and the map's size
+  (2048 for a cascade, 1024 for a spot tile) as the viewport.
 - It is single-sample, whatever the scene's MSAA, and draws both faces (no
   culling), so open meshes such as planes and cards cast too. The light's
   `DepthBiasState` is part of the pipeline options, so each distinct bias

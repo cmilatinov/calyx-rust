@@ -48,6 +48,29 @@ pub(crate) struct CameraUniform {
     pub viewport_size: [f32; 2],
 }
 
+impl CameraUniform {
+    /// The uniform of a view through `projection` from `view` (world to view
+    /// space), with its inverses, its clip planes and the size in pixels of
+    /// the target it renders into.
+    pub fn new(
+        view: &Mat4,
+        projection: &Mat4,
+        near_plane: f32,
+        far_plane: f32,
+        viewport_size: [f32; 2],
+    ) -> Self {
+        Self {
+            projection: (*projection).into(),
+            view: (*view).into(),
+            inverse_projection: glm::inverse(projection).into(),
+            inverse_view: glm::inverse(view).into(),
+            near_plane,
+            far_plane,
+            viewport_size,
+        }
+    }
+}
+
 impl Default for CameraUniform {
     fn default() -> Self {
         Self {
@@ -1339,25 +1362,16 @@ impl SceneRenderer {
         camera: &Camera,
         camera_transform: &Transform,
     ) {
-        let mut camera_uniform = CameraUniform::default();
-        let mut projection = camera.projection;
-        let mut view = camera_transform.inverse_matrix();
-        camera_uniform
-            .projection
-            .clone_from_slice(projection.as_mut());
-        camera_uniform.view.clone_from_slice(view.as_mut());
-        camera_uniform
-            .inverse_projection
-            .clone_from_slice(glm::inverse(&projection).as_mut());
-        camera_uniform
-            .inverse_view
-            .clone_from_slice(glm::inverse(&view).as_mut());
-        camera_uniform.near_plane = camera.near_plane;
-        camera_uniform.far_plane = camera.far_plane;
-        camera_uniform.viewport_size = [
-            self.scene_texture_msaa.descriptor.size.width as f32,
-            self.scene_texture_msaa.descriptor.size.height as f32,
-        ];
+        let camera_uniform = CameraUniform::new(
+            &camera_transform.inverse_matrix(),
+            &camera.projection,
+            camera.near_plane,
+            camera.far_plane,
+            [
+                self.scene_texture_msaa.descriptor.size.width as f32,
+                self.scene_texture_msaa.descriptor.size.height as f32,
+            ],
+        );
         queue.write_buffer(
             &self.camera_uniform_buffer,
             0,

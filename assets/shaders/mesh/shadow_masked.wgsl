@@ -1,4 +1,5 @@
 //#include "shaders/common/inputs.wgsl"
+//#include "shaders/common/camera.wgsl"
 //#include "shaders/mesh/mesh.wgsl"
 //#include "shaders/mesh/pbr_material.wgsl"
 
@@ -10,18 +11,10 @@
 // declared as `pbr.wgsl` declares it, so the two layouts match, though only the base color
 // texture, its sampler and the material uniform are read.
 
-struct ShadowView {
-    // World to the light's clip space.
-    view_projection: mat4x4f,
-};
-
 struct VertexOut {
     @builtin(position) position: vec4f,
     @location(0) uv: vec2f,
 };
-
-@group(0) @binding(0)
-var<uniform> shadow_view: ShadowView;
 
 @group(2) @binding(0)
 var base_color_texture: texture_2d<f32>;
@@ -61,7 +54,7 @@ fn vs_main(vertex: VertexIn) -> VertexOut {
     let instance = mesh.instances[vertex.instance];
     let local_position = skinned_local(vertex, instance, vec4f(vertex.position, 1.0));
     var out: VertexOut;
-    out.position = shadow_view.view_projection * (instance.transform * local_position);
+    out.position = camera.projection * camera.view * (instance.transform * local_position);
     out.uv = vertex.uv0;
     return out;
 }

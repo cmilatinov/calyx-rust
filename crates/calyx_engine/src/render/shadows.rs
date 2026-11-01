@@ -15,6 +15,7 @@ use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::math::{self, Transform};
 use crate::render::asset_render_state::LockedAssetRenderState;
+use crate::render::scene_renderer::CameraUniform;
 use crate::render::{
     CachedBindGroup, Camera, DrawBatch, MaterialBindGroups, PipelineOptions, RenderUtils,
     SceneRendererError, Shader,
@@ -151,11 +152,42 @@ impl ShadowCamera {
     }
 }
 
+/// One view the shadow pass renders from: a cascade or a spot light.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(crate) struct LightView {
+    /// World to the light's view space.
+    pub view: Mat4,
+    /// The light's view space to clip space.
+    pub projection: Mat4,
+    /// The view-space depths of the projection's near and far planes.
+    pub near: f32,
+    pub far: f32,
+}
+
+impl LightView {
+    /// World to the light's clip space.
+    pub fn view_projection(&self) -> Mat4 {
+        self.projection * self.view
+    }
+
+    /// The camera uniform the shadow pass binds to render this view into a
+    /// map of `size` x `size` texels.
+    fn camera_uniform(&self, size: u32) -> CameraUniform {
+        CameraUniform::new(
+            &self.view,
+            &self.projection,
+            self.near,
+            self.far,
+            [size as f32; 2],
+        )
+    }
+}
+
 /// The directional light's cascades.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct CascadeShadow {
-    /// World to each cascade's clip space.
-    pub view_projection: [Mat4; SHADOW_CASCADE_COUNT],
+    /// Each cascade's view.
+    pub views: [LightView; SHADOW_CASCADE_COUNT],
     /// View depth at which each cascade ends.
     pub split_far: [f32; SHADOW_CASCADE_COUNT],
     /// World size of one texel of each cascade.
@@ -166,8 +198,8 @@ pub(crate) struct CascadeShadow {
 /// One spot light's shadow.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SpotShadowView {
-    /// World to the light's clip space.
-    pub view_projection: Mat4,
+    /// The light's view.
+    pub view: LightView,
     /// The atlas tile it renders into, also its `shadow_index`.
     pub tile: u32,
     /// World size of one texel per unit of distance from the light.
@@ -325,7 +357,12 @@ fn fit_cascades(camera: &ShadowCamera, direction: Vec3, settings: ShadowSettings
     // The light's rotation, about the world origin: snapping in this space
     // moves a cascade only in whole texels.
     let light_view = glm::look_at_lh(&Vec3::zeros(), &direction, &up_for(&direction));
-    let mut view_projection = [Mat4::identity(); SHADOW_CASCADE_COUNT];
+    let mut views = [LightView {
+        view: light_view,
+        projection: Mat4::identity(),
+        near: 0.0,
+        far: 1.0,
+    }; SHADOW_CASCADE_COUNT];
     let mut texel_size = [0.0; SHADOW_CASCADE_COUNT];
     for i in 0..SHADOW_CASCADE_COUNT {
         let corners =
@@ -347,19 +384,17 @@ fn fit_cascades(camera: &ShadowCamera, direction: Vec3, settings: ShadowSettings
         let y = (center.y / texel).floor() * texel;
         // Casters up to the shadow distance towards the light, outside the
         // sphere, still draw into the cascade.
-        let projection = glm::ortho_lh_zo(
-            x - half,
-            x + half,
-            y - half,
-            y + half,
-            center.z - radius - far,
-            center.z + radius,
-        );
-        view_projection[i] = projection * light_view;
+        let (z_near, z_far) = (center.z - radius - far, center.z + radius);
+        views[i] = LightView {
+            view: light_view,
+            projection: glm::ortho_lh_zo(x - half, x + half, y - half, y + half, z_near, z_far),
+            near: z_near,
+            far: z_far,
+        };
         texel_size[i] = texel;
     }
     CascadeShadow {
-        view_projection,
+        views,
         split_far,
         texel_size,
         settings,
@@ -382,7 +417,12 @@ fn fit_spot(
     let view = glm::look_at_lh(&position, &(position + direction), &up_for(&direction));
     let projection = glm::perspective_lh_zo(1.0, fov, near, far);
     SpotShadowView {
-        view_projection: projection * view,
+        view: LightView {
+            view,
+            projection,
+            near,
+            far,
+        },
         tile,
         texel_scale: 2.0 * (fov * 0.5).tan() / SHADOW_ATLAS_TILE as f32,
         settings,
@@ -442,7 +482,7 @@ impl From<&ShadowPlan> for GpuShadowData {
             data.directional_normal_bias = cascades.settings.normal_bias.max(0.0);
             for (i, cascade) in data.cascades.iter_mut().enumerate() {
                 *cascade = GpuShadowCascade {
-                    view_projection: cascades.view_projection[i].into(),
+                    view_projection: cascades.views[i].view_projection().into(),
                     split_far: cascades.split_far[i],
                     texel_size: cascades.texel_size[i],
                     _padding: [0.0; 2],
@@ -452,7 +492,7 @@ impl From<&ShadowPlan> for GpuShadowData {
         for spot in &plan.spots {
             let (x, y) = spot.tile_origin();
             data.spots[spot.tile as usize] = GpuSpotShadow {
-                view_projection: spot.view_projection.into(),
+                view_projection: spot.view.view_projection().into(),
                 tile_offset: [
                     x as f32 / SHADOW_ATLAS_RESOLUTION as f32,
                     y as f32 / SHADOW_ATLAS_RESOLUTION as f32,
@@ -550,7 +590,7 @@ pub(crate) struct ShadowRenderer {
     /// The PBR shader, whose materials' bind groups the masked pass binds.
     pbr_shader_id: AssetId,
     data_buffer: wgpu::Buffer,
-    /// One light-space matrix per cascade, then per atlas tile.
+    /// One camera uniform per cascade, then per atlas tile.
     view_buffers: Vec<wgpu::Buffer>,
     view_bind_groups: Vec<CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer)>>,
     /// Allocated only while the directional light casts a shadow.
@@ -587,7 +627,7 @@ impl ShadowRenderer {
             pbr_shader_id,
             data_buffer: uniform("shadow_data", size_of::<GpuShadowData>()),
             view_buffers: (0..views)
-                .map(|_| uniform("shadow_view", size_of::<[[f32; 4]; 4]>()))
+                .map(|_| uniform("shadow_view", size_of::<CameraUniform>()))
                 .collect(),
             view_bind_groups: (0..views).map(|_| Default::default()).collect(),
             cascades: None,
@@ -683,12 +723,11 @@ impl ShadowRenderer {
             }
         };
         let layout = shader.bind_group_layouts[0].clone();
-        let mut view_bind_group = |index: usize, view_projection: &Mat4| {
-            let matrix: [[f32; 4]; 4] = (*view_projection).into();
+        let mut view_bind_group = |index: usize, uniform: CameraUniform| {
             queue.write_buffer(
                 &self.view_buffers[index],
                 0,
-                bytemuck::cast_slice(&[matrix]),
+                bytemuck::cast_slice(&[uniform]),
             );
             let buffer = &self.view_buffers[index];
             self.view_bind_groups[index]
@@ -720,8 +759,8 @@ impl ShadowRenderer {
                 )
             });
             let pipelines = pipelines(&cascade_plan.settings);
-            for (i, view_projection) in cascade_plan.view_projection.iter().enumerate() {
-                let bind_group = view_bind_group(i, view_projection);
+            for (i, view) in cascade_plan.views.iter().enumerate() {
+                let bind_group = view_bind_group(i, view.camera_uniform(SHADOW_CASCADE_RESOLUTION));
                 let mut pass =
                     Self::begin_pass(encoder, &cascades.layer_views[i], "Shadow Cascade");
                 pass.set_bind_group(0, &bind_group, &[]);
@@ -744,7 +783,7 @@ impl ShadowRenderer {
                 .map(|spot| {
                     view_bind_group(
                         SHADOW_CASCADE_COUNT + spot.tile as usize,
-                        &spot.view_projection,
+                        spot.view.camera_uniform(SHADOW_ATLAS_TILE),
                     )
                 })
                 .collect();
@@ -977,7 +1016,7 @@ mod tests {
                     splits[i - 1] - (splits[i - 1] - before) * CASCADE_BLEND
                 };
                 for corner in camera.slice_corners(start, splits[i]) {
-                    let ndc = clip(&cascades.view_projection[i], corner);
+                    let ndc = clip(&cascades.views[i].view_projection(), corner);
                     assert!(
                         ndc.x.abs() <= 1.0 && ndc.y.abs() <= 1.0 && (0.0..=1.0).contains(&ndc.z),
                         "{name}: cascade {i} misses corner {corner} of [{start}, {}]: {ndc}",
@@ -1002,8 +1041,8 @@ mod tests {
             // A fixed world point moves across the map by a whole number of
             // texels, so the rasterized shadow does not shimmer.
             let point = vec3(1.0, 0.5, 2.0);
-            let shift = (clip(&after.view_projection[i], point)
-                - clip(&before.view_projection[i], point))
+            let shift = (clip(&after.views[i].view_projection(), point)
+                - clip(&before.views[i].view_projection(), point))
             .xy()
                 * (SHADOW_CASCADE_RESOLUTION as f32 / 2.0);
             for axis in [shift.x, shift.y] {
@@ -1067,10 +1106,55 @@ mod tests {
         );
         let edge = 29f32.to_radians();
         let in_cone = position + vec3(edge.sin(), -edge.cos(), 0.0) * 9.0;
-        let ndc = clip(&view.view_projection, in_cone);
+        let ndc = clip(&view.view.view_projection(), in_cone);
         assert!(ndc.x.abs() < 1.0 && ndc.y.abs() < 1.0 && (0.0..1.0).contains(&ndc.z));
-        let past_range = clip(&view.view_projection, position - Vec3::y() * 11.0);
+        let past_range = clip(&view.view.view_projection(), position - Vec3::y() * 11.0);
         assert!(past_range.z > 1.0);
+    }
+
+    #[test]
+    fn each_shadow_view_binds_a_full_camera_uniform_of_its_map() {
+        // `shaders/mesh/shadow.wgsl` binds `CameraUniforms` of
+        // `shaders/common/camera.wgsl`, so each cascade and spot tile uploads
+        // a whole camera: its matrices with their inverses, its clip planes
+        // and the size of the map it renders into.
+        let camera = camera_at(vec3(2.0, 3.0, -5.0), vec3(0.2, -0.4, 1.0).normalize());
+        let (plan, _) =
+            ShadowPlan::new(&[sun(30.0), spot(vec3(1.0, 4.0, 2.0), 50.0)], Some(&camera));
+        let cascades = plan.directional.unwrap();
+        let views = cascades
+            .views
+            .iter()
+            .map(|view| (view, SHADOW_CASCADE_RESOLUTION))
+            .chain(
+                plan.spots
+                    .iter()
+                    .map(|spot| (&spot.view, SHADOW_ATLAS_TILE)),
+            );
+        for (view, size) in views {
+            let uniform = view.camera_uniform(size);
+            let projection = Mat4::from(uniform.projection);
+            let view_matrix = Mat4::from(uniform.view);
+            assert!(
+                (projection * view_matrix - view.view_projection())
+                    .abs()
+                    .max()
+                    < 1e-5
+            );
+            let identity = Mat4::identity();
+            let inverse_projection = Mat4::from(uniform.inverse_projection);
+            let inverse_view = Mat4::from(uniform.inverse_view);
+            assert!((inverse_projection * projection - identity).abs().max() < 1e-3);
+            assert!((inverse_view * view_matrix - identity).abs().max() < 1e-4);
+            assert_eq!(uniform.viewport_size, [size as f32; 2]);
+            // The clip planes are where the projection puts depth 0 and 1.
+            let depth = |z: f32| {
+                let clip = projection * vec4(0.0, 0.0, z, 1.0);
+                clip.z / clip.w
+            };
+            assert!(depth(uniform.near_plane).abs() < 1e-4);
+            assert!((depth(uniform.far_plane) - 1.0).abs() < 1e-4);
+        }
     }
 
     #[test]
