@@ -2,7 +2,9 @@ use crate::component::{
     ComponentAmbientLight, ComponentDirectionalLight, ComponentPointLight, ComponentSpotLight,
 };
 use crate::render::buffer::ResizableBuffer;
-use crate::render::{RenderContext, Shader};
+use crate::render::{
+    RenderContext, Shader, ShadowBindings, ShadowCamera, ShadowCaster, ShadowPlan, ShadowSettings,
+};
 use crate::scene::Scene;
 use egui_wgpu::wgpu;
 use legion::{Entity, IntoQuery};
@@ -17,6 +19,8 @@ enum Light {
         direction: [f32; 3],
         color: [f32; 3],
         intensity: f32,
+        /// Its shadow settings when it casts shadows.
+        shadow: Option<ShadowSettings>,
     },
     Point {
         position: [f32; 3],
@@ -36,6 +40,8 @@ enum Light {
         cos_outer: f32,
         color: [f32; 3],
         intensity: f32,
+        /// Its shadow settings when it casts shadows.
+        shadow: Option<ShadowSettings>,
     },
 }
 
@@ -47,6 +53,35 @@ impl Light {
             Light::Directional { .. } => 0,
             Light::Point { .. } => 1,
             Light::Spot { .. } => 2,
+        }
+    }
+
+    /// The light as a shadow caster, or `None` when it casts no shadow.
+    fn shadow_caster(&self) -> Option<ShadowCaster> {
+        match *self {
+            Light::Directional {
+                direction,
+                shadow: Some(settings),
+                ..
+            } => Some(ShadowCaster::Directional {
+                direction: direction.into(),
+                settings,
+            }),
+            Light::Spot {
+                position,
+                direction,
+                range,
+                cos_outer,
+                shadow: Some(settings),
+                ..
+            } => Some(ShadowCaster::Spot {
+                position: position.into(),
+                direction: direction.into(),
+                range,
+                outer_angle: cos_outer.clamp(-1.0, 1.0).acos(),
+                settings,
+            }),
+            _ => None,
         }
     }
 }
@@ -64,7 +99,8 @@ struct GpuLight {
     color: [f32; 3],
     intensity: f32,
     cos_outer: f32,
-    /// The light's shadow map, or -1 for none. Reserved for shadow mapping.
+    /// The light's shadow, or -1 for none: the cascades of a directional
+    /// light, or the atlas tile of a spot light (see [`ShadowPlan`]).
     shadow_index: i32,
     _padding: [f32; 2],
 }
@@ -80,6 +116,7 @@ impl From<Light> for GpuLight {
                 direction,
                 color,
                 intensity,
+                ..
             } => GpuLight {
                 direction,
                 color,
@@ -106,6 +143,7 @@ impl From<Light> for GpuLight {
                 cos_outer,
                 color,
                 intensity,
+                ..
             } => GpuLight {
                 position,
                 range,
@@ -134,17 +172,24 @@ struct LightStorageHeader {
 
 /// The contents of the light storage buffer: the header, then the lights
 /// grouped by kind in the header's order. The range a light sits in is its
-/// kind, so the shader runs one branch-free loop per kind.
+/// kind, so the shader runs one branch-free loop per kind. Each light carries
+/// its index into `shadows`.
 #[derive(Debug, Default, PartialEq)]
 struct PackedLights {
     header: LightStorageHeader,
     lights: Vec<GpuLight>,
+    shadows: ShadowPlan,
 }
 
 impl PackedLights {
-    fn new(mut lights: Vec<Light>) -> Self {
-        // A stable sort keeps the scene's order within each kind.
+    /// Packs `lights`, giving shadows fitted to `camera` to those that cast
+    /// them; without a camera no light has a shadow.
+    fn new(mut lights: Vec<Light>, camera: Option<&ShadowCamera>) -> Self {
+        // A stable sort keeps the scene's order within each kind, so the
+        // first shadowed directional light is the scene's first.
         lights.sort_by_key(Light::upload_order);
+        let casters: Vec<Option<ShadowCaster>> = lights.iter().map(Light::shadow_caster).collect();
+        let (shadows, shadow_indices) = ShadowPlan::new(&casters, camera);
         let count = |order: usize| {
             lights
                 .iter()
@@ -158,7 +203,15 @@ impl PackedLights {
                 spot_count: count(2),
                 _padding: 0,
             },
-            lights: lights.into_iter().map(GpuLight::from).collect(),
+            lights: lights
+                .into_iter()
+                .zip(shadow_indices)
+                .map(|(light, shadow_index)| GpuLight {
+                    shadow_index,
+                    ..GpuLight::from(light)
+                })
+                .collect(),
+            shadows,
         }
     }
 }
@@ -166,6 +219,7 @@ impl PackedLights {
 pub struct LightManager {
     light_storage_buffer: ResizableBuffer,
     ambient_light: [f32; 4],
+    shadow_plan: ShadowPlan,
 }
 
 impl Default for LightManager {
@@ -175,16 +229,25 @@ impl Default for LightManager {
                 wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             ),
             ambient_light: [0.0, 0.0, 0.0, 1.0],
+            shadow_plan: Default::default(),
         }
     }
 }
 
 impl LightManager {
-    pub fn build_data(&mut self, render_context: &RenderContext, scene: &Scene) {
+    /// Gathers and uploads the scene's enabled lights. With a camera, the
+    /// lights that cast shadows get them, fitted to it; see
+    /// [`Self::shadow_plan`].
+    pub fn build_data(
+        &mut self,
+        render_context: &RenderContext,
+        scene: &Scene,
+        shadow_camera: Option<&ShadowCamera>,
+    ) {
         let device = render_context.device();
         let queue = render_context.queue();
 
-        let packed = PackedLights::new(Self::collect_lights(scene));
+        let packed = PackedLights::new(Self::collect_lights(scene), shadow_camera);
         let header_size = size_of::<LightStorageHeader>();
         // The buffer holds room for at least one light, even with none to light.
         let size = (header_size + packed.lights.len().max(1) * size_of::<GpuLight>()) as u64;
@@ -201,6 +264,12 @@ impl LightManager {
         }
 
         self.ambient_light = Self::collect_ambient_light(scene);
+        self.shadow_plan = packed.shadows;
+    }
+
+    /// The shadows the last [`Self::build_data`] gave its lights.
+    pub fn shadow_plan(&self) -> &ShadowPlan {
+        &self.shadow_plan
     }
 
     pub fn ambient_light(&self) -> [f32; 4] {
@@ -212,21 +281,43 @@ impl LightManager {
         self.light_storage_buffer.get_wgpu_buffer().clone()
     }
 
+    /// The group 2 bind group of `scene_shader`: the light storage buffer,
+    /// then the shadow data, maps and sampler of
+    /// `assets/shaders/common/shadows.wgsl`.
     pub fn storage_bind_group(
         &self,
         device: &wgpu::Device,
         scene_shader: &Shader,
+        shadows: &ShadowBindings<'_>,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("light_storage_bind_group"),
             layout: &scene_shader.bind_group_layouts[2],
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: self
-                    .light_storage_buffer
-                    .get_wgpu_buffer()
-                    .as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self
+                        .light_storage_buffer
+                        .get_wgpu_buffer()
+                        .as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: shadows.data.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(shadows.cascades),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(shadows.atlas),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(shadows.sampler),
+                },
+            ],
         })
     }
 
@@ -278,6 +369,11 @@ impl LightManager {
                     .into(),
                 color: [color[0], color[1], color[2]],
                 intensity: light.intensity.max(0.0),
+                shadow: light.cast_shadows.then_some(ShadowSettings {
+                    distance: light.shadow_distance.max(1.0),
+                    depth_bias: light.depth_bias,
+                    normal_bias: light.normal_bias,
+                }),
             })
         }
         directional_lights
@@ -312,6 +408,11 @@ impl LightManager {
                 cos_outer: outer.to_radians().cos(),
                 color: [color[0], color[1], color[2]],
                 intensity: light.intensity.max(0.0),
+                shadow: light.cast_shadows.then_some(ShadowSettings {
+                    distance: light.shadow_distance.max(0.0),
+                    depth_bias: light.depth_bias,
+                    normal_bias: light.normal_bias,
+                }),
             });
         }
         spot_lights
@@ -398,6 +499,7 @@ mod tests {
             ComponentDirectionalLight {
                 color: Color32::GREEN,
                 intensity: 0.5,
+                ..Default::default()
             },
         );
 
@@ -442,6 +544,7 @@ mod tests {
             direction: [0.0, -1.0, 0.0],
             color: [1.0, 0.5, 0.25],
             intensity: 2.0,
+            shadow: None,
         });
         assert_eq!(
             directional,
@@ -514,7 +617,7 @@ mod tests {
         add_point(&mut scene, 5.0);
         add_spot(&mut scene, 6.0);
 
-        let packed = PackedLights::new(LightManager::collect_lights(&scene));
+        let packed = PackedLights::new(LightManager::collect_lights(&scene), None);
 
         assert_eq!(
             packed.header,
@@ -547,7 +650,106 @@ mod tests {
 
     #[test]
     fn no_lights_pack_to_zero_counts() {
-        assert_eq!(PackedLights::new(Vec::new()), PackedLights::default());
+        assert_eq!(PackedLights::new(Vec::new(), None), PackedLights::default());
+    }
+
+    fn shadow_camera() -> ShadowCamera {
+        ShadowCamera::new(
+            &crate::render::Camera::default(),
+            &crate::math::Transform::from_xyz(0.0, 0.0, -5.0),
+        )
+    }
+
+    #[test]
+    fn shadowed_lights_carry_their_shadow_index_and_others_none() {
+        let mut scene = test_scene();
+        let add_directional = |scene: &mut Scene, intensity: f32, cast_shadows: bool| {
+            let object = scene.create(None, None);
+            scene.add_component(
+                object,
+                ComponentDirectionalLight {
+                    intensity,
+                    cast_shadows,
+                    ..Default::default()
+                },
+            );
+            object
+        };
+        let add_spot = |scene: &mut Scene, intensity: f32, z: f32, cast_shadows: bool| {
+            let object = scene.create(None, None);
+            scene.set_world_transform(object, translation(&vec3(0.0, 0.0, z)));
+            scene.add_component(
+                object,
+                ComponentSpotLight {
+                    intensity,
+                    cast_shadows,
+                    ..Default::default()
+                },
+            );
+            object
+        };
+        add_directional(&mut scene, 1.0, false);
+        let sun = add_directional(&mut scene, 2.0, true);
+        add_directional(&mut scene, 3.0, true);
+        add_spot(&mut scene, 4.0, 20.0, true);
+        add_spot(&mut scene, 5.0, -4.0, true);
+        add_spot(&mut scene, 6.0, 0.0, false);
+
+        let shadow_index = |packed: &PackedLights, intensity: f32| {
+            packed
+                .lights
+                .iter()
+                .find(|light| light.intensity == intensity)
+                .unwrap()
+                .shadow_index
+        };
+        let camera = shadow_camera();
+        let packed = PackedLights::new(LightManager::collect_lights(&scene), Some(&camera));
+        assert_eq!(shadow_index(&packed, 1.0), -1, "it casts no shadow");
+        assert_eq!(shadow_index(&packed, 2.0), 0, "the first shadowed sun");
+        assert_eq!(shadow_index(&packed, 3.0), -1, "only one sun gets cascades");
+        assert_eq!(shadow_index(&packed, 5.0), 0, "the nearest spot light");
+        assert_eq!(shadow_index(&packed, 4.0), 1);
+        assert_eq!(shadow_index(&packed, 6.0), -1);
+        assert!(packed.shadows.directional.is_some());
+        assert_eq!(packed.shadows.spots.len(), 2);
+
+        // Disabling the shadowed sun frees its cascades for the next one, and
+        // enabling it takes them back.
+        assert!(scene.set_component_enabled::<ComponentDirectionalLight>(sun, false));
+        let packed = PackedLights::new(LightManager::collect_lights(&scene), Some(&camera));
+        assert_eq!(shadow_index(&packed, 3.0), 0);
+        assert!(scene.set_component_enabled::<ComponentDirectionalLight>(sun, true));
+        let packed = PackedLights::new(LightManager::collect_lights(&scene), Some(&camera));
+        assert_eq!(shadow_index(&packed, 2.0), 0);
+        assert_eq!(shadow_index(&packed, 3.0), -1);
+
+        // Without a camera, as with shadows switched off, nothing has one.
+        let packed = PackedLights::new(LightManager::collect_lights(&scene), None);
+        assert!(packed.lights.iter().all(|light| light.shadow_index == -1));
+        assert!(packed.shadows.is_empty());
+    }
+
+    #[test]
+    fn a_disabled_spot_light_gives_up_its_tile_until_re_enabled() {
+        let mut scene = test_scene();
+        let spot = scene.create(None, None);
+        scene.add_component(
+            spot,
+            ComponentSpotLight {
+                cast_shadows: true,
+                ..Default::default()
+            },
+        );
+        let camera = shadow_camera();
+        let plan = |scene: &Scene| {
+            PackedLights::new(LightManager::collect_lights(scene), Some(&camera)).shadows
+        };
+        assert_eq!(plan(&scene).spots.len(), 1);
+        assert!(scene.set_component_enabled::<ComponentSpotLight>(spot, false));
+        assert!(plan(&scene).is_empty());
+        assert!(scene.set_component_enabled::<ComponentSpotLight>(spot, true));
+        assert_eq!(plan(&scene).spots.len(), 1);
     }
 
     #[test]
@@ -567,6 +769,7 @@ mod tests {
                 range: 6.0,
                 inner_angle: 60.0,
                 outer_angle: 80.0,
+                ..Default::default()
             },
         );
 

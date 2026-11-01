@@ -158,6 +158,7 @@ fn spawn_cube(
         ComponentMesh {
             mesh: arena.mesh.clone(),
             material: arena.material.clone(),
+            ..Default::default()
         },
     );
     scene.add_component(

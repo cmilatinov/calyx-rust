@@ -22,6 +22,13 @@ pub use render_utils::*;
 pub use scene_renderer::*;
 pub use shader::*;
 pub use shader_loader::*;
+pub(crate) use shadows::{
+    ShadowBindings, ShadowCamera, ShadowCaster, ShadowPlan, ShadowRenderer, ShadowSettings,
+};
+pub use shadows::{
+    ShadowFrameStats, MAX_SPOT_SHADOWS, SHADOW_ATLAS_RESOLUTION, SHADOW_ATLAS_TILE,
+    SHADOW_CASCADE_COUNT, SHADOW_CASCADE_RESOLUTION,
+};
 pub(crate) use skybox_renderer::*;
 
 mod asset_render_state;
@@ -49,6 +56,7 @@ mod render_utils;
 mod scene_renderer;
 mod shader;
 mod shader_loader;
+mod shadows;
 mod skybox_renderer;
 #[cfg(test)]
 mod test_kernel;

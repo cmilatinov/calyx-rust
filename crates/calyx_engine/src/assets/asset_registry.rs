@@ -2105,6 +2105,7 @@ impl AssetRegistry {
                 ComponentMesh {
                     mesh: self.load("meshes/cube").ok().into(),
                     material: self.load("materials/default").ok().into(),
+                    ..Default::default()
                 },
             );
             scene

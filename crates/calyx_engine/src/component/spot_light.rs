@@ -41,6 +41,23 @@ pub struct ComponentSpotLight {
     /// Half-angle of the cone past which the light is zero, in degrees.
     #[reflect_attr(min = 0.0, max = 89.0, speed = 0.1)]
     pub outer_angle: f32,
+    /// Whether the light casts shadows. At most
+    /// [`MAX_SPOT_SHADOWS`](crate::render::MAX_SPOT_SHADOWS) spot lights get
+    /// them, the nearest to the camera first; the others light unoccluded.
+    pub cast_shadows: bool,
+    /// Distance from the camera, in world units, past which the light gives
+    /// up its shadow.
+    #[reflect_attr(min = 1.0, speed = 0.5)]
+    pub shadow_distance: f32,
+    /// Slope-scaled and constant depth bias of the shadow pass, in units of
+    /// the default. Raise it against shadow acne, lower it against light
+    /// leaking under casters.
+    #[reflect_attr(min = 0.0, max = 10.0, speed = 0.05)]
+    pub depth_bias: f32,
+    /// How far, in shadow texels, a shaded point moves along its normal
+    /// before it looks up its shadow.
+    #[reflect_attr(min = 0.0, max = 10.0, speed = 0.05)]
+    pub normal_bias: f32,
 }
 
 impl Default for ComponentSpotLight {
@@ -51,6 +68,10 @@ impl Default for ComponentSpotLight {
             range: 10.0,
             inner_angle: 20.0,
             outer_angle: 30.0,
+            cast_shadows: false,
+            shadow_distance: 50.0,
+            depth_bias: 1.0,
+            normal_bias: 1.0,
         }
     }
 }

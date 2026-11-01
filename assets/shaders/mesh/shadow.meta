@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "b69d8041-9628-3662-402e-105e106d2c40",
+    "name": "shaders/mesh/shadow",
+    "display_name": "shadow",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

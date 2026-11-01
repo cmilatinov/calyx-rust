@@ -17,9 +17,9 @@ use crate::render::postprocess::{
 };
 use crate::render::render_utils::RenderUtils;
 use crate::render::{
-    Camera, GizmoRenderer, GridRenderer, LightManager, MeshRenderDefaults, MeshRenderTargets,
-    MeshRenderer, OutlineRenderer, ParticleRenderer, ParticleSimulation, PipelineOptions,
-    SkyboxRenderer,
+    Camera, DrawBatch, GizmoRenderer, GridRenderer, LightManager, MeshRenderDefaults,
+    MeshRenderTargets, MeshRenderer, OutlineRenderer, ParticleRenderer, ParticleSimulation,
+    PipelineOptions, ShadowCamera, ShadowFrameStats, ShadowRenderer, SkyboxRenderer,
 };
 use crate::scene::{GameObject, Scene};
 use crate::utils::TypeUuid;
@@ -32,7 +32,7 @@ use nalgebra_glm::Mat4;
 use rapier3d::pipeline::DebugRenderPipeline;
 use std::collections::{HashMap, HashSet};
 use std::default::Default;
-use std::ops::Range;
+
 use std::sync::{mpsc, Arc};
 use uuid::Uuid;
 
@@ -80,6 +80,9 @@ pub struct SceneRendererOptions {
     /// Lighting this view uses in place of the scene's sky lights, such as
     /// the editor's prefab mode. It belongs to the view, never to the scene.
     pub environment: Option<SceneEnvironment>,
+    /// Whether lights that cast shadows get them. Off, no shadow pass runs
+    /// and no shadow map is allocated, as thumbnails need.
+    pub shadows: bool,
 }
 
 /// Lighting a view supplies itself instead of taking it from the scene: an
@@ -105,6 +108,7 @@ impl Default for SceneRendererOptions {
             mesh_cull_mode: Some(wgpu::Face::Back),
             samples: 0,
             environment: None,
+            shadows: false,
         }
     }
 }
@@ -163,6 +167,7 @@ pub struct DrawListElement {
     bone_transform_index: i32,
     object_id: u32,
     transform: [[f32; 4]; 4],
+    cast_shadows: bool,
 }
 
 struct PendingObjectIdReadback {
@@ -205,6 +210,7 @@ pub struct SceneRenderer {
     skybox_renderer: SkyboxRenderer,
     camera_uniform_buffer: wgpu::Buffer,
     light_manager: LightManager,
+    shadow_renderer: ShadowRenderer,
     gizmo_renderer: GizmoRenderer,
     outline_renderer: OutlineRenderer,
     particle_renderer: ParticleRenderer,
@@ -287,6 +293,7 @@ impl SceneRenderer {
         let scene_object_id_readback = Self::create_object_id_readback_buffer(device);
 
         let mesh_renderer = MeshRenderer::new(context)?;
+        let shadow_renderer = ShadowRenderer::new(context)?;
         let skybox_renderer = SkyboxRenderer::new(context)?;
 
         let camera_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -347,6 +354,7 @@ impl SceneRenderer {
             skybox_renderer,
             camera_uniform_buffer,
             light_manager: Default::default(),
+            shadow_renderer,
             gizmo_renderer,
             outline_renderer,
             particle_renderer,
@@ -371,6 +379,17 @@ impl SceneRenderer {
     #[cfg(test)]
     pub(crate) fn particle_renderer(&self) -> &ParticleRenderer {
         &self.particle_renderer
+    }
+
+    /// What the last [`Self::render_scene_base`] drew into shadow maps.
+    pub fn shadow_stats(&self) -> ShadowFrameStats {
+        self.shadow_renderer.stats()
+    }
+
+    /// Whether the directional light's cascades and the spot light atlas
+    /// are allocated. Each exists only while a light shadows into it.
+    pub fn shadow_maps_allocated(&self) -> (bool, bool) {
+        self.shadow_renderer.allocated()
     }
 
     /// Returns the current renderer options.
@@ -454,12 +473,26 @@ impl SceneRenderer {
         self.finish_object_ids();
         let draw_list = self.build_draw_list();
         self.build_mesh_data(&render_context);
-        self.light_manager.build_data(&render_context, scene);
+        let shadow_camera = self
+            .options
+            .shadows
+            .then(|| ShadowCamera::new(camera, camera_transform));
+        self.light_manager
+            .build_data(&render_context, scene, shadow_camera.as_ref());
         // Compute the skybox's environment maps before the meshes that are lit
         // by them and the skybox pass that draws its cubemap.
         self.skybox_renderer
             .prepare(&render_context, &mut encoder, &self.assets);
         let assets = self.assets.lock();
+        // Shadow maps render before the scene pass that samples them.
+        self.shadow_renderer.render(
+            device,
+            queue,
+            &mut encoder,
+            self.light_manager.shadow_plan(),
+            &assets,
+            &draw_list,
+        );
         {
             let black_texture_cube = self.default_assets.black_texture_cube.read();
             let black_texture_2d = self.default_assets.black_texture_2d.read();
@@ -479,6 +512,7 @@ impl SceneRenderer {
                 },
                 queue,
                 &self.light_manager,
+                &self.shadow_renderer.bindings(),
                 &self.camera_uniform_buffer,
                 self.options.clear_color,
                 &options,
@@ -580,25 +614,31 @@ impl SceneRenderer {
         &self.last_post_process_plan
     }
 
-    fn build_draw_list(&mut self) -> Vec<(AssetId, AssetId, AssetId, Range<u32>)> {
-        let mut last: (AssetId, AssetId, AssetId) = Default::default();
+    /// Batches the frame's draw-list elements, appending their instances to
+    /// each mesh's instance list. A batch is a run of one shader, material
+    /// and mesh that all cast shadows or all do not, so the shadow pass can
+    /// skip whole batches.
+    fn build_draw_list(&mut self) -> Vec<DrawBatch> {
+        let mut last: (AssetId, AssetId, AssetId, bool) = Default::default();
         let mut mesh_instances: HashMap<AssetId, u32> = Default::default();
         let mut instance_count: u32 = 0;
         let mut mesh = None;
-        let mut draw_list: Vec<(AssetId, AssetId, AssetId, Range<u32>)> = Default::default();
-        let mut insert_instance_list = |last: (AssetId, AssetId, AssetId), instance_count: u32| {
-            if last != Default::default() && instance_count > 0 {
-                let (shader_id, mat_id, mesh_id) = last;
-                let start = mesh_instances.entry(mesh_id).or_default();
-                draw_list.push((
-                    shader_id,
-                    mat_id,
-                    mesh_id,
-                    *start..(*start + instance_count),
-                ));
-                *start += instance_count;
-            }
-        };
+        let mut draw_list: Vec<DrawBatch> = Default::default();
+        let mut insert_instance_list =
+            |last: (AssetId, AssetId, AssetId, bool), instance_count: u32| {
+                let (shader_id, mat_id, mesh_id, cast_shadows) = last;
+                if (shader_id, mat_id, mesh_id) != Default::default() && instance_count > 0 {
+                    let start = mesh_instances.entry(mesh_id).or_default();
+                    draw_list.push(DrawBatch {
+                        shader_id,
+                        mat_id,
+                        mesh_id,
+                        instances: *start..(*start + instance_count),
+                        cast_shadows,
+                    });
+                    *start += instance_count;
+                }
+            };
         for DrawListElement {
             shader_id,
             mat_id,
@@ -606,9 +646,11 @@ impl SceneRenderer {
             bone_transform_index,
             object_id,
             transform,
+            cast_shadows,
         } in self.draw_list.drain(0..)
         {
-            if (shader_id, mat_id, mesh_id) != last {
+            let key = (shader_id, mat_id, mesh_id, cast_shadows);
+            if key != last {
                 // Release the previous batch's mesh before locking the next:
                 // batches that differ only in material share their mesh.
                 drop(mesh.take());
@@ -625,7 +667,7 @@ impl SceneRenderer {
                 });
                 instance_count += 1;
             }
-            last = (shader_id, mat_id, mesh_id);
+            last = key;
         }
         insert_instance_list(last, instance_count);
         draw_list
@@ -638,6 +680,7 @@ impl SceneRenderer {
         game_object_id: Uuid,
         bone_transform_index: Option<i32>,
         transform: [[f32; 4]; 4],
+        cast_shadows: bool,
     ) {
         let Some(shader_ref) = mat_ref
             .read()
@@ -654,6 +697,7 @@ impl SceneRenderer {
             bone_transform_index: bone_transform_index.unwrap_or(-1),
             object_id,
             transform,
+            cast_shadows,
         });
         self.assets
             .meshes
@@ -755,6 +799,7 @@ impl SceneRenderer {
                 scene.uuid(game_object),
                 None,
                 transform.matrix().into(),
+                c_mesh.cast_shadows,
             );
         }
         let mut skinned_meshes: HashSet<Uuid> = Default::default();
@@ -824,6 +869,7 @@ impl SceneRenderer {
                 scene.uuid(game_object),
                 Some(bone_transform_index as i32),
                 transform.matrix().into(),
+                c_skinned_mesh.cast_shadows,
             );
         }
         let mut query = <(Entity, &ComponentSkyLight)>::query();
@@ -909,8 +955,9 @@ impl SceneRenderer {
                  shader_id,
                  mat_id,
                  mesh_id,
+                 cast_shadows,
                  ..
-             }| (*shader_id, *mat_id, *mesh_id),
+             }| (*shader_id, *mat_id, *mesh_id, *cast_shadows),
         );
     }
 
@@ -1536,7 +1583,7 @@ mod tests {
         ParticleScalarRange, ParticleSizeOverLifetime, ParticleSpawnShape, ParticleVelocity,
     };
     use crate::math::Transform;
-    use crate::render::{Camera, Shader};
+    use crate::render::{Camera, Shader, SHADOW_CASCADE_COUNT};
     use crate::test_support::{
         test_adapter, test_asset_context_with_assets, SceneBuilder, TestAssets,
     };
@@ -1571,6 +1618,7 @@ mod tests {
             ComponentMesh {
                 mesh: AssetRef::from_id(mesh.id()),
                 material: AssetRef::from_id(material.id()),
+                ..Default::default()
             },
         );
         builder.set_transform(game_object, glm::translation(&position));
@@ -1832,6 +1880,7 @@ mod tests {
             ComponentMesh {
                 mesh: AssetRef::from_id(cube.id()),
                 material: AssetRef::from_id(first.id()),
+                ..Default::default()
             },
         );
         let scene = builder.finish();
@@ -1844,7 +1893,7 @@ mod tests {
 
         let mut batches: Vec<_> = draw_list
             .iter()
-            .map(|(_, material, mesh, range)| (*material, *mesh, range.len()))
+            .map(|batch| (batch.mat_id, batch.mesh_id, batch.instances.len()))
             .collect();
         batches.sort();
         let mut expected = vec![
@@ -1859,8 +1908,8 @@ mod tests {
         for mesh in [&cube, &sphere] {
             let mut ranges: Vec<_> = draw_list
                 .iter()
-                .filter(|(_, _, mesh_id, _)| *mesh_id == mesh.id())
-                .map(|(_, _, _, range)| range.clone())
+                .filter(|batch| batch.mesh_id == mesh.id())
+                .map(|batch| batch.instances.clone())
                 .collect();
             ranges.sort_by_key(|range| range.start);
             let instances = mesh.read().instances.len() as u32;
@@ -1989,6 +2038,7 @@ mod tests {
                 material: AssetRef::from_id(material.id()),
                 root_bone: crate::scene::GameObjectRef::new(root_uuid),
                 bone_transforms: palette,
+                ..Default::default()
             },
         );
         (root_object, hip_object, mesh_object)
@@ -2189,6 +2239,7 @@ mod tests {
                 ComponentMesh {
                     mesh: AssetRef::from_id(cube.id()),
                     material: AssetRef::from_id(material.id()),
+                    ..Default::default()
                 },
             );
             builder.set_transform(object, turn);
@@ -2712,6 +2763,7 @@ mod tests {
             ComponentMesh {
                 mesh: AssetRef::from_id(cube.id()),
                 material: AssetRef::from_id(material.id()),
+                ..Default::default()
             },
         );
         // The cube spans -1..1, so the face towards the camera sits at z = -0.05.
@@ -2736,6 +2788,7 @@ mod tests {
                 crate::component::ComponentDirectionalLight {
                     color: Color32::BLACK,
                     intensity: 20.0,
+                    ..Default::default()
                 },
             );
             let lamp = builder.spawn("lamp");
@@ -3045,7 +3098,7 @@ mod tests {
         let draw_list = batching.build_draw_list();
         let batches: Vec<_> = draw_list
             .iter()
-            .map(|(_, mat_id, mesh_id, range)| (*mat_id, *mesh_id, range.clone()))
+            .map(|batch| (batch.mat_id, batch.mesh_id, batch.instances.clone()))
             .collect();
         assert_eq!(
             batches,
@@ -3128,6 +3181,7 @@ mod tests {
             ComponentMesh {
                 mesh: AssetRef::from_id(cube.id()),
                 material: AssetRef::from_id(material.id()),
+                ..Default::default()
             },
         );
         // Rotated so its silhouette has diagonal edges that only partially
@@ -3261,6 +3315,420 @@ mod tests {
         assert!(
             !skybox.read().dirty,
             "the frame that selected the skybox should have prepared its maps"
+        );
+    }
+
+    /// What one frame of [`shadow_frames`] saw: the red channel at each
+    /// sampled point, what the shadow pass drew, and which maps exist.
+    struct ShadowFrame<const N: usize> {
+        pixels: [u8; N],
+        stats: ShadowFrameStats,
+        allocated: (bool, bool),
+    }
+
+    /// An edit to a [`shadow_frames`] scene between two frames, given the
+    /// objects its build returned.
+    type ShadowEdit = Box<dyn FnOnce(&mut Scene, &[GameObject])>;
+
+    /// The camera of the shadow tests: 8 units straight above the origin,
+    /// looking down.
+    fn overhead_camera() -> (Camera, Transform) {
+        let camera = Camera::new(1.0, 60f32.to_radians(), 0.1, 200.0);
+        let transform = Transform::from_components(
+            vec3(0.0, 8.0, 0.0),
+            UnitQuaternion::face_towards(&vec3(0.0, -1.0, 0.0), &vec3(0.0, 0.0, 1.0)),
+            vec3(1.0, 1.0, 1.0),
+        );
+        (camera, transform)
+    }
+
+    /// The rotation that points a light's +Z along `direction`.
+    fn pointing(direction: Vec3) -> Mat4 {
+        glm::quat_to_mat4(
+            &UnitQuaternion::rotation_between(&Vec3::z(), &direction.normalize())
+                .expect("a direction off -Z"),
+        )
+    }
+
+    /// Spawns a cube of `scale` at `position` that casts shadows.
+    fn spawn_box(
+        builder: &mut SceneBuilder,
+        name: &str,
+        cube: &Ref<Mesh>,
+        material: &Ref<Material>,
+        position: Vec3,
+        scale: Vec3,
+    ) -> GameObject {
+        let object = builder.spawn(name);
+        builder.add_component(
+            object,
+            ComponentMesh {
+                mesh: AssetRef::from_id(cube.id()),
+                material: AssetRef::from_id(material.id()),
+                ..Default::default()
+            },
+        );
+        builder.set_transform(object, glm::translation(&position) * glm::scaling(&scale));
+        object
+    }
+
+    /// Spawns a shadow-casting sun travelling along `direction`.
+    fn spawn_sun(builder: &mut SceneBuilder, direction: Vec3) -> GameObject {
+        let sun = builder.spawn("sun");
+        builder.add_component(
+            sun,
+            crate::component::ComponentDirectionalLight {
+                intensity: 3.0,
+                cast_shadows: true,
+                ..Default::default()
+            },
+        );
+        builder.set_transform(sun, pointing(direction));
+        sun
+    }
+
+    /// Renders, from [`overhead_camera`], a ground plane whose top face is at
+    /// y = 0.05 spanning -4..4 in X and Z, plus whatever `build` adds, then
+    /// renders again after each of `edits`. `build` returns the objects the
+    /// edits change.
+    fn shadow_frames<const N: usize>(
+        shadows: bool,
+        build: impl FnOnce(
+            &mut SceneBuilder,
+            &ReadOnlyAssetContext,
+            &Ref<Mesh>,
+            &Ref<Material>,
+        ) -> Vec<GameObject>,
+        points: [Vec3; N],
+        edits: Vec<ShadowEdit>,
+    ) -> Vec<ShadowFrame<N>> {
+        const SIZE: (u32, u32) = (128, 128);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let material = pbr_material(&read_only_context, "test/shadows");
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        spawn_box(
+            &mut builder,
+            "ground",
+            &cube,
+            &material,
+            Vec3::zeros(),
+            // The cube mesh spans -0.5..0.5.
+            vec3(8.0, 0.1, 8.0),
+        );
+        let objects = build(&mut builder, &read_only_context, &cube, &material);
+        let mut scene = builder.finish();
+        let (camera, transform) = overhead_camera();
+        let mut renderer = SceneRenderer::new(
+            &read_only_context,
+            SceneRendererOptions {
+                clear_color: Color32::BLACK,
+                shadows,
+                ..Default::default()
+            },
+            SIZE,
+        )
+        .expect("scene renderer should load its assets");
+        let frame = |renderer: &mut SceneRenderer, scene: &Scene| {
+            renderer.render_scene_base(&camera, &transform, scene, None, None);
+            renderer.finalize_scene();
+            let image = read_scene_texture(renderer, &render_context);
+            ShadowFrame {
+                pixels: points.map(|point| {
+                    let (x, y) = project(&camera, &transform, point, SIZE);
+                    image.get_pixel(x, y).0[0]
+                }),
+                stats: renderer.shadow_stats(),
+                allocated: renderer.shadow_maps_allocated(),
+            }
+        };
+        let mut frames = vec![frame(&mut renderer, &scene)];
+        for edit in edits {
+            edit(&mut scene, &objects);
+            frames.push(frame(&mut renderer, &scene));
+        }
+        frames
+    }
+
+    /// A sun at 45 degrees along +X over a box hovering at y = 1.5: the
+    /// box's shadow centers on (1.45, 0.05, 0), clear of the box as the
+    /// overhead camera sees it, and (-1.5, 0.05, 0) is in full light.
+    fn sun_over_box(
+        builder: &mut SceneBuilder,
+        _: &ReadOnlyAssetContext,
+        cube: &Ref<Mesh>,
+        material: &Ref<Material>,
+    ) -> Vec<GameObject> {
+        let sun = spawn_sun(builder, vec3(1.0, -1.0, 0.0));
+        let occluder = spawn_box(
+            builder,
+            "box",
+            cube,
+            material,
+            vec3(0.0, 1.5, 0.0),
+            Vec3::repeat(1.0),
+        );
+        vec![sun, occluder]
+    }
+
+    const BOX_SHADOW: Vec3 = Vec3::new(1.45, 0.05, 0.0);
+    const BOX_LIT: Vec3 = Vec3::new(-1.5, 0.05, 0.0);
+
+    #[test]
+    fn a_box_over_a_plane_darkens_the_plane_where_it_occludes_the_sun() {
+        let frames = shadow_frames(true, sun_over_box, [BOX_SHADOW, BOX_LIT], vec![]);
+        let [shadowed, lit] = frames[0].pixels;
+        assert!(lit > 40, "the plane is lit away from the box, got {lit}");
+        assert!(
+            shadowed <= 2,
+            "the box's shadow keeps the sun off the plane: {shadowed}, lit {lit}"
+        );
+        assert_eq!(frames[0].stats.cascades, SHADOW_CASCADE_COUNT);
+        assert_eq!(
+            frames[0].allocated,
+            (true, false),
+            "no spot light, no atlas"
+        );
+
+        let [unshadowed, lit_without] =
+            shadow_frames(false, sun_over_box, [BOX_SHADOW, BOX_LIT], vec![])[0].pixels;
+        assert!(
+            unshadowed.abs_diff(lit) <= 2 && lit_without.abs_diff(lit) <= 2,
+            "with shadows off the plane is lit everywhere: {unshadowed} and {lit_without}, \
+             against {lit}"
+        );
+    }
+
+    #[test]
+    fn a_plane_facing_the_light_is_lit_evenly_with_no_acne() {
+        let points: [Vec3; 25] = std::array::from_fn(|i| {
+            vec3(
+                -3.0 + 1.5 * (i % 5) as f32,
+                0.05,
+                -3.0 + 1.5 * (i / 5) as f32,
+            )
+        });
+        let tilted = vec3(30f32.to_radians().sin(), -30f32.to_radians().cos(), 0.0);
+        let build = |builder: &mut SceneBuilder,
+                     _: &ReadOnlyAssetContext,
+                     _: &Ref<Mesh>,
+                     _: &Ref<Material>| { vec![spawn_sun(builder, tilted)] };
+        let with = shadow_frames(true, build, points, vec![]);
+        let without = shadow_frames(false, build, points, vec![]);
+        let reference = without[0].pixels[12];
+        assert!(reference > 40, "the plane is lit, got {reference}");
+        for (i, (on, off)) in with[0].pixels.iter().zip(without[0].pixels).enumerate() {
+            assert!(
+                off > 40,
+                "point {i} at {} is on the lit plane, got {off}",
+                points[i]
+            );
+            assert!(
+                on.abs_diff(off) <= 2,
+                "point {i} at {} shadows itself: {on} with shadows, {off} without",
+                points[i]
+            );
+        }
+    }
+
+    #[test]
+    fn each_spot_light_shadow_lands_in_its_own_tile() {
+        // Two spot lights 3 units up at x = -2 and x = 2, pointing down, each
+        // with a box between it and the plane on the side towards the
+        // center. A box's shadow falls 1 unit from its light towards the
+        // center, and the point 1 unit away on the other side is lit.
+        let build = |builder: &mut SceneBuilder,
+                     _: &ReadOnlyAssetContext,
+                     cube: &Ref<Mesh>,
+                     material: &Ref<Material>| {
+            for (i, x) in [-2.0f32, 2.0].into_iter().enumerate() {
+                let spot = builder.spawn(format!("spot {i}"));
+                builder.add_component(
+                    spot,
+                    crate::component::ComponentSpotLight {
+                        intensity: 30.0,
+                        range: 10.0,
+                        inner_angle: 35.0,
+                        outer_angle: 40.0,
+                        cast_shadows: true,
+                        ..Default::default()
+                    },
+                );
+                builder.set_transform(
+                    spot,
+                    glm::translation(&vec3(x, 3.0, 0.0)) * pointing(-Vec3::y()),
+                );
+                let toward_center = -x.signum();
+                spawn_box(
+                    builder,
+                    &format!("box {i}"),
+                    cube,
+                    material,
+                    vec3(x + 0.4 * toward_center, 1.5, 0.0),
+                    Vec3::repeat(0.5),
+                );
+            }
+            vec![]
+        };
+        let points = [
+            vec3(-1.0, 0.05, 0.0),
+            vec3(-3.0, 0.05, 0.0),
+            vec3(1.0, 0.05, 0.0),
+            vec3(3.0, 0.05, 0.0),
+        ];
+        let frame = &shadow_frames(true, build, points, vec![])[0];
+        let [left_shadow, left_lit, right_shadow, right_lit] = frame.pixels;
+        assert_eq!(frame.stats.spot_tiles, 2);
+        assert_eq!(frame.allocated, (false, true), "no sun, no cascades");
+        for (side, shadowed, lit) in [
+            ("left", left_shadow, left_lit),
+            ("right", right_shadow, right_lit),
+        ] {
+            assert!(
+                lit > 40,
+                "the {side} spot light lights the plane, got {lit}"
+            );
+            assert!(
+                shadowed <= 2,
+                "the {side} box shadows its spot light: {shadowed}, lit {lit}"
+            );
+        }
+        let unshadowed = shadow_frames(false, build, points, vec![])[0].pixels;
+        assert!(
+            unshadowed[0].abs_diff(left_lit) <= 2 && unshadowed[2].abs_diff(right_lit) <= 2,
+            "without shadows both sides are lit: {unshadowed:?}, against {left_lit} and \
+             {right_lit}"
+        );
+        assert!(
+            unshadowed[1].abs_diff(left_lit) <= 2,
+            "the lit side has no acne: {} without shadows, {left_lit} with",
+            unshadowed[1]
+        );
+    }
+
+    #[test]
+    fn a_mesh_that_casts_no_shadow_or_is_disabled_drops_out_of_the_shadow_pass() {
+        let set_cast = |cast_shadows: bool| -> ShadowEdit {
+            Box::new(move |scene: &mut Scene, objects: &[GameObject]| {
+                scene
+                    .write_component::<ComponentMesh, _>(objects[1], |mesh| {
+                        mesh.cast_shadows = cast_shadows
+                    })
+                    .expect("the box has a mesh");
+            })
+        };
+        let set_enabled = |enabled: bool| -> ShadowEdit {
+            Box::new(move |scene: &mut Scene, objects: &[GameObject]| {
+                assert!(scene.set_component_enabled::<ComponentMesh>(objects[1], enabled));
+            })
+        };
+        let frames = shadow_frames(
+            true,
+            sun_over_box,
+            [BOX_SHADOW],
+            vec![
+                set_cast(false),
+                set_cast(true),
+                set_enabled(false),
+                set_enabled(true),
+            ],
+        );
+        let shadowed = |frame: &ShadowFrame<1>| frame.pixels[0] <= 2;
+        // The ground and the box, in each cascade.
+        let both = 2 * SHADOW_CASCADE_COUNT as u32;
+        let ground_only = SHADOW_CASCADE_COUNT as u32;
+        assert!(shadowed(&frames[0]));
+        assert_eq!(frames[0].stats.caster_instances, both);
+        assert!(
+            !shadowed(&frames[1]),
+            "a box that casts no shadow leaves the plane lit"
+        );
+        assert_eq!(frames[1].stats.caster_instances, ground_only);
+        assert!(shadowed(&frames[2]), "casting again, it shadows again");
+        assert_eq!(frames[2].stats.caster_instances, both);
+        assert!(!shadowed(&frames[3]), "a disabled box casts no shadow");
+        assert_eq!(frames[3].stats.caster_instances, ground_only);
+        assert!(shadowed(&frames[4]), "re-enabled, it shadows again");
+        assert_eq!(frames[4].stats.caster_instances, both);
+    }
+
+    #[test]
+    fn a_disabled_or_unshadowed_sun_frees_its_cascades_until_it_casts_again() {
+        let set_enabled = |enabled: bool| -> ShadowEdit {
+            Box::new(move |scene: &mut Scene, objects: &[GameObject]| {
+                assert!(scene
+                    .set_component_enabled::<crate::component::ComponentDirectionalLight>(
+                        objects[0], enabled
+                    ));
+            })
+        };
+        let set_cast = |cast_shadows: bool| -> ShadowEdit {
+            Box::new(move |scene: &mut Scene, objects: &[GameObject]| {
+                scene
+                    .write_component::<crate::component::ComponentDirectionalLight, _>(
+                        objects[0],
+                        |sun| sun.cast_shadows = cast_shadows,
+                    )
+                    .expect("the sun has a light");
+            })
+        };
+        let frames = shadow_frames(
+            true,
+            sun_over_box,
+            [BOX_SHADOW],
+            vec![
+                set_enabled(false),
+                set_enabled(true),
+                set_cast(false),
+                set_cast(true),
+            ],
+        );
+        let allocated: Vec<_> = frames.iter().map(|frame| frame.allocated.0).collect();
+        assert_eq!(allocated, [true, false, true, false, true]);
+        let cascades: Vec<_> = frames.iter().map(|frame| frame.stats.cascades).collect();
+        let all = SHADOW_CASCADE_COUNT;
+        assert_eq!(cascades, [all, 0, all, 0, all]);
+        assert!(
+            frames[2].pixels[0] <= 2,
+            "re-enabled, the sun is shadowed again"
+        );
+
+        // A renderer with shadows off gathers no caster and allocates nothing.
+        let off = &shadow_frames(false, sun_over_box, [BOX_SHADOW], vec![])[0];
+        assert_eq!(off.allocated, (false, false));
+        assert_eq!(off.stats, ShadowFrameStats::default());
+    }
+
+    #[test]
+    fn a_skinned_mesh_casts_its_posed_shadow() {
+        // The mesh models a unit cube at the origin; its bone poses it at
+        // y = 1.5, where the box of `sun_over_box` hovers. Only the
+        // posed cube stands between the sun and `BOX_SHADOW`.
+        let frames = shadow_frames(
+            true,
+            |builder, context, _, material| {
+                let sun = spawn_sun(builder, vec3(1.0, -1.0, 0.0));
+                let mesh = skinned_cube(context, "test/shadow_skinned", "hip", Mat4::identity());
+                let hip = glm::translation(&vec3(0.0, 1.5, 0.0));
+                spawn_skinned_model(builder, &mesh, material, Mat4::identity(), hip, Vec::new());
+                vec![sun]
+            },
+            [BOX_SHADOW, BOX_LIT],
+            vec![],
+        );
+        let [shadowed, lit] = frames[0].pixels;
+        assert!(lit > 40, "the plane is lit away from the cube, got {lit}");
+        assert!(
+            shadowed <= 2,
+            "the posed cube shadows the plane: {shadowed}, lit {lit}"
         );
     }
 }

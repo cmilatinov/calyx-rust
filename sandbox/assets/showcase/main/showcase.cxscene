@@ -7,6 +7,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "e5a6855a-1998-667d-ecf7-7bcd2548e89b",
         "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
       },
@@ -38,6 +39,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "3d2fc75e-6981-ba06-8368-5a24a364c632",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -100,6 +102,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "e5a6855a-1998-667d-ecf7-7bcd2548e89b",
         "mesh": "e26dd487-ca0d-fac5-b703-542d2a97d71d"
       },
@@ -131,6 +134,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "62c14a93-bd7c-3602-57c3-a2a3e500226f",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -162,6 +166,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "8c4d826b-865e-532c-fb21-95ed93dff79b",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -224,6 +229,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "1b1c10e9-d628-ea76-5b23-6c58187714ec",
         "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
       },
@@ -513,6 +519,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "6ed0f492-c96e-aaf3-a170-23bf0b5883b3",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -660,6 +667,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "3d2fc75e-6981-ba06-8368-5a24a364c632",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -691,6 +699,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "3d2fc75e-6981-ba06-8368-5a24a364c632",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -741,6 +750,7 @@
         "ty": "Dynamic"
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "3d2fc75e-6981-ba06-8368-5a24a364c632",
         "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
       },
@@ -803,6 +813,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "3d2fc75e-6981-ba06-8368-5a24a364c632",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -834,6 +845,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "bda9cfca-f81a-d790-01fa-4391895458fa",
         "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
       },
@@ -865,6 +877,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "b95b302b-3117-5432-2658-b6e4fe8f113b",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -976,6 +989,7 @@
         }
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "e5a6855a-1998-667d-ecf7-7bcd2548e89b",
         "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
       },
@@ -1065,6 +1079,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "4e34107e-31cd-53dd-92dc-3944cbe1cd8f",
         "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
       },
@@ -1128,6 +1143,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "ca836336-d0b2-7ee1-f8cd-343586827561",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -1273,6 +1289,7 @@
         "ty": "Dynamic"
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "92da47a7-b64d-58dd-4ab6-39b14bc7f015",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -1391,6 +1408,7 @@
         }
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "e5a6855a-1998-667d-ecf7-7bcd2548e89b",
         "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
       },
@@ -1441,6 +1459,7 @@
         "ty": "Dynamic"
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "3d2fc75e-6981-ba06-8368-5a24a364c632",
         "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
       },
@@ -1487,6 +1506,7 @@
         "ty": "Dynamic"
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "e7c5c1d0-0eac-4c3a-5b09-ac1f668326d2",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -1531,6 +1551,7 @@
         }
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "e5a6855a-1998-667d-ecf7-7bcd2548e89b",
         "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
       },
@@ -1577,6 +1598,7 @@
         "ty": "Dynamic"
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "a8559065-33ca-64e6-dad7-0d20a13c7682",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -1608,6 +1630,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "3d2fc75e-6981-ba06-8368-5a24a364c632",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -1670,13 +1693,17 @@
         "visible": true
       },
       "72b2568a-2ea0-4f58-ae76-e3f655006f0f": {
+        "cast_shadows": true,
         "color": [
           255,
           228,
           196,
           255
         ],
-        "intensity": 2.200000047683716
+        "depth_bias": 1.0,
+        "intensity": 2.200000047683716,
+        "normal_bias": 1.0,
+        "shadow_distance": 50.0
       },
       "c5b3b71f-1f14-4b5b-9881-436118684d29": {
         "transform": {
@@ -1752,6 +1779,7 @@
         "ty": "Dynamic"
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "92da47a7-b64d-58dd-4ab6-39b14bc7f015",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -1783,6 +1811,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "e5a6855a-1998-667d-ecf7-7bcd2548e89b",
         "mesh": "e26dd487-ca0d-fac5-b703-542d2a97d71d"
       },
@@ -1944,6 +1973,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "dac6edd8-18d5-ecb1-1940-1c265aede2ed",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -2006,6 +2036,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "e5a6855a-1998-667d-ecf7-7bcd2548e89b",
         "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
       },
@@ -2037,6 +2068,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "3d2fc75e-6981-ba06-8368-5a24a364c632",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -2068,6 +2100,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "3d2fc75e-6981-ba06-8368-5a24a364c632",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -2099,6 +2132,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "f47447e8-77d8-6770-2fcc-0768d23ba38d",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -2157,6 +2191,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "e5a6855a-1998-667d-ecf7-7bcd2548e89b",
         "mesh": "e26dd487-ca0d-fac5-b703-542d2a97d71d"
       },
@@ -2188,6 +2223,7 @@
         "visible": true
       },
       "bb784426-a5ec-4995-a86a-c40e7e2cb3ab": {
+        "cast_shadows": true,
         "material": "07868104-5116-a797-7868-b9a44c1beb3a",
         "mesh": "084f8985-9e74-5e5b-8f75-ac8130344b9c",
         "root_bone": "50f241d5-6d0c-4698-8170-fbd89d1b673d"
@@ -2220,6 +2256,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "e5a6855a-1998-667d-ecf7-7bcd2548e89b",
         "mesh": "e26dd487-ca0d-fac5-b703-542d2a97d71d"
       },
@@ -2458,6 +2495,7 @@
         "ty": "Dynamic"
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "e7c5c1d0-0eac-4c3a-5b09-ac1f668326d2",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -2502,6 +2540,7 @@
         }
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "e5a6855a-1998-667d-ecf7-7bcd2548e89b",
         "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
       },
@@ -2614,6 +2653,7 @@
         "ty": "Dynamic"
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "92da47a7-b64d-58dd-4ab6-39b14bc7f015",
         "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
       },
@@ -2716,6 +2756,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "0d77fb58-541f-4267-c350-9bd0452912a4",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -3120,16 +3161,20 @@
         "visible": true
       },
       "0d4f0a8e-3a3c-4c47-9f0e-5b8f2d7c6a41": {
+        "cast_shadows": true,
         "color": [
           255,
           190,
           110,
           255
         ],
+        "depth_bias": 1.0,
         "inner_angle": 15.0,
         "intensity": 400.0,
+        "normal_bias": 1.0,
         "outer_angle": 25.0,
-        "range": 12.0
+        "range": 12.0,
+        "shadow_distance": 50.0
       },
       "c5b3b71f-1f14-4b5b-9881-436118684d29": {
         "transform": {
@@ -3178,6 +3223,7 @@
         "ty": "Dynamic"
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "a8559065-33ca-64e6-dad7-0d20a13c7682",
         "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
       },
@@ -3209,6 +3255,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "3bf30fb8-34e7-a496-5a0e-55cbdb8465ee",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -3240,6 +3287,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "bda9cfca-f81a-d790-01fa-4391895458fa",
         "mesh": "e26dd487-ca0d-fac5-b703-542d2a97d71d"
       },
@@ -3298,6 +3346,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "a66a3a83-b4d5-10ee-0558-d0b1ec98cf51",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -3348,6 +3397,7 @@
         "ty": "Dynamic"
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "a8559065-33ca-64e6-dad7-0d20a13c7682",
         "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
       },
@@ -3379,6 +3429,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "3d2fc75e-6981-ba06-8368-5a24a364c632",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -3410,6 +3461,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "4ae1a38c-4738-e151-2cff-c210967fc871",
         "mesh": "d19899a9-da22-448b-6b0c-4b35c4b289aa"
       },
@@ -3460,6 +3512,7 @@
         "ty": "Dynamic"
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "26352e5a-48ff-cdf9-d5e8-77f96412fd90",
         "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
       },
