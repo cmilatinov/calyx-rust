@@ -1,20 +1,9 @@
 //#include "shaders/common/constants.wgsl"
-//#include "shaders/common/inputs.wgsl"
-//#include "shaders/common/camera.wgsl"
-//#include "shaders/mesh/mesh.wgsl"
-//#include "shaders/mesh/pbr_material.wgsl"
+//#include "shaders/mesh/pbr_vertex.wgsl"
+//#include "shaders/mesh/pbr_surface.wgsl"
 //#include "shaders/common/lights.wgsl"
 //#include "shaders/common/shadows.wgsl"
 //#include "shaders/common/pbr_utils.wgsl"
-
-struct VertexOut {
-    @builtin(position) position: vec4f,
-    @location(0) world_position: vec3f,
-    @location(1) normal: vec3f,
-    @location(2) uv: vec2f,
-    // World-space tangent along increasing U; w is the bitangent's handedness.
-    @location(3) tangent: vec4f,
-};
 
 struct EnvironmentProperties {
     sky_light: vec4f,
@@ -81,62 +70,25 @@ var occlusion_texture: texture_2d<f32>;
 @group(3) @binding(10)
 var occlusion_sampler: sampler;
 
-@vertex
-fn vs_main(vertex: VertexIn) -> VertexOut {
-    let instance = mesh.instances[vertex.instance];
-    var out: VertexOut;
-    let local_position = skinned_local(vertex, instance, vec4f(vertex.position, 1.0));
-    let local_normal = skinned_local(vertex, instance, vec4f(vertex.normal, 0.0));
-    let local_tangent = skinned_local(vertex, instance, vec4f(vertex.tangent.xyz, 0.0));
-    out.world_position = (instance.transform * local_position).xyz;
-    out.normal = (instance.transform * local_normal).xyz;
-    out.tangent = vec4f((instance.transform * local_tangent).xyz, vertex.tangent.w);
-    out.position =
-        camera.projection *
-        camera.view *
-        vec4f(out.world_position, 1.0);
-    out.uv = vertex.uv0;
-    return out;
-}
-
-// The shading normal: the vertex normal, bent by the normal texture in the tangent frame.
-// `tangent_in` is the interpolated vertex tangent and `sampled` the normal texture's texel.
-fn shading_normal(normal: vec3f, tangent_in: vec4f, sampled: vec3f) -> vec3f {
-    let n = normalize(normal);
-    let tangent = tangent_in.xyz - n * dot(n, tangent_in.xyz);
-    let tangent_length = length(tangent);
-    if tangent_length < 1e-6 {
-        return n;
-    }
-    let t = tangent / tangent_length;
-    let b = cross(n, t) * select(1.0, -1.0, tangent_in.w < 0.0);
-    let tangent_normal =
-        (sampled * 2.0 - 1.0) * vec3f(material.normal_scale, material.normal_scale, 1.0);
-    let bent = mat3x3f(t, b, n) * tangent_normal;
-    if dot(bent, bent) < 1e-12 {
-        return n;
-    }
-    return normalize(bent);
-}
-
 @fragment
-fn fs_main(in: VertexOut) -> @location(0) vec4f {
+fn fs_main(in: PbrVertexOut) -> @location(0) vec4f {
     // Every texture is sampled up front: sampling needs uniform control flow.
-    let albedo =
-        textureSample(base_color_texture, base_color_sampler, in.uv) * material.base_color_factor;
-    let metallic_roughness =
+    var texels: PbrTexels;
+    texels.base_color = textureSample(base_color_texture, base_color_sampler, in.uv);
+    texels.metallic_roughness =
         textureSample(metallic_roughness_texture, metallic_roughness_sampler, in.uv);
-    let normal_sample = textureSample(normal_texture, normal_sampler, in.uv).xyz;
-    let emissive = textureSample(emissive_texture, emissive_sampler, in.uv).rgb;
-    let occlusion_sample = textureSample(occlusion_texture, occlusion_sampler, in.uv).r;
-    if albedo.a < material.alpha_cutoff {
+    texels.normal = textureSample(normal_texture, normal_sampler, in.uv).xyz;
+    texels.emissive = textureSample(emissive_texture, emissive_sampler, in.uv).rgb;
+    texels.occlusion = textureSample(occlusion_texture, occlusion_sampler, in.uv).r;
+    let surface = pbr_surface(material, texels, in.normal, in.tangent);
+    if pbr_discards(material, surface) {
         discard;
     }
-    let n = shading_normal(in.normal, in.tangent, normal_sample);
-    let metallic = material.metallic * metallic_roughness.b;
-    let roughness = material.roughness * metallic_roughness.g;
-    let occlusion = material.ambient_occlusion *
-        (1.0 + material.occlusion_strength * (occlusion_sample - 1.0));
+    let albedo = surface.albedo;
+    let n = surface.normal;
+    let metallic = surface.metallic;
+    let roughness = surface.roughness;
+    let occlusion = surface.occlusion;
     let view_position = vec3f(
         camera.inverse_view[3][0],
         camera.inverse_view[3][1],
@@ -154,7 +106,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
 
     // Shadows dim each light's direct term only, never the ambient and image-based light. They
     // are looked up with the geometric normal, which the normal offset follows.
-    let geometric_normal = normalize(in.normal);
+    let geometric_normal = surface.geometric_normal;
 
     for (var i = 0u; i < directional_end; i++) {
         let light = light_storage.lights[i];
@@ -207,7 +159,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     let ambient = diffuse + specular;
     let direct_ambient = kd * environment.ambient_light.rgb * albedo.rgb;
     color += occlusion * (ambient + direct_ambient);
-    color += material.emission_color.rgb * material.emission_strength * emissive;
+    color += surface.emission;
 
     // Linear HDR radiance: the post-processing chain tone maps it.
     return vec4f(color.xyz, albedo.a);

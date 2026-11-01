@@ -2,11 +2,12 @@ use std::path::PathBuf;
 
 use calyx_engine::class_registry::ComponentRegistry;
 use calyx_engine::component::{Component, ComponentID};
+use calyx_engine::render::GBufferView;
 use calyx_engine::scene::{GameObject, Scene};
 use calyx_engine::utils::TypeUuid;
 use calyx_remote_protocol::{
     CaptureTarget, Command, CoordSpace, ErrorKind, InputEventSpec, ModifiersSpec, PickTarget,
-    PointerButtonSpec, RequestEnvelope, TransformSpace, UnsavedSceneAnswer,
+    PointerButtonSpec, RequestEnvelope, SceneView, TransformSpace, UnsavedSceneAnswer,
 };
 use nalgebra::UnitQuaternion;
 use nalgebra_glm::Vec3;
@@ -400,6 +401,16 @@ impl EditorApp {
                 space,
                 target,
             } => self.remote_pick(runtime, x, y, space, target),
+            Command::SetSceneView { view } => {
+                self.state.scene_renderer.options_mut().gbuffer_view = match view {
+                    SceneView::Lit => None,
+                    SceneView::Albedo => Some(GBufferView::Albedo),
+                    SceneView::Normals => Some(GBufferView::Normals),
+                    SceneView::Material => Some(GBufferView::Material),
+                    SceneView::Emissive => Some(GBufferView::Emissive),
+                };
+                Ok(Some(serde_json::json!({ "view": view })))
+            }
             Command::FocusGame { grab } => {
                 self.tree.make_active(|_, tile| {
                     matches!(tile, egui_tiles::Tile::Pane(pane) if *pane == PanelGame::name())

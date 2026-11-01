@@ -17,9 +17,10 @@ use crate::render::postprocess::{
 };
 use crate::render::render_utils::RenderUtils;
 use crate::render::{
-    Camera, DrawBatch, GizmoRenderer, GridRenderer, LightManager, MeshRenderDefaults,
-    MeshRenderTargets, MeshRenderer, OutlineRenderer, ParticleRenderer, ParticleSimulation,
-    PipelineOptions, ShadowCamera, ShadowFrameStats, ShadowRenderer, SkyboxRenderer,
+    Camera, DrawBatch, GBufferRenderer, GBufferTargets, GBufferView, GizmoRenderer, GridRenderer,
+    LightManager, MeshRenderDefaults, MeshRenderTargets, MeshRenderer, OutlineRenderer,
+    ParticleRenderer, ParticleSimulation, PipelineOptions, ShadowCamera, ShadowFrameStats,
+    ShadowRenderer, SkyboxRenderer,
 };
 use crate::scene::{GameObject, Scene};
 use crate::utils::TypeUuid;
@@ -106,6 +107,10 @@ pub struct SceneRendererOptions {
     /// Whether lights that cast shadows get them. Off, no shadow pass runs
     /// and no shadow map is allocated, as thumbnails need.
     pub shadows: bool,
+    /// The G-buffer target the view shows in place of the lit image, or
+    /// `None` for the lit image. While it is `None` the geometry pass does
+    /// not run and the G-buffer is not allocated.
+    pub gbuffer_view: Option<GBufferView>,
 }
 
 /// Lighting a view supplies itself instead of taking it from the scene: an
@@ -132,6 +137,7 @@ impl Default for SceneRendererOptions {
             samples: 0,
             environment: None,
             shadows: false,
+            gbuffer_view: None,
         }
     }
 }
@@ -234,6 +240,7 @@ pub struct SceneRenderer {
     camera_uniform_buffer: wgpu::Buffer,
     light_manager: LightManager,
     shadow_renderer: ShadowRenderer,
+    gbuffer_renderer: GBufferRenderer,
     gizmo_renderer: GizmoRenderer,
     outline_renderer: OutlineRenderer,
     particle_renderer: ParticleRenderer,
@@ -317,6 +324,7 @@ impl SceneRenderer {
 
         let mesh_renderer = MeshRenderer::new(context)?;
         let shadow_renderer = ShadowRenderer::new(context)?;
+        let gbuffer_renderer = GBufferRenderer::new(context)?;
         let skybox_renderer = SkyboxRenderer::new(context)?;
 
         let camera_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -378,6 +386,7 @@ impl SceneRenderer {
             camera_uniform_buffer,
             light_manager: Default::default(),
             shadow_renderer,
+            gbuffer_renderer,
             gizmo_renderer,
             outline_renderer,
             particle_renderer,
@@ -413,6 +422,23 @@ impl SceneRenderer {
     /// are allocated. Each exists only while a light shadows into it.
     pub fn shadow_maps_allocated(&self) -> (bool, bool) {
         self.shadow_renderer.allocated()
+    }
+
+    /// The G-buffer the last [`Self::render_scene_base`] drew, or `None`
+    /// when no G-buffer view was selected, and the geometry pass did not run.
+    pub fn gbuffer(&self) -> Option<&GBufferTargets> {
+        self.gbuffer_renderer.targets()
+    }
+
+    /// Instances the last frame's geometry pass drew.
+    pub fn gbuffer_drawn_instances(&self) -> u32 {
+        self.gbuffer_renderer.drawn_instances()
+    }
+
+    /// Whether this frame needs the G-buffer: only a G-buffer view reads it
+    /// until the deferred lighting pass lands.
+    fn gbuffer_needed(&self) -> bool {
+        self.options.gbuffer_view.is_some()
     }
 
     /// Returns the current renderer options.
@@ -551,6 +577,22 @@ impl SceneRenderer {
                 &draw_list,
             );
         }
+        // The geometry pass tests against the depth the forward pass just
+        // wrote, so the G-buffer holds the surfaces the lit image shows.
+        if self.gbuffer_needed() {
+            self.gbuffer_renderer.render(
+                &render_context,
+                &mut encoder,
+                &assets,
+                &material_bind_groups,
+                &draw_list,
+                &self.camera_uniform_buffer,
+                &self.scene_depth_texture,
+                self.options.mesh_cull_mode,
+            );
+        } else {
+            self.gbuffer_renderer.release();
+        }
         self.mesh_renderer.render_object_ids(
             device,
             &mut encoder,
@@ -601,6 +643,9 @@ impl SceneRenderer {
     /// post-processing never changes their colors. Call it once after each
     /// [`Self::render_scene_base`]: above one sample the resolve discards the
     /// multisampled surface.
+    ///
+    /// With a G-buffer view selected, the view of the G-buffer replaces the
+    /// post-processed image, and the chain does not run.
     pub fn finalize_scene(&mut self) {
         let render_context = self.asset_context.render_context.clone();
         let device = render_context.device();
@@ -608,6 +653,19 @@ impl SceneRenderer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("scene_finalize_encoder"),
         });
+        if let Some(view) = self.options.gbuffer_view {
+            if self.gbuffer_renderer.render_view(
+                &render_context,
+                &mut encoder,
+                view,
+                &self.scene_texture,
+            ) {
+                self.last_post_process_plan = Default::default();
+                self.render_overlays(&render_context, &mut encoder);
+                queue.submit(Some(encoder.finish()));
+                return;
+            }
+        }
         let source = match &self.hdr_resolved {
             Some(hdr_resolved) => {
                 Self::resolve_scene_texture(&self.scene_texture_msaa, hdr_resolved, &mut encoder);
@@ -1477,6 +1535,8 @@ impl SceneRenderer {
             height,
             self.options.samples,
         );
+        self.gbuffer_renderer
+            .resize(&self.asset_context.render_context, (width, height));
         self.post_process.clear_targets();
         self.overlay.clear_targets();
     }
@@ -3924,6 +3984,484 @@ mod tests {
             shadowed <= 2,
             "the posed cube shadows the plane: {shadowed}, lit {lit}"
         );
+    }
+    /// The texel at `(x, y)` of `texture`, as its bytes.
+    fn read_texel(
+        render_context: &RenderContext,
+        texture: &Texture,
+        (x, y): (u32, u32),
+    ) -> Vec<u8> {
+        let device = render_context.device();
+        let size = texture
+            .descriptor
+            .format
+            .block_copy_size(None)
+            .expect("a color format has a texel size");
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("texel_readback"),
+            size: wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x, y, z: 0 },
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT),
+                    rows_per_image: Some(1),
+                },
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        render_context.queue().submit(Some(encoder.finish()));
+        let slice = buffer.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |result| result.expect("map failed"));
+        let _ = device.poll(wgpu::Maintain::Wait);
+        let bytes = slice.get_mapped_range()[..size as usize].to_vec();
+        buffer.unmap();
+        bytes
+    }
+
+    /// The four half floats of an `Rgba16Float` texel.
+    fn halves(bytes: &[u8]) -> [f32; 4] {
+        std::array::from_fn(|i| half_to_f32(u16::from_le_bytes([bytes[2 * i], bytes[2 * i + 1]])))
+    }
+
+    /// The unit vector whose octahedral encoding is `(x, y)`, as
+    /// `docs/design/rendering/gbuffer.md` defines it.
+    fn octahedral_decode(x: f32, y: f32) -> Vec3 {
+        let mut n = vec3(x, y, 1.0 - x.abs() - y.abs());
+        let fold = (-n.z).clamp(0.0, 1.0);
+        n.x += if n.x >= 0.0 { -fold } else { fold };
+        n.y += if n.y >= 0.0 { -fold } else { fold };
+        n.normalize()
+    }
+
+    fn assert_near(actual: Vec3, expected: Vec3, what: &str) {
+        assert!(
+            (actual - expected).norm() < 0.01,
+            "{what}: expected {expected:?}, got {actual:?}"
+        );
+    }
+
+    fn assert_bytes_near(actual: &[u8], expected: &[u8], what: &str) {
+        assert!(
+            actual
+                .iter()
+                .zip(expected)
+                .all(|(a, b)| a.abs_diff(*b) <= 1),
+            "{what}: expected {expected:?}, got {actual:?}"
+        );
+    }
+
+    /// The material of the G-buffer tests: every input the geometry pass
+    /// writes set to a distinct value.
+    fn gbuffer_material(context: &ReadOnlyAssetContext, name: &str) -> Ref<Material> {
+        let material = pbr_material(context, name);
+        {
+            let mut material = material.write();
+            for (variable, value) in [
+                (
+                    "base_color_factor",
+                    ShaderVariableValue::Color([0.8, 0.4, 0.2, 1.0]),
+                ),
+                ("metallic", ShaderVariableValue::Float(0.25)),
+                ("roughness", ShaderVariableValue::Float(0.5)),
+                ("ambient_occlusion", ShaderVariableValue::Float(0.75)),
+                (
+                    "emission_color",
+                    ShaderVariableValue::Color([1.0, 0.5, 0.0, 1.0]),
+                ),
+                ("emission_strength", ShaderVariableValue::Float(2.0)),
+            ] {
+                assert!(material.set_variable(variable, value), "{variable}");
+            }
+        }
+        material
+    }
+
+    /// The sRGB bytes of [`gbuffer_material`]'s base color.
+    fn gbuffer_albedo_bytes() -> [u8; 3] {
+        [0.8, 0.4, 0.2].map(linear_to_srgb)
+    }
+
+    /// The plane of the G-buffer tests: a thin box in front of the camera
+    /// of `front_camera`, turned 30 degrees about Y, so its face towards the
+    /// camera has the normal `(-sin 30, 0, -cos 30)`.
+    fn spawn_turned_plane(builder: &mut SceneBuilder, mesh: &Ref<Mesh>, material: &Ref<Material>) {
+        let plane = builder.spawn("plane");
+        builder.add_component(
+            plane,
+            ComponentMesh {
+                mesh: AssetRef::from_id(mesh.id()),
+                material: AssetRef::from_id(material.id()),
+                ..Default::default()
+            },
+        );
+        builder.set_transform(
+            plane,
+            glm::rotation(30f32.to_radians(), &Vec3::y()) * glm::scaling(&vec3(2.0, 2.0, 0.05)),
+        );
+    }
+
+    /// The normal of [`spawn_turned_plane`]'s face towards the camera, in
+    /// the view space of `front_camera`, which looks down +Z unrotated.
+    fn turned_plane_normal() -> Vec3 {
+        vec3(-30f32.to_radians().sin(), 0.0, -30f32.to_radians().cos())
+    }
+
+    /// Renders `scene` from `front_camera` with `view` selected and returns
+    /// the renderer.
+    fn render_gbuffer(
+        context: &ReadOnlyAssetContext,
+        scene: &Scene,
+        samples: u32,
+        size: (u32, u32),
+        view: Option<GBufferView>,
+    ) -> SceneRenderer {
+        let mut renderer = SceneRenderer::new(
+            context,
+            SceneRendererOptions {
+                samples,
+                clear_color: Color32::BLACK,
+                gbuffer_view: view,
+                ..Default::default()
+            },
+            size,
+        )
+        .expect("scene renderer should load its assets");
+        let (camera, transform) = front_camera(1.0, 5.0);
+        renderer.render_scene_base(&camera, &transform, scene, None, None);
+        renderer.finalize_scene();
+        renderer
+    }
+
+    #[test]
+    fn the_gbuffer_holds_a_planes_albedo_normals_material_and_emission() {
+        const SIZE: (u32, u32) = (32, 32);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let material = gbuffer_material(&read_only_context, "test/gbuffer_plane");
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        spawn_turned_plane(&mut builder, &cube, &material);
+        let scene = builder.finish();
+        let center = (SIZE.0 / 2, SIZE.1 / 2);
+
+        for samples in [1, 4] {
+            if !supports_samples(
+                &render_context,
+                wgpu::TextureFormat::Rgba16Float,
+                samples,
+                true,
+            ) {
+                continue;
+            }
+            let renderer = render_gbuffer(
+                &read_only_context,
+                &scene,
+                samples,
+                SIZE,
+                Some(GBufferView::Albedo),
+            );
+            let gbuffer = renderer
+                .gbuffer()
+                .expect("a G-buffer view draws the G-buffer");
+            assert_eq!(gbuffer.size(), SIZE);
+
+            let albedo = read_texel(&render_context, &gbuffer.albedo, center);
+            assert_bytes_near(&albedo[..3], &gbuffer_albedo_bytes(), "albedo");
+            assert_eq!(albedo[3], 255, "a drawn surface marks its albedo alpha");
+            let corner = read_texel(&render_context, &gbuffer.albedo, (0, 0));
+            assert_eq!(corner, [0, 0, 0, 0], "nothing is drawn at the corner");
+
+            let [sx, sy, gx, gy] = halves(&read_texel(&render_context, &gbuffer.normals, center));
+            assert_near(
+                octahedral_decode(sx, sy),
+                turned_plane_normal(),
+                &format!("shading normal at {samples} samples"),
+            );
+            assert_near(
+                octahedral_decode(gx, gy),
+                turned_plane_normal(),
+                &format!("geometric normal at {samples} samples"),
+            );
+
+            let surface = read_texel(&render_context, &gbuffer.material, center);
+            assert_bytes_near(
+                &surface[..3],
+                &[64, 128, 191],
+                "metallic, roughness, occlusion",
+            );
+
+            let [r, g, b, _] = halves(&read_texel(&render_context, &gbuffer.emissive, center));
+            assert_near(vec3(r, g, b), vec3(2.0, 1.0, 0.0), "emission");
+        }
+    }
+
+    #[test]
+    fn a_normal_map_bends_the_gbuffer_shading_normal_but_not_the_geometric_normal() {
+        const SIZE: (u32, u32) = (32, 32);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        // A tangent-space normal along the tangent, at half scale.
+        let material = pbr_material(&read_only_context, "test/gbuffer_normal_map");
+        {
+            let mut material = material.write();
+            assert!(material.set_variable(
+                "normal_texture",
+                ShaderVariableValue::Texture2D(MaterialTexture::Color([1.0, 0.5, 1.0, 1.0]))
+            ));
+            assert!(material.set_variable("normal_scale", ShaderVariableValue::Float(0.5)));
+        }
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        spawn_mesh(&mut builder, "plane", &cube, &material, Vec3::zeros());
+        let scene = builder.finish();
+        let renderer = render_gbuffer(
+            &read_only_context,
+            &scene,
+            1,
+            SIZE,
+            Some(GBufferView::Normals),
+        );
+        let gbuffer = renderer.gbuffer().expect("the G-buffer is drawn");
+        let [sx, sy, gx, gy] = halves(&read_texel(
+            &render_context,
+            &gbuffer.normals,
+            (SIZE.0 / 2, SIZE.1 / 2),
+        ));
+        let geometric = octahedral_decode(gx, gy);
+        let shading = octahedral_decode(sx, sy);
+        assert_near(geometric, vec3(0.0, 0.0, -1.0), "geometric normal");
+        // The texel (1, 0.5, 1) is the tangent plus the normal; at half
+        // scale the normal tilts atan(0.5) towards the tangent, which lies
+        // in the face's plane.
+        let tilt = shading.xy().norm().atan2(-shading.z).to_degrees();
+        assert!(
+            (tilt - 0.5f32.atan().to_degrees()).abs() < 1.0,
+            "the shading normal tilts atan(0.5) along the tangent, got {shading:?}"
+        );
+    }
+
+    #[test]
+    fn the_gbuffer_discards_the_fragments_an_alpha_cutoff_discards() {
+        const SIZE: (u32, u32) = (32, 32);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let behind = gbuffer_material(&read_only_context, "test/gbuffer_behind");
+        let masked = pbr_material(&read_only_context, "test/gbuffer_masked");
+        {
+            let mut masked = masked.write();
+            assert!(masked.set_variable(
+                "base_color_factor",
+                ShaderVariableValue::Color([0.0, 1.0, 0.0, 0.25])
+            ));
+            assert!(masked.set_variable("alpha_cutoff", ShaderVariableValue::Float(0.5)));
+        }
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        spawn_mesh(&mut builder, "behind", &cube, &behind, vec3(0.0, 0.0, 3.0));
+        spawn_mesh(&mut builder, "masked", &cube, &masked, Vec3::zeros());
+        let scene = builder.finish();
+        let renderer = render_gbuffer(
+            &read_only_context,
+            &scene,
+            1,
+            SIZE,
+            Some(GBufferView::Albedo),
+        );
+        let gbuffer = renderer.gbuffer().expect("the G-buffer is drawn");
+        let albedo = read_texel(&render_context, &gbuffer.albedo, (SIZE.0 / 2, SIZE.1 / 2));
+        assert_bytes_near(
+            &albedo[..3],
+            &gbuffer_albedo_bytes(),
+            "the discarded box shows the box behind it",
+        );
+    }
+
+    #[test]
+    fn a_skinned_mesh_writes_its_posed_normal_into_the_gbuffer() {
+        const SIZE: (u32, u32) = (32, 32);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        let mesh = skinned_cube(
+            &read_only_context,
+            "test/gbuffer_skinned",
+            "hip",
+            Mat4::identity(),
+        );
+        let material = gbuffer_material(&read_only_context, "test/gbuffer_skinned_material");
+        // No animator and no palette: the rest pose, in which the bone's
+        // turn poses the cube.
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        spawn_skinned_model(
+            &mut builder,
+            &mesh,
+            &material,
+            Mat4::identity(),
+            glm::rotation(30f32.to_radians(), &Vec3::y()),
+            Vec::new(),
+        );
+        let scene = builder.finish();
+        let renderer = render_gbuffer(
+            &read_only_context,
+            &scene,
+            1,
+            SIZE,
+            Some(GBufferView::Normals),
+        );
+        let gbuffer = renderer.gbuffer().expect("the G-buffer is drawn");
+        let [sx, sy, gx, gy] = halves(&read_texel(
+            &render_context,
+            &gbuffer.normals,
+            (SIZE.0 / 2, SIZE.1 / 2),
+        ));
+        assert_near(
+            octahedral_decode(sx, sy),
+            turned_plane_normal(),
+            "shading normal",
+        );
+        assert_near(
+            octahedral_decode(gx, gy),
+            turned_plane_normal(),
+            "geometric normal",
+        );
+    }
+
+    #[test]
+    fn the_geometry_pass_runs_only_while_a_gbuffer_view_is_selected() {
+        const SIZE: (u32, u32) = (16, 16);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let material = pbr_material(&read_only_context, "test/gbuffer_toggle");
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        spawn_mesh(&mut builder, "box", &cube, &material, Vec3::zeros());
+        let scene = builder.finish();
+        let (camera, transform) = front_camera(1.0, 5.0);
+        let mut renderer = renderer(&read_only_context, 1, SIZE);
+        let frame = |renderer: &mut SceneRenderer| {
+            renderer.render_scene_base(&camera, &transform, &scene, None, None);
+            renderer.finalize_scene();
+            (
+                renderer.gbuffer().is_some(),
+                renderer.gbuffer_drawn_instances(),
+            )
+        };
+
+        assert_eq!(
+            frame(&mut renderer),
+            (false, 0),
+            "the forward frame draws no G-buffer"
+        );
+        assert!(
+            !renderer.last_post_process_plan().passes.is_empty(),
+            "the lit image is post-processed"
+        );
+        renderer.options_mut().gbuffer_view = Some(GBufferView::Normals);
+        assert_eq!(
+            frame(&mut renderer),
+            (true, 1),
+            "a G-buffer view draws the box"
+        );
+        renderer.resize_textures(24, 20);
+        assert_eq!(
+            renderer.gbuffer().map(GBufferTargets::size),
+            Some((24, 20)),
+            "the G-buffer resizes with the scene textures"
+        );
+        renderer.options_mut().gbuffer_view = None;
+        assert_eq!(frame(&mut renderer), (false, 0), "the G-buffer is released");
+    }
+
+    #[test]
+    fn the_scene_view_shows_each_gbuffer_target_in_place_of_the_lit_image() {
+        const SIZE: (u32, u32) = (32, 32);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let material = gbuffer_material(&read_only_context, "test/gbuffer_view");
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        spawn_turned_plane(&mut builder, &cube, &material);
+        let scene = builder.finish();
+        let normal = turned_plane_normal().map(|axis| (axis * 0.5 + 0.5) * 255.0);
+        // Reinhard of the emission (2, 1, 0).
+        let emission = [2.0 / 3.0, 0.5, 0.0].map(linear_to_srgb);
+        for (view, expected) in [
+            (GBufferView::Albedo, gbuffer_albedo_bytes()),
+            (
+                GBufferView::Normals,
+                [normal.x, normal.y, normal.z].map(|value| value.round() as u8),
+            ),
+            (GBufferView::Material, [64, 128, 191]),
+            (GBufferView::Emissive, emission),
+        ] {
+            let renderer = render_gbuffer(&read_only_context, &scene, 1, SIZE, Some(view));
+            assert!(
+                renderer.last_post_process_plan().passes.is_empty(),
+                "{view:?}: the view replaces the post-processing chain"
+            );
+            let image = read_scene_texture(&renderer, &render_context);
+            assert_bytes_near(
+                &image.get_pixel(SIZE.0 / 2, SIZE.1 / 2).0[..3],
+                &expected,
+                view.label(),
+            );
+            assert_eq!(
+                image.get_pixel(0, 0).0,
+                [0, 0, 0, 255],
+                "{view:?}: where nothing is drawn the view is black"
+            );
+        }
     }
 }
 

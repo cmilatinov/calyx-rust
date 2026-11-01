@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "52a86bc6-e3cc-22e9-076d-c546238dd6b8",
+    "name": "shaders/mesh/gbuffer",
+    "display_name": "gbuffer",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}
