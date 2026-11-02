@@ -477,3 +477,19 @@ fn a_local_volume_and_its_effects_save_and_load_with_the_scene() {
         }
     );
 }
+
+#[test]
+fn a_point_inside_a_scaled_box_without_a_blend_distance_gets_the_full_weight() {
+    // The round trip through the object's transform must not push an inside
+    // point a rounding error outside the box.
+    let volume = box_volume(vec3(5.0, 5.0, 5.0), 0.0, 0.7);
+    let transform = Transform::from_components(
+        Vec3::zeros(),
+        UnitQuaternion::identity(),
+        vec3(3.0, 1.0, 1.0),
+    );
+    for x in [0.1, 0.7, 1.3, -4.9, 14.9] {
+        let factor = volume.blend_factor(&transform, &vec3(x, 0.2, -0.3));
+        assert_eq!(factor, 0.7, "at x = {x}");
+    }
+}

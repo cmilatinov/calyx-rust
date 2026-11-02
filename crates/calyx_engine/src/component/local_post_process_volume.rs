@@ -101,6 +101,16 @@ impl ComponentLocalPostProcessVolume {
                 // so the nearest point is the local point clamped to the box.
                 let local = transform.inverse_transform_position(point);
                 let half_extents = half_extents.abs();
+                // Inside is decided in local space: the round trip back to
+                // world space can leave an inside point a rounding error away
+                // from itself.
+                if local
+                    .iter()
+                    .zip(half_extents.iter())
+                    .all(|(p, h)| p.abs() <= *h)
+                {
+                    return 0.0;
+                }
                 let nearest = vec3(
                     local.x.clamp(-half_extents.x, half_extents.x),
                     local.y.clamp(-half_extents.y, half_extents.y),
