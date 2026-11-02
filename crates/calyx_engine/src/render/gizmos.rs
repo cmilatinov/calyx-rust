@@ -22,6 +22,7 @@ pub struct Gizmos<'a> {
     pub(crate) camera: &'a Camera,
     pub(crate) camera_transform: &'a Transform,
     pub(crate) viewport_size: [f32; 2],
+    pub(crate) selected_object: Option<uuid::Uuid>,
     pub(crate) object_id: u32,
     pub(crate) color: Vec4,
     pub(crate) opacity: f32,
@@ -34,6 +35,12 @@ pub struct Gizmos<'a> {
 }
 
 impl Gizmos<'_> {
+    /// The id of the game object selected in the editor, if any, for gizmos
+    /// that only draw while their object, or one related to it, is selected.
+    pub fn selected_object(&self) -> Option<uuid::Uuid> {
+        self.selected_object
+    }
+
     /// Emits a wireframe sphere centered at `center`.
     pub fn wire_sphere(&mut self, center: &Vec3, radius: f32) {
         let translation = glm::translate(&Mat4::identity(), center);
@@ -320,6 +327,7 @@ mod tests {
             camera: &camera,
             camera_transform: &camera_transform,
             viewport_size: [1920.0, 1080.0],
+            selected_object: None,
             object_id: 0,
             color: vec4(1.0, 1.0, 1.0, 1.0),
             opacity: 1.0,
@@ -358,6 +366,7 @@ mod tests {
             camera: &camera,
             camera_transform: &camera_transform,
             viewport_size: [1920.0, 1080.0],
+            selected_object: None,
             object_id: 17,
             color: vec4(1.0, 1.0, 1.0, 1.0),
             opacity: 1.0,
@@ -390,6 +399,7 @@ mod tests {
             camera: &camera,
             camera_transform: &camera_transform,
             viewport_size: [1920.0, 1080.0],
+            selected_object: None,
             object_id: 0,
             color: vec4(1.0, 1.0, 1.0, 1.0),
             opacity: 1.0,

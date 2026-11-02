@@ -598,6 +598,7 @@ impl EditorApp {
                         GameContext {
                             scenes, particles, ..
                         },
+                    selection,
                     scene_renderer,
                     game_renderer,
                     game_size,
@@ -621,6 +622,9 @@ impl EditorApp {
         prefab_mode.dress_scene_view(scene_renderer.options_mut());
         scene_renderer.set_hovered_game_object(None);
         scene_renderer.set_selected_game_object(None);
+        // Gizmos that only draw for the selection, such as a camera path's,
+        // see it while the scene renders; the outline gets it afterwards.
+        scene_renderer.set_gizmo_selected_object(selection.first(SelectionType::GameObject));
 
         let scene = scenes.simulation_scene();
         let particles = Some(&*particles);

@@ -453,6 +453,14 @@ impl SceneRenderer {
         self.hovered_game_object = hovered_game_object;
     }
 
+    /// Sets the game object component gizmos see as selected
+    /// ([`crate::render::Gizmos::selected_object`]) from the next render on.
+    /// It is separate from [`Self::set_selected_game_object`], which the
+    /// editor only sets after the scene renders, for the outline.
+    pub fn set_gizmo_selected_object(&mut self, selected: Option<Uuid>) {
+        self.gizmo_renderer.set_selected_object(selected);
+    }
+
     /// Sets the selected game object used for editor highlight overlays.
     pub fn set_selected_game_object(&mut self, selected_game_object: Option<Uuid>) {
         self.selected_game_object = selected_game_object;

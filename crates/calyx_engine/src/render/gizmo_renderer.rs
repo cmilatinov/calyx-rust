@@ -52,6 +52,9 @@ pub struct GizmoInstance {
 /// Collects and renders debug gizmos for scenes and physics.
 pub struct GizmoRenderer {
     component_registry: ReadOnlyRef<ComponentRegistry>,
+    /// The editor's selected game object, which components read through
+    /// [`Gizmos::selected_object`] to draw selection-only gizmos.
+    selected_object: Option<Uuid>,
 
     samples: u32,
     circle_list: Vec<GizmoInstance>,
@@ -216,6 +219,7 @@ impl GizmoRenderer {
             cube_instances: InstanceChunks::new("cube_instance_buffer"),
 
             component_registry: game.registries.components.clone(),
+            selected_object: None,
         })
     }
 
@@ -260,6 +264,11 @@ impl GizmoRenderer {
         self.icons_mesh.rebuild_mesh_data(device);
     }
 
+    /// Sets the selected game object the next frame's gizmos see.
+    pub fn set_selected_object(&mut self, selected_object: Option<Uuid>) {
+        self.selected_object = selected_object;
+    }
+
     /// Returns a gizmo command recorder for the current frame.
     pub fn gizmos<'a>(
         &'a mut self,
@@ -272,6 +281,7 @@ impl GizmoRenderer {
             camera,
             camera_transform,
             viewport_size,
+            selected_object: self.selected_object,
             object_id: 0,
             color: vec4(1.0, 1.0, 1.0, 1.0),
             opacity: 1.0,
