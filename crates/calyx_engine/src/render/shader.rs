@@ -84,9 +84,10 @@ pub struct Shader {
     /// [`Shader::create_bind_group`], with the names they bind in each.
     /// Carried across hot reloads.
     named_bindings: Mutex<BTreeMap<u32, BTreeSet<String>>>,
-    /// Groups below [`FIRST_MATERIAL_GROUP`] that bind a material's bind
-    /// group, recorded by [`Shader::shares_material_group`]. Carried across
-    /// hot reloads.
+    /// Groups that bind a material's bind group: those a material on this
+    /// shader fills, recorded by [`Shader::record_material_groups`], and
+    /// those a pass binds another shader's materials to, recorded by
+    /// [`Shader::shares_material_group`]. Carried across hot reloads.
     material_groups: Mutex<BTreeSet<u32>>,
 }
 
@@ -336,8 +337,9 @@ impl Shader {
     /// - an entry point `reloaded` lacks;
     /// - in a group renderers bind by name ([`Shader::create_bind_group`]), a
     ///   binding under a name they do not bind;
-    /// - in a material group ([`FIRST_MATERIAL_GROUP`] and later, or one
-    ///   recorded by [`Shader::shares_material_group`]), a binding of a kind a
+    /// - in a group recorded as a material group (see
+    ///   [`Shader::record_material_groups`] and
+    ///   [`Shader::shares_material_group`]), a binding of a kind a
     ///   material cannot fill;
     /// - in any other group, whose renderer binds fixed binding numbers, any
     ///   added, removed or changed binding.
@@ -395,7 +397,7 @@ impl Shader {
             }
             let before = live_bindings.get(key);
             let after = reloaded_bindings.get(key);
-            if group >= FIRST_MATERIAL_GROUP || material_groups.contains(&group) {
+            if material_groups.contains(&group) {
                 match after {
                     Some(entry)
                         if !Self::material_can_fill(entry)
@@ -603,6 +605,18 @@ impl Shader {
         }
     }
 
+    /// Records `groups` as groups a material fills, so a hot reload may
+    /// change their bindings to any a material fills: a material on the
+    /// shader follows it ([`crate::assets::material::Material::follow_shader`]).
+    /// A group no material or pass has been recorded for keeps its renderer's
+    /// fixed bindings.
+    pub(crate) fn record_material_groups(&self, groups: impl IntoIterator<Item = u32>) {
+        self.material_groups
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .extend(groups);
+    }
+
     /// Whether this shader's `group` declares exactly the bindings of
     /// `material_shader`'s `material_group`, so a bind group a material built
     /// for that one binds here too. A pass that binds materials of another
@@ -619,12 +633,7 @@ impl Shader {
         material_shader: &Shader,
         material_group: u32,
     ) -> bool {
-        if group < FIRST_MATERIAL_GROUP {
-            self.material_groups
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .insert(group);
-        }
+        self.record_material_groups([group]);
         let entries = |shader: &Shader, group: u32| {
             Self::bindings(&shader.bind_group_entries)
                 .into_iter()
@@ -2150,6 +2159,23 @@ fn fs_main() -> @location(0) vec4f {{
         write_and_reload(&context, &path, &pass_shader("", "0.5"));
         assert!(reload_error_messages(&context).is_empty());
         assert!(pass.read().source.contains("0.5"));
+
+        // A group the pass does not bind materials to stays its renderer's:
+        // the G-buffer renderer binds nothing at group 3.
+        write_and_reload(
+            &context,
+            &path,
+            &pass_shader(
+                "@group(3) @binding(0) var<uniform> extra: Tint;",
+                "extra.color",
+            ),
+        );
+        let errors = reload_error_messages(&context);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].contains("group 3 binding 0 `extra` was added"),
+            "{errors:?}"
+        );
 
         let texture = "@group(2) @binding(1) var tint_texture: texture_2d<f32>;\n\
                        @group(2) @binding(2) var tint_sampler: sampler;";

@@ -833,6 +833,11 @@ impl Material {
         self.update_entries(assets);
         self.create_buffers(assets);
         self.shader_layout_generation = self.shader_layout_generation(assets);
+        if let Some(shader) = self.shader.get_ref(&assets.registries) {
+            shader
+                .read()
+                .record_material_groups(self.bind_group_entries.keys().copied());
+        }
     }
 
     fn shader_layout_generation(&self, assets: &ReadOnlyAssetContext) -> Option<u64> {
