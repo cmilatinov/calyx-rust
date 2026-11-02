@@ -92,12 +92,15 @@ impl AssetRegistry {
             let Some(root) = self.owning_asset_root(&file) else {
                 continue;
             };
-            if let Err(err) = self.build_asset_meta(root, &file, &file.with_extension("meta")) {
-                log::warn!(
+            match self.build_asset_meta(root, &file, &file.with_extension("meta")) {
+                // Its create and write events came while it had no id, so
+                // they could not retry a failed load of the id it has now.
+                Ok(()) => self.clear_failed_background_load(&file),
+                Err(err) => log::warn!(
                     "Failed to build asset metadata for {}: {}",
                     file.display(),
                     err
-                );
+                ),
             }
         }
     }
@@ -130,6 +133,7 @@ impl AssetRegistry {
             match self.build_asset_meta(root, file, meta_path) {
                 Ok(()) => {
                     self.asset_data_mut().pending.remove(file);
+                    self.clear_failed_background_load(file);
                     log::debug!(
                         "Registered {} from its .meta {}",
                         file.display(),
@@ -515,6 +519,41 @@ mod tests {
         assert_eq!(resolved.ptr_id(), rekeyed.ptr_id());
         assert_eq!(held.read().text, "imported");
         assert_eq!(meta_id_on_disk(&meta_path), chosen);
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    /// A file deleted and recreated without a `.meta` registers only once
+    /// its window passes, after its create event; the failed background load
+    /// of its id is forgotten then, so the next poll retries.
+    #[test]
+    fn a_settled_file_retries_its_failed_background_load() {
+        let root = temp_asset_root("calyx-meta-settle-retry");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        let asset_path = root.join("level.cxscene");
+        std::fs::write(&asset_path, b"{}").expect("failed to write the scene");
+        registry.recv_notify_event(created(&asset_path));
+        settle(&registry);
+        let id = registry
+            .asset_id_from_path(&asset_path)
+            .expect("the file is registered");
+        registry.background_loads.lock().unwrap().insert(
+            id,
+            super::super::BackgroundLoadState::Failed(AssetError::LoadError.with_source("test")),
+        );
+
+        std::fs::remove_file(&asset_path).expect("failed to delete the scene");
+        registry.recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File))
+                .add_path(asset_path.clone()),
+        );
+        std::fs::write(&asset_path, b"{}").expect("failed to recreate the scene");
+        registry.recv_notify_event(created(&asset_path));
+        settle(&registry);
+
+        assert_eq!(registry.asset_id_from_path(&asset_path), Some(id));
+        assert!(!registry.background_loads.lock().unwrap().contains_key(&id));
         drop(registry);
         std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
