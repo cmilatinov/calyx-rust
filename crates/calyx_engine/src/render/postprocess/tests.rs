@@ -150,12 +150,6 @@ fn disabled_passes_and_passes_without_their_inputs_are_left_out() {
         name: "disabled",
         stage: PostProcessStage::Hdr,
         enabled: false,
-        inputs: PassInputs::empty(),
-    });
-    let normals = Box::new(StubPass {
-        name: "ssao",
-        stage: PostProcessStage::Hdr,
-        enabled: true,
         inputs: SceneInput::Normals.into(),
     });
     let velocity = Box::new(StubPass {
@@ -172,7 +166,6 @@ fn disabled_passes_and_passes_without_their_inputs_are_left_out() {
     });
     let passes: Vec<Box<dyn PostProcessPass>> = vec![
         disabled,
-        normals,
         velocity,
         depth,
         StubPass::boxed("tonemap", PostProcessStage::Tonemap),
@@ -185,25 +178,66 @@ fn disabled_passes_and_passes_without_their_inputs_are_left_out() {
             .iter()
             .map(|planned| planned.pass)
             .collect::<Vec<_>>(),
-        vec![3, 4]
+        vec![2, 3]
     );
     assert!(plan.depth, "the fog pass asked for depth");
+    assert!(
+        !plan.normals,
+        "only a disabled pass asked for normals, so the frame builds none"
+    );
     assert_eq!(
         plan.skipped,
-        vec![
-            PostProcessError::InputUnavailable {
-                pass: "ssao".into(),
-                input: SceneInput::Normals,
-            },
-            PostProcessError::InputUnavailable {
-                pass: "motion_blur".into(),
-                input: SceneInput::Velocity,
-            },
-        ]
+        vec![PostProcessError::InputUnavailable {
+            pass: "motion_blur".into(),
+            input: SceneInput::Velocity,
+        }]
     );
     assert_eq!(
         plan.skipped[0].to_string(),
-        "post-process pass `ssao` needs normals, which the renderer does not produce yet"
+        "post-process pass `motion_blur` needs velocity, which the renderer does not produce yet"
+    );
+}
+
+#[test]
+fn passes_that_read_gbuffer_normals_or_albedo_are_planned_with_them() {
+    let normals = Box::new(StubPass {
+        name: "ssao",
+        stage: PostProcessStage::Hdr,
+        enabled: true,
+        inputs: SceneInput::Normals.into(),
+    });
+    let albedo = Box::new(StubPass {
+        name: "albedo_tint",
+        stage: PostProcessStage::Hdr,
+        enabled: true,
+        inputs: SceneInput::Albedo.into(),
+    });
+    let passes: Vec<Box<dyn PostProcessPass>> = vec![
+        normals,
+        albedo,
+        StubPass::boxed("tonemap", PostProcessStage::Tonemap),
+    ];
+
+    let plan = ChainPlan::build(&passes, &Default::default());
+
+    assert_eq!(
+        plan.passes
+            .iter()
+            .map(|planned| planned.pass)
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2]
+    );
+    assert!(plan.skipped.is_empty(), "{:?}", plan.skipped);
+    assert!(plan.normals, "the ssao pass asked for normals");
+    assert!(plan.albedo, "the tint pass asked for albedo");
+    assert!(!plan.depth, "no pass asked for depth");
+
+    let tonemap_only: Vec<Box<dyn PostProcessPass>> =
+        vec![StubPass::boxed("tonemap", PostProcessStage::Tonemap)];
+    let plan = ChainPlan::build(&tonemap_only, &Default::default());
+    assert!(
+        !plan.normals && !plan.albedo,
+        "a frame without such a pass reads neither"
     );
 }
 
@@ -584,6 +618,8 @@ fn run_frame(
             output,
             depth,
             particle_depth: None,
+            normals: None,
+            albedo: None,
         },
     );
     render_context.queue().submit(Some(encoder.finish()));
@@ -1369,6 +1405,8 @@ fn run_fxaa(context: &crate::context::ReadOnlyAssetContext, image: &Image) -> Im
             output: &output,
             depth: &depth,
             particle_depth: None,
+            normals: None,
+            albedo: None,
         },
     );
     render_context.queue().submit(Some(encoder.finish()));

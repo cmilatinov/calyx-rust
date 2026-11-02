@@ -636,6 +636,8 @@ mod tests {
                 output: &output,
                 depth: &depth,
                 particle_depth: None,
+                normals: None,
+                albedo: None,
             },
         );
         assert_eq!(plan.passes.len(), 1, "bloom runs");
@@ -820,6 +822,8 @@ mod tests {
                 intermediates: 0,
                 depth: false,
                 particle_depth: false,
+                normals: false,
+                albedo: false,
             }
         );
         assert_eq!(renderer.post_process().pool().allocated(), 0);
@@ -854,6 +858,8 @@ mod tests {
                     output: &output,
                     depth: None,
                     particle_depth: None,
+                    normals: None,
+                    albedo: None,
                 },
             )
             .expect("the pass's shaders build");
@@ -947,6 +953,8 @@ mod tests {
                     output: &output,
                     depth: &depth,
                     particle_depth: None,
+                    normals: None,
+                    albedo: None,
                 },
             );
         };
