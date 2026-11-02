@@ -10,7 +10,7 @@ use crate::core::Ref;
 use crate::render::asset_render_state::LockedAssetRenderState;
 use crate::render::{
     CachedBindGroup, DrawBatch, MaterialBindGroups, PipelineOptions, RenderContext, RenderUtils,
-    SceneRendererError, Shader,
+    SceneRendererError, Shader, FIRST_MATERIAL_GROUP,
 };
 use egui_wgpu::wgpu;
 use std::sync::Arc;
@@ -278,6 +278,12 @@ impl GBufferRenderer {
         let shader = self.shader.read();
         let pipeline = shader.pipeline(&options);
         let layout = shader.bind_group_layouts[0].clone();
+        // A hot reload of this shader or the PBR one can leave group 2 apart
+        // from the materials' group until the other follows; the materials
+        // are skipped meanwhile.
+        let binds_materials = assets
+            .shader(self.pbr_shader_id)
+            .is_some_and(|pbr| shader.shares_material_group(2, pbr, FIRST_MATERIAL_GROUP));
         drop(shader);
         let camera_bind_group = self
             .camera_bind_group
@@ -338,7 +344,9 @@ impl GBufferRenderer {
         } else {
             Box::new(draw_list.iter().rev())
         };
-        for batch in batches.filter(|batch| batch.shader_id == self.pbr_shader_id) {
+        for batch in
+            batches.filter(|batch| binds_materials && batch.shader_id == self.pbr_shader_id)
+        {
             let Some(material_group) = material_bind_groups
                 .get(&batch.mat_id)
                 .and_then(|groups| groups.get(&3))

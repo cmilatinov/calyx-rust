@@ -7,7 +7,10 @@ use egui_wgpu::wgpu;
 
 pub struct GridRenderer {
     shader: Ref<Shader>,
-    camera_bind_group: wgpu::BindGroup,
+    camera_uniform_buffer: wgpu::Buffer,
+    /// The camera bind group with the [`Shader::layout_generation`] it was
+    /// built for, or `None` for a layout it could not be built for.
+    camera_bind_group: Option<(u64, Option<wgpu::BindGroup>)>,
 }
 
 impl GridRenderer {
@@ -16,26 +19,37 @@ impl GridRenderer {
         camera_uniform_buffer: &wgpu::Buffer,
     ) -> Result<Self, SceneRendererError> {
         let shader = SceneRendererError::load::<Shader>(context, "shaders/editor/grid")?;
-        let camera_bind_group =
-            context
-                .render_context
-                .device()
-                .create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("camera_bind_group"),
-                    layout: &shader.read().bind_group_layouts[0],
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: camera_uniform_buffer.as_entire_binding(),
-                    }],
-                });
-        Ok(Self {
+        let mut renderer = Self {
             shader,
-            camera_bind_group,
-        })
+            camera_uniform_buffer: camera_uniform_buffer.clone(),
+            camera_bind_group: None,
+        };
+        // Built now, so the shader knows from the start which resource its
+        // renderer binds and a hot reload may renumber it.
+        renderer.camera_bind_group();
+        Ok(renderer)
     }
 
-    pub fn camera_bind_group(&self) -> &wgpu::BindGroup {
-        &self.camera_bind_group
+    /// The camera bind group for the shader's current layout, rebuilt after a
+    /// hot reload changes it, or `None` when it cannot be built.
+    pub fn camera_bind_group(&mut self) -> Option<wgpu::BindGroup> {
+        let shader = self.shader.read();
+        let generation = shader.layout_generation();
+        if self
+            .camera_bind_group
+            .as_ref()
+            .is_none_or(|(built, _)| *built != generation)
+        {
+            let bind_group = shader.create_bind_group(
+                0,
+                Some("camera_bind_group"),
+                &[("camera", self.camera_uniform_buffer.as_entire_binding())],
+            );
+            self.camera_bind_group = Some((generation, bind_group));
+        }
+        self.camera_bind_group
+            .as_ref()
+            .and_then(|(_, bind_group)| bind_group.clone())
     }
 }
 
@@ -59,11 +73,14 @@ impl OverlayPass for GridRenderer {
                 ..RenderUtils::depth_default(wgpu::TextureFormat::Depth32Float)
             })
             .build();
+        let Some(camera_bind_group) = self.camera_bind_group() else {
+            return;
+        };
         let Some(pipeline) = self.shader.read().pipeline(&options) else {
             return;
         };
         render_pass.set_pipeline(&pipeline);
-        render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+        render_pass.set_bind_group(0, &camera_bind_group, &[]);
         RenderUtils::draw_fullscreen(render_pass);
     }
 }
@@ -86,9 +103,9 @@ mod tests {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let renderer = GridRenderer::new(&read_only_context, &camera_uniform_buffer)
+        let mut renderer = GridRenderer::new(&read_only_context, &camera_uniform_buffer)
             .expect("grid renderer should load its shader");
 
-        let _ = renderer.camera_bind_group();
+        assert!(renderer.camera_bind_group().is_some());
     }
 }

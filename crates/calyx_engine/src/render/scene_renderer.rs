@@ -614,7 +614,7 @@ impl SceneRenderer {
             &self.default_assets.cube,
             &self.scene_texture_msaa,
             &self.scene_depth_texture,
-            self.grid_renderer.camera_bind_group(),
+            &self.camera_uniform_buffer,
             self.options.samples,
         );
         self.particle_renderer.render(
@@ -1034,6 +1034,7 @@ impl SceneRenderer {
         } = &mut self.assets;
         for material in materials.values() {
             let mut material = material.write();
+            material.follow_shader(&self.asset_context);
             material.load_buffers(render_context);
             material.collect_textures(
                 &self.asset_context,

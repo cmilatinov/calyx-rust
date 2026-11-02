@@ -11,7 +11,7 @@ use crate::assets::texture::{Texture, TextureColorSpace};
 use crate::assets::{Asset, AssetId};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
-use crate::render::{LockedAssetRenderState, RenderContext, Shader};
+use crate::render::{LockedAssetRenderState, RenderContext, Shader, FIRST_MATERIAL_GROUP};
 use crate::utils::TypeUuid;
 use egui_wgpu::wgpu;
 use naga::{ImageDimension, Scalar, ScalarKind, TypeInner, VectorSize};
@@ -204,6 +204,10 @@ pub struct Material {
     #[serde(skip)]
     /// GPU buffers created for buffer-backed shader variables.
     pub buffers: HashMap<(u32, u32), wgpu::Buffer>,
+    /// The [`Shader::layout_generation`] the variables, bind-group entries and buffers were
+    /// built for. [`Material::follow_shader`] rebuilds them when the shader's differs.
+    #[serde(skip)]
+    shader_layout_generation: Option<u64>,
 }
 
 /// Cached metadata for one bind-group entry.
@@ -217,6 +221,8 @@ pub struct BindGroupEntry {
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct MaterialBindGroupCacheKey {
     shader_id: AssetId,
+    /// The shader layouts the bind groups are built for.
+    shader_layout_generation: Option<u64>,
     entries: Vec<MaterialBindGroupCacheEntry>,
 }
 
@@ -305,6 +311,7 @@ impl Material {
             texture_color_spaces: Default::default(),
             bind_group_entries: Default::default(),
             buffers: Default::default(),
+            shader_layout_generation: None,
         };
         material.init(assets);
         material
@@ -386,7 +393,7 @@ impl Material {
         for (_, variable) in module.global_variables.iter() {
             if let Some(binding) = &variable.binding {
                 let ty = &module.types[variable.ty];
-                if binding.group >= 3 {
+                if binding.group >= FIRST_MATERIAL_GROUP {
                     Self::shader_variable(
                         module,
                         ty,
@@ -399,6 +406,30 @@ impl Material {
             }
         }
         variables
+    }
+
+    /// Whether a material on a shader of `module` has a variable for `group` `binding`, so it
+    /// can fill that binding: a uniform of a scalar, vector or 4x4 matrix, or a struct with at
+    /// least one of those, a 2D texture or a sampler.
+    /// Unlike the variables a material takes, which start at [`FIRST_MATERIAL_GROUP`], `group`
+    /// may be any group, such as a pass's group that binds a material's bind group.
+    pub(crate) fn reflects_binding(module: &naga::Module, group: u32, binding: u32) -> bool {
+        let mut variables = Vec::new();
+        for (_, variable) in module.global_variables.iter() {
+            if let Some(resource) = &variable.binding {
+                if (resource.group, resource.binding) == (group, binding) {
+                    Self::shader_variable(
+                        module,
+                        &module.types[variable.ty],
+                        resource,
+                        variable.name.clone().unwrap_or_default(),
+                        None,
+                        &mut variables,
+                    );
+                }
+            }
+        }
+        !variables.is_empty()
     }
 
     /// Adds each variable the shader declares that the material lacks, with its reflected
@@ -552,7 +583,7 @@ impl Material {
                     *group,
                     device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: None,
-                        layout: &shader.bind_group_layouts[*group as usize],
+                        layout: shader.group_layout(*group)?,
                         entries: entries.as_slice(),
                     }),
                 ))
@@ -608,6 +639,7 @@ impl Material {
 
         MaterialBindGroupCacheKey {
             shader_id: self.shader.id(),
+            shader_layout_generation: self.shader_layout_generation,
             entries,
         }
     }
@@ -762,7 +794,8 @@ impl Material {
                         ty,
                         binding,
                         member.name.clone().unwrap_or_default(),
-                        Some(member.offset),
+                        // A nested struct's members sit at its own offset plus theirs.
+                        Some(offset.unwrap_or_default() + member.offset),
                         variables,
                     );
                 }
@@ -799,6 +832,51 @@ impl Material {
         self.rebuild_variable_indices();
         self.update_entries(assets);
         self.create_buffers(assets);
+        self.shader_layout_generation = self.shader_layout_generation(assets);
+    }
+
+    fn shader_layout_generation(&self, assets: &ReadOnlyAssetContext) -> Option<u64> {
+        let shader = self.shader.get_ref(&assets.registries)?;
+        let generation = shader.read().layout_generation();
+        Some(generation)
+    }
+
+    /// Follows a hot reload that changed the layout of the material's shader: takes the
+    /// shader's variables as it now reflects them, each with the value the material held under
+    /// the same name for the same kind of value, wherever the shader now binds it, or else its
+    /// reflected default, and rebuilds the bind-group entries and buffers for the new layout. A
+    /// variable the shader no longer declares is dropped. Does nothing while the shader's
+    /// [`Shader::layout_generation`] is the one the material was built for.
+    pub(crate) fn follow_shader(&mut self, assets: &ReadOnlyAssetContext) {
+        let generation = self.shader_layout_generation(assets);
+        if generation == self.shader_layout_generation {
+            return;
+        }
+        if let Some(shader) = self.shader.get_ref(&assets.registries) {
+            let mut previous = std::mem::take(&mut self.variables);
+            self.variables = Self::reflect_variables(&shader.read().module)
+                .into_iter()
+                .map(|mut variable| {
+                    let same_kind = |other: &ShaderVariable| {
+                        other.name == variable.name
+                            && std::mem::discriminant(&other.value)
+                                == std::mem::discriminant(&variable.value)
+                    };
+                    // Two structs may name a member alike: the one at the same slot first.
+                    let kept = previous
+                        .iter()
+                        .position(|other| same_kind(other) && *other == variable)
+                        .or_else(|| previous.iter().position(same_kind));
+                    if let Some(index) = kept {
+                        variable.value = previous.swap_remove(index).value;
+                    }
+                    variable
+                })
+                .collect();
+        }
+        self.bind_group_entries.clear();
+        self.buffers.clear();
+        self.init(assets);
     }
 
     fn update_entries(&mut self, context: &ReadOnlyAssetContext) {
@@ -826,8 +904,11 @@ impl Material {
                     .get_mut(&binding.group)
                     .and_then(|e| e.get_mut(&binding.binding))
                 {
-                    if let TypeInner::Struct { span, .. } = &ty.inner {
-                        entry.size = Some(*span);
+                    if let BindingType::Buffer = entry.ty {
+                        // A uniform's whole type, a struct or a lone scalar, vector or matrix,
+                        // rounded up to the 16 bytes uniform buffers are laid out in.
+                        entry.size =
+                            Some(ty.inner.size(shader.module.to_ctx()).next_multiple_of(16));
                     }
                 }
             }
@@ -888,6 +969,7 @@ impl From<(&ReadOnlyAssetContext, MaterialData)> for Material {
             texture_color_spaces: Default::default(),
             bind_group_entries: Default::default(),
             buffers: Default::default(),
+            shader_layout_generation: None,
         };
         value.init(assets);
         value
