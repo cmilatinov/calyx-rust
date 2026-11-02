@@ -397,6 +397,15 @@ impl Shader {
                 }
             }
         }
+        // The passes that bind a material group always bind it and skip a
+        // batch whose material has none, so the group must stay.
+        for group in &material_groups {
+            if live.group_layout(*group).is_some() && reloaded.group_layout(*group).is_none() {
+                return Some(format!(
+                    "group {group} no longer declares any binding, but materials bind it"
+                ));
+            }
+        }
         let live_bindings = Self::bindings(&live.bind_group_entries);
         let reloaded_bindings = Self::bindings(&reloaded.bind_group_entries);
         let keys = live_bindings
@@ -2116,6 +2125,25 @@ fn fs_main() -> @location(0) vec4f {{
         assert_eq!(errors.len(), 1, "{errors:?}");
         assert!(
             errors[0].contains("group 3 binding 1 `extra`"),
+            "{errors:?}"
+        );
+
+        // Dropping the whole material group is refused: the passes that
+        // bind it would skip every batch.
+        write_and_reload(
+            &context,
+            &path,
+            &material_shader("", "")
+                .replace(
+                    "@group(3) @binding(0) var<uniform> material: MaterialProperties;",
+                    "",
+                )
+                .replace(" * material.base_color", ""),
+        );
+        let errors = reload_error_messages(&context);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].contains("group 3 no longer declares"),
             "{errors:?}"
         );
 
