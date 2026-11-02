@@ -1,6 +1,6 @@
 use approx::AbsDiffEq;
 use mint::Vector2;
-use nalgebra::{Matrix3, UnitQuaternion};
+use nalgebra::{Matrix3, Rotation3, UnitQuaternion};
 use nalgebra_glm as glm;
 use nalgebra_glm::{vec3, Mat4, Vec3};
 
@@ -52,12 +52,13 @@ pub fn decompose_transform(
     }
     *scale = vec3(sx, sy, sz);
     let rotation_matrix = Matrix3::from_columns(&[x_axis, y_axis, z_axis]);
-    *rotation = UnitQuaternion::from_matrix_eps(
-        &rotation_matrix,
-        f32::default_epsilon(),
-        100,
-        UnitQuaternion::identity(),
-    );
+    // The iterative fit cannot leave its starting guess when the rotation is
+    // a half turn from it, so start from the direct conversion rather than
+    // the identity; the fit then only absorbs any shear left in the axes.
+    let guess =
+        UnitQuaternion::from_rotation_matrix(&Rotation3::from_matrix_unchecked(rotation_matrix));
+    *rotation =
+        UnitQuaternion::from_matrix_eps(&rotation_matrix, f32::default_epsilon(), 100, guess);
 }
 
 /// Converts a vertical field of view to a horizontal field of view for
@@ -113,6 +114,27 @@ mod tests {
         assert_abs_diff_eq!(out_scale, scale, epsilon = 1e-5);
         let dot = rot.quaternion().dot(out_rot.quaternion()).abs();
         assert_abs_diff_eq!(dot, 1.0, epsilon = 1e-5);
+    }
+
+    /// A half turn is as far from the identity as a rotation gets, so it is
+    /// the case an iterative fit started from the identity cannot leave.
+    #[test]
+    fn decompose_transform_keeps_a_half_turn() {
+        let pos = vec3(1.0f32, 2.0, 3.0);
+        let scale = vec3(3.0f32, 3.0, 3.0);
+        // Exact half turns about Y, X and Z, as a scene file stores them.
+        for (i, j, k) in [(0.0, 1.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0)] {
+            let rot = UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(0.0, i, j, k));
+            let mat = compose_transform(&pos, &rot, &scale);
+
+            let mut out_pos = Vec3::zeros();
+            let mut out_rot = UnitQuaternion::identity();
+            let mut out_scale = Vec3::zeros();
+            decompose_transform(&mat, &mut out_pos, &mut out_rot, &mut out_scale);
+
+            let dot = rot.quaternion().dot(out_rot.quaternion()).abs();
+            assert_abs_diff_eq!(dot, 1.0, epsilon = 1e-5);
+        }
     }
 
     #[test]
