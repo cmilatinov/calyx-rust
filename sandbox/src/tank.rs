@@ -2,8 +2,8 @@ use crate::combat::{record_kill, KillEvent};
 use crate::spawn::ComponentRespawnState;
 use calyx_engine::component::{
     ColliderShape, Component, ComponentCamera, ComponentCollider, ComponentEventContext,
-    ComponentID, ComponentMesh, ComponentRigidBody, ComponentTransform, ComponentUpdate,
-    ReflectComponent, ReflectComponentUpdate,
+    ComponentID, ComponentMesh, ComponentRef, ComponentRigidBody, ComponentTransform,
+    ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
 };
 use calyx_engine::core::TimeType;
 use calyx_engine::input::Input;
@@ -145,14 +145,12 @@ impl Component for ComponentProjectile {}
 
 impl ComponentUpdate for ComponentProjectile {
     fn update(
-        &self,
-        ComponentEventContext {
-            scene, game_object, ..
-        }: ComponentEventContext,
+        this: ComponentRef<Self>,
+        ComponentEventContext { scene, .. }: ComponentEventContext,
         resources: &mut ResourceMap,
         _input: &Input,
     ) {
-        update_projectile(scene, game_object, resources.time().delta_time());
+        update_projectile(scene, this.game_object(), resources.time().delta_time());
     }
 }
 
@@ -222,16 +220,14 @@ impl ComponentHealth {
 
 impl ComponentUpdate for ComponentTankController {
     fn update(
-        &self,
+        this: ComponentRef<Self>,
         ComponentEventContext {
             scene, game_object, ..
         }: ComponentEventContext,
         resources: &mut ResourceMap,
         input: &Input,
     ) {
-        let Some(mut controller) = scene
-            .read_component::<ComponentTankController, _, _>(game_object, |component| *component)
-        else {
+        let Some(mut controller) = this.read(scene, |component| *component) else {
             return;
         };
 
@@ -242,7 +238,7 @@ impl ComponentUpdate for ComponentTankController {
             .unwrap_or(false)
         {
             // A dead or respawning tank comes back at rest.
-            let _ = scene.write_component::<ComponentTankController, _>(game_object, |component| {
+            let _ = this.write(scene, |component| {
                 component.speed = 0.0;
             });
             return;
@@ -271,7 +267,7 @@ impl ComponentUpdate for ComponentTankController {
             aim_point,
         );
         update_shooting(scene, game_object, input, dt, &mut controller);
-        let _ = scene.write_component::<ComponentTankController, _>(game_object, |component| {
+        let _ = this.write(scene, |component| {
             component.fire_cooldown_remaining = controller.fire_cooldown_remaining;
             component.reload_remaining = controller.reload_remaining;
             component.ammo = controller.ammo;

@@ -1,5 +1,6 @@
 use calyx_engine::component::{
-    Component, ComponentEventContext, ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
+    Component, ComponentEventContext, ComponentRef, ComponentUpdate, ReflectComponent,
+    ReflectComponentUpdate,
 };
 use calyx_engine::input::Input;
 use calyx_engine::reflect::{Reflect, ReflectDefault};
@@ -161,14 +162,12 @@ impl ComponentGameState {
 
 impl ComponentUpdate for ComponentGameState {
     fn update(
-        &self,
-        ComponentEventContext {
-            scene, game_object, ..
-        }: ComponentEventContext,
+        this: ComponentRef<Self>,
+        ComponentEventContext { scene, .. }: ComponentEventContext,
         resources: &mut ResourceMap,
         _input: &Input,
     ) {
-        update_game_state(scene, game_object, resources.time().delta_time());
+        update_game_state(scene, this.game_object(), resources.time().delta_time());
     }
 }
 

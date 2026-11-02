@@ -771,7 +771,8 @@ mod tests {
     };
     use crate as calyx_engine;
     use crate::component::{
-        Component, ComponentEventContext, ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
+        Component, ComponentEventContext, ComponentRef, ComponentUpdate, ReflectComponent,
+        ReflectComponentUpdate,
     };
     use crate::context::GameContext;
     use crate::input::{ActionMap, InputBinding, PROJECT_ACTION_MAP_NAME};
@@ -798,9 +799,13 @@ mod tests {
     impl Component for TestInputComponent {}
 
     impl ComponentUpdate for TestInputComponent {
-        fn update(&self, _ctx: ComponentEventContext, resources: &mut ResourceMap, input: &Input) {
-            // The registry runs every update hook for every object, so a
-            // scene without the probe resource is another test's scene.
+        fn update(
+            _this: ComponentRef<Self>,
+            _ctx: ComponentEventContext,
+            resources: &mut ResourceMap,
+            input: &Input,
+        ) {
+            // A scene without the probe resource is another test's scene.
             let Some(probe) = resources.resource_mut::<InputProbe>() else {
                 return;
             };

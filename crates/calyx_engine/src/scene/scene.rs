@@ -985,9 +985,9 @@ impl Scene {
         let default_instance = meta.default();
         if self.bind_instance(game_object, component, default_instance) {
             // Call the registered reset if one exists for this component type.
-            if let Some(resetter) = component_registry.reset_component(type_uuid) {
+            if let Some(hook) = component_registry.reset_component(type_uuid) {
                 let assets = self.registries.clone();
-                resetter.reset(ComponentEventContext {
+                hook.reset(ComponentEventContext {
                     registries: &assets,
                     scene: self,
                     game_object,
@@ -1348,13 +1348,13 @@ impl Scene {
             .filter(|go| *go != self.root)
             .collect();
 
-        for (type_uuid, starter) in component_registry.components_with_start() {
+        for (type_uuid, hook) in component_registry.components_with_start() {
             let prototype = component_registry.component(type_uuid);
             for &game_object in &game_objects {
                 if !self.runs_hooks(game_object, prototype) {
                     continue;
                 }
-                starter.start(ComponentEventContext {
+                hook.start(ComponentEventContext {
                     registries: &registries,
                     scene: self,
                     game_object,
@@ -1378,21 +1378,21 @@ impl Scene {
         }
         let component_registry = registries.components.read();
 
-        // Collect once — each updater's read_component bails early for entities
-        // that don't have its component type. The root carries no behaviour.
+        // Collect once; each hook runs only on the objects holding its
+        // component. The root carries no behaviour.
         let game_objects: Vec<GameObject> = <Entity>::query()
             .iter(&self.world.0)
             .filter_map(|e| self.game_object_from_entity(*e))
             .filter(|go| *go != self.root)
             .collect();
 
-        for (type_uuid, updater) in component_registry.components_with_update() {
+        for (type_uuid, hook) in component_registry.components_with_update() {
             let prototype = component_registry.component(type_uuid);
             for &game_object in &game_objects {
                 if !self.runs_hooks(game_object, prototype) {
                     continue;
                 }
-                updater.update(
+                hook.update(
                     ComponentEventContext {
                         registries,
                         scene: self,

@@ -2,8 +2,8 @@
 mod tests {
     use crate as calyx_engine;
     use crate::component::{
-        Component, ComponentCamera, ComponentEventContext, ComponentID, ComponentStart,
-        ReflectComponent, ReflectComponentStart,
+        Component, ComponentCamera, ComponentEventContext, ComponentID, ComponentRef,
+        ComponentStart, ReflectComponent, ReflectComponentStart,
     };
     use crate::core::Ref;
     use crate::reflect::{Reflect, ReflectDefault};
@@ -32,13 +32,8 @@ mod tests {
     impl Component for StartCounter {}
 
     impl ComponentStart for StartCounter {
-        fn start(
-            &self,
-            ComponentEventContext {
-                scene, game_object, ..
-            }: ComponentEventContext,
-        ) {
-            let _ = scene.write_component::<StartCounter, _>(game_object, |counter| {
+        fn start(this: ComponentRef<Self>, ctx: ComponentEventContext) {
+            let _ = this.write(ctx.scene, |counter| {
                 counter.count += 1;
             });
         }

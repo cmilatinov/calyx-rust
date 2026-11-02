@@ -1,7 +1,7 @@
 use calyx_engine::assets::{material::Material, mesh::Mesh, AssetRef};
 use calyx_engine::component::{
     ColliderShape, Component, ComponentCollider, ComponentEventContext, ComponentID, ComponentMesh,
-    ComponentRigidBody, ComponentStart, ReflectComponent, ReflectComponentStart,
+    ComponentRef, ComponentRigidBody, ComponentStart, ReflectComponent, ReflectComponentStart,
 };
 use calyx_engine::math::Transform;
 use calyx_engine::reflect::{Reflect, ReflectDefault};
@@ -73,14 +73,12 @@ impl ComponentArena {
 
 impl ComponentStart for ComponentArena {
     fn start(
-        &self,
+        this: ComponentRef<Self>,
         ComponentEventContext {
             scene, game_object, ..
         }: ComponentEventContext,
     ) {
-        let Some(arena) =
-            scene.read_component::<ComponentArena, _, _>(game_object, |arena| arena.clone())
-        else {
+        let Some(arena) = this.read(scene, |arena| arena.clone()) else {
             return;
         };
         generate_arena(scene, game_object, &arena);

@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate as calyx_engine;
 use crate::component::{
-    Component, ComponentEventContext, ComponentHud, ComponentStart, ComponentUpdate,
+    Component, ComponentEventContext, ComponentHud, ComponentRef, ComponentStart, ComponentUpdate,
     ReflectComponent, ReflectComponentHud, ReflectComponentStart, ReflectComponentUpdate,
 };
 use crate::component::{
@@ -333,28 +333,31 @@ impl Component for SwitchableScript {
 }
 
 impl ComponentStart for SwitchableScript {
-    fn start(&self, ctx: ComponentEventContext) {
-        ctx.scene
-            .write_component::<SwitchableScript, _>(ctx.game_object, |script| script.starts += 1);
+    fn start(this: ComponentRef<Self>, ctx: ComponentEventContext) {
+        this.write(ctx.scene, |script| script.starts += 1);
     }
 }
 
 impl ComponentUpdate for SwitchableScript {
-    fn update(&self, ctx: ComponentEventContext, _resources: &mut ResourceMap, _input: &Input) {
-        ctx.scene
-            .write_component::<SwitchableScript, _>(ctx.game_object, |script| script.updates += 1);
+    fn update(
+        this: ComponentRef<Self>,
+        ctx: ComponentEventContext,
+        _resources: &mut ResourceMap,
+        _input: &Input,
+    ) {
+        this.write(ctx.scene, |script| script.updates += 1);
     }
 }
 
 impl ComponentHud for SwitchableScript {
     fn build_hud(
-        &self,
-        scene: &Scene,
-        game_object: GameObject,
+        _this: &Self,
+        _scene: &Scene,
+        _game_object: GameObject,
         ui: &mut UiArena,
         _viewport: UiRect,
     ) -> Option<UiNodeHandle> {
-        scene.read_component::<SwitchableScript, _, _>(game_object, |_| ui.text("script"))
+        Some(ui.text("script"))
     }
 }
 

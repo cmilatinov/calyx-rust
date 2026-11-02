@@ -1,8 +1,8 @@
 use crate::spawn::ComponentRespawnState;
 use crate::tank::{flatten_xz, spawn_round, yaw_rotation, ComponentProjectile};
 use calyx_engine::component::{
-    Component, ComponentEventContext, ComponentMesh, ComponentUpdate, ReflectComponent,
-    ReflectComponentUpdate,
+    Component, ComponentEventContext, ComponentMesh, ComponentRef, ComponentUpdate,
+    ReflectComponent, ReflectComponentUpdate,
 };
 use calyx_engine::input::Input;
 use calyx_engine::reflect::{Reflect, ReflectDefault};
@@ -52,14 +52,12 @@ impl Component for ComponentSentry {}
 
 impl ComponentUpdate for ComponentSentry {
     fn update(
-        &self,
-        ComponentEventContext {
-            scene, game_object, ..
-        }: ComponentEventContext,
+        this: ComponentRef<Self>,
+        ComponentEventContext { scene, .. }: ComponentEventContext,
         resources: &mut ResourceMap,
         _input: &Input,
     ) {
-        update_sentry(scene, game_object, resources.time().delta_time());
+        update_sentry(scene, this.game_object(), resources.time().delta_time());
     }
 }
 
