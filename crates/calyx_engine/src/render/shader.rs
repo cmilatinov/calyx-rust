@@ -14,12 +14,20 @@ use naga::front::wgsl::ParseError;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 /// Bind-group layout entries grouped by bind-group index.
 pub type BindGroupEntries = BTreeMap<u32, Vec<wgpu::BindGroupLayoutEntry>>;
 /// Ordered bind-group layouts created from shader reflection.
 pub type BindGroupLayouts = Vec<wgpu::BindGroupLayout>;
+
+/// The first bind group a material fills: [`crate::assets::material::Material`] reflects the
+/// bindings of this group and later ones into its variables and binds them itself.
+pub const FIRST_MATERIAL_GROUP: u32 = 3;
+
+/// Source of [`Shader::layout_generation`].
+static LAYOUT_GENERATIONS: AtomicU64 = AtomicU64::new(1);
 
 /// High-level shader pipeline kind.
 #[derive(PartialEq, Eq)]
@@ -69,6 +77,16 @@ pub struct Shader {
     previous_compute_pipelines: HashMap<String, ComputeKernel>,
     /// Parsed Naga module used for reflection.
     pub module: naga::Module,
+    /// See [`Shader::layout_generation`].
+    layout_generation: u64,
+    /// The groups renderers build bind groups for through
+    /// [`Shader::create_bind_group`], with the names they bind in each.
+    /// Carried across hot reloads.
+    named_bindings: Mutex<BTreeMap<u32, BTreeSet<String>>>,
+    /// Groups below [`FIRST_MATERIAL_GROUP`] that bind a material's bind
+    /// group, recorded by [`Shader::shares_material_group`]. Carried across
+    /// hot reloads.
+    material_groups: Mutex<BTreeSet<u32>>,
 }
 
 impl Asset for Shader {
@@ -186,25 +204,58 @@ impl Asset for Shader {
             previous_pipelines: HashMap::new(),
             previous_compute_pipelines: HashMap::new(),
             module,
+            layout_generation: LAYOUT_GENERATIONS.fetch_add(1, Ordering::Relaxed),
+            named_bindings: Default::default(),
+            material_groups: Default::default(),
         }))
     }
 
     /// Refuses a version that lacks an entry point the live shader has, or
-    /// whose bind-group entries differ from the live shader's: renderers
-    /// draw through the live entry points with bind groups built from the
-    /// live layouts. An accepted version keeps the live pipelines, for
-    /// options whose pipeline wgpu rejects in it.
+    /// whose bind groups its renderers cannot fill (see
+    /// [`Shader::incompatible_change`]).
+    ///
+    /// A version with the live bind-group entries keeps the live
+    /// [`Shader::layout_generation`], so bind groups built for the live
+    /// layouts stay valid, and keeps the live pipelines, for options whose
+    /// pipeline wgpu rejects in it. A version whose layout changed gets a new
+    /// generation, which tells renderers to rebuild their bind groups, and
+    /// keeps no pipeline of the live one: those take the old layouts.
     fn accept_reload(&mut self, previous: &Self) -> Result<(), AssetError> {
         if let Some(change) = Self::incompatible_change(previous, self) {
             return Err(AssetError::LoadError
                 .with_type(Self::asset_name())
                 .with_source(format!(
                     "{change}, so the reload is refused and shader {} keeps running; \
-                     a change to its entry points or bind-group layout takes effect \
-                     when the editor restarts",
+                     a change its renderers cannot follow takes effect when the editor \
+                     restarts",
                     previous.name
                 )));
         }
+        *self
+            .named_bindings
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner) = previous
+            .named_bindings
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        *self
+            .material_groups
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner) = previous
+            .material_groups
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if Self::bindings(&previous.bind_group_entries) != Self::bindings(&self.bind_group_entries)
+        {
+            log::info!(
+                "Shader {} reloaded with a new bind-group layout; its bind groups are rebuilt",
+                self.name
+            );
+            return Ok(());
+        }
+        self.layout_generation = previous.layout_generation;
         let pipelines = previous
             .pipelines
             .lock()
@@ -278,8 +329,19 @@ impl Drop for ValidationScope<'_> {
 
 impl Shader {
     /// The first difference between `live` and `reloaded` that a running
-    /// renderer cannot follow: an entry point `reloaded` lacks, or a changed
-    /// bind-group entry.
+    /// renderer cannot follow, naming the binding:
+    ///
+    /// - an entry point `reloaded` lacks;
+    /// - in a group renderers bind by name ([`Shader::create_bind_group`]), a
+    ///   binding under a name they do not bind;
+    /// - in a material group ([`FIRST_MATERIAL_GROUP`] and later, or one
+    ///   recorded by [`Shader::shares_material_group`]), a binding of a kind a
+    ///   material cannot fill;
+    /// - in any other group, whose renderer binds fixed binding numbers, any
+    ///   added, removed or changed binding.
+    ///
+    /// Every other layout change is one the renderers follow by rebuilding
+    /// their bind groups.
     fn incompatible_change(live: &Self, reloaded: &Self) -> Option<String> {
         for entry_point in &live.module.entry_points {
             let kept =
@@ -293,30 +355,236 @@ impl Shader {
                 ));
             }
         }
-        let bindings = |groups: &BindGroupEntries| {
-            groups
-                .iter()
-                .flat_map(|(group, entries)| {
-                    entries
-                        .iter()
-                        .map(move |entry| ((*group, entry.binding), *entry))
-                })
-                .collect::<BTreeMap<_, _>>()
-        };
-        let live = bindings(&live.bind_group_entries);
-        let reloaded = bindings(&reloaded.bind_group_entries);
-        let keys = live.keys().chain(reloaded.keys()).collect::<BTreeSet<_>>();
+        let named = live
+            .named_bindings
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let material_groups = live
+            .material_groups
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        for (group, names) in &named {
+            for (binding, name) in reloaded.binding_names(*group) {
+                if !names.contains(name) {
+                    return Some(format!(
+                        "group {group} binding {binding} `{name}` is not a resource its \
+                         renderer binds ({})",
+                        names
+                            .iter()
+                            .map(|name| format!("`{name}`"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+            }
+        }
+        let live_bindings = Self::bindings(&live.bind_group_entries);
+        let reloaded_bindings = Self::bindings(&reloaded.bind_group_entries);
+        let keys = live_bindings
+            .keys()
+            .chain(reloaded_bindings.keys())
+            .collect::<BTreeSet<_>>();
         for key in keys {
-            let change = match (live.get(key), reloaded.get(key)) {
-                (Some(_), None) => "was removed",
-                (None, Some(_)) => "was added",
-                (Some(before), Some(after)) if before != after => "changed",
+            let (group, binding) = *key;
+            if named.contains_key(&group) {
+                continue;
+            }
+            let before = live_bindings.get(key);
+            let after = reloaded_bindings.get(key);
+            if group >= FIRST_MATERIAL_GROUP || material_groups.contains(&group) {
+                match after {
+                    Some(entry) if !Self::material_can_fill(entry) => {
+                        return Some(format!(
+                            "group {group} binding {binding} `{}` is a {:?}, which a \
+                             material cannot fill",
+                            reloaded.binding_name(group, binding),
+                            entry.ty
+                        ));
+                    }
+                    _ => continue,
+                }
+            }
+            let (change, shader) = match (before, after) {
+                (Some(_), None) => ("was removed", live),
+                (None, Some(_)) => ("was added", reloaded),
+                (Some(before), Some(after)) if before != after => ("changed", reloaded),
                 _ => continue,
             };
-            let (group, binding) = key;
-            return Some(format!("group {group} binding {binding} {change}"));
+            return Some(format!(
+                "group {group} binding {binding} `{}` {change}",
+                shader.binding_name(group, binding)
+            ));
         }
         None
+    }
+
+    /// Every bind-group entry of `groups`, by group and binding.
+    fn bindings(groups: &BindGroupEntries) -> BTreeMap<(u32, u32), wgpu::BindGroupLayoutEntry> {
+        groups
+            .iter()
+            .flat_map(|(group, entries)| {
+                entries
+                    .iter()
+                    .map(move |entry| ((*group, entry.binding), *entry))
+            })
+            .collect()
+    }
+
+    /// Whether a material fills a binding of `entry`'s kind: a uniform
+    /// buffer, a filterable 2D float texture or a filtering sampler, the
+    /// kinds [`crate::assets::material::Material`] reflects.
+    fn material_can_fill(entry: &wgpu::BindGroupLayoutEntry) -> bool {
+        entry.count.is_none()
+            && matches!(
+                entry.ty,
+                wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    ..
+                } | wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                } | wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)
+            )
+    }
+
+    /// The binding number and variable name of each binding of `group`.
+    fn binding_names(&self, group: u32) -> impl Iterator<Item = (u32, &str)> {
+        self.module
+            .global_variables
+            .iter()
+            .filter_map(move |(_, variable)| {
+                let binding = variable.binding.as_ref()?;
+                (binding.group == group).then(|| {
+                    (
+                        binding.binding,
+                        variable.name.as_deref().unwrap_or_default(),
+                    )
+                })
+            })
+    }
+
+    /// The variable name of `group` `binding`, or an empty name.
+    fn binding_name(&self, group: u32, binding: u32) -> &str {
+        self.binding_names(group)
+            .find(|(other, _)| *other == binding)
+            .map_or("", |(_, name)| name)
+    }
+
+    /// Identifies this shader's bind-group layouts. A hot reload that keeps
+    /// every bind-group entry keeps it, and one that changes the layout
+    /// gives a new one, so a renderer that keys a cached bind group on it
+    /// rebuilds the group for the reloaded layout before its next draw.
+    pub fn layout_generation(&self) -> u64 {
+        self.layout_generation
+    }
+
+    /// The layout of bind group `group`, or `None` when the shader declares
+    /// no binding in it.
+    pub fn group_layout(&self, group: u32) -> Option<&wgpu::BindGroupLayout> {
+        let index = self
+            .bind_group_entries
+            .keys()
+            .position(|other| *other == group)?;
+        self.bind_group_layouts.get(index)
+    }
+
+    /// Builds a bind group for `group` from `resources`, each under the name
+    /// of the shader variable it binds to. Each binding the group declares
+    /// takes the resource of its variable's name, wherever the shader
+    /// numbers it, and a resource the group does not declare is left out.
+    ///
+    /// The names are recorded on the shader, so a hot reload may then
+    /// renumber, reorder, drop or bring back these bindings: the reload gets
+    /// a new [`Shader::layout_generation`], and a renderer that rebuilds on
+    /// it fills the new layout. A reload that declares a binding under any
+    /// other name is refused, naming it.
+    ///
+    /// Returns `None`, logging why, when the group has no layout, declares a
+    /// binding none of `resources` is named for, or wgpu rejects a resource
+    /// for its binding; the caller then skips its draw.
+    pub fn create_bind_group(
+        &self,
+        group: u32,
+        label: Option<&str>,
+        resources: &[(&str, wgpu::BindingResource<'_>)],
+    ) -> Option<wgpu::BindGroup> {
+        self.named_bindings
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(group)
+            .or_default()
+            .extend(resources.iter().map(|(name, _)| name.to_string()));
+        let Some(layout) = self.group_layout(group) else {
+            log::error!("Shader {} has no bind group {group}", self.name);
+            return None;
+        };
+        let mut entries = Vec::new();
+        for (binding, name) in self.binding_names(group) {
+            let Some((_, resource)) = resources.iter().find(|(offered, _)| *offered == name) else {
+                log::error!(
+                    "Shader {} declares group {group} binding {binding} `{name}`, \
+                     which its renderer does not bind",
+                    self.name
+                );
+                return None;
+            };
+            entries.push(wgpu::BindGroupEntry {
+                binding,
+                resource: resource.clone(),
+            });
+        }
+        let device = self.render_context.device();
+        let scope = ValidationScope::push(device);
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label,
+            layout,
+            entries: &entries,
+        });
+        match scope.pop() {
+            None => Some(bind_group),
+            Some(error) => {
+                log::error!(
+                    "wgpu rejected bind group {group} of shader {}: {error}",
+                    self.name
+                );
+                None
+            }
+        }
+    }
+
+    /// Whether this shader's `group` declares exactly the bindings of
+    /// `material_shader`'s `material_group`, so a bind group a material built
+    /// for that one binds here too. A pass that binds materials of another
+    /// shader checks this before it binds them, and skips them when the two
+    /// differ, as they do after a hot reload changes one shader's material
+    /// bindings until the other follows.
+    ///
+    /// Records `group` as a material group of this shader, so a hot reload
+    /// may change its bindings as it may change those of the material's own
+    /// shader.
+    pub fn shares_material_group(
+        &self,
+        group: u32,
+        material_shader: &Shader,
+        material_group: u32,
+    ) -> bool {
+        if group < FIRST_MATERIAL_GROUP {
+            self.material_groups
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(group);
+        }
+        let entries = |shader: &Shader, group: u32| {
+            Self::bindings(&shader.bind_group_entries)
+                .into_iter()
+                .filter(|((other, _), _)| *other == group)
+                .map(|((_, binding), entry)| (binding, entry))
+                .collect::<Vec<_>>()
+        };
+        entries(self, group) == entries(material_shader, material_group)
     }
 
     /// Describes naga's `error` in `shader`'s source at the files and lines
@@ -1291,6 +1559,371 @@ fn fs_main() -> @location(0) vec4f {
             .expect("the shader loads")
             .asset;
         assert!(fresh.pipeline(&options()).is_none());
+    }
+
+    /// A 1x1 target the probe shaders draw into, and a buffer to read it.
+    struct Target {
+        texture: wgpu::Texture,
+        readback: wgpu::Buffer,
+    }
+
+    impl Target {
+        fn new(device: &wgpu::Device) -> Self {
+            Self {
+                texture: device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("layout_probe_target"),
+                    size: wgpu::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                    view_formats: &[],
+                }),
+                readback: device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("layout_probe_readback"),
+                    size: 256,
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                }),
+            }
+        }
+    }
+
+    /// Draws a frame of `shader` into `target` with `groups` bound in order
+    /// and returns its pixel, or the wgpu validation error the frame raised.
+    fn draw(
+        context: &crate::context::ReadOnlyAssetContext,
+        shader: &Shader,
+        groups: &[&wgpu::BindGroup],
+        target: &Target,
+    ) -> Result<[u8; 4], wgpu::Error> {
+        let pipeline = shader.pipeline(&options()).expect("a pipeline");
+        let device = context.render_context.device();
+        let queue = context.render_context.queue();
+        let scope = super::ValidationScope::push(device);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let view = target.texture.create_view(&Default::default());
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("layout_probe"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&pipeline);
+            for (index, group) in groups.iter().enumerate() {
+                pass.set_bind_group(index as u32, *group, &[]);
+            }
+            pass.draw(0..3, 0..1);
+        }
+        encoder.copy_texture_to_buffer(
+            target.texture.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &target.readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(256),
+                    rows_per_image: None,
+                },
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit([encoder.finish()]);
+        if let Some(error) = scope.pop() {
+            return Err(error);
+        }
+        let slice = target.readback.slice(..4);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        device.poll(wgpu::Maintain::Wait);
+        let pixel = {
+            let bytes = slice.get_mapped_range();
+            [bytes[0], bytes[1], bytes[2], bytes[3]]
+        };
+        target.readback.unmap();
+        Ok(pixel)
+    }
+
+    fn uniform(context: &crate::context::ReadOnlyAssetContext, color: [f32; 4]) -> wgpu::Buffer {
+        use egui_wgpu::wgpu::util::DeviceExt;
+        context
+            .render_context
+            .device()
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("layout_probe_uniform"),
+                contents: bytemuck::cast_slice(&color),
+                usage: wgpu::BufferUsages::UNIFORM,
+            })
+    }
+
+    /// The probe shader with its tint uniform renumbered to binding 1 and
+    /// declared after a helper function.
+    const RENUMBERED: &str = r#"
+struct Tint { color: vec4f }
+
+fn tinted() -> vec4f {
+    return tint.color;
+}
+
+@group(0) @binding(1) var<uniform> tint: Tint;
+
+@vertex
+fn vs_main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {
+    let uv = vec2f(f32((index << 1u) & 2u), f32(index & 2u));
+    return vec4f(uv * 2.0 - 1.0, 0.0, 1.0);
+}
+
+@fragment
+fn fs_main() -> @location(0) vec4f {
+    return tinted();
+}
+"#;
+
+    /// The probe shader with a second uniform its renderer knows nothing of.
+    const UNKNOWN_BINDING: &str = r#"
+struct Tint { color: vec4f }
+@group(0) @binding(0) var<uniform> tint: Tint;
+@group(0) @binding(1) var<uniform> extra: Tint;
+
+@vertex
+fn vs_main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {
+    let uv = vec2f(f32((index << 1u) & 2u), f32(index & 2u));
+    return vec4f(uv * 2.0 - 1.0, 0.0, 1.0);
+}
+
+@fragment
+fn fs_main() -> @location(0) vec4f {
+    return tint.color * extra.color;
+}
+"#;
+
+    /// A renderer that binds its uniform by name follows a reload that
+    /// renumbers it: the reload is accepted with a new layout generation,
+    /// the bind group built for the old layout no longer validates, and one
+    /// rebuilt for the new layout draws the same color. A reload that adds a
+    /// binding the renderer does not bind is refused, naming it.
+    #[test]
+    fn a_renderer_binding_by_name_follows_a_renumbered_binding() {
+        let assets = TestAssets::engine();
+        let path = assets.engine_root().join("named_probe.wgsl");
+        std::fs::write(&path, shader_source("1.0")).expect("the shader is writable");
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let shader = context
+            .registries
+            .assets
+            .read()
+            .load::<Shader>("named_probe")
+            .expect("the shader loads");
+        let tint = uniform(&context, [0.0, 1.0, 0.0, 1.0]);
+        let target = Target::new(context.render_context.device());
+        let bind = |shader: &Shader| {
+            shader
+                .create_bind_group(0, None, &[("tint", tint.as_entire_binding())])
+                .expect("the tint binds")
+        };
+        let before = bind(&shader.read());
+        let generation = shader.read().layout_generation();
+        assert_eq!(
+            draw(&context, &shader.read(), &[&before], &target).expect("a valid frame"),
+            [0, 255, 0, 255]
+        );
+
+        write_and_reload(&context, &path, RENUMBERED);
+        assert!(reload_error_messages(&context).is_empty());
+        assert!(shader.read().source.contains("@binding(1)"));
+        assert_ne!(shader.read().layout_generation(), generation);
+        assert!(
+            draw(&context, &shader.read(), &[&before], &target).is_err(),
+            "the bind group of the old layout no longer validates"
+        );
+        let after = bind(&shader.read());
+        assert_eq!(
+            draw(&context, &shader.read(), &[&after], &target).expect("a valid frame"),
+            [0, 255, 0, 255]
+        );
+
+        write_and_reload(&context, &path, UNKNOWN_BINDING);
+        let errors = reload_error_messages(&context);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].contains("group 0 binding 1 `extra`"),
+            "{errors:?}"
+        );
+        assert!(shader.read().source.contains("tinted"));
+    }
+
+    /// A reload that keeps every binding keeps the layout generation, so
+    /// bind groups built before it stay valid.
+    #[test]
+    fn a_reload_that_keeps_the_layout_keeps_its_generation() {
+        let assets = TestAssets::engine();
+        let path = assets.engine_root().join("kept_probe.wgsl");
+        std::fs::write(&path, shader_source("1.0")).expect("the shader is writable");
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let shader = context
+            .registries
+            .assets
+            .read()
+            .load::<Shader>("kept_probe")
+            .expect("the shader loads");
+        let generation = shader.read().layout_generation();
+        write_and_reload(&context, &path, &shader_source("0.5"));
+        assert!(shader.read().source.contains("0.5"));
+        assert_eq!(shader.read().layout_generation(), generation);
+    }
+
+    /// A material shader: groups 0 to 2 hold a uniform each, as a renderer
+    /// fills them, and group 3 the material's own color. `extra` is spliced
+    /// into group 3 and `sample` into the fragment color.
+    fn material_shader(extra: &str, sample: &str) -> String {
+        format!(
+            r#"
+struct Tint {{ color: vec4f }}
+@group(0) @binding(0) var<uniform> u0: Tint;
+@group(1) @binding(0) var<uniform> u1: Tint;
+@group(2) @binding(0) var<uniform> u2: Tint;
+
+struct MaterialProperties {{ base_color: vec4f }}
+@group(3) @binding(0) var<uniform> material: MaterialProperties;
+{extra}
+
+@vertex
+fn vs_main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {{
+    let uv = vec2f(f32((index << 1u) & 2u), f32(index & 2u));
+    return vec4f(uv * 2.0 - 1.0, 0.0, 1.0);
+}}
+
+@fragment
+fn fs_main() -> @location(0) vec4f {{
+    return u0.color * u1.color * u2.color * material.base_color{sample};
+}}
+"#
+        )
+    }
+
+    /// A reload that adds a texture and its sampler to a material's group is
+    /// accepted; the material gains the new inputs with their defaults,
+    /// keeps its color, and its rebuilt bind group draws a valid frame. A
+    /// storage buffer, which a material cannot fill, is refused, naming it.
+    #[test]
+    fn a_material_follows_a_reload_that_adds_an_optional_binding() {
+        use crate::assets::material::{Material, ShaderVariableValue};
+        use crate::render::AssetRenderState;
+
+        let assets = TestAssets::engine();
+        let path = assets.engine_root().join("material_probe.wgsl");
+        std::fs::write(&path, material_shader("", "")).expect("the shader is writable");
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let registry = context.registries.assets.read();
+        let shader = registry
+            .load::<Shader>("material_probe")
+            .expect("the shader loads");
+        let default_texture = registry.white_texture().expect("the white texture");
+        drop(registry);
+        let mut material = Material::from_shader(&context, shader.clone());
+        assert!(material.set_variable(
+            "base_color",
+            ShaderVariableValue::Color([0.0, 0.0, 1.0, 1.0])
+        ));
+        let white = uniform(&context, [1.0; 4]);
+        let target = Target::new(context.render_context.device());
+        let draw_material = |material: &mut Material| {
+            material.follow_shader(&context);
+            material.load_buffers(&context.render_context);
+            let mut state = AssetRenderState::default();
+            state.shaders.insert(shader.id(), shader.clone());
+            material.collect_textures(&context, &mut state.textures, default_texture.clone());
+            let locked = state.lock();
+            let groups = material.bind_groups(
+                context.render_context.device(),
+                &context,
+                &locked,
+                default_texture.clone(),
+            );
+            let shader = shader.read();
+            let renderer_groups = ["u0", "u1", "u2"]
+                .iter()
+                .enumerate()
+                .map(|(group, name)| {
+                    shader
+                        .create_bind_group(group as u32, None, &[(name, white.as_entire_binding())])
+                        .expect("the uniform binds")
+                })
+                .collect::<Vec<_>>();
+            let material_group = groups.get(&3).expect("the material binds group 3");
+            draw(
+                &context,
+                &shader,
+                &[
+                    &renderer_groups[0],
+                    &renderer_groups[1],
+                    &renderer_groups[2],
+                    material_group,
+                ],
+                &target,
+            )
+        };
+        assert_eq!(
+            draw_material(&mut material).expect("a valid frame"),
+            [0, 0, 255, 255]
+        );
+
+        let texture = "@group(3) @binding(1) var tint_texture: texture_2d<f32>;\n\
+                       @group(3) @binding(2) var tint_sampler: sampler;";
+        write_and_reload(
+            &context,
+            &path,
+            &material_shader(
+                texture,
+                " * textureSample(tint_texture, tint_sampler, vec2f(0.5))",
+            ),
+        );
+        assert!(reload_error_messages(&context).is_empty());
+        assert!(shader.read().source.contains("tint_texture"));
+        assert_eq!(
+            draw_material(&mut material).expect("a valid frame"),
+            [0, 0, 255, 255],
+            "the new texture defaults to white and the color is kept"
+        );
+        assert!(material
+            .variables
+            .iter()
+            .any(|variable| variable.name == "tint_texture"));
+
+        write_and_reload(
+            &context,
+            &path,
+            &material_shader(
+                "@group(3) @binding(1) var<storage, read> weights: array<f32>;",
+                " * weights[0]",
+            ),
+        );
+        let errors = reload_error_messages(&context);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].contains("group 3 binding 1 `weights`"),
+            "{errors:?}"
+        );
+        assert!(errors[0].contains("material cannot fill"), "{errors:?}");
     }
 
     const INVALID: &str = "fn main() { let x: u32 = 1.0; }";

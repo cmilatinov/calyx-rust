@@ -11,7 +11,7 @@ use crate::assets::texture::{Texture, TextureColorSpace};
 use crate::assets::{Asset, AssetId};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
-use crate::render::{LockedAssetRenderState, RenderContext, Shader};
+use crate::render::{LockedAssetRenderState, RenderContext, Shader, FIRST_MATERIAL_GROUP};
 use crate::utils::TypeUuid;
 use egui_wgpu::wgpu;
 use naga::{ImageDimension, Scalar, ScalarKind, TypeInner, VectorSize};
@@ -204,6 +204,10 @@ pub struct Material {
     #[serde(skip)]
     /// GPU buffers created for buffer-backed shader variables.
     pub buffers: HashMap<(u32, u32), wgpu::Buffer>,
+    /// The [`Shader::layout_generation`] the variables, bind-group entries and buffers were
+    /// built for. [`Material::follow_shader`] rebuilds them when the shader's differs.
+    #[serde(skip)]
+    shader_layout_generation: Option<u64>,
 }
 
 /// Cached metadata for one bind-group entry.
@@ -217,6 +221,8 @@ pub struct BindGroupEntry {
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct MaterialBindGroupCacheKey {
     shader_id: AssetId,
+    /// The shader layouts the bind groups are built for.
+    shader_layout_generation: Option<u64>,
     entries: Vec<MaterialBindGroupCacheEntry>,
 }
 
@@ -305,6 +311,7 @@ impl Material {
             texture_color_spaces: Default::default(),
             bind_group_entries: Default::default(),
             buffers: Default::default(),
+            shader_layout_generation: None,
         };
         material.init(assets);
         material
@@ -386,7 +393,7 @@ impl Material {
         for (_, variable) in module.global_variables.iter() {
             if let Some(binding) = &variable.binding {
                 let ty = &module.types[variable.ty];
-                if binding.group >= 3 {
+                if binding.group >= FIRST_MATERIAL_GROUP {
                     Self::shader_variable(
                         module,
                         ty,
@@ -552,7 +559,7 @@ impl Material {
                     *group,
                     device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: None,
-                        layout: &shader.bind_group_layouts[*group as usize],
+                        layout: shader.group_layout(*group)?,
                         entries: entries.as_slice(),
                     }),
                 ))
@@ -608,6 +615,7 @@ impl Material {
 
         MaterialBindGroupCacheKey {
             shader_id: self.shader.id(),
+            shader_layout_generation: self.shader_layout_generation,
             entries,
         }
     }
@@ -799,6 +807,38 @@ impl Material {
         self.rebuild_variable_indices();
         self.update_entries(assets);
         self.create_buffers(assets);
+        self.shader_layout_generation = self.shader_layout_generation(assets);
+    }
+
+    fn shader_layout_generation(&self, assets: &ReadOnlyAssetContext) -> Option<u64> {
+        let shader = self.shader.get_ref(&assets.registries)?;
+        let generation = shader.read().layout_generation();
+        Some(generation)
+    }
+
+    /// Follows a hot reload that changed the layout of the material's shader: drops each
+    /// variable the shader no longer declares, or now declares as another kind of value, adds
+    /// each new one with its reflected default, and rebuilds the bind-group entries and buffers
+    /// for the new layout. Values of the variables the shader keeps are kept. Does nothing while
+    /// the shader's [`Shader::layout_generation`] is the one the material was built for.
+    pub(crate) fn follow_shader(&mut self, assets: &ReadOnlyAssetContext) {
+        let generation = self.shader_layout_generation(assets);
+        if generation == self.shader_layout_generation {
+            return;
+        }
+        if let Some(shader) = self.shader.get_ref(&assets.registries) {
+            let reflected = Self::reflect_variables(&shader.read().module);
+            self.variables.retain(|variable| {
+                reflected.iter().any(|other| {
+                    other == variable
+                        && std::mem::discriminant(&other.value)
+                            == std::mem::discriminant(&variable.value)
+                })
+            });
+        }
+        self.bind_group_entries.clear();
+        self.buffers.clear();
+        self.init(assets);
     }
 
     fn update_entries(&mut self, context: &ReadOnlyAssetContext) {
@@ -888,6 +928,7 @@ impl From<(&ReadOnlyAssetContext, MaterialData)> for Material {
             texture_color_spaces: Default::default(),
             bind_group_entries: Default::default(),
             buffers: Default::default(),
+            shader_layout_generation: None,
         };
         value.init(assets);
         value
