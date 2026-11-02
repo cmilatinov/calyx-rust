@@ -19,6 +19,8 @@ const MOVE_FORWARD: &str = "editor_camera_forward";
 const MOVE_RIGHT: &str = "editor_camera_right";
 const MOVE_UP: &str = "editor_camera_up";
 const BOOST: &str = "editor_camera_boost";
+/// Steepest pitch, in degrees, the camera looks up or down.
+const MAX_PITCH: f32 = 89.0;
 
 impl EditorCamera {
     /// Action map for flying the editor camera, independent of the project's map.
@@ -43,17 +45,25 @@ impl EditorCamera {
         map
     }
 
-    /// Turns the camera to face `target`, a world point, upright. Returns
-    /// `false`, and leaves it as it was, when `target` is its own position.
+    /// Turns the camera to face `target`, a world point, upright. Its pitch
+    /// stays within the ±89° flying allows, so a target straight above or
+    /// below is faced as nearly as that. Returns `false`, and leaves the
+    /// camera as it was, when `target` is its own position.
     pub fn look_at(&mut self, target: &Vec3) -> bool {
         let direction = target - self.transform.position;
         if direction.magnitude() <= f32::EPSILON {
             return false;
         }
-        self.transform.rotation = UnitQuaternion::face_towards(&direction, &Vec3::y_axis());
-        // Flying turns the camera from these angles, so they follow the new
-        // rotation.
-        self.rotation = self.transform.rotation.pitch_yaw();
+        let direction = direction.normalize();
+        // The same angles flying turns the camera by: the rotation is
+        // `from_euler_angles(pitch, yaw, 0)`, whose forward axis is
+        // `(cos(pitch) sin(yaw), -sin(pitch), cos(pitch) cos(yaw))`.
+        let pitch = (-direction.y)
+            .asin()
+            .clamp(-MAX_PITCH.to_radians(), MAX_PITCH.to_radians());
+        let yaw = direction.x.atan2(direction.z);
+        self.rotation = Vec2::new(pitch, yaw);
+        self.transform.rotation = UnitQuaternion::from_euler_angles(pitch, yaw, 0.0);
         true
     }
 }
@@ -86,8 +96,11 @@ impl CameraLike for EditorCamera {
 
         let delta = Vec2::new(drag.y, drag.x).scale(time.static_delta_time() * ROTATION_SPEED);
         self.rotation += delta;
-        self.rotation.x =
-            nalgebra::clamp(self.rotation.x, -89.0f32.to_radians(), 89.0f32.to_radians());
+        self.rotation.x = nalgebra::clamp(
+            self.rotation.x,
+            -MAX_PITCH.to_radians(),
+            MAX_PITCH.to_radians(),
+        );
         self.transform.rotation =
             UnitQuaternion::from_euler_angles(self.rotation.x, self.rotation.y, 0.0);
 
@@ -156,5 +169,23 @@ mod tests {
         let before = camera.transform;
         assert!(!camera.look_at(&Vec3::new(0.0, 2.0, 0.0)));
         assert_eq!(camera.transform.rotation, before.rotation);
+    }
+
+    #[test]
+    fn look_at_straight_down_or_up_stays_upright_at_the_flying_pitch_limit() {
+        for (target, pitch) in [(-10.0, 89.0f32), (10.0, -89.0)] {
+            let mut camera = EditorCamera::default();
+            camera.transform.position = Vec3::zeros();
+            assert!(camera.look_at(&Vec3::new(0.0, target, 0.0)));
+            let forward = camera.transform.forward();
+            assert!(forward.iter().all(|v| v.is_finite()), "{forward}");
+            assert!(
+                (forward.y.abs() - 89f32.to_radians().sin()).abs() < 1e-4,
+                "{forward}"
+            );
+            assert_eq!(forward.y.signum(), target.signum());
+            assert!((camera.rotation.x - pitch.to_radians()).abs() < 1e-5);
+            assert!(camera.transform.right().y.abs() < 1e-5, "no roll");
+        }
     }
 }
