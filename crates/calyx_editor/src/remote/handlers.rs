@@ -411,6 +411,26 @@ impl EditorApp {
                 };
                 Ok(Some(serde_json::json!({ "view": view })))
             }
+            Command::ViewportCamera { position, look_at } => {
+                let camera = &mut self.state.camera;
+                if let Some([x, y, z]) = position {
+                    camera.transform.position = nalgebra_glm::vec3(x, y, z);
+                }
+                if let Some([x, y, z]) = look_at {
+                    if !camera.look_at(&nalgebra_glm::vec3(x, y, z)) {
+                        return Err((
+                            ErrorKind::BadRequest,
+                            "look_at is the camera's own position".into(),
+                        ));
+                    }
+                }
+                let transform = &camera.transform;
+                let forward = transform.forward();
+                Ok(Some(serde_json::json!({
+                    "position": [transform.position.x, transform.position.y, transform.position.z],
+                    "forward": [forward.x, forward.y, forward.z],
+                })))
+            }
             Command::FocusGame { grab } => {
                 self.tree.make_active(|_, tile| {
                     matches!(tile, egui_tiles::Tile::Pane(pane) if *pane == PanelGame::name())

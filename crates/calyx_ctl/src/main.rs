@@ -139,6 +139,16 @@ enum Action {
         #[arg(value_enum)]
         view: SceneViewArg,
     },
+    /// Place the editor's viewport camera, or print where it is without
+    /// options.
+    ViewportCamera {
+        /// World position to move the camera to.
+        #[arg(long, num_args = 3, value_names = ["X", "Y", "Z"], allow_negative_numbers = true)]
+        position: Option<Vec<f32>>,
+        /// World point for the camera to face.
+        #[arg(long, num_args = 3, value_names = ["X", "Y", "Z"], allow_negative_numbers = true)]
+        look_at: Option<Vec<f32>>,
+    },
     /// Activate the Game tab and grab (or release) gameplay input focus.
     FocusGame {
         /// Release the input grab instead of taking it.
@@ -607,6 +617,15 @@ fn build_command(action: &Action, base: Duration) -> Result<(Command, Duration),
                 PickTargetArg::Game => PickTarget::Game,
             },
         }),
+        Action::ViewportCamera { position, look_at } => {
+            let triple = |values: &Option<Vec<f32>>| -> Option<[f32; 3]> {
+                values.as_ref().map(|v| [v[0], v[1], v[2]])
+            };
+            simple(Command::ViewportCamera {
+                position: triple(position),
+                look_at: triple(look_at),
+            })
+        }
         Action::View { view } => simple(Command::SetSceneView {
             view: match view {
                 SceneViewArg::Lit => SceneView::Lit,
