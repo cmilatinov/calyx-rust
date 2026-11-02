@@ -249,6 +249,7 @@ impl Asset for Shader {
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
         if Self::bindings(&previous.bind_group_entries) != Self::bindings(&self.bind_group_entries)
+            || previous.buffer_sizes() != self.buffer_sizes()
         {
             log::info!(
                 "Shader {} reloaded with a new bind-group layout; its bind groups are rebuilt",
@@ -441,6 +442,30 @@ impl Shader {
             .collect()
     }
 
+    /// The size of the type of each buffer binding, by group and binding. A
+    /// reload that changes one changes the layout as a bind group sees it,
+    /// though not its entries: a buffer sized for the old type is too small
+    /// for a larger one.
+    fn buffer_sizes(&self) -> BTreeMap<(u32, u32), u32> {
+        self.module
+            .global_variables
+            .iter()
+            .filter(|(_, variable)| {
+                matches!(
+                    variable.space,
+                    naga::AddressSpace::Uniform | naga::AddressSpace::Storage { .. }
+                )
+            })
+            .filter_map(|(_, variable)| {
+                let binding = variable.binding.as_ref()?;
+                let size = self.module.types[variable.ty]
+                    .inner
+                    .size(self.module.to_ctx());
+                Some(((binding.group, binding.binding), size))
+            })
+            .collect()
+    }
+
     /// Whether a material fills a binding of `entry`'s kind: a uniform
     /// buffer, a filterable 2D float texture or a filtering sampler, the
     /// kinds [`crate::assets::material::Material`] reflects.
@@ -540,6 +565,25 @@ impl Shader {
                 );
                 return None;
             };
+            // wgpu checks a buffer against the size the shader reads only
+            // when it draws, outside any scope, so it is checked here.
+            if let wgpu::BindingResource::Buffer(buffer) = resource {
+                let bound = buffer
+                    .size
+                    .map_or(buffer.buffer.size() - buffer.offset, |size| size.get());
+                let read = self
+                    .buffer_sizes()
+                    .get(&(group, binding))
+                    .copied()
+                    .unwrap_or_default();
+                if bound < u64::from(read) {
+                    log::error!(
+                        "Shader {} reads {read} bytes of group {group} binding {binding}                          `{name}`, but its renderer binds {bound}",
+                        self.name
+                    );
+                    return None;
+                }
+            }
             entries.push(wgpu::BindGroupEntry {
                 binding,
                 resource: resource.clone(),
@@ -1768,6 +1812,19 @@ fn fs_main() -> @location(0) vec4f {
             [0, 255, 0, 255]
         );
 
+        // A larger uniform than the renderer's buffer is not bound at all,
+        // rather than failing when it draws.
+        write_and_reload(
+            &context,
+            &path,
+            &RENUMBERED.replace("color: vec4f }", "color: vec4f, scale: vec4f }"),
+        );
+        assert!(reload_error_messages(&context).is_empty());
+        assert!(shader
+            .read()
+            .create_bind_group(0, None, &[("tint", tint.as_entire_binding())])
+            .is_none());
+
         write_and_reload(&context, &path, UNKNOWN_BINDING);
         let errors = reload_error_messages(&context);
         assert_eq!(errors.len(), 1, "{errors:?}");
@@ -1955,6 +2012,27 @@ fn fs_main() -> @location(0) vec4f {{
             ),
         );
         assert!(reload_error_messages(&context).is_empty());
+        assert_eq!(
+            draw_material(&mut material).expect("a valid frame"),
+            [0, 0, 255, 255]
+        );
+
+        // A nested struct's members are written at their own offsets: the
+        // inner scale multiplies and the outer offset, zero, adds nothing.
+        write_and_reload(
+            &context,
+            &path,
+            &material_shader(
+                "struct Inner { scale: vec4f }
+                 struct Outer { bias: vec4f, inner: Inner }
+                 @group(3) @binding(1) var<uniform> extra: Outer;",
+                " * extra.inner.scale + extra.bias",
+            ),
+        );
+        assert!(reload_error_messages(&context).is_empty());
+        // The material takes the new variables as it draws its first frame.
+        draw_material(&mut material).expect("a valid frame");
+        assert!(material.set_variable("scale", ShaderVariableValue::Vec4([1.0; 4])));
         assert_eq!(
             draw_material(&mut material).expect("a valid frame"),
             [0, 0, 255, 255]

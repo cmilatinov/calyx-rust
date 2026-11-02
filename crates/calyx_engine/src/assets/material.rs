@@ -794,7 +794,8 @@ impl Material {
                         ty,
                         binding,
                         member.name.clone().unwrap_or_default(),
-                        Some(member.offset),
+                        // A nested struct's members sit at its own offset plus theirs.
+                        Some(offset.unwrap_or_default() + member.offset),
                         variables,
                     );
                 }
