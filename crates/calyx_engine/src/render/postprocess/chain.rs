@@ -46,6 +46,10 @@ pub struct ChainPlan {
     pub depth: bool,
     /// Whether a planned pass reads [`SceneInput::ParticleDepth`].
     pub particle_depth: bool,
+    /// Whether a planned pass reads the G-buffer normals.
+    pub normals: bool,
+    /// Whether a planned pass reads the G-buffer albedo.
+    pub albedo: bool,
 }
 
 impl ChainPlan {
@@ -65,6 +69,8 @@ impl ChainPlan {
                 Ok(()) => {
                     plan.depth |= inputs.contains(SceneInput::Depth);
                     plan.particle_depth |= inputs.contains(SceneInput::ParticleDepth);
+                    plan.normals |= inputs.contains(SceneInput::Normals);
+                    plan.albedo |= inputs.contains(SceneInput::Albedo);
                     running.push(index);
                 }
                 Err(error) => plan.skipped.push(error),
@@ -106,6 +112,12 @@ pub struct ChainTargets<'a> {
     /// same sample count, or `None` when the renderer drew none and it would
     /// equal `depth`.
     pub particle_depth: Option<&'a Texture>,
+    /// The G-buffer's normals target, single-sample at any sample count, or
+    /// `None` before the renderer has drawn one.
+    pub normals: Option<&'a Texture>,
+    /// The G-buffer's albedo target, single-sample at any sample count, or
+    /// `None` before the renderer has drawn one.
+    pub albedo: Option<&'a Texture>,
 }
 
 /// Post-processing passes in stage order, then insertion order, with the
@@ -164,7 +176,9 @@ impl PostProcessChain {
         match input {
             SceneInput::Depth => plan.depth,
             SceneInput::ParticleDepth => plan.particle_depth,
-            SceneInput::Normals | SceneInput::Velocity => false,
+            SceneInput::Normals => plan.normals,
+            SceneInput::Albedo => plan.albedo,
+            SceneInput::Velocity => false,
         }
     }
 
@@ -264,6 +278,14 @@ impl PostProcessChain {
                 particle_depth: inputs
                     .contains(SceneInput::ParticleDepth)
                     .then_some(particle_depth)
+                    .flatten(),
+                normals: inputs
+                    .contains(SceneInput::Normals)
+                    .then_some(targets.normals)
+                    .flatten(),
+                albedo: inputs
+                    .contains(SceneInput::Albedo)
+                    .then_some(targets.albedo)
                     .flatten(),
             };
             let (input, output) = (io.input, io.output);
