@@ -2,8 +2,8 @@
 //! areas from the scene's depth.
 
 use super::{
-    PassContext, PassInputs, PassIo, PostProcessPass, PostProcessSettings, PostProcessStage,
-    SceneInput,
+    NoPipeline, PassContext, PassInputs, PassIo, PostProcessPass, PostProcessSettings,
+    PostProcessStage, SceneInput,
 };
 use crate::assets::texture::Texture;
 use crate::component::ComponentAmbientOcclusion;
@@ -190,14 +190,16 @@ impl SsaoPass {
     fn pipeline(
         shader: &Ref<Shader>,
         format: wgpu::TextureFormat,
-    ) -> Option<(wgpu::RenderPipeline, wgpu::BindGroupLayout)> {
+    ) -> Result<(wgpu::RenderPipeline, wgpu::BindGroupLayout), NoPipeline> {
         let shader = shader.read();
-        let pipeline = shader.pipeline(
-            &PipelineOptions::fullscreen_builder()
-                .target(RenderUtils::color_default(format))
-                .build(),
-        );
-        Some((pipeline?, shader.bind_group_layouts[0].clone()))
+        let pipeline = shader
+            .pipeline(
+                &PipelineOptions::fullscreen_builder()
+                    .target(RenderUtils::color_default(format))
+                    .build(),
+            )
+            .ok_or_else(|| NoPipeline::of(&shader))?;
+        Ok((pipeline, shader.bind_group_layouts[0].clone()))
     }
 }
 
@@ -243,7 +245,12 @@ impl PostProcessPass for SsaoPass {
         );
     }
 
-    fn record(&mut self, context: &PassContext, encoder: &mut wgpu::CommandEncoder, io: PassIo) {
+    fn record(
+        &mut self,
+        context: &PassContext,
+        encoder: &mut wgpu::CommandEncoder,
+        io: PassIo,
+    ) -> Result<(), NoPipeline> {
         let depth = io
             .depth
             .expect("the chain hands depth to a pass that asks for it");
@@ -265,9 +272,7 @@ impl PostProcessPass for SsaoPass {
         let targets = targets.as_ref().expect("the targets were just fitted");
 
         // Occlusion from depth, at half resolution.
-        let Some((pipeline, layout)) = Self::pipeline(occlusion_shader, Self::TARGET_FORMAT) else {
-            return;
-        };
+        let (pipeline, layout) = Self::pipeline(occlusion_shader, Self::TARGET_FORMAT)?;
         let bind_group =
             occlusion_bind_group.get_or_create((layout.clone(), depth.view.clone()), || {
                 device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -293,9 +298,7 @@ impl PostProcessPass for SsaoPass {
         drop(render_pass);
 
         // Depth-aware blur that removes the rotation noise.
-        let Some((pipeline, layout)) = Self::pipeline(blur_shader, Self::TARGET_FORMAT) else {
-            return;
-        };
+        let (pipeline, layout) = Self::pipeline(blur_shader, Self::TARGET_FORMAT)?;
         let occlusion = &targets.occlusion.view;
         let bind_group = blur_bind_group.get_or_create((layout.clone(), occlusion.clone()), || {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -315,11 +318,7 @@ impl PostProcessPass for SsaoPass {
         drop(render_pass);
 
         // Multiply the upsampled occlusion into the scene color.
-        let Some((pipeline, layout)) =
-            Self::pipeline(composite_shader, io.output.descriptor.format)
-        else {
-            return;
-        };
+        let (pipeline, layout) = Self::pipeline(composite_shader, io.output.descriptor.format)?;
         let blurred = &targets.blurred.view;
         let bind_group = composite_bind_group.get_or_create(
             (
@@ -363,6 +362,7 @@ impl PostProcessPass for SsaoPass {
         render_pass.set_pipeline(&pipeline);
         render_pass.set_bind_group(0, bind_group, &[]);
         RenderUtils::draw_fullscreen(&mut render_pass);
+        Ok(())
     }
 
     fn release_targets(&mut self) {
@@ -969,7 +969,8 @@ mod tests {
                     depth: Some(&depth),
                     particle_depth: Some(&depth),
                 },
-            );
+            )
+            .expect("the pass's shaders build");
             render_context.queue().submit(Some(encoder.finish()));
             pass.target_size()
         };

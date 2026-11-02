@@ -1,6 +1,8 @@
 //! The bloom pass: bright HDR light bleeds into its surroundings.
 
-use super::{PassContext, PassIo, PostProcessPass, PostProcessSettings, PostProcessStage};
+use super::{
+    NoPipeline, PassContext, PassIo, PostProcessPass, PostProcessSettings, PostProcessStage,
+};
 use crate::assets::texture::Texture;
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
@@ -213,11 +215,12 @@ impl BloomPass {
     fn pipeline(
         shader: &Ref<Shader>,
         target: wgpu::ColorTargetState,
-    ) -> Option<(wgpu::RenderPipeline, wgpu::BindGroupLayout)> {
+    ) -> Result<(wgpu::RenderPipeline, wgpu::BindGroupLayout), NoPipeline> {
         let shader = shader.read();
-        let pipeline =
-            shader.pipeline(&PipelineOptions::fullscreen_builder().target(target).build());
-        Some((pipeline?, shader.bind_group_layouts[0].clone()))
+        let pipeline = shader
+            .pipeline(&PipelineOptions::fullscreen_builder().target(target).build())
+            .ok_or_else(|| NoPipeline::of(&shader))?;
+        Ok((pipeline, shader.bind_group_layouts[0].clone()))
     }
 
     /// Adds the source color onto what the target holds.
@@ -269,7 +272,12 @@ impl PostProcessPass for BloomPass {
         );
     }
 
-    fn record(&mut self, context: &PassContext, encoder: &mut wgpu::CommandEncoder, io: PassIo) {
+    fn record(
+        &mut self,
+        context: &PassContext,
+        encoder: &mut wgpu::CommandEncoder,
+        io: PassIo,
+    ) -> Result<(), NoPipeline> {
         let format = io.output.descriptor.format;
         self.fit_mips(context.render_context, context.size, format);
         let device = context.render_context.device();
@@ -287,16 +295,10 @@ impl PostProcessPass for BloomPass {
 
         // Threshold and downsample the input into the first mip, then each
         // mip into the next.
-        let Some((prefilter, prefilter_layout)) =
-            Self::pipeline(prefilter, RenderUtils::color_default(format))
-        else {
-            return;
-        };
-        let Some((downsample, downsample_layout)) =
-            Self::pipeline(downsample, RenderUtils::color_default(format))
-        else {
-            return;
-        };
+        let (prefilter, prefilter_layout) =
+            Self::pipeline(prefilter, RenderUtils::color_default(format))?;
+        let (downsample, downsample_layout) =
+            Self::pipeline(downsample, RenderUtils::color_default(format))?;
         for level in 0..mips.len() {
             let (pipeline, layout, source, uniform) = if level == 0 {
                 (
@@ -333,11 +335,7 @@ impl PostProcessPass for BloomPass {
         // Upsample each mip and add it onto the next larger one. A single mip
         // has nothing to upsample, so it needs no blending pipeline.
         if mips.len() > 1 {
-            let Some((upsample, upsample_layout)) =
-                Self::pipeline(upsample, Self::additive(format))
-            else {
-                return;
-            };
+            let (upsample, upsample_layout) = Self::pipeline(upsample, Self::additive(format))?;
             for level in (1..mips.len()).rev() {
                 let source = mips[level].texture.view.clone();
                 let layout = upsample_layout.clone();
@@ -368,11 +366,7 @@ impl PostProcessPass for BloomPass {
         }
 
         // Add the first mip, holding every mip's blur, onto the input.
-        let Some((composite, layout)) =
-            Self::pipeline(composite, RenderUtils::color_default(format))
-        else {
-            return;
-        };
+        let (composite, layout) = Self::pipeline(composite, RenderUtils::color_default(format))?;
         let bloom = &mips[0].texture.view;
         let bind_group = composite_bind_group.get_or_create(
             (layout.clone(), io.input.view.clone(), bloom.clone()),
@@ -406,6 +400,7 @@ impl PostProcessPass for BloomPass {
         render_pass.set_pipeline(&composite);
         render_pass.set_bind_group(0, bind_group, &[]);
         RenderUtils::draw_fullscreen(&mut render_pass);
+        Ok(())
     }
 
     fn release_targets(&mut self) {
@@ -860,7 +855,8 @@ mod tests {
                     depth: None,
                     particle_depth: None,
                 },
-            );
+            )
+            .expect("the pass's shaders build");
             render_context.queue().submit(Some(encoder.finish()));
             pass.mip_sizes()
         };
@@ -911,7 +907,14 @@ mod tests {
             settings.bloom.is_some()
         }
         fn prepare(&mut self, _: &PassContext, _: &PostProcessSettings) {}
-        fn record(&mut self, _: &PassContext, _: &mut wgpu::CommandEncoder, _: PassIo) {}
+        fn record(
+            &mut self,
+            _: &PassContext,
+            _: &mut wgpu::CommandEncoder,
+            _: PassIo,
+        ) -> Result<(), NoPipeline> {
+            Ok(())
+        }
         fn release_targets(&mut self) {
             self.releases.fetch_add(1, Ordering::SeqCst);
         }

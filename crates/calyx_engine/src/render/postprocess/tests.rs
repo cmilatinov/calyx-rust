@@ -78,7 +78,12 @@ impl PostProcessPass for StubPass {
         self.enabled
     }
     fn prepare(&mut self, _context: &PassContext, _settings: &PostProcessSettings) {}
-    fn record(&mut self, _: &PassContext, _: &mut wgpu::CommandEncoder, _: PassIo) {
+    fn record(
+        &mut self,
+        _: &PassContext,
+        _: &mut wgpu::CommandEncoder,
+        _: PassIo,
+    ) -> Result<(), NoPipeline> {
         unreachable!("planning tests never record");
     }
 }
@@ -234,7 +239,8 @@ fn color_target(render_context: &Arc<RenderContext>, label: &'static str) -> Tex
             format: wgpu::TextureFormat::Rgba16Float,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         },
         None,
@@ -397,7 +403,7 @@ struct AffinePass {
     inputs: PassInputs,
     scale: f32,
     offset: f32,
-    pipeline: wgpu::RenderPipeline,
+    pipeline: Option<wgpu::RenderPipeline>,
     uniform: wgpu::Buffer,
     recorded: Arc<Mutex<Recorded>>,
 }
@@ -449,7 +455,7 @@ impl AffinePass {
             inputs: PassInputs::empty(),
             scale,
             offset,
-            pipeline,
+            pipeline: Some(pipeline),
             uniform,
             recorded: recorded.clone(),
         })
@@ -457,6 +463,12 @@ impl AffinePass {
 
     fn reading_depth(mut self: Box<Self>) -> Box<Self> {
         self.inputs |= SceneInput::Depth;
+        self
+    }
+
+    /// The pass as it is once its shader has no pipeline: it records nothing.
+    fn without_pipeline(mut self: Box<Self>) -> Box<Self> {
+        self.pipeline = None;
         self
     }
 }
@@ -481,7 +493,12 @@ impl PostProcessPass for AffinePass {
             bytemuck::cast_slice(&[self.scale, self.offset, 0.0, 0.0]),
         );
     }
-    fn record(&mut self, context: &PassContext, encoder: &mut wgpu::CommandEncoder, io: PassIo) {
+    fn record(
+        &mut self,
+        context: &PassContext,
+        encoder: &mut wgpu::CommandEncoder,
+        io: PassIo,
+    ) -> Result<(), NoPipeline> {
         let mut recorded = self.recorded.lock().unwrap();
         recorded.order.push(self.name);
         recorded
@@ -490,13 +507,18 @@ impl PostProcessPass for AffinePass {
         if let Some(depth) = io.depth {
             recorded.depth = Some(depth.texture.clone());
         }
+        let Some(pipeline) = &self.pipeline else {
+            return Err(NoPipeline {
+                shader: "affine_test_pass".into(),
+            });
+        };
         let bind_group =
             context
                 .render_context
                 .device()
                 .create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("affine_test_bind_group"),
-                    layout: &self.pipeline.get_bind_group_layout(0),
+                    layout: &pipeline.get_bind_group_layout(0),
                     entries: &[
                         wgpu::BindGroupEntry {
                             binding: 0,
@@ -509,9 +531,10 @@ impl PostProcessPass for AffinePass {
                     ],
                 });
         let mut pass = RenderUtils::fullscreen_pass(encoder, &io.output.view, self.name);
-        pass.set_pipeline(&self.pipeline);
+        pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
         RenderUtils::draw_fullscreen(&mut pass);
+        Ok(())
     }
 }
 
@@ -526,25 +549,46 @@ fn run_chain(
 ) -> ([f32; 4], ChainPlan) {
     let source = color_target(render_context, "test_source");
     let output = color_target(render_context, "test_output");
+    run_frame(
+        render_context,
+        chain,
+        settings,
+        (&source, source_color),
+        &output,
+        depth,
+    )
+}
+
+/// Runs `chain` for one frame from `source`, cleared to its color first,
+/// into `output`, and returns the output's top-left texel and the plan it
+/// ran. Reusing the textures across calls renders successive frames.
+fn run_frame(
+    render_context: &Arc<RenderContext>,
+    chain: &mut PostProcessChain,
+    settings: &PostProcessSettings,
+    (source, source_color): (&Texture, [f64; 4]),
+    output: &Texture,
+    depth: &Texture,
+) -> ([f32; 4], ChainPlan) {
     let mut encoder = render_context
         .device()
         .create_command_encoder(&Default::default());
-    clear_color(&mut encoder, &source, source_color);
+    clear_color(&mut encoder, source, source_color);
     let plan = chain.run(
         render_context,
         &mut encoder,
         settings,
         ChainTargets {
-            source: &source,
-            output: &output,
+            source,
+            output,
             depth,
             particle_depth: None,
         },
     );
     render_context.queue().submit(Some(encoder.finish()));
-    let texel = read_rgba16f(render_context, &output);
+    let texel = read_rgba16f(render_context, output);
     assert_close(
-        read_rgba16f(render_context, &source)[0],
+        read_rgba16f(render_context, source)[0],
         source_color[0] as f32,
         "the chain must not write its source",
     );
@@ -623,6 +667,90 @@ fn passes_run_in_chain_order_through_reused_pool_targets() {
     );
     chain.clear_targets();
     assert_eq!(chain.pool().allocated(), 0, "a resize frees the pool");
+}
+
+/// Renders two frames of different scene color through `chain` into the same
+/// output and returns the output's red channel after each.
+fn two_frames(
+    render_context: &Arc<RenderContext>,
+    chain: &mut PostProcessChain,
+    colors: [f64; 2],
+) -> [f32; 2] {
+    let source = color_target(render_context, "test_source");
+    let output = color_target(render_context, "test_output");
+    let depth = depth_target(render_context, 1);
+    colors.map(|color| {
+        let (texel, _) = run_frame(
+            render_context,
+            chain,
+            &Default::default(),
+            (&source, [color, color, color, 1.0]),
+            &output,
+            &depth,
+        );
+        texel[0]
+    })
+}
+
+#[test]
+fn a_pass_without_a_pipeline_passes_its_input_through() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let context = context.lock_read();
+    let render_context = context.render_context.clone();
+    let recorded = Arc::new(Mutex::new(Recorded::default()));
+
+    // The broken pass sits between two others, so it reads and writes pool
+    // targets.
+    let mut chain = PostProcessChain::new(&context).expect("chain shaders load");
+    for (name, stage, scale, offset) in [
+        ("double", PostProcessStage::Hdr, 2.0, 0.0),
+        ("broken", PostProcessStage::Hdr, 10.0, 0.0),
+        ("add_one", PostProcessStage::Ldr, 1.0, 1.0),
+    ] {
+        let pass = AffinePass::boxed(&render_context, &recorded, name, stage, scale, offset);
+        chain.push(if name == "broken" {
+            pass.without_pipeline()
+        } else {
+            pass
+        });
+    }
+    let [first, second] = two_frames(&render_context, &mut chain, [1.0, 0.25]);
+    assert_close(
+        first,
+        1.0 * 2.0 + 1.0,
+        "the broken pass leaves the input as is",
+    );
+    assert_close(
+        second,
+        0.25 * 2.0 + 1.0,
+        "the second frame shows the new scene",
+    );
+
+    // The broken pass writes the chain's output itself.
+    let mut chain = PostProcessChain::new(&context).expect("chain shaders load");
+    chain.push(AffinePass::boxed(
+        &render_context,
+        &recorded,
+        "double",
+        PostProcessStage::Hdr,
+        2.0,
+        0.0,
+    ));
+    chain.push(
+        AffinePass::boxed(
+            &render_context,
+            &recorded,
+            "broken",
+            PostProcessStage::Ldr,
+            10.0,
+            0.0,
+        )
+        .without_pipeline(),
+    );
+    let [first, second] = two_frames(&render_context, &mut chain, [1.0, 0.25]);
+    assert_close(first, 2.0, "the output receives the broken pass's input");
+    assert_close(second, 0.5, "the second frame shows the new scene");
 }
 
 /// Whether the test device can render `format` at `samples`.

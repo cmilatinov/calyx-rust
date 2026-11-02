@@ -97,9 +97,13 @@ impl TargetPool {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format,
-                // A pass renders into it and the next pass reads it.
+                // A pass renders into it and the next pass reads it. The
+                // chain copies into and out of it for a pass that has no
+                // pipeline.
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC
+                    | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             },
             None,

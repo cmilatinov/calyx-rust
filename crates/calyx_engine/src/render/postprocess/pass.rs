@@ -2,7 +2,7 @@
 
 use super::PostProcessSettings;
 use crate::assets::texture::Texture;
-use crate::render::RenderContext;
+use crate::render::{RenderContext, Shader};
 use egui_wgpu::wgpu;
 use enumflags2::{bitflags, make_bitflags, BitFlags};
 use std::fmt;
@@ -79,6 +79,26 @@ pub enum PostProcessError {
         /// The input it asked for.
         input: SceneInput,
     },
+}
+
+/// Why a pass recorded nothing: a shader it draws with has no pipeline,
+/// because wgpu rejected it and no earlier version of the shader built one.
+/// The chain then copies the pass's input to its output, so later passes and
+/// the presented image still show the current frame.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("shader {shader} has no pipeline")]
+pub struct NoPipeline {
+    /// The name of the shader without a pipeline.
+    pub shader: String,
+}
+
+impl NoPipeline {
+    /// The error for `shader`.
+    pub fn of(shader: &Shader) -> Self {
+        Self {
+            shader: shader.name.clone(),
+        }
+    }
 }
 
 /// What a pass may use while preparing and recording.
@@ -175,8 +195,15 @@ pub trait PostProcessPass: Send + Sync {
     /// records.
     fn prepare(&mut self, context: &PassContext, settings: &PostProcessSettings);
 
-    /// Records the pass: reads `io.input`, writes `io.output`.
-    fn record(&mut self, context: &PassContext, encoder: &mut wgpu::CommandEncoder, io: PassIo);
+    /// Records the pass: reads `io.input`, writes `io.output`. Returns
+    /// [`NoPipeline`] when it could not write the output, and the chain
+    /// copies the input there instead.
+    fn record(
+        &mut self,
+        context: &PassContext,
+        encoder: &mut wgpu::CommandEncoder,
+        io: PassIo,
+    ) -> Result<(), NoPipeline>;
 
     /// Frees textures the pass owns besides the chain's pool targets. The
     /// chain calls it on resize and on every frame the pass does not run.
