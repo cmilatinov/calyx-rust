@@ -71,7 +71,7 @@ impl PostProcessEffects {
     pub fn from_game_object(scene: &Scene, game_object: GameObject) -> Self {
         let components = Self::components(scene, game_object);
         match PostProcessProfile::of_volume(scene, game_object) {
-            Some(profile) => profile.effects().overlaid_by(&components),
+            Some(profile) => profile.read().effects().overlaid_by(&components),
             None => components,
         }
     }

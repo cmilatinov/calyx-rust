@@ -358,23 +358,38 @@ A local volume changes part of the look in a region and fades it in and out as t
 
 ```rust
 // assets/post_process_profile/, saved as `.cxpostfx` JSON.
-pub struct PostProcessProfile {
-    pub tonemapping: Option<ProfileEntry<ComponentTonemap>>,
-    /* one entry per effect, as in PostProcessSettings */
-}
-pub struct ProfileEntry<T> { pub enabled: bool, pub settings: T }  // true, T::default()
+pub struct PostProcessProfile { entries: Vec<ProfileEntry> }  // at most one entry per effect type
+pub struct ProfileEntry { pub enabled: bool, pub settings: Box<dyn PostProcessEffect> }
+
+// component/post_process/: the marker every effect component implements and
+// lists in its #[reflect(...)], so the type registry knows the effect types.
+#[reflect_trait]
+pub trait PostProcessEffect: Component {}
 
 // Both volumes gain:
 pub profile: AssetRef<PostProcessProfile>,  // nil: no profile
 ```
 
+```json
+{
+  "entries": [
+    { "type": "68ac12ac-fc9a-489e-b305-363eaf593966", "enabled": true,
+      "settings": { "preset": "Aces", "exposure_ev": 1.5 } },
+    { "type": "7e09858d-fd71-4729-bb90-8ed76c0bda9a", "enabled": false,
+      "settings": { "intensity": 0.75 } }
+  ]
+}
+```
+
 A profile is a look saved as an asset, which any number of global and local volumes, in any scene, reference.
 
-- **Entries**: an optional entry per effect, each with its own `enabled` flag and the effect component's own settings type, so the passes read profile values exactly as component values. Every field of a saved entry is optional: a missing `enabled` is on and missing settings take the component's defaults. An absent entry is not saved.
+- **Entries**: a list of entries, at most one per effect, each keyed in the file by its effect component's type UUID (`type`), with its own `enabled` flag and the component's serialized fields (`settings`), as a scene saves the component. The settings are a value of the effect component itself, so the passes read profile values exactly as component values. A missing `enabled` is on, and missing settings fields take the component's defaults. An empty profile saves as `{ "entries": [] }`.
+- **Effect types**: the components registered with the `PostProcessEffect` reflect trait (`PostProcessProfile::effect_types`, from the type registry); a project component can be one too. Loading deserializes each entry through the component registry's prototype for its type, as a scene loads components, then through `ReflectPostProcessEffect`. An entry whose type is unknown or not an effect, whose settings do not deserialize, or whose type an earlier entry has, is skipped with a warning, and the rest of the profile loads. Adding an effect therefore needs no change to the profile or its file format.
+- **Gathering**: `PostProcessProfile::effects` maps the enabled entries onto `PostProcessEffects`, one line per effect. That mapping, and `PostProcessEffects`' fixed fields, go away with #477, which keys the resolved settings by type UUID too.
 - **Precedence** (`PostProcessEffects::from_game_object`): the volume's profile entries, each enabled entry on and each disabled one off, then each effect component present and enabled on the volume's object replaces its effect's entry whole. A component the object lacks or holds disabled leaves the profile's entry; to switch off a profile's effect on one volume, give it the component and switch its entry off in the profile, or override the effect with neutral values. A volume without a profile, or whose profile does not load (warned once), reads its components alone, as before profiles. Tone mapping still falls back to its defaults when neither sets it. An object with both a global and a local volume uses the global volume's profile.
 - **No blending or layering**: a profile never layers over another. Local volumes blend the settings each volume resolves to (Local Volumes), so a profile reaches the blend as that volume's effects.
 - **Live edits**: `resolve` reads the loaded profile every frame through the asset registry, so an edit in the profile's inspector, a change of a volume's `profile` field and a hot reload of the file all show on the next frame, in every view and every volume that uses it. Saving the profile writes its file; an external change to the file hot reloads it in place.
-- **Editor**: the asset inspector draws each entry as an effect component, with the header checkbox for `enabled`, Remove in the header's menu and the default field inspectors, and Add Effect adds an absent effect with its defaults; Save in the asset's menu writes the file. The content browser's Create New > Post Process Profile writes an empty profile. A volume's inspector shows Create Profile, which asks for a file, writes a profile with the volume's look (its current profile's entries with the object's effect components copied over them; a disabled component becomes a disabled entry only where the profile has none), points the volume at it and removes the effect components from the object, as one undo step. The look is unchanged, and editing the profile now changes it. `calyx_ctl profile create/get/set` and `asset save` drive the same paths.
+- **Editor**: the asset inspector draws each entry as an effect component, with the header checkbox for `enabled`, Remove in the header's menu and the default field inspectors, and Add Effect adds an absent registered effect with its defaults; Save in the asset's menu writes the file. The content browser's Create New > Post Process Profile writes an empty profile. A volume's inspector shows Create Profile, which asks for a file, writes a profile with the volume's look (its current profile's entries with the object's effect components copied over them; a disabled component becomes a disabled entry only where the profile has none), points the volume at it and removes the effect components from the object, as one undo step. The look is unchanged, and editing the profile now changes it. `calyx_ctl profile create/get/set` and `asset save` drive the same paths; `profile get` and `set` use the file format.
 
 ## Shaders
 

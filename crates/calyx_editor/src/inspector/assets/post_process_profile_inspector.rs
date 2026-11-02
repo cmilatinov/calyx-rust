@@ -22,9 +22,10 @@ use crate::scene_edit::SceneEdit;
 /// The file name a new profile takes, before a number makes it unique.
 const NEW_PROFILE_STEM: &str = "post_process_profile";
 
-/// Edits a [`PostProcessProfile`]: each entry draws as an effect component
-/// does, with its enabled checkbox and a Remove entry in its header's menu,
-/// and "Add Effect" adds the effects the profile lacks. Edits apply to the
+/// Edits a [`PostProcessProfile`]: each entry draws, in the profile's order,
+/// as an effect component does, with its enabled checkbox and a Remove entry
+/// in its header's menu, and "Add Effect" adds the registered effects the
+/// profile lacks, by name. Edits apply to the
 /// loaded profile, so every volume that uses it renders them on the next
 /// frame; Save in the asset's menu writes the file.
 #[derive(Default, Clone, TypeUuid, Reflect)]
@@ -59,10 +60,8 @@ impl AssetInspector for PostProcessProfileInspector {
         let component_inspector = ComponentInspector::new(inspectors);
         let mut profile = profile.write();
         let mut removals = Vec::new();
-        for type_uuid in PostProcessProfile::effect_types() {
-            let Some(entry) = profile.entry_mut(type_uuid) else {
-                continue;
-            };
+        for entry in profile.entries_mut() {
+            let type_uuid = entry.type_uuid();
             let Some(TypeInfo::Struct(type_info)) = types.type_info_by_id(type_uuid) else {
                 continue;
             };
@@ -79,13 +78,13 @@ impl AssetInspector for PostProcessProfileInspector {
                     component_inspector.show_unpinned(
                         ui,
                         &ctx,
-                        entry.settings,
-                        Some(*entry.enabled),
+                        entry.settings.as_reflect_mut(),
+                        Some(entry.enabled),
                     )
                 })
                 .inner;
             if let Some(enabled) = response.enabled {
-                *entry.enabled = enabled;
+                entry.enabled = enabled;
             }
             if response.remove {
                 removals.push(type_uuid);
@@ -94,16 +93,17 @@ impl AssetInspector for PostProcessProfileInspector {
         for type_uuid in removals {
             profile.remove_entry(type_uuid);
         }
-        let missing: Vec<_> = PostProcessProfile::effect_types()
+        let mut missing: Vec<_> = PostProcessProfile::effect_types(&types)
             .into_iter()
             .filter(|type_uuid| !profile.has_entry(*type_uuid))
             .filter_map(|type_uuid| Some((type_uuid, type_display_name(&types, type_uuid)?)))
             .collect();
+        missing.sort_by(|(_, a), (_, b)| a.cmp(b));
         ui.add_enabled_ui(!missing.is_empty(), |ui| {
             ui.menu_button("Add Effect", |ui| {
                 for (type_uuid, name) in missing {
                     if ui.button(name).clicked() {
-                        profile.add_entry(type_uuid);
+                        profile.add_entry(&types, type_uuid);
                         ui.close_menu();
                     }
                 }
@@ -182,6 +182,7 @@ impl PostProcessProfileInspector {
         }
         drop(registry);
 
+        let effect_types = PostProcessProfile::effect_types(&game.assets.registries.types.read());
         let scene = edit.scene_mut(game);
         let reference = || AssetRef::<PostProcessProfile>::from_id(id);
         scene.write_component(
@@ -192,7 +193,7 @@ impl PostProcessProfileInspector {
             game_object,
             |volume: &mut ComponentLocalPostProcessVolume| volume.profile = reference(),
         );
-        for type_uuid in PostProcessProfile::effect_types() {
+        for type_uuid in effect_types {
             scene.remove_component_dyn(game_object, type_uuid);
         }
         log::info!(

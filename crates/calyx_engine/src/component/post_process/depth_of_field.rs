@@ -1,5 +1,6 @@
 //! The depth of field effect component, read by the depth of field pass.
 
+use super::{PostProcessEffect, ReflectPostProcessEffect};
 use crate as calyx_engine;
 use crate::component::{Component, ReflectComponent};
 use crate::reflect::{Reflect, ReflectDefault};
@@ -9,7 +10,7 @@ use serde::{Deserialize, Serialize};
 /// Depth of field: the scene blurs with distance from a focus plane.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect)]
 #[uuid = "ac9e495b-1859-42d8-b1c5-0d35f113c089"]
-#[reflect(Default, TypeUuidDynamic, Component)]
+#[reflect(Default, TypeUuidDynamic, Component, PostProcessEffect)]
 #[reflect_attr(name = "Depth Of Field", category = "Post Processing")]
 #[serde(default)]
 pub struct ComponentDepthOfField {
@@ -43,6 +44,8 @@ impl ComponentDepthOfField {
         (self.blur_radius() / 16.0).max(0.5)
     }
 }
+
+impl PostProcessEffect for ComponentDepthOfField {}
 
 impl Component for ComponentDepthOfField {
     /// A disabled effect component switches its pass off.

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use calyx_engine::assets::post_process_profile::PostProcessProfile;
+use calyx_engine::assets::post_process_profile::{PostProcessProfile, PostProcessProfileData};
 use calyx_engine::class_registry::ComponentRegistry;
 use calyx_engine::component::{Component, ComponentID};
 use calyx_engine::core::Ref;
@@ -332,19 +332,27 @@ impl EditorApp {
                 }
             }
             Command::GetPostProcessProfile { path } => {
-                let profile = *self.remote_profile(path)?.read();
-                Ok(Some(profile_json(&profile)?))
+                let profile = self.remote_profile(path)?;
+                let json = profile_json(&profile.read());
+                Ok(Some(json?))
             }
             Command::SetPostProcessProfile { path, profile } => {
-                let profile: PostProcessProfile =
+                let data: PostProcessProfileData =
                     serde_json::from_value(profile).map_err(|error| {
                         (
                             ErrorKind::BadRequest,
                             format!("value does not deserialize into a profile: {error}"),
                         )
                     })?;
+                let registries = &self.state.game.assets.registries;
+                let profile = PostProcessProfile::from_data(
+                    data,
+                    &registries.types.read(),
+                    &registries.components.read(),
+                );
+                let json = profile_json(&profile)?;
                 *self.remote_profile(path)?.write() = profile;
-                Ok(Some(profile_json(&profile)?))
+                Ok(Some(json))
             }
 
             Command::GetSceneState => {
@@ -1187,7 +1195,8 @@ fn delete_now(scene: &mut Scene, game_object: GameObject) -> Vec<Uuid> {
     removed
 }
 
-/// `profile` as its file holds it.
+/// `profile` as its file holds it. An entry `set_post_process_profile`
+/// skipped is not in it.
 fn profile_json(profile: &PostProcessProfile) -> Result<serde_json::Value, (ErrorKind, String)> {
     serde_json::to_value(profile).map_err(|error| (ErrorKind::Internal, error.to_string()))
 }

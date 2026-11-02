@@ -1,5 +1,6 @@
 //! The anti-aliasing effect component, read by the FXAA pass.
 
+use super::{PostProcessEffect, ReflectPostProcessEffect};
 use crate as calyx_engine;
 use crate::component::{Component, ReflectComponent};
 use crate::reflect::{Reflect, ReflectDefault};
@@ -9,7 +10,7 @@ use serde::{Deserialize, Serialize};
 /// Screen-space anti-aliasing.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect)]
 #[uuid = "c19ff2b7-c3ed-4f04-9dfa-e026efdedf82"]
-#[reflect(Default, TypeUuidDynamic, Component)]
+#[reflect(Default, TypeUuidDynamic, Component, PostProcessEffect)]
 #[reflect_attr(name = "Anti-Aliasing (FXAA)", category = "Post Processing")]
 #[serde(default)]
 pub struct ComponentAntiAliasing {
@@ -22,6 +23,8 @@ pub struct ComponentAntiAliasing {
     #[reflect_attr(min = 0.0, max = 1.0, speed = 0.01)]
     pub subpixel: f32,
 }
+
+impl PostProcessEffect for ComponentAntiAliasing {}
 
 impl Component for ComponentAntiAliasing {
     /// A disabled effect component switches its pass off.

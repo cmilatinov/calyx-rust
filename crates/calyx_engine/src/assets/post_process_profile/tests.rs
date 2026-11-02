@@ -1,16 +1,17 @@
-//! Post-processing profiles: saving and loading, partial entries, and how a
-//! volume's profile and the effect components on its object combine.
+//! Post-processing profiles: the file format, partial and unknown entries,
+//! and how a volume's profile and the effect components on its object
+//! combine.
 
 use super::*;
 use crate::assets::{Asset, AssetRef};
 use crate::component::{
-    ComponentBloom, ComponentGlobalPostProcessVolume, ComponentLocalPostProcessVolume,
-    ComponentTonemap, ComponentVignette,
+    ComponentBloom, ComponentCamera, ComponentGlobalPostProcessVolume,
+    ComponentLocalPostProcessVolume, ComponentTonemap, ComponentVignette,
 };
 use crate::context::ReadOnlyRegistryContext;
 use crate::render::postprocess::{PostProcessEffects, PostProcessSettings};
 use crate::scene::{GameObject, Scene};
-use crate::test_support::test_registries_with_assets;
+use crate::test_support::{test_registries, test_registries_with_assets};
 use notify::{Event, EventKind};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -48,6 +49,15 @@ fn registries_with_profile(root: &TempRoot, path: &Path) -> (ReadOnlyRegistryCon
     (registries, id)
 }
 
+/// The profile at `id`, loaded through `registries`.
+fn load(registries: &ReadOnlyRegistryContext, id: Uuid) -> crate::core::Ref<PostProcessProfile> {
+    registries
+        .assets
+        .read()
+        .load_by_id::<PostProcessProfile>(id)
+        .expect("the profile loads")
+}
+
 fn bloom(intensity: f32) -> ComponentBloom {
     ComponentBloom {
         intensity,
@@ -57,10 +67,7 @@ fn bloom(intensity: f32) -> ComponentBloom {
 
 /// A profile with bloom at `intensity` and every other effect absent.
 fn bloom_profile(intensity: f32) -> PostProcessProfile {
-    PostProcessProfile {
-        bloom: Some(ProfileEntry::new(bloom(intensity))),
-        ..Default::default()
-    }
+    PostProcessProfile::from_entries([ProfileEntry::new(bloom(intensity))])
 }
 
 /// A global volume referencing `profile`.
@@ -107,70 +114,160 @@ fn rewrite_and_hot_reload(registries: &ReadOnlyRegistryContext, path: &Path, pro
 }
 
 #[test]
+fn a_profile_saves_as_a_list_of_entries_keyed_by_type_uuid() {
+    let profile = PostProcessProfile::from_entries([
+        ProfileEntry::new(ComponentTonemap {
+            exposure_ev: 1.5,
+            ..Default::default()
+        }),
+        ProfileEntry::disabled(bloom(0.75)),
+    ]);
+
+    let saved = serde_json::to_value(profile.to_data()).unwrap();
+
+    assert_eq!(
+        saved,
+        serde_json::json!({
+            "entries": [
+                {
+                    "type": ComponentTonemap::type_uuid(),
+                    "enabled": true,
+                    "settings": { "preset": "Aces", "exposure_ev": 1.5 },
+                },
+                {
+                    "type": ComponentBloom::type_uuid(),
+                    "enabled": false,
+                    "settings": { "threshold": 1.0, "knee": 0.5, "intensity": 0.75, "radius": 6 },
+                },
+            ]
+        })
+    );
+}
+
+#[test]
 fn a_profile_saves_and_loads_through_the_asset_registry() {
     let root = TempRoot::new();
     let path = root.path("look.cxpostfx");
-    let profile = PostProcessProfile {
-        tonemapping: Some(ProfileEntry::new(ComponentTonemap {
+    let profile = PostProcessProfile::from_entries([
+        ProfileEntry::new(ComponentTonemap {
             exposure_ev: 1.5,
             ..Default::default()
-        })),
-        bloom: Some(ProfileEntry {
-            enabled: false,
-            settings: bloom(0.8),
         }),
-        vignette: Some(ProfileEntry::new(ComponentVignette {
+        ProfileEntry::disabled(bloom(0.8)),
+        ProfileEntry::new(ComponentVignette {
             intensity: 0.7,
             ..Default::default()
-        })),
-        ..Default::default()
-    };
+        }),
+    ]);
     save(&profile, &path);
 
     let (registries, id) = registries_with_profile(&root, &path);
-    let loaded = registries
-        .assets
-        .read()
-        .load_by_id::<PostProcessProfile>(id)
-        .expect("the profile loads");
 
-    assert_eq!(*loaded.read(), profile);
+    assert_eq!(*load(&registries, id).read(), profile);
+}
+
+#[test]
+fn an_empty_profile_round_trips() {
+    let root = TempRoot::new();
+    let path = root.path("empty.cxpostfx");
+    save(&PostProcessProfile::default(), &path);
+
+    let (registries, id) = registries_with_profile(&root, &path);
+
+    assert_eq!(*load(&registries, id).read(), PostProcessProfile::default());
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&std::fs::read_to_string(&path).unwrap())
+            .unwrap(),
+        serde_json::json!({ "entries": [] })
+    );
 }
 
 #[test]
 fn a_partial_entry_loads_the_effects_defaults() {
     let root = TempRoot::new();
     let path = root.path("partial.cxpostfx");
-    std::fs::write(
-        &path,
-        r#"{ "bloom": { "settings": { "intensity": 2.0 } }, "vignette": { "enabled": false } }"#,
-    )
-    .unwrap();
+    let file = serde_json::json!({
+        "entries": [
+            { "type": ComponentBloom::type_uuid(), "settings": { "intensity": 2.0 } },
+            { "type": ComponentVignette::type_uuid(), "enabled": false },
+        ]
+    });
+    std::fs::write(&path, file.to_string()).unwrap();
 
     let (registries, id) = registries_with_profile(&root, &path);
-    let loaded = *registries
-        .assets
-        .read()
-        .load_by_id::<PostProcessProfile>(id)
-        .expect("the profile loads")
-        .read();
 
     assert_eq!(
-        loaded,
-        PostProcessProfile {
-            bloom: Some(ProfileEntry::new(ComponentBloom {
+        *load(&registries, id).read(),
+        PostProcessProfile::from_entries([
+            ProfileEntry::new(ComponentBloom {
                 intensity: 2.0,
                 threshold: 1.0,
                 knee: 0.5,
                 radius: 6,
-            })),
-            vignette: Some(ProfileEntry {
-                enabled: false,
-                settings: ComponentVignette::default(),
             }),
-            ..Default::default()
-        }
+            ProfileEntry::disabled(ComponentVignette::default()),
+        ])
     );
+}
+
+#[test]
+fn an_unknown_or_non_effect_type_is_skipped_and_the_rest_loads() {
+    let root = TempRoot::new();
+    let path = root.path("unknown.cxpostfx");
+    let file = serde_json::json!({
+        "entries": [
+            { "type": Uuid::new_v4(), "settings": { "strength": 1.0 } },
+            { "type": ComponentCamera::type_uuid(), "settings": {} },
+            { "type": ComponentBloom::type_uuid(), "settings": { "intensity": 2.0 } },
+            { "type": ComponentBloom::type_uuid(), "settings": { "intensity": 3.0 } },
+        ]
+    });
+    std::fs::write(&path, file.to_string()).unwrap();
+
+    let (registries, id) = registries_with_profile(&root, &path);
+
+    assert_eq!(*load(&registries, id).read(), bloom_profile(2.0));
+}
+
+#[test]
+fn the_effect_types_are_the_registered_effect_components() {
+    let registries = test_registries();
+    let types = registries.types.read();
+
+    let mut effect_types = PostProcessProfile::effect_types(&types);
+    effect_types.sort();
+    let mut expected = vec![
+        ComponentTonemap::type_uuid(),
+        crate::component::ComponentAmbientOcclusion::type_uuid(),
+        crate::component::ComponentDepthOfField::type_uuid(),
+        ComponentBloom::type_uuid(),
+        crate::component::ComponentColorGrading::type_uuid(),
+        ComponentVignette::type_uuid(),
+        crate::component::ComponentAntiAliasing::type_uuid(),
+    ];
+    expected.sort();
+
+    assert_eq!(effect_types, expected);
+}
+
+#[test]
+fn entries_are_added_with_their_defaults_and_removed_by_type() {
+    let registries = test_registries();
+    let types = registries.types.read();
+    let mut profile = PostProcessProfile::default();
+
+    assert!(profile.add_entry(&types, ComponentVignette::type_uuid()));
+    assert!(!profile.add_entry(&types, ComponentVignette::type_uuid()));
+    assert!(!profile.add_entry(&types, ComponentCamera::type_uuid()));
+    assert!(profile.has_entry(ComponentVignette::type_uuid()));
+    assert_eq!(
+        profile,
+        PostProcessProfile::from_entries([ProfileEntry::new(ComponentVignette::default())])
+    );
+
+    assert!(profile.remove_entry(ComponentVignette::type_uuid()));
+    assert!(!profile.remove_entry(ComponentVignette::type_uuid()));
+    assert_eq!(profile, PostProcessProfile::default());
 }
 
 #[test]
@@ -198,13 +295,8 @@ fn an_enabled_effect_component_replaces_the_profile_entry_and_a_disabled_or_abse
 fn a_disabled_profile_entry_is_off_unless_an_enabled_component_replaces_it() {
     let root = TempRoot::new();
     let path = root.path("look.cxpostfx");
-    let profile = PostProcessProfile {
-        vignette: Some(ProfileEntry {
-            enabled: false,
-            settings: ComponentVignette::default(),
-        }),
-        ..Default::default()
-    };
+    let profile =
+        PostProcessProfile::from_entries([ProfileEntry::disabled(ComponentVignette::default())]);
     save(&profile, &path);
     let (registries, id) = registries_with_profile(&root, &path);
     let mut scene = registries.scene();
@@ -244,7 +336,7 @@ fn a_profile_without_tone_mapping_leaves_the_tone_mapping_defaults() {
 
 #[test]
 fn a_volume_whose_profile_does_not_load_uses_its_components_alone() {
-    let registries = crate::test_support::test_registries();
+    let registries = test_registries();
     let mut scene = registries.scene();
     let volume = spawn_global(&mut scene, Uuid::new_v4());
     scene.add_component(volume, bloom(0.9));
@@ -271,12 +363,9 @@ fn two_volumes_sharing_a_profile_both_follow_an_edit_to_it() {
     assert_eq!(effects_of(&scene, global).bloom, Some(bloom(0.3)));
     assert_eq!(effects_of(&scene, local).bloom, Some(bloom(0.3)));
 
-    let profile = registries
-        .assets
-        .read()
-        .load_by_id::<PostProcessProfile>(id)
-        .unwrap();
-    profile.write().bloom = Some(ProfileEntry::new(bloom(0.6)));
+    load(&registries, id)
+        .write()
+        .insert(ProfileEntry::new(bloom(0.6)));
 
     assert_eq!(effects_of(&scene, global).bloom, Some(bloom(0.6)));
     assert_eq!(effects_of(&scene, local).bloom, Some(bloom(0.6)));
@@ -293,11 +382,10 @@ fn a_hot_reload_of_the_profile_changes_the_resolved_settings() {
     let resolve = |scene: &Scene| PostProcessSettings::resolve(scene, &Default::default());
     assert_eq!(resolve(&scene).bloom, Some(bloom(0.3)));
 
-    rewrite_and_hot_reload(
-        &registries,
-        &path,
-        r#"{ "bloom": { "settings": { "intensity": 1.25 } } }"#,
-    );
+    let file = serde_json::json!({
+        "entries": [{ "type": ComponentBloom::type_uuid(), "settings": { "intensity": 1.25 } }]
+    });
+    rewrite_and_hot_reload(&registries, &path, &file.to_string());
 
     assert_eq!(resolve(&scene).bloom, Some(bloom(1.25)));
 }
@@ -317,7 +405,7 @@ fn volumes_saved_without_a_profile_still_load() {
 
 #[test]
 fn a_profile_from_a_volume_copies_its_effect_components_and_keeps_the_look() {
-    let registries = crate::test_support::test_registries();
+    let registries = test_registries();
     let mut scene = registries.scene();
     let volume = scene.create(None, None);
     scene.add_component(volume, ComponentGlobalPostProcessVolume::default());
@@ -334,14 +422,10 @@ fn a_profile_from_a_volume_copies_its_effect_components_and_keeps_the_look() {
 
     assert_eq!(
         profile,
-        PostProcessProfile {
-            bloom: Some(ProfileEntry::new(bloom(0.9))),
-            vignette: Some(ProfileEntry {
-                enabled: false,
-                settings: vignette,
-            }),
-            ..Default::default()
-        }
+        PostProcessProfile::from_entries([
+            ProfileEntry::new(bloom(0.9)),
+            ProfileEntry::disabled(vignette),
+        ])
     );
     assert_eq!(PostProcessSettings::from(profile.effects()), before);
 }
