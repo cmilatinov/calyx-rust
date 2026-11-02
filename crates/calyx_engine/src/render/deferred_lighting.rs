@@ -1,7 +1,6 @@
 //! The deferred lighting pass: shades the opaque PBR surfaces of the
-//! G-buffer into the scene's HDR target with the lighting the forward PBR
-//! pass uses. The paths and their pass order are in
-//! `docs/design/post-processing/architecture.md`.
+//! G-buffer into the scene's HDR target through `pbr_lighting`. The pass
+//! order is in `docs/design/post-processing/architecture.md`.
 
 use crate::assets::texture::Texture;
 use crate::context::ReadOnlyAssetContext;
@@ -37,12 +36,6 @@ impl DeferredLightingRenderer {
             )?,
             gbuffer_bind_group: Default::default(),
         })
-    }
-
-    /// Drops the cached bind group, on a frame the deferred path does not
-    /// run, so it holds no G-buffer view.
-    pub fn release(&mut self) {
-        self.gbuffer_bind_group.clear();
     }
 
     /// Clears `color` to `clear_color` and writes the lit color of every

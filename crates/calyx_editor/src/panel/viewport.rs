@@ -6,7 +6,7 @@ use crate::{icons, EditorAppState};
 use calyx_engine::context::GameContext;
 use calyx_engine::input::Input;
 use calyx_engine::math::Transform;
-use calyx_engine::render::{CameraLike, GBufferView, RenderPath};
+use calyx_engine::render::{CameraLike, GBufferView};
 use calyx_engine::scene::GameObject;
 use egui::epaint::Vertex;
 use egui::load::SizedTexture;
@@ -120,10 +120,6 @@ impl PanelViewport {
             .on_hover_text("Run the edit scene's particle systems while play is stopped");
             ui.separator();
             Self::view_mode_combo(ui, &mut app_state.scene_renderer.options_mut().gbuffer_view);
-            let mut render_path = app_state.scene_renderer.options().render_path;
-            Self::render_path_combo(ui, &mut render_path);
-            app_state.scene_renderer.options_mut().render_path = render_path;
-            app_state.game_renderer.options_mut().render_path = render_path;
         });
         ui.add_space(-ui.style().spacing.item_spacing.y + padding);
     }
@@ -142,24 +138,6 @@ impl PanelViewport {
             })
             .response
             .on_hover_text("Show the lit scene, or one target of the deferred G-buffer");
-    }
-
-    /// Picks how the scene view and the Game tab shade the opaque PBR
-    /// meshes: deferred, or forward to compare against it.
-    fn render_path_combo(ui: &mut Ui, path: &mut RenderPath) {
-        let label = |path: RenderPath| match path {
-            RenderPath::Deferred => "Deferred",
-            RenderPath::Forward => "Forward",
-        };
-        egui::ComboBox::from_id_salt("viewport_render_path")
-            .selected_text(label(*path))
-            .show_ui(ui, |ui| {
-                for option in [RenderPath::Deferred, RenderPath::Forward] {
-                    ui.selectable_value(path, option, label(option));
-                }
-            })
-            .response
-            .on_hover_text("Shade opaque meshes from the G-buffer, or in the forward pass");
     }
 
     fn viewport(&self, ui: &mut Ui, app_state: &mut EditorAppState) -> egui::Response {

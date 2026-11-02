@@ -283,8 +283,6 @@ impl ThumbnailGenerator {
                             shadows: false,
                             // Thumbnails show the lit image.
                             gbuffer_view: None,
-                            // Thumbnails shade as the scene view does.
-                            render_path: RenderPath::Deferred,
                         },
                         (size_px, size_px),
                     )

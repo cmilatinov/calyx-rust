@@ -9,7 +9,6 @@ use crate::render::{
     CachedBindGroup, GizmoRenderer, LightManager, PipelineOptions, SceneRendererError, Shader,
     ShadowBindings,
 };
-use egui::Color32;
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use std::collections::{HashMap, HashSet};
@@ -73,34 +72,13 @@ struct CachedMaterialBindGroups {
     groups: HashMap<u32, wgpu::BindGroup>,
 }
 
-/// The bind groups every PBR lighting pass binds, forward or deferred: group
+/// The bind groups the deferred lighting pass and the forward draws bind: group
 /// 0, the camera and the sky light's maps, and group 2, the lights and the
 /// shadow maps (see `shaders/common/pbr_lighting.wgsl`).
 #[derive(Clone)]
 pub(crate) struct LightingBindGroups {
     pub scene: wgpu::BindGroup,
     pub lights: wgpu::BindGroup,
-}
-
-/// Which draws of the draw list the forward pass draws.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ForwardDraws {
-    /// Every draw, over cleared color and depth: the forward path.
-    All,
-    /// Every draw whose shader is not `deferred_shader`, over the image and
-    /// depth the deferred lighting pass left: the deferred path's forward-only
-    /// draws.
-    AfterDeferred { deferred_shader: AssetId },
-}
-
-impl ForwardDraws {
-    /// Whether the pass draws the batches of `shader_id`.
-    pub fn includes(self, shader_id: AssetId) -> bool {
-        match self {
-            ForwardDraws::All => true,
-            ForwardDraws::AfterDeferred { deferred_shader } => shader_id != deferred_shader,
-        }
-    }
 }
 
 pub struct MeshRenderTargets<'a> {
@@ -135,14 +113,8 @@ impl MeshRenderer {
         })
     }
 
-    /// The PBR shader, whose draws the deferred path shades from the
-    /// G-buffer.
-    pub fn scene_shader_id(&self) -> AssetId {
-        self.scene_shader.id()
-    }
-
-    /// The frame's lighting bind groups, for the forward PBR pass and the
-    /// deferred lighting pass alike: the camera, the sky light's maps
+    /// The frame's lighting bind groups, for the deferred lighting pass and
+    /// the forward draws alike: the camera, the sky light's maps
     /// (`skybox_id`'s, or black without one) and the environment uniform,
     /// then the lights and the shadow maps. Each is reused from earlier
     /// frames while it binds the same resources.
@@ -201,7 +173,10 @@ impl MeshRenderer {
         LightingBindGroups { scene, lights }
     }
 
-    /// Draws `draws` of `draw_list` into `targets`, lit through `lighting`.
+    /// Draws every batch of `draw_list` whose shader is not the PBR shader
+    /// into `targets`, lit through `lighting`, over the image and depth the
+    /// deferred lighting pass left: the forward-only draws. The PBR batches
+    /// are shaded from the G-buffer.
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
@@ -210,38 +185,27 @@ impl MeshRenderer {
         material_bind_groups: &MaterialBindGroups,
         lighting: &LightingBindGroups,
         targets: MeshRenderTargets<'_>,
-        clear_color: Color32,
         pipeline_options: &PipelineOptions,
-        draws: ForwardDraws,
         draw_list: &[DrawBatch],
     ) {
-        let (color_load, depth_load) = match draws {
-            ForwardDraws::All => (
-                wgpu::LoadOp::Clear(RenderUtils::clear_value(clear_color)),
-                wgpu::LoadOp::Clear(1.0),
-            ),
-            ForwardDraws::AfterDeferred { .. } => (wgpu::LoadOp::Load, wgpu::LoadOp::Load),
-        };
+        let deferred_shader = self.scene_shader.id();
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Viewport Scene"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &targets.color.view,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: color_load,
+                    load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
                 },
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: &targets.depth.view,
                 depth_ops: Some(wgpu::Operations {
-                    load: depth_load,
+                    load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
                 }),
-                stencil_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(0),
-                    store: wgpu::StoreOp::Store,
-                }),
+                stencil_ops: None,
             }),
             timestamp_writes: None,
             occlusion_query_set: None,
@@ -256,7 +220,7 @@ impl MeshRenderer {
             ..
         } in draw_list
         {
-            if !draws.includes(shader_id) {
+            if shader_id == deferred_shader {
                 continue;
             }
             let Some(shader) = assets.shader(shader_id) else {
