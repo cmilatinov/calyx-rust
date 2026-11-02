@@ -89,7 +89,7 @@ pub enum PostProcessStage { Hdr, Tonemap, Ldr }
 
 #[bitflags]
 #[repr(u8)]
-pub enum SceneInput { Depth = 0b001, Normals = 0b010, Velocity = 0b100 }
+pub enum SceneInput { Depth, Normals, Velocity, ParticleDepth, Albedo }  // one bit each
 pub type PassInputs = BitFlags<SceneInput>;                  // enumflags2
 
 pub trait PostProcessPass {
@@ -106,7 +106,10 @@ pub trait PostProcessPass {
 pub struct PassIo<'a> {
     pub input: &'a Texture,          // never the output
     pub output: &'a Texture,
-    pub depth: Option<&'a Texture>,  // when requested
+    pub depth: Option<&'a Texture>,  // each scene input only when requested
+    pub particle_depth: Option<&'a Texture>,
+    pub normals: Option<&'a Texture>,
+    pub albedo: Option<&'a Texture>,
 }
 ```
 
@@ -127,11 +130,17 @@ The wiring is a pure plan (`ChainPlan`) built before any GPU work, which keeps o
 
 ## Shared Inputs
 
-A pass declares the scene inputs it reads in `inputs()`. The chain builds each one only when an enabled pass asks for it.
+A pass declares the scene inputs it reads in `inputs()`. The chain builds each one only when an enabled pass asks for it, and hands it only to the passes that asked, in `PassIo`.
 
+- **How they reach the chain**: `render_scene_base` draws the scene and keeps its depth, the particle depth and the G-buffer on the renderer. `finalize_scene` hands them to `PostProcessChain::run` in `ChainTargets`, at whatever sample count they were drawn. `ChainPlan::build` records which inputs the frame's planned passes read (`plan.depth`, `plan.particle_depth`, `plan.normals`, `plan.albedo`), and the chain resolves or passes through only those. `PostProcessChain::reads` answers the same question for the renderer before the scene is drawn, which the particle depth uses.
 - **Depth**: without MSAA the scene's depth texture is passed through. With MSAA a small pass copies sample 0 of the multisampled depth into a single-sample `Depth32Float` texture, built once per frame for every pass that asks.
 - **Particle depth**: the scene depth with every particle drawn in, including those that stay out of the scene depth, nearest wins (see Particles And Depth). The particle renderer writes it at the scene's sample count only when a pass that runs asks for it and a particle is drawn; the chain resolves it like depth. Otherwise it is the scene depth, resolved once for both.
-- **Normals, velocity**: not produced yet. A pass that asks for one is skipped with a `PostProcessError::InputUnavailable` warning naming the pass and input.
+- **Normals**: the G-buffer's `normals` target itself, `Rgba16Float`: the view-space shading normal in RG and the view-space geometric normal in BA, each octahedral (see [G-Buffer](../rendering/gbuffer.md#normal-encoding)). A pass decodes the one it needs with `gbuffer_decode_normal` from `shaders/deferred/gbuffer_encoding.wgsl`. The chain passes the raw target, not a decoded copy: decoding is a few instructions where a pass loads a texel, while a decoded copy would cost a full-screen pass and a target every frame and would keep only one of the two normals. Both are in the view space of `camera.view`, `+z` away from the camera, so SSAO (#448) can orient its hemisphere by either one.
+- **Albedo**: the G-buffer's `albedo` target itself, `Rgba8UnormSrgb`, so a pass that samples or loads it gets linear base color. Its alpha is the G-buffer's coverage: 1 where an opaque PBR surface was drawn, 0 elsewhere (sky, particles, meshes drawn with another shader). The normals target holds zeros where alpha is 0, so a pass that reads normals and needs to know where they hold a surface asks for albedo as well.
+- **Normals and albedo under MSAA**: the G-buffer is single-sample at every sample count and is never resolved (see [G-Buffer](../rendering/gbuffer.md#msaa)), so the chain hands passes the same single-sample targets at one and four samples, and builds nothing for them. Above one sample the chain's depth is sample 0 of the scene depth, which for a PBR pixel is the G-buffer depth the lighting pass wrote into every sample, so depth, normals and albedo describe the same surface there.
+- **Normals and albedo are lazy for free**: every frame draws the G-buffer for the deferred lighting pass, so a pass reading them adds no pass and no target, and a frame without such a pass does no extra work either. A G-buffer view replaces the chain, so it never reads them.
+- **What they do not see**: the G-buffer holds only opaque PBR surfaces. Where a mesh drawn with another shader, or an alpha-blended particle written into the scene depth, covers a PBR surface, the depth holds the nearer draw while normals and albedo still hold the surface behind it. A pass that must agree with the depth there compares the depth with the particle depth, or treats such pixels as it treats sky.
+- **Velocity**: not produced yet. A pass that asks for it is skipped with a `PostProcessError::InputUnavailable` warning naming the pass and input.
 
 Tone mapping asks for nothing.
 
@@ -193,7 +202,7 @@ composite   input, blurred, depth,       -> output            input.rgb * visibi
             particle depth
 ```
 
-- **Reconstruction**: the renderer produces no normals (`SceneInput::Normals` is unavailable), so each occlusion texel rebuilds its view-space position from depth with `PassContext::camera` (linear depth and `tan_half_fov`), and its normal from the cross product of the position differences to its horizontal and vertical neighbours. On each axis it takes the neighbour closer in depth, so normals do not bend at silhouettes, and it turns the normal toward the camera.
+- **Reconstruction**: SSAO does not read `SceneInput::Normals` yet (#448), so each occlusion texel rebuilds its view-space position from depth with `PassContext::camera` (linear depth and `tan_half_fov`), and its normal from the cross product of the position differences to its horizontal and vertical neighbours. On each axis it takes the neighbour closer in depth, so normals do not bend at silhouettes, and it turns the normal toward the camera.
 - **Hemisphere**: up to 64 kernel offsets in the unit hemisphere around +z, generated once per sample count from a fixed seed. They cluster toward the center and keep at least 0.15 of their length along the normal, so a flat surface does not occlude itself. Each texel turns the kernel around its normal by one of 16 angles from a 4x4 tile in Bayer order, then scales it by `radius`.
 - **Occlusion**: each sample is projected back to the screen and compared with the depth there. A surface more than `bias` in front of the sample occludes it, faded out by `smoothstep(radius / |dz|)` when that surface lies far in front of the pixel, so a foreground object does not darken the wall behind it. Samples off screen or on the sky do not count. Visibility is `(1 - occluded / samples) ^ intensity`.
 - **Blur**: a 4x4 box over exactly one tile of the noise, which cancels the rotation pattern, weighting each texel by how close its view depth is to the center's (zero at a 10% difference).
@@ -256,7 +265,7 @@ A geometry pass draws the opaque PBR meshes into a G-buffer that `SceneRenderer`
 | `material` | `Rgba8Unorm` | R metallic (factor times texture B), G roughness (factor times texture G), B ambient occlusion (`ambient_occlusion` with the occlusion texture's R at `occlusion_strength`) |
 | `emissive` | `Rgba16Float` | RGB `emission_color * emission_strength * emissive_texture`, linear HDR |
 
-The chain does not read the G-buffer yet: `SceneInput::Normals` stays unavailable. A G-buffer view (`SceneRendererOptions::gbuffer_view`) replaces the chain's output with one target.
+The chain hands the `normals` and `albedo` targets to the passes that ask for `SceneInput::Normals` and `SceneInput::Albedo` (see Shared Inputs). A G-buffer view (`SceneRendererOptions::gbuffer_view`) replaces the chain's output with one target.
 
 ## Deferred Shading
 
@@ -409,7 +418,9 @@ Headless tests in `crates/calyx_engine/src/render/postprocess/`:
 - Tone mapping preserves alpha.
 - ACES maps known HDR inputs to the reference fit within tolerance.
 - The display-encoding test above.
-- Depth reaches a pass that requests it, single-sample at one and four samples; normals and velocity report unavailable.
+- Depth reaches a pass that requests it, single-sample at one and four samples; velocity reports unavailable.
+- A pass that requests normals or albedo is planned with them, and a plan without such a pass reads neither.
+- In `scene_renderer.rs`, a pass that requests normals and albedo gets the G-buffer's own single-sample targets, holding a turned plane's normal and base color, at one and four samples, and no depth it did not ask for.
 - Volume selection picks the highest enabled priority, warns on a tie, and falls back to the defaults. A volume with no effect components resolves to tone mapping alone, only the selected volume's effect components are gathered, a disabled tone-mapping component falls back to the defaults, and adding, disabling or removing each effect component switches its pass on or off in the renderer's plan.
 - SSAO leaves a flat plane facing the camera unoccluded, darkens an inside corner most at its crease, does not darken a one-pixel post standing in front of that crease, leaves the sky, at a cleared or skybox depth, bit for bit unchanged, and leaves a particle out of the scene depth in front of the crease unchanged while the crease above it stays occluded. With it disabled the renderer's plan is tone mapping alone. Its targets are half the chain's size and freed on release, and a partial component loads with the defaults.
 - Depth of field (`dof.rs`): `CameraPlanes` inverts the render projection; pixels at the focus distance are unchanged; far pixels blur more than pixels near focus, and pixels in front of it blur too; a blurred background stays behind a sharp edge while a blurred foreground spreads over it; the pass reads depth at one and four samples with the same result; with it disabled the plan is the tone-map-only plan and its texture is not allocated, follows the chain's size, and is freed when disabled and on resize. A partial component loads with the defaults.

@@ -28,7 +28,11 @@ pub enum SceneInput {
     /// Scene depth, single-sample: opaque geometry and the particles that
     /// write depth.
     Depth = 0b0001,
-    /// View-space normals. Not produced yet.
+    /// The G-buffer's normals target, single-sample at every sample count:
+    /// `Rgba16Float` holding the view-space shading normal in RG and the
+    /// view-space geometric normal in BA, each octahedral. Decode them with
+    /// `gbuffer_decode_normal` from `shaders/deferred/gbuffer_encoding.wgsl`.
+    /// Only pixels whose [`Self::Albedo`] alpha is 1 hold a surface.
     Normals = 0b0010,
     /// Screen-space motion vectors. Not produced yet.
     Velocity = 0b0100,
@@ -36,6 +40,10 @@ pub enum SceneInput {
     /// out of the scene depth, nearest wins, single-sample. Where no
     /// particle covers a pixel it equals [`Self::Depth`].
     ParticleDepth = 0b1000,
+    /// The G-buffer's albedo target, single-sample at every sample count:
+    /// `Rgba8UnormSrgb` holding the linear base color in RGB, and in A 1
+    /// where an opaque PBR surface was drawn, 0 elsewhere.
+    Albedo = 0b10000,
 }
 
 impl fmt::Display for SceneInput {
@@ -45,6 +53,7 @@ impl fmt::Display for SceneInput {
             Self::Normals => "normals",
             Self::Velocity => "velocity",
             Self::ParticleDepth => "particle depth",
+            Self::Albedo => "albedo",
         })
     }
 }
@@ -54,7 +63,8 @@ impl fmt::Display for SceneInput {
 pub type PassInputs = BitFlags<SceneInput>;
 
 /// The scene inputs the renderer produces.
-pub const PRODUCED_INPUTS: PassInputs = make_bitflags!(SceneInput::{Depth | ParticleDepth});
+pub const PRODUCED_INPUTS: PassInputs =
+    make_bitflags!(SceneInput::{Depth | ParticleDepth | Normals | Albedo});
 
 /// Checks the inputs `pass` reads against what the renderer produces, and
 /// reports the first one it does not.
@@ -173,6 +183,12 @@ pub struct PassIo<'a> {
     /// Single-sample scene depth with every particle in it, when the pass
     /// asked for [`SceneInput::ParticleDepth`].
     pub particle_depth: Option<&'a Texture>,
+    /// The G-buffer's normals target, when the pass asked for
+    /// [`SceneInput::Normals`].
+    pub normals: Option<&'a Texture>,
+    /// The G-buffer's albedo target, when the pass asked for
+    /// [`SceneInput::Albedo`].
+    pub albedo: Option<&'a Texture>,
 }
 
 /// One full-screen pass of the post-processing chain.
