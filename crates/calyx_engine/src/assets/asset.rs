@@ -17,6 +17,7 @@ use crate::assets::animation_graph::AnimationGraph;
 use crate::assets::error::AssetError;
 use crate::assets::material::Material;
 use crate::assets::mesh::Mesh;
+use crate::assets::post_process_profile::PostProcessProfile;
 use crate::assets::texture::Texture;
 use crate::assets::{BackgroundLoad, LoadedAsset};
 use crate::context::{ReadOnlyAssetContext, ReadOnlyRegistryContext};
@@ -110,6 +111,19 @@ impl<T: Asset + TypeUuid> Clone for AssetRef<T> {
             id: self.id,
             inner: None,
         }
+    }
+}
+
+/// Two references are equal when they name the same asset.
+impl<T: Asset + TypeUuid> PartialEq for AssetRef<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl<T: Asset + TypeUuid> std::fmt::Debug for AssetRef<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("AssetRef").field(&self.id).finish()
     }
 }
 
@@ -260,6 +274,10 @@ impl_extern_type_uuid!(
     "3c20b700-e0a1-4a01-bd53-246c1d1a292c"
 );
 impl_extern_type_uuid!(AssetRef<Prefab>, "6c255f88-b471-421f-8e61-c04a95a918f3");
+impl_extern_type_uuid!(
+    AssetRef<PostProcessProfile>,
+    "79634ff0-07bb-4251-af4e-59dac4283a62"
+);
 
 impl_reflect_value!(AssetRef<Mesh>(AssetAccess));
 impl_reflect_value!(AssetRef<Shader>(AssetAccess));
@@ -269,3 +287,4 @@ impl_reflect_value!(AssetRef<Skybox>(AssetAccess));
 impl_reflect_value!(AssetRef<Animation>(AssetAccess));
 impl_reflect_value!(AssetRef<AnimationGraph>(AssetAccess));
 impl_reflect_value!(AssetRef<Prefab>(AssetAccess));
+impl_reflect_value!(AssetRef<PostProcessProfile>(AssetAccess));

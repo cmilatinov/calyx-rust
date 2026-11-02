@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
+use calyx_engine::assets::post_process_profile::{PostProcessProfile, PostProcessProfileData};
 use calyx_engine::class_registry::ComponentRegistry;
 use calyx_engine::component::{Component, ComponentID};
+use calyx_engine::core::Ref;
 use calyx_engine::render::GBufferView;
 use calyx_engine::scene::{GameObject, Scene};
 use calyx_engine::utils::TypeUuid;
@@ -16,6 +18,7 @@ use uuid::Uuid;
 use super::runtime::{color_image_to_rgba, save_png, PendingOp, RemoteRuntime, ResponseSlot};
 use super::server::{parse_error_response, ClientId, Incoming};
 use crate::asset_open::{AssetOpenOutcome, SceneSwitchAnswer};
+use crate::inspector::assets::post_process_profile_inspector::PostProcessProfileInspector;
 use crate::panel::{Panel, PanelGame};
 use crate::prefab_instances;
 use crate::scene_edit::SceneEdit;
@@ -284,6 +287,73 @@ impl EditorApp {
                 path,
                 unsaved_scene,
             } => self.remote_open_asset(path, unsaved_scene),
+            Command::SaveAsset { path } => {
+                let asset_id = self.remote_asset_id(path)?;
+                let saved = self
+                    .state
+                    .game
+                    .assets
+                    .registries
+                    .assets
+                    .read()
+                    .persist(asset_id);
+                if !saved {
+                    return Err((
+                        ErrorKind::BadRequest,
+                        "the asset is not loaded, or its file could not be written".into(),
+                    ));
+                }
+                Ok(Some(
+                    serde_json::json!({ "asset_id": asset_id.to_string() }),
+                ))
+            }
+            Command::CreatePostProcessProfile { object, path } => {
+                let game_object =
+                    resolve_object(self.state.game.scenes.simulation_scene(), &object)?;
+                self.state.flush_pending_inspector_value_edits();
+                let mut edit = SceneEdit::begin("Remote create post-process profile");
+                match PostProcessProfileInspector::create_from_volume(
+                    &mut edit,
+                    &mut self.state.game,
+                    game_object,
+                    &path,
+                ) {
+                    Ok(id) => {
+                        self.state.commit_scene_edit(edit);
+                        Ok(Some(serde_json::json!({
+                            "id": id.to_string(),
+                            "path": path.display().to_string(),
+                        })))
+                    }
+                    Err(error) => {
+                        edit.cancel();
+                        Err((ErrorKind::BadRequest, error))
+                    }
+                }
+            }
+            Command::GetPostProcessProfile { path } => {
+                let profile = self.remote_profile(path)?;
+                let json = profile_json(&profile.read());
+                Ok(Some(json?))
+            }
+            Command::SetPostProcessProfile { path, profile } => {
+                let data: PostProcessProfileData =
+                    serde_json::from_value(profile).map_err(|error| {
+                        (
+                            ErrorKind::BadRequest,
+                            format!("value does not deserialize into a profile: {error}"),
+                        )
+                    })?;
+                let registries = &self.state.game.assets.registries;
+                let profile = PostProcessProfile::from_data(
+                    data,
+                    &registries.types.read(),
+                    &registries.components.read(),
+                );
+                let json = profile_json(&profile)?;
+                *self.remote_profile(path)?.write() = profile;
+                Ok(Some(json))
+            }
 
             Command::GetSceneState => {
                 let scene = self.state.game.scenes.simulation_scene();
@@ -510,6 +580,45 @@ impl EditorApp {
             }),
             None => serde_json::Value::Null,
         }
+    }
+
+    /// The asset id of the file at `path`.
+    fn remote_asset_id(&self, path: PathBuf) -> Result<Uuid, (ErrorKind, String)> {
+        let path = dunce::canonicalize(&path).map_err(|error| {
+            (
+                ErrorKind::NotFound,
+                format!("asset file {}: {error}", path.display()),
+            )
+        })?;
+        self.state
+            .game
+            .assets
+            .registries
+            .assets
+            .read()
+            .asset_id_from_path(&path)
+            .ok_or_else(|| {
+                (
+                    ErrorKind::NotFound,
+                    format!("{} is not a registered asset", path.display()),
+                )
+            })
+    }
+
+    /// The post-processing profile at `path`, loaded.
+    fn remote_profile(
+        &self,
+        path: PathBuf,
+    ) -> Result<Ref<PostProcessProfile>, (ErrorKind, String)> {
+        let asset_id = self.remote_asset_id(path)?;
+        self.state
+            .game
+            .assets
+            .registries
+            .assets
+            .read()
+            .load_by_id::<PostProcessProfile>(asset_id)
+            .map_err(|error| (ErrorKind::BadRequest, error.to_string()))
     }
 
     /// The asset id of the prefab file at `path`.
@@ -1084,6 +1193,12 @@ fn delete_now(scene: &mut Scene, game_object: GameObject) -> Vec<Uuid> {
     scene.delete(game_object);
     scene.flush_deletes();
     removed
+}
+
+/// `profile` as its file holds it. An entry `set_post_process_profile`
+/// skipped is not in it.
+fn profile_json(profile: &PostProcessProfile) -> Result<serde_json::Value, (ErrorKind, String)> {
+    serde_json::to_value(profile).map_err(|error| (ErrorKind::Internal, error.to_string()))
 }
 
 /// Names the undo entry of a command that edits the scene, or returns `None`

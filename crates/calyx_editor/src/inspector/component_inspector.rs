@@ -277,6 +277,31 @@ impl<'a> ComponentInspector<'a> {
         pin: PinState,
         enabled: Option<bool>,
     ) -> ComponentResponse {
+        self.show_with_pin(ui, ctx, instance, Some(pin), enabled)
+    }
+
+    /// Draws `instance` as [`Self::show`] does, with no pin icon or pin
+    /// edits: for a value that is not one of an object's components, such
+    /// as an effect entry of a post-processing profile.
+    pub fn show_unpinned(
+        &self,
+        ui: &mut Ui,
+        ctx: &InspectorContext,
+        instance: &mut dyn Reflect,
+        enabled: Option<bool>,
+    ) -> ComponentResponse {
+        self.show_with_pin(ui, ctx, instance, None, enabled)
+    }
+
+    fn show_with_pin(
+        &self,
+        ui: &mut Ui,
+        ctx: &InspectorContext,
+        instance: &mut dyn Reflect,
+        pin: Option<PinState>,
+        enabled: Option<bool>,
+    ) -> ComponentResponse {
+        let pinned = pin.is_some_and(|pin| pin.pinned);
         let name = display_name(&ctx.assets.types.read(), instance);
         let id = ui.make_persistent_id(name);
         let type_uuid = instance.uuid();
@@ -297,9 +322,9 @@ impl<'a> ComponentInspector<'a> {
                     }
                 });
         }
-        if pin.pinned && enabled.is_none() {
+        if pinned && enabled.is_none() {
             label = label.with_icon(&icons::PIN);
-        } else if pin.pinned {
+        } else if pinned {
             // The checkbox takes the icon slot, so the pin moves right.
             label = label
                 .with_buttons(|ui| {
@@ -337,7 +362,9 @@ impl<'a> ComponentInspector<'a> {
             }
         }
         res.context_menu(|ui| {
-            response.pin = Self::pin_menu(ui, pin);
+            if let Some(pin) = pin {
+                response.pin = Self::pin_menu(ui, pin);
+            }
             let removable = type_uuid != ComponentID::type_uuid()
                 && type_uuid != ComponentTransform::type_uuid();
             if removable && ui.button("Remove").clicked() {

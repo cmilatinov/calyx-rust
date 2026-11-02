@@ -3,6 +3,7 @@
 //! camera blended over them.
 
 use super::blend::{blend_effect, BlendEffect};
+use crate::assets::post_process_profile::PostProcessProfile;
 use crate::component::{
     Component, ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom,
     ComponentColorGrading, ComponentDepthOfField, ComponentGlobalPostProcessVolume,
@@ -38,8 +39,8 @@ pub struct PostProcessSettings {
     pub anti_aliasing: Option<ComponentAntiAliasing>,
 }
 
-/// The enabled effect components on one volume's game object, each `None`
-/// when the object has no enabled component for it.
+/// One volume's effects, from its profile and the enabled effect components
+/// on its game object, each `None` when neither switches it on.
 ///
 /// Tone mapping is optional here too: a local volume without a tone-mapping
 /// component leaves the exposure below it alone.
@@ -62,9 +63,35 @@ pub struct PostProcessEffects {
 }
 
 impl PostProcessEffects {
-    /// The enabled effect components on `game_object`. A missing or disabled
-    /// component is `None`.
+    /// The effects of the volume on `game_object`: its profile's enabled
+    /// entries, if it has a profile, with each enabled effect component on
+    /// the object replacing its entry. An effect neither switches on is
+    /// `None`; a disabled component leaves the profile's entry, and a
+    /// disabled entry is off. See [`PostProcessProfile`].
     pub fn from_game_object(scene: &Scene, game_object: GameObject) -> Self {
+        let components = Self::components(scene, game_object);
+        match PostProcessProfile::of_volume(scene, game_object) {
+            Some(profile) => profile.read().effects().overlaid_by(&components),
+            None => components,
+        }
+    }
+
+    /// `self` with each effect `over` has replacing this one's.
+    pub fn overlaid_by(&self, over: &Self) -> Self {
+        Self {
+            tonemapping: over.tonemapping.or(self.tonemapping),
+            ambient_occlusion: over.ambient_occlusion.or(self.ambient_occlusion),
+            depth_of_field: over.depth_of_field.or(self.depth_of_field),
+            bloom: over.bloom.or(self.bloom),
+            color_grading: over.color_grading.or(self.color_grading),
+            vignette: over.vignette.or(self.vignette),
+            anti_aliasing: over.anti_aliasing.or(self.anti_aliasing),
+        }
+    }
+
+    /// The enabled effect components on `game_object`, without its volume's
+    /// profile. A missing or disabled component is `None`.
+    pub fn components(scene: &Scene, game_object: GameObject) -> Self {
         Self {
             tonemapping: effect(scene, game_object),
             ambient_occlusion: effect(scene, game_object),
@@ -265,9 +292,9 @@ impl PostProcessSettings {
             .and_then(|entity| scene.game_object_from_entity(entity))
     }
 
-    /// The settings the enabled effect components on `game_object` describe.
-    /// A missing or disabled effect is off, and tone mapping falls back to
-    /// its defaults.
+    /// The settings the volume on `game_object` describes, from its profile
+    /// and the enabled effect components on the object. An effect neither
+    /// switches on is off, and tone mapping falls back to its defaults.
     ///
     /// It reads [`PostProcessEffects::from_game_object`], the one path that
     /// gathers a volume's effects, global or local.

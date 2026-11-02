@@ -1,5 +1,6 @@
 //! The bloom effect component, read by the bloom pass.
 
+use super::{PostProcessEffect, ReflectPostProcessEffect};
 use crate as calyx_engine;
 use crate::component::{Component, ReflectComponent};
 use crate::reflect::{Reflect, ReflectDefault};
@@ -9,7 +10,7 @@ use serde::{Deserialize, Serialize};
 /// Bloom: light above a threshold is blurred and added back onto the scene.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect)]
 #[uuid = "7e09858d-fd71-4729-bb90-8ed76c0bda9a"]
-#[reflect(Default, TypeUuidDynamic, Component)]
+#[reflect(Default, TypeUuidDynamic, Component, PostProcessEffect)]
 #[reflect_attr(name = "Bloom", category = "Post Processing")]
 #[serde(default)]
 pub struct ComponentBloom {
@@ -29,6 +30,8 @@ pub struct ComponentBloom {
     /// how far the glow spreads. Clamped to `1..=8`.
     pub radius: u32,
 }
+
+impl PostProcessEffect for ComponentBloom {}
 
 impl Component for ComponentBloom {
     /// A disabled effect component switches its pass off.

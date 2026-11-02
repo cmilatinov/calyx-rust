@@ -1,3 +1,4 @@
+use super::inspector_registry::InspectorRegistry;
 use calyx_engine::context::GameContext;
 use calyx_engine::reflect_trait;
 use egui::Ui;
@@ -16,8 +17,17 @@ pub enum AssetInspectorAction {
 #[reflect_trait]
 pub trait AssetInspector: Send + Sync {
     fn target_type_uuid(&self) -> Uuid;
-    fn show_inspector(&self, ui: &mut Ui, game: &mut GameContext, asset_id: Uuid) {
-        let _ = (ui, game, asset_id);
+    /// Draws the editing widgets for the asset `asset_id`. `inspectors`
+    /// draws values with the editor's type inspectors, as the components of
+    /// an object are drawn.
+    fn show_inspector(
+        &self,
+        ui: &mut Ui,
+        game: &mut GameContext,
+        inspectors: &InspectorRegistry,
+        asset_id: Uuid,
+    ) {
+        let _ = (ui, game, inspectors, asset_id);
     }
     fn has_context_menu(&self) -> bool {
         false

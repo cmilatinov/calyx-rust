@@ -1,4 +1,6 @@
 use crate as calyx_engine;
+use crate::assets::post_process_profile::PostProcessProfile;
+use crate::assets::AssetRef;
 use crate::component::{Component, ReflectComponent};
 use crate::math::{compose_transform, Transform};
 use crate::reflect::{Reflect, ReflectDefault};
@@ -36,14 +38,14 @@ impl Default for LocalVolumeShape {
 
 /// A post-processing volume that covers a region of the scene.
 ///
-/// Its effects are the post-process effect components on the same game
-/// object, the same ones a
-/// [`ComponentGlobalPostProcessVolume`](super::ComponentGlobalPostProcessVolume)
-/// uses. While the render camera is inside the shape they blend over the
+/// Its effects come from its `profile`, if it has one, overlaid with the
+/// post-process effect components on the same game object, as for a
+/// [`ComponentGlobalPostProcessVolume`](super::ComponentGlobalPostProcessVolume).
+/// While the render camera is inside the shape they blend over the
 /// global volume's settings by `weight`; the blend falls linearly to zero
 /// over `blend_distance` outside it. See
 /// [`PostProcessSettings::resolve`](crate::render::postprocess::PostProcessSettings::resolve).
-#[derive(Clone, Copy, Debug, PartialEq, TypeUuid, Serialize, Deserialize, Component, Reflect)]
+#[derive(Clone, Debug, PartialEq, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "8d3c6a2e-5b71-4f0a-9c84-1e2f7a6b9d53"]
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Local Post Process Volume", category = "Post Processing")]
@@ -62,6 +64,9 @@ pub struct ComponentLocalPostProcessVolume {
     /// Local volumes apply in ascending priority, so the highest applies
     /// last. It orders local volumes only, never the global one.
     pub priority: i32,
+    /// The post-processing profile the volume's effects start from, or none.
+    /// Effect components on the volume's object replace its entries.
+    pub profile: AssetRef<PostProcessProfile>,
 }
 
 impl Default for ComponentLocalPostProcessVolume {
@@ -71,6 +76,7 @@ impl Default for ComponentLocalPostProcessVolume {
             blend_distance: 2.0,
             weight: 1.0,
             priority: 0,
+            profile: AssetRef::default(),
         }
     }
 }

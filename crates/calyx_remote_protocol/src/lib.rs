@@ -196,6 +196,41 @@ pub enum Command {
         #[serde(default)]
         unsaved_scene: Option<UnsavedSceneAnswer>,
     },
+    /// Writes the loaded asset at `path` back to its file, as Save in the
+    /// asset inspector's menu does. Refused for an asset that is not loaded.
+    SaveAsset {
+        /// Path to the asset file, absolute or relative to the editor's
+        /// working directory.
+        path: PathBuf,
+    },
+
+    /// Creates a post-processing profile asset at `path` from the volume on
+    /// `object`, as "Create Profile" in the volume's inspector does, as one
+    /// undo step: the volume's effect components move into the profile,
+    /// which the volume then references. Responds with the profile's asset
+    /// `id` and `path`.
+    CreatePostProcessProfile {
+        /// Game object UUID or unique name of the volume.
+        object: String,
+        /// Where to write the profile, inside an asset root.
+        path: PathBuf,
+    },
+    /// Responds with the loaded post-processing profile at `path`, as its
+    /// file holds it after a save.
+    GetPostProcessProfile {
+        /// Path to the `.cxpostfx` file.
+        path: PathBuf,
+    },
+    /// Replaces the loaded post-processing profile at `path` with `profile`,
+    /// as edits in its asset inspector do: every volume that uses it renders
+    /// the new value on the next frame, and the file is unchanged until
+    /// `save_asset`. Fields missing from `profile` take their defaults.
+    SetPostProcessProfile {
+        /// Path to the `.cxpostfx` file.
+        path: PathBuf,
+        /// The whole profile, as `get_post_process_profile` prints it.
+        profile: serde_json::Value,
+    },
 
     /// Returns the full active scene serialized as scene-file JSON.
     GetSceneState,
@@ -609,6 +644,20 @@ mod tests {
             },
             Command::UpdatePrefabInstances {
                 path: Some(PathBuf::from("assets/prefabs/crate.cxprefab")),
+            },
+            Command::SaveAsset {
+                path: PathBuf::from("assets/look.cxpostfx"),
+            },
+            Command::CreatePostProcessProfile {
+                object: "Volume".into(),
+                path: PathBuf::from("assets/look.cxpostfx"),
+            },
+            Command::GetPostProcessProfile {
+                path: PathBuf::from("assets/look.cxpostfx"),
+            },
+            Command::SetPostProcessProfile {
+                path: PathBuf::from("assets/look.cxpostfx"),
+                profile: serde_json::json!({ "bloom": { "enabled": true } }),
             },
             Command::GetSceneState,
             Command::ListObjects,

@@ -1,5 +1,6 @@
 //! The vignette effect component, read by the colour grading pass.
 
+use super::{PostProcessEffect, ReflectPostProcessEffect};
 use crate as calyx_engine;
 use crate::component::{Component, ReflectComponent};
 use crate::reflect::{Reflect, ReflectDefault};
@@ -10,7 +11,7 @@ use serde::{Deserialize, Serialize};
 /// Darkens, or tints, the edges of the screen.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect)]
 #[uuid = "61efa204-ed0d-4d1f-86a4-b226be940b13"]
-#[reflect(Default, TypeUuidDynamic, Component)]
+#[reflect(Default, TypeUuidDynamic, Component, PostProcessEffect)]
 #[reflect_attr(name = "Vignette", category = "Post Processing")]
 #[serde(default)]
 pub struct ComponentVignette {
@@ -23,6 +24,8 @@ pub struct ComponentVignette {
     /// The color the edges fade to.
     pub color: Color32,
 }
+
+impl PostProcessEffect for ComponentVignette {}
 
 impl Component for ComponentVignette {
     /// A disabled effect component switches its pass off.
