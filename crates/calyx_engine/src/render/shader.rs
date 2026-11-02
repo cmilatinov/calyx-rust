@@ -665,8 +665,14 @@ impl Shader {
                 .map(|((_, binding), size)| (binding, size))
                 .collect::<Vec<_>>()
         };
+        // Nor do they say which variable a binding is: two bindings of the
+        // same kind can trade places in one shader and not the other.
+        fn names(shader: &Shader, group: u32) -> BTreeMap<u32, &str> {
+            shader.binding_names(group).collect()
+        }
         entries(self, group) == entries(material_shader, material_group)
             && sizes(self, group) == sizes(material_shader, material_group)
+            && names(self, group) == names(material_shader, material_group)
     }
 
     /// Describes naga's `error` in `shader`'s source at the files and lines
@@ -2164,6 +2170,17 @@ fn fs_main() -> @location(0) vec4f {{
             &material_path,
             &material_shader("", "")
                 .replace("base_color: vec4f }", "base_color: vec4f, gain: vec4f }"),
+        );
+        assert!(reload_error_messages(&context).is_empty());
+        assert!(!pass.read().shares_material_group(2, &material.read(), 3));
+        // Nor is one whose bindings keep their kinds and sizes under other
+        // variables.
+        write_and_reload(
+            &context,
+            &material_path,
+            &material_shader("", "")
+                .replace("var<uniform> material:", "var<uniform> props:")
+                .replace("* material.base_color", "* props.base_color"),
         );
         assert!(reload_error_messages(&context).is_empty());
         assert!(!pass.read().shares_material_group(2, &material.read(), 3));
