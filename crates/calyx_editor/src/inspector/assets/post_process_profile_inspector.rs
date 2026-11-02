@@ -138,8 +138,9 @@ impl PostProcessProfileInspector {
     /// components copied over them (see
     /// [`PostProcessProfile::from_game_object`]); the volume then references
     /// the new profile and the effect components leave the object, so the
-    /// look is unchanged and editing the profile changes it. `path` must lie
-    /// in an asset root; an existing file there is replaced.
+    /// look is unchanged and editing the profile changes it. `path` must be a
+    /// `.cxpostfx` file in an asset root, checked before anything is written;
+    /// an existing profile there is replaced.
     pub fn create_from_volume(
         edit: &mut SceneEdit,
         game: &mut GameContext,
@@ -152,6 +153,17 @@ impl PostProcessProfileInspector {
                 "{} has no post-process volume to create a profile from",
                 scene.name(game_object)
             ));
+        }
+        // Checked before writing, so a refused destination is never
+        // overwritten: a file of another type, or one the registry would not
+        // take as an asset.
+        if !path.extension().is_some_and(|extension| {
+            PostProcessProfile::file_extensions().contains(&extension.to_str().unwrap_or_default())
+        }) {
+            return Err(format!("{} is not a .cxpostfx file", path.display()));
+        }
+        if !game.assets.registries.assets.read().is_in_asset_root(path) {
+            return Err(format!("{} is outside every asset root", path.display()));
         }
         let profile = PostProcessProfile::from_game_object(scene, game_object);
         profile

@@ -190,3 +190,31 @@ fn the_profile_inspector_switches_edits_adds_and_removes_entries() {
     assert_eq!(profile.read().bloom, None, "Remove drops the entry");
     assert!(profile.read().vignette.is_some());
 }
+
+/// Create Profile checks its destination before writing, so a refused path
+/// never overwrites a file: one outside every asset root, or of another type.
+#[test]
+fn create_profile_refuses_a_destination_outside_the_asset_roots_or_of_another_type() {
+    let root = TempRoot::new();
+    let outside = TempRoot::new();
+    let mut game = GameContext::new(test_asset_context_with_assets(vec![root.0.clone()]));
+    let object = volume_with_effects(&mut game);
+    let outside_file = outside.0.join("look.cxpostfx");
+    std::fs::write(&outside_file, "keep").unwrap();
+    let scene_file = root.0.join("level.cxscene");
+    std::fs::write(&scene_file, "keep").unwrap();
+
+    for path in [&outside_file, &scene_file] {
+        let mut edit = SceneEdit::begin("Create post-process profile");
+        let result =
+            PostProcessProfileInspector::create_from_volume(&mut edit, &mut game, object, path);
+        edit.cancel();
+
+        assert!(result.is_err(), "{} is refused", path.display());
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "keep");
+    }
+    assert!(
+        has::<ComponentBloom>(&game, object),
+        "the volume is untouched"
+    );
+}
