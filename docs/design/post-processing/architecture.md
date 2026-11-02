@@ -311,13 +311,39 @@ pub struct PostProcessSettings {
 ```
 
 - **Effect components**: each effect's settings struct is itself the component, with its own type UUID, so a pass reads exactly the values the inspector edits and #114 can blend the same types. None carries an `enabled` field: an effect is on when its component is present on the volume's game object and the scene holds it enabled (`Scene::is_component_enabled`, #415). The volume's own enabled state lives in the scene the same way.
-- **Gathering**: `PostProcessSettings::resolve(scene)` is the one entry point. `PostProcessSettings::selected_volume(scene)` picks the volume's game object, and `PostProcessSettings::from_game_object(scene, game_object)` reads the enabled effect components on it: each present and enabled component becomes `Some`, every other effect is `None` and its pass is off. Tone mapping is never `None`; without an enabled Tone Mapping component it takes `ComponentTonemap::default()`. Any view that renders a scene, such as thumbnails, calls `resolve` the same way the renderer does.
+- **Gathering**: `PostProcessSettings::resolve(scene, camera_position)` is the one entry point; see Local Volumes for the camera position. `PostProcessSettings::selected_volume(scene)` picks the volume's game object, and `PostProcessSettings::from_game_object(scene, game_object)` reads the enabled effect components on it: each present and enabled component becomes `Some`, every other effect is `None` and its pass is off. Tone mapping is never `None`; without an enabled Tone Mapping component it takes `ComponentTonemap::default()`. Any view that renders a scene, such as thumbnails, calls `resolve` the same way the renderer does.
 - **Selection**: the enabled volume with the highest priority. On a priority tie the renderer warns once and uses the first found. With no enabled volume it uses `PostProcessSettings::default()`, tone mapping alone. Effect components on other game objects, or on a disabled or losing volume's object, are never read.
 - **Passes**: each pass's `enabled` is whether its field is `Some`, and `prepare` reads the values from it. The chain and the passes read nothing else from the scene.
 - **Inspector**: the volume and the effect components carry `category = "Post Processing"`, and the add-component menu lists components without a category first, then each category under its heading, in name order. Each effect edits with the default field inspectors and switches on and off through the component header's checkbox.
 - **Saved scenes**: a volume saves only `priority`, and each effect saves its fields under its own type UUID on the same object. The committed scenes were converted once from the old layout, a `settings` struct inside the volume; loading has no migration path. `sandbox/tests/saved_data.rs` fails if a committed scene or prefab still holds the old layout.
 - Prefab mode and thumbnails render scenes with no volume, so they get the defaults with no special case.
-- #114's local volumes blend `PostProcessSettings` values before the chain runs; the chain only ever sees one resolved value.
+
+### Local Volumes
+
+```rust
+pub struct ComponentLocalPostProcessVolume {
+    pub shape: LocalVolumeShape,  // Box { half_extents: (5, 5, 5) }
+    pub blend_distance: f32,      // 2.0, world units
+    pub weight: f32,              // 1.0, in [0, 1]
+    pub priority: i32,            // 0
+}
+pub enum LocalVolumeShape { Box { half_extents: Vec3 }, Sphere { radius: f32 } }
+
+// One volume's enabled effect components, every one optional.
+pub struct PostProcessEffects { pub tonemapping: Option<ComponentTonemap>, /* the other effects as in PostProcessSettings */ }
+```
+
+A local volume changes part of the look in a region and fades it in and out as the camera crosses its edge. Its effects are the same effect components, on its own game object. The chain still sees one resolved `PostProcessSettings`.
+
+- **Camera position**: `PostProcessSettings::resolve(scene, camera_position)` takes the world position of the camera the view draws with. `render_scene_base` passes its `camera_transform`, so the editor viewport, the Game tab, the player and thumbnails each blend at their own camera.
+- **Shape**: in the game object's space. A box is centred on the object and rotates and scales with it. A sphere is centred on the object, and its radius scales with the largest axis of the object's world scale, so it stays a sphere.
+- **Blend factor** (`ComponentLocalPostProcessVolume::blend_factor`): `weight` inside the shape and on its surface, falling linearly to zero at `blend_distance` world units outside it, and zero beyond. A box measures from its nearest point, so the fade rounds its edges and corners. A blend distance of zero switches the volume at its surface.
+- **Order**: blending starts from the global volume's resolved settings, the defaults without one; global selection is unchanged. `PostProcessSettings::local_volumes` lists the enabled local volumes with a factor above zero in ascending priority, ties in ascending object id with a warning once per priority, and each applies over the result of those before it, so the highest priority applies last.
+- **Override per effect**: an effect component present and enabled on the volume overrides every one of its fields; there are no per-field override flags. One the volume lacks or holds disabled inherits the value below it. A disabled local volume takes no part.
+- **Blending per field** (`render/postprocess/blend.rs`, `BlendEffect`): `f32` fields interpolate, colours interpolate in linear space, and integer and enum fields (bloom radius, SSAO sample count, the tone-mapping preset) switch to the volume's at a factor of 0.5.
+- **Fade-in**: an effect off below and on in the volume fades in from its neutral values, the volume's own values with the strength at rest: SSAO, bloom and vignette intensity 0, depth of field blur 0, and the colour grading defaults. FXAA has no neutral value and switches on at 0.5. Tone mapping is always on below a volume.
+- **Gathering**: `PostProcessEffects::from_game_object` reads one volume's enabled effect components, for global and local volumes alike; `PostProcessSettings::from_game_object` is it with tone mapping defaulted. #115's profiles plug in there.
+- **Gizmos**: the editor draws a local volume's shape, and more faintly the outer edge of its blend distance: a sphere of radius plus blend distance, or the box grown by the blend distance on every side, which traces the faces of the rounded blend region.
 
 ## Shaders
 
@@ -367,6 +393,7 @@ Headless tests in `crates/calyx_engine/src/render/postprocess/`:
 - Depth of field (`dof.rs`): `CameraPlanes` inverts the render projection; pixels at the focus distance are unchanged; far pixels blur more than pixels near focus, and pixels in front of it blur too; a blurred background stays behind a sharp edge while a blurred foreground spreads over it; the pass reads depth at one and four samples with the same result; with it disabled the plan is the tone-map-only plan and its texture is not allocated, follows the chain's size, and is freed when disabled and on resize. A partial component loads with the defaults.
 - Bloom (`bloom.rs`): a single pixel above the threshold spreads energy into its neighbours, fading with distance, and keeps alpha; an image entirely below the threshold passes through unchanged; a flat image of 20,000 blooms to the expected value without overflowing the half-float mips; a composite past the half-float maximum saturates at it; with bloom disabled the renderer's plan is the tone-map-only plan; the mip chain follows the chain's size and the radius and is freed on release; the chain releases a pass's targets on resize and on frames the pass does not run.
 - Colour grading (`color_grading/tests.rs`): neutral settings return the input, zero saturation gives grey at the input's luminance, contrast keeps mid grey, positive temperature warms and positive tint adds magenta, the vignette darkens the corners and leaves the centre unchanged, and alpha is preserved. With both effects off the pass is left out of the plan, the scene renderer plans it before FXAA, and partial components load with the defaults.
+- Local volumes (`local_volume_tests.rs`): the blend factor inside, at the edge, within the blend distance and outside a box, a rotated and scaled box and a sphere, and with no blend distance; a factor of zero changes nothing; overlapping volumes apply in ascending priority, and ties in object id order with the tie reported; an absent or disabled effect inherits the value below; an effect off below fades in from its neutral values and FXAA switches on at 0.5; integer and enum fields switch at 0.5 and colours blend in linear space; a disabled volume takes no part; the scene renderer resolves at the camera it draws with; and a volume saves and loads with its scene.
 - FXAA smooths a hard diagonal edge and keeps each pixel's alpha, leaves a flat colour and its alpha unchanged, and leaves the plan unchanged while disabled. A partial component loads with the defaults.
 
 Headless tests in `crates/calyx_engine/src/render/overlay/` and `scene_renderer.rs`:
@@ -383,6 +410,6 @@ Headless tests in `crates/calyx_engine/src/render/overlay/` and `scene_renderer.
 ## Roadmap
 
 - **#113** adds effects as `Hdr` and `Ldr` passes, each with its own effect component (#416).
-- **#114** adds local volumes that blend `PostProcessSettings` before the chain runs.
+- **#114** adds local volumes that blend `PostProcessSettings` before the chain runs (see Local Volumes).
 - **#115** adds editor UI for post-processing profiles.
 - **#378** adds a showcase scene that validates the look end to end.

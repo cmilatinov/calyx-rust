@@ -7,7 +7,7 @@ use calyx_engine::scene::{GameObject, Scene};
 use calyx_engine::utils::TypeUuid;
 use calyx_remote_protocol::{
     CaptureTarget, Command, CoordSpace, ErrorKind, InputEventSpec, ModifiersSpec, PickTarget,
-    PointerButtonSpec, RenderPath, RequestEnvelope, SceneView, TransformSpace, UnsavedSceneAnswer,
+    PointerButtonSpec, RequestEnvelope, SceneView, TransformSpace, UnsavedSceneAnswer,
 };
 use nalgebra::UnitQuaternion;
 use nalgebra_glm::Vec3;
@@ -411,14 +411,25 @@ impl EditorApp {
                 };
                 Ok(Some(serde_json::json!({ "view": view })))
             }
-            Command::SetRenderPath { path } => {
-                let render_path = match path {
-                    RenderPath::Deferred => calyx_engine::render::RenderPath::Deferred,
-                    RenderPath::Forward => calyx_engine::render::RenderPath::Forward,
-                };
-                self.state.scene_renderer.options_mut().render_path = render_path;
-                self.state.game_renderer.options_mut().render_path = render_path;
-                Ok(Some(serde_json::json!({ "path": path })))
+            Command::ViewportCamera { position, look_at } => {
+                let camera = &mut self.state.camera;
+                if let Some([x, y, z]) = position {
+                    camera.transform.position = nalgebra_glm::vec3(x, y, z);
+                }
+                if let Some([x, y, z]) = look_at {
+                    if !camera.look_at(&nalgebra_glm::vec3(x, y, z)) {
+                        return Err((
+                            ErrorKind::BadRequest,
+                            "look_at is the camera's own position".into(),
+                        ));
+                    }
+                }
+                let transform = &camera.transform;
+                let forward = transform.forward();
+                Ok(Some(serde_json::json!({
+                    "position": [transform.position.x, transform.position.y, transform.position.z],
+                    "forward": [forward.x, forward.y, forward.z],
+                })))
             }
             Command::FocusGame { grab } => {
                 self.tree.make_active(|_, tile| {

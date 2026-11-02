@@ -306,12 +306,16 @@ pub enum Command {
         /// The view to show.
         view: SceneView,
     },
-    /// Sets how the editor's scene view and Game tab shade the scene's
-    /// opaque PBR meshes: deferred, the default, or forward for comparison.
-    /// Responds with the path now used.
-    SetRenderPath {
-        /// The path to use.
-        path: RenderPath,
+    /// Places the editor's viewport camera, then responds with where it is
+    /// and the direction it faces. Without `position` or `look_at` it only
+    /// reports them.
+    ViewportCamera {
+        /// New world position, when given.
+        #[serde(default)]
+        position: Option<[f32; 3]>,
+        /// World point to face, when given.
+        #[serde(default)]
+        look_at: Option<[f32; 3]>,
     },
     /// Activates the Game tab and sets the cursor-grab flag so gameplay input
     /// reaches the simulation.
@@ -372,17 +376,6 @@ pub enum SceneView {
     Material,
     /// The G-buffer's emission.
     Emissive,
-}
-
-/// How the editor shades the scene's opaque PBR meshes.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum RenderPath {
-    /// From the G-buffer, in the deferred lighting pass.
-    #[default]
-    Deferred,
-    /// In the forward pass, as every other draw.
-    Forward,
 }
 
 /// Coordinate spaces for pointer coordinates.
@@ -673,8 +666,9 @@ mod tests {
             Command::SetSceneView {
                 view: SceneView::Normals,
             },
-            Command::SetRenderPath {
-                path: RenderPath::Forward,
+            Command::ViewportCamera {
+                position: Some([1.0, 2.0, 3.0]),
+                look_at: Some([0.0, 0.0, 0.0]),
             },
             Command::FocusGame { grab: true },
             Command::InjectInput {

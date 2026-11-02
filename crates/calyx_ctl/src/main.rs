@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use calyx_remote_protocol::{
-    CaptureTarget, Command, CoordSpace, InputEventSpec, PickTarget, PointerButtonSpec, RenderPath,
+    CaptureTarget, Command, CoordSpace, InputEventSpec, PickTarget, PointerButtonSpec,
     ResponsePayload, SceneView, TransformSpace, UnsavedSceneAnswer,
 };
 use clap::{Parser, Subcommand, ValueEnum};
@@ -139,11 +139,15 @@ enum Action {
         #[arg(value_enum)]
         view: SceneViewArg,
     },
-    /// Shade the scene's opaque PBR meshes deferred or forward, in the scene
-    /// view and the Game tab.
-    RenderPath {
-        #[arg(value_enum)]
-        path: RenderPathArg,
+    /// Place the editor's viewport camera, or print where it is without
+    /// options.
+    ViewportCamera {
+        /// World position to move the camera to.
+        #[arg(long, num_args = 3, value_names = ["X", "Y", "Z"], allow_negative_numbers = true)]
+        position: Option<Vec<f32>>,
+        /// World point for the camera to face.
+        #[arg(long, num_args = 3, value_names = ["X", "Y", "Z"], allow_negative_numbers = true)]
+        look_at: Option<Vec<f32>>,
     },
     /// Activate the Game tab and grab (or release) gameplay input focus.
     FocusGame {
@@ -311,12 +315,6 @@ enum SceneViewArg {
     Normals,
     Material,
     Emissive,
-}
-
-#[derive(Clone, Copy, ValueEnum)]
-enum RenderPathArg {
-    Deferred,
-    Forward,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -619,6 +617,15 @@ fn build_command(action: &Action, base: Duration) -> Result<(Command, Duration),
                 PickTargetArg::Game => PickTarget::Game,
             },
         }),
+        Action::ViewportCamera { position, look_at } => {
+            let triple = |values: &Option<Vec<f32>>| -> Option<[f32; 3]> {
+                values.as_ref().map(|v| [v[0], v[1], v[2]])
+            };
+            simple(Command::ViewportCamera {
+                position: triple(position),
+                look_at: triple(look_at),
+            })
+        }
         Action::View { view } => simple(Command::SetSceneView {
             view: match view {
                 SceneViewArg::Lit => SceneView::Lit,
@@ -626,12 +633,6 @@ fn build_command(action: &Action, base: Duration) -> Result<(Command, Duration),
                 SceneViewArg::Normals => SceneView::Normals,
                 SceneViewArg::Material => SceneView::Material,
                 SceneViewArg::Emissive => SceneView::Emissive,
-            },
-        }),
-        Action::RenderPath { path } => simple(Command::SetRenderPath {
-            path: match path {
-                RenderPathArg::Deferred => RenderPath::Deferred,
-                RenderPathArg::Forward => RenderPath::Forward,
             },
         }),
         Action::FocusGame { release_grab } => simple(Command::FocusGame {
