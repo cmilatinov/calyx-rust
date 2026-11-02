@@ -1,5 +1,6 @@
 //! The colour grading effect component, read by the colour grading pass.
 
+use super::{PostProcessEffect, ReflectPostProcessEffect};
 use crate as calyx_engine;
 use crate::component::{Component, ReflectComponent};
 use crate::reflect::{Reflect, ReflectDefault};
@@ -9,7 +10,7 @@ use serde::{Deserialize, Serialize};
 /// White balance, contrast and saturation, after tone mapping.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect)]
 #[uuid = "d2694fb5-4815-471e-9537-4ab502c580f0"]
-#[reflect(Default, TypeUuidDynamic, Component)]
+#[reflect(Default, TypeUuidDynamic, Component, PostProcessEffect)]
 #[reflect_attr(name = "Colour Grading", category = "Post Processing")]
 #[serde(default)]
 pub struct ComponentColorGrading {
@@ -27,6 +28,8 @@ pub struct ComponentColorGrading {
     #[reflect_attr(min = -1.0, max = 1.0, speed = 0.01)]
     pub tint: f32,
 }
+
+impl PostProcessEffect for ComponentColorGrading {}
 
 impl Component for ComponentColorGrading {
     /// A disabled effect component switches its pass off.

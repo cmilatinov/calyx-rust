@@ -6,6 +6,7 @@ use calyx_engine::assets::animation::Animation;
 use calyx_engine::assets::animation_graph::AnimationGraph;
 use calyx_engine::assets::material::Material;
 use calyx_engine::assets::mesh::Mesh;
+use calyx_engine::assets::post_process_profile::PostProcessProfile;
 use calyx_engine::assets::skybox::Skybox;
 use calyx_engine::assets::texture::Texture;
 use calyx_engine::assets::{AssetRef, ReflectAssetAccess};
@@ -31,7 +32,8 @@ impl TypeInspector for AssetRefInspector {
             AssetRef<Skybox>,
             AssetRef<Animation>,
             AssetRef<AnimationGraph>,
-            AssetRef<Prefab>
+            AssetRef<Prefab>,
+            AssetRef<PostProcessProfile>
         )
     }
 

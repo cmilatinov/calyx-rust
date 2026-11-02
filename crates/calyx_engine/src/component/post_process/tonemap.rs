@@ -1,5 +1,6 @@
 //! The tone-mapping effect component, read by the tone-map pass.
 
+use super::{PostProcessEffect, ReflectPostProcessEffect};
 use crate as calyx_engine;
 use crate::component::{Component, ReflectComponent};
 use crate::reflect::{Reflect, ReflectDefault};
@@ -10,7 +11,7 @@ use serde::{Deserialize, Serialize};
 /// post-process volume's game object.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect)]
 #[uuid = "68ac12ac-fc9a-489e-b305-363eaf593966"]
-#[reflect(Default, TypeUuidDynamic, Component)]
+#[reflect(Default, TypeUuidDynamic, Component, PostProcessEffect)]
 #[reflect_attr(name = "Tone Mapping", category = "Post Processing")]
 #[serde(default)]
 pub struct ComponentTonemap {
@@ -30,6 +31,8 @@ impl Default for ComponentTonemap {
         }
     }
 }
+
+impl PostProcessEffect for ComponentTonemap {}
 
 impl Component for ComponentTonemap {
     /// A disabled tone-mapping component leaves the defaults in effect.

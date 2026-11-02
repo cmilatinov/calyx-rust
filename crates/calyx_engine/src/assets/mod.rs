@@ -16,6 +16,8 @@ mod loaded_asset;
 pub mod material;
 /// Mesh assets and GPU upload helpers.
 pub mod mesh;
+/// Post-processing profile assets shared between volumes.
+pub mod post_process_profile;
 /// HDR skybox assets and environment-map generation.
 pub mod skybox;
 /// Texture assets and mip-generation helpers.

@@ -1,4 +1,5 @@
 use crate::inspector::asset_inspector::{AssetInspector, ReflectAssetInspector};
+use crate::inspector::inspector_registry::InspectorRegistry;
 use crate::inspector::widgets::{AssetSelectorFilter, Widgets};
 use calyx_engine::assets::material::{
     Material, MaterialTexture, ShaderVariable, ShaderVariableValue,
@@ -48,7 +49,13 @@ impl AssetInspector for MaterialInspector {
     fn target_type_uuid(&self) -> Uuid {
         Material::type_uuid()
     }
-    fn show_inspector(&self, ui: &mut Ui, game: &mut GameContext, asset_id: Uuid) {
+    fn show_inspector(
+        &self,
+        ui: &mut Ui,
+        game: &mut GameContext,
+        _inspectors: &InspectorRegistry,
+        asset_id: Uuid,
+    ) {
         let Ok(asset) = game
             .assets
             .registries

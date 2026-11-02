@@ -1,5 +1,6 @@
 use crate::asset_open::{AssetOpenContext, AssetOpenOutcome, AssetOpener, ReflectAssetOpener};
 use crate::inspector::asset_inspector::{AssetInspector, ReflectAssetInspector};
+use crate::inspector::inspector_registry::InspectorRegistry;
 use crate::inspector::widgets::Widgets;
 use crate::panel::{Panel, PanelAnimator};
 use crate::widgets::{List, ListButtons, ListItemContext};
@@ -48,7 +49,13 @@ impl AssetInspector for AnimationGraphInspector {
         AnimationGraph::type_uuid()
     }
 
-    fn show_inspector(&self, ui: &mut Ui, game: &mut GameContext, asset_id: Uuid) {
+    fn show_inspector(
+        &self,
+        ui: &mut Ui,
+        game: &mut GameContext,
+        _inspectors: &InspectorRegistry,
+        asset_id: Uuid,
+    ) {
         let Ok(asset) = game
             .assets
             .registries
