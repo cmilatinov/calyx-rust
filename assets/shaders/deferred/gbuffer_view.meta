@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "d1aabbe5-a255-d6ae-dcff-1eccf558bd20",
+    "name": "shaders/deferred/gbuffer_view",
+    "display_name": "gbuffer_view",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

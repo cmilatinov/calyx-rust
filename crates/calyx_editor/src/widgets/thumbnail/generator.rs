@@ -281,6 +281,8 @@ impl ThumbnailGenerator {
                             environment: None,
                             // Thumbnails skip the shadow pass and its maps.
                             shadows: false,
+                            // Thumbnails show the lit image.
+                            gbuffer_view: None,
                         },
                         (size_px, size_px),
                     )

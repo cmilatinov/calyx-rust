@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "98616b08-affd-7579-140d-36c1ba5f5d11",
+    "name": "shaders/mesh/pbr_vertex",
+    "display_name": "pbr_vertex",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use calyx_remote_protocol::{
     CaptureTarget, Command, CoordSpace, InputEventSpec, PickTarget, PointerButtonSpec,
-    ResponsePayload, TransformSpace, UnsavedSceneAnswer,
+    ResponsePayload, SceneView, TransformSpace, UnsavedSceneAnswer,
 };
 use clap::{Parser, Subcommand, ValueEnum};
 
@@ -133,6 +133,11 @@ enum Action {
         space: SpaceArg,
         #[arg(long, value_enum, default_value_t = PickTargetArg::Viewport)]
         target: PickTargetArg,
+    },
+    /// Show the lit scene or one G-buffer target in the editor's scene view.
+    View {
+        #[arg(value_enum)]
+        view: SceneViewArg,
     },
     /// Activate the Game tab and grab (or release) gameplay input focus.
     FocusGame {
@@ -291,6 +296,15 @@ impl From<SpaceArg> for CoordSpace {
 enum PickTargetArg {
     Viewport,
     Game,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum SceneViewArg {
+    Lit,
+    Albedo,
+    Normals,
+    Material,
+    Emissive,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -591,6 +605,15 @@ fn build_command(action: &Action, base: Duration) -> Result<(Command, Duration),
             target: match target {
                 PickTargetArg::Viewport => PickTarget::Viewport,
                 PickTargetArg::Game => PickTarget::Game,
+            },
+        }),
+        Action::View { view } => simple(Command::SetSceneView {
+            view: match view {
+                SceneViewArg::Lit => SceneView::Lit,
+                SceneViewArg::Albedo => SceneView::Albedo,
+                SceneViewArg::Normals => SceneView::Normals,
+                SceneViewArg::Material => SceneView::Material,
+                SceneViewArg::Emissive => SceneView::Emissive,
             },
         }),
         Action::FocusGame { release_grab } => simple(Command::FocusGame {

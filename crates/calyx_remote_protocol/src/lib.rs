@@ -300,6 +300,12 @@ pub enum Command {
         #[serde(default)]
         target: PickTarget,
     },
+    /// Sets what the editor's scene view shows: the lit image, or one
+    /// G-buffer target in its place. Responds with the view now shown.
+    SetSceneView {
+        /// The view to show.
+        view: SceneView,
+    },
     /// Activates the Game tab and sets the cursor-grab flag so gameplay input
     /// reaches the simulation.
     FocusGame {
@@ -342,6 +348,23 @@ pub enum UnsavedSceneAnswer {
     Discard,
     /// Keep the open scene.
     Cancel,
+}
+
+/// What the editor's scene view shows, as its view mode menu lists it.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SceneView {
+    /// The lit, post-processed scene.
+    #[default]
+    Lit,
+    /// The G-buffer's base color.
+    Albedo,
+    /// The G-buffer's view-space shading normals.
+    Normals,
+    /// The G-buffer's metallic, roughness and ambient occlusion.
+    Material,
+    /// The G-buffer's emission.
+    Emissive,
 }
 
 /// Coordinate spaces for pointer coordinates.
@@ -628,6 +651,9 @@ mod tests {
                 y: 0.5,
                 space: CoordSpace::Game,
                 target: PickTarget::Game,
+            },
+            Command::SetSceneView {
+                view: SceneView::Normals,
             },
             Command::FocusGame { grab: true },
             Command::InjectInput {

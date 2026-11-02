@@ -6,7 +6,7 @@ use crate::{icons, EditorAppState};
 use calyx_engine::context::GameContext;
 use calyx_engine::input::Input;
 use calyx_engine::math::Transform;
-use calyx_engine::render::CameraLike;
+use calyx_engine::render::{CameraLike, GBufferView};
 use calyx_engine::scene::GameObject;
 use egui::epaint::Vertex;
 use egui::load::SizedTexture;
@@ -118,8 +118,26 @@ impl PanelViewport {
                 "Simulate particles in edit mode",
             )
             .on_hover_text("Run the edit scene's particle systems while play is stopped");
+            ui.separator();
+            Self::view_mode_combo(ui, &mut app_state.scene_renderer.options_mut().gbuffer_view);
         });
         ui.add_space(-ui.style().spacing.item_spacing.y + padding);
+    }
+
+    /// Picks what the scene view shows: the lit image, or one G-buffer
+    /// target in its place.
+    fn view_mode_combo(ui: &mut Ui, view: &mut Option<GBufferView>) {
+        let label = |view: Option<GBufferView>| view.map_or("Lit", GBufferView::label);
+        egui::ComboBox::from_id_salt("viewport_view_mode")
+            .selected_text(label(*view))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(view, None, label(None));
+                for mode in GBufferView::ALL {
+                    ui.selectable_value(view, Some(mode), label(Some(mode)));
+                }
+            })
+            .response
+            .on_hover_text("Show the lit scene, or one target of the deferred G-buffer");
     }
 
     fn viewport(&self, ui: &mut Ui, app_state: &mut EditorAppState) -> egui::Response {

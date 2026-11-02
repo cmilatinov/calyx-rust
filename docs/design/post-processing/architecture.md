@@ -242,6 +242,19 @@ Alpha is read with the pixel and passes through, so transparent views such as th
 - Alpha is read from the pixel itself, never filtered, so transparent views such as thumbnails stay transparent.
 - FXAA does not see editor overlays: they composite after the chain and keep their MSAA.
 
+## G-Buffer
+
+A geometry pass draws the opaque PBR meshes into a G-buffer that `SceneRenderer` owns, single-sample at the scene's size and sharing the scene depth at one sample. [G-Buffer](../rendering/gbuffer.md) holds the pass, the MSAA decision, the debug view and the full channel mapping; the layout is:
+
+| Target | Format | Channels |
+| --- | --- | --- |
+| `albedo` | `Rgba8UnormSrgb` | RGB base color texture times `base_color_factor`; A 1 where a surface was drawn |
+| `normals` | `Rgba16Float` | RG view-space shading normal (normal map with vertex tangents and `normal_scale`), BA view-space geometric normal, both octahedral |
+| `material` | `Rgba8Unorm` | R metallic (factor times texture B), G roughness (factor times texture G), B ambient occlusion (`ambient_occlusion` with the occlusion texture's R at `occlusion_strength`) |
+| `emissive` | `Rgba16Float` | RGB `emission_color * emission_strength * emissive_texture`, linear HDR |
+
+The forward pass still shades the image, and the chain does not read the G-buffer yet: `SceneInput::Normals` stays unavailable. The geometry pass runs only while the scene view shows a G-buffer target (`SceneRendererOptions::gbuffer_view`), which replaces the chain's output.
+
 ## Settings And Volumes
 
 A volume decides where post-processing applies and with what priority. Each effect's settings are their own component on the volume's game object. The volume and the effect components live in `crates/calyx_engine/src/component/`, the effects in `component/post_process/`, one file each, and hold authoring data only; the passes in `render/postprocess/` read them through `PostProcessSettings`.
