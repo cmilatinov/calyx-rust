@@ -135,7 +135,12 @@ impl GBufferTargets {
         self.depth.is_some()
     }
 
-    fn color_targets(&self) -> [&Texture; 4] {
+    /// The pass's own depth, above one sample only.
+    pub(crate) fn own_depth(&self) -> Option<&Texture> {
+        self.depth.as_ref()
+    }
+
+    pub(crate) fn color_targets(&self) -> [&Texture; 4] {
         [&self.albedo, &self.normals, &self.material, &self.emissive]
     }
 }
@@ -219,11 +224,16 @@ impl GBufferRenderer {
     }
 
     /// Draws every batch of `draw_list` that uses the PBR shader into the
-    /// G-buffer, after the forward pass has drawn the scene into
-    /// `scene_depth`. At one sample the pass tests against that depth
-    /// without writing it, so only the surfaces the forward pass kept land
-    /// in the G-buffer. Above one sample the scene depth cannot be attached
-    /// to single-sample targets, so the pass draws against its own depth.
+    /// G-buffer, against `scene_depth` at one sample and against its own
+    /// single-sample depth above one, where the multisampled scene depth
+    /// cannot be attached beside single-sample targets.
+    ///
+    /// With `owns_depth`, on the deferred path, the pass runs first and draws
+    /// the depth itself: it clears it and tests `Less`, as the forward pass
+    /// does. Without it, while only the debug view reads the G-buffer, it runs
+    /// after the forward pass, and at one sample tests against the depth that
+    /// pass wrote without writing it, so only the surfaces the forward pass
+    /// kept land in the G-buffer.
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
@@ -235,6 +245,7 @@ impl GBufferRenderer {
         camera_uniform_buffer: &wgpu::Buffer,
         scene_depth: &Texture,
         cull_mode: Option<wgpu::Face>,
+        owns_depth: bool,
     ) {
         let device = render_context.device();
         let size = (
@@ -255,7 +266,9 @@ impl GBufferRenderer {
             .as_ref()
             .expect("the targets were just created");
 
-        let depth_stencil = if own_depth {
+        // On a depth the pass draws itself, it clears it and tests `Less`.
+        let draws_depth = own_depth || owns_depth;
+        let depth_stencil = if draws_depth {
             RenderUtils::depth_default(wgpu::TextureFormat::Depth32Float)
         } else {
             wgpu::DepthStencilState {
@@ -303,9 +316,14 @@ impl GBufferRenderer {
                 },
             })
         });
-        let (depth_view, depth_load) = match &targets.depth {
-            Some(depth) => (&depth.view, wgpu::LoadOp::Clear(1.0)),
-            None => (&scene_depth.view, wgpu::LoadOp::Load),
+        let depth_view = match &targets.depth {
+            Some(depth) => &depth.view,
+            None => &scene_depth.view,
+        };
+        let depth_load = if draws_depth {
+            wgpu::LoadOp::Clear(1.0)
+        } else {
+            wgpu::LoadOp::Load
         };
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("G-Buffer"),
@@ -328,12 +346,13 @@ impl GBufferRenderer {
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &camera_bind_group, &[]);
         // Of fragments that tie in depth, the forward pass's `Less` keeps the
-        // first drawn. On its own depth this pass tests `Less` too and draws
-        // in the forward order. On the forward depth it tests `LessEqual`
-        // without writing, so the last drawn lands: it draws the batches in
-        // reverse to keep the forward winner. The instances and triangles of
-        // one batch share its material.
-        let batches: Box<dyn Iterator<Item = &DrawBatch>> = if own_depth {
+        // first drawn. On a depth it draws itself this pass tests `Less` too and draws
+        // in the forward order, so on the deferred path the forward-only
+        // draws that follow keep the same winners. On the forward depth it
+        // tests `LessEqual` without writing, so the last drawn lands: it draws
+        // the batches in reverse to keep the forward winner. The instances
+        // and triangles of one batch share its material.
+        let batches: Box<dyn Iterator<Item = &DrawBatch>> = if draws_depth {
             Box::new(draw_list.iter())
         } else {
             Box::new(draw_list.iter().rev())

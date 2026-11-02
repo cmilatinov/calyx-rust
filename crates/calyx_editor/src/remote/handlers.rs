@@ -7,7 +7,7 @@ use calyx_engine::scene::{GameObject, Scene};
 use calyx_engine::utils::TypeUuid;
 use calyx_remote_protocol::{
     CaptureTarget, Command, CoordSpace, ErrorKind, InputEventSpec, ModifiersSpec, PickTarget,
-    PointerButtonSpec, RequestEnvelope, SceneView, TransformSpace, UnsavedSceneAnswer,
+    PointerButtonSpec, RenderPath, RequestEnvelope, SceneView, TransformSpace, UnsavedSceneAnswer,
 };
 use nalgebra::UnitQuaternion;
 use nalgebra_glm::Vec3;
@@ -410,6 +410,15 @@ impl EditorApp {
                     SceneView::Emissive => Some(GBufferView::Emissive),
                 };
                 Ok(Some(serde_json::json!({ "view": view })))
+            }
+            Command::SetRenderPath { path } => {
+                let render_path = match path {
+                    RenderPath::Deferred => calyx_engine::render::RenderPath::Deferred,
+                    RenderPath::Forward => calyx_engine::render::RenderPath::Forward,
+                };
+                self.state.scene_renderer.options_mut().render_path = render_path;
+                self.state.game_renderer.options_mut().render_path = render_path;
+                Ok(Some(serde_json::json!({ "path": path })))
             }
             Command::FocusGame { grab } => {
                 self.tree.make_active(|_, tile| {

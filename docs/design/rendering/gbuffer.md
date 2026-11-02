@@ -2,8 +2,9 @@
 
 A geometry pass draws the scene's opaque PBR meshes into a G-buffer owned by
 `SceneRenderer`, and a debug view shows one of its targets in place of the lit
-image. The forward pass still shades the image the scene view shows; the
-deferred lighting pass (#446) will shade from this G-buffer.
+image. On the deferred path, the default, the deferred lighting pass shades the
+image from this G-buffer; the render paths and their pass order are in
+[Post-Processing Architecture](../post-processing/architecture.md#render-paths).
 
 Code: `crates/calyx_engine/src/render/gbuffer.rs` (`GBufferTargets`,
 `GBufferRenderer`, `GBufferView`), `assets/shaders/mesh/gbuffer.wgsl` (the
@@ -64,16 +65,15 @@ normal cost one target.
 ### Emission
 
 Emission has its own float target rather than being written into the HDR
-color target as the lighting pass's starting value: while the forward pass
-draws the image, the HDR target already holds the forward result. The
-deferred lighting pass can add the emissive target into its output, or drop
-the target and have the geometry pass write emission into the HDR target
-once it owns it.
+color target as the lighting pass's starting value: on the forward path the
+HDR target already holds the forward result when the geometry pass runs. The
+deferred lighting pass adds the emissive target into its output.
 
 ## The geometry pass
 
-`GBufferRenderer::render` runs in `SceneRenderer::render_scene_base` after the
-forward mesh pass, on the same command encoder and draw list.
+`GBufferRenderer::render` runs in `SceneRenderer::render_scene_base`, on the
+same command encoder and draw list as the forward pass: first, on the deferred
+path, and after the forward mesh pass on the forward path.
 
 - It draws every batch of the shared `DrawList` whose shader is
   `shaders/mesh/pbr`; a draw with any other shader stays forward only. The
@@ -89,14 +89,18 @@ forward mesh pass, on the same command encoder and draw list.
   the masked shadow pass binds it. It reads the material through the same
   `pbr_surface` as the forward pass and discards exactly the fragments
   forward discards.
-- At one sample it loads the scene depth the forward pass wrote and tests
-  `LessEqual` without writing, so it covers exactly the surfaces the lit image
-  shows, occluded by every opaque mesh, PBR or not. Of fragments that tie in
-  depth, such as two coplanar meshes, the forward pass keeps the first drawn
-  and this pass the last, so it draws the batches in reverse order and keeps
-  the forward winner. A tie within one batch shares its material. On its own
-  depth, above one sample, it tests `Less` as forward does and draws in the
-  forward order.
+- On the deferred path it owns the depth: it clears it and tests `Less` as the
+  forward pass does, in the forward order, so of fragments that tie in depth
+  it keeps the first drawn. At one sample that depth is the scene depth; above
+  one it is its own, which the lighting pass copies into the scene depth.
+- On the forward path at one sample it loads the scene depth the forward pass
+  wrote and tests `LessEqual` without writing, so it covers exactly the
+  surfaces the lit image shows, occluded by every opaque mesh, PBR or not. Of
+  fragments that tie in depth, such as two coplanar meshes, the forward pass
+  keeps the first drawn and this pass the last, so it draws the batches in
+  reverse order and keeps the forward winner. A tie within one batch shares
+  its material. On its own depth, above one sample, it tests `Less` as forward
+  does and draws in the forward order.
 
 ## MSAA
 
@@ -104,16 +108,18 @@ The G-buffer is single-sample and is never resolved: averaging normals or
 material values across samples gives values no surface has, and a
 multisampled G-buffer multiplies its memory by the sample count.
 
-- **Deferred path**: renders single-sample. A view that uses it replaces
-  MSAA with the FXAA pass the post-processing chain already has (Anti-Aliasing
-  component on the volume). The editor scene view, the Game tab and
-  thumbnails already render at one sample.
-- **Above one sample**, while forward shading draws the image (tests render at
-  four), the scene depth is multisampled and cannot be attached beside
-  single-sample targets. The geometry pass then clears and writes its own
-  single-sample `Depth32Float` depth, allocated with the targets, so the
-  G-buffer still holds the nearest PBR surface, but meshes drawn with other
-  shaders do not occlude it.
+- **Deferred path**: PBR surfaces shade at one sample. A view that uses it
+  replaces MSAA with the FXAA pass the post-processing chain already has
+  (Anti-Aliasing component on the volume). The editor scene view, the Game
+  tab and thumbnails render at one sample. Above one sample the lighting pass
+  writes each pixel into all of its samples, so PBR edges are not
+  multisampled; forward-only draws, the skybox and particles still are.
+- **Above one sample** (tests render at four) the scene depth is
+  multisampled and cannot be attached beside single-sample targets. The
+  geometry pass then clears and writes its own single-sample `Depth32Float`
+  depth, allocated with the targets, so the G-buffer still holds the nearest
+  PBR surface, but meshes drawn with other shaders do not occlude it. On the
+  deferred path the lighting pass writes that depth into the scene depth.
 
 ## Debug view
 
@@ -127,43 +133,40 @@ normals, material or emissive) or `None` for the lit image.
   from `[-1, 1]` to `[0, 1]`) and the material are data, written so the
   displayed byte is the stored value: 0.5 shows as 128. A pixel with albedo
   alpha 0 shows black.
-- The geometry pass runs only while a view is selected (later, also while the
-  deferred path needs it). Without one it records nothing and the targets are
-  released, so the default forward frame costs no pass and no memory. The
+- On the forward path the geometry pass runs only while a view is selected.
+  Without one it records nothing and the targets are released, so a forward
+  frame costs no pass and no memory. The deferred path always runs it. The
   targets are created on the first frame that needs them and resized with the
   other scene textures.
 - The editor's scene view has a view mode menu in its action bar (Lit,
   Albedo, Normals, Material, Emissive). `calyx_ctl view <lit|albedo|normals|material|emissive>`
   sets it remotely (`set_scene_view`).
 
-## For deferred lighting (#446)
+## Deferred lighting
 
-- Rebuild the world position from the scene depth and `inverse_projection`
-  and `inverse_view`; decode both normals and bring them to world space with
-  `inverse_view`. Shade with the shading normal, offset shadow lookups along
-  the geometric normal, and apply ambient occlusion to the ambient and
-  image-based terms only.
-- Skip pixels whose albedo alpha is 0: the forward pass or the skybox owns
-  them.
-- Draws with other shaders stay forward. The geometry pass will then run
-  before them and own depth, rather than testing against the forward depth as
-  it does while the debug view is its only reader.
+The lighting pass (`shaders/deferred/lighting_common.wgsl`) rebuilds the
+world position from the depth with `inverse_projection` and `inverse_view`,
+decodes both normals and brings them to world space with `inverse_view`. It
+shades with the shading normal through the `pbr_lighting` the forward pass
+uses, which offsets shadow lookups along the geometric normal and applies
+ambient occlusion to the ambient and image-based terms only. It discards
+pixels whose albedo alpha is 0: the forward pass or the skybox owns them.
 
 ## Testing
 
 Headless tests in `crates/calyx_engine/src/render/scene_renderer.rs`:
 
 - A plane turned 30 degrees writes its albedo, both normals, metallic,
-  roughness, occlusion and emission at one and four samples, and nothing
-  where it is not drawn.
+  roughness, occlusion and emission on both paths at one and four samples,
+  and nothing where it is not drawn.
 - A normal map tilts the shading normal by the expected angle and leaves the
   geometric normal.
 - A box discarded by its alpha cutoff leaves the box behind it in the
   G-buffer.
-- Of two coplanar boxes, the G-buffer holds the one the lit image shows, at
-  one and four samples.
+- Of two coplanar boxes, the G-buffer holds the one the lit image shows, on
+  both paths at one and four samples.
 - A skinned mesh in its rest pose writes its posed normal.
-- The geometry pass runs and allocates its targets only while a view is
-  selected, and the targets resize with the scene.
+- On the forward path the geometry pass runs and allocates its targets only
+  while a view is selected, and the targets resize with the scene.
 - Each debug view shows its target's expected bytes in the scene texture, and
   black where nothing is drawn.

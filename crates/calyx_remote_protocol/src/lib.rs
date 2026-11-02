@@ -306,6 +306,13 @@ pub enum Command {
         /// The view to show.
         view: SceneView,
     },
+    /// Sets how the editor's scene view and Game tab shade the scene's
+    /// opaque PBR meshes: deferred, the default, or forward for comparison.
+    /// Responds with the path now used.
+    SetRenderPath {
+        /// The path to use.
+        path: RenderPath,
+    },
     /// Activates the Game tab and sets the cursor-grab flag so gameplay input
     /// reaches the simulation.
     FocusGame {
@@ -365,6 +372,17 @@ pub enum SceneView {
     Material,
     /// The G-buffer's emission.
     Emissive,
+}
+
+/// How the editor shades the scene's opaque PBR meshes.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RenderPath {
+    /// From the G-buffer, in the deferred lighting pass.
+    #[default]
+    Deferred,
+    /// In the forward pass, as every other draw.
+    Forward,
 }
 
 /// Coordinate spaces for pointer coordinates.
@@ -654,6 +672,9 @@ mod tests {
             },
             Command::SetSceneView {
                 view: SceneView::Normals,
+            },
+            Command::SetRenderPath {
+                path: RenderPath::Forward,
             },
             Command::FocusGame { grab: true },
             Command::InjectInput {

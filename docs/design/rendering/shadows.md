@@ -145,11 +145,13 @@ shaded point, and the scene camera's `CameraUniforms` in group 0, which every
 lighting pass binds, so a deferred lighting pass includes
 `shaders/common/shadows.wgsl` unchanged.
 
-- Forward: `pbr.wgsl` multiplies each directional and spot light's direct term
-  by its shadow factor. Ambient light and image-based lighting are never
+- Forward: `pbr.wgsl` shades through `pbr_lighting`, which multiplies each
+  directional and spot light's direct term by its shadow factor. Ambient light and image-based lighting are never
   shadowed.
-- Deferred (#446, not landed yet): its lighting pass binds the camera in group 0, the same group 2 resources and
-  calls the same two functions with the G-buffer's world position and normal.
+- Deferred: the lighting pass binds the same group 0 and group 2 bind groups
+  and shades through the same `pbr_lighting` of
+  `shaders/common/pbr_lighting.wgsl`, with the world position rebuilt from the
+  depth and the G-buffer's geometric normal.
 
 ## Budget
 

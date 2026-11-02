@@ -18,7 +18,9 @@ use calyx_engine::component::{
 };
 use calyx_engine::context::ReadOnlyAssetContext;
 use calyx_engine::math::Transform;
-use calyx_engine::render::{Camera, RenderContext, SceneRenderer, SceneRendererOptions, Shader};
+use calyx_engine::render::{
+    Camera, RenderContext, RenderPath, SceneRenderer, SceneRendererOptions, Shader,
+};
 use calyx_engine::scene::{GameObject, Prefab, Scene};
 use calyx_engine::utils::TypeUuid;
 use eframe::wgpu;

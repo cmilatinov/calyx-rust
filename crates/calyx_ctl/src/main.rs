@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use calyx_remote_protocol::{
-    CaptureTarget, Command, CoordSpace, InputEventSpec, PickTarget, PointerButtonSpec,
+    CaptureTarget, Command, CoordSpace, InputEventSpec, PickTarget, PointerButtonSpec, RenderPath,
     ResponsePayload, SceneView, TransformSpace, UnsavedSceneAnswer,
 };
 use clap::{Parser, Subcommand, ValueEnum};
@@ -138,6 +138,12 @@ enum Action {
     View {
         #[arg(value_enum)]
         view: SceneViewArg,
+    },
+    /// Shade the scene's opaque PBR meshes deferred or forward, in the scene
+    /// view and the Game tab.
+    RenderPath {
+        #[arg(value_enum)]
+        path: RenderPathArg,
     },
     /// Activate the Game tab and grab (or release) gameplay input focus.
     FocusGame {
@@ -305,6 +311,12 @@ enum SceneViewArg {
     Normals,
     Material,
     Emissive,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum RenderPathArg {
+    Deferred,
+    Forward,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -614,6 +626,12 @@ fn build_command(action: &Action, base: Duration) -> Result<(Command, Duration),
                 SceneViewArg::Normals => SceneView::Normals,
                 SceneViewArg::Material => SceneView::Material,
                 SceneViewArg::Emissive => SceneView::Emissive,
+            },
+        }),
+        Action::RenderPath { path } => simple(Command::SetRenderPath {
+            path: match path {
+                RenderPathArg::Deferred => RenderPath::Deferred,
+                RenderPathArg::Forward => RenderPath::Forward,
             },
         }),
         Action::FocusGame { release_grab } => simple(Command::FocusGame {

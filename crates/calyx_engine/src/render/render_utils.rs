@@ -14,19 +14,25 @@ impl RenderUtils {
         view: &wgpu::TextureView,
         clear_color: Color32,
     ) -> wgpu::RenderPassColorAttachment<'_> {
-        let [x, y, z, w] = clear_color.to_array();
         wgpu::RenderPassColorAttachment {
             view,
             resolve_target: None,
             ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(wgpu::Color {
-                    r: x as f64 / 255.0,
-                    g: y as f64 / 255.0,
-                    b: z as f64 / 255.0,
-                    a: w as f64 / 255.0,
-                }),
+                load: wgpu::LoadOp::Clear(Self::clear_value(clear_color)),
                 store: wgpu::StoreOp::Store,
             },
+        }
+    }
+
+    /// The clear value of a color target cleared to `clear_color`, each of
+    /// its bytes over 255.
+    pub fn clear_value(clear_color: Color32) -> wgpu::Color {
+        let [x, y, z, w] = clear_color.to_array();
+        wgpu::Color {
+            r: x as f64 / 255.0,
+            g: y as f64 / 255.0,
+            b: z as f64 / 255.0,
+            a: w as f64 / 255.0,
         }
     }
 

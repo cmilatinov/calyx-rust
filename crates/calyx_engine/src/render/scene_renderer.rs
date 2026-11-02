@@ -17,10 +17,10 @@ use crate::render::postprocess::{
 };
 use crate::render::render_utils::RenderUtils;
 use crate::render::{
-    Camera, DrawBatch, GBufferRenderer, GBufferTargets, GBufferView, GizmoRenderer, GridRenderer,
-    LightManager, MeshRenderDefaults, MeshRenderTargets, MeshRenderer, OutlineRenderer,
-    ParticleRenderer, ParticleSimulation, PipelineOptions, ShadowCamera, ShadowFrameStats,
-    ShadowRenderer, SkyboxRenderer,
+    Camera, DeferredLightingRenderer, DrawBatch, ForwardDraws, GBufferRenderer, GBufferTargets,
+    GBufferView, GizmoRenderer, GridRenderer, LightManager, MeshRenderDefaults, MeshRenderTargets,
+    MeshRenderer, OutlineRenderer, ParticleRenderer, ParticleSimulation, PipelineOptions,
+    ShadowCamera, ShadowFrameStats, ShadowRenderer, SkyboxRenderer,
 };
 use crate::scene::{GameObject, Scene};
 use crate::utils::TypeUuid;
@@ -108,9 +108,27 @@ pub struct SceneRendererOptions {
     /// and no shadow map is allocated, as thumbnails need.
     pub shadows: bool,
     /// The G-buffer target the view shows in place of the lit image, or
-    /// `None` for the lit image. While it is `None` the geometry pass does
-    /// not run and the G-buffer is not allocated.
+    /// `None` for the lit image. While it is `None` on the forward path the
+    /// geometry pass does not run and the G-buffer is not allocated.
     pub gbuffer_view: Option<GBufferView>,
+    /// How the scene's opaque PBR meshes are shaded: from the G-buffer by
+    /// the deferred lighting pass (the default), or in the forward pass, for
+    /// comparison. Every other draw takes the forward pass either way.
+    pub render_path: RenderPath,
+}
+
+/// How a [`SceneRenderer`] shades the scene's opaque PBR meshes. The paths
+/// are described in `docs/design/post-processing/architecture.md`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum RenderPath {
+    /// The geometry pass writes the PBR meshes into the G-buffer, owning the
+    /// depth, and a full-screen lighting pass shades them. Forward-only draws
+    /// follow, against that depth. The G-buffer is single-sample, so above
+    /// one sample PBR edges are not multisampled; FXAA smooths them.
+    #[default]
+    Deferred,
+    /// Every mesh shades in the forward pass, as before the deferred path.
+    Forward,
 }
 
 /// Lighting a view supplies itself instead of taking it from the scene: an
@@ -138,6 +156,7 @@ impl Default for SceneRendererOptions {
             environment: None,
             shadows: false,
             gbuffer_view: None,
+            render_path: RenderPath::default(),
         }
     }
 }
@@ -241,6 +260,7 @@ pub struct SceneRenderer {
     light_manager: LightManager,
     shadow_renderer: ShadowRenderer,
     gbuffer_renderer: GBufferRenderer,
+    deferred_lighting: DeferredLightingRenderer,
     gizmo_renderer: GizmoRenderer,
     outline_renderer: OutlineRenderer,
     particle_renderer: ParticleRenderer,
@@ -325,6 +345,7 @@ impl SceneRenderer {
         let mesh_renderer = MeshRenderer::new(context)?;
         let shadow_renderer = ShadowRenderer::new(context)?;
         let gbuffer_renderer = GBufferRenderer::new(context)?;
+        let deferred_lighting = DeferredLightingRenderer::new(context)?;
         let skybox_renderer = SkyboxRenderer::new(context)?;
 
         let camera_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -387,6 +408,7 @@ impl SceneRenderer {
             light_manager: Default::default(),
             shadow_renderer,
             gbuffer_renderer,
+            deferred_lighting,
             gizmo_renderer,
             outline_renderer,
             particle_renderer,
@@ -425,7 +447,8 @@ impl SceneRenderer {
     }
 
     /// The G-buffer the last [`Self::render_scene_base`] drew, or `None`
-    /// when no G-buffer view was selected, and the geometry pass did not run.
+    /// when the frame took the forward path with no G-buffer view selected,
+    /// and the geometry pass did not run.
     pub fn gbuffer(&self) -> Option<&GBufferTargets> {
         self.gbuffer_renderer.targets()
     }
@@ -435,10 +458,15 @@ impl SceneRenderer {
         self.gbuffer_renderer.drawn_instances()
     }
 
-    /// Whether this frame needs the G-buffer: only a G-buffer view reads it
-    /// until the deferred lighting pass lands.
+    /// Whether this frame shades its PBR meshes from the G-buffer.
+    fn deferred(&self) -> bool {
+        self.options.render_path == RenderPath::Deferred
+    }
+
+    /// Whether this frame needs the G-buffer: the deferred path shades from
+    /// it, and a G-buffer view shows it.
     fn gbuffer_needed(&self) -> bool {
-        self.options.gbuffer_view.is_some()
+        self.deferred() || self.options.gbuffer_view.is_some()
     }
 
     /// Returns the current renderer options.
@@ -549,37 +577,33 @@ impl SceneRenderer {
             &material_bind_groups,
             &draw_list,
         );
-        {
+        let lighting = {
             let black_texture_cube = self.default_assets.black_texture_cube.read();
             let black_texture_2d = self.default_assets.black_texture_2d.read();
-            self.mesh_renderer.render(
+            self.mesh_renderer.lighting_bind_groups(
                 device,
-                &mut encoder,
+                queue,
                 &assets,
-                &material_bind_groups,
                 MeshRenderDefaults {
                     black_texture_2d: &black_texture_2d,
                     black_texture_cube: &black_texture_cube,
                 },
-                MeshRenderTargets {
-                    color: &self.scene_texture_msaa,
-                    depth: &self.scene_depth_texture,
-                },
-                queue,
                 &self.light_manager,
                 &self.shadow_renderer.bindings(),
                 &self.camera_uniform_buffer,
-                self.options.clear_color,
-                &options,
                 self.skybox_renderer.skybox_id(),
                 self.sky_light_intensity,
                 self.light_manager.ambient_light(),
-                &draw_list,
-            );
-        }
-        // The geometry pass tests against the depth the forward pass just
-        // wrote, so the G-buffer holds the surfaces the lit image shows.
-        if self.gbuffer_needed() {
+            )
+        };
+        let mesh_targets = MeshRenderTargets {
+            color: &self.scene_texture_msaa,
+            depth: &self.scene_depth_texture,
+        };
+        if self.deferred() {
+            // The geometry pass draws the PBR meshes and owns the depth, the
+            // lighting pass shades them, and the forward-only draws follow
+            // against the deferred depth.
             self.gbuffer_renderer.render(
                 &render_context,
                 &mut encoder,
@@ -589,9 +613,65 @@ impl SceneRenderer {
                 &self.camera_uniform_buffer,
                 &self.scene_depth_texture,
                 self.options.mesh_cull_mode,
+                true,
+            );
+            let gbuffer = self
+                .gbuffer_renderer
+                .targets()
+                .expect("the geometry pass just drew the G-buffer");
+            self.deferred_lighting.render(
+                &render_context,
+                &mut encoder,
+                gbuffer,
+                gbuffer.own_depth().unwrap_or(&self.scene_depth_texture),
+                &lighting,
+                &self.scene_texture_msaa,
+                &self.scene_depth_texture,
+                self.options.clear_color,
+            );
+            self.mesh_renderer.render(
+                &mut encoder,
+                &assets,
+                &material_bind_groups,
+                &lighting,
+                mesh_targets,
+                self.options.clear_color,
+                &options,
+                ForwardDraws::AfterDeferred {
+                    deferred_shader: self.mesh_renderer.scene_shader_id(),
+                },
+                &draw_list,
             );
         } else {
-            self.gbuffer_renderer.release();
+            self.deferred_lighting.release();
+            self.mesh_renderer.render(
+                &mut encoder,
+                &assets,
+                &material_bind_groups,
+                &lighting,
+                mesh_targets,
+                self.options.clear_color,
+                &options,
+                ForwardDraws::All,
+                &draw_list,
+            );
+            // The geometry pass tests against the depth the forward pass just
+            // wrote, so the G-buffer holds the surfaces the lit image shows.
+            if self.gbuffer_needed() {
+                self.gbuffer_renderer.render(
+                    &render_context,
+                    &mut encoder,
+                    &assets,
+                    &material_bind_groups,
+                    &draw_list,
+                    &self.camera_uniform_buffer,
+                    &self.scene_depth_texture,
+                    self.options.mesh_cull_mode,
+                    false,
+                );
+            } else {
+                self.gbuffer_renderer.release();
+            }
         }
         self.mesh_renderer.render_object_ids(
             device,
@@ -3407,6 +3487,9 @@ mod tests {
             SceneRendererOptions {
                 samples: SAMPLES,
                 clear_color: Color32::WHITE,
+                // The deferred path shades PBR meshes at one sample; the
+                // forward path multisamples their edges.
+                render_path: RenderPath::Forward,
                 ..Default::default()
             },
             (SIZE, SIZE),
@@ -4122,11 +4205,24 @@ mod tests {
         vec3(-30f32.to_radians().sin(), 0.0, -30f32.to_radians().cos())
     }
 
-    /// Renders `scene` from `front_camera` with `view` selected and returns
-    /// the renderer.
+    /// Renders `scene` from `front_camera` with `view` selected, on the
+    /// default path, and returns the renderer.
     fn render_gbuffer(
         context: &ReadOnlyAssetContext,
         scene: &Scene,
+        samples: u32,
+        size: (u32, u32),
+        view: Option<GBufferView>,
+    ) -> SceneRenderer {
+        render_gbuffer_on(context, scene, RenderPath::default(), samples, size, view)
+    }
+
+    /// Renders `scene` from `front_camera` on `path` with `view` selected
+    /// and returns the renderer.
+    fn render_gbuffer_on(
+        context: &ReadOnlyAssetContext,
+        scene: &Scene,
+        path: RenderPath,
         samples: u32,
         size: (u32, u32),
         view: Option<GBufferView>,
@@ -4137,6 +4233,7 @@ mod tests {
                 samples,
                 clear_color: Color32::BLACK,
                 gbuffer_view: view,
+                render_path: path,
                 ..Default::default()
             },
             size,
@@ -4167,7 +4264,12 @@ mod tests {
         let scene = builder.finish();
         let center = (SIZE.0 / 2, SIZE.1 / 2);
 
-        for samples in [1, 4] {
+        for (path, samples) in [
+            (RenderPath::Forward, 1),
+            (RenderPath::Forward, 4),
+            (RenderPath::Deferred, 1),
+            (RenderPath::Deferred, 4),
+        ] {
             if !supports_samples(
                 &render_context,
                 wgpu::TextureFormat::Rgba16Float,
@@ -4176,9 +4278,10 @@ mod tests {
             ) {
                 continue;
             }
-            let renderer = render_gbuffer(
+            let renderer = render_gbuffer_on(
                 &read_only_context,
                 &scene,
+                path,
                 samples,
                 SIZE,
                 Some(GBufferView::Albedo),
@@ -4198,12 +4301,12 @@ mod tests {
             assert_near(
                 octahedral_decode(sx, sy),
                 turned_plane_normal(),
-                &format!("shading normal at {samples} samples"),
+                &format!("shading normal on {path:?} at {samples} samples"),
             );
             assert_near(
                 octahedral_decode(gx, gy),
                 turned_plane_normal(),
-                &format!("geometric normal at {samples} samples"),
+                &format!("geometric normal on {path:?} at {samples} samples"),
             );
 
             let surface = read_texel(&render_context, &gbuffer.material, center);
@@ -4308,9 +4411,14 @@ mod tests {
         let scene = builder.finish();
         let center = (SIZE.0 / 2, SIZE.1 / 2);
 
-        // At one sample the pass shares the forward depth; above one it
-        // draws against its own.
-        for samples in [1, 4] {
+        // On the forward path at one sample the pass shares the forward
+        // depth; above one, and on the deferred path, it draws the depth.
+        for (path, samples) in [
+            (RenderPath::Forward, 1),
+            (RenderPath::Forward, 4),
+            (RenderPath::Deferred, 1),
+            (RenderPath::Deferred, 4),
+        ] {
             if !supports_samples(
                 &render_context,
                 wgpu::TextureFormat::Rgba16Float,
@@ -4319,13 +4427,14 @@ mod tests {
             ) {
                 continue;
             }
-            let lit = render_gbuffer(&read_only_context, &scene, samples, SIZE, None);
+            let lit = render_gbuffer_on(&read_only_context, &scene, path, samples, SIZE, None);
             let lit = read_scene_texture(&lit, &render_context)
                 .get_pixel(center.0, center.1)
                 .0;
-            let renderer = render_gbuffer(
+            let renderer = render_gbuffer_on(
                 &read_only_context,
                 &scene,
+                path,
                 samples,
                 SIZE,
                 Some(GBufferView::Albedo),
@@ -4335,12 +4444,12 @@ mod tests {
             assert_ne!(
                 lit[0] > lit[1],
                 lit[1] > lit[0],
-                "the lit image is red or green at {samples} samples: {lit:?}"
+                "the lit image is red or green on {path:?} at {samples} samples: {lit:?}"
             );
             assert_eq!(
                 albedo[0] > albedo[1],
                 lit[0] > lit[1],
-                "{samples} samples: the G-buffer holds the box the lit image shows: lit {lit:?}, \
+                "{path:?}, {samples} samples: the G-buffer holds the box the lit image shows: lit {lit:?}, \
                  albedo {albedo:?}"
             );
         }
@@ -4441,7 +4550,7 @@ mod tests {
     }
 
     #[test]
-    fn the_geometry_pass_runs_only_while_a_gbuffer_view_is_selected() {
+    fn on_the_forward_path_the_geometry_pass_runs_only_while_a_gbuffer_view_is_selected() {
         const SIZE: (u32, u32) = (16, 16);
         let assets = TestAssets::engine();
         let context = assets.asset_context();
@@ -4458,6 +4567,7 @@ mod tests {
         let scene = builder.finish();
         let (camera, transform) = front_camera(1.0, 5.0);
         let mut renderer = renderer(&read_only_context, 1, SIZE);
+        renderer.options_mut().render_path = RenderPath::Forward;
         let frame = |renderer: &mut SceneRenderer| {
             renderer.render_scene_base(&camera, &transform, &scene, None, None);
             renderer.finalize_scene();
@@ -4538,6 +4648,485 @@ mod tests {
                 "{view:?}: where nothing is drawn the view is black"
             );
         }
+    }
+
+    /// A PBR material registered as `name`, with each of `variables` set.
+    fn pbr_material_with(
+        context: &ReadOnlyAssetContext,
+        name: &str,
+        variables: Vec<(&str, ShaderVariableValue)>,
+    ) -> Ref<Material> {
+        let material = pbr_material(context, name);
+        {
+            let mut material = material.write();
+            for (variable, value) in variables {
+                assert!(material.set_variable(variable, value), "{variable}");
+            }
+        }
+        material
+    }
+
+    /// The camera of the path comparison tests: up and back from the
+    /// origin, looking down at it.
+    fn comparison_camera() -> (Camera, Transform) {
+        let camera = Camera::new(1.0, 60f32.to_radians(), 0.1, 100.0);
+        let position = vec3(0.0, 5.0, -7.0);
+        let transform = Transform::from_components(
+            position,
+            UnitQuaternion::face_towards(&-position, &Vec3::y()),
+            vec3(1.0, 1.0, 1.0),
+        );
+        (camera, transform)
+    }
+
+    /// A scene that exercises every term the PBR lighting has: a shadowed
+    /// sun, a point light and a shadowed spot light over a ground plane, a
+    /// metallic box, an emissive box, a box an alpha cutoff keeps and one it
+    /// discards, the flat ambient light and, with `sky`, a sky light.
+    fn lit_comparison_scene(context: &ReadOnlyAssetContext, sky: Option<AssetId>) -> Scene {
+        let cube = context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let ground = pbr_material_with(
+            context,
+            "test/paths_ground",
+            vec![
+                (
+                    "base_color_factor",
+                    ShaderVariableValue::Color([0.7, 0.7, 0.65, 1.0]),
+                ),
+                ("roughness", ShaderVariableValue::Float(0.8)),
+                ("metallic", ShaderVariableValue::Float(0.0)),
+            ],
+        );
+        let metal = pbr_material_with(
+            context,
+            "test/paths_metal",
+            vec![
+                (
+                    "base_color_factor",
+                    ShaderVariableValue::Color([0.9, 0.6, 0.3, 1.0]),
+                ),
+                ("roughness", ShaderVariableValue::Float(0.35)),
+                ("metallic", ShaderVariableValue::Float(0.8)),
+                ("ambient_occlusion", ShaderVariableValue::Float(0.6)),
+            ],
+        );
+        let emissive = gbuffer_material(context, "test/paths_emissive");
+        let cutout = |name: &str, alpha: f32| {
+            pbr_material_with(
+                context,
+                name,
+                vec![
+                    (
+                        "base_color_factor",
+                        ShaderVariableValue::Color([0.2, 0.7, 0.3, alpha]),
+                    ),
+                    ("alpha_cutoff", ShaderVariableValue::Float(0.5)),
+                ],
+            )
+        };
+        let kept = cutout("test/paths_cutout_kept", 0.75);
+        let discarded = cutout("test/paths_cutout_discarded", 0.25);
+
+        let mut builder = SceneBuilder::new(context.registries.clone());
+        spawn_box(
+            &mut builder,
+            "ground",
+            &cube,
+            &ground,
+            Vec3::zeros(),
+            vec3(8.0, 0.1, 8.0),
+        );
+        spawn_box(
+            &mut builder,
+            "metal",
+            &cube,
+            &metal,
+            vec3(0.5, 0.6, 0.0),
+            Vec3::repeat(1.0),
+        );
+        spawn_box(
+            &mut builder,
+            "emissive",
+            &cube,
+            &emissive,
+            vec3(-1.5, 0.35, 1.5),
+            Vec3::repeat(0.6),
+        );
+        spawn_box(
+            &mut builder,
+            "kept",
+            &cube,
+            &kept,
+            vec3(1.8, 0.35, 1.8),
+            Vec3::repeat(0.6),
+        );
+        // In front of the metal box: it hides nothing, since it is discarded.
+        spawn_box(
+            &mut builder,
+            "discarded",
+            &cube,
+            &discarded,
+            vec3(0.4, 1.0, -1.8),
+            Vec3::repeat(0.8),
+        );
+        spawn_sun(&mut builder, vec3(1.0, -1.5, 0.6));
+        let point = builder.spawn("point");
+        builder.add_component(
+            point,
+            crate::component::ComponentPointLight {
+                radius: 6.0,
+                color: Color32::from_rgb(255, 120, 80),
+                intensity: 4.0,
+            },
+        );
+        builder.set_transform(point, glm::translation(&vec3(-2.0, 1.5, -1.0)));
+        let spot = builder.spawn("spot");
+        builder.add_component(
+            spot,
+            crate::component::ComponentSpotLight {
+                color: Color32::from_rgb(120, 160, 255),
+                intensity: 20.0,
+                range: 8.0,
+                inner_angle: 25.0,
+                outer_angle: 35.0,
+                cast_shadows: true,
+                ..Default::default()
+            },
+        );
+        builder.set_transform(
+            spot,
+            glm::translation(&vec3(-1.5, 3.0, -1.5)) * pointing(-Vec3::y()),
+        );
+        spawn_box(
+            &mut builder,
+            "spot occluder",
+            &cube,
+            &metal,
+            vec3(-1.4, 1.5, -1.5),
+            Vec3::repeat(0.4),
+        );
+        let ambient = builder.spawn("ambient");
+        builder.add_component(ambient, crate::component::ComponentAmbientLight::default());
+        if let Some(skybox) = sky {
+            let sky = builder.spawn("sky");
+            builder.add_component(
+                sky,
+                ComponentSkyLight {
+                    skybox: AssetRef::from_id(skybox),
+                    intensity: 0.5,
+                    ..Default::default()
+                },
+            );
+        }
+        builder.finish()
+    }
+
+    /// Writes the test sky, a uniform blue HDR, and returns its path, or
+    /// `None` when the adapter cannot filter the `Rgba32Float` it uploads as.
+    fn test_sky(assets: &TestAssets) -> Option<std::path::PathBuf> {
+        if !crate::test_support::test_render_context()
+            .device()
+            .features()
+            .contains(wgpu::Features::FLOAT32_FILTERABLE)
+        {
+            eprintln!("the test adapter cannot filter Rgba32Float skyboxes: no sky light");
+            return None;
+        }
+        let path = assets.engine_root().join("skyboxes/test_sky.hdr");
+        write_test_hdr(&path, 16);
+        Some(path)
+    }
+
+    /// One frame of `scene` from [`comparison_camera`] on `path` at
+    /// `samples`, with shadows, once the sky light, if any, has loaded.
+    /// Returns the renderer with the frame finalized.
+    fn render_path_frame(
+        context: &ReadOnlyAssetContext,
+        scene: &Scene,
+        path: RenderPath,
+        samples: u32,
+        size: (u32, u32),
+        sky: bool,
+    ) -> SceneRenderer {
+        let mut renderer = SceneRenderer::new(
+            context,
+            SceneRendererOptions {
+                samples,
+                clear_color: Color32::BLACK,
+                shadows: true,
+                render_path: path,
+                ..Default::default()
+            },
+            size,
+        )
+        .expect("scene renderer should load its assets");
+        let (camera, transform) = comparison_camera();
+        renderer.render_scene_base(&camera, &transform, scene, None, None);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while sky && renderer.skybox_renderer.skybox_id().is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the sky never finished loading"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            renderer.render_scene_base(&camera, &transform, scene, None, None);
+        }
+        renderer.finalize_scene();
+        renderer
+    }
+
+    /// How far two images of one size are apart.
+    #[derive(Debug)]
+    struct ImageDifference {
+        /// The mean over every channel of every pixel of the absolute
+        /// difference, in bytes.
+        mean: f32,
+        /// The fraction of pixels with a channel more than `threshold` bytes
+        /// apart.
+        over_threshold: f32,
+        /// The largest difference of any channel.
+        max: u8,
+    }
+
+    fn image_difference(
+        a: &image::RgbaImage,
+        b: &image::RgbaImage,
+        threshold: u8,
+    ) -> ImageDifference {
+        assert_eq!(a.dimensions(), b.dimensions());
+        let mut sum = 0u64;
+        let mut over = 0usize;
+        let mut max = 0u8;
+        for (a, b) in a.pixels().zip(b.pixels()) {
+            let diffs: Vec<u8> = (0..3).map(|c| a.0[c].abs_diff(b.0[c])).collect();
+            sum += diffs.iter().map(|&d| d as u64).sum::<u64>();
+            let pixel_max = diffs.iter().copied().max().unwrap_or(0);
+            max = max.max(pixel_max);
+            if pixel_max > threshold {
+                over += 1;
+            }
+        }
+        let pixels = (a.width() * a.height()) as f32;
+        ImageDifference {
+            mean: sum as f32 / (pixels * 3.0),
+            over_threshold: over as f32 / pixels,
+            max,
+        }
+    }
+
+    #[test]
+    fn the_deferred_path_matches_the_forward_path_at_one_and_four_samples() {
+        const SIZE: (u32, u32) = (128, 128);
+        let assets = TestAssets::engine();
+        let sky_path = test_sky(&assets);
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        let sky = sky_path.as_ref().map(|_| {
+            read_only_context
+                .registries
+                .assets
+                .read()
+                .asset_id("skyboxes/test_sky")
+                .expect("test skybox should have metadata")
+        });
+        let scene = lit_comparison_scene(&read_only_context, sky);
+        assert_eq!(
+            SceneRendererOptions::default().render_path,
+            RenderPath::Deferred,
+            "the deferred path is the default"
+        );
+
+        // At one sample both paths shade the same point of every pixel
+        // through the same lighting, and differ only by the G-buffer's
+        // quantization. Above one the deferred path does not multisample PBR
+        // edges, so edge pixels may differ, by as much as the edge's contrast.
+        for (samples, max_over, max_mean, max_diff) in [(1, 0.0, 0.5, 3), (4, 0.06, 1.5, 255)] {
+            if !supports_samples(
+                &render_context,
+                wgpu::TextureFormat::Rgba16Float,
+                samples,
+                true,
+            ) {
+                continue;
+            }
+            let frame = |path| {
+                let renderer = render_path_frame(
+                    &read_only_context,
+                    &scene,
+                    path,
+                    samples,
+                    SIZE,
+                    sky.is_some(),
+                );
+                let drawn = renderer.gbuffer_drawn_instances();
+                (read_scene_texture(&renderer, &render_context), drawn)
+            };
+            let (forward, forward_drawn) = frame(RenderPath::Forward);
+            let (deferred, deferred_drawn) = frame(RenderPath::Deferred);
+            assert_eq!(forward_drawn, 0, "the forward path draws no G-buffer");
+            assert_eq!(
+                deferred_drawn, 6,
+                "the deferred path draws every PBR mesh into the G-buffer"
+            );
+            let lit = forward
+                .pixels()
+                .filter(|pixel| pixel.0[..3].iter().any(|&c| c > 20))
+                .count();
+            assert!(
+                lit as u32 > SIZE.0 * SIZE.1 / 2,
+                "the scene fills most of the image: {lit} lit pixels"
+            );
+            let difference = image_difference(&forward, &deferred, 3);
+            eprintln!("{samples} samples: {difference:?}");
+            assert!(
+                difference.over_threshold <= max_over
+                    && difference.mean <= max_mean
+                    && difference.max <= max_diff,
+                "{samples} samples: the deferred image matches the forward one, {difference:?}"
+            );
+        }
+    }
+
+    /// A mesh shader other than the PBR one, which keeps the forward path:
+    /// it binds the PBR lighting's groups but draws its material's flat
+    /// `color`, unlit.
+    const UNLIT_SHADER: &str = r#"//#include "shaders/mesh/pbr_vertex.wgsl"
+//#include "shaders/common/pbr_lighting.wgsl"
+
+struct UnlitProperties {
+    color: vec4f,
+};
+
+@group(3) @binding(0)
+var<uniform> unlit: UnlitProperties;
+
+@fragment
+fn fs_main(in: PbrVertexOut) -> @location(0) vec4f {
+    return vec4f(unlit.color.rgb, 1.0);
+}
+"#;
+
+    #[test]
+    fn forward_only_draws_follow_the_deferred_lighting_against_its_depth() {
+        const SIZE: (u32, u32) = (64, 64);
+        let assets = TestAssets::engine();
+        let shader_path = assets.engine_root().join("shaders/test/unlit.wgsl");
+        std::fs::create_dir_all(shader_path.parent().expect("a parent"))
+            .expect("the test shader folder is created");
+        std::fs::write(&shader_path, UNLIT_SHADER).expect("the test shader is written");
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let unlit = {
+            let registry = read_only_context.registries.assets.read();
+            let shader = registry
+                .load::<Shader>("shaders/test/unlit")
+                .expect("the unlit test shader loads");
+            let mut material = Material::from_shader(&read_only_context, shader);
+            assert!(
+                material.set_variable("color", ShaderVariableValue::Color([1.0, 0.0, 1.0, 1.0]))
+            );
+            registry
+                .create_or_update("test/paths_unlit".into(), material)
+                .expect("material should be created")
+        };
+        // A box glowing green, with no light: the lit image is its emission.
+        let green = pbr_material_with(
+            &read_only_context,
+            "test/paths_green",
+            vec![
+                (
+                    "base_color_factor",
+                    ShaderVariableValue::Color([0.0, 0.0, 0.0, 1.0]),
+                ),
+                (
+                    "emission_color",
+                    ShaderVariableValue::Color([0.0, 1.0, 0.0, 1.0]),
+                ),
+                ("emission_strength", ShaderVariableValue::Float(1.0)),
+            ],
+        );
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        spawn_mesh(&mut builder, "green", &cube, &green, Vec3::zeros());
+        // An unlit box in front of the green one, on its left, and one
+        // behind it, wider, on its right.
+        spawn_box(
+            &mut builder,
+            "front",
+            &cube,
+            &unlit,
+            vec3(-0.6, 0.0, -1.0),
+            Vec3::repeat(0.6),
+        );
+        spawn_box(
+            &mut builder,
+            "behind",
+            &cube,
+            &unlit,
+            vec3(0.6, 0.0, 1.5),
+            Vec3::repeat(1.2),
+        );
+        let scene = builder.finish();
+        let (camera, transform) = front_camera(1.0, 5.0);
+        let frame = |path| {
+            let mut renderer = SceneRenderer::new(
+                &read_only_context,
+                SceneRendererOptions {
+                    clear_color: Color32::BLACK,
+                    render_path: path,
+                    ..Default::default()
+                },
+                SIZE,
+            )
+            .expect("scene renderer should load its assets");
+            renderer.render_scene_base(&camera, &transform, &scene, None, None);
+            renderer.finalize_scene();
+            let drawn = renderer.gbuffer_drawn_instances();
+            (read_scene_texture(&renderer, &render_context), drawn)
+        };
+        let (forward, _) = frame(RenderPath::Forward);
+        let (deferred, drawn) = frame(RenderPath::Deferred);
+        assert_eq!(drawn, 1, "only the PBR box enters the G-buffer");
+
+        let pixel = |point: Vec3| {
+            let (x, y) = project(&camera, &transform, point, SIZE);
+            deferred.get_pixel(x, y).0
+        };
+        // Tone mapping desaturates the pure colors a little.
+        let magenta = |[r, g, b, _]: [u8; 4]| r > g + 80 && b > g + 80;
+        let green = |[r, g, b, _]: [u8; 4]| g > r + 80 && g > b + 80;
+        let front = pixel(vec3(-0.6, 0.0, -1.3));
+        assert!(
+            magenta(front),
+            "the unlit box in front covers the green one: {front:?}"
+        );
+        let covered = pixel(vec3(0.25, 0.0, -0.5));
+        assert!(
+            green(covered),
+            "the green box hides the unlit one behind it: {covered:?}"
+        );
+        let beside = pixel(vec3(0.95, 0.0, 0.9));
+        assert!(
+            magenta(beside),
+            "the unlit box behind shows beside the green one: {beside:?}"
+        );
+        let difference = image_difference(&forward, &deferred, 3);
+        assert!(
+            difference.over_threshold == 0.0,
+            "both paths draw the same image: {difference:?}"
+        );
     }
 }
 

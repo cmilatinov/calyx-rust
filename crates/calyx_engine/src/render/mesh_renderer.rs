@@ -73,6 +73,36 @@ struct CachedMaterialBindGroups {
     groups: HashMap<u32, wgpu::BindGroup>,
 }
 
+/// The bind groups every PBR lighting pass binds, forward or deferred: group
+/// 0, the camera and the sky light's maps, and group 2, the lights and the
+/// shadow maps (see `shaders/common/pbr_lighting.wgsl`).
+#[derive(Clone)]
+pub(crate) struct LightingBindGroups {
+    pub scene: wgpu::BindGroup,
+    pub lights: wgpu::BindGroup,
+}
+
+/// Which draws of the draw list the forward pass draws.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ForwardDraws {
+    /// Every draw, over cleared color and depth: the forward path.
+    All,
+    /// Every draw whose shader is not `deferred_shader`, over the image and
+    /// depth the deferred lighting pass left: the deferred path's forward-only
+    /// draws.
+    AfterDeferred { deferred_shader: AssetId },
+}
+
+impl ForwardDraws {
+    /// Whether the pass draws the batches of `shader_id`.
+    pub fn includes(self, shader_id: AssetId) -> bool {
+        match self {
+            ForwardDraws::All => true,
+            ForwardDraws::AfterDeferred { deferred_shader } => shader_id != deferred_shader,
+        }
+    }
+}
+
 pub struct MeshRenderTargets<'a> {
     pub color: &'a Texture,
     pub depth: &'a Texture,
@@ -105,26 +135,31 @@ impl MeshRenderer {
         })
     }
 
+    /// The PBR shader, whose draws the deferred path shades from the
+    /// G-buffer.
+    pub fn scene_shader_id(&self) -> AssetId {
+        self.scene_shader.id()
+    }
+
+    /// The frame's lighting bind groups, for the forward PBR pass and the
+    /// deferred lighting pass alike: the camera, the sky light's maps
+    /// (`skybox_id`'s, or black without one) and the environment uniform,
+    /// then the lights and the shadow maps. Each is reused from earlier
+    /// frames while it binds the same resources.
     #[allow(clippy::too_many_arguments)]
-    pub fn render(
+    pub fn lighting_bind_groups(
         &mut self,
         device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        assets: &LockedAssetRenderState,
-        material_bind_groups: &MaterialBindGroups,
-        defaults: MeshRenderDefaults<'_>,
-        targets: MeshRenderTargets<'_>,
         queue: &wgpu::Queue,
+        assets: &LockedAssetRenderState,
+        defaults: MeshRenderDefaults<'_>,
         light_manager: &LightManager,
         shadows: &ShadowBindings<'_>,
         camera_uniform_buffer: &wgpu::Buffer,
-        clear_color: Color32,
-        pipeline_options: &PipelineOptions,
         skybox_id: Option<AssetId>,
         sky_light_intensity: f32,
         ambient_light: [f32; 4],
-        draw_list: &[DrawBatch],
-    ) {
+    ) -> LightingBindGroups {
         let (irradiance_map, prefilter_map, brdf_map) = skybox_id
             .and_then(|id| assets.skybox(id)?.environment_maps())
             .unwrap_or((
@@ -140,14 +175,14 @@ impl MeshRenderer {
                 ambient_light,
             }]),
         );
-        let scene_bind_group = self.scene_bind_group(
+        let scene = self.scene_bind_group(
             device,
             camera_uniform_buffer,
             irradiance_map,
             prefilter_map,
             brdf_map,
         );
-        let light_storage_bind_group = {
+        let lights = {
             let scene_shader = self.scene_shader.read();
             let key = (
                 scene_shader.bind_group_layouts[2].clone(),
@@ -163,20 +198,51 @@ impl MeshRenderer {
                 .clone()
         };
 
+        LightingBindGroups { scene, lights }
+    }
+
+    /// Draws `draws` of `draw_list` into `targets`, lit through `lighting`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        assets: &LockedAssetRenderState,
+        material_bind_groups: &MaterialBindGroups,
+        lighting: &LightingBindGroups,
+        targets: MeshRenderTargets<'_>,
+        clear_color: Color32,
+        pipeline_options: &PipelineOptions,
+        draws: ForwardDraws,
+        draw_list: &[DrawBatch],
+    ) {
+        let (color_load, depth_load) = match draws {
+            ForwardDraws::All => (
+                wgpu::LoadOp::Clear(RenderUtils::clear_value(clear_color)),
+                wgpu::LoadOp::Clear(1.0),
+            ),
+            ForwardDraws::AfterDeferred { .. } => (wgpu::LoadOp::Load, wgpu::LoadOp::Load),
+        };
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Viewport Scene"),
-            color_attachments: &[Some(RenderUtils::color_attachment(
-                &targets.color.view,
-                clear_color,
-            ))],
-            depth_stencil_attachment: Some(RenderUtils::depth_stencil_attachment(
-                &targets.depth.view,
-                1.0,
-                Some(wgpu::Operations {
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &targets.color.view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: color_load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &targets.depth.view,
+                depth_ops: Some(wgpu::Operations {
+                    load: depth_load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(0),
                     store: wgpu::StoreOp::Store,
                 }),
-            )),
+            }),
             timestamp_writes: None,
             occlusion_query_set: None,
         });
@@ -190,6 +256,9 @@ impl MeshRenderer {
             ..
         } in draw_list
         {
+            if !draws.includes(shader_id) {
+                continue;
+            }
             let Some(shader) = assets.shader(shader_id) else {
                 continue;
             };
@@ -201,8 +270,8 @@ impl MeshRenderer {
                     continue;
                 };
                 render_pass.set_pipeline(&pipeline);
-                render_pass.set_bind_group(0, &scene_bind_group, &[]);
-                render_pass.set_bind_group(2, &light_storage_bind_group, &[]);
+                render_pass.set_bind_group(0, &lighting.scene, &[]);
+                render_pass.set_bind_group(2, &lighting.lights, &[]);
             }
             if mat_id != last.1 {
                 if let Some(groups) = material_bind_groups.get(&mat_id) {

@@ -32,6 +32,7 @@ Each shader applies its own curve, so the scene texture mixes color spaces and n
 
 ```text
 render_scene_base:  every lit shader and particles write linear HDR -> scene_texture_msaa
+                    (opaque PBR meshes through the deferred lighting pass, see Render Paths)
                     collects gizmos, resolves PostProcessSettings from the scene and keeps them
 finalize_scene:     resolve MSAA -> hdr_resolved (renderer-owned)
                     PostProcessChain:
@@ -246,7 +247,7 @@ Alpha is read with the pixel and passes through, so transparent views such as th
 
 ## G-Buffer
 
-A geometry pass draws the opaque PBR meshes into a G-buffer that `SceneRenderer` owns, single-sample at the scene's size and sharing the scene depth at one sample. [G-Buffer](../rendering/gbuffer.md) holds the pass, the MSAA decision, the debug view and the full channel mapping; the layout is:
+A geometry pass draws the opaque PBR meshes into a G-buffer that `SceneRenderer` owns, single-sample at the scene's size. [G-Buffer](../rendering/gbuffer.md) holds the pass, the MSAA decision, the debug view and the full channel mapping; the layout is:
 
 | Target | Format | Channels |
 | --- | --- | --- |
@@ -255,7 +256,30 @@ A geometry pass draws the opaque PBR meshes into a G-buffer that `SceneRenderer`
 | `material` | `Rgba8Unorm` | R metallic (factor times texture B), G roughness (factor times texture G), B ambient occlusion (`ambient_occlusion` with the occlusion texture's R at `occlusion_strength`) |
 | `emissive` | `Rgba16Float` | RGB `emission_color * emission_strength * emissive_texture`, linear HDR |
 
-The forward pass still shades the image, and the chain does not read the G-buffer yet: `SceneInput::Normals` stays unavailable. The geometry pass runs only while the scene view shows a G-buffer target (`SceneRendererOptions::gbuffer_view`), which replaces the chain's output.
+The chain does not read the G-buffer yet: `SceneInput::Normals` stays unavailable. A G-buffer view (`SceneRendererOptions::gbuffer_view`) replaces the chain's output with one target.
+
+## Render Paths
+
+`SceneRendererOptions::render_path` picks how the opaque PBR meshes, the draws whose shader is `shaders/mesh/pbr`, are shaded. `RenderPath::Deferred` is the default; `RenderPath::Forward` keeps the forward shading for comparison. Every other draw takes the forward pass on both paths: a mesh with another shader, and any blended material added later. Alpha-cutoff PBR materials take the deferred path; the geometry pass discards the fragments forward discards.
+
+Both paths shade through `pbr_lighting` in `assets/shaders/common/pbr_lighting.wgsl`, over the same bind groups: group 0 holds the camera, the sky light's irradiance, prefiltered environment and BRDF maps and the environment uniform, and group 2 the lights and the shadow maps (`MeshRenderer::lighting_bind_groups`). Each light's direct term is dimmed by its shadow, looked up with the geometric normal; the sky light and the flat ambient term are dimmed by the material's occlusion only. The forward PBR shader feeds it the interpolated surface, the lighting pass the G-buffer.
+
+Pass order in `render_scene_base`, after the shadow pass:
+
+```text
+Deferred:  geometry pass    PBR draws -> G-buffer; clears and writes the depth, Less, draw order
+           lighting pass    full screen, G-buffer + depth -> scene_texture_msaa (cleared first)
+           forward pass     the other draws, loading color and depth
+Forward:   forward pass     every draw, clearing color and depth
+           geometry pass    only for a G-buffer view, testing the forward depth without writing
+Both:      object ids, skybox, particles, then finalize_scene: the chain and the overlays
+```
+
+- **Depth.** On the deferred path the geometry pass owns the depth: at one sample it draws the scene depth itself, and the lighting pass leaves it. Above one sample the G-buffer has its own single-sample depth (the multisampled scene depth cannot be attached beside single-sample targets), and the lighting pass writes it, through `frag_depth`, into every sample of the scene depth. The forward-only draws, the skybox and the particles then test against the deferred surfaces, and post-processing reads one depth on both paths.
+- **Lighting pass.** `DeferredLightingRenderer` (`crates/calyx_engine/src/render/deferred_lighting.rs`) draws `shaders/deferred/lighting.wgsl` at one sample and `shaders/deferred/lighting_msaa.wgsl` above one; both include `shaders/deferred/lighting_common.wgsl`. Group 1 binds the four G-buffer targets and the depth. A pixel whose albedo alpha is 0 is discarded, so it keeps the clear color for the skybox or a forward draw. Elsewhere the world position is rebuilt from the depth with `inverse_projection` and `inverse_view`, the normals are decoded and taken to world space, and the color is written with alpha 1: every fragment kept is opaque, so the forward PBR shader writes alpha 1 too.
+- **MSAA.** The G-buffer is single-sample, so above one sample the deferred path writes each pixel's color into all of its samples: PBR edges are not multisampled, while forward-only draws, the skybox and particles still are. The editor's views and thumbnails render at one sample, and FXAA (Anti-Aliasing on the volume) smooths the edges.
+- **Thumbnails.** The thumbnail renderer takes the deferred path like the scene view, with shadows off; its transparent clear color stays where no surface is drawn.
+- **Toggle.** The scene view's action bar has a Deferred / Forward menu beside the view mode menu, which sets both the scene view and the Game tab. `calyx_ctl render-path deferred|forward` sets the same remotely.
 
 ## Settings And Volumes
 
@@ -346,6 +370,9 @@ Headless tests in `crates/calyx_engine/src/render/postprocess/`:
 - FXAA smooths a hard diagonal edge and keeps each pixel's alpha, leaves a flat colour and its alpha unchanged, and leaves the plan unchanged while disabled. A partial component loads with the defaults.
 
 Headless tests in `crates/calyx_engine/src/render/overlay/` and `scene_renderer.rs`:
+
+- A scene with a shadowed sun, a point light, a shadowed spot light, a metallic box, an emissive box, an alpha-cutoff box kept and one discarded, ambient light and, where the adapter filters `Rgba32Float`, a sky light renders on the deferred path within tolerance of the forward path, at one and four samples; above one sample only PBR edge pixels may differ.
+- A mesh with another shader keeps the forward path: in front of a deferred box it covers it, behind one it is hidden, and the image matches the forward path.
 
 - A half-covered, anti-aliased overlay edge pixel composites as premultiplied alpha, without darkening.
 - Enabled overlays record in order, and the overlay target exists only while one is enabled.
