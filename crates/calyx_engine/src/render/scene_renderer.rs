@@ -626,7 +626,7 @@ impl SceneRenderer {
             &self.default_assets.cube,
             &self.scene_texture_msaa,
             &self.scene_depth_texture,
-            self.grid_renderer.camera_bind_group(),
+            &self.camera_uniform_buffer,
             self.options.samples,
         );
         self.particle_renderer.render(
@@ -1046,6 +1046,7 @@ impl SceneRenderer {
         } = &mut self.assets;
         for material in materials.values() {
             let mut material = material.write();
+            material.follow_shader(&self.asset_context);
             material.load_buffers(render_context);
             material.collect_textures(
                 &self.asset_context,
@@ -2951,6 +2952,114 @@ mod tests {
         assert!(
             b > g && g > r && r > 0,
             "the emissive cube shows its emission color, got ({r}, {g}, {b})"
+        );
+    }
+
+    /// The deferred lighting pass binds the G-buffer by name: a reload of
+    /// `lighting_common.wgsl` that swaps the albedo and emissive bindings,
+    /// whose entries are alike, is accepted with a new layout generation,
+    /// and the pass rebuilds its group so the emissive cube looks the same.
+    #[test]
+    fn a_reload_swapping_the_gbuffer_bindings_of_deferred_lighting_rebuilds_its_group() {
+        const SIZE: (u32, u32) = (64, 64);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        let registry = read_only_context.registries.assets.read();
+        let cube = registry.cube().expect("missing cube mesh");
+        let shader = registry
+            .load::<Shader>("shaders/mesh/pbr")
+            .expect("missing pbr shader");
+        let lighting = registry
+            .load::<Shader>("shaders/deferred/lighting")
+            .expect("missing lighting shader");
+        let mut material = Material::from_shader(&read_only_context, shader);
+        for variable in material.variables.iter_mut() {
+            match variable.name.as_str() {
+                "base_color_factor" => {
+                    variable.value = ShaderVariableValue::Color([1.0, 0.0, 0.0, 1.0])
+                }
+                "emission_color" => {
+                    variable.value = ShaderVariableValue::Color([0.0, 0.0, 1.0, 1.0])
+                }
+                "emission_strength" => variable.value = ShaderVariableValue::Float(1.0),
+                _ => {}
+            }
+        }
+        let material = registry
+            .create_or_update("test/swapped_gbuffer".into(), material)
+            .expect("material should be created");
+        drop(registry);
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        let center = vec3(0.0, 0.0, 0.0);
+        spawn_mesh(&mut builder, "cube", &cube, &material, center);
+        let scene = builder.finish();
+        let (camera, transform) = front_camera(1.0, 5.0);
+        let mut renderer = SceneRenderer::new(
+            &read_only_context,
+            SceneRendererOptions {
+                clear_color: Color32::BLACK,
+                ..Default::default()
+            },
+            SIZE,
+        )
+        .expect("scene renderer should load its assets");
+        let (x, y) = project(&camera, &transform, center, SIZE);
+        let pixel = |renderer: &mut SceneRenderer| {
+            renderer.render_scene_base(&camera, &transform, &scene, None, None);
+            renderer.finalize_scene();
+            read_scene_texture(renderer, &render_context)
+                .get_pixel(x, y)
+                .0
+        };
+        let before = pixel(&mut renderer);
+        let [r, _, b, _] = before;
+        assert!(
+            b > 0 && r == 0,
+            "the unlit cube shows its emission only: {before:?}"
+        );
+
+        let path = assets
+            .engine_root()
+            .join("shaders/deferred/lighting_common.wgsl");
+        let source = std::fs::read_to_string(&path).expect("the shader is readable");
+        let swapped = source
+            .replace(
+                "@binding(0)\nvar albedo_texture",
+                "@binding(9)\nvar albedo_texture",
+            )
+            .replace(
+                "@binding(0)\r\nvar albedo_texture",
+                "@binding(9)\r\nvar albedo_texture",
+            )
+            .replace(
+                "@binding(3)\nvar emissive_texture",
+                "@binding(0)\nvar emissive_texture",
+            )
+            .replace(
+                "@binding(3)\r\nvar emissive_texture",
+                "@binding(0)\r\nvar emissive_texture",
+            )
+            .replace("@binding(9)", "@binding(3)");
+        assert_ne!(swapped, source, "the bindings were swapped");
+        let generation = lighting.read().layout_generation();
+        std::fs::write(&path, swapped).expect("the shader is writable");
+        {
+            let registry = read_only_context.registries.assets.read();
+            registry.recv_notify_event(
+                notify::Event::new(notify::EventKind::Modify(notify::event::ModifyKind::Any))
+                    .add_path(path.clone()),
+            );
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            registry.reload_assets();
+            assert!(registry.reload_errors().is_empty());
+        }
+        assert_ne!(lighting.read().layout_generation(), generation);
+        assert_eq!(
+            pixel(&mut renderer),
+            before,
+            "the pass binds each G-buffer view to its variable wherever it moved"
         );
     }
 

@@ -22,6 +22,8 @@ pub struct SkyboxRenderer {
     skybox_brdf_shader: Ref<Shader>,
     skybox_cubemap_mip_shader: Ref<Shader>,
     cubemap_bind_group: CachedBindGroup<(wgpu::BindGroupLayout, wgpu::TextureView, wgpu::Sampler)>,
+    /// The camera uniform as the skybox shader's group 0.
+    camera_bind_group: CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer)>,
 }
 
 impl SkyboxRenderer {
@@ -37,6 +39,7 @@ impl SkyboxRenderer {
             skybox_brdf_shader: load("shaders/environment/brdf")?,
             skybox_cubemap_mip_shader: load("shaders/utility/mip_generator_cube")?,
             cubemap_bind_group: Default::default(),
+            camera_bind_group: Default::default(),
         })
     }
 
@@ -95,7 +98,7 @@ impl SkyboxRenderer {
         cube_mesh: &Ref<Mesh>,
         scene_texture_msaa: &Texture,
         scene_depth_texture: &Texture,
-        camera_bind_group: &wgpu::BindGroup,
+        camera_uniform_buffer: &wgpu::Buffer,
         samples: u32,
     ) {
         let skybox = Self::selected_skybox_ref(self.skybox, assets)
@@ -106,6 +109,23 @@ impl SkyboxRenderer {
             let device = render_context.device();
             let shader = self.skybox_shader.read();
             let cube_mesh = cube_mesh.read();
+            let camera_layout = &shader.bind_group_layouts[0];
+            let camera_bind_group = self
+                .camera_bind_group
+                .get_or_create(
+                    (camera_layout.clone(), camera_uniform_buffer.clone()),
+                    || {
+                        device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: Some("skybox_camera_bind_group"),
+                            layout: camera_layout,
+                            entries: &[wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: camera_uniform_buffer.as_entire_binding(),
+                            }],
+                        })
+                    },
+                )
+                .clone();
             let layout = &shader.bind_group_layouts[1];
             let cubemap = &skybox.cubemap;
             let bind_group = self.cubemap_bind_group.get_or_create(
@@ -150,7 +170,7 @@ impl SkyboxRenderer {
                 return;
             };
             render_pass.set_pipeline(&pipeline);
-            render_pass.set_bind_group(0, camera_bind_group, &[]);
+            render_pass.set_bind_group(0, &camera_bind_group, &[]);
             render_pass.set_bind_group(1, bind_group, &[]);
             RenderUtils::bind_mesh_buffers(&mut render_pass, &cube_mesh);
             RenderUtils::draw_mesh_instanced(&mut render_pass, &cube_mesh, 0..1);

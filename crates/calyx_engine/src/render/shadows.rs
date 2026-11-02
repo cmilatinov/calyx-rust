@@ -18,7 +18,7 @@ use crate::render::asset_render_state::LockedAssetRenderState;
 use crate::render::scene_renderer::CameraUniform;
 use crate::render::{
     CachedBindGroup, Camera, DrawBatch, MaterialBindGroups, PipelineOptions, RenderUtils,
-    SceneRendererError, Shader,
+    SceneRendererError, Shader, FIRST_MATERIAL_GROUP,
 };
 use egui_wgpu::wgpu;
 use nalgebra_glm as glm;
@@ -697,10 +697,14 @@ impl ShadowRenderer {
 
         let shader = self.shader.read();
         let masked_shader = self.masked_shader.read();
+        let masking = assets
+            .shader(self.pbr_shader_id)
+            .is_some_and(|pbr| masked_shader.shares_material_group(2, pbr, FIRST_MATERIAL_GROUP));
         let casters = Casters {
             assets,
             material_bind_groups,
             pbr_shader_id: self.pbr_shader_id,
+            masking,
             draw_list,
         };
         let pipelines = |settings: &ShadowSettings| {
@@ -833,6 +837,10 @@ struct Casters<'a> {
     assets: &'a LockedAssetRenderState<'a>,
     material_bind_groups: &'a MaterialBindGroups,
     pbr_shader_id: AssetId,
+    /// Whether the masked shader's group 2 binds the PBR materials' group:
+    /// a hot reload of one of the two shaders can change it until the other
+    /// follows, and masked casters then cast unmasked shadows.
+    masking: bool,
     draw_list: &'a [DrawBatch],
 }
 
@@ -842,7 +850,7 @@ impl Casters<'_> {
     /// PBR shader, whose material layout the masked shader shares, or its
     /// material never discards.
     fn mask(&self, batch: &DrawBatch) -> Option<&wgpu::BindGroup> {
-        if batch.shader_id != self.pbr_shader_id {
+        if !self.masking || batch.shader_id != self.pbr_shader_id {
             return None;
         }
         let material = self.assets.material(batch.mat_id)?;

@@ -12,9 +12,9 @@ use crate::render::{
 use egui::Color32;
 use egui_wgpu::wgpu;
 
-/// The G-buffer's views the pass binds in group 1: albedo, normals,
-/// material, emissive, then depth.
-type GBufferBindGroupKey = (wgpu::BindGroupLayout, [wgpu::TextureView; 5]);
+/// The shader layouts and the G-buffer's views the pass binds in group 1:
+/// albedo, normals, material, emissive, then depth.
+type GBufferBindGroupKey = (u64, [wgpu::TextureView; 5]);
 
 /// Shades the G-buffer into the scene target with a full-screen pass.
 pub(crate) struct DeferredLightingRenderer {
@@ -50,7 +50,7 @@ impl DeferredLightingRenderer {
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
-        render_context: &RenderContext,
+        _render_context: &RenderContext,
         encoder: &mut wgpu::CommandEncoder,
         gbuffer: &GBufferTargets,
         gbuffer_depth: &Texture,
@@ -77,8 +77,6 @@ impl DeferredLightingRenderer {
             });
         }
         let pipeline = shader.pipeline(&options);
-        let layout = shader.bind_group_layouts[1].clone();
-        drop(shader);
         let [albedo, normals, material, emissive] = gbuffer.color_targets();
         let views = [
             albedo.view.clone(),
@@ -87,24 +85,31 @@ impl DeferredLightingRenderer {
             emissive.view.clone(),
             gbuffer_depth.view.clone(),
         ];
-        let device = render_context.device();
-        let gbuffer_bind_group =
-            self.gbuffer_bind_group
-                .get_or_create((layout.clone(), views.clone()), || {
-                    let entries: Vec<wgpu::BindGroupEntry> = views
-                        .iter()
-                        .enumerate()
-                        .map(|(binding, view)| wgpu::BindGroupEntry {
-                            binding: binding as u32,
-                            resource: wgpu::BindingResource::TextureView(view),
-                        })
-                        .collect();
-                    device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("deferred_lighting_gbuffer_bind_group"),
-                        layout: &layout,
-                        entries: &entries,
-                    })
-                });
+        // Bound by name, so a reload that renumbers the G-buffer's bindings
+        // rebuilds the group for its new layout.
+        let gbuffer_bind_group = self
+            .gbuffer_bind_group
+            .get_or_try_create((shader.layout_generation(), views.clone()), || {
+                let names = [
+                    "albedo_texture",
+                    "normals_texture",
+                    "material_texture",
+                    "emissive_texture",
+                    "depth_texture",
+                ];
+                let resources = names
+                    .iter()
+                    .zip(&views)
+                    .map(|(name, view)| (*name, wgpu::BindingResource::TextureView(view)))
+                    .collect::<Vec<_>>();
+                shader.create_bind_group(
+                    1,
+                    Some("deferred_lighting_gbuffer_bind_group"),
+                    &resources,
+                )
+            })
+            .cloned();
+        drop(shader);
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Deferred Lighting"),
@@ -117,12 +122,12 @@ impl DeferredLightingRenderer {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
-        let Some(pipeline) = pipeline else {
+        let (Some(pipeline), Some(gbuffer_bind_group)) = (pipeline, gbuffer_bind_group) else {
             return;
         };
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &lighting.scene, &[]);
-        pass.set_bind_group(1, gbuffer_bind_group, &[]);
+        pass.set_bind_group(1, &gbuffer_bind_group, &[]);
         pass.set_bind_group(2, &lighting.lights, &[]);
         RenderUtils::draw_fullscreen(&mut pass);
     }
