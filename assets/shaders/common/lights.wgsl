@@ -39,10 +39,20 @@ struct LightIncidence {
     radiance: vec3f,
 };
 
-// Distance attenuation of a point or spot light `dist` away, within its range `r`.
+// Distance attenuation of a point or spot light `dist` away with range `r`: inverse-square,
+// windowed to reach exactly 0 at `r` and stay 0 beyond it,
+//     saturate(1 - (dist / r)^4)^2 / (dist^2 + 1).
+// The `+ 1` keeps it finite at the light, so it is 1 at distance 0 and `intensity` is the
+// radiance there; well inside the range a point 1 unit away gets half of it, one 3 units away a
+// tenth. The window only dims the outer part of the range, so a light fades smoothly to nothing
+// at its range instead of cutting off.
 fn light_distance_attenuation(dist: f32, r: f32) -> f32 {
-    let a = max((999.0 - r) / (r * r), 0.0);
-    return 1.0 / ((a * dist * dist) + dist + 1.0);
+    if dist >= r {
+        return 0.0;
+    }
+    let ratio2 = (dist * dist) / (r * r);
+    let window = saturate(1.0 - ratio2 * ratio2);
+    return (window * window) / (dist * dist + 1.0);
 }
 
 // How much of a spot light reaches a point whose direction from the light makes the cosine

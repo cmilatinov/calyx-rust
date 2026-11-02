@@ -865,4 +865,78 @@ mod tests {
             [0.25, 1.0, 0.5, 1.0]
         );
     }
+
+    /// `light_distance_attenuation` from `lights.wgsl`, evaluated on the GPU
+    /// at each `(distance, range)` pair.
+    fn gpu_attenuation(queries: &[[f32; 2]]) -> Vec<f32> {
+        const KERNEL: &str = r#"
+//#include "shaders/common/lights.wgsl"
+
+@group(0) @binding(0) var<storage, read> queries: array<vec2f>;
+@group(0) @binding(1) var<storage, read_write> values: array<f32>;
+
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+    if gid.x >= arrayLength(&queries) {
+        return;
+    }
+    let query = queries[gid.x];
+    values[gid.x] = light_distance_attenuation(query.x, query.y);
+}
+
+// A second entry point, so `main` binds only the resources it uses and not
+// the light storage `lights.wgsl` declares in group 2.
+@compute @workgroup_size(1)
+fn unused() {}
+"#;
+        crate::render::test_kernel::run_kernel(
+            KERNEL,
+            &[bytemuck::cast_slice(queries)],
+            queries.len(),
+        )
+    }
+
+    #[test]
+    fn point_and_spot_falloff_is_inverse_square_windowed_to_zero_at_range() {
+        let ranges = [0.5, 1.0, 6.0, 12.0, 100.0];
+        // 64 even steps from the light to its range, then past it.
+        let steps: Vec<f32> = (0..=80).map(|i| i as f32 / 64.0).collect();
+        let queries: Vec<[f32; 2]> = ranges
+            .iter()
+            .flat_map(|&range| steps.iter().map(move |&t| [t * range, range]))
+            .collect();
+        let values = gpu_attenuation(&queries);
+
+        for (range, values) in ranges.iter().zip(values.chunks(steps.len())) {
+            assert_eq!(values[0], 1.0, "range {range}: full intensity at the light");
+            for (i, pair) in values[..=64].windows(2).enumerate() {
+                assert!(
+                    pair[1] < pair[0],
+                    "range {range}: decreases from step {i} ({}) to {} ({})",
+                    pair[0],
+                    i + 1,
+                    pair[1]
+                );
+            }
+            for (i, value) in values[64..].iter().enumerate() {
+                assert_eq!(
+                    *value,
+                    0.0,
+                    "range {range}: zero at {} ranges",
+                    1.0 + i as f32 / 64.0
+                );
+            }
+        }
+
+        // Well inside the range the falloff is 1 / (d² + 1); halfway out the
+        // window (1 - (d/r)^4)^2 = (15/16)^2 dims it.
+        let values = gpu_attenuation(&[[1.0, 100.0], [3.0, 100.0], [2.0, 4.0]]);
+        let expected = [0.5, 0.1, 0.878_906_25 / 5.0];
+        for (value, expected) in values.iter().zip(expected) {
+            assert!(
+                (value - expected).abs() < 1e-4,
+                "falloff {value}, expected {expected}"
+            );
+        }
+    }
 }

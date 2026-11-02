@@ -23,7 +23,9 @@ pub struct ComponentPointLight {
     pub radius: f32,
     /// Light color.
     pub color: Color32,
-    /// Scalar intensity multiplier.
+    /// Radiance at the light. It falls off with the inverse square of the
+    /// distance plus one, so a surface 1 unit away receives half of it, and
+    /// fades smoothly to zero at `radius`.
     #[reflect_attr(min = 0.0, speed = 0.01)]
     pub intensity: f32,
 }
