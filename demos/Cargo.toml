@@ -10,9 +10,3 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 calyx_engine = { path = "../crates/calyx_engine" }
-serde.workspace = true
-inventory.workspace = true
-legion.workspace = true
-serde_json.workspace = true
-nalgebra.workspace = true
-nalgebra-glm.workspace = true

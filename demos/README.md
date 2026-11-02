@@ -41,4 +41,4 @@ Without it the scene opens with only its sky, and the editor log names the
 missing assets. [`THIRD_PARTY_ASSETS.md`](THIRD_PARTY_ASSETS.md) has the
 licence details and the full import options.
 
-The demo's components, such as the camera path, are in `src/`.
+The flythrough uses the engine's `ComponentCameraPath`: the `Camera` follows the children of the `Camera Path` object. Components a demo needs that the engine does not ship go in `src/`.

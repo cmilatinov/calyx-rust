@@ -237,6 +237,57 @@ def sky_fog(package):
 
 
 # --------------------------------------------------------------------------
+# Normals
+
+# Unity's ModelImporterNormals values, as `normalImportMode` stores them.
+NORMALS_IMPORT, NORMALS_CALCULATE, NORMALS_NONE = 0, 1, 2
+
+
+def normal_settings(meta_text):
+    """(mode, smoothing angle) of a model's normals from its `.meta`. None
+    becomes Calculate, as Unity does for a lit shader; a meta without the
+    settings gets Unity's defaults, Import and 60 degrees."""
+    importer = unity_yaml.parse_meta(meta_text).get("ModelImporter") or {}
+    tangent_space = importer.get("tangentSpace") or {}
+    mode = int(tangent_space.get("normalImportMode", NORMALS_IMPORT))
+    angle = float(tangent_space.get("normalSmoothAngle", 60))
+    if mode == NORMALS_NONE:
+        mode = NORMALS_CALCULATE
+    return mode, angle
+
+
+def check_faceted(obj_path):
+    """Fails the import unless the OBJ at `obj_path` is faceted the way a
+    model whose normals Unity calculates with a smoothing angle of 0 is:
+    every triangle's corners carry the triangle's own face normal, facing the
+    way its (counter-clockwise) winding does. A smooth-shaded mesh, or one
+    whose normals point against its winding, fails."""
+    positions, normals = [], []
+    with open(obj_path) as f:
+        for line in f:
+            parts = line.split()
+            if not parts:
+                continue
+            if parts[0] == "v":
+                positions.append([float(c) for c in parts[1:4]])
+            elif parts[0] == "vn":
+                normals.append([float(c) for c in parts[1:4]])
+            elif parts[0] == "f":
+                corners = [c.split("/") for c in parts[1:]]
+                a, b, c = (positions[int(k[0]) - 1] for k in corners)
+                u = [b[i] - a[i] for i in range(3)]
+                v = [c[i] - a[i] for i in range(3)]
+                face = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]
+                length = math.sqrt(sum(x * x for x in face))
+                if length < 1e-9:
+                    continue  # a degenerate triangle has no face normal to compare
+                for k in corners:
+                    n = normals[int(k[2]) - 1]
+                    if sum(face[i] * n[i] for i in range(3)) / length < 0.999:
+                        raise SystemExit(f"{obj_path}: a corner normal is not its triangle's face normal")
+
+
+# --------------------------------------------------------------------------
 # Import
 
 
@@ -259,7 +310,8 @@ def import_assets(package, blender):
             with open(fbx, "wb") as f:
                 f.write(package.assets[guid])
             obj = os.path.join(VENDOR, "models", stem(path))
-            job["meshes"].append([os.path.abspath(fbx), os.path.abspath(obj + ".obj")])
+            mode, angle = normal_settings(package.metas.get(guid, ""))
+            job["meshes"].append([os.path.abspath(fbx), os.path.abspath(obj + ".obj"), mode, angle])
             metas.append((obj, mesh_name(path), TYPE_MESH))
         for path, guid in package.with_extension(".tga"):
             tga = os.path.join(work, guid + ".tga")
@@ -279,6 +331,9 @@ def import_assets(package, blender):
         if result.returncode != 0 or converted != len(job["meshes"]) + len(job["textures"]):
             sys.stderr.write(result.stdout[-4000:] + result.stderr[-4000:])
             raise SystemExit("Blender conversion failed")
+        for fbx, obj, mode, angle in job["meshes"]:
+            if mode != NORMALS_IMPORT and angle == 0:
+                check_faceted(obj)
         for args in metas:
             write_meta(*args)
     finally:
@@ -503,13 +558,13 @@ def add_lighting(writer, sun, by_id):
 # Unity's directional light of intensity 1 under its default ambient, in
 # Calyx's units; tuned by eye against the store screenshots.
 SUN_INTENSITY = 3.0
-SKY_INTENSITY = 1.3
+SKY_INTENSITY = 0.9
 POST_PROCESS = {
     C_VOLUME: {"priority": 0},
-    C_TONEMAP: {"exposure_ev": 0.8, "preset": "Aces"},
+    C_TONEMAP: {"exposure_ev": 0.6, "preset": "Aces"},
     C_BLOOM: {"intensity": 0.08, "knee": 0.5, "radius": 6, "threshold": 1.5},
     C_AO: {"bias": 0.025, "intensity": 0.6, "radius": 0.8, "sample_count": 16},
-    C_GRADING: {"contrast": 1.0, "saturation": 1.1, "temperature": -0.06, "tint": 0.0},
+    C_GRADING: {"contrast": 1.05, "saturation": 1.0, "temperature": -0.06, "tint": 0.0},
     C_VIGNETTE: {"color": [0, 0, 0, 255], "intensity": 0.15, "smoothness": 0.5},
     C_FXAA: {"edge_threshold": 0.166, "subpixel": 0.75},
 }
@@ -567,8 +622,7 @@ def add_camera(writer, cameras):
     writer.add("camera", "Camera", None, position, rotation, [1, 1, 1], {
         C_CAMERA: {"clear_color": [135, 190, 230, 255], "far_plane": 1500.0,
                    "fov": round(fov_x, 5), "near_plane": float(camera["near clip plane"])},
-        C_CAMERA_PATH: {"waypoints": str(uuid.uuid5(NAMESPACE, "unity:camera path")),
-                        "loop_seconds": 90.0},
+        C_CAMERA_PATH: {"path": path, "duration": 90.0, "looping": True},
     })
 
 

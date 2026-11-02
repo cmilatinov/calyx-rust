@@ -12627,7 +12627,7 @@
         }
       },
       "eb42f81f-45ab-428c-9d07-961696edc5fa": {
-        "intensity": 1.3,
+        "intensity": 0.9,
         "skybox": "b54b855c-1db7-5cdc-9293-e19639776142"
       }
     },
@@ -12661,7 +12661,7 @@
         "priority": 0
       },
       "68ac12ac-fc9a-489e-b305-363eaf593966": {
-        "exposure_ev": 0.8,
+        "exposure_ev": 0.6,
         "preset": "Aces"
       },
       "7e09858d-fd71-4729-bb90-8ed76c0bda9a": {
@@ -12677,8 +12677,8 @@
         "sample_count": 16
       },
       "d2694fb5-4815-471e-9537-4ab502c580f0": {
-        "contrast": 1.0,
-        "saturation": 1.1,
+        "contrast": 1.05,
+        "saturation": 1.0,
         "temperature": -0.06,
         "tint": 0.0
       },
@@ -13005,8 +13005,9 @@
         "near_plane": 0.3
       },
       "b6f1c0de-2a4e-4c5b-9d37-8e1f4a6b2c90": {
-        "waypoints": "29b96bcc-6d9a-5783-85f1-90065b582d92",
-        "loop_seconds": 90.0
+        "path": "29b96bcc-6d9a-5783-85f1-90065b582d92",
+        "duration": 90.0,
+        "looping": true
       }
     }
   },
