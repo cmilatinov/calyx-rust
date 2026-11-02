@@ -1,11 +1,15 @@
 # Third-Party Demo Assets
 
-## RPG Poly Pack Lite: licence check
+## RPG Poly Pack - Lite (not in this repository)
 
-The first demo, `assets/rpg_poly/rpg_poly.cxscene`, recreates the demo village
-of [RPG Poly Pack - Lite](https://assetstore.unity.com/packages/3d/environments/landscapes/rpg-poly-pack-lite-148410)
-by Gigel3d, a free Unity Asset Store package. None of the pack's files are in
-this repository. Findings, checked on 2026-11-02:
+The first demo, `assets/rpg_poly/rpg_poly.cxscene`, is the demo village of
+[RPG Poly Pack - Lite](https://assetstore.unity.com/packages/3d/environments/landscapes/rpg-poly-pack-lite-148410)
+by Gigel3d, a free Unity Asset Store package, rebuilt in Calyx from the
+pack's own models, textures, materials and demo scene.
+
+### Licence check
+
+Checked on 2026-11-02:
 
 - **Licence.** The store page lists the pack under the
   [Standard Unity Asset Store EULA](https://unity.com/legal/as-terms) as an
@@ -14,64 +18,48 @@ this repository. Findings, checked on 2026-11-02:
   an asset for use "as incorporated and embedded in" a Licensed Product,
   where it must not be a substantial portion of that product (Appendix 1,
   section 2.2.1), and it allows no copies except "incidental transient or
-  temporary copies" (Appendix 1, section 5.1). Committing the model and
-  texture files to a public repository would distribute them as standalone,
-  extractable files, which the EULA does not permit.
+  temporary copies" (Appendix 1, section 5.1). Committing the files, raw or
+  converted, would distribute them as standalone, extractable files.
 - **Use outside Unity: allowed, within the EULA.** The EULA has no clause that
   ties assets to the Unity engine, and Unity's support article
   [Can I use assets from the Asset Store with other engines?](https://support.unity.com/hc/en-us/articles/34387186019988-Can-I-use-assets-from-the-Asset-Store-with-other-engines)
   says assets may be used with other engines under the EULA, but not
   redistributed as standalone items or in a form others can extract.
-- **Getting the files.** The pack downloads only through a Unity account and
-  the Unity editor's Package Manager.
 
-So the demo follows the ET's fallback: it rebuilds the village from CC0
-assets, listed below, and generated geometry, and keeps the pack out of git
-entirely. The store page's screenshots are linked from the demo's pull
-request for comparison and are not committed here.
+So the pack stays out of git. Everyone who runs the demo downloads the pack
+themselves and imports it locally.
 
-## Kenney Nature Kit
+### Import step
 
-- Source: https://kenney.nl/assets/nature-kit (version 2.1)
-- Licence: CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Credit: Kenney (www.kenney.nl).
-- Files: `assets/rpg_poly/models/nature/*.obj`
-- Used for the trees, rocks, grass, flowers, fences, logs, pots and plank walkways.
-- Changes: converted from the kit's GLB files to one OBJ per material part
-  with node transforms applied; the parts draw with the demo's own flat-colour
-  materials (`assets/rpg_poly/materials/`) instead of Kenney's palette.
+1. Get the pack (free) from its store page with a Unity account, and download
+   it through the Unity editor's Package Manager (My Assets). Unity saves it
+   to `%APPDATA%\Unity\Asset Store-5.x\Gigel3d\3D ModelsEnvironmentsLandscapes\RPG Poly Pack - Lite.unitypackage`.
+2. With the Calyx editor closed, run from the repository root:
 
-## Kenney Fantasy Town Kit
+   ```
+   python demos/tools/rpg_poly/import_pack.py
+   ```
 
-- Source: https://kenney.nl/assets/fantasy-town-kit (version 2.0)
-- Licence: CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Credit: Kenney (www.kenney.nl).
-- Files: `assets/rpg_poly/models/town/*.obj`, `assets/rpg_poly/textures/town_wood.png`, `assets/rpg_poly/textures/town_thatch.png`
-- Used for the houses' modular log walls and roofs, the well shelter, the
-  cart, market stall, banner, table, benches and lantern posts.
-- Changes: converted from GLB to OBJ as above. The two textures are regrades of the kit's
-  `colormap.png`: muted wood, with the red roofs turned dark wood
-  (`town_wood`) or straw (`town_thatch`).
+   It needs Python 3 and Blender 4.x (`--blender <blender.exe>` if Blender
+   is not in its default place, `--package <path>` for another copy of the
+   pack). It writes the converted models, textures and materials to
+   `assets/rpg_poly/vendor/`, which `.gitignore` keeps out of git.
 
-## Kenney Survival Kit
+Without the import the scene still opens and plays, showing only the sky,
+and the editor log names each missing asset once.
 
-- Source: https://kenney.nl/assets/survival-kit (version 2.0)
-- Licence: CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Credit: Kenney (www.kenney.nl).
-- Files: `assets/rpg_poly/models/survival/*.obj`, `assets/rpg_poly/textures/survival.png`
-- Used for the barrels, crates, chest, bucket, workbench, signpost, wood pile and fire pits.
-- Changes: converted from GLB to OBJ as above; `survival.png` is a muted
-  regrade of the kit's `colormap.png`.
+### What is committed
+
+- `assets/rpg_poly/rpg_poly.cxscene`: the demo scene's layout, generated
+  from the pack's `rpgpp_lt_scene_1.0.unity` by
+  `import_pack.py --scene`. It holds object names, transforms and references
+  to the vendor assets by id, and no geometry, textures or materials.
+- `tools/rpg_poly/`: the importer.
 
 ## Kloofendal 48d Partly Cloudy (Pure Sky) HDRI
 
 - Source: Poly Haven, https://polyhaven.com/a/kloofendal_48d_partly_cloudy_puresky
 - Licence: CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Original by Greg Zaal, sky edits by Jarod Guest.
 - Files: `assets/rpg_poly/sky/kloofendal_48d_partly_cloudy_puresky_2k.hdr`
-- Used unchanged, at 2K, as the demo's sky.
-
-## Generated geometry
-
-`assets/rpg_poly/models/terrain/` (the ground and its hills, the mountains and
-their snow, and the dirt paths and patches) is generated by
-`tools/rpg_poly/build.py` and is part of this repository. The same script
-does the conversions and regrades above from the downloaded kits, writes the
-materials and meta files, and lays out the scene; its docstring says how to
-run it.
+- Used unchanged, at 2K, for the scene's ambient and reflected light; the
+  pack's own sky dome and clouds are drawn in front of it.

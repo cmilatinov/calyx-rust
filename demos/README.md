@@ -19,13 +19,26 @@ press play.
 
 | Demo | Scene | |
 | --- | --- | --- |
-| ![RPG Poly village](docs/rpg_poly.png) | [`assets/rpg_poly/rpg_poly.cxscene`](assets/rpg_poly/rpg_poly.cxscene) | **RPG Poly village.** A remake of the demo village from Unity's [RPG Poly Pack - Lite](https://assetstore.unity.com/packages/3d/environments/landscapes/rpg-poly-pack-lite-148410), rebuilt from CC0 assets: log houses, plank walkways, pines and props in a valley under snowy peaks, with sun shadows, a sky and a post-processing volume. In play the camera flies a loop around the village. |
+| ![RPG Poly village](docs/rpg_poly.png) | [`assets/rpg_poly/rpg_poly.cxscene`](assets/rpg_poly/rpg_poly.cxscene) | **RPG Poly village.** The demo village of Unity's [RPG Poly Pack - Lite](https://assetstore.unity.com/packages/3d/environments/landscapes/rpg-poly-pack-lite-148410), object for object from the pack's own scene, with sun shadows, image-based ambient light, SSAO and a post-processing volume. In play the camera flies a loop above the village. **Needs the pack:** see below. |
 
-## Assets
+## Importing RPG Poly Pack - Lite
 
-Third-party assets and their licences are listed in
-[`THIRD_PARTY_ASSETS.md`](THIRD_PARTY_ASSETS.md).
+The pack's licence keeps its files out of this public repository, so the
+RPG Poly village needs a one-time local import:
 
-`tools/rpg_poly/build.py` regenerates the RPG Poly village's meshes,
-textures, materials and scene from the downloaded Kenney kits; see its
-docstring. The demo's components, such as the camera path, are in `src/`.
+1. Download the free pack through the Unity editor's Package Manager
+   (My Assets) after adding it to your Unity account from its store page.
+2. Close the Calyx editor, then run from the repository root:
+
+   ```
+   python demos/tools/rpg_poly/import_pack.py
+   ```
+
+   It needs Python 3 and Blender 4.x, and builds the models, textures and
+   materials into the gitignored `assets/rpg_poly/vendor/`.
+
+Without it the scene opens with only its sky, and the editor log names the
+missing assets. [`THIRD_PARTY_ASSETS.md`](THIRD_PARTY_ASSETS.md) has the
+licence details and the full import options.
+
+The demo's components, such as the camera path, are in `src/`.
