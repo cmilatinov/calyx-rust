@@ -55,8 +55,12 @@ pub fn decompose_transform(
     // The iterative fit cannot leave its starting guess when the rotation is
     // a half turn from it, so start from the direct conversion rather than
     // the identity; the fit then only absorbs any shear left in the axes.
-    let guess =
-        UnitQuaternion::from_rotation_matrix(&Rotation3::from_matrix_unchecked(rotation_matrix));
+    // With shear the axes are not orthogonal and the conversion is not a unit
+    // quaternion, so it is normalised first.
+    let guess = UnitQuaternion::new_normalize(
+        *UnitQuaternion::from_rotation_matrix(&Rotation3::from_matrix_unchecked(rotation_matrix))
+            .quaternion(),
+    );
     *rotation =
         UnitQuaternion::from_matrix_eps(&rotation_matrix, f32::default_epsilon(), 100, guess);
 }
@@ -135,6 +139,35 @@ mod tests {
             let dot = rot.quaternion().dot(out_rot.quaternion()).abs();
             assert_abs_diff_eq!(dot, 1.0, epsilon = 1e-5);
         }
+    }
+
+    /// A rotated child under a non-uniformly scaled parent leaves shear in
+    /// the world matrix, so its normalised axes are not orthogonal; the
+    /// decomposed rotation must still be a unit quaternion.
+    #[test]
+    fn decompose_transform_keeps_a_unit_rotation_under_shear() {
+        let parent = compose_transform(
+            &Vec3::zeros(),
+            &UnitQuaternion::identity(),
+            &vec3(2.0f32, 1.0, 1.0),
+        );
+        let child = compose_transform(
+            &Vec3::zeros(),
+            &UnitQuaternion::from_euler_angles(0.0, 0.0, std::f32::consts::FRAC_PI_4),
+            &vec3(1.0f32, 1.0, 1.0),
+        );
+
+        let mut out_pos = Vec3::zeros();
+        let mut out_rot = UnitQuaternion::identity();
+        let mut out_scale = Vec3::zeros();
+        decompose_transform(
+            &(parent * child),
+            &mut out_pos,
+            &mut out_rot,
+            &mut out_scale,
+        );
+
+        assert_abs_diff_eq!(out_rot.quaternion().norm(), 1.0, epsilon = 1e-5);
     }
 
     #[test]
