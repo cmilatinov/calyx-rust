@@ -1,6 +1,7 @@
 use super::shader_loader::AssetShaderLoader;
 use crate as calyx_engine;
 use crate::assets::error::AssetError;
+use crate::assets::material::Material;
 use crate::assets::{Asset, LoadedAsset};
 use crate::context::ReadOnlyAssetContext;
 use crate::render::render_utils::RenderUtils;
@@ -395,7 +396,10 @@ impl Shader {
             let after = reloaded_bindings.get(key);
             if group >= FIRST_MATERIAL_GROUP || material_groups.contains(&group) {
                 match after {
-                    Some(entry) if !Self::material_can_fill(entry) => {
+                    Some(entry)
+                        if !Self::material_can_fill(entry)
+                            || !Material::reflects_binding(&reloaded.module, group, binding) =>
+                    {
                         return Some(format!(
                             "group {group} binding {binding} `{}` is a {:?}, which a \
                              material cannot fill",
@@ -1909,21 +1913,41 @@ fn fs_main() -> @location(0) vec4f {{
             .iter()
             .any(|variable| variable.name == "tint_texture"));
 
+        // A lone scalar uniform gets a buffer of its own size, which a
+        // unit multiplier fills with one.
         write_and_reload(
             &context,
             &path,
             &material_shader(
-                "@group(3) @binding(1) var<storage, read> weights: array<f32>;",
-                " * weights[0]",
+                "@group(3) @binding(1) var<uniform> normal_scale: f32;",
+                " * normal_scale",
             ),
         );
-        let errors = reload_error_messages(&context);
-        assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(
-            errors[0].contains("group 3 binding 1 `weights`"),
-            "{errors:?}"
+        assert!(reload_error_messages(&context).is_empty());
+        assert_eq!(
+            draw_material(&mut material).expect("a valid frame"),
+            [0, 0, 255, 255]
         );
-        assert!(errors[0].contains("material cannot fill"), "{errors:?}");
+
+        // A storage buffer, and a uniform array no variable reflects, are
+        // bindings a material cannot fill.
+        for binding in [
+            "@group(3) @binding(1) var<storage, read> weights: array<f32>;",
+            "@group(3) @binding(1) var<uniform> weights: array<vec4f, 2>;",
+        ] {
+            write_and_reload(
+                &context,
+                &path,
+                &material_shader(binding, " * vec4f(weights[0])"),
+            );
+            let errors = reload_error_messages(&context);
+            assert_eq!(errors.len(), 1, "{errors:?}");
+            assert!(
+                errors[0].contains("group 3 binding 1 `weights`"),
+                "{errors:?}"
+            );
+            assert!(errors[0].contains("material cannot fill"), "{errors:?}");
+        }
     }
 
     const INVALID: &str = "fn main() { let x: u32 = 1.0; }";

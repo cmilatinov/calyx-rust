@@ -408,6 +408,15 @@ impl Material {
         variables
     }
 
+    /// Whether a material on a shader of `module` has a variable for `group` `binding`, so it
+    /// can fill that binding: a uniform of a scalar, vector or 4x4 matrix, or a struct with at
+    /// least one of those, a 2D texture or a sampler.
+    pub(crate) fn reflects_binding(module: &naga::Module, group: u32, binding: u32) -> bool {
+        Self::reflect_variables(module)
+            .iter()
+            .any(|variable| variable.group == group && variable.binding == binding)
+    }
+
     /// Adds each variable the shader declares that the material lacks, with its reflected
     /// default, keeps the variables in binding order, and records each texture slot's color
     /// space.
@@ -866,8 +875,11 @@ impl Material {
                     .get_mut(&binding.group)
                     .and_then(|e| e.get_mut(&binding.binding))
                 {
-                    if let TypeInner::Struct { span, .. } = &ty.inner {
-                        entry.size = Some(*span);
+                    if let BindingType::Buffer = entry.ty {
+                        // A uniform's whole type, a struct or a lone scalar, vector or matrix,
+                        // rounded up to the 16 bytes uniform buffers are laid out in.
+                        entry.size =
+                            Some(ty.inner.size(shader.module.to_ctx()).next_multiple_of(16));
                     }
                 }
             }
