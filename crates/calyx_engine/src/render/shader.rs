@@ -371,6 +371,18 @@ impl Shader {
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
         for (group, names) in &named {
+            // Its renderer always binds the group and skips its draw when it
+            // cannot, so the group must stay.
+            if live.group_layout(*group).is_some() && reloaded.group_layout(*group).is_none() {
+                return Some(format!(
+                    "group {group} no longer declares any binding, but its renderer binds                      it ({})",
+                    names
+                        .iter()
+                        .map(|name| format!("`{name}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
             for (binding, name) in reloaded.binding_names(*group) {
                 if !names.contains(name) {
                     return Some(format!(
@@ -1859,6 +1871,22 @@ fn fs_main() -> @location(0) vec4f {
             .read()
             .create_bind_group(0, None, &[("tint", tint.as_entire_binding())])
             .is_none());
+
+        // A version that no longer binds the tint at all is refused: the
+        // renderer would skip its draws.
+        write_and_reload(
+            &context,
+            &path,
+            &shader_source("1.0")
+                .replace("return tint.color * 1.0;", "return vec4f(1.0);")
+                .replace("@group(0) @binding(0) var<uniform> tint: Tint;", ""),
+        );
+        let errors = reload_error_messages(&context);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].contains("group 0 no longer declares"),
+            "{errors:?}"
+        );
 
         write_and_reload(&context, &path, UNKNOWN_BINDING);
         let errors = reload_error_messages(&context);
