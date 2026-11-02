@@ -19,6 +19,7 @@ use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use relative_path::RelativePathBuf;
 use uuid::Uuid;
 
 use super::{AssetMeta, AssetMetaData, AssetRegistry};
@@ -155,14 +156,16 @@ impl AssetRegistry {
     /// Moves the asset at `file` from the id it is registered under to the
     /// one its `.meta` names. Its cached value, read under the old id, is
     /// evicted, so the next load reads it under the new one; a holder of the
-    /// old reference keeps its value. The old id, and each sub-asset's,
-    /// resolve to the new ones, so a reference saved with them still loads.
+    /// old reference keeps its value. The old id, and each sub-asset's the
+    /// new `.meta` lists under another id, resolve to the new ones, so a
+    /// reference saved with them still loads; a sub-asset it does not list
+    /// keeps its id under the new parent.
     fn rekey_asset(&self, root: &Path, file: &Path, meta_path: &Path, old: AssetMeta) {
-        let old_children: Vec<(String, Uuid)> = {
+        let old_children: Vec<AssetMeta> = {
             let data = self.asset_data();
             old.children
                 .iter()
-                .filter_map(|child| data.meta.get(child).map(|meta| (meta.name.clone(), *child)))
+                .filter_map(|child| data.meta.get(child).cloned())
                 .collect()
         };
         let mut ids: HashSet<Uuid> = old.children.iter().copied().collect();
@@ -183,14 +186,32 @@ impl AssetRegistry {
         };
         let mut moves = vec![(old.id, new.id)];
         let mut data = self.asset_data_mut();
-        for (name, old_child) in old_children {
-            let new_child = new
-                .children
-                .iter()
-                .copied()
-                .find(|child| data.meta.get(child).is_some_and(|meta| meta.name == name));
-            if let Some(new_child) = new_child.filter(|new_child| *new_child != old_child) {
-                moves.push((old_child, new_child));
+        for mut old_child in old_children {
+            let new_child = new.children.iter().copied().find(|child| {
+                data.meta
+                    .get(child)
+                    .is_some_and(|meta| meta.name == old_child.name)
+            });
+            match new_child {
+                Some(new_child) if new_child != old_child.id => {
+                    moves.push((old_child.id, new_child));
+                }
+                Some(_) => {}
+                // The new `.meta` does not list it, as a tool's that leaves
+                // sub-assets to the import: keep it under the new parent, so
+                // loading it by id still loads the model that recreates it.
+                None => {
+                    let name = Self::sub_asset_name(&new.name, &old_child.name);
+                    old_child.parent = Some(new.id);
+                    data.names.insert(
+                        RelativePathBuf::from(name.as_str()).normalize(),
+                        old_child.id,
+                    );
+                    if let Some(parent) = data.meta.get_mut(&new.id) {
+                        parent.children.push(old_child.id);
+                    }
+                    data.meta.insert(old_child.id, old_child);
+                }
             }
         }
         for (from, to) in moves {
@@ -494,6 +515,64 @@ mod tests {
         assert_eq!(resolved.ptr_id(), rekeyed.ptr_id());
         assert_eq!(held.read().text, "imported");
         assert_eq!(meta_id_on_disk(&meta_path), chosen);
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    /// A model's sub-assets are registered from its `.meta`, or when it
+    /// loads. A tool's `.meta` that lists none keeps the ones the model had,
+    /// under the new parent, so loading one by its id still finds the model.
+    #[test]
+    fn rekeying_keeps_sub_assets_the_new_meta_does_not_list() {
+        let root = temp_asset_root("calyx-meta-rekey-children");
+        let parent_path = root.join("parent.fbx");
+        let meta_path = root.join("parent.meta");
+        let (old_parent, child) = (Uuid::new_v4(), Uuid::new_v4());
+        std::fs::write(&parent_path, b"").expect("failed to write the model");
+        std::fs::write(
+            &meta_path,
+            serde_json::to_vec_pretty(&json!({
+                "main": {
+                    "id": old_parent,
+                    "name": "parent",
+                    "display_name": "parent",
+                    "type_uuid": crate::scene::Prefab::type_uuid(),
+                },
+                "inner": [{
+                    "id": child,
+                    "name": "Body",
+                    "display_name": "Body",
+                    "type_uuid": crate::assets::mesh::Mesh::type_uuid(),
+                }]
+            }))
+            .expect("failed to encode the meta"),
+        )
+        .expect("failed to write the meta");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        assert_eq!(registry.asset_id("parent/Body"), Some(child));
+
+        let chosen = Uuid::new_v4();
+        write_meta(
+            &meta_path,
+            chosen,
+            "parent",
+            crate::scene::Prefab::type_uuid(),
+        );
+        registry.recv_notify_event(modified(&meta_path));
+
+        assert_eq!(registry.asset_id_from_path(&parent_path), Some(chosen));
+        assert_eq!(registry.asset_id("parent/Body"), Some(child));
+        let child_meta = registry
+            .asset_meta_from_id(child)
+            .expect("the sub-asset keeps its metadata");
+        assert_eq!(child_meta.parent, Some(chosen));
+        assert_eq!(
+            registry
+                .asset_meta_from_id(chosen)
+                .map(|meta| meta.children),
+            Some(vec![child])
+        );
         drop(registry);
         std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
