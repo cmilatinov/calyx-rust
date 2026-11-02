@@ -411,10 +411,25 @@ impl Material {
     /// Whether a material on a shader of `module` has a variable for `group` `binding`, so it
     /// can fill that binding: a uniform of a scalar, vector or 4x4 matrix, or a struct with at
     /// least one of those, a 2D texture or a sampler.
+    /// Unlike the variables a material takes, which start at [`FIRST_MATERIAL_GROUP`], `group`
+    /// may be any group, such as a pass's group that binds a material's bind group.
     pub(crate) fn reflects_binding(module: &naga::Module, group: u32, binding: u32) -> bool {
-        Self::reflect_variables(module)
-            .iter()
-            .any(|variable| variable.group == group && variable.binding == binding)
+        let mut variables = Vec::new();
+        for (_, variable) in module.global_variables.iter() {
+            if let Some(resource) = &variable.binding {
+                if (resource.group, resource.binding) == (group, binding) {
+                    Self::shader_variable(
+                        module,
+                        &module.types[variable.ty],
+                        resource,
+                        variable.name.clone().unwrap_or_default(),
+                        None,
+                        &mut variables,
+                    );
+                }
+            }
+        }
+        !variables.is_empty()
     }
 
     /// Adds each variable the shader declares that the material lacks, with its reflected

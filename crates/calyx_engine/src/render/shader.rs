@@ -397,8 +397,13 @@ impl Shader {
             if group >= FIRST_MATERIAL_GROUP || material_groups.contains(&group) {
                 match after {
                     Some(entry)
-                        if !Self::material_can_fill(entry)
-                            || !Material::reflects_binding(&reloaded.module, group, binding) =>
+                        if before != after
+                            && (!Self::material_can_fill(entry)
+                                || !Material::reflects_binding(
+                                    &reloaded.module,
+                                    group,
+                                    binding,
+                                )) =>
                     {
                         return Some(format!(
                             "group {group} binding {binding} `{}` is a {:?}, which a \
@@ -1974,6 +1979,79 @@ fn fs_main() -> @location(0) vec4f {{
             );
             assert!(errors[0].contains("material cannot fill"), "{errors:?}");
         }
+    }
+
+    /// A pass's shader whose group 2 binds the materials of a material
+    /// shader's group 3, as the G-buffer and masked shadow shaders do.
+    /// `extra` is spliced into group 2 and `color` is its fragment color.
+    fn pass_shader(extra: &str, color: &str) -> String {
+        format!(
+            r#"
+struct Tint {{ color: vec4f }}
+@group(0) @binding(0) var<uniform> u0: Tint;
+@group(1) @binding(0) var<uniform> u1: Tint;
+
+struct MaterialProperties {{ base_color: vec4f }}
+@group(2) @binding(0) var<uniform> material: MaterialProperties;
+{extra}
+
+@vertex
+fn vs_main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {{
+    let uv = vec2f(f32((index << 1u) & 2u), f32(index & 2u));
+    return vec4f(uv * 2.0 - 1.0, 0.0, 1.0);
+}}
+
+@fragment
+fn fs_main() -> @location(0) vec4f {{
+    return u0.color * u1.color * material.base_color * {color};
+}}
+"#
+        )
+    }
+
+    /// Once a pass's group 2 is found to share a material group, a reload
+    /// of the pass that keeps its bindings is accepted, and so is one that
+    /// adds a binding a material fills, which then no longer matches the
+    /// material shader until it follows.
+    #[test]
+    fn a_pass_sharing_a_material_group_follows_its_reloads() {
+        let assets = TestAssets::engine();
+        let material_path = assets.engine_root().join("shared_material_probe.wgsl");
+        std::fs::write(&material_path, material_shader("", "")).expect("the shader is writable");
+        let path = assets.engine_root().join("pass_probe.wgsl");
+        std::fs::write(&path, pass_shader("", "1.0")).expect("the shader is writable");
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let registry = context.registries.assets.read();
+        let material_shader = registry
+            .load::<Shader>("shared_material_probe")
+            .expect("the material shader loads");
+        let pass = registry
+            .load::<Shader>("pass_probe")
+            .expect("the pass loads");
+        drop(registry);
+        assert!(pass
+            .read()
+            .shares_material_group(2, &material_shader.read(), 3));
+
+        write_and_reload(&context, &path, &pass_shader("", "0.5"));
+        assert!(reload_error_messages(&context).is_empty());
+        assert!(pass.read().source.contains("0.5"));
+
+        let texture = "@group(2) @binding(1) var tint_texture: texture_2d<f32>;\n\
+                       @group(2) @binding(2) var tint_sampler: sampler;";
+        write_and_reload(
+            &context,
+            &path,
+            &pass_shader(
+                texture,
+                "textureSample(tint_texture, tint_sampler, vec2f(0.5))",
+            ),
+        );
+        assert!(reload_error_messages(&context).is_empty());
+        assert!(!pass
+            .read()
+            .shares_material_group(2, &material_shader.read(), 3));
     }
 
     const INVALID: &str = "fn main() { let x: u32 = 1.0; }";
