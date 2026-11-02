@@ -825,25 +825,38 @@ impl Material {
         Some(generation)
     }
 
-    /// Follows a hot reload that changed the layout of the material's shader: drops each
-    /// variable the shader no longer declares, or now declares as another kind of value, adds
-    /// each new one with its reflected default, and rebuilds the bind-group entries and buffers
-    /// for the new layout. Values of the variables the shader keeps are kept. Does nothing while
-    /// the shader's [`Shader::layout_generation`] is the one the material was built for.
+    /// Follows a hot reload that changed the layout of the material's shader: takes the
+    /// shader's variables as it now reflects them, each with the value the material held under
+    /// the same name for the same kind of value, wherever the shader now binds it, or else its
+    /// reflected default, and rebuilds the bind-group entries and buffers for the new layout. A
+    /// variable the shader no longer declares is dropped. Does nothing while the shader's
+    /// [`Shader::layout_generation`] is the one the material was built for.
     pub(crate) fn follow_shader(&mut self, assets: &ReadOnlyAssetContext) {
         let generation = self.shader_layout_generation(assets);
         if generation == self.shader_layout_generation {
             return;
         }
         if let Some(shader) = self.shader.get_ref(&assets.registries) {
-            let reflected = Self::reflect_variables(&shader.read().module);
-            self.variables.retain(|variable| {
-                reflected.iter().any(|other| {
-                    other == variable
-                        && std::mem::discriminant(&other.value)
-                            == std::mem::discriminant(&variable.value)
+            let mut previous = std::mem::take(&mut self.variables);
+            self.variables = Self::reflect_variables(&shader.read().module)
+                .into_iter()
+                .map(|mut variable| {
+                    let same_kind = |other: &ShaderVariable| {
+                        other.name == variable.name
+                            && std::mem::discriminant(&other.value)
+                                == std::mem::discriminant(&variable.value)
+                    };
+                    // Two structs may name a member alike: the one at the same slot first.
+                    let kept = previous
+                        .iter()
+                        .position(|other| same_kind(other) && *other == variable)
+                        .or_else(|| previous.iter().position(same_kind));
+                    if let Some(index) = kept {
+                        variable.value = previous.swap_remove(index).value;
+                    }
+                    variable
                 })
-            });
+                .collect();
         }
         self.bind_group_entries.clear();
         self.buffers.clear();

@@ -1829,7 +1829,7 @@ fn fs_main() -> @location(0) vec4f {{
     /// storage buffer, which a material cannot fill, is refused, naming it.
     #[test]
     fn a_material_follows_a_reload_that_adds_an_optional_binding() {
-        use crate::assets::material::{Material, ShaderVariableValue};
+        use crate::assets::material::{Material, MaterialTexture, ShaderVariableValue};
         use crate::render::AssetRenderState;
 
         let assets = TestAssets::engine();
@@ -1912,6 +1912,32 @@ fn fs_main() -> @location(0) vec4f {{
             .variables
             .iter()
             .any(|variable| variable.name == "tint_texture"));
+
+        // A renumbered texture keeps the value set on it, by its name.
+        assert!(material.set_variable(
+            "tint_texture",
+            ShaderVariableValue::Texture2D(MaterialTexture::Color([0.0, 0.0, 0.5, 1.0])),
+        ));
+        assert_eq!(
+            draw_material(&mut material).expect("a valid frame"),
+            [0, 0, 128, 255]
+        );
+        let renumbered = "@group(3) @binding(3) var tint_sampler: sampler;\n\
+                          @group(3) @binding(4) var tint_texture: texture_2d<f32>;";
+        write_and_reload(
+            &context,
+            &path,
+            &material_shader(
+                renumbered,
+                " * textureSample(tint_texture, tint_sampler, vec2f(0.5))",
+            ),
+        );
+        assert!(reload_error_messages(&context).is_empty());
+        assert_eq!(
+            draw_material(&mut material).expect("a valid frame"),
+            [0, 0, 128, 255],
+            "the texture keeps its value at its new binding"
+        );
 
         // A lone scalar uniform gets a buffer of its own size, which a
         // unit multiplier fills with one.
