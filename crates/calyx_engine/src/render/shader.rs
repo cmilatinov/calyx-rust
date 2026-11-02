@@ -251,6 +251,7 @@ impl Asset for Shader {
             .clone();
         if Self::bindings(&previous.bind_group_entries) != Self::bindings(&self.bind_group_entries)
             || previous.buffer_sizes() != self.buffer_sizes()
+            || previous.binding_name_map() != self.binding_name_map()
         {
             log::info!(
                 "Shader {} reloaded with a new bind-group layout; its bind groups are rebuilt",
@@ -495,6 +496,19 @@ impl Shader {
                     )
                 })
             })
+    }
+
+    /// The variable name of every binding, by group and binding. A reload
+    /// that renames or swaps bindings of the same kind keeps every entry, but
+    /// a renderer that binds by name binds other resources to them.
+    fn binding_name_map(&self) -> BTreeMap<(u32, u32), &str> {
+        self.bind_group_entries
+            .keys()
+            .flat_map(|group| {
+                self.binding_names(*group)
+                    .map(move |(binding, name)| ((*group, binding), name))
+            })
+            .collect()
     }
 
     /// The variable name of `group` `binding`, or an empty name.

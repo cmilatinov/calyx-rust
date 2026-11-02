@@ -34,6 +34,24 @@ impl<K: PartialEq> CachedBindGroup<K> {
         &self.cached.as_ref().expect("the cache was just filled").1
     }
 
+    /// Returns the cached group when it was built for `key`, else builds it
+    /// with `create`, which may fail: then nothing is cached and `None` is
+    /// returned, and the next call tries again.
+    pub fn get_or_try_create(
+        &mut self,
+        key: K,
+        create: impl FnOnce() -> Option<wgpu::BindGroup>,
+    ) -> Option<&wgpu::BindGroup> {
+        if self
+            .cached
+            .as_ref()
+            .is_none_or(|(cached, _)| *cached != key)
+        {
+            self.cached = create().map(|group| (key, group));
+        }
+        self.cached.as_ref().map(|(_, group)| group)
+    }
+
     /// The cached group, whatever key built it.
     pub fn get(&self) -> Option<&wgpu::BindGroup> {
         self.cached.as_ref().map(|(_, group)| group)

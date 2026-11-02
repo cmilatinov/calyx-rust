@@ -4,8 +4,8 @@
 use calyx_engine::assets::texture::Texture;
 use calyx_engine::assets::{AssetAccess, AssetRef};
 use calyx_engine::component::{
-    ComponentCollider, ComponentID, ComponentRigidBody, ComponentTransform, ParticleBlendMode,
-    ParticleSpawnShape,
+    ComponentCollider, ComponentID, ComponentRigidBody, ComponentTransform, LocalVolumeShape,
+    ParticleBlendMode, ParticleSpawnShape,
 };
 use calyx_engine::math::{Curve, CurveInterpolation, Gradient};
 use calyx_engine::reflect::Reflect;
@@ -444,4 +444,25 @@ fn gradient_inspector_adds_a_key_on_a_strip_click() {
     assert_discrete(&h.click(point, draw!(inspector, &mut value)));
     assert_eq!(value.keys.len(), 3);
     assert!((value.keys[1].color.w - 0.5).abs() < 0.05, "{value:?}");
+}
+
+#[test]
+fn local_volume_shape_inspector_reports_a_choice_that_keeps_the_size_and_a_drag() {
+    let mut h = InspectorHarness::new();
+    let registry = h.inspector_registry();
+    let inspector = lookup(&registry, LocalVolumeShape::type_uuid());
+    let mut value = LocalVolumeShape::Box {
+        half_extents: Vec3::new(1.0, 3.0, 2.0),
+    };
+
+    assert_idle(&h.idle(3, draw!(inspector, &mut value)));
+    let combo = h.widget(Role::ComboBox, 0);
+    assert!(!any_changed(&h.click(combo, draw!(inspector, &mut value))));
+    let sphere = h.labelled(Role::Button, "Sphere");
+    assert_discrete(&h.click(sphere, draw!(inspector, &mut value)));
+    assert_eq!(value, LocalVolumeShape::Sphere { radius: 3.0 });
+
+    let radius = h.widget(Role::SpinButton, 0);
+    assert_drag(&h.drag(radius, Vec2::new(40.0, 0.0), draw!(inspector, &mut value)));
+    assert_ne!(value, LocalVolumeShape::Sphere { radius: 3.0 });
 }

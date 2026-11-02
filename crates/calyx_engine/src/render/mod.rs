@@ -1,6 +1,7 @@
 pub(crate) use asset_render_state::*;
 pub(crate) use bind_group_cache::*;
 pub use camera::*;
+pub(crate) use deferred_lighting::DeferredLightingRenderer;
 pub(crate) use gbuffer::GBufferRenderer;
 pub use gbuffer::{GBufferTargets, GBufferView};
 pub use gizmo_renderer::*;
@@ -38,6 +39,7 @@ mod bind_group_cache;
 /// Buffer-layout helpers and resizable GPU buffers.
 pub mod buffer;
 mod camera;
+mod deferred_lighting;
 mod gbuffer;
 mod gizmo_renderer;
 mod gizmos;

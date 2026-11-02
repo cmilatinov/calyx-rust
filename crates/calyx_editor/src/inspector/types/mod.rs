@@ -8,6 +8,7 @@ mod float_inspector;
 mod game_object_ref_inspector;
 mod gradient_inspector;
 mod integer_inspector;
+mod local_volume_shape_inspector;
 mod particle_spawn_shape_inspector;
 mod rigid_body_inspector;
 mod string_inspector;

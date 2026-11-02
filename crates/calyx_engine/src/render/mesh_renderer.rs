@@ -9,7 +9,6 @@ use crate::render::{
     CachedBindGroup, GizmoRenderer, LightManager, PipelineOptions, SceneRendererError, Shader,
     ShadowBindings,
 };
-use egui::Color32;
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use std::collections::{HashMap, HashSet};
@@ -73,6 +72,15 @@ struct CachedMaterialBindGroups {
     groups: HashMap<u32, wgpu::BindGroup>,
 }
 
+/// The bind groups the deferred lighting pass and the forward draws bind: group
+/// 0, the camera and the sky light's maps, and group 2, the lights and the
+/// shadow maps (see `shaders/common/pbr_lighting.wgsl`).
+#[derive(Clone)]
+pub(crate) struct LightingBindGroups {
+    pub scene: wgpu::BindGroup,
+    pub lights: wgpu::BindGroup,
+}
+
 pub struct MeshRenderTargets<'a> {
     pub color: &'a Texture,
     pub depth: &'a Texture,
@@ -105,26 +113,25 @@ impl MeshRenderer {
         })
     }
 
+    /// The frame's lighting bind groups, for the deferred lighting pass and
+    /// the forward draws alike: the camera, the sky light's maps
+    /// (`skybox_id`'s, or black without one) and the environment uniform,
+    /// then the lights and the shadow maps. Each is reused from earlier
+    /// frames while it binds the same resources.
     #[allow(clippy::too_many_arguments)]
-    pub fn render(
+    pub fn lighting_bind_groups(
         &mut self,
         device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        assets: &LockedAssetRenderState,
-        material_bind_groups: &MaterialBindGroups,
-        defaults: MeshRenderDefaults<'_>,
-        targets: MeshRenderTargets<'_>,
         queue: &wgpu::Queue,
+        assets: &LockedAssetRenderState,
+        defaults: MeshRenderDefaults<'_>,
         light_manager: &LightManager,
         shadows: &ShadowBindings<'_>,
         camera_uniform_buffer: &wgpu::Buffer,
-        clear_color: Color32,
-        pipeline_options: &PipelineOptions,
         skybox_id: Option<AssetId>,
         sky_light_intensity: f32,
         ambient_light: [f32; 4],
-        draw_list: &[DrawBatch],
-    ) {
+    ) -> LightingBindGroups {
         let (irradiance_map, prefilter_map, brdf_map) = skybox_id
             .and_then(|id| assets.skybox(id)?.environment_maps())
             .unwrap_or((
@@ -140,14 +147,14 @@ impl MeshRenderer {
                 ambient_light,
             }]),
         );
-        let scene_bind_group = self.scene_bind_group(
+        let scene = self.scene_bind_group(
             device,
             camera_uniform_buffer,
             irradiance_map,
             prefilter_map,
             brdf_map,
         );
-        let light_storage_bind_group = {
+        let lights = {
             let scene_shader = self.scene_shader.read();
             let key = (
                 scene_shader.bind_group_layouts[2].clone(),
@@ -163,20 +170,43 @@ impl MeshRenderer {
                 .clone()
         };
 
+        LightingBindGroups { scene, lights }
+    }
+
+    /// Draws every batch of `draw_list` whose shader is not the PBR shader
+    /// into `targets`, lit through `lighting`, over the image and depth the
+    /// deferred lighting pass left: the forward-only draws. The PBR batches
+    /// are shaded from the G-buffer.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        assets: &LockedAssetRenderState,
+        material_bind_groups: &MaterialBindGroups,
+        lighting: &LightingBindGroups,
+        targets: MeshRenderTargets<'_>,
+        pipeline_options: &PipelineOptions,
+        draw_list: &[DrawBatch],
+    ) {
+        let deferred_shader = self.scene_shader.id();
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Viewport Scene"),
-            color_attachments: &[Some(RenderUtils::color_attachment(
-                &targets.color.view,
-                clear_color,
-            ))],
-            depth_stencil_attachment: Some(RenderUtils::depth_stencil_attachment(
-                &targets.depth.view,
-                1.0,
-                Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(0),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &targets.color.view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &targets.depth.view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
                 }),
-            )),
+                stencil_ops: None,
+            }),
             timestamp_writes: None,
             occlusion_query_set: None,
         });
@@ -190,6 +220,9 @@ impl MeshRenderer {
             ..
         } in draw_list
         {
+            if shader_id == deferred_shader {
+                continue;
+            }
             let Some(shader) = assets.shader(shader_id) else {
                 continue;
             };
@@ -201,8 +234,8 @@ impl MeshRenderer {
                     continue;
                 };
                 render_pass.set_pipeline(&pipeline);
-                render_pass.set_bind_group(0, &scene_bind_group, &[]);
-                render_pass.set_bind_group(2, &light_storage_bind_group, &[]);
+                render_pass.set_bind_group(0, &lighting.scene, &[]);
+                render_pass.set_bind_group(2, &lighting.lights, &[]);
             }
             if mat_id != last.1 {
                 if let Some(groups) = material_bind_groups.get(&mat_id) {
