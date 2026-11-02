@@ -448,6 +448,13 @@ impl SceneRenderer {
         &mut self.options
     }
 
+    /// Sets the aspect (width over height) of the view scene cameras render
+    /// into, such as the editor's Game tab, so camera gizmos frame what it
+    /// shows; `None` while that view has no size.
+    pub fn set_preview_aspect(&mut self, preview_aspect: Option<f32>) {
+        self.gizmo_renderer.set_preview_aspect(preview_aspect);
+    }
+
     /// Sets the hovered game object used for editor highlight overlays.
     pub fn set_hovered_game_object(&mut self, hovered_game_object: Option<Uuid>) {
         self.hovered_game_object = hovered_game_object;

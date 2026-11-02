@@ -54,6 +54,7 @@ pub struct GizmoRenderer {
     component_registry: ReadOnlyRef<ComponentRegistry>,
 
     samples: u32,
+    preview_aspect: Option<f32>,
     circle_list: Vec<GizmoInstance>,
     cube_list: Vec<GizmoInstance>,
 
@@ -195,6 +196,7 @@ impl GizmoRenderer {
 
         Ok(Self {
             samples,
+            preview_aspect: None,
             circle_list: Vec::new(),
             cube_list: Vec::new(),
 
@@ -260,6 +262,13 @@ impl GizmoRenderer {
         self.icons_mesh.rebuild_mesh_data(device);
     }
 
+    /// Sets the aspect (width over height) of the view scene cameras render
+    /// into, such as the editor's Game tab, which camera gizmos frame; `None`
+    /// while that view has no size.
+    pub fn set_preview_aspect(&mut self, preview_aspect: Option<f32>) {
+        self.preview_aspect = preview_aspect;
+    }
+
     /// Returns a gizmo command recorder for the current frame.
     pub fn gizmos<'a>(
         &'a mut self,
@@ -272,6 +281,7 @@ impl GizmoRenderer {
             camera,
             camera_transform,
             viewport_size,
+            preview_aspect: self.preview_aspect,
             object_id: 0,
             color: vec4(1.0, 1.0, 1.0, 1.0),
             opacity: 1.0,

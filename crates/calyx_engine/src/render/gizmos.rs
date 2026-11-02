@@ -8,6 +8,10 @@ use nalgebra_glm::{vec2, vec3, vec4, Mat4, Vec3, Vec4};
 const MIN_ICON_SIZE_PIXELS: f32 = 24.0;
 const MAX_ICON_SIZE_PIXELS: f32 = 48.0;
 
+/// The aspect a camera gizmo frames when no view it previews has a size,
+/// such as before the editor's Game tab is first shown.
+pub const FALLBACK_PREVIEW_ASPECT: f32 = 16.0 / 9.0;
+
 /// Built-in camera-facing editor icon shapes.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum GizmoIcon {
@@ -22,6 +26,9 @@ pub struct Gizmos<'a> {
     pub(crate) camera: &'a Camera,
     pub(crate) camera_transform: &'a Transform,
     pub(crate) viewport_size: [f32; 2],
+    /// Aspect (width over height) of the view scene cameras render into,
+    /// such as the editor's Game tab, when that view has a size.
+    pub(crate) preview_aspect: Option<f32>,
     pub(crate) object_id: u32,
     pub(crate) color: Vec4,
     pub(crate) opacity: f32,
@@ -34,6 +41,13 @@ pub struct Gizmos<'a> {
 }
 
 impl Gizmos<'_> {
+    /// Aspect (width over height) a scene camera's gizmo frames: that of the
+    /// view the camera renders into, such as the editor's Game tab, else
+    /// [`FALLBACK_PREVIEW_ASPECT`].
+    pub fn preview_aspect(&self) -> f32 {
+        self.preview_aspect.unwrap_or(FALLBACK_PREVIEW_ASPECT)
+    }
+
     /// Emits a wireframe sphere centered at `center`.
     pub fn wire_sphere(&mut self, center: &Vec3, radius: f32) {
         let translation = glm::translate(&Mat4::identity(), center);
@@ -120,16 +134,8 @@ impl Gizmos<'_> {
         self.cube_list.push(self.gizmo_instance(transform, false));
     }
 
-    /// Emits a wireframe frustum from camera projection parameters.
-    pub fn wire_frustum(
-        &mut self,
-        transform: &Transform,
-        aspect: f32,
-        fov: f32,
-        near_plane: f32,
-        far_plane: f32,
-    ) {
-        let camera = Camera::new(aspect, fov, near_plane, far_plane);
+    /// Emits the wireframe frustum `camera` sees from `transform`.
+    pub fn wire_frustum(&mut self, transform: &Transform, camera: &Camera) {
         let matrix = (camera.projection * transform.inverse_matrix())
             .try_inverse()
             .unwrap_or_else(Mat4::identity);
@@ -320,6 +326,7 @@ mod tests {
             camera: &camera,
             camera_transform: &camera_transform,
             viewport_size: [1920.0, 1080.0],
+            preview_aspect: None,
             object_id: 0,
             color: vec4(1.0, 1.0, 1.0, 1.0),
             opacity: 1.0,
@@ -358,6 +365,7 @@ mod tests {
             camera: &camera,
             camera_transform: &camera_transform,
             viewport_size: [1920.0, 1080.0],
+            preview_aspect: None,
             object_id: 17,
             color: vec4(1.0, 1.0, 1.0, 1.0),
             opacity: 1.0,
@@ -390,6 +398,7 @@ mod tests {
             camera: &camera,
             camera_transform: &camera_transform,
             viewport_size: [1920.0, 1080.0],
+            preview_aspect: None,
             object_id: 0,
             color: vec4(1.0, 1.0, 1.0, 1.0),
             opacity: 1.0,

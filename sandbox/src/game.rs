@@ -2,7 +2,7 @@ use calyx_engine::context::{AssetContext, GameContext, UpdatedScene};
 use calyx_engine::error::DynError;
 use calyx_engine::input::Input;
 use calyx_engine::logging::{DefaultLogger, Log};
-use calyx_engine::render::{Camera, SceneRenderer, SceneRendererOptions};
+use calyx_engine::render::{SceneRenderer, SceneRendererOptions};
 use calyx_engine::runtime::{
     initial_render_size, wgpu_configuration, FrameCounter, ProjectRuntimeSettings, WindowSettings,
 };
@@ -156,12 +156,7 @@ impl eframe::App for GameApp {
             if let Some((game_object, c_camera)) = scene.main_camera() {
                 let transform = scene.world_transform(game_object);
 
-                let camera = Camera::new(
-                    rect.aspect_ratio(),
-                    c_camera.fov,
-                    c_camera.near_plane,
-                    c_camera.far_plane,
-                );
+                let camera = c_camera.camera(rect.aspect_ratio());
                 renderer.render_scene_base(&camera, &transform, scene, Some(&game.particles), None);
                 renderer.finalize_scene();
             }
