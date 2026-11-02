@@ -13,7 +13,7 @@
 //!   it names another id, the asset is re-keyed under that id, and the id it
 //!   had resolves to the new one for the rest of the session.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -31,9 +31,6 @@ pub(crate) const CREATED_FILE_SETTLE: Duration = Duration::from_millis(500);
 
 /// How often the watcher thread registers the files whose window passed.
 pub(super) const SETTLE_POLL: Duration = Duration::from_millis(100);
-
-/// The longest chain of re-keys [`AssetRegistry::resolve_asset_id`] follows.
-const MAX_ALIAS_HOPS: usize = 8;
 
 impl AssetRegistry {
     /// Holds a file the watcher reported without a `.meta` until its `.meta`
@@ -184,8 +181,8 @@ impl AssetRegistry {
         let Some(new) = self.asset_meta_from_path(file) else {
             return;
         };
+        let mut moves = vec![(old.id, new.id)];
         let mut data = self.asset_data_mut();
-        data.aliases.insert(old.id, new.id);
         for (name, old_child) in old_children {
             let new_child = new
                 .children
@@ -193,8 +190,11 @@ impl AssetRegistry {
                 .copied()
                 .find(|child| data.meta.get(child).is_some_and(|meta| meta.name == name));
             if let Some(new_child) = new_child.filter(|new_child| *new_child != old_child) {
-                data.aliases.insert(old_child, new_child);
+                moves.push((old_child, new_child));
             }
+        }
+        for (from, to) in moves {
+            Self::add_alias_locked(&mut data.aliases, from, to);
         }
         drop(data);
         log::info!(
@@ -206,21 +206,28 @@ impl AssetRegistry {
         );
     }
 
+    /// Points `from` at `to`, and every id that pointed at `from` at `to`
+    /// too, so each alias names the id an asset has now, however many times
+    /// it was re-keyed.
+    fn add_alias_locked(aliases: &mut HashMap<Uuid, Uuid>, from: Uuid, to: Uuid) {
+        for target in aliases.values_mut() {
+            if *target == from {
+                *target = to;
+            }
+        }
+        aliases.insert(from, to);
+        // `to` is registered again, as when a `.meta` changes back.
+        aliases.remove(&to);
+    }
+
     /// The id an asset re-keyed from `id` has now, or `id` itself. A
     /// registered id is never redirected.
     pub(super) fn resolve_asset_id(&self, id: Uuid) -> Uuid {
         let data = self.asset_data();
-        let mut resolved = id;
-        for _ in 0..MAX_ALIAS_HOPS {
-            if data.meta.contains_key(&resolved) {
-                break;
-            }
-            match data.aliases.get(&resolved) {
-                Some(next) => resolved = *next,
-                None => break,
-            }
+        if data.meta.contains_key(&id) {
+            return id;
         }
-        resolved
+        data.aliases.get(&id).copied().unwrap_or(id)
     }
 
     /// Whether the registry holds an asset whose source is `file` itself,
@@ -487,6 +494,39 @@ mod tests {
         assert_eq!(resolved.ptr_id(), rekeyed.ptr_id());
         assert_eq!(held.read().text, "imported");
         assert_eq!(meta_id_on_disk(&meta_path), chosen);
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    /// A tool that gives the asset a fresh id on every import re-keys it
+    /// again and again; the first id still resolves to the last.
+    #[test]
+    fn an_id_from_before_many_rekeys_resolves_to_the_latest() {
+        let root = temp_asset_root("calyx-meta-rekey-chain");
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        registry.register_asset_type::<MetaTestText>();
+        let asset_path = root.join("note.cxmetatext");
+        let meta_path = root.join("note.meta");
+        std::fs::write(&asset_path, "imported").expect("failed to write the asset");
+        registry.recv_notify_event(created(&asset_path));
+        settle(&registry);
+        let first = registry
+            .asset_id_from_path(&asset_path)
+            .expect("the file is registered under a generated id");
+
+        let mut latest = first;
+        for _ in 0..12 {
+            latest = Uuid::new_v4();
+            write_meta(&meta_path, latest, "note", MetaTestText::type_uuid());
+            registry.recv_notify_event(modified(&meta_path));
+        }
+
+        assert_eq!(registry.asset_id_from_path(&asset_path), Some(latest));
+        let resolved = registry
+            .load_by_id::<MetaTestText>(first)
+            .expect("the first id resolves to the latest");
+        assert_eq!(resolved.id(), latest);
         drop(registry);
         std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
