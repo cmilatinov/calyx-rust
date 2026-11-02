@@ -135,7 +135,12 @@ impl GBufferTargets {
         self.depth.is_some()
     }
 
-    fn color_targets(&self) -> [&Texture; 4] {
+    /// The pass's own depth, above one sample only.
+    pub(crate) fn own_depth(&self) -> Option<&Texture> {
+        self.depth.as_ref()
+    }
+
+    pub(crate) fn color_targets(&self) -> [&Texture; 4] {
         [&self.albedo, &self.normals, &self.material, &self.emissive]
     }
 }
@@ -148,7 +153,7 @@ struct GBufferViewUniform {
 }
 
 /// Draws the scene's PBR meshes into the G-buffer and shows a target in the
-/// debug view. It owns the targets, which exist only while the pass runs.
+/// debug view. It owns the targets, created on the first frame.
 pub(crate) struct GBufferRenderer {
     /// `shaders/mesh/gbuffer.wgsl`, the geometry pass.
     shader: Ref<Shader>,
@@ -188,7 +193,7 @@ impl GBufferRenderer {
         })
     }
 
-    /// The targets, while the pass runs.
+    /// The targets, once the first frame has drawn them.
     pub fn targets(&self) -> Option<&GBufferTargets> {
         self.targets.as_ref()
     }
@@ -196,15 +201,6 @@ impl GBufferRenderer {
     /// Instances the last frame's geometry pass drew.
     pub fn drawn_instances(&self) -> u32 {
         self.drawn_instances
-    }
-
-    /// Frees the targets, on a frame the pass does not run.
-    pub fn release(&mut self) {
-        if self.targets.take().is_some() {
-            log::info!("Releasing the G-buffer");
-        }
-        self.view_bind_group.clear();
-        self.drawn_instances = 0;
     }
 
     /// Recreates the targets at the scene's new size, when they exist.
@@ -219,11 +215,13 @@ impl GBufferRenderer {
     }
 
     /// Draws every batch of `draw_list` that uses the PBR shader into the
-    /// G-buffer, after the forward pass has drawn the scene into
-    /// `scene_depth`. At one sample the pass tests against that depth
-    /// without writing it, so only the surfaces the forward pass kept land
-    /// in the G-buffer. Above one sample the scene depth cannot be attached
-    /// to single-sample targets, so the pass draws against its own depth.
+    /// G-buffer, first in the frame, and draws the depth itself: it clears
+    /// it and tests `Less` in the draw order, so of fragments that tie in
+    /// depth the first drawn is kept, as the forward-only draws that follow
+    /// keep it. The depth is `scene_depth` at one sample and the targets'
+    /// own single-sample depth above one, where the multisampled scene depth
+    /// cannot be attached beside single-sample targets; the lighting pass
+    /// then copies it into the scene depth.
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
@@ -255,15 +253,7 @@ impl GBufferRenderer {
             .as_ref()
             .expect("the targets were just created");
 
-        let depth_stencil = if own_depth {
-            RenderUtils::depth_default(wgpu::TextureFormat::Depth32Float)
-        } else {
-            wgpu::DepthStencilState {
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::LessEqual,
-                ..RenderUtils::depth_default(wgpu::TextureFormat::Depth32Float)
-            }
-        };
+        let depth_stencil = RenderUtils::depth_default(wgpu::TextureFormat::Depth32Float);
         let options = PipelineOptions::builder()
             .samples(1)
             .cull_mode(cull_mode)
@@ -303,9 +293,9 @@ impl GBufferRenderer {
                 },
             })
         });
-        let (depth_view, depth_load) = match &targets.depth {
-            Some(depth) => (&depth.view, wgpu::LoadOp::Clear(1.0)),
-            None => (&scene_depth.view, wgpu::LoadOp::Load),
+        let depth_view = match &targets.depth {
+            Some(depth) => &depth.view,
+            None => &scene_depth.view,
         };
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("G-Buffer"),
@@ -313,7 +303,7 @@ impl GBufferRenderer {
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: depth_view,
                 depth_ops: Some(wgpu::Operations {
-                    load: depth_load,
+                    load: wgpu::LoadOp::Clear(1.0),
                     store: wgpu::StoreOp::Store,
                 }),
                 stencil_ops: None,
@@ -327,18 +317,10 @@ impl GBufferRenderer {
         };
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &camera_bind_group, &[]);
-        // Of fragments that tie in depth, the forward pass's `Less` keeps the
-        // first drawn. On its own depth this pass tests `Less` too and draws
-        // in the forward order. On the forward depth it tests `LessEqual`
-        // without writing, so the last drawn lands: it draws the batches in
-        // reverse to keep the forward winner. The instances and triangles of
-        // one batch share its material.
-        let batches: Box<dyn Iterator<Item = &DrawBatch>> = if own_depth {
-            Box::new(draw_list.iter())
-        } else {
-            Box::new(draw_list.iter().rev())
-        };
-        for batch in batches.filter(|batch| batch.shader_id == self.pbr_shader_id) {
+        for batch in draw_list
+            .iter()
+            .filter(|batch| batch.shader_id == self.pbr_shader_id)
+        {
             let Some(material_group) = material_bind_groups
                 .get(&batch.mat_id)
                 .and_then(|groups| groups.get(&3))

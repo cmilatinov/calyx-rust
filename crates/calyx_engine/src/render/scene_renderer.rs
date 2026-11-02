@@ -17,10 +17,10 @@ use crate::render::postprocess::{
 };
 use crate::render::render_utils::RenderUtils;
 use crate::render::{
-    Camera, DrawBatch, GBufferRenderer, GBufferTargets, GBufferView, GizmoRenderer, GridRenderer,
-    LightManager, MeshRenderDefaults, MeshRenderTargets, MeshRenderer, OutlineRenderer,
-    ParticleRenderer, ParticleSimulation, PipelineOptions, ShadowCamera, ShadowFrameStats,
-    ShadowRenderer, SkyboxRenderer,
+    Camera, DeferredLightingRenderer, DrawBatch, GBufferRenderer, GBufferTargets, GBufferView,
+    GizmoRenderer, GridRenderer, LightManager, MeshRenderDefaults, MeshRenderTargets, MeshRenderer,
+    OutlineRenderer, ParticleRenderer, ParticleSimulation, PipelineOptions, ShadowCamera,
+    ShadowFrameStats, ShadowRenderer, SkyboxRenderer,
 };
 use crate::scene::{GameObject, Scene};
 use crate::utils::TypeUuid;
@@ -108,8 +108,8 @@ pub struct SceneRendererOptions {
     /// and no shadow map is allocated, as thumbnails need.
     pub shadows: bool,
     /// The G-buffer target the view shows in place of the lit image, or
-    /// `None` for the lit image. While it is `None` the geometry pass does
-    /// not run and the G-buffer is not allocated.
+    /// `None` for the lit image. The G-buffer is the one the frame shades
+    /// from.
     pub gbuffer_view: Option<GBufferView>,
 }
 
@@ -241,6 +241,7 @@ pub struct SceneRenderer {
     light_manager: LightManager,
     shadow_renderer: ShadowRenderer,
     gbuffer_renderer: GBufferRenderer,
+    deferred_lighting: DeferredLightingRenderer,
     gizmo_renderer: GizmoRenderer,
     outline_renderer: OutlineRenderer,
     particle_renderer: ParticleRenderer,
@@ -325,6 +326,7 @@ impl SceneRenderer {
         let mesh_renderer = MeshRenderer::new(context)?;
         let shadow_renderer = ShadowRenderer::new(context)?;
         let gbuffer_renderer = GBufferRenderer::new(context)?;
+        let deferred_lighting = DeferredLightingRenderer::new(context)?;
         let skybox_renderer = SkyboxRenderer::new(context)?;
 
         let camera_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -387,6 +389,7 @@ impl SceneRenderer {
             light_manager: Default::default(),
             shadow_renderer,
             gbuffer_renderer,
+            deferred_lighting,
             gizmo_renderer,
             outline_renderer,
             particle_renderer,
@@ -424,8 +427,8 @@ impl SceneRenderer {
         self.shadow_renderer.allocated()
     }
 
-    /// The G-buffer the last [`Self::render_scene_base`] drew, or `None`
-    /// when no G-buffer view was selected, and the geometry pass did not run.
+    /// The G-buffer the last [`Self::render_scene_base`] drew and shaded the
+    /// PBR meshes from, or `None` before the first frame.
     pub fn gbuffer(&self) -> Option<&GBufferTargets> {
         self.gbuffer_renderer.targets()
     }
@@ -433,12 +436,6 @@ impl SceneRenderer {
     /// Instances the last frame's geometry pass drew.
     pub fn gbuffer_drawn_instances(&self) -> u32 {
         self.gbuffer_renderer.drawn_instances()
-    }
-
-    /// Whether this frame needs the G-buffer: only a G-buffer view reads it
-    /// until the deferred lighting pass lands.
-    fn gbuffer_needed(&self) -> bool {
-        self.options.gbuffer_view.is_some()
     }
 
     /// Returns the current renderer options.
@@ -550,50 +547,65 @@ impl SceneRenderer {
             &material_bind_groups,
             &draw_list,
         );
-        {
+        let lighting = {
             let black_texture_cube = self.default_assets.black_texture_cube.read();
             let black_texture_2d = self.default_assets.black_texture_2d.read();
-            self.mesh_renderer.render(
+            self.mesh_renderer.lighting_bind_groups(
                 device,
-                &mut encoder,
+                queue,
                 &assets,
-                &material_bind_groups,
                 MeshRenderDefaults {
                     black_texture_2d: &black_texture_2d,
                     black_texture_cube: &black_texture_cube,
                 },
-                MeshRenderTargets {
-                    color: &self.scene_texture_msaa,
-                    depth: &self.scene_depth_texture,
-                },
-                queue,
                 &self.light_manager,
                 &self.shadow_renderer.bindings(),
                 &self.camera_uniform_buffer,
-                self.options.clear_color,
-                &options,
                 self.skybox_renderer.skybox_id(),
                 self.sky_light_intensity,
                 self.light_manager.ambient_light(),
-                &draw_list,
-            );
-        }
-        // The geometry pass tests against the depth the forward pass just
-        // wrote, so the G-buffer holds the surfaces the lit image shows.
-        if self.gbuffer_needed() {
-            self.gbuffer_renderer.render(
-                &render_context,
-                &mut encoder,
-                &assets,
-                &material_bind_groups,
-                &draw_list,
-                &self.camera_uniform_buffer,
-                &self.scene_depth_texture,
-                self.options.mesh_cull_mode,
-            );
-        } else {
-            self.gbuffer_renderer.release();
-        }
+            )
+        };
+        let mesh_targets = MeshRenderTargets {
+            color: &self.scene_texture_msaa,
+            depth: &self.scene_depth_texture,
+        };
+        // The geometry pass draws the PBR meshes and owns the depth, the
+        // lighting pass shades them, and the forward pass draws every other
+        // mesh after them, against the deferred depth.
+        self.gbuffer_renderer.render(
+            &render_context,
+            &mut encoder,
+            &assets,
+            &material_bind_groups,
+            &draw_list,
+            &self.camera_uniform_buffer,
+            &self.scene_depth_texture,
+            self.options.mesh_cull_mode,
+        );
+        let gbuffer = self
+            .gbuffer_renderer
+            .targets()
+            .expect("the geometry pass just drew the G-buffer");
+        self.deferred_lighting.render(
+            &render_context,
+            &mut encoder,
+            gbuffer,
+            gbuffer.own_depth().unwrap_or(&self.scene_depth_texture),
+            &lighting,
+            &self.scene_texture_msaa,
+            &self.scene_depth_texture,
+            self.options.clear_color,
+        );
+        self.mesh_renderer.render(
+            &mut encoder,
+            &assets,
+            &material_bind_groups,
+            &lighting,
+            mesh_targets,
+            &options,
+            &draw_list,
+        );
         self.mesh_renderer.render_object_ids(
             device,
             &mut encoder,
@@ -3354,6 +3366,7 @@ mod tests {
         const SAMPLES: u32 = 4;
         const SIZE: u32 = 64;
         let assets = TestAssets::engine();
+        write_unlit_shader(&assets);
         let context = assets.asset_context();
         let read_only_context = context.lock_read();
         let render_context = read_only_context.render_context.clone();
@@ -3382,7 +3395,13 @@ mod tests {
             .read()
             .cube()
             .expect("missing cube mesh");
-        let material = pbr_material(&read_only_context, "test/msaa_material");
+        // PBR meshes shade from the single-sample G-buffer, so the cube is
+        // a forward draw, whose edges are multisampled.
+        let material = unlit_material(
+            &read_only_context,
+            "test/msaa_material",
+            [0.0, 0.0, 0.0, 1.0],
+        );
         let mut builder = SceneBuilder::new(read_only_context.registries.clone());
         let game_object = builder.spawn("cube");
         builder.add_component(
@@ -4184,9 +4203,7 @@ mod tests {
                 SIZE,
                 Some(GBufferView::Albedo),
             );
-            let gbuffer = renderer
-                .gbuffer()
-                .expect("a G-buffer view draws the G-buffer");
+            let gbuffer = renderer.gbuffer().expect("the frame draws the G-buffer");
             assert_eq!(gbuffer.size(), SIZE);
 
             let albedo = read_texel(&render_context, &gbuffer.albedo, center);
@@ -4309,8 +4326,8 @@ mod tests {
         let scene = builder.finish();
         let center = (SIZE.0 / 2, SIZE.1 / 2);
 
-        // At one sample the pass shares the forward depth; above one it
-        // draws against its own.
+        // The geometry pass draws the depth itself, at one sample into the
+        // scene depth and above one into its own.
         for samples in [1, 4] {
             if !supports_samples(
                 &render_context,
@@ -4442,7 +4459,7 @@ mod tests {
     }
 
     #[test]
-    fn the_geometry_pass_runs_only_while_a_gbuffer_view_is_selected() {
+    fn every_frame_draws_the_gbuffer_which_resizes_with_the_scene() {
         const SIZE: (u32, u32) = (16, 16);
         let assets = TestAssets::engine();
         let context = assets.asset_context();
@@ -4453,25 +4470,26 @@ mod tests {
             .read()
             .cube()
             .expect("missing cube mesh");
-        let material = pbr_material(&read_only_context, "test/gbuffer_toggle");
+        let material = pbr_material(&read_only_context, "test/gbuffer_every_frame");
         let mut builder = SceneBuilder::new(read_only_context.registries.clone());
         spawn_mesh(&mut builder, "box", &cube, &material, Vec3::zeros());
         let scene = builder.finish();
         let (camera, transform) = front_camera(1.0, 5.0);
         let mut renderer = renderer(&read_only_context, 1, SIZE);
+        assert!(renderer.gbuffer().is_none(), "no G-buffer before a frame");
         let frame = |renderer: &mut SceneRenderer| {
             renderer.render_scene_base(&camera, &transform, &scene, None, None);
             renderer.finalize_scene();
             (
-                renderer.gbuffer().is_some(),
+                renderer.gbuffer().map(GBufferTargets::size),
                 renderer.gbuffer_drawn_instances(),
             )
         };
 
         assert_eq!(
             frame(&mut renderer),
-            (false, 0),
-            "the forward frame draws no G-buffer"
+            (Some(SIZE), 1),
+            "the lit frame draws the box into the G-buffer"
         );
         assert!(
             !renderer.last_post_process_plan().passes.is_empty(),
@@ -4480,8 +4498,8 @@ mod tests {
         renderer.options_mut().gbuffer_view = Some(GBufferView::Normals);
         assert_eq!(
             frame(&mut renderer),
-            (true, 1),
-            "a G-buffer view draws the box"
+            (Some(SIZE), 1),
+            "a G-buffer view shows the same G-buffer"
         );
         renderer.resize_textures(24, 20);
         assert_eq!(
@@ -4489,8 +4507,7 @@ mod tests {
             Some((24, 20)),
             "the G-buffer resizes with the scene textures"
         );
-        renderer.options_mut().gbuffer_view = None;
-        assert_eq!(frame(&mut renderer), (false, 0), "the G-buffer is released");
+        assert_eq!(frame(&mut renderer), (Some((24, 20)), 1));
     }
 
     #[test]
@@ -4537,6 +4554,498 @@ mod tests {
                 image.get_pixel(0, 0).0,
                 [0, 0, 0, 255],
                 "{view:?}: where nothing is drawn the view is black"
+            );
+        }
+    }
+
+    /// A PBR material registered as `name`, with each of `variables` set.
+    fn pbr_material_with(
+        context: &ReadOnlyAssetContext,
+        name: &str,
+        variables: Vec<(&str, ShaderVariableValue)>,
+    ) -> Ref<Material> {
+        let material = pbr_material(context, name);
+        {
+            let mut material = material.write();
+            for (variable, value) in variables {
+                assert!(material.set_variable(variable, value), "{variable}");
+            }
+        }
+        material
+    }
+
+    /// A rough grey dielectric: base color 0.5, metallic 0, roughness 1.
+    /// At roughness 1 the GGX distribution is 1/pi whatever the half vector.
+    fn rough_grey(context: &ReadOnlyAssetContext, name: &str) -> Ref<Material> {
+        pbr_material_with(
+            context,
+            name,
+            vec![
+                (
+                    "base_color_factor",
+                    ShaderVariableValue::Color([0.5, 0.5, 0.5, 1.0]),
+                ),
+                ("metallic", ShaderVariableValue::Float(0.0)),
+                ("roughness", ShaderVariableValue::Float(1.0)),
+            ],
+        )
+    }
+
+    /// The radiance [`rough_grey`] reflects towards `v` from unit radiance
+    /// arriving along `l` at a surface with normal `n`, worked out from the
+    /// Cook-Torrance terms of `shaders/common/pbr_utils.wgsl`: at roughness 1,
+    /// D = 1/pi and k = 1/2, so G1(x) = n.x / (n.x / 2 + 1/2); F is
+    /// 0.04 + 0.96 (1 - v.h)^5; the diffuse term is (1 - F) albedo / pi.
+    fn rough_grey_radiance(n: Vec3, v: Vec3, l: Vec3) -> f32 {
+        let albedo = 0.5;
+        let h = (v + l).normalize();
+        let n_dot_l = n.dot(&l).max(0.0);
+        let n_dot_v = n.dot(&v).max(0.0);
+        let g1 = |x: f32| x / (x * 0.5 + 0.5);
+        let f = 0.04 + 0.96 * (1.0 - v.dot(&h).clamp(0.0, 1.0)).powi(5);
+        let d = 1.0 / std::f32::consts::PI;
+        let specular = d * g1(n_dot_v) * g1(n_dot_l) * f / (4.0 * n_dot_v * n_dot_l).max(1e-6);
+        ((1.0 - f) * albedo / std::f32::consts::PI + specular) * n_dot_l
+    }
+
+    /// `light_distance_attenuation` of `shaders/common/lights.wgsl`, as its
+    /// comment states it: saturate(1 - (d / r)^4)^2 / (d^2 + 1).
+    fn distance_attenuation(distance: f32, range: f32) -> f32 {
+        let ratio = distance / range;
+        let window = (1.0 - ratio.powi(4)).clamp(0.0, 1.0);
+        window * window / (distance * distance + 1.0)
+    }
+
+    /// The linear HDR radiance the last frame shaded at `pixel`, as the
+    /// post-processing chain reads it: the single-sample scene target, or its
+    /// resolve above one sample.
+    fn hdr_texel(
+        renderer: &SceneRenderer,
+        render_context: &RenderContext,
+        pixel: (u32, u32),
+    ) -> Vec3 {
+        let texture = renderer
+            .hdr_resolved
+            .as_ref()
+            .unwrap_or(&renderer.scene_texture_msaa);
+        let [r, g, b, _] = halves(&read_texel(render_context, texture, pixel));
+        vec3(r, g, b)
+    }
+
+    /// Renders one frame of `scene` from `camera` at `samples` over a black
+    /// clear color, with shadows, and returns the renderer.
+    fn render_lit(
+        context: &ReadOnlyAssetContext,
+        scene: &Scene,
+        (camera, transform): &(Camera, Transform),
+        samples: u32,
+        size: (u32, u32),
+    ) -> SceneRenderer {
+        let mut renderer = SceneRenderer::new(
+            context,
+            SceneRendererOptions {
+                samples,
+                clear_color: Color32::BLACK,
+                shadows: true,
+                ..Default::default()
+            },
+            size,
+        )
+        .expect("scene renderer should load its assets");
+        renderer.render_scene_base(camera, transform, scene, None, None);
+        renderer.finalize_scene();
+        renderer
+    }
+
+    /// Whether `samples` can render, as the scene renderer's targets need.
+    fn renders_at(render_context: &RenderContext, samples: u32) -> bool {
+        supports_samples(
+            render_context,
+            wgpu::TextureFormat::Rgba16Float,
+            samples,
+            true,
+        ) && supports_samples(
+            render_context,
+            wgpu::TextureFormat::Depth32Float,
+            samples,
+            false,
+        )
+    }
+
+    fn assert_radiance(actual: Vec3, expected: f32, what: &str) {
+        // The G-buffer stores the base color as sRGB bytes, 0.6% off at 0.5.
+        let tolerance = 0.02 * expected + 0.002;
+        assert!(
+            actual.iter().all(|c| (c - expected).abs() <= tolerance),
+            "{what}: expected {expected} in every channel, got {actual:?}"
+        );
+    }
+
+    /// The rough grey ground of [`overhead_camera`]'s scenes: top face at
+    /// y = 0.05, spanning -4..4 in X and Z.
+    fn spawn_rough_ground(builder: &mut SceneBuilder, context: &ReadOnlyAssetContext) {
+        let cube = context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let ground = rough_grey(context, "test/deferred_ground");
+        spawn_box(
+            builder,
+            "ground",
+            &cube,
+            &ground,
+            Vec3::zeros(),
+            vec3(8.0, 0.1, 8.0),
+        );
+    }
+
+    #[test]
+    fn an_overhead_sun_and_a_point_light_light_a_rough_plane_to_their_known_radiance() {
+        const SIZE: (u32, u32) = (32, 32);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        let camera = overhead_camera();
+        let center = (SIZE.0 / 2, SIZE.1 / 2);
+        let up = Vec3::y();
+
+        // The sun straight down: light, normal and view all along +Y at the
+        // center, so the radiance is 3 (0.96 * 0.5 + 0.04 / 4) / pi.
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        spawn_rough_ground(&mut builder, &read_only_context);
+        let sun = builder.spawn("sun");
+        builder.add_component(
+            sun,
+            crate::component::ComponentDirectionalLight {
+                intensity: 3.0,
+                ..Default::default()
+            },
+        );
+        builder.set_transform(sun, pointing(-Vec3::y()));
+        let sun_scene = builder.finish();
+        let sun_radiance = 3.0 * 0.49 / std::f32::consts::PI;
+        assert!((3.0 * rough_grey_radiance(up, up, up) - sun_radiance).abs() < 1e-6);
+
+        // A point light 2 units over the center, inside its range of 10.
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        spawn_rough_ground(&mut builder, &read_only_context);
+        let point = builder.spawn("point");
+        builder.add_component(
+            point,
+            crate::component::ComponentPointLight {
+                radius: 10.0,
+                color: Color32::WHITE,
+                intensity: 5.0,
+            },
+        );
+        builder.set_transform(point, glm::translation(&vec3(0.0, 2.05, 0.0)));
+        let point_scene = builder.finish();
+        let point_radiance = 5.0 * distance_attenuation(2.0, 10.0) * 0.49 / std::f32::consts::PI;
+
+        for samples in [1, 4] {
+            if !renders_at(&render_context, samples) {
+                continue;
+            }
+            for (scene, expected, what) in [
+                (&sun_scene, sun_radiance, "the overhead sun"),
+                (&point_scene, point_radiance, "the point light 2 units up"),
+            ] {
+                let renderer = render_lit(&read_only_context, scene, &camera, samples, SIZE);
+                assert_radiance(
+                    hdr_texel(&renderer, &render_context, center),
+                    expected,
+                    &format!("{what} at {samples} samples"),
+                );
+                assert_eq!(
+                    renderer.gbuffer_drawn_instances(),
+                    1,
+                    "the plane is shaded from the G-buffer"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_shadowed_point_is_unlit_and_an_unshadowed_one_gets_the_suns_known_radiance() {
+        const SIZE: (u32, u32) = (128, 128);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        spawn_rough_ground(&mut builder, &read_only_context);
+        let occluder = rough_grey(&read_only_context, "test/deferred_occluder");
+        sun_over_box(&mut builder, &read_only_context, &cube, &occluder);
+        let scene = builder.finish();
+        let camera = overhead_camera();
+        // `spawn_sun`'s sun: intensity 3 travelling along (1, -1, 0).
+        let l = vec3(-1.0, 1.0, 0.0).normalize();
+        let v = (camera.1.position - BOX_LIT).normalize();
+        let lit_radiance = 3.0 * rough_grey_radiance(Vec3::y(), v, l);
+
+        for samples in [1, 4] {
+            if !renders_at(&render_context, samples) {
+                continue;
+            }
+            let renderer = render_lit(&read_only_context, &scene, &camera, samples, SIZE);
+            let at = |point| {
+                hdr_texel(
+                    &renderer,
+                    &render_context,
+                    project(&camera.0, &camera.1, point, SIZE),
+                )
+            };
+            assert_radiance(
+                at(BOX_LIT),
+                lit_radiance,
+                &format!("the unshadowed point at {samples} samples"),
+            );
+            let shadowed = at(BOX_SHADOW);
+            assert!(
+                shadowed.max() < 0.005,
+                "the box's shadow is unlit with no ambient light at {samples} samples, got \
+                 {shadowed:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn emission_shows_through_an_alpha_cutoff_hole_and_a_kept_cutout_covers_it() {
+        const SIZE: (u32, u32) = (64, 64);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        // Black base colors and no light: each pixel is its emission alone.
+        let glowing = |name: &str, color: [f32; 4], strength: f32, alpha: f32| {
+            pbr_material_with(
+                &read_only_context,
+                name,
+                vec![
+                    (
+                        "base_color_factor",
+                        ShaderVariableValue::Color([0.0, 0.0, 0.0, alpha]),
+                    ),
+                    ("emission_color", ShaderVariableValue::Color(color)),
+                    ("emission_strength", ShaderVariableValue::Float(strength)),
+                    ("alpha_cutoff", ShaderVariableValue::Float(0.5)),
+                ],
+            )
+        };
+        let wall = glowing("test/deferred_wall", [0.0, 1.0, 0.0, 1.0], 2.0, 1.0);
+        let hole = glowing("test/deferred_hole", [1.0, 0.0, 0.0, 1.0], 1.0, 0.25);
+        let kept = glowing("test/deferred_kept", [0.0, 0.0, 1.0, 1.0], 0.5, 0.75);
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        spawn_box(
+            &mut builder,
+            "wall",
+            &cube,
+            &wall,
+            vec3(0.0, 0.0, 3.0),
+            vec3(4.0, 4.0, 0.1),
+        );
+        spawn_box(
+            &mut builder,
+            "hole",
+            &cube,
+            &hole,
+            vec3(-0.8, 0.0, 0.0),
+            Vec3::repeat(1.0),
+        );
+        spawn_box(
+            &mut builder,
+            "kept",
+            &cube,
+            &kept,
+            vec3(0.8, 0.0, 0.0),
+            Vec3::repeat(1.0),
+        );
+        let scene = builder.finish();
+        let camera = front_camera(1.0, 5.0);
+
+        for samples in [1, 4] {
+            if !renders_at(&render_context, samples) {
+                continue;
+            }
+            let renderer = render_lit(&read_only_context, &scene, &camera, samples, SIZE);
+            let at = |point| {
+                hdr_texel(
+                    &renderer,
+                    &render_context,
+                    project(&camera.0, &camera.1, point, SIZE),
+                )
+            };
+            assert_near(
+                at(vec3(-0.8, 0.0, -0.5)),
+                vec3(0.0, 2.0, 0.0),
+                &format!("the wall's emission through the hole at {samples} samples"),
+            );
+            assert_near(
+                at(vec3(0.8, 0.0, -0.5)),
+                vec3(0.0, 0.0, 0.5),
+                &format!("the kept cutout's emission at {samples} samples"),
+            );
+            assert_near(
+                hdr_texel(&renderer, &render_context, (0, 0)),
+                Vec3::zeros(),
+                &format!("the clear color where nothing is drawn at {samples} samples"),
+            );
+        }
+    }
+
+    /// A mesh shader other than the PBR one, which keeps the forward path:
+    /// it binds the PBR lighting's groups but draws its material's flat
+    /// `color`, unlit.
+    const UNLIT_SHADER: &str = r#"//#include "shaders/mesh/pbr_vertex.wgsl"
+//#include "shaders/common/pbr_lighting.wgsl"
+
+struct UnlitProperties {
+    color: vec4f,
+};
+
+@group(3) @binding(0)
+var<uniform> unlit: UnlitProperties;
+
+@fragment
+fn fs_main(in: PbrVertexOut) -> @location(0) vec4f {
+    return vec4f(unlit.color.rgb, 1.0);
+}
+"#;
+
+    /// Writes [`UNLIT_SHADER`] into `assets` as `shaders/test/unlit`, before
+    /// their asset context loads.
+    fn write_unlit_shader(assets: &TestAssets) {
+        let path = assets.engine_root().join("shaders/test/unlit.wgsl");
+        std::fs::create_dir_all(path.parent().expect("a parent"))
+            .expect("the test shader folder is created");
+        std::fs::write(&path, UNLIT_SHADER).expect("the test shader is written");
+    }
+
+    /// A material of the unlit test shader, registered as `name`.
+    fn unlit_material(
+        context: &ReadOnlyAssetContext,
+        name: &str,
+        color: [f32; 4],
+    ) -> Ref<Material> {
+        let registry = context.registries.assets.read();
+        let shader = registry
+            .load::<Shader>("shaders/test/unlit")
+            .expect("the unlit test shader loads");
+        let mut material = Material::from_shader(context, shader);
+        assert!(material.set_variable("color", ShaderVariableValue::Color(color)));
+        registry
+            .create_or_update(name.into(), material)
+            .expect("material should be created")
+    }
+
+    #[test]
+    fn forward_only_draws_follow_the_deferred_lighting_against_its_depth() {
+        const SIZE: (u32, u32) = (64, 64);
+        let assets = TestAssets::engine();
+        write_unlit_shader(&assets);
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let unlit = unlit_material(
+            &read_only_context,
+            "test/forward_unlit",
+            [1.0, 0.0, 1.0, 1.0],
+        );
+        // A box glowing green, with no light: its radiance is its emission.
+        let green = pbr_material_with(
+            &read_only_context,
+            "test/forward_green",
+            vec![
+                (
+                    "base_color_factor",
+                    ShaderVariableValue::Color([0.0, 0.0, 0.0, 1.0]),
+                ),
+                (
+                    "emission_color",
+                    ShaderVariableValue::Color([0.0, 1.0, 0.0, 1.0]),
+                ),
+                ("emission_strength", ShaderVariableValue::Float(1.0)),
+            ],
+        );
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        spawn_mesh(&mut builder, "green", &cube, &green, Vec3::zeros());
+        // An unlit box in front of the green one, on its left, and one
+        // behind it, wider, on its right.
+        spawn_box(
+            &mut builder,
+            "front",
+            &cube,
+            &unlit,
+            vec3(-0.6, 0.0, -1.0),
+            Vec3::repeat(0.6),
+        );
+        spawn_box(
+            &mut builder,
+            "behind",
+            &cube,
+            &unlit,
+            vec3(0.6, 0.0, 1.5),
+            Vec3::repeat(1.2),
+        );
+        let scene = builder.finish();
+        let camera = front_camera(1.0, 5.0);
+        let magenta = vec3(1.0, 0.0, 1.0);
+        let green = vec3(0.0, 1.0, 0.0);
+
+        // Above one sample the forward draws test against the G-buffer depth
+        // the lighting pass copied into the multisampled scene depth.
+        for samples in [1, 4] {
+            if !renders_at(&render_context, samples) {
+                continue;
+            }
+            let renderer = render_lit(&read_only_context, &scene, &camera, samples, SIZE);
+            assert_eq!(
+                renderer.gbuffer_drawn_instances(),
+                1,
+                "only the PBR box enters the G-buffer"
+            );
+            let at = |point| {
+                hdr_texel(
+                    &renderer,
+                    &render_context,
+                    project(&camera.0, &camera.1, point, SIZE),
+                )
+            };
+            assert_near(
+                at(vec3(-0.6, 0.0, -1.3)),
+                magenta,
+                &format!("the unlit box in front covers the green one at {samples} samples"),
+            );
+            assert_near(
+                at(vec3(0.25, 0.0, -0.5)),
+                green,
+                &format!("the green box hides the unlit one behind it at {samples} samples"),
+            );
+            assert_near(
+                at(vec3(0.95, 0.0, 0.9)),
+                magenta,
+                &format!("the unlit box behind shows beside the green one at {samples} samples"),
             );
         }
     }

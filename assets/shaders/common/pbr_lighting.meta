@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "7a78a79d-26f9-46e4-bb68-d9c1993544f6",
+    "name": "shaders/common/pbr_lighting",
+    "display_name": "pbr_lighting",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

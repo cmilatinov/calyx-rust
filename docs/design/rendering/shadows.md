@@ -138,18 +138,18 @@ lit and 0 in shadow, and 1 for a light whose `shadow_index` is -1.
   spot light's grows with distance from the light. A point outside a map is
   lit.
 
-## Render paths
+## Lighting pass
 
 The lookups need only the world position and the geometric normal of the
 shaded point, and the scene camera's `CameraUniforms` in group 0, which every
-lighting pass binds, so a deferred lighting pass includes
+lighting pass binds, so the deferred lighting pass includes
 `shaders/common/shadows.wgsl` unchanged.
 
-- Forward: `pbr.wgsl` multiplies each directional and spot light's direct term
-  by its shadow factor. Ambient light and image-based lighting are never
-  shadowed.
-- Deferred (#446, not landed yet): its lighting pass binds the camera in group 0, the same group 2 resources and
-  calls the same two functions with the G-buffer's world position and normal.
+- The deferred lighting pass shades every PBR mesh through `pbr_lighting` of
+  `shaders/common/pbr_lighting.wgsl`, which multiplies each directional and
+  spot light's direct term by its shadow factor, looked up with the world
+  position rebuilt from the depth and the G-buffer's geometric normal.
+  Ambient light and image-based lighting are never shadowed.
 
 ## Budget
 
