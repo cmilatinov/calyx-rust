@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "d782feee-9293-54f0-9996-a3b208a3571b",
+    "name": "rpg_poly/models/survival/workbench",
+    "display_name": "workbench",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}

@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "3d66aad3-7e57-5fd5-b40c-1703916ea952",
+    "name": "rpg_poly/models/survival/signpost",
+    "display_name": "signpost",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}

@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "9d50c5e7-35f7-5ddb-a1d9-fa3cc702ba34",
+    "name": "rpg_poly/models/survival/campfire-pit",
+    "display_name": "campfire-pit",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}

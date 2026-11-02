@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "55e2f240-b17d-504f-97da-d14b4220002e",
+    "name": "rpg_poly/models/survival/chest",
+    "display_name": "chest",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}

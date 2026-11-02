@@ -8,6 +8,7 @@ members = [
     "crates/calyx_remote_protocol",
     "crates/calyx_ctl",
     "sandbox",
+    "demos",
 ]
 resolver = "2"
 

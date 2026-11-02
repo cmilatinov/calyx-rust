@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "cec61f44-0dc7-557a-b21e-041c89a40e0c",
+    "name": "rpg_poly/models/nature/stump_round_woodInner",
+    "display_name": "stump_round_woodInner",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}

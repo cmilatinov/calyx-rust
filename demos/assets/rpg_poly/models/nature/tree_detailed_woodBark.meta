@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "48eeeddd-c98a-5247-99e9-fef5accab08a",
+    "name": "rpg_poly/models/nature/tree_detailed_woodBark",
+    "display_name": "tree_detailed_woodBark",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}

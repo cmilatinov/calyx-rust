@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "b8ef2ffe-1a8a-512c-9200-786fdfdd868d",
+    "name": "rpg_poly/models/town/wall-wood",
+    "display_name": "wall-wood",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}

@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "2d3286f8-bbe2-5800-9394-077c5093e772",
+    "name": "rpg_poly/models/survival/bucket",
+    "display_name": "bucket",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}

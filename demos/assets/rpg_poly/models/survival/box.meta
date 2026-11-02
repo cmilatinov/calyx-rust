@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "c60ce576-cc6d-573a-aa23-a3c83bca57aa",
+    "name": "rpg_poly/models/survival/box",
+    "display_name": "box",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}

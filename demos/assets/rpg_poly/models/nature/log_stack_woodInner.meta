@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "24221c65-da43-50d3-b40d-ae8d47c012e9",
+    "name": "rpg_poly/models/nature/log_stack_woodInner",
+    "display_name": "log_stack_woodInner",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}

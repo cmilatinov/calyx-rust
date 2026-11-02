@@ -1,0 +1,18 @@
+[package]
+name = "demos"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "demos"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+calyx_engine = { path = "../crates/calyx_engine" }
+serde.workspace = true
+inventory.workspace = true
+legion.workspace = true
+serde_json.workspace = true
+nalgebra.workspace = true
+nalgebra-glm.workspace = true

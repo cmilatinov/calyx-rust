@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "58f08ee3-c842-5da6-ba1e-d898a6e6275b",
+    "name": "rpg_poly/models/town/stall-bench",
+    "display_name": "stall-bench",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}

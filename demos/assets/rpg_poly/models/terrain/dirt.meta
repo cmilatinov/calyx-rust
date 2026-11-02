@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "a9c53301-871a-51e8-aa3a-aadb22bd29b8",
+    "name": "rpg_poly/models/terrain/dirt",
+    "display_name": "dirt",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}
