@@ -499,7 +499,8 @@ impl SceneRenderer {
             })])
             .build();
         self.build_asset_data(&render_context, scene);
-        self.post_process_settings = PostProcessSettings::resolve(scene);
+        self.post_process_settings =
+            PostProcessSettings::resolve(scene, &camera_transform.position);
         if self.options.gizmos {
             let object_id_lookup = &mut self.object_id_lookup;
             let object_ids_build = &mut self.object_ids_build;

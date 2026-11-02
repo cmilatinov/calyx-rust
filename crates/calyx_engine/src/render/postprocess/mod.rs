@@ -3,6 +3,7 @@
 //!
 //! See `docs/design/post-processing/architecture.md`.
 
+pub use blend::*;
 pub use bloom::*;
 pub use chain::*;
 pub use color_grading::*;
@@ -15,6 +16,7 @@ pub use settings::*;
 pub use ssao::*;
 pub use tonemap::*;
 
+mod blend;
 mod bloom;
 mod chain;
 mod color_grading;
@@ -27,5 +29,7 @@ mod settings;
 mod ssao;
 mod tonemap;
 
+#[cfg(test)]
+mod local_volume_tests;
 #[cfg(test)]
 mod tests;

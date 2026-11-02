@@ -13,6 +13,7 @@ use crate::scene::{GameObject, Scene};
 use crate::test_support::{test_adapter, test_registries, SceneBuilder, TestAssets};
 use egui::Color32;
 use egui_wgpu::wgpu;
+use nalgebra_glm::Vec3;
 use std::sync::{Arc, Mutex};
 
 const SIZE: u32 = 4;
@@ -1000,7 +1001,7 @@ fn a_volume_without_effect_components_resolves_to_tone_mapping_alone() {
         Some(game_object)
     );
     assert_eq!(
-        PostProcessSettings::resolve(&scene),
+        PostProcessSettings::resolve(&scene, &Vec3::zeros()),
         PostProcessSettings::default()
     );
 }
@@ -1021,7 +1022,7 @@ fn effects_are_gathered_from_the_selected_volumes_game_object_only() {
     let stray = scene.create(None, None);
     scene.add_component(stray, ComponentVignette::default());
 
-    let settings = PostProcessSettings::resolve(&scene);
+    let settings = PostProcessSettings::resolve(&scene, &Vec3::zeros());
     assert_eq!(settings.tonemapping.exposure_ev, -1.0);
     assert_eq!(
         settings.anti_aliasing,
@@ -1032,7 +1033,7 @@ fn effects_are_gathered_from_the_selected_volumes_game_object_only() {
 
     // Disabling the winning volume hands the frame to the other one.
     scene.set_component_enabled::<ComponentGlobalPostProcessVolume>(high, false);
-    let settings = PostProcessSettings::resolve(&scene);
+    let settings = PostProcessSettings::resolve(&scene, &Vec3::zeros());
     assert_eq!(settings.tonemapping.exposure_ev, 1.0);
     assert_eq!(settings.bloom, Some(bloom));
     assert_eq!(settings.anti_aliasing, None);
@@ -1044,19 +1045,21 @@ fn a_disabled_tone_mapping_component_falls_back_to_the_defaults() {
     let mut scene = registries.scene();
     let game_object = spawn_volumes(&mut scene, &[volume(true, 0, 2.0)])[0];
     assert_eq!(
-        PostProcessSettings::resolve(&scene).tonemapping.exposure_ev,
+        PostProcessSettings::resolve(&scene, &Vec3::zeros())
+            .tonemapping
+            .exposure_ev,
         2.0
     );
     assert!(scene.set_component_enabled::<ComponentTonemap>(game_object, false));
     assert_eq!(
-        PostProcessSettings::resolve(&scene).tonemapping,
+        PostProcessSettings::resolve(&scene, &Vec3::zeros()).tonemapping,
         ComponentTonemap::default()
     );
 }
 
 /// The names of the passes `passes` plans for `scene`'s settings.
 fn planned(passes: &[Box<dyn PostProcessPass>], scene: &Scene) -> Vec<String> {
-    ChainPlan::build(passes, &PostProcessSettings::resolve(scene))
+    ChainPlan::build(passes, &PostProcessSettings::resolve(scene, &Vec3::zeros()))
         .passes
         .iter()
         .map(|planned| passes[planned.pass].name().to_string())

@@ -13,9 +13,9 @@ use crate::component::{
     ComponentAmbientLight, ComponentAmbientOcclusion, ComponentAnimator, ComponentAntiAliasing,
     ComponentBloom, ComponentBone, ComponentCamera, ComponentCollider, ComponentColorGrading,
     ComponentDepthOfField, ComponentDirectionalLight, ComponentGlobalPostProcessVolume,
-    ComponentID, ComponentMesh, ComponentParticleSystem, ComponentPointLight, ComponentRigidBody,
-    ComponentSkinnedMesh, ComponentSkyLight, ComponentSpotLight, ComponentTonemap,
-    ComponentTransform, ComponentVignette,
+    ComponentID, ComponentLocalPostProcessVolume, ComponentMesh, ComponentParticleSystem,
+    ComponentPointLight, ComponentRigidBody, ComponentSkinnedMesh, ComponentSkyLight,
+    ComponentSpotLight, ComponentTonemap, ComponentTransform, ComponentVignette,
 };
 use crate::context::ReadOnlyRegistryContext;
 use crate::input::Input;
@@ -95,6 +95,7 @@ fn only_types_whose_systems_honor_the_state_opt_in() {
         ComponentCollider::type_uuid(),
         ComponentRigidBody::type_uuid(),
         ComponentGlobalPostProcessVolume::type_uuid(),
+        ComponentLocalPostProcessVolume::type_uuid(),
         ComponentTonemap::type_uuid(),
         ComponentAmbientOcclusion::type_uuid(),
         ComponentDepthOfField::type_uuid(),

@@ -42,6 +42,20 @@ impl EditorCamera {
         map.bind_action(BOOST, InputBinding::Modifier(Modifiers::CTRL));
         map
     }
+
+    /// Turns the camera to face `target`, a world point, upright. Returns
+    /// `false`, and leaves it as it was, when `target` is its own position.
+    pub fn look_at(&mut self, target: &Vec3) -> bool {
+        let direction = target - self.transform.position;
+        if direction.magnitude() <= f32::EPSILON {
+            return false;
+        }
+        self.transform.rotation = UnitQuaternion::face_towards(&direction, &Vec3::y_axis());
+        // Flying turns the camera from these angles, so they follow the new
+        // rotation.
+        self.rotation = self.transform.rotation.pitch_yaw();
+        true
+    }
 }
 
 impl Default for EditorCamera {
@@ -123,5 +137,24 @@ mod tests {
         assert_eq!(input.axis(MOVE_UP), -1.0);
         assert!(input.action(BOOST).pressed());
         let _ = ctx.end_pass();
+    }
+
+    #[test]
+    fn look_at_faces_the_target_and_flying_turns_from_there() {
+        let mut camera = EditorCamera::default();
+        camera.transform.position = Vec3::new(0.0, 2.0, 0.0);
+        assert!(camera.look_at(&Vec3::new(3.0, 2.0, 4.0)));
+        let forward = camera.transform.forward();
+        assert!(
+            (forward - Vec3::new(0.6, 0.0, 0.8)).magnitude() < 1e-5,
+            "{forward}"
+        );
+        // The angles flying starts from match the new rotation.
+        let rebuilt = UnitQuaternion::from_euler_angles(camera.rotation.x, camera.rotation.y, 0.0);
+        assert!(rebuilt.angle_to(&camera.transform.rotation) < 1e-4);
+
+        let before = camera.transform;
+        assert!(!camera.look_at(&Vec3::new(0.0, 2.0, 0.0)));
+        assert_eq!(camera.transform.rotation, before.rotation);
     }
 }
