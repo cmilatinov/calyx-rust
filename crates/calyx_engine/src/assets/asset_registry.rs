@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::any::TypeId;
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
-use std::fs::{File, OpenOptions};
-use std::io::{BufReader, BufWriter};
+use std::fs::OpenOptions;
+use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::thread::{JoinHandle, ThreadId};
@@ -41,6 +41,8 @@ use crate::utils::TypeUuid;
 
 use super::skybox::Skybox;
 use super::LoadedAsset;
+
+mod meta_sync;
 
 /// Loads an asset file. Given the cached reference for the id, it writes the
 /// new value into that reference; otherwise it returns a new reference.
@@ -103,6 +105,12 @@ struct AssetData {
     /// another source, keeps its id but gets a new generation.
     generations: HashMap<Uuid, (u64, PathBuf)>,
     next_generation: u64,
+    /// Files the watcher reported without a `.meta`, with when it last
+    /// reported each; see [`meta_sync`].
+    pending: HashMap<PathBuf, Instant>,
+    /// Ids assets had before their `.meta` changed on disk to name another,
+    /// with the id each moved to; see [`meta_sync`].
+    aliases: HashMap<Uuid, Uuid>,
 }
 
 /// Loader registered for one asset type. Cloned out of the registry before it
@@ -305,10 +313,15 @@ impl AssetRegistry {
             registry
         });
         let watcher_registry_ref = registry_ref.clone();
-        registry_ref.write().watcher_thread = Some(std::thread::spawn(move || {
-            for event in watcher_rx.iter().flatten() {
-                watcher_registry_ref.read().recv_notify_event(event);
+        registry_ref.write().watcher_thread = Some(std::thread::spawn(move || loop {
+            match watcher_rx.recv_timeout(meta_sync::SETTLE_POLL) {
+                Ok(Ok(event)) => watcher_registry_ref.read().recv_notify_event(event),
+                Ok(Err(_)) | Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
             }
+            watcher_registry_ref
+                .read()
+                .register_settled_files(Instant::now());
         }));
         Ok(registry_ref)
     }
@@ -504,6 +517,7 @@ impl AssetRegistry {
     /// again while the load runs starts no second load. A failed load is
     /// reported until the asset's source file changes, then retried.
     pub fn load_by_id_in_background<A: Asset + TypeUuid>(&self, id: Uuid) -> BackgroundLoad<A> {
+        let id = self.resolve_asset_id(id);
         let mut loads = self
             .background_loads
             .lock()
@@ -622,7 +636,7 @@ impl AssetRegistry {
 
     /// Loads an asset by UUID as a type-erased handle.
     pub fn load_dyn_by_id(&self, id: Uuid) -> Result<Ref<dyn Asset>, AssetError> {
-        self.load_asset(id, LoadMode::Load, None)
+        self.load_asset(self.resolve_asset_id(id), LoadMode::Load, None)
     }
 
     fn load_typed<A: Asset + TypeUuid>(
@@ -630,6 +644,7 @@ impl AssetRegistry {
         id: Uuid,
         mode: LoadMode,
     ) -> Result<Ref<A>, AssetError> {
+        let id = self.resolve_asset_id(id);
         self.load_asset(id, mode, Some(A::type_uuid()))?
             .try_downcast::<A>()
             .ok_or_else(|| {
@@ -1184,6 +1199,7 @@ impl AssetRegistry {
             }
             EventKind::Modify(_) => {
                 for file in paths_iter {
+                    self.touch_pending_file(file);
                     self.mark_path_dirty(file);
                 }
             }
@@ -1191,6 +1207,7 @@ impl AssetRegistry {
                 // A deleted folder arrives as one extensionless path that
                 // `notify_event_paths` drops, so forget by path prefix here.
                 for removed in event.paths.iter().filter(|path| !path.exists()) {
+                    self.forget_pending_under(removed);
                     self.forget_assets_under(removed);
                     self.mark_dependents_dirty(removed);
                 }
@@ -1221,6 +1238,16 @@ impl AssetRegistry {
             }
             _ => {}
         }
+        // A `.meta` written or changed by another tool names the asset's id.
+        if matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_)) {
+            for meta_path in event
+                .paths
+                .iter()
+                .filter(|path| path.extension().is_some_and(|ext| ext == "meta") && path.is_file())
+            {
+                self.sync_meta_file(meta_path);
+            }
+        }
         // Only events that can change the source retry a failed load; an
         // access event, such as the loader opening its own source, cannot.
         if matches!(
@@ -1247,6 +1274,13 @@ impl AssetRegistry {
         };
         if !self.is_asset_file(file) {
             log::trace!("Ignoring created file of no asset type: {}", file.display());
+            return;
+        }
+        // A tool writing a file and its `.meta` may write the `.meta` second;
+        // wait for it rather than hand out a generated id.
+        let meta_path = file.with_extension("meta");
+        if !meta_path.exists() && !self.is_registered_at(file) {
+            self.defer_created_file(file);
             return;
         }
         if let Err(err) = self.build_asset_meta(asset_path, file, &file.with_extension("meta")) {
@@ -1279,6 +1313,8 @@ impl AssetRegistry {
         }
         self.build_asset_meta(root, &path, &path.with_extension("meta"))
             .map_err(|err| AssetError::LoadError.with_path(&path).with_source(err))?;
+        // The writer registered it, so it no longer waits for a `.meta`.
+        self.asset_data_mut().pending.remove(&path);
         self.asset_id_from_path(&path).ok_or_else(not_found)
     }
 
@@ -1386,9 +1422,8 @@ impl AssetRegistry {
     /// path, not by name, so a same-name asset in another root survives and
     /// is registered again under any name the forgotten asset held.
     fn forget_assets_under(&self, path: &Path) {
-        let mut data = self.asset_data_mut();
         let mut ids: HashSet<Uuid> = HashSet::new();
-        for meta in data.meta.values() {
+        for meta in self.asset_data().meta.values() {
             if meta.path.as_deref().is_some_and(|p| p.starts_with(path)) {
                 ids.insert(meta.id);
                 ids.extend(meta.children.iter().copied());
@@ -1397,6 +1432,16 @@ impl AssetRegistry {
         if ids.is_empty() {
             return;
         }
+        let freed = self.drop_asset_ids(&ids);
+        self.register_sources_named(&freed);
+        log::info!("Forgot deleted assets under {}", path.display());
+    }
+
+    /// Drops the in-memory metadata, names, dirty marks, reload errors,
+    /// generations, dependency entries and cached values of `ids`, and
+    /// returns the names they held. Holders keep their own refs.
+    fn drop_asset_ids(&self, ids: &HashSet<Uuid>) -> HashSet<RelativePathBuf> {
+        let mut data = self.asset_data_mut();
         let freed: HashSet<RelativePathBuf> = data
             .names
             .iter()
@@ -1418,8 +1463,7 @@ impl AssetRegistry {
         // Evict cached values too: a recreated file often gets the same
         // path-derived id and must load fresh. Holders keep their own refs.
         self.asset_cache_mut().retain(|id, _| !ids.contains(id));
-        self.register_sources_named(&freed);
-        log::info!("Forgot deleted assets under {}", path.display());
+        freed
     }
 
     /// Registers again, from disk, every asset file in any root whose name
@@ -1618,8 +1662,12 @@ impl AssetRegistry {
                 },
                 inner: Default::default(),
             };
-            self.write_meta_file(meta_path, &meta)?;
-            meta.main
+            // A `.meta` another tool wrote since the check above wins.
+            if Self::write_new_meta_file(meta_path, &meta)? {
+                meta.main
+            } else {
+                self.load_meta_file(asset_path, meta_path)?.main
+            }
         };
         meta.type_uuid = type_uuid;
         meta.path = Some(match path.absolutize().map_err(Box::new)? {
@@ -1769,9 +1817,7 @@ impl AssetRegistry {
         meta_path: &Path,
     ) -> Result<AssetMetaData, BoxedError> {
         let name_path = Self::relative_asset_path(asset_path, meta_path)?;
-        let file = File::open(meta_path).map_err(Box::new)?;
-        let reader = BufReader::new(file);
-        let mut meta: AssetMetaData = serde_json::from_reader(reader).map_err(Box::new)?;
+        let mut meta = Self::read_meta_file(meta_path)?;
         // Child names may carry the stored main name as a legacy prefix, so
         // strip it before the main name is rebased onto the file's location
         // under its owning root (an older scan may have used an outer root).
@@ -1797,7 +1843,19 @@ impl AssetRegistry {
     /// already holds the same content in either line-ending style. A changed
     /// file keeps the line endings it had, so a checkout's CRLF files (git's
     /// `core.autocrlf`) stay CRLF and only the changed lines differ.
+    ///
+    /// A `.meta` naming another asset id is left as it is: another tool
+    /// wrote it, and the watcher re-reads it and re-keys the asset.
     fn write_meta_file(&self, meta_path: &Path, meta: &AssetMetaData) -> Result<(), BoxedError> {
+        if let Some(on_disk) = Self::meta_names_another_id(meta_path, meta.main.id) {
+            log::info!(
+                "Keeping {}: it names asset id {}, not {}",
+                meta_path.display(),
+                on_disk,
+                meta.main.id
+            );
+            return Ok(());
+        }
         let content = serde_json::to_string_pretty(meta).map_err(Box::new)?;
         let existing = std::fs::read(meta_path).ok();
         let crlf = match existing.as_deref() {
@@ -2145,6 +2203,12 @@ mod tests {
         path
     }
 
+    /// Registers the created files that wait for a `.meta`, as the watcher
+    /// thread does once their settle window passes.
+    fn settle(registry: &AssetRegistry) {
+        registry.register_settled_files(Instant::now() + meta_sync::CREATED_FILE_SETTLE);
+    }
+
     fn write_parent_with_child_meta(root: &Path, child_name: &str) -> (Uuid, Uuid) {
         let parent_id = Uuid::new_v4();
         let child_id = Uuid::new_v4();
@@ -2231,6 +2295,7 @@ mod tests {
             Event::new(EventKind::Create(notify::event::CreateKind::File)).add_path(asset_path);
 
         registry.recv_notify_event(event);
+        settle(&registry);
 
         assert_eq!(
             written_meta_type_uuid(&root.join("scene.meta")),
@@ -2489,6 +2554,7 @@ mod tests {
             .add_path(asset_path.clone());
 
         registry.recv_notify_event(event);
+        settle(&registry);
 
         let id = registry
             .asset_id("nested/created")
@@ -2564,6 +2630,7 @@ mod tests {
         .add_path(asset_path.clone());
 
         registry.recv_notify_event(event);
+        settle(&registry);
 
         let id = registry
             .asset_id_from_path(&asset_path)
@@ -2587,6 +2654,7 @@ mod tests {
             .add_path(asset_path.clone());
 
         registry.recv_notify_event(event);
+        settle(&registry);
 
         let id = registry
             .asset_id("created")
@@ -3280,6 +3348,7 @@ mod tests {
             Event::new(EventKind::Create(notify::event::CreateKind::File))
                 .add_path(asset_path.clone()),
         );
+        settle(&registries.assets.read());
         assert_eq!(registries.assets.read().asset_id("gated"), Some(id));
         gate.1.wait();
         let _ = loader.join().expect("loader thread panicked");
@@ -3346,6 +3415,7 @@ mod tests {
         registry.recv_notify_event(
             Event::new(EventKind::Create(notify::event::CreateKind::File)).add_path(second_path),
         );
+        settle(&registry);
 
         assert_eq!(registry.asset_id("note"), Some(id));
         let loaded = registry
@@ -3440,6 +3510,7 @@ mod tests {
         registry.recv_notify_event(
             Event::new(EventKind::Create(notify::event::CreateKind::File)).add_path(second_path),
         );
+        settle(&registry);
 
         assert_eq!(registry.asset_id("note"), Some(id));
         assert!(registry.reload_errors().is_empty());
@@ -3502,6 +3573,7 @@ mod tests {
             Event::new(EventKind::Create(notify::event::CreateKind::File))
                 .add_path(asset_path.clone()),
         );
+        settle(&registry);
         let recreated_id = registry
             .asset_id("note")
             .expect("recreated asset should have metadata");

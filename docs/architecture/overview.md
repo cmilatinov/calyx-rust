@@ -99,7 +99,7 @@ Example game project. Compiles as dynamic library (plugin) with `plugin_main` en
 - `.cxscene` — Scenes
 - `.cxanim` — Animations
 - `.cxpostfx` — Post-processing profiles, shared between post-process volumes
-- `.meta` — Asset metadata (UUID, name, type). Only a file whose extension is a registered asset type gets one; other files in an asset root are listed in the content browser but are not assets.
+- `.meta` — Asset metadata (UUID, name, type). Only a file whose extension is a registered asset type gets one; other files in an asset root are listed in the content browser but are not assets. A `.meta` on disk owns its asset's id: the editor never rewrites the id of one that exists. A file that appears while the editor runs waits half a second for its `.meta` before the editor generates one, and a `.meta` another tool writes or changes later re-keys the asset under its id, with the old id resolving to the new one until the editor closes (`crates/calyx_engine/src/assets/asset_registry/meta_sync.rs`). Tools can write an asset and its `.meta` in either order with the editor open.
 - `project.toml` — Project configuration
 
 ## Shader Layout
