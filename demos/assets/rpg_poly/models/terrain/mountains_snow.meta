@@ -1,9 +1,0 @@
-{
-  "main": {
-    "id": "f03e6635-5bab-50e3-8527-4a7e18e28c91",
-    "name": "rpg_poly/models/terrain/mountains_snow",
-    "display_name": "mountains_snow",
-    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
-  },
-  "inner": []
-}

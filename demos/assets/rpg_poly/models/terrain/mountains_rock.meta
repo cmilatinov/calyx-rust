@@ -1,9 +1,0 @@
-{
-  "main": {
-    "id": "3e73daa8-1821-5d90-8f38-a71e5e24208c",
-    "name": "rpg_poly/models/terrain/mountains_rock",
-    "display_name": "mountains_rock",
-    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
-  },
-  "inner": []
-}

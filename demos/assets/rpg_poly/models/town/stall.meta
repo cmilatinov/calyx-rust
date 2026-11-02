@@ -1,9 +1,0 @@
-{
-  "main": {
-    "id": "085ab2ff-393c-5416-975d-95de7aafee70",
-    "name": "rpg_poly/models/town/stall",
-    "display_name": "stall",
-    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
-  },
-  "inner": []
-}

@@ -519,6 +519,7 @@ impl AssetRegistry {
             };
         }
         if !self.asset_data().meta.contains_key(&id) {
+            report_missing_asset(id);
             return BackgroundLoad::Failed(
                 AssetError::NotFound
                     .with_type(A::asset_name())
@@ -655,8 +656,10 @@ impl AssetRegistry {
                 data.generations.get(&id).map(|(generation, _)| *generation),
             )
         };
-        let meta =
-            meta.ok_or_else(|| AssetError::NotFound.with_source(format!("asset id {id}")))?;
+        let Some(meta) = meta else {
+            report_missing_asset(id);
+            return Err(AssetError::NotFound.with_source(format!("asset id {id}")));
+        };
         if let Some(parent_id) = meta.parent {
             self.load_asset(parent_id, LoadMode::Load, None)?;
         }
@@ -2131,9 +2134,49 @@ impl AssetRegistry {
     }
 }
 
+/// Logs an error the first time something asks for an asset id no asset
+/// root registers, such as a scene's mesh whose file is missing, and returns
+/// whether it did. Components resolve their asset references every frame, so
+/// each id is reported once. The nil id is an unset reference, not a missing
+/// asset.
+fn report_missing_asset(id: Uuid) -> bool {
+    static REPORTED: std::sync::OnceLock<Mutex<HashSet<Uuid>>> = std::sync::OnceLock::new();
+    if id.is_nil() {
+        return false;
+    }
+    let first = REPORTED
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .insert(id);
+    if first {
+        log::error!(
+            "No asset with id {id} is registered: something refers to an asset whose file is missing, so it is skipped"
+        );
+    }
+    first
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A scene's mesh whose file is gone resolves every frame, so the missing
+    /// asset is reported once, not every frame; an unset (nil) reference is
+    /// not an error.
+    #[test]
+    fn a_missing_asset_is_reported_once() {
+        let registries = crate::test_support::test_registries();
+        let missing = Uuid::new_v4();
+        let assets = registries.assets.read();
+        assert!(assets.load_by_id::<Mesh>(missing).is_err());
+        assert!(
+            !report_missing_asset(missing),
+            "the load already reported it"
+        );
+        assert!(report_missing_asset(Uuid::new_v4()));
+        assert!(!report_missing_asset(Uuid::nil()));
+    }
     use crate::test_support::test_registries_with_assets;
     use serde_json::json;
 
