@@ -632,7 +632,18 @@ impl Shader {
                 .map(|((_, binding), entry)| (binding, entry))
                 .collect::<Vec<_>>()
         };
+        // The buffer entries say nothing of size: a material's buffer is
+        // sized for its own shader's type, which must be this one's too.
+        let sizes = |shader: &Shader, group: u32| {
+            shader
+                .buffer_sizes()
+                .into_iter()
+                .filter(|((other, _), _)| *other == group)
+                .map(|((_, binding), size)| (binding, size))
+                .collect::<Vec<_>>()
+        };
         entries(self, group) == entries(material_shader, material_group)
+            && sizes(self, group) == sizes(material_shader, material_group)
     }
 
     /// Describes naga's `error` in `shader`'s source at the files and lines
@@ -2114,16 +2125,27 @@ fn fs_main() -> @location(0) vec4f {{
         let context = assets.asset_context();
         let context = context.lock_read();
         let registry = context.registries.assets.read();
-        let material_shader = registry
+        let material = registry
             .load::<Shader>("shared_material_probe")
             .expect("the material shader loads");
         let pass = registry
             .load::<Shader>("pass_probe")
             .expect("the pass loads");
         drop(registry);
-        assert!(pass
-            .read()
-            .shares_material_group(2, &material_shader.read(), 3));
+        assert!(pass.read().shares_material_group(2, &material.read(), 3));
+
+        // A material uniform of another size, with the same entries, is a
+        // buffer the pass's group cannot bind.
+        write_and_reload(
+            &context,
+            &material_path,
+            &material_shader("", "")
+                .replace("base_color: vec4f }", "base_color: vec4f, gain: vec4f }"),
+        );
+        assert!(reload_error_messages(&context).is_empty());
+        assert!(!pass.read().shares_material_group(2, &material.read(), 3));
+        write_and_reload(&context, &material_path, &material_shader("", ""));
+        assert!(pass.read().shares_material_group(2, &material.read(), 3));
 
         write_and_reload(&context, &path, &pass_shader("", "0.5"));
         assert!(reload_error_messages(&context).is_empty());
@@ -2140,9 +2162,7 @@ fn fs_main() -> @location(0) vec4f {{
             ),
         );
         assert!(reload_error_messages(&context).is_empty());
-        assert!(!pass
-            .read()
-            .shares_material_group(2, &material_shader.read(), 3));
+        assert!(!pass.read().shares_material_group(2, &material.read(), 3));
     }
 
     const INVALID: &str = "fn main() { let x: u32 = 1.0; }";
