@@ -398,13 +398,8 @@ impl Shader {
             if group >= FIRST_MATERIAL_GROUP || material_groups.contains(&group) {
                 match after {
                     Some(entry)
-                        if before != after
-                            && (!Self::material_can_fill(entry)
-                                || !Material::reflects_binding(
-                                    &reloaded.module,
-                                    group,
-                                    binding,
-                                )) =>
+                        if !Self::material_can_fill(entry)
+                            || !Material::reflects_binding(&reloaded.module, group, binding) =>
                     {
                         return Some(format!(
                             "group {group} binding {binding} `{}` is a {:?}, which a \
@@ -2036,6 +2031,24 @@ fn fs_main() -> @location(0) vec4f {{
         assert_eq!(
             draw_material(&mut material).expect("a valid frame"),
             [0, 0, 255, 255]
+        );
+
+        // A uniform whose entry stays the same but whose type no variable
+        // reflects is refused too: the material would drop its buffer.
+        write_and_reload(
+            &context,
+            &path,
+            &material_shader(
+                "struct Flags { flags: vec4u }
+                 @group(3) @binding(1) var<uniform> extra: Flags;",
+                " * vec4f(extra.flags)",
+            ),
+        );
+        let errors = reload_error_messages(&context);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].contains("group 3 binding 1 `extra`"),
+            "{errors:?}"
         );
 
         // A storage buffer, and a uniform array no variable reflects, are
