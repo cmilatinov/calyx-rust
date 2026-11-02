@@ -31,7 +31,7 @@ fn box_volume(
         shape: LocalVolumeShape::Box { half_extents },
         blend_distance,
         weight,
-        priority: 0,
+        ..Default::default()
     }
 }
 
@@ -73,7 +73,7 @@ fn a_sphere_volume_blends_by_distance_from_its_surface() {
         shape: LocalVolumeShape::Sphere { radius: 1.0 },
         blend_distance: 2.0,
         weight: 0.5,
-        priority: 0,
+        ..Default::default()
     };
     // Its radius scales with the largest axis of the object's scale.
     let transform = Transform::from_components(
@@ -442,8 +442,11 @@ fn a_local_volume_and_its_effects_save_and_load_with_the_scene() {
         blend_distance: 1.5,
         weight: 0.7,
         priority: 3,
+        ..Default::default()
     };
-    scene.write_component(local, |v: &mut ComponentLocalPostProcessVolume| *v = volume);
+    scene.write_component(local, |v: &mut ComponentLocalPostProcessVolume| {
+        *v = volume.clone()
+    });
     scene.add_component(local, bloom(0.9, 5));
     scene.set_component_enabled::<ComponentLocalPostProcessVolume>(local, false);
 
@@ -457,7 +460,7 @@ fn a_local_volume_and_its_effects_save_and_load_with_the_scene() {
         .find(scene.uuid(local))
         .expect("the volume's object loads");
     assert_eq!(
-        loaded.read_component(object, |v: &ComponentLocalPostProcessVolume| *v),
+        loaded.read_component(object, |v: &ComponentLocalPostProcessVolume| v.clone()),
         Some(volume)
     );
     assert_eq!(

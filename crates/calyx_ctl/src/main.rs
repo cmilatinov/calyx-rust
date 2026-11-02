@@ -97,6 +97,10 @@ enum Action {
     /// Asset operations, as the content browser does them.
     #[command(subcommand)]
     Asset(AssetAction),
+    /// Post-processing profile assets: create one from a volume, and read or
+    /// edit a loaded one as its inspector does.
+    #[command(subcommand)]
+    Profile(ProfileAction),
     /// List all game objects.
     Objects,
     /// Game object operations.
@@ -211,6 +215,24 @@ enum AssetAction {
         /// Answer the unsaved-scene prompt; without it the prompt stays open.
         #[arg(long, value_enum)]
         unsaved: Option<UnsavedArg>,
+    },
+    /// Write a loaded asset back to its file, as Save in its inspector does.
+    Save { path: PathBuf },
+}
+
+#[derive(Subcommand)]
+enum ProfileAction {
+    /// Create a .cxpostfx profile from a volume's effects, as the volume
+    /// inspector's "Create Profile" does, and point the volume at it.
+    Create { object: String, path: PathBuf },
+    /// Print a loaded profile.
+    Get { path: PathBuf },
+    /// Replace a loaded profile from JSON, as its inspector edits it, without
+    /// saving the file.
+    Set {
+        path: PathBuf,
+        /// The whole profile, as `profile get` prints it.
+        json: String,
     },
 }
 
@@ -522,6 +544,24 @@ fn build_command(action: &Action, base: Duration) -> Result<(Command, Duration),
                 path: path.clone(),
                 unsaved_scene: unsaved.map(Into::into),
             }),
+            AssetAction::Save { path } => simple(Command::SaveAsset { path: path.clone() }),
+        },
+        Action::Profile(profile) => match profile {
+            ProfileAction::Create { object, path } => simple(Command::CreatePostProcessProfile {
+                object: object.clone(),
+                path: path.clone(),
+            }),
+            ProfileAction::Get { path } => {
+                simple(Command::GetPostProcessProfile { path: path.clone() })
+            }
+            ProfileAction::Set { path, json } => {
+                let profile: serde_json::Value = serde_json::from_str(json)
+                    .map_err(|error| format!("profile is not valid JSON: {error}"))?;
+                simple(Command::SetPostProcessProfile {
+                    path: path.clone(),
+                    profile,
+                })
+            }
         },
         Action::Objects => simple(Command::ListObjects),
         Action::Object(object) => match object {

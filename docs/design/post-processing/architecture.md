@@ -285,7 +285,7 @@ object ids, skybox, particles; then finalize_scene: the chain and the overlays
 A volume decides where post-processing applies and with what priority. Each effect's settings are their own component on the volume's game object. The volume and the effect components live in `crates/calyx_engine/src/component/`, the effects in `component/post_process/`, one file each, and hold authoring data only; the passes in `render/postprocess/` read them through `PostProcessSettings`.
 
 ```rust
-pub struct ComponentGlobalPostProcessVolume { pub priority: i32 }  // 0
+pub struct ComponentGlobalPostProcessVolume { pub priority: i32, pub profile: AssetRef<PostProcessProfile> }  // 0, none
 
 // Effect components, each `#[serde(default)]` and switchable (`can_disable`).
 pub struct ComponentTonemap { pub preset: TonemappingPreset, pub exposure_ev: f32 }  // Aces, 0.0
@@ -309,12 +309,12 @@ pub struct PostProcessSettings {
 }
 ```
 
-- **Effect components**: each effect's settings struct is itself the component, with its own type UUID, so a pass reads exactly the values the inspector edits and #114 can blend the same types. None carries an `enabled` field: an effect is on when its component is present on the volume's game object and the scene holds it enabled (`Scene::is_component_enabled`, #415). The volume's own enabled state lives in the scene the same way.
-- **Gathering**: `PostProcessSettings::resolve(scene, camera_position)` is the one entry point; see Local Volumes for the camera position. `PostProcessSettings::selected_volume(scene)` picks the volume's game object, and `PostProcessSettings::from_game_object(scene, game_object)` reads the enabled effect components on it: each present and enabled component becomes `Some`, every other effect is `None` and its pass is off. Tone mapping is never `None`; without an enabled Tone Mapping component it takes `ComponentTonemap::default()`. Any view that renders a scene, such as thumbnails, calls `resolve` the same way the renderer does.
+- **Effect components**: each effect's settings struct is itself the component, with its own type UUID, so a pass reads exactly the values the inspector edits and #114 can blend the same types. None carries an `enabled` field: an effect is on when its component is present on the volume's game object and the scene holds it enabled (`Scene::is_component_enabled`, #415), or when the volume's profile has an enabled entry for it (see Profiles). The volume's own enabled state lives in the scene the same way.
+- **Gathering**: `PostProcessSettings::resolve(scene, camera_position)` is the one entry point; see Local Volumes for the camera position. `PostProcessSettings::selected_volume(scene)` picks the volume's game object, and `PostProcessSettings::from_game_object(scene, game_object)` reads the volume's effects, its profile's entries overlaid with the enabled effect components on it (see Profiles): each effect either switches on becomes `Some`, every other effect is `None` and its pass is off. Tone mapping is never `None`; without an enabled Tone Mapping component it takes `ComponentTonemap::default()`. Any view that renders a scene, such as thumbnails, calls `resolve` the same way the renderer does.
 - **Selection**: the enabled volume with the highest priority. On a priority tie the renderer warns once and uses the first found. With no enabled volume it uses `PostProcessSettings::default()`, tone mapping alone. Effect components on other game objects, or on a disabled or losing volume's object, are never read.
 - **Passes**: each pass's `enabled` is whether its field is `Some`, and `prepare` reads the values from it. The chain and the passes read nothing else from the scene.
 - **Inspector**: the volume and the effect components carry `category = "Post Processing"`, and the add-component menu lists components without a category first, then each category under its heading, in name order. Each effect edits with the default field inspectors and switches on and off through the component header's checkbox.
-- **Saved scenes**: a volume saves only `priority`, and each effect saves its fields under its own type UUID on the same object. The committed scenes were converted once from the old layout, a `settings` struct inside the volume; loading has no migration path. `sandbox/tests/saved_data.rs` fails if a committed scene or prefab still holds the old layout.
+- **Saved scenes**: a volume saves `priority` and its `profile` id (nil without one; a scene saved before profiles loads with none), and each effect saves its fields under its own type UUID on the same object. The committed scenes were converted once from the old layout, a `settings` struct inside the volume; loading has no migration path. `sandbox/tests/saved_data.rs` fails if a committed scene or prefab still holds the old layout.
 - Prefab mode and thumbnails render scenes with no volume, so they get the defaults with no special case.
 
 ### Local Volumes
@@ -325,6 +325,7 @@ pub struct ComponentLocalPostProcessVolume {
     pub blend_distance: f32,      // 2.0, world units
     pub weight: f32,              // 1.0, in [0, 1]
     pub priority: i32,            // 0
+    pub profile: AssetRef<PostProcessProfile>,  // none; see Profiles
 }
 pub enum LocalVolumeShape { Box { half_extents: Vec3 }, Sphere { radius: f32 } }
 
@@ -341,8 +342,30 @@ A local volume changes part of the look in a region and fades it in and out as t
 - **Override per effect**: an effect component present and enabled on the volume overrides every one of its fields; there are no per-field override flags. One the volume lacks or holds disabled inherits the value below it. A disabled local volume takes no part.
 - **Blending per field** (`render/postprocess/blend.rs`, `BlendEffect`): `f32` fields interpolate, colours interpolate in linear space, and integer and enum fields (bloom radius, SSAO sample count, the tone-mapping preset) switch to the volume's at a factor of 0.5.
 - **Fade-in**: an effect off below and on in the volume fades in from its neutral values, the volume's own values with the strength at rest: SSAO, bloom and vignette intensity 0, depth of field blur 0, and the colour grading defaults. FXAA has no neutral value and switches on at 0.5. Tone mapping is always on below a volume.
-- **Gathering**: `PostProcessEffects::from_game_object` reads one volume's enabled effect components, for global and local volumes alike; `PostProcessSettings::from_game_object` is it with tone mapping defaulted. #115's profiles plug in there.
+- **Gathering**: `PostProcessEffects::from_game_object` reads one volume's effects, its profile overlaid with its enabled effect components (see Profiles), for global and local volumes alike; `PostProcessSettings::from_game_object` is it with tone mapping defaulted.
 - **Gizmos**: the editor draws a local volume's shape, and more faintly the outer edge of its blend distance: a sphere of radius plus blend distance, or the box grown by the blend distance on every side, which traces the faces of the rounded blend region.
+
+### Profiles
+
+```rust
+// assets/post_process_profile/, saved as `.cxpostfx` JSON.
+pub struct PostProcessProfile {
+    pub tonemapping: Option<ProfileEntry<ComponentTonemap>>,
+    /* one entry per effect, as in PostProcessSettings */
+}
+pub struct ProfileEntry<T> { pub enabled: bool, pub settings: T }  // true, T::default()
+
+// Both volumes gain:
+pub profile: AssetRef<PostProcessProfile>,  // nil: no profile
+```
+
+A profile is a look saved as an asset, which any number of global and local volumes, in any scene, reference.
+
+- **Entries**: an optional entry per effect, each with its own `enabled` flag and the effect component's own settings type, so the passes read profile values exactly as component values. Every field of a saved entry is optional: a missing `enabled` is on and missing settings take the component's defaults. An absent entry is not saved.
+- **Precedence** (`PostProcessEffects::from_game_object`): the volume's profile entries, each enabled entry on and each disabled one off, then each effect component present and enabled on the volume's object replaces its effect's entry whole. A component the object lacks or holds disabled leaves the profile's entry; to switch off a profile's effect on one volume, give it the component and switch its entry off in the profile, or override the effect with neutral values. A volume without a profile, or whose profile does not load (warned once), reads its components alone, as before profiles. Tone mapping still falls back to its defaults when neither sets it. An object with both a global and a local volume uses the global volume's profile.
+- **No blending or layering**: a profile never layers over another. Local volumes blend the settings each volume resolves to (Local Volumes), so a profile reaches the blend as that volume's effects.
+- **Live edits**: `resolve` reads the loaded profile every frame through the asset registry, so an edit in the profile's inspector, a change of a volume's `profile` field and a hot reload of the file all show on the next frame, in every view and every volume that uses it. Saving the profile writes its file; an external change to the file hot reloads it in place.
+- **Editor**: the asset inspector draws each entry as an effect component, with the header checkbox for `enabled`, Remove in the header's menu and the default field inspectors, and Add Effect adds an absent effect with its defaults; Save in the asset's menu writes the file. The content browser's Create New > Post Process Profile writes an empty profile. A volume's inspector shows Create Profile, which asks for a file, writes a profile with the volume's look (its current profile's entries with the object's effect components copied over them; a disabled component becomes a disabled entry only where the profile has none), points the volume at it and removes the effect components from the object, as one undo step. The look is unchanged, and editing the profile now changes it. `calyx_ctl profile create/get/set` and `asset save` drive the same paths.
 
 ## Shaders
 

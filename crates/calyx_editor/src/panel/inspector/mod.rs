@@ -2,6 +2,7 @@ use std::any::Any;
 use std::collections::HashSet;
 
 use crate::inspector::assets::animation_graph_inspector::AnimationGraphInspector;
+use crate::inspector::assets::post_process_profile_inspector::PostProcessProfileInspector;
 use crate::inspector::component_inspector::{type_display_name, ComponentInspector};
 use crate::inspector::type_inspector::InspectorContext;
 use crate::panel::Panel;
@@ -125,6 +126,35 @@ impl PanelInspector {
                 enabled,
             );
             state.commit_scene_edit(edit);
+        }
+        Self::create_profile_ui(ui, state, game_object);
+    }
+
+    /// Draws "Create Profile" under a post-process volume's components: it
+    /// moves the volume's effects into a new profile asset the volume then
+    /// uses, as one undo step.
+    fn create_profile_ui(ui: &mut Ui, state: &mut EditorAppState, game_object: GameObject) {
+        if !PostProcessProfileInspector::is_volume(
+            state.game.scenes.simulation_scene(),
+            game_object,
+        ) {
+            return;
+        }
+        let clicked = ui
+            .button("Create Profile")
+            .on_hover_text(
+                "Move this volume's effects into a new post-processing profile asset, \
+                 which the volume then uses",
+            )
+            .clicked();
+        if clicked {
+            state.flush_pending_inspector_value_edits();
+            if let Some(edit) = PostProcessProfileInspector::create_from_volume_with_dialog(
+                &mut state.game,
+                game_object,
+            ) {
+                state.commit_scene_edit(edit);
+            }
         }
     }
 
@@ -286,7 +316,12 @@ impl PanelInspector {
                         res
                     }),
                 |ui| {
-                    inspector.show_inspector(ui, &mut state.game, asset_id);
+                    inspector.show_inspector(
+                        ui,
+                        &mut state.game,
+                        &state.inspector_registry,
+                        asset_id,
+                    );
                 },
             );
     }

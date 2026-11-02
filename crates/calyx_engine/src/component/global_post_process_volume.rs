@@ -1,4 +1,6 @@
 use crate as calyx_engine;
+use crate::assets::post_process_profile::PostProcessProfile;
+use crate::assets::AssetRef;
 use crate::component::{Component, ReflectComponent};
 use crate::reflect::{Reflect, ReflectDefault};
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
@@ -6,8 +8,10 @@ use serde::{Deserialize, Serialize};
 
 /// Marks its game object as a scene-wide post-processing volume.
 ///
-/// The volume holds no settings: each effect is its own component on the
-/// same game object, such as [`ComponentBloom`].
+/// Its effects come from its `profile`, if it has one, overlaid with the
+/// effect components on the same game object, such as
+/// [`ComponentBloom`](super::ComponentBloom): an enabled component replaces
+/// the profile's entry for its effect.
 /// The renderer uses the enabled volume with the highest priority and the
 /// enabled effect components beside it, and tone mapping alone when the
 /// scene has no enabled volume. See
@@ -20,12 +24,17 @@ use serde::{Deserialize, Serialize};
 pub struct ComponentGlobalPostProcessVolume {
     /// Among enabled volumes, the highest priority wins.
     pub priority: i32,
+    /// The post-processing profile the volume starts from, or none.
+    pub profile: AssetRef<PostProcessProfile>,
 }
 
 impl ComponentGlobalPostProcessVolume {
     /// A volume of `priority`.
     pub fn new(priority: i32) -> Self {
-        Self { priority }
+        Self {
+            priority,
+            profile: AssetRef::default(),
+        }
     }
 }
 

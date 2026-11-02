@@ -22,6 +22,7 @@ use crate::assets::error::{AssetError, AssetErrorKind};
 use crate::assets::import;
 use crate::assets::material::{Material, MaterialTexture};
 use crate::assets::mesh::Mesh;
+use crate::assets::post_process_profile::PostProcessProfile;
 use crate::assets::texture::Texture;
 use crate::assets::Asset;
 use crate::assets::LoadedAssetRef;
@@ -388,6 +389,7 @@ impl AssetRegistry {
         self.register_asset_type::<Skybox>();
         self.register_asset_type::<AnimationGraph>();
         self.register_asset_type::<ActionMap>();
+        self.register_asset_type::<PostProcessProfile>();
     }
 }
 

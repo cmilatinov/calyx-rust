@@ -1,4 +1,5 @@
 use crate::inspector::asset_inspector::AssetInspectorAction;
+use crate::inspector::assets::post_process_profile_inspector::PostProcessProfileInspector;
 use crate::inspector::assets::prefab_inspector::PrefabInspector;
 use crate::panel::Panel;
 use crate::scene_edit::SceneEdit;
@@ -303,6 +304,14 @@ impl PanelContentBrowser {
                     {
                         let writer = BufWriter::new(file);
                         let _ = serde_json::to_writer_pretty(writer, &AnimationGraph::default());
+                    }
+                    ui.close_menu();
+                }
+                if ui.button("Post Process Profile").clicked() {
+                    if let Err(error) =
+                        PostProcessProfileInspector::create_in_folder(&self.selected_folder)
+                    {
+                        log::error!("Failed to create a post-process profile: {error}");
                     }
                     ui.close_menu();
                 }
