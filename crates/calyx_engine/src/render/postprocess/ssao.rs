@@ -682,6 +682,8 @@ mod tests {
                 output: &output,
                 depth,
                 particle_depth,
+                normals: None,
+                albedo: None,
             },
         );
         assert_eq!(plan.passes.len(), 1, "ssao runs");
@@ -932,6 +934,8 @@ mod tests {
                 intermediates: 0,
                 depth: false,
                 particle_depth: false,
+                normals: false,
+                albedo: false,
             },
             "with ssao off the frame is tone mapping alone and builds no depth"
         );
@@ -968,6 +972,8 @@ mod tests {
                     output: &output,
                     depth: Some(&depth),
                     particle_depth: Some(&depth),
+                    normals: None,
+                    albedo: None,
                 },
             )
             .expect("the pass's shaders build");

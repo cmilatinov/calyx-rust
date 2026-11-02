@@ -686,6 +686,9 @@ impl SceneRenderer {
             }
             None => &self.scene_texture_msaa,
         };
+        // The G-buffer is single-sample at every sample count, so passes read
+        // its targets as they are: nothing is resolved or copied for them.
+        let gbuffer = self.gbuffer_renderer.targets();
         self.last_post_process_plan = self.post_process.run(
             &render_context,
             &mut encoder,
@@ -695,6 +698,8 @@ impl SceneRenderer {
                 output: &self.scene_texture,
                 depth: &self.scene_depth_texture,
                 particle_depth: self.particle_renderer.particle_depth(),
+                normals: gbuffer.map(|gbuffer| &gbuffer.normals),
+                albedo: gbuffer.map(|gbuffer| &gbuffer.albedo),
             },
         );
         self.render_overlays(&render_context, &mut encoder);
@@ -710,6 +715,12 @@ impl SceneRenderer {
     /// The post-processing chain this renderer runs.
     pub fn post_process(&self) -> &PostProcessChain {
         &self.post_process
+    }
+
+    /// The post-processing chain, to add a pass to it in tests.
+    #[cfg(test)]
+    pub(crate) fn post_process_mut(&mut self) -> &mut PostProcessChain {
+        &mut self.post_process
     }
 
     /// The plan the last [`Self::finalize_scene`] ran.
@@ -1683,6 +1694,9 @@ mod tests {
         ParticleSpawnShape, ParticleVelocity,
     };
     use crate::math::Transform;
+    use crate::render::postprocess::{
+        NoPipeline, PassContext, PassInputs, PassIo, PostProcessPass, PostProcessStage,
+    };
     use crate::render::{Camera, Shader, SHADOW_CASCADE_COUNT};
     use crate::test_support::{
         test_adapter, test_asset_context_with_assets, SceneBuilder, TestAssets,
@@ -1690,6 +1704,7 @@ mod tests {
     use nalgebra::UnitQuaternion;
     use nalgebra_glm::{vec3, vec4, Vec3};
     use std::path::Path;
+    use std::sync::Mutex;
 
     const VIEWPORT: u32 = 512;
 
@@ -4664,6 +4679,140 @@ mod tests {
                 [0, 0, 0, 255],
                 "{view:?}: where nothing is drawn the view is black"
             );
+        }
+    }
+
+    /// What a [`GBufferInputsPass`] was handed when it recorded.
+    #[derive(Default)]
+    struct HandedInputs {
+        normals: Option<wgpu::Texture>,
+        albedo: Option<wgpu::Texture>,
+        depth: Option<wgpu::Texture>,
+    }
+
+    /// An `Hdr` pass that reads the G-buffer normals and albedo, records what
+    /// the chain hands it and copies its input to its output.
+    struct GBufferInputsPass {
+        handed: Arc<Mutex<HandedInputs>>,
+    }
+
+    impl PostProcessPass for GBufferInputsPass {
+        fn name(&self) -> &str {
+            "gbuffer_inputs"
+        }
+        fn stage(&self) -> PostProcessStage {
+            PostProcessStage::Hdr
+        }
+        fn inputs(&self) -> PassInputs {
+            SceneInput::Normals | SceneInput::Albedo
+        }
+        fn enabled(&self, _settings: &PostProcessSettings) -> bool {
+            true
+        }
+        fn prepare(&mut self, _context: &PassContext, _: &PostProcessSettings) {}
+        fn record(
+            &mut self,
+            _context: &PassContext,
+            encoder: &mut wgpu::CommandEncoder,
+            io: PassIo,
+        ) -> Result<(), NoPipeline> {
+            let mut handed = self.handed.lock().unwrap();
+            handed.normals = io.normals.map(|texture| texture.texture.clone());
+            handed.albedo = io.albedo.map(|texture| texture.texture.clone());
+            handed.depth = io.depth.map(|texture| texture.texture.clone());
+            encoder.copy_texture_to_texture(
+                io.input.texture.as_image_copy(),
+                io.output.texture.as_image_copy(),
+                io.output.descriptor.size,
+            );
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_pass_that_reads_normals_and_albedo_gets_the_gbuffers_targets() {
+        const SIZE: (u32, u32) = (32, 32);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let material = gbuffer_material(&read_only_context, "test/gbuffer_scene_inputs");
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        spawn_turned_plane(&mut builder, &cube, &material);
+        let scene = builder.finish();
+        let center = (SIZE.0 / 2, SIZE.1 / 2);
+
+        for samples in [1, 4] {
+            if !supports_samples(
+                &render_context,
+                wgpu::TextureFormat::Rgba16Float,
+                samples,
+                true,
+            ) {
+                eprintln!("skipping {samples} samples: unsupported by the test adapter");
+                continue;
+            }
+            let mut renderer = SceneRenderer::new(
+                &read_only_context,
+                SceneRendererOptions {
+                    samples,
+                    clear_color: Color32::BLACK,
+                    ..Default::default()
+                },
+                SIZE,
+            )
+            .expect("scene renderer should load its assets");
+            let handed = Arc::new(Mutex::new(HandedInputs::default()));
+            renderer
+                .post_process_mut()
+                .push(Box::new(GBufferInputsPass {
+                    handed: handed.clone(),
+                }));
+            let (camera, transform) = front_camera(1.0, 5.0);
+            renderer.render_scene_base(&camera, &transform, &scene, None, None);
+            renderer.finalize_scene();
+
+            let plan = renderer.last_post_process_plan();
+            assert!(plan.skipped.is_empty(), "{:?}", plan.skipped);
+            assert!(plan.normals && plan.albedo, "the plan reads both");
+            let gbuffer = renderer.gbuffer().expect("the frame draws the G-buffer");
+            let handed = handed.lock().unwrap();
+            assert_eq!(
+                handed.normals.as_ref(),
+                Some(&gbuffer.normals.texture),
+                "the pass reads the G-buffer normals at {samples} samples"
+            );
+            assert_eq!(
+                handed.albedo.as_ref(),
+                Some(&gbuffer.albedo.texture),
+                "the pass reads the G-buffer albedo at {samples} samples"
+            );
+            assert_eq!(handed.depth, None, "the pass did not ask for depth");
+            assert_eq!(gbuffer.normals.descriptor.sample_count, 1);
+            assert_eq!(gbuffer.albedo.descriptor.sample_count, 1);
+
+            let [sx, sy, gx, gy] = halves(&read_texel(&render_context, &gbuffer.normals, center));
+            assert_near(
+                octahedral_decode(sx, sy),
+                turned_plane_normal(),
+                &format!("handed shading normal at {samples} samples"),
+            );
+            assert_near(
+                octahedral_decode(gx, gy),
+                turned_plane_normal(),
+                &format!("handed geometric normal at {samples} samples"),
+            );
+            let albedo = read_texel(&render_context, &gbuffer.albedo, center);
+            assert_bytes_near(&albedo[..3], &gbuffer_albedo_bytes(), "handed albedo");
+            assert_eq!(albedo[3], 255, "the surface marks its coverage");
+            let corner = read_texel(&render_context, &gbuffer.albedo, (0, 0));
+            assert_eq!(corner[3], 0, "no surface at the corner");
         }
     }
 
