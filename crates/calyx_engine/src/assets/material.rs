@@ -302,7 +302,7 @@ impl Material {
     /// Builds a default material from a shader asset by reflecting its exposed
     /// variables. Each variable takes its reflected default: zero, except white for a color
     /// and for a texture, the flat normal for a normal texture, and one for the multipliers
-    /// `normal_scale` and `occlusion_strength`.
+    /// `normal_scale`, `occlusion_strength` and `ambient_occlusion`.
     pub fn from_shader(assets: &ReadOnlyAssetContext, shader_ref: Ref<Shader>) -> Self {
         let mut material = Self {
             shader: Some(shader_ref).into(),
@@ -319,8 +319,8 @@ impl Material {
 
     /// Builds a material on `shader`, the PBR scene shader, from an imported glTF-style
     /// material. `textures` holds the texture asset id of each imported texture, or `None` for
-    /// one that did not upload; a slot naming none keeps the shader's default. The ambient
-    /// occlusion multiplier is one, so only the occlusion texture darkens the ambient light.
+    /// one that did not upload; a slot naming none keeps the shader's default, so the ambient
+    /// occlusion multiplier stays one and only the occlusion texture darkens the ambient light.
     pub(crate) fn from_imported(
         assets: &ReadOnlyAssetContext,
         shader: Ref<Shader>,
@@ -369,7 +369,6 @@ impl Material {
                 "occlusion_strength",
                 Some(ShaderVariableValue::Float(imported.occlusion_strength)),
             ),
-            ("ambient_occlusion", Some(ShaderVariableValue::Float(1.0))),
             (
                 "alpha_cutoff",
                 Some(ShaderVariableValue::Float(
@@ -819,7 +818,10 @@ impl Material {
     /// Whether the float variable `name` multiplies another input, so its neutral default is
     /// one rather than zero.
     fn is_unit_multiplier(name: &str) -> bool {
-        matches!(name, "normal_scale" | "occlusion_strength")
+        matches!(
+            name,
+            "normal_scale" | "occlusion_strength" | "ambient_occlusion"
+        )
     }
 
     fn is_normal_texture(name: &str) -> bool {
@@ -1043,6 +1045,11 @@ mod tests {
         ));
         assert_eq!(float(&material, "normal_scale"), 1.0);
         assert_eq!(float(&material, "occlusion_strength"), 1.0);
+        assert_eq!(
+            float(&material, "ambient_occlusion"),
+            1.0,
+            "a new material takes the full ambient light"
+        );
         assert_eq!(float(&material, "alpha_cutoff"), 0.0);
         assert_eq!(float(&material, "emission_strength"), 0.0);
         for texture in [

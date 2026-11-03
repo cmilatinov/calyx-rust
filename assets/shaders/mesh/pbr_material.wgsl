@@ -9,7 +9,7 @@ struct MaterialProperties {
     // Metallic and roughness factors, multiplied by the metallic-roughness texture's B and G.
     metallic: f32,
     roughness: f32,
-    // Multiplies the ambient light, on top of the occlusion texture.
+    // Multiplies the ambient light, on top of the occlusion texture. Defaults to 1.
     ambient_occlusion: f32,
     // Linear HDR radiance added on top of the lit color:
     // emission_color * emission_strength * emissive_texture.
