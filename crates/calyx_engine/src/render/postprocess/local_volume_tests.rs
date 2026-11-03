@@ -4,8 +4,9 @@
 use super::*;
 use crate::component::{
     ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom, ComponentColorGrading,
-    ComponentDepthOfField, ComponentGlobalPostProcessVolume, ComponentLocalPostProcessVolume,
-    ComponentTonemap, ComponentVignette, LocalVolumeShape,
+    ComponentDepthOfField, ComponentFog, ComponentGlobalPostProcessVolume,
+    ComponentLocalPostProcessVolume, ComponentTonemap, ComponentVignette, FogMode,
+    LocalVolumeShape,
 };
 use crate::math::{compose_transform, Transform};
 use crate::scene::{GameObject, Scene};
@@ -495,4 +496,96 @@ fn a_point_inside_a_scaled_box_without_a_blend_distance_gets_the_full_weight() {
         let factor = volume.blend_factor(&transform, &vec3(x, 0.2, -0.3));
         assert_eq!(factor, 0.7, "at x = {x}");
     }
+}
+
+fn fog(mode: FogMode, color: Color32, start: f32, end: f32) -> ComponentFog {
+    ComponentFog {
+        mode,
+        color,
+        start,
+        end,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn fog_blends_between_a_global_and_a_local_volume_by_camera_position() {
+    let registries = test_registries();
+    let mut scene = registries.scene();
+    let global = spawn_global(&mut scene, 0.0, None);
+    scene.add_component(
+        global,
+        ComponentFog {
+            intensity: 1.0,
+            density: 0.02,
+            ..fog(FogMode::Linear, Color32::BLACK, 0.0, 100.0)
+        },
+    );
+    let local = spawn_local(&mut scene, Vec3::zeros(), 1.0, 0);
+    scene.add_component(
+        local,
+        ComponentFog {
+            intensity: 3.0,
+            density: 0.06,
+            ..fog(FogMode::Exponential, Color32::WHITE, 20.0, 300.0)
+        },
+    );
+
+    let resolve = |x: f32| PostProcessSettings::resolve(&scene, &vec3(x, 0.0, 0.0)).fog;
+    let inside = resolve(0.0).expect("fog inside the volume");
+    assert_eq!(inside.mode, FogMode::Exponential, "inside");
+    assert_eq!(inside.color, Color32::WHITE);
+
+    // Halfway through the blend distance.
+    let halfway = resolve(2.0).expect("fog halfway out");
+    assert_close(halfway.start, 10.0, "start interpolates");
+    assert_close(halfway.end, 200.0, "end interpolates");
+    assert_close(halfway.density, 0.04, "density interpolates");
+    assert_close(halfway.intensity, 2.0, "intensity interpolates");
+    assert_close(halfway.opacity, 1.0, "opacity stays full");
+    assert_eq!(
+        halfway.mode,
+        FogMode::Exponential,
+        "the mode switches at 0.5"
+    );
+    // Linear 0.5 encodes to sRGB 188; a gamma-space blend would give 128.
+    assert!(
+        (187..=189).contains(&halfway.color.r()),
+        "the colour blends in linear space: {:?}",
+        halfway.color
+    );
+    let short_of_half = resolve(2.02).expect("fog just past halfway out");
+    assert_eq!(
+        short_of_half.mode,
+        FogMode::Linear,
+        "below 0.5 the mode stays"
+    );
+
+    assert_eq!(
+        resolve(3.0),
+        Some(fog(FogMode::Linear, Color32::BLACK, 0.0, 100.0))
+            .map(|f| ComponentFog { density: 0.02, ..f }),
+        "outside the blend distance the global fog applies"
+    );
+}
+
+#[test]
+fn fog_off_below_fades_in_from_no_opacity() {
+    let below = PostProcessSettings::default();
+    let effects = PostProcessEffects {
+        fog: Some(ComponentFog {
+            opacity: 0.8,
+            ..fog(FogMode::Linear, Color32::WHITE, 5.0, 50.0)
+        }),
+        ..Default::default()
+    };
+
+    let settings = below.blend(&effects, 0.25);
+
+    let fog = settings.fog.expect("fog fades in");
+    assert_close(fog.opacity, 0.2, "opacity from 0");
+    assert_close(fog.start, 5.0, "keeps the volume's start");
+    assert_close(fog.end, 50.0, "keeps the volume's end");
+    assert_eq!(fog.color, Color32::WHITE, "keeps the volume's colour");
+    assert_eq!(below.blend(&effects, 0.0).fog.map(|f| f.opacity), Some(0.0));
 }

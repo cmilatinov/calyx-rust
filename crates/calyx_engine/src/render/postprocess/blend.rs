@@ -3,7 +3,7 @@
 
 use crate::component::{
     ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom, ComponentColorGrading,
-    ComponentDepthOfField, ComponentTonemap, ComponentVignette,
+    ComponentDepthOfField, ComponentFog, ComponentTonemap, ComponentVignette,
 };
 use egui::{Color32, Rgba};
 
@@ -115,6 +115,28 @@ impl BlendEffect for ComponentDepthOfField {
     fn neutral(target: &Self) -> Option<Self> {
         Some(Self {
             max_blur: 0.0,
+            ..*target
+        })
+    }
+}
+
+impl BlendEffect for ComponentFog {
+    fn blend(&self, target: &Self, factor: f32) -> Self {
+        Self {
+            mode: switch(self.mode, target.mode, factor),
+            color: lerp_color(self.color, target.color, factor),
+            intensity: lerp(self.intensity, target.intensity, factor),
+            start: lerp(self.start, target.start, factor),
+            end: lerp(self.end, target.end, factor),
+            density: lerp(self.density, target.density, factor),
+            opacity: lerp(self.opacity, target.opacity, factor),
+        }
+    }
+
+    /// No fog: nothing takes any of the fog colour.
+    fn neutral(target: &Self) -> Option<Self> {
+        Some(Self {
+            opacity: 0.0,
             ..*target
         })
     }

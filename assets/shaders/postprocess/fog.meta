@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "b6f9aedb-d5bf-4b4e-9ab9-d986e76ef109",
+    "name": "shaders/postprocess/fog",
+    "display_name": "fog",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

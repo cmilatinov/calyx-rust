@@ -15,6 +15,7 @@ pub use anti_aliasing::*;
 pub use bloom::*;
 pub use color_grading::*;
 pub use depth_of_field::*;
+pub use fog::*;
 pub use tonemap::*;
 pub use vignette::*;
 
@@ -23,6 +24,7 @@ mod anti_aliasing;
 mod bloom;
 mod color_grading;
 mod depth_of_field;
+mod fog;
 mod tonemap;
 mod vignette;
 
