@@ -387,7 +387,7 @@ mod tests {
         selected: Option<GameObject>,
     ) -> usize {
         use crate::assets::mesh::Mesh;
-        use crate::render::Camera;
+        use crate::render::{Camera, GizmoOptions};
         let render_context = crate::test_support::test_render_context();
         let camera = Camera::default();
         let camera_transform = Transform::default();
@@ -399,7 +399,10 @@ mod tests {
             camera: &camera,
             camera_transform: &camera_transform,
             viewport_size: [1920.0, 1080.0],
-            selected_object: selected.map(|object| scene.uuid(object)),
+            options: GizmoOptions {
+                selected: selected.map(|object| scene.uuid(object)),
+                ..Default::default()
+            },
             object_id: 0,
             color: Vec4::new(1.0, 1.0, 1.0, 1.0),
             opacity: 1.0,

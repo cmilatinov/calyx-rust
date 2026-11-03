@@ -29,7 +29,7 @@ use calyx_engine::error::BoxedError;
 use calyx_engine::input::Input;
 use calyx_engine::logging::{DefaultLogger, Log};
 use calyx_engine::render::{
-    Camera, ParticleSimulation, SceneRenderer, SceneRendererError, SceneRendererOptions,
+    GizmoOptions, ParticleSimulation, SceneRenderer, SceneRendererError, SceneRendererOptions,
 };
 use calyx_engine::runtime::{initial_render_size, wgpu_configuration, FrameCounter};
 use calyx_engine::scene::Scene;
@@ -172,7 +172,7 @@ impl EditorAppState {
             &asset_context,
             SceneRendererOptions {
                 grid: true,
-                gizmos: true,
+                gizmos: Some(GizmoOptions::default()),
                 samples: 1,
                 clear_color: prefab_mode::SCENE_VIEW_BACKDROP,
                 shadows: true,
@@ -620,11 +620,16 @@ impl EditorApp {
         }
         camera.update_projection();
         prefab_mode.dress_scene_view(scene_renderer.options_mut());
-        scene_renderer.set_hovered_game_object(None);
-        scene_renderer.set_selected_game_object(None);
+        let game_view_size = Self::get_physical_size(ctx, *game_size);
         // Gizmos that only draw for the selection, such as a camera path's,
         // see it while the scene renders; the outline gets it afterwards.
-        scene_renderer.set_gizmo_selected_object(selection.first(SelectionType::GameObject));
+        scene_renderer.options_mut().gizmos = Some(GizmoOptions {
+            game_view_aspect: Self::has_renderable_size(game_view_size.0, game_view_size.1)
+                .then(|| game_view_size.0 as f32 / game_view_size.1 as f32),
+            selected: selection.first(SelectionType::GameObject),
+        });
+        scene_renderer.set_hovered_game_object(None);
+        scene_renderer.set_selected_game_object(None);
 
         let scene = scenes.simulation_scene();
         let particles = Some(&*particles);
@@ -636,7 +641,7 @@ impl EditorApp {
             Some(physics_debug_pipeline),
         );
         if scene.main_camera().is_some() {
-            let size = Self::get_physical_size(ctx, *game_size);
+            let size = game_view_size;
             if !Self::has_renderable_size(size.0, size.1) {
                 let mut encoder =
                     render_state
@@ -674,12 +679,7 @@ impl EditorApp {
         game_renderer.options_mut().clear_color = c.clear_color;
         game_renderer.resize_textures(width, height);
         let transform = scene.world_transform(node);
-        let camera = Camera::new(
-            width as f32 / height as f32,
-            c.fov,
-            c.near_plane,
-            c.far_plane,
-        );
+        let camera = c.camera(width as f32 / height as f32);
         game_renderer.render_scene_base(&camera, &transform, scene, particles, None);
         game_renderer.finalize_scene();
         true

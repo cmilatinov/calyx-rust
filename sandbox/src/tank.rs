@@ -9,7 +9,7 @@ use calyx_engine::core::TimeType;
 use calyx_engine::input::Input;
 use calyx_engine::math::Transform;
 use calyx_engine::reflect::{Reflect, ReflectDefault};
-use calyx_engine::render::{Camera, Ray};
+use calyx_engine::render::Ray;
 use calyx_engine::resource::ResourceMap;
 use calyx_engine::scene::GameObjectRef;
 use calyx_engine::scene::Scene;
@@ -946,14 +946,9 @@ fn cursor_ground_intersection(
     let aspect = rect.width() / rect.height().max(f32::EPSILON);
     let camera = scene
         .read_component::<ComponentCamera, _, _>(camera_object, |component| {
-            Camera::new(
-                aspect,
-                component.fov,
-                component.near_plane,
-                component.far_plane,
-            )
+            component.camera(aspect)
         })
-        .unwrap_or_else(|| Camera::new(aspect, 70.0f32.to_radians(), 0.1, 1000.0));
+        .unwrap_or_else(|| ComponentCamera::default().camera(aspect));
     let ray = camera.screen_ray(
         &camera_transform,
         vec2(cursor.x - rect.left(), cursor.y - rect.top()),
