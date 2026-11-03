@@ -3,8 +3,7 @@ its TGA textures to PNG.
 
 Embedded in the importer, which writes it beside its job and runs
 `blender --background --factory-startup --python blender_convert.py -- job.json`.
-The job lists `{"meshes": [[fbx, obj, normal mode, smoothing angle], ...], "textures": [[tga, png, fog], ...]}`,
-where `fog` is null or `[r, g, b, fraction]` to blend the texture towards.
+The job lists `{"meshes": [[fbx, obj, normal mode, smoothing angle], ...], "textures": [[tga, png], ...]}`.
 
 Each OBJ holds the mesh as Unity stores it, so the scene can reuse the
 pack's transforms unchanged:
@@ -137,20 +136,10 @@ def convert_mesh(fbx, obj, normal_mode=NORMALS_CALCULATE, smooth_angle=0.0):
     print(f"converted {obj}", flush=True)
 
 
-def convert_texture(tga, png, fog=None):
+def convert_texture(tga, png):
     image = bpy.data.images.load(tga)
     if not image.has_data:
         image.pixels[0]  # loads the pixels; saving needs them
-    if fog:
-        # Blends the texture towards the fog colour by the fog fraction,
-        # [r, g, b, fraction], as Unity's fog does at the object's distance.
-        r, g, b, amount = fog
-        pixels = list(image.pixels)
-        for i in range(0, len(pixels), 4):
-            pixels[i] += (r - pixels[i]) * amount
-            pixels[i + 1] += (g - pixels[i + 1]) * amount
-            pixels[i + 2] += (b - pixels[i + 2]) * amount
-        image.pixels[:] = pixels
     image.file_format = "PNG"
     image.filepath_raw = png
     image.save()
@@ -161,8 +150,8 @@ def main():
     job = json.load(open(sys.argv[sys.argv.index("--") + 1]))
     for fbx, obj, normal_mode, smooth_angle in job["meshes"]:
         convert_mesh(fbx, obj, normal_mode, smooth_angle)
-    for tga, png, fog in job["textures"]:
-        convert_texture(tga, png, fog)
+    for tga, png in job["textures"]:
+        convert_texture(tga, png)
 
 
 main()

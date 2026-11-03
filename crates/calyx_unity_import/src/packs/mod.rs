@@ -5,12 +5,7 @@ pub mod rpg_poly;
 
 use uuid::Uuid;
 
-use crate::package::UnityPackage;
 use crate::scene::{Converted, SceneWriter};
-
-/// Bakes a pack's fog into a texture: the fog `[r, g, b, fraction]` for
-/// the texture with the given GUID, if any.
-pub type TextureFog = fn(&UnityPackage, &str) -> Result<Option<[f64; 4]>, String>;
 
 /// One Asset Store pack the importer knows.
 pub struct Pack {
@@ -37,8 +32,6 @@ pub struct Pack {
     pub scene_name: &'static str,
     /// The material GUID a model file's own renderer uses.
     pub default_material: &'static str,
-    /// The fog `[r, g, b, fraction]` to bake into a texture, by its GUID.
-    pub texture_fog: TextureFog,
     /// Adds the pack's lighting, post-processing and camera to the converted
     /// scene, and returns extra text for the summary.
     pub finish_scene: fn(&mut SceneWriter, &Converted) -> Result<String, String>,

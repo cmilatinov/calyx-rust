@@ -160,13 +160,26 @@ Particles draw in the scene pass, after the meshes and the skybox, sorted back t
 - **Additive particles stay out of depth**: they add light and hide nothing, so the scene depth, the grid and gizmos never see them, nor the faint fringe of alpha-blended particles. For the passes that must not treat them as background, the renderer copies the scene depth into the particle depth and the same depth-only pass draws every particle into it, at a low threshold so the visible glow and fringe count.
 - **Depth of field** reads the particle depth, so every visible particle gets the circle of confusion of its own distance, never the background's. Through a particle the background takes the particle's circle too, which a single depth per pixel cannot avoid.
 - **SSAO** runs before any particle draws, on the G-buffer's depth (see Ambient Occlusion), so no particle occludes geometry, and a particle's light, added over the lit surface, is never darkened.
+- **Fog** reads the scene depth, so alpha-blended particles past half coverage take the fog of their own distance, while additive particles and alpha fringes take the fog of the surface behind them (see Fog).
 - Soft particles, which fade where they meet geometry, do not exist yet. They would be additive or below the alpha threshold, so they would stay out of the scene depth the same way.
 - A deferred G-buffer (#410) supplies opaque depth before the forward particles draw, so the same depth-only pass writes into it unchanged.
 
 `CameraPlanes::tan_half_fov` holds the tangents of half the horizontal and vertical fields of view, taken from the projection matrix (`1 / P[0][0]`, `1 / P[1][1]`), so a pass can rebuild view-space positions: the pixel at normalized device coordinates `ndc` and view distance `z` lies at `(ndc * tan_half_fov * z, z)`, and a view-space point projects back to `ndc = xy / (tan_half_fov * z)`.
+## Fog
+
+`FogPass` (`postprocess/fog.rs`) is an `Hdr` pass that reads `SceneInput::Depth` and fades each pixel towards a fog colour by its distance from the camera. It runs while the settings hold a `fog`, from an enabled Fog component on the volume, so a frame without it keeps the tone-map-only plan and builds no depth copy. It records one full-screen pass (`shaders/postprocess/fog.wgsl`) and owns no texture.
+
+- **Distance**: the view depth from `CameraPlanes::linear_depth`, stretched along the pixel's ray with `tan_half_fov`, so a surface's fog does not change as the camera turns about it. Unity's built-in fog uses the view depth instead, which fogs the screen's edges less than its centre.
+- **Amount**: `Linear` is `saturate((distance - start) / (end - start))`, a hard step at `start` when `end <= start`; `Exponential` is `1 - exp(-density * distance)`. Either is scaled by `opacity`, the most of the fog colour any pixel takes. The output is `mix(color, fog_color, amount)`, alpha unchanged.
+- **Colour**: an sRGB `Color32` converted to linear and scaled by `intensity`, so it is linear HDR radiance mixed in before tone mapping. Exposure and the curve then apply to the fog as to the scene, so a fog colour shows darker than its swatch at 0 EV under ACES; `intensity` brings it back, as it does for a light.
+- **Background**: the cleared depth (1) and the skybox's depth (`0.9999999`) both linearize to the far plane, so the sky or the clear colour takes the fog of the far plane's distance with no special case: linear fog that ends before the far plane covers it entirely, and exponential fog covers it by `1 - exp(-density * far)`. Distant geometry and the background therefore meet in the same colour at the horizon. The sky above the horizon takes the same fog as the horizon; fading the fog with height on the sky would need the camera's orientation in `PassContext`.
+- **Order**: first in the `Hdr` stage. SSAO is applied inside the lighting pass, before the chain (see Ambient Occlusion), so occlusion darkens only the surfaces' ambient light and never the fog in front of them, as the fog's in-scattered light is not occluded by the geometry. Before depth of field, so a fogged distant surface blurs to its fogged colour, as a lens sees it. Before bloom, so bloom spreads the light that reaches the camera through the fog: a bright light far in the fog is dimmed before it blooms.
+- **What it fogs**: everything in the scene depth by its own distance: the opaque PBR surfaces, meshes drawn with another shader in the forward pass, and alpha-blended particles past half coverage (see Particles And Depth). Additive particles and the faint fringe of alpha-blended ones are not in the scene depth, so their light is mixed towards the fog by the distance of the surface behind them: a glow in front of distant fog fades with that fog. The pass reads the scene depth rather than the particle depth because the particle depth would fog the background behind a particle's soft edge by the particle's nearer distance, leaving an unfogged halo around every particle in front of fog.
+- **MSAA**: depth reaches the pass single-sample at every sample count, sample 0 of the scene depth above one sample (see Shared Inputs), so a multisampled forward edge takes the fog of one of its samples.
+
 ## Depth Of Field
 
-`DepthOfFieldPass` (`postprocess/dof.rs`) is an `Hdr` pass that reads `SceneInput::ParticleDepth`, so particles blur by their own distance (see Particles And Depth). It runs while the settings hold a `depth_of_field`, which they do only when the volume has an enabled Depth Of Field component, so a frame without it keeps the tone-map-only plan. It runs first in the `Hdr` stage, before bloom, so bloom spreads highlights that are already out of focus, as a lens would. It records two render passes:
+`DepthOfFieldPass` (`postprocess/dof.rs`) is an `Hdr` pass that reads `SceneInput::ParticleDepth`, so particles blur by their own distance (see Particles And Depth). It runs while the settings hold a `depth_of_field`, which they do only when the volume has an enabled Depth Of Field component, so a frame without it keeps the tone-map-only plan. It runs after fog and before bloom, so bloom spreads highlights that are already out of focus, as a lens would. It records two render passes:
 
 ```text
 coc     depth           -> coc (R16Float, owned)   signed circle of confusion, in pixels
@@ -313,11 +326,17 @@ pub struct ComponentBloom { pub threshold: f32, pub knee: f32, pub intensity: f3
 pub struct ComponentColorGrading { pub contrast: f32, pub saturation: f32, pub temperature: f32, pub tint: f32 }  // 1, 1, 0, 0
 pub struct ComponentVignette { pub intensity: f32, pub smoothness: f32, pub color: Color32 }  // 0.4, 0.2, black
 pub struct ComponentAntiAliasing { pub edge_threshold: f32, pub subpixel: f32 }  // 0.166, 0.75
+pub struct ComponentFog {
+    pub mode: FogMode, pub color: Color32, pub intensity: f32,  // Linear, (180, 196, 212), 1.0
+    pub start: f32, pub end: f32, pub density: f32, pub opacity: f32,  // 0.0, 300.0, 0.01, 1.0
+}
+pub enum FogMode { Linear, Exponential }
 
 // What the chain reads for one frame: not a component and not saved.
 pub struct PostProcessSettings {
     pub tonemapping: ComponentTonemap,
     pub ambient_occlusion: Option<ComponentAmbientOcclusion>,
+    pub fog: Option<ComponentFog>,
     pub depth_of_field: Option<ComponentDepthOfField>,
     pub bloom: Option<ComponentBloom>,
     pub color_grading: Option<ComponentColorGrading>,
@@ -357,8 +376,8 @@ A local volume changes part of the look in a region and fades it in and out as t
 - **Blend factor** (`ComponentLocalPostProcessVolume::blend_factor`): `weight` inside the shape and on its surface, falling linearly to zero at `blend_distance` world units outside it, and zero beyond. A box measures from its nearest point, so the fade rounds its edges and corners. A blend distance of zero switches the volume at its surface.
 - **Order**: blending starts from the global volume's resolved settings, the defaults without one; global selection is unchanged. `PostProcessSettings::local_volumes` lists the enabled local volumes with a factor above zero in ascending priority, ties in ascending object id with a warning once per priority, and each applies over the result of those before it, so the highest priority applies last.
 - **Override per effect**: an effect component present and enabled on the volume overrides every one of its fields; there are no per-field override flags. One the volume lacks or holds disabled inherits the value below it. A disabled local volume takes no part.
-- **Blending per field** (`render/postprocess/blend.rs`, `BlendEffect`): `f32` fields interpolate, colours interpolate in linear space, and integer and enum fields (bloom radius, SSAO sample count, the tone-mapping preset) switch to the volume's at a factor of 0.5.
-- **Fade-in**: an effect off below and on in the volume fades in from its neutral values, the volume's own values with the strength at rest: SSAO, bloom and vignette intensity 0, depth of field blur 0, and the colour grading defaults. FXAA has no neutral value and switches on at 0.5. Tone mapping is always on below a volume.
+- **Blending per field** (`render/postprocess/blend.rs`, `BlendEffect`): `f32` fields interpolate, colours interpolate in linear space, and integer and enum fields (bloom radius, SSAO sample count, the tone-mapping preset, the fog mode) switch to the volume's at a factor of 0.5.
+- **Fade-in**: an effect off below and on in the volume fades in from its neutral values, the volume's own values with the strength at rest: SSAO, bloom and vignette intensity 0, fog opacity 0, depth of field blur 0, and the colour grading defaults. FXAA has no neutral value and switches on at 0.5. Tone mapping is always on below a volume.
 - **Gathering**: `PostProcessEffects::from_game_object` reads one volume's effects, its profile overlaid with its enabled effect components (see Profiles), for global and local volumes alike; `PostProcessSettings::from_game_object` is it with tone mapping defaulted.
 - **Gizmos**: the editor draws a local volume's shape, and more faintly the outer edge of its blend distance: a sphere of radius plus blend distance, or the box grown by the blend distance on every side, which traces the faces of the rounded blend region.
 
@@ -407,6 +426,7 @@ A profile is a look saved as an asset, which any number of global and local volu
 - `assets/shaders/postprocess/bloom_prefilter.wgsl`, `bloom_downsample.wgsl`, `bloom_upsample.wgsl` and `bloom_composite.wgsl`: the bloom passes. `bloom_filters.wgsl` holds the 13-tap downsample and the tent upsample they share.
 - `assets/shaders/postprocess/color_grading.wgsl`: the colour grading and vignette pass.
 - `assets/shaders/postprocess/fxaa.wgsl`: the FXAA pass.
+- `assets/shaders/postprocess/fog.wgsl`: the fog pass.
 - `assets/shaders/postprocess/depth_resolve.wgsl`: copies sample 0 of the multisampled depth.
 - `assets/shaders/postprocess/dof_coc.wgsl` and `dof_blur.wgsl`: the depth of field passes. `dof_common.wgsl` holds their uniform, the depth linearization and the circle of confusion.
 - `assets/shaders/editor/overlay_composite.wgsl`: blends the resolved overlay target over the scene texture.
@@ -450,6 +470,7 @@ Headless tests in `crates/calyx_engine/src/render/postprocess/`:
 - Bloom (`bloom.rs`): a single pixel above the threshold spreads energy into its neighbours, fading with distance, and keeps alpha; an image entirely below the threshold passes through unchanged; a flat image of 20,000 blooms to the expected value without overflowing the half-float mips; a composite past the half-float maximum saturates at it; with bloom disabled the renderer's plan is the tone-map-only plan; the mip chain follows the chain's size and the radius and is freed on release; the chain releases a pass's targets on resize and on frames the pass does not run.
 - Colour grading (`color_grading/tests.rs`): neutral settings return the input, zero saturation gives grey at the input's luminance, contrast keeps mid grey, positive temperature warms and positive tint adds magenta, the vignette darkens the corners and leaves the centre unchanged, and alpha is preserved. With both effects off the pass is left out of the plan, the scene renderer plans it before FXAA, and partial components load with the defaults.
 - Local volumes (`local_volume_tests.rs`): the blend factor inside, at the edge, within the blend distance and outside a box, a rotated and scaled box and a sphere, and with no blend distance; a factor of zero changes nothing; overlapping volumes apply in ascending priority, and ties in object id order with the tie reported; an absent or disabled effect inherits the value below; an effect off below fades in from its neutral values and FXAA switches on at 0.5; integer and enum fields switch at 0.5 and colours blend in linear space; a disabled volume takes no part; the scene renderer resolves at the camera it draws with; and a volume saves and loads with its scene.
+- Fog (`fog/tests.rs`): a plane facing the camera fades to the fog colour by its distance along each pixel's ray, linear and exponential, at the expected amount, and keeps alpha; a surface before linear fog starts is unchanged; the background, at a cleared or skybox depth, takes the fog colour under linear fog that ends before the far plane and the far plane's fog under exponential fog; in a rendered scene the far of two identical cubes is closer to the fog colour than the near one, at one and four samples, while without fog they look the same; the renderer runs fog first in the `Hdr` stage, before depth of field and bloom; a partial component loads with the defaults. Fog blends between a global and a local volume and fades in from opacity 0 (`local_volume_tests.rs`), and a profile's fog entry round-trips and switches fog on (`post_process_profile/tests.rs`).
 - FXAA smooths a hard diagonal edge and keeps each pixel's alpha, leaves a flat colour and its alpha unchanged, and leaves the plan unchanged while disabled. A partial component loads with the defaults.
 
 Headless tests in `crates/calyx_engine/src/render/overlay/` and `scene_renderer.rs`:

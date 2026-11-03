@@ -801,19 +801,23 @@ mod tests {
         assert_eq!(
             names,
             [
+                "fog",
                 "depth_of_field",
                 "bloom",
                 "tonemap",
                 "color_grading",
                 "fxaa"
             ],
-            "the renderer runs bloom after depth of field"
+            "the renderer runs bloom after fog and depth of field"
         );
         assert_eq!(
             *renderer.last_post_process_plan(),
             ChainPlan {
                 passes: vec![PlannedPass {
-                    pass: 2,
+                    pass: names
+                        .iter()
+                        .position(|name| *name == "tonemap")
+                        .expect("the renderer tone maps"),
                     input: PassTarget::Source,
                     output: PassTarget::Output,
                 }],

@@ -26,12 +26,10 @@ pub struct MeshJob {
     pub smooth_angle: f64,
 }
 
-/// One texture to convert, optionally blended towards a fog colour
-/// `[r, g, b, fraction]`.
+/// One texture to convert.
 pub struct TextureJob {
     pub tga: PathBuf,
     pub png: PathBuf,
-    pub fog: Option<[f64; 4]>,
 }
 
 /// `(mode, smoothing angle)` of a model's normals from its `.meta`. None
@@ -101,7 +99,6 @@ pub fn convert(
                         Json::Array(vec![
                             Json::Str(absolute(&t.tga)),
                             Json::Str(absolute(&t.png)),
-                            t.fog.map_or(Json::Null, Json::floats),
                         ])
                     })
                     .collect(),

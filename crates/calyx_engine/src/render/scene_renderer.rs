@@ -12,8 +12,8 @@ use crate::math::Transform;
 use crate::render::asset_render_state::AssetRenderState;
 use crate::render::overlay::{OverlayCompositor, OverlayContext, OverlayPass};
 use crate::render::postprocess::{
-    BloomPass, CameraPlanes, ChainPlan, ChainTargets, ColorGradingPass, DepthOfFieldPass, FxaaPass,
-    PostProcessChain, PostProcessSettings, SceneInput, SsaoInputs, SsaoPass, TonemapPass,
+    BloomPass, CameraPlanes, ChainPlan, ChainTargets, ColorGradingPass, DepthOfFieldPass, FogPass,
+    FxaaPass, PostProcessChain, PostProcessSettings, SceneInput, SsaoInputs, SsaoPass, TonemapPass,
 };
 use crate::render::render_utils::RenderUtils;
 use crate::render::{
@@ -356,9 +356,11 @@ impl SceneRenderer {
         let outline_renderer = OutlineRenderer::new(context)?;
         let particle_renderer = ParticleRenderer::new(context)?;
         let mut post_process = PostProcessChain::new(context)?;
-        // Depth of field runs first, before bloom, so bloom spreads already
-        // blurred highlights. SSAO is not a chain pass: the lighting pass
-        // applies it to the ambient light.
+        // Fog runs first in the Hdr stage, before depth of field and bloom,
+        // which blur and spread the fogged light as a lens would see it. SSAO
+        // is not a chain pass: the lighting pass applies it to the ambient
+        // light, so occlusion never darkens the fog.
+        post_process.push(Box::new(FogPass::new(context)?));
         post_process.push(Box::new(DepthOfFieldPass::new(context)?));
         post_process.push(Box::new(TonemapPass::new(context)?));
         post_process.push(Box::new(BloomPass::new(context)?));

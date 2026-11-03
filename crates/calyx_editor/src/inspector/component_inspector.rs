@@ -3,7 +3,8 @@
 //! A component is drawn under a collapsing header with its type inspector,
 //! or, without one, field by field from its registered type info: nested
 //! structs, lists and the fields' own type inspectors, with fields that name
-//! a `group` gathered into collapsible sections. A component that can be
+//! a `group` gathered into collapsible sections. An enum with only unit
+//! variants and no type inspector is a dropdown of its variants. A component that can be
 //! disabled has a checkbox left of its title, and its body is greyed out and
 //! read-only while it is off. The header's context menu offers removing the
 //! component; the caller applies that and the checkbox.
@@ -11,12 +12,12 @@
 use calyx_engine::component::{ComponentID, ComponentTransform};
 use calyx_engine::reflect::type_registry::TypeRegistry;
 use calyx_engine::reflect::{
-    AttributeValue, ListInfo, NamedField, Reflect, ReflectDefault, ReflectList, StructInfo,
-    TypeInfo,
+    AttributeValue, EnumInfo, EnumVariantInfo, ListInfo, NamedField, Reflect, ReflectDefault,
+    ReflectList, StructInfo, TypeInfo,
 };
 use calyx_engine::utils::TypeUuid;
 use convert_case::{Case, Casing};
-use egui::{Id, Rect, Response, RichText, TextStyle, Ui, Vec2};
+use egui::{Id, Rect, Response, RichText, TextStyle, Ui, Vec2, WidgetInfo, WidgetType};
 use re_ui::list_item::{LabelContent, ListItem, PropertyContent, ShowCollapsingResponse};
 use re_ui::UiExt;
 use std::collections::HashMap;
@@ -180,6 +181,8 @@ enum ElementView {
     Struct,
     /// A nested list's elements, under the element.
     List,
+    /// A dropdown of an enum's unit variants, inline on the element's row.
+    UnitEnum,
     /// The element's type name, read-only.
     Label,
 }
@@ -198,6 +201,7 @@ fn element_view(
         Some(TypeInfo::Enum(_)) if has_inspector => ElementView::Enum,
         _ if has_inspector => ElementView::Inline,
         Some(TypeInfo::Struct(_)) => ElementView::Struct,
+        Some(TypeInfo::Enum(info)) if info.is_unit_only() => ElementView::UnitEnum,
         _ if is_list => ElementView::List,
         _ => ElementView::Label,
     }
@@ -538,6 +542,14 @@ impl<'a> ComponentInspector<'a> {
                 Some(info),
                 trail,
             ),
+            Some(TypeInfo::Enum(info)) if info.is_unit_only() && instance.as_enum().is_some() => {
+                let label = name.trim_end().to_owned();
+                let mut response = InspectorResponse::NONE;
+                Widgets::inspector_prop_value(ui, name, |ui, _| {
+                    response = unit_enum_dropdown(ui, id, &label, info, instance);
+                });
+                response
+            }
             Some(_) => {
                 Widgets::inspector_prop_value(ui, name, |ui, _| {
                     ui.label(instance.type_name_short());
@@ -629,6 +641,20 @@ impl<'a> ComponentInspector<'a> {
             .interactive(true)
             .draggable(true);
         let mut response = InspectorResponse::NONE;
+        if let (ElementView::UnitEnum, Some(TypeInfo::Enum(info))) = (view, element_info) {
+            let item_response = item.show_flat(
+                ui,
+                PropertyContent::new(label.as_str()).value_fn(|ui, _| {
+                    response = unit_enum_dropdown(ui, id, &label, info, element);
+                }),
+            );
+            let shown = ShowCollapsingResponse {
+                item_response,
+                body_response: None,
+                openness: 0.0,
+            };
+            return (response, shown);
+        }
         if let (ElementView::Inline, Some(inspector)) = (view, inspector) {
             let item_response = item.show_flat(
                 ui,
@@ -681,6 +707,55 @@ impl<'a> ComponentInspector<'a> {
             },
         );
         (response, shown)
+    }
+}
+
+/// Draws a dropdown of `info`'s variants, in declaration order, showing the
+/// one `instance` holds, and sets `instance` to the variant picked. `label`
+/// names the dropdown for accessibility. Reports a pick of another variant
+/// as a discrete change.
+fn unit_enum_dropdown(
+    ui: &mut Ui,
+    id: Id,
+    label: &str,
+    info: &EnumInfo,
+    instance: &mut dyn Reflect,
+) -> InspectorResponse {
+    let Some(value) = instance.as_enum_mut() else {
+        return InspectorResponse::NONE;
+    };
+    let current = value.variant_name();
+    let current_label = info
+        .variant(current)
+        .map(variant_display_name)
+        .unwrap_or_else(|| current.to_owned());
+    let mut selected = current;
+    let enabled = ui.is_enabled();
+    let dropdown = egui::ComboBox::from_id_salt(id)
+        .selected_text(current_label.as_str())
+        .show_ui(ui, |ui| {
+            for variant in &info.variants {
+                ui.selectable_value(&mut selected, variant.name, variant_display_name(variant));
+            }
+        });
+    dropdown.response.widget_info(|| {
+        let mut widget = WidgetInfo::labeled(WidgetType::ComboBox, enabled, label);
+        widget.current_text_value = Some(current_label.clone());
+        widget
+    });
+    if selected != current && value.set_unit_variant(selected) {
+        InspectorResponse::CHANGED
+    } else {
+        InspectorResponse::NONE
+    }
+}
+
+/// The name the inspector shows for `variant`: its `name` attribute, or its
+/// name in title case.
+fn variant_display_name(variant: &EnumVariantInfo) -> String {
+    match variant.attr("name") {
+        Some(AttributeValue::String(name)) => name.to_owned(),
+        _ => variant.name.from_case(Case::Pascal).to_case(Case::Title),
     }
 }
 
@@ -777,9 +852,10 @@ mod tests {
     use crate::widgets::ListContainer;
     use calyx_engine::component::{
         Component, ComponentBone, ComponentCamera, ComponentParticleSystem, ComponentPointLight,
+        ComponentTonemap,
     };
     use calyx_engine::reflect::type_registry::TypeRegistry;
-    use calyx_engine::reflect::{ListInfo, Reflect, TypeInfo};
+    use calyx_engine::reflect::{ListInfo, Reflect, ReflectDefault, TypeInfo};
     use calyx_engine::utils::TypeUuid;
     use egui::accesskit::Role;
     use egui::{Id, Rect, Ui, Vec2};
@@ -1465,5 +1541,169 @@ mod tests {
             "a row starts at {left}, left of the inspector at {}",
             viewport.min.x
         );
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, TypeUuid, Reflect, Serialize, Deserialize)]
+    #[uuid = "73077ef6-6460-4a4e-8051-26d76df35176"]
+    #[reflect(Default)]
+    enum TestQuality {
+        #[default]
+        Low,
+        Medium,
+        #[reflect_attr(name = "Very High")]
+        VeryHigh,
+    }
+
+    #[derive(Default, Debug, PartialEq, TypeUuid, Reflect, Serialize, Deserialize)]
+    #[uuid = "cec6d20c-45f6-4b51-936a-40c181610eb9"]
+    struct QualityHolder {
+        quality: TestQuality,
+        levels: Vec<TestQuality>,
+    }
+
+    #[test]
+    fn unit_enum_fields_pick_their_variant_from_a_dropdown() {
+        let mut h = InspectorHarness::new();
+        h.type_info = QualityHolder::type_uuid();
+        let registry = h.inspector_registry();
+        let inspector = ComponentInspector::new(&registry);
+        let holder = std::cell::RefCell::new(QualityHolder::default());
+        let key = ComponentKey {
+            game_object: Uuid::nil(),
+            component: QualityHolder::type_uuid(),
+        };
+        let tracker = std::cell::RefCell::new(InspectorEditTracker::default());
+        tracker
+            .borrow_mut()
+            .set_baseline(key, serde_json::to_value(&*holder.borrow()).ok());
+        let commits = std::cell::RefCell::new(Vec::new());
+        // Each frame's response goes through the edit tracker, as the
+        // inspector panel does, and every committed edit is kept.
+        let mut draw = |ui: &mut Ui, ctx: &InspectorContext| {
+            let response = inspector.show_fields(
+                ui,
+                ctx,
+                holder.borrow_mut().as_reflect_mut(),
+                &FieldTrail::root(Id::new("quality_holder")),
+            );
+            let pointer_down = ui.input(|input| input.pointer.any_down());
+            let mut tracker = tracker.borrow_mut();
+            if tracker.report(key, response, pointer_down) {
+                let current = serde_json::to_value(&*holder.borrow()).ok();
+                commits.borrow_mut().extend(tracker.commit(key, current));
+            }
+            response
+        };
+
+        h.idle(3, &mut draw);
+        let dropdown = &h.widgets(Role::ComboBox)[0];
+        assert_eq!(dropdown.label.as_deref(), Some("Quality"));
+        assert_eq!(dropdown.value.as_deref(), Some("Low"));
+
+        h.click(h.widget(Role::ComboBox, 0), &mut draw);
+        let options = h
+            .labels()
+            .into_iter()
+            .filter(|label| ["Low", "Medium", "Very High"].contains(label))
+            .collect::<Vec<_>>();
+        assert_eq!(options, ["Low", "Medium", "Very High"]);
+
+        let picked = h.click(h.labelled(Role::Button, "Very High"), &mut draw);
+        assert!(any_changed(&picked), "{picked:?}");
+        assert!(picked.iter().all(|response| !response.drag_started));
+        assert_eq!(holder.borrow().quality, TestQuality::VeryHigh);
+        h.idle(3, &mut draw);
+        let dropdown = &h.widgets(Role::ComboBox)[0];
+        assert_eq!(dropdown.value.as_deref(), Some("Very High"));
+
+        // The pick is one edit of the field, and undoing it restores the
+        // variant it replaced.
+        let commits = commits.take();
+        assert_eq!(commits.len(), 1);
+        let mut history = SceneHistory::default();
+        assert!(history.push_inspector_value(InspectorValueEdit {
+            label: "Edit Quality Holder".into(),
+            game_object: commits[0].key.game_object,
+            component: commits[0].key.component,
+            changes: commits[0].changes.clone(),
+        }));
+        let Some(SceneHistoryRestore::InspectorValue { values, .. }) = history.undo() else {
+            panic!("expected an inspector value restore");
+        };
+        let mut serialized = serde_json::to_value(&*holder.borrow()).unwrap();
+        for (path, value) in values {
+            assert!(crate::set_json_value(&mut serialized, &path, value));
+        }
+        let restored: QualityHolder = serde_json::from_value(serialized).unwrap();
+        assert_eq!(restored.quality, TestQuality::Low);
+    }
+
+    #[test]
+    fn unit_enum_list_elements_pick_their_variant_from_a_dropdown() {
+        let mut h = InspectorHarness::new();
+        h.type_info = QualityHolder::type_uuid();
+        let registry = h.inspector_registry();
+        let inspector = ComponentInspector::new(&registry);
+        let mut holder = QualityHolder {
+            quality: TestQuality::Low,
+            levels: vec![TestQuality::Medium],
+        };
+        let mut draw = |ui: &mut Ui, ctx: &InspectorContext| {
+            inspector.show_fields(
+                ui,
+                ctx,
+                holder.as_reflect_mut(),
+                &FieldTrail::root(Id::new("quality_list")),
+            )
+        };
+
+        h.idle(3, &mut draw);
+        let element = h.labelled(Role::ComboBox, "Element 0");
+        h.click(element, &mut draw);
+        let picked = h.click(h.labelled(Role::Button, "Low"), &mut draw);
+        assert!(any_changed(&picked), "{picked:?}");
+        assert_eq!(holder.levels, vec![TestQuality::Low]);
+    }
+
+    /// The Tone Mapping component's `preset` shows its variant, both as an
+    /// object's component and as a profile's effect entry, which the
+    /// profile inspector draws unpinned.
+    #[test]
+    fn tone_mapping_shows_its_preset_in_a_dropdown() {
+        for pinned in [true, false] {
+            let mut h = InspectorHarness::new();
+            h.type_info = ComponentTonemap::type_uuid();
+            let registry = h.inspector_registry();
+            let inspector = ComponentInspector::new(&registry);
+            let mut tonemap = ComponentTonemap::default();
+            let mut draw = |ui: &mut Ui, ctx: &InspectorContext| {
+                let instance = tonemap.as_reflect_mut();
+                let response = if pinned {
+                    inspector.show(ui, ctx, instance, PinState::default(), Some(true))
+                } else {
+                    inspector.show_unpinned(ui, ctx, instance, Some(true))
+                };
+                response.edit
+            };
+
+            h.idle(3, &mut draw);
+            let dropdowns = h.widgets(Role::ComboBox);
+            assert_eq!(dropdowns.len(), 1, "{:#?}", h.nodes());
+            assert_eq!(dropdowns[0].label.as_deref(), Some("Preset"));
+            assert_eq!(dropdowns[0].value.as_deref(), Some("Aces"));
+            assert!(!h.labels().contains(&"TonemappingPreset"));
+        }
+    }
+
+    #[test]
+    fn unit_enum_elements_draw_inline() {
+        let registry = TypeRegistry::new();
+        let quality = registry.type_info::<TestQuality>();
+        assert_eq!(
+            element_view(false, false, quality, false),
+            ElementView::UnitEnum
+        );
+        // A type inspector still wins.
+        assert_eq!(element_view(true, false, quality, false), ElementView::Enum);
     }
 }

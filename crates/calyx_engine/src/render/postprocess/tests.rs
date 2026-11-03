@@ -2,7 +2,8 @@ use super::*;
 use crate::assets::texture::Texture;
 use crate::component::{
     Component, ComponentAntiAliasing, ComponentBloom, ComponentColorGrading, ComponentDepthOfField,
-    ComponentGlobalPostProcessVolume, ComponentTonemap, ComponentVignette, TonemappingPreset,
+    ComponentFog, ComponentGlobalPostProcessVolume, ComponentTonemap, ComponentVignette,
+    TonemappingPreset,
 };
 use crate::render::scene_renderer::{half_to_f32, linear_to_srgb};
 use crate::render::{
@@ -1015,6 +1016,7 @@ fn no_enabled_volume_selects_nothing_and_the_defaults_tone_map_alone() {
         PostProcessSettings {
             tonemapping: ComponentTonemap::default(),
             ambient_occlusion: None,
+            fog: None,
             depth_of_field: None,
             bloom: None,
             color_grading: None,
@@ -1150,6 +1152,7 @@ fn adding_or_disabling_an_effect_component_switches_its_pass_in_the_plan() {
     check_effect::<ComponentColorGrading>(passes, &mut scene, volume, "color_grading");
     check_effect::<ComponentVignette>(passes, &mut scene, volume, "color_grading");
     check_effect::<ComponentAntiAliasing>(passes, &mut scene, volume, "fxaa");
+    check_effect::<ComponentFog>(passes, &mut scene, volume, "fog");
 
     // A disabled volume's effects are off too.
     scene.add_component(volume, ComponentBloom::default());

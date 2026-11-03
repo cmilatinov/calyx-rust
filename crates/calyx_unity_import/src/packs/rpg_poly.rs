@@ -5,7 +5,6 @@ use std::f64::consts::PI;
 use uuid::{uuid, Uuid};
 
 use crate::json::{round_to, Json};
-use crate::package::UnityPackage;
 use crate::packs::Pack;
 use crate::scene::{Converted, SceneWriter, UnityCamera};
 use crate::yaml::Value;
@@ -26,7 +25,6 @@ pub const PACK: Pack = Pack {
     scene_name: "rpg_poly",
     // The pack's one atlas material.
     default_material: "58d53420af384224ea4cfee8973d18cb",
-    texture_fog,
     finish_scene,
 };
 
@@ -42,6 +40,7 @@ const C_TONEMAP: &str = "68ac12ac-fc9a-489e-b305-363eaf593966";
 const C_BLOOM: &str = "7e09858d-fd71-4729-bb90-8ed76c0bda9a";
 const C_FXAA: &str = "c19ff2b7-c3ed-4f04-9dfa-e026efdedf82";
 const C_GRADING: &str = "d2694fb5-4815-471e-9537-4ab502c580f0";
+const C_FOG: &str = "659a0e8b-963d-439b-9a73-dc8bb2c6ead1";
 const C_CAMERA_PATH: &str = "b6f1c0de-2a4e-4c5b-9d37-8e1f4a6b2c90";
 
 /// The committed sky (`sky/kloofendal_48d_partly_cloudy_puresky_2k.meta`):
@@ -49,11 +48,6 @@ const C_CAMERA_PATH: &str = "b6f1c0de-2a4e-4c5b-9d37-8e1f4a6b2c90";
 /// ambient, standing in for the procedural sky Unity's ambient comes from.
 /// The pack's own sky dome and clouds are drawn over it.
 const SKYBOX_ID: &str = "b54b855c-1db7-5cdc-9293-e19639776142";
-
-/// The sky dome's texture, and the dome's radius in the demo scene: its mesh
-/// spans about 49 m, and the scene scales it by 10.
-const SKY_TEXTURE: &str = "5c4fa0e44769f8f46a06d96031e56a4e";
-const SKY_DOME_RADIUS: f64 = 490.0;
 
 /// Unity's directional light of intensity 1 under its default ambient, in
 /// Calyx's units; tuned by eye against the store screenshots.
@@ -69,39 +63,6 @@ const ORBIT_RADIUS: f64 = 46.0;
 const ORBIT_HEIGHT: f64 = 36.0;
 const ORBIT_STOPS: usize = 8;
 const FRAMING_CAMERA: &str = "Camera(KeyImage)";
-
-/// The demo scene's linear fog where it meets the sky dome, for the dome's
-/// texture. Unity draws the dome through the scene's fog, which washes its
-/// saturated teal out to the pale blue of the store screenshots. Calyx has
-/// no fog, and the dome sits at a near-constant distance from the village,
-/// so the fog's effect on it is baked into its texture instead.
-fn texture_fog(package: &UnityPackage, guid: &str) -> Result<Option<[f64; 4]>, String> {
-    if guid != SKY_TEXTURE {
-        return Ok(None);
-    }
-    let scene = package
-        .guids
-        .get(PACK.demo_scene)
-        .ok_or("the pack has no demo scene")?;
-    let documents = package.documents(scene)?;
-    let Some(settings) = documents.iter().find(|d| d.class_name == "RenderSettings") else {
-        return Ok(None);
-    };
-    let settings = &settings.body;
-    if settings.str_at("m_Fog") != Some("1") {
-        return Ok(None);
-    }
-    let color = settings.get("m_FogColor").ok_or("fog without a colour")?;
-    let start = settings.f64_at("m_LinearFogStart").unwrap_or(0.0);
-    let end = settings.f64_at("m_LinearFogEnd").unwrap_or(1.0);
-    let fraction = ((SKY_DOME_RADIUS - start) / (end - start)).clamp(0.0, 1.0);
-    Ok(Some([
-        color.f64_at("r").unwrap_or(0.0),
-        color.f64_at("g").unwrap_or(0.0),
-        color.f64_at("b").unwrap_or(0.0),
-        fraction,
-    ]))
-}
 
 fn origin() -> (Json, Json, Json) {
     (
@@ -195,15 +156,69 @@ fn add_lighting(writer: &mut SceneWriter, converted: &Converted) -> Result<(), S
         p,
         r,
         s,
-        post_process(),
+        post_process(converted.render_settings.as_ref()),
         true,
     );
     Ok(())
 }
 
-fn post_process() -> Vec<(String, Json)> {
+/// The brightness of the fog colour, in Calyx's units: Unity mixes its fog
+/// colour into the displayed image, while Calyx's fog is linear HDR light
+/// that the volume's exposure and tone mapping then darken; tuned by eye
+/// against the store screenshots.
+const FOG_INTENSITY: f64 = 1.0;
+
+/// The fog of the Unity scene's `RenderSettings`, as a Fog component, if
+/// the scene has fog on. Unity's linear and exponential fog map to Calyx's;
+/// its exponential squared fog has no counterpart and becomes exponential.
+fn fog(render_settings: Option<&Value>) -> Option<(String, Json)> {
+    let settings = render_settings?;
+    if settings.str_at("m_Fog") != Some("1") {
+        return None;
+    }
+    let color = settings.get("m_FogColor");
+    let channel = |c: &str| {
+        let value = color.and_then(|color| color.f64_at(c)).unwrap_or(0.0);
+        Json::Int((value.clamp(0.0, 1.0) * 255.0).round_ties_even() as i64)
+    };
+    let mode = match settings.str_at("m_FogMode") {
+        Some("1") => "Linear",
+        _ => "Exponential",
+    };
+    Some((
+        C_FOG.into(),
+        Json::object([
+            (
+                "color",
+                Json::Array(vec![
+                    channel("r"),
+                    channel("g"),
+                    channel("b"),
+                    Json::Int(255),
+                ]),
+            ),
+            (
+                "density",
+                Json::Float(settings.f64_at("m_FogDensity").unwrap_or(0.01)),
+            ),
+            (
+                "end",
+                Json::Float(settings.f64_at("m_LinearFogEnd").unwrap_or(300.0)),
+            ),
+            ("intensity", Json::Float(FOG_INTENSITY)),
+            ("mode", Json::Str(mode.into())),
+            ("opacity", Json::Float(1.0)),
+            (
+                "start",
+                Json::Float(settings.f64_at("m_LinearFogStart").unwrap_or(0.0)),
+            ),
+        ]),
+    ))
+}
+
+fn post_process(render_settings: Option<&Value>) -> Vec<(String, Json)> {
     let f = Json::Float;
-    vec![
+    let mut components = vec![
         (C_VOLUME.into(), Json::object([("priority", Json::Int(0))])),
         (
             C_TONEMAP.into(),
@@ -251,7 +266,9 @@ fn post_process() -> Vec<(String, Json)> {
             C_FXAA.into(),
             Json::object([("edge_threshold", f(0.063)), ("subpixel", f(1.0))]),
         ),
-    ]
+    ];
+    components.extend(fog(render_settings));
+    components
 }
 
 /// The rotation whose +Z looks from `position` at `target`, upright, as

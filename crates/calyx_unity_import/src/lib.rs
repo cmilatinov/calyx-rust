@@ -241,7 +241,6 @@ fn convert_models_and_textures(
         textures.push(TextureJob {
             tga,
             png: with_extension(&png, "png"),
-            fog: (layout.pack.texture_fog)(package, &guid)?,
         });
         metas.push((png, layout.texture_name(&path), TYPE_TEXTURE));
     }

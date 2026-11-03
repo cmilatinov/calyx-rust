@@ -6,7 +6,7 @@ use super::blend::{blend_effect, BlendEffect};
 use crate::assets::post_process_profile::PostProcessProfile;
 use crate::component::{
     Component, ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom,
-    ComponentColorGrading, ComponentDepthOfField, ComponentGlobalPostProcessVolume,
+    ComponentColorGrading, ComponentDepthOfField, ComponentFog, ComponentGlobalPostProcessVolume,
     ComponentLocalPostProcessVolume, ComponentTonemap, ComponentVignette,
 };
 use crate::scene::{GameObject, Scene};
@@ -27,6 +27,8 @@ pub struct PostProcessSettings {
     pub tonemapping: ComponentTonemap,
     /// Screen-space ambient occlusion, first in the `Hdr` stage.
     pub ambient_occlusion: Option<ComponentAmbientOcclusion>,
+    /// Distance fog, first in the `Hdr` stage.
+    pub fog: Option<ComponentFog>,
     /// Depth of field, in the `Hdr` stage.
     pub depth_of_field: Option<ComponentDepthOfField>,
     /// Bloom, in the `Hdr` stage.
@@ -50,6 +52,8 @@ pub struct PostProcessEffects {
     pub tonemapping: Option<ComponentTonemap>,
     /// Screen-space ambient occlusion.
     pub ambient_occlusion: Option<ComponentAmbientOcclusion>,
+    /// Distance fog.
+    pub fog: Option<ComponentFog>,
     /// Depth of field.
     pub depth_of_field: Option<ComponentDepthOfField>,
     /// Bloom.
@@ -81,6 +85,7 @@ impl PostProcessEffects {
         Self {
             tonemapping: over.tonemapping.or(self.tonemapping),
             ambient_occlusion: over.ambient_occlusion.or(self.ambient_occlusion),
+            fog: over.fog.or(self.fog),
             depth_of_field: over.depth_of_field.or(self.depth_of_field),
             bloom: over.bloom.or(self.bloom),
             color_grading: over.color_grading.or(self.color_grading),
@@ -95,6 +100,7 @@ impl PostProcessEffects {
         Self {
             tonemapping: effect(scene, game_object),
             ambient_occlusion: effect(scene, game_object),
+            fog: effect(scene, game_object),
             depth_of_field: effect(scene, game_object),
             bloom: effect(scene, game_object),
             color_grading: effect(scene, game_object),
@@ -111,6 +117,7 @@ impl From<PostProcessEffects> for PostProcessSettings {
         Self {
             tonemapping: effects.tonemapping.unwrap_or_default(),
             ambient_occlusion: effects.ambient_occlusion,
+            fog: effects.fog,
             depth_of_field: effects.depth_of_field,
             bloom: effects.bloom,
             color_grading: effects.color_grading,
@@ -260,6 +267,7 @@ impl PostProcessSettings {
                 effects.ambient_occlusion,
                 factor,
             ),
+            fog: blend_effect(self.fog, effects.fog, factor),
             depth_of_field: blend_effect(self.depth_of_field, effects.depth_of_field, factor),
             bloom: blend_effect(self.bloom, effects.bloom, factor),
             color_grading: blend_effect(self.color_grading, effects.color_grading, factor),

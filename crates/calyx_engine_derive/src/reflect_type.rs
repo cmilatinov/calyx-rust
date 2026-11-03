@@ -138,11 +138,29 @@ fn expand(ast: &DeriveInput) -> darling::Result<proc_macro2::TokenStream> {
         }
     }
 
-    let reflect_impls = type_name_and_reflect_impls(name);
+    let (reflect_methods, enum_impl) = match &ast.data {
+        Data::Enum(e) => (
+            quote! {
+                #[inline]
+                fn as_enum(&self) -> ::core::option::Option<&dyn calyx_engine::reflect::ReflectEnum> {
+                    ::core::option::Option::Some(self)
+                }
+                #[inline]
+                fn as_enum_mut(
+                    &mut self,
+                ) -> ::core::option::Option<&mut dyn calyx_engine::reflect::ReflectEnum> {
+                    ::core::option::Option::Some(self)
+                }
+            },
+            reflect_enum_impl(name, e.variants.iter()),
+        ),
+        _ => (quote! {}, quote! {}),
+    };
+    let reflect_impls = type_name_and_reflect_impls(name, reflect_methods);
     let register_traits_impl = register_trait_meta_impls(name, trait_paths)?;
     let register_type_info = match &ast.data {
         Data::Struct(s) => struct_type_info(name, &s.fields, &reflect_attrs)?,
-        Data::Enum(e) => enum_type_info(name, e.variants.iter(), &reflect_attrs),
+        Data::Enum(e) => enum_type_info(name, e.variants.iter(), &reflect_attrs)?,
         Data::Union(u) => {
             return Err(
                 darling::Error::custom("Reflect only works on structs and enums")
@@ -170,6 +188,7 @@ fn expand(ast: &DeriveInput) -> darling::Result<proc_macro2::TokenStream> {
 
     Ok(quote! {
         #reflect_impls
+        #enum_impl
         #reflected_type_impl
     })
 }
@@ -276,19 +295,70 @@ fn enum_type_info<'a>(
     name: &Ident,
     variants: impl Iterator<Item = &'a syn::Variant>,
     reflect_attrs: &proc_macro2::TokenStream,
-) -> proc_macro2::TokenStream {
-    let add_variant_calls = variants.map(|variant| {
+) -> darling::Result<proc_macro2::TokenStream> {
+    let mut add_variant_calls = Vec::new();
+    for variant in variants {
         let variant_name = variant.ident.to_string();
         let variant_name = LitStr::new(variant_name.as_str(), Span::call_site());
+        let attrs = match variant
+            .attrs
+            .iter()
+            .find(|attr| attr.path().is_ident("reflect_attr"))
+        {
+            Some(attr) => attribute_map(&reflect_attributes(attr)?),
+            None => quote! { [].into() },
+        };
         let fields = enum_variant_fields(&variant.fields);
-        quote! {
-            .variant(#variant_name, vec![#(#fields),*])
-        }
-    });
+        add_variant_calls.push(quote! {
+            .variant(#variant_name, #attrs, vec![#(#fields),*])
+        });
+    }
 
-    quote! {
+    Ok(quote! {
         registry.meta_enum::<#name>(#reflect_attrs)
             #(#add_variant_calls)*;
+    })
+}
+
+/// The `ReflectEnum` impl of the enum `name`: it names the variant a value
+/// holds and sets a unit variant by name.
+fn reflect_enum_impl<'a>(
+    name: &Ident,
+    variants: impl Iterator<Item = &'a syn::Variant> + Clone,
+) -> proc_macro2::TokenStream {
+    let name_arms = variants.clone().map(|variant| {
+        let ident = &variant.ident;
+        let variant_name = LitStr::new(&ident.to_string(), Span::call_site());
+        quote! { Self::#ident { .. } => #variant_name, }
+    });
+    let set_arms = variants
+        .filter(|variant| matches!(variant.fields, Fields::Unit))
+        .map(|variant| {
+            let ident = &variant.ident;
+            let variant_name = LitStr::new(&ident.to_string(), Span::call_site());
+            quote! {
+                #variant_name => {
+                    *self = Self::#ident;
+                    true
+                }
+            }
+        });
+    quote! {
+        #[automatically_derived]
+        impl calyx_engine::reflect::ReflectEnum for #name {
+            fn variant_name(&self) -> &'static str {
+                match *self {
+                    #(#name_arms)*
+                }
+            }
+
+            fn set_unit_variant(&mut self, name: &str) -> bool {
+                match name {
+                    #(#set_arms)*
+                    _ => false,
+                }
+            }
+        }
     }
 }
 

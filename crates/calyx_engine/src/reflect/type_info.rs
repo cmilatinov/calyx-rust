@@ -100,14 +100,34 @@ impl EnumInfo {
     pub fn attr(&self, name: &str) -> Option<AttributeValue> {
         self.attrs.get(name).copied()
     }
+
+    /// Whether every variant is a unit variant, so a value can be set to
+    /// any of them by name.
+    pub fn is_unit_only(&self) -> bool {
+        self.variants.iter().all(EnumVariantInfo::is_unit)
+    }
 }
 
 /// Reflection metadata for one enum variant.
 pub struct EnumVariantInfo {
     /// Variant name.
     pub name: &'static str,
+    /// Attributes attached to the variant, such as its display `name`.
+    pub attrs: AttributeMap,
     /// Variant fields in declaration order.
     pub fields: Vec<EnumVariantFieldInfo>,
+}
+
+impl EnumVariantInfo {
+    /// Looks up a variant attribute by name.
+    pub fn attr(&self, name: &str) -> Option<AttributeValue> {
+        self.attrs.get(name).copied()
+    }
+
+    /// Whether the variant carries no data.
+    pub fn is_unit(&self) -> bool {
+        self.fields.is_empty()
+    }
 }
 
 /// Reflection metadata for one enum variant field.
@@ -263,6 +283,76 @@ mod tests {
         assert!(info.variant("Unit").is_some());
         assert_eq!(info.variant("Named").unwrap().fields[0].name, Some("value"));
         assert_eq!(info.variant("Tuple").unwrap().fields[0].name, None);
+        assert!(!info.is_unit_only());
+    }
+
+    #[derive(Debug, PartialEq, TypeUuid, Reflect)]
+    #[allow(dead_code)]
+    enum Mode {
+        First,
+        #[reflect_attr(name = "Second Mode")]
+        Second,
+        Data(f32),
+    }
+
+    #[derive(TypeUuid, Reflect)]
+    #[allow(dead_code)]
+    enum Quality {
+        Low,
+        High,
+    }
+
+    #[test]
+    fn enum_values_read_and_set_their_variant_through_reflection() {
+        let mut mode = Mode::First;
+        let reflected = mode.as_reflect_mut();
+        assert_eq!(reflected.as_enum().unwrap().variant_name(), "First");
+        assert!(reflected.as_enum_mut().unwrap().set_unit_variant("Second"));
+        assert_eq!(mode, Mode::Second);
+        assert_eq!(
+            mode.as_reflect().as_enum().unwrap().variant_name(),
+            "Second"
+        );
+
+        // A data-carrying variant reads, but cannot be set by name.
+        let mut data = Mode::Data(1.5);
+        assert_eq!(data.as_reflect().as_enum().unwrap().variant_name(), "Data");
+        let reflected = data.as_reflect_mut().as_enum_mut().unwrap();
+        assert!(!reflected.set_unit_variant("Data"));
+        assert!(!reflected.set_unit_variant("Missing"));
+        assert_eq!(data, Mode::Data(1.5));
+
+        // A struct is not an enum.
+        assert!(Transform::default().as_reflect().as_enum().is_none());
+    }
+
+    #[test]
+    fn enum_variants_carry_their_attributes() {
+        let mut reg = TypeRegistry {
+            types: Default::default(),
+            identities: Default::default(),
+        };
+        Mode::register(&mut reg);
+        Quality::register(&mut reg);
+
+        let TypeInfo::Enum(mode) = reg.type_info::<Mode>().unwrap() else {
+            panic!("expected enum info");
+        };
+        assert!(matches!(
+            mode.variant("Second").unwrap().attr("name"),
+            Some(AttributeValue::String("Second Mode"))
+        ));
+        assert!(mode.variant("First").unwrap().attr("name").is_none());
+        assert!(mode.variant("First").unwrap().is_unit());
+        assert!(!mode.variant("Data").unwrap().is_unit());
+        assert!(!mode.is_unit_only());
+
+        let TypeInfo::Enum(quality) = reg.type_info::<Quality>().unwrap() else {
+            panic!("expected enum info");
+        };
+        assert!(quality.is_unit_only());
+        let names = quality.variants.iter().map(|v| v.name).collect::<Vec<_>>();
+        assert_eq!(names, ["Low", "High"]);
     }
 
     #[derive(TypeUuid, Reflect)]
