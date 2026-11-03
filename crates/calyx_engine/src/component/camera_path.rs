@@ -6,7 +6,7 @@ use crate::component::{
     Component, ComponentEventContext, ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
 };
 use crate::input::Input;
-use crate::math::Transform;
+use crate::math::{self, Transform};
 use crate::reflect::{Reflect, ReflectDefault};
 use crate::render::Gizmos;
 use crate::resource::ResourceMap;
@@ -118,14 +118,14 @@ impl Component for ComponentCameraPath {
             .collect();
         gizmos.set_color(&Vec4::new(1.0, 0.8, 0.2, 1.0));
         if stops.len() >= 2 {
-            let samples = stops.len() * GIZMO_SEGMENTS_PER_STOP;
-            let mut previous = stops[0].position;
-            for k in 1..=samples {
-                let t = k as f32 / samples as f32;
-                if let Some(pose) = sample_path(&stops, t, self.looping) {
-                    gizmos.line(&previous, &pose.position);
-                    previous = pose.position;
-                }
+            let segments = if self.looping {
+                stops.len()
+            } else {
+                stops.len() - 1
+            };
+            for index in 0..segments {
+                let [p0, p1, p2, p3] = segment_points(&stops, index, self.looping);
+                gizmos.catmull_rom(&p0, &p1, &p2, &p3, GIZMO_SEGMENTS_PER_STOP);
             }
         }
         for stop in &stops {
@@ -207,29 +207,28 @@ pub fn sample_path(stops: &[Transform], t: f32, looping: bool) -> Option<Transfo
     let along = t * segments as f32;
     let index = (along.floor() as usize).min(segments - 1);
     let u = along - index as f32;
+    let [p0, p1, p2, p3] = segment_points(stops, index, looping);
+    let position = math::catmull_rom(p0, p1, p2, p3, u);
+    let (from, to) = (stops[index], stops[(index + 1) % count]);
+    let rotation = from.rotation.slerp(&to.rotation, smoothstep(u));
+    Some(Transform::from_components(position, rotation, from.scale))
+}
+
+/// The positions of segment `index`'s stop, the next stop and their
+/// neighbours, as the Catmull-Rom curve needs them: a looping path wraps
+/// round, and an open path's end stop stands in for its missing neighbour.
+fn segment_points(stops: &[Transform], index: usize, looping: bool) -> [Vec3; 4] {
+    let count = stops.len() as isize;
     let at = |offset: isize| {
         let i = index as isize + offset;
         let i = if looping {
-            i.rem_euclid(count as isize)
+            i.rem_euclid(count)
         } else {
-            i.clamp(0, count as isize - 1)
+            i.clamp(0, count - 1)
         };
-        stops[i as usize]
+        stops[i as usize].position
     };
-    let (p0, p1, p2, p3) = (at(-1), at(0), at(1), at(2));
-    let position = catmull_rom(p0.position, p1.position, p2.position, p3.position, u);
-    let rotation = p1.rotation.slerp(&p2.rotation, smoothstep(u));
-    Some(Transform::from_components(position, rotation, p1.scale))
-}
-
-fn catmull_rom(p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3, u: f32) -> Vec3 {
-    let u2 = u * u;
-    let u3 = u2 * u;
-    (p1 * 2.0
-        + (p2 - p0) * u
-        + (p0 * 2.0 - p1 * 5.0 + p2 * 4.0 - p3) * u2
-        + (p1 * 3.0 - p0 - p2 * 3.0 + p3) * u3)
-        * 0.5
+    [at(-1), at(0), at(1), at(2)]
 }
 
 /// Eases the turn between two stops so the follower does not snap round at

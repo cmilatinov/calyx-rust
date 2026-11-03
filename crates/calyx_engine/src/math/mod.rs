@@ -77,6 +77,27 @@ pub fn to_fov_y(aspect: f32, fov_x: f32) -> f32 {
     2.0 * ((fov_x * 0.5).tan() / aspect).atan()
 }
 
+/// The point a fraction `t` along the cubic Bezier curve from `start` to
+/// `end` with control points `c1` and `c2`, in Bernstein form.
+pub fn cubic_bezier(start: Vec3, c1: Vec3, c2: Vec3, end: Vec3, t: f32) -> Vec3 {
+    let s = 1.0 - t;
+    start * (s * s * s) + c1 * (3.0 * s * s * t) + c2 * (3.0 * s * t * t) + end * (t * t * t)
+}
+
+/// The cubic Bezier control points `[start, c1, c2, end]` of the uniform
+/// Catmull-Rom segment from `p1` to `p2`, whose neighbours are `p0` and `p3`.
+pub fn catmull_rom_to_bezier(p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3) -> [Vec3; 4] {
+    [p1, p1 + (p2 - p0) / 6.0, p2 - (p3 - p1) / 6.0, p2]
+}
+
+/// The point a fraction `u` along the uniform Catmull-Rom segment from `p1`
+/// to `p2`, whose neighbours are `p0` and `p3`, evaluated through its Bezier
+/// form so curves and their gizmos share one implementation.
+pub fn catmull_rom(p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3, u: f32) -> Vec3 {
+    let [start, c1, c2, end] = catmull_rom_to_bezier(p0, p1, p2, p3);
+    cubic_bezier(start, c1, c2, end, u)
+}
+
 /// Fits a rectangle with aspect ratio `aspect` inside `available`.
 pub fn fit_aspect(aspect: f32, available: impl Into<Vector2<f32>>) -> Vector2<f32> {
     let available: Vector2<f32> = available.into();
@@ -187,6 +208,56 @@ mod tests {
         assert_abs_diff_eq!(out_scale, scale, epsilon = 1e-5);
         let dot = rot.quaternion().dot(out_rot.quaternion()).abs();
         assert_abs_diff_eq!(dot, 1.0, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn a_cubic_bezier_runs_from_start_to_end_through_its_bernstein_midpoint() {
+        let (start, c1, c2, end) = (
+            vec3(0.0f32, 0.0, 0.0),
+            vec3(1.0f32, 4.0, 0.0),
+            vec3(5.0f32, 4.0, 2.0),
+            vec3(6.0f32, 0.0, 2.0),
+        );
+        assert_abs_diff_eq!(cubic_bezier(start, c1, c2, end, 0.0), start, epsilon = 1e-6);
+        assert_abs_diff_eq!(cubic_bezier(start, c1, c2, end, 1.0), end, epsilon = 1e-6);
+        let midpoint = (start + c1 * 3.0 + c2 * 3.0 + end) / 8.0;
+        assert_abs_diff_eq!(
+            cubic_bezier(start, c1, c2, end, 0.5),
+            midpoint,
+            epsilon = 1e-6
+        );
+    }
+
+    /// The uniform Catmull-Rom polynomial, as the camera path evaluated it
+    /// before the curve went through its Bezier form.
+    fn catmull_rom_polynomial(p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3, u: f32) -> Vec3 {
+        let u2 = u * u;
+        let u3 = u2 * u;
+        (p1 * 2.0
+            + (p2 - p0) * u
+            + (p0 * 2.0 - p1 * 5.0 + p2 * 4.0 - p3) * u2
+            + (p1 * 3.0 - p0 - p2 * 3.0 + p3) * u3)
+            * 0.5
+    }
+
+    #[test]
+    fn catmull_rom_through_its_bezier_form_matches_the_polynomial() {
+        let (p0, p1, p2, p3) = (
+            vec3(-3.0f32, 1.0, 0.0),
+            vec3(0.0f32, 0.0, 0.0),
+            vec3(4.0f32, 2.0, 1.0),
+            vec3(5.0f32, -1.0, 6.0),
+        );
+        for u in [0.0f32, 0.1, 0.25, 0.5, 0.7, 0.9, 1.0] {
+            assert_abs_diff_eq!(
+                catmull_rom(p0, p1, p2, p3, u),
+                catmull_rom_polynomial(p0, p1, p2, p3, u),
+                epsilon = 1e-5
+            );
+        }
+        let [start, _, _, end] = catmull_rom_to_bezier(p0, p1, p2, p3);
+        assert_eq!(start, p1);
+        assert_eq!(end, p2);
     }
 
     #[test]

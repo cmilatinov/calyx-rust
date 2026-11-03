@@ -1,5 +1,5 @@
 use crate::assets::mesh::Mesh;
-use crate::math::{compose_transform, Transform};
+use crate::math::{self, compose_transform, Transform};
 use crate::render::{Camera, GizmoInstance};
 use nalgebra::UnitQuaternion;
 use nalgebra_glm as glm;
@@ -178,6 +178,34 @@ impl Gizmos<'_> {
         self.lines_mesh.uvs[1].extend(std::iter::repeat_n(vec2(self.color.z, self.alpha()), 2));
     }
 
+    /// Emits the cubic Bezier curve from `start` to `end` with control points
+    /// `c1` and `c2` as `segments` line pieces in the current color.
+    pub fn cubic_bezier(
+        &mut self,
+        start: &Vec3,
+        c1: &Vec3,
+        c2: &Vec3,
+        end: &Vec3,
+        segments: usize,
+    ) {
+        let segments = segments.max(1);
+        let mut previous = *start;
+        for k in 1..=segments {
+            let t = k as f32 / segments as f32;
+            let next = math::cubic_bezier(*start, *c1, *c2, *end, t);
+            self.line(&previous, &next);
+            previous = next;
+        }
+    }
+
+    /// Emits the uniform Catmull-Rom segment from `p1` to `p2`, whose
+    /// neighbours are `p0` and `p3`, as `segments` line pieces in the current
+    /// color.
+    pub fn catmull_rom(&mut self, p0: &Vec3, p1: &Vec3, p2: &Vec3, p3: &Vec3, segments: usize) {
+        let [start, c1, c2, end] = math::catmull_rom_to_bezier(*p0, *p1, *p2, *p3);
+        self.cubic_bezier(&start, &c1, &c2, &end, segments);
+    }
+
     /// Emits a colored point.
     pub fn point(&mut self, point: &Vec3) {
         self.points_mesh.vertices.push(*point);
@@ -348,6 +376,52 @@ mod tests {
         let projected_pixels = size * camera.projection[(1, 1)].abs() * 1080.0 / 2.0;
 
         assert!((projected_pixels - MAX_ICON_SIZE_PIXELS).abs() < 0.001);
+    }
+
+    #[test]
+    fn a_cubic_bezier_gizmo_adds_its_segments_from_start_to_end() {
+        let assets = TestAssets::engine();
+        let asset_context = assets.asset_context();
+        let context = asset_context.lock_read();
+        let camera = Camera::default();
+        let camera_transform = Transform::default();
+        let mut circle_list = Vec::new();
+        let mut cube_list = Vec::new();
+        let mut lines_mesh = Mesh::new(&context.render_context);
+        let mut points_mesh = Mesh::new(&context.render_context);
+        let mut icons_mesh = Mesh::new(&context.render_context);
+        let mut gizmos = Gizmos {
+            camera: &camera,
+            camera_transform: &camera_transform,
+            viewport_size: [1920.0, 1080.0],
+            selected_object: None,
+            object_id: 0,
+            color: vec4(1.0, 1.0, 1.0, 1.0),
+            opacity: 1.0,
+            depth_test_enabled: true,
+            circle_list: &mut circle_list,
+            cube_list: &mut cube_list,
+            lines_mesh: &mut lines_mesh,
+            points_mesh: &mut points_mesh,
+            icons_mesh: &mut icons_mesh,
+        };
+        let (start, c1, c2, end) = (
+            vec3(0.0, 0.0, 0.0),
+            vec3(1.0, 3.0, 0.0),
+            vec3(4.0, 3.0, 0.0),
+            vec3(5.0, 0.0, 0.0),
+        );
+
+        gizmos.cubic_bezier(&start, &c1, &c2, &end, 7);
+
+        let vertices = &lines_mesh.vertices;
+        assert_eq!(vertices.len(), 14, "7 lines of 2 vertices");
+        assert_eq!(vertices[0], start);
+        assert!((vertices[13] - end).norm() < 1e-6);
+        // The pieces join up into one polyline.
+        for line in 1..7 {
+            assert_eq!(vertices[2 * line], vertices[2 * line - 1]);
+        }
     }
 
     #[test]
