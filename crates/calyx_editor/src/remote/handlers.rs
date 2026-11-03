@@ -1300,21 +1300,23 @@ fn set_parent_keeping_world(
     let world = scene.world_transform(game_object).matrix();
     let local = calyx_engine::math::Transform::from(&(parent_world.inverse_matrix() * world));
     let kept = parent_world.matrix() * local.matrix();
-    // Rotation and scale are compared apart from translation, so an object
-    // far from the origin cannot hide a deformation in the translation's
-    // tolerance. Written so a non-finite difference is refused too.
+    // Each column, the object's three world axes and its position, is
+    // compared against its own length, so neither a long axis nor a distant
+    // position can hide a deformation of the others. The position also
+    // allows for the rounding of the parent's own position. Written so a
+    // non-finite difference is refused too.
     let error = kept - world;
-    let close = |error: f32, magnitude: f32| error <= 1e-4 * magnitude.max(1.0);
-    let linear_kept = close(
-        error.fixed_view::<3, 3>(0, 0).amax(),
-        world.fixed_view::<3, 3>(0, 0).amax(),
-    );
-    let translation_kept = close(
-        error.fixed_view::<3, 1>(0, 3).amax(),
-        world.fixed_view::<3, 1>(0, 3).amax(),
-    );
+    let parent_distance = parent_world.position.norm();
+    let kept_exactly = (0..4).all(|column| {
+        let error = error.fixed_view::<3, 1>(0, column).norm();
+        let mut length = world.fixed_view::<3, 1>(0, column).norm();
+        if column == 3 {
+            length = length.max(parent_distance);
+        }
+        error <= 1e-4 * length + 1e-6
+    });
     let finite = local.matrix().iter().all(|value| value.is_finite());
-    if !finite || !linear_kept || !translation_kept {
+    if !finite || !kept_exactly {
         return Err((
             ErrorKind::BadRequest,
             format!(
@@ -2177,8 +2179,15 @@ mod tests {
             ..turn(45.0)
         };
         scene.set_transform(far, &far_transform.matrix());
+        // A long axis must not hide the shear of the short ones either.
+        let long = named(scene, "Long", None);
+        let long_transform = calyx_engine::math::Transform {
+            scale: Vec3::new(1.0, 1.0, 10000.0),
+            ..turn(45.0)
+        };
+        scene.set_transform(long, &long_transform.matrix());
 
-        for object in ["Tilted", "Far"] {
+        for object in ["Tilted", "Far", "Long"] {
             let (kind, message) = as_one_edit(&mut game, &mut document, |scene| {
                 set_parent_keeping_world(scene, object, Some("Stretched"))
             })
@@ -2192,6 +2201,7 @@ mod tests {
         let scene = game.scenes.current_scene();
         assert_eq!(scene.parent(tilted), Some(scene.root()));
         assert_eq!(scene.parent(far), Some(scene.root()));
+        assert_eq!(scene.parent(long), Some(scene.root()));
         assert!(!document.can_undo(&game), "a refused move records nothing");
 
         // A turn that stays on the parent's axes needs no shear.
@@ -2230,6 +2240,37 @@ mod tests {
         assert_eq!(scene.parent(roof), Some(scene.root()));
         assert!(near(scene.transform(roof).position, [0.0, 5.0, 0.0]));
         assert!(!document.can_undo(&game), "a refused move records nothing");
+    }
+
+    /// Rounding grows with the parent's distance from the origin, so an
+    /// object near the origin still moves under a distant parent.
+    #[test]
+    fn reparenting_under_a_distant_parent_keeps_the_world_transform() {
+        let mut game = calyx_engine::test_support::test_game_context();
+        let mut document = document();
+        let scene = game.scenes.current_scene_mut();
+        let distant = named(scene, "Distant", None);
+        let transform = calyx_engine::math::Transform {
+            position: Vec3::new(123456.7, -98765.4, 54321.1),
+            rotation: UnitQuaternion::from_euler_angles(0.3, 1.1, -0.7),
+            ..Default::default()
+        };
+        scene.set_transform(distant, &transform.matrix());
+        let pebble = named(scene, "Pebble", None);
+        scene.set_transform(
+            pebble,
+            &nalgebra_glm::translation(&Vec3::new(0.0, 0.0, 0.0)),
+        );
+
+        as_one_edit(&mut game, &mut document, |scene| {
+            set_parent_keeping_world(scene, "Pebble", Some("Distant"))
+        })
+        .expect("the pebble should move under the distant parent");
+
+        let scene = game.scenes.current_scene();
+        assert_eq!(scene.parent(pebble), Some(distant));
+        let world = scene.world_transform(pebble).position;
+        assert!(world.norm() < 0.05, "{world:?}");
     }
 
     #[test]
