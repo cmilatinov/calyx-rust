@@ -494,15 +494,19 @@ pub struct EnumInfoBuilder<'a> {
 }
 
 impl<'a> EnumInfoBuilder<'a> {
-    /// Registers one enum variant with its field descriptors.
+    /// Registers one enum variant with its attributes and field
+    /// descriptors.
     pub fn variant(
         &mut self,
         name: &'static str,
+        attrs: AttributeMap,
         fields: Vec<EnumVariantFieldInfo>,
     ) -> &mut EnumInfoBuilder<'a> {
-        self.type_info
-            .variants
-            .push(EnumVariantInfo { name, fields });
+        self.type_info.variants.push(EnumVariantInfo {
+            name,
+            attrs,
+            fields,
+        });
         self
     }
 }
