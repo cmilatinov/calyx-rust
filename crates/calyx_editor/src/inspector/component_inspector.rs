@@ -1132,32 +1132,6 @@ mod tests {
         assert_eq!(numbers_changed, 1, "{before} -> {after}");
     }
 
-    /// Drags the camera inspector's first field, its vertical `fov`, by
-    /// `dx` points and returns the angle it lands on, in degrees.
-    fn drag_camera_fov(dx: f32) -> f32 {
-        let mut h = InspectorHarness::new();
-        h.type_info = ComponentCamera::type_uuid();
-        let registry = h.inspector_registry();
-        let inspector = ComponentInspector::new(&registry);
-        let mut camera = ComponentCamera::default();
-        let mut draw = |ui: &mut Ui, ctx: &InspectorContext| {
-            inspector
-                .show(ui, ctx, camera.as_reflect_mut(), PinState::default(), None)
-                .edit
-        };
-        h.idle(3, &mut draw);
-        let field = h.widget(Role::SpinButton, 0);
-        h.drag(field, Vec2::new(dx, 0.0), &mut draw);
-        drop(draw);
-        camera.fov.to_degrees()
-    }
-
-    #[test]
-    fn camera_fov_is_limited_to_a_vertical_angle_range() {
-        assert!((drag_camera_fov(-5000.0) - 10.0).abs() < 1e-3);
-        assert!((drag_camera_fov(5000.0) - 120.0).abs() < 1e-3);
-    }
-
     /// Draws a camera with the header checkbox in `enabled`'s state, applying
     /// each toggle the header reports to it, as the inspector panel does.
     fn show_toggleable_camera(

@@ -16,10 +16,11 @@ use serde::{Deserialize, Serialize};
 #[reflect_attr(name = "Camera")]
 #[serde(default)]
 pub struct ComponentCamera {
-    /// Vertical field of view in radians: the angle between the top and
-    /// bottom of the view, whatever its aspect. Views build their
-    /// projection from it through [`ComponentCamera::camera`].
-    #[reflect_attr(angle, min = 10.0, max = 120.0, speed = 0.1)]
+    /// Horizontal field of view in radians: the angle between the left and
+    /// right edges of the view. The vertical angle follows from the aspect
+    /// of the view the camera renders into. Views build their projection
+    /// from it through [`ComponentCamera::camera`].
+    #[reflect_attr(angle, min = 30.0, max = 160.0, speed = 0.1)]
     pub fov: f32,
     /// Near clipping plane distance.
     #[reflect_attr(min = 0.01, speed = 0.01)]
@@ -34,7 +35,7 @@ pub struct ComponentCamera {
 impl Default for ComponentCamera {
     fn default() -> Self {
         Self {
-            fov: 60.0f32.to_radians(),
+            fov: 70.0f32.to_radians(),
             near_plane: 0.1,
             far_plane: 100.0,
             clear_color: Color32::BLACK,
@@ -44,12 +45,12 @@ impl Default for ComponentCamera {
 
 impl ComponentCamera {
     /// The render camera this component projects through at `aspect`
-    /// (width over height): `fov` stays the vertical angle at every aspect,
-    /// so a wider view shows more to the sides. Every view of a scene
-    /// camera, the game view, thumbnails and the camera gizmo, builds its
-    /// projection here.
+    /// (width over height): `fov` stays the horizontal angle at every
+    /// aspect, so a taller view shows more above and below. Every view of a
+    /// scene camera, the game view, thumbnails and the camera gizmo, builds
+    /// its projection here.
     pub fn camera(&self, aspect: f32) -> Camera {
-        Camera::from_fov_y(aspect, self.fov, self.near_plane, self.far_plane)
+        Camera::new(aspect, self.fov, self.near_plane, self.far_plane)
     }
 }
 
@@ -77,21 +78,28 @@ mod tests {
     use approx::assert_abs_diff_eq;
     use nalgebra_glm::Vec3;
 
-    /// The vertical angle a perspective projection shows.
-    fn vertical_fov(camera: &Camera) -> f32 {
-        2.0 * (1.0 / camera.projection[(1, 1)]).atan()
+    /// The horizontal and vertical angles a perspective projection shows.
+    fn projection_fovs(camera: &Camera) -> (f32, f32) {
+        (
+            2.0 * (1.0 / camera.projection[(0, 0)]).atan(),
+            2.0 * (1.0 / camera.projection[(1, 1)]).atan(),
+        )
     }
 
     #[test]
-    fn camera_projects_its_fov_as_the_vertical_angle_at_any_aspect() {
+    fn camera_projects_its_fov_as_the_horizontal_angle_at_any_aspect() {
         let component = ComponentCamera {
-            fov: 60.0f32.to_radians(),
+            fov: 90.0f32.to_radians(),
             ..Default::default()
         };
 
-        for aspect in [16.0 / 9.0, 4.0 / 3.0] {
+        // A 90 degree horizontal angle puts the side edges at tan(45) = 1, so
+        // the top edge sits at 1 / aspect: 2 * atan(9 / 16) and 2 * atan(3 / 4).
+        for (aspect, vertical_degrees) in [(16.0 / 9.0, 58.715_5), (4.0 / 3.0, 73.739_8)] {
             let camera = component.camera(aspect);
-            assert_abs_diff_eq!(vertical_fov(&camera), 60.0f32.to_radians(), epsilon = 1e-5);
+            let (horizontal, vertical) = projection_fovs(&camera);
+            assert_abs_diff_eq!(horizontal, 90.0f32.to_radians(), epsilon = 1e-5);
+            assert_abs_diff_eq!(vertical.to_degrees(), vertical_degrees, epsilon = 1e-3);
             assert_abs_diff_eq!(camera.aspect, aspect);
         }
     }
@@ -145,22 +153,22 @@ mod tests {
     }
 
     #[test]
-    fn camera_gizmo_frames_the_previewed_view_with_the_vertical_fov() {
+    fn camera_gizmo_frames_the_previewed_view_with_the_horizontal_fov() {
         let camera = ComponentCamera {
             fov: 60.0f32.to_radians(),
             far_plane: 10.0,
             ..Default::default()
         };
-        // tan(30 degrees) * 10, the far plane's half height at a 60 degree vertical angle.
-        let half_height = 5.773_502_7;
+        // tan(30 degrees) * 10, the far plane's half width at a 60 degree horizontal angle.
+        let half_width = 5.773_502_7;
 
         let (right, up) = gizmo_far_plane_half_extents(&camera, Some(4.0 / 3.0));
-        assert_abs_diff_eq!(up, half_height, epsilon = 1e-3);
-        assert_abs_diff_eq!(right, half_height * 4.0 / 3.0, epsilon = 1e-3);
+        assert_abs_diff_eq!(right, half_width, epsilon = 1e-3);
+        assert_abs_diff_eq!(up, half_width * 3.0 / 4.0, epsilon = 1e-3);
 
         // Without a previewed view, the gizmo falls back to 16:9.
         let (right, up) = gizmo_far_plane_half_extents(&camera, None);
-        assert_abs_diff_eq!(up, half_height, epsilon = 1e-3);
-        assert_abs_diff_eq!(right, half_height * 16.0 / 9.0, epsilon = 1e-3);
+        assert_abs_diff_eq!(right, half_width, epsilon = 1e-3);
+        assert_abs_diff_eq!(up, half_width * 9.0 / 16.0, epsilon = 1e-3);
     }
 }

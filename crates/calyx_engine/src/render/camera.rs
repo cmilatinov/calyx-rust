@@ -46,13 +46,6 @@ impl Camera {
         camera
     }
 
-    /// Creates a camera projection from a vertical field of view `fov_y` in
-    /// radians, the angle scene cameras author, keeping the horizontal one
-    /// the projection derives from at `aspect`.
-    pub fn from_fov_y(aspect: f32, fov_y: f32, near_plane: f32, far_plane: f32) -> Self {
-        Self::new(aspect, math::to_fov_x(aspect, fov_y), near_plane, far_plane)
-    }
-
     /// Rebuilds the projection matrix from the current camera parameters.
     pub fn update_projection(&mut self) {
         self.projection = nalgebra_glm::perspective_lh::<f32>(
