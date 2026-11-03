@@ -6,7 +6,8 @@
 //! a [`KillEvent`] from the host and record it the same way.
 
 use calyx_engine::component::{
-    Component, ComponentEventContext, ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
+    Component, ComponentEventContext, ComponentRef, ComponentUpdate, ReflectComponent,
+    ReflectComponentUpdate,
 };
 use calyx_engine::input::Input;
 use calyx_engine::reflect::{Reflect, ReflectDefault};
@@ -150,15 +151,13 @@ impl Component for ComponentKillFeed {}
 
 impl ComponentUpdate for ComponentKillFeed {
     fn update(
-        &self,
-        ComponentEventContext {
-            scene, game_object, ..
-        }: ComponentEventContext,
+        this: ComponentRef<Self>,
+        ComponentEventContext { scene, .. }: ComponentEventContext,
         resources: &mut ResourceMap,
         _input: &Input,
     ) {
         let dt = resources.time().delta_time();
-        let _ = scene.write_component::<ComponentKillFeed, _>(game_object, |feed| feed.advance(dt));
+        let _ = this.write(scene, |feed| feed.advance(dt));
     }
 }
 

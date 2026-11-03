@@ -2,7 +2,7 @@ use crate as calyx_engine;
 use crate::component::{
     AnimationParameters, Component, ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
 };
-use crate::component::{ComponentAnimator, ComponentEventContext};
+use crate::component::{ComponentAnimator, ComponentEventContext, ComponentRef};
 use crate::input::Input;
 use crate::net::sync::{SynchronizationOptions, Synchronized};
 use crate::reflect::{Reflect, ReflectDefault};
@@ -37,11 +37,17 @@ impl Default for ComponentNetworkAnimator {
 impl Component for ComponentNetworkAnimator {}
 
 impl ComponentUpdate for ComponentNetworkAnimator {
-    fn update(&self, mut ctx: ComponentEventContext, resources: &mut ResourceMap, _input: &Input) {
-        let Some(mut net_animator) = ctx
-            .scene
-            .read_component::<ComponentNetworkAnimator, _, _>(ctx.game_object, |c| c.clone())
-        else {
+    fn update(
+        this: ComponentRef<Self>,
+        mut ctx: ComponentEventContext,
+        resources: &mut ResourceMap,
+        _input: &Input,
+    ) {
+        // The synchronizer needs the whole context while it changes its own
+        // state, so it runs on a copy of this component that is written back
+        // after. Nothing it calls writes this component through the context,
+        // so the write-back overwrites no other write.
+        let Some(mut net_animator) = this.read(ctx.scene, |c| c.clone()) else {
             return;
         };
         if let Some(AnimationParameters(value)) = net_animator.parameters.update(
@@ -64,9 +70,8 @@ impl ComponentUpdate for ComponentNetworkAnimator {
                     c_animator.parameters = value;
                 });
         }
-        ctx.scene
-            .write_component::<ComponentNetworkAnimator, _>(ctx.game_object, |c| {
-                *c = net_animator;
-            });
+        this.write(ctx.scene, |c| {
+            *c = net_animator;
+        });
     }
 }

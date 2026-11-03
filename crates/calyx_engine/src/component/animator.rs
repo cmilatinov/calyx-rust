@@ -1,6 +1,7 @@
 use super::{
-    Component, ComponentBone, ComponentEventContext, ComponentReset, ComponentSkinnedMesh,
-    ComponentUpdate, ReflectComponent, ReflectComponentReset, ReflectComponentUpdate,
+    Component, ComponentBone, ComponentEventContext, ComponentRef, ComponentReset,
+    ComponentSkinnedMesh, ComponentUpdate, ReflectComponent, ReflectComponentReset,
+    ReflectComponentUpdate,
 };
 use crate as calyx_engine;
 use crate::assets::animation::{AnimationKeyFrames, QuatKeyFrame, VectorKeyFrame};
@@ -141,7 +142,7 @@ impl Component for ComponentAnimator {
 
 impl ComponentReset for ComponentAnimator {
     fn reset(
-        &self,
+        this: ComponentRef<Self>,
         ComponentEventContext {
             registries: assets,
             scene,
@@ -150,7 +151,7 @@ impl ComponentReset for ComponentAnimator {
     ) {
         let mut pose = AnimatorPose::default();
         Self::compute_animation_pose(assets, scene, game_object, &mut pose);
-        scene.write_component::<ComponentAnimator, _>(game_object, |c| {
+        this.write(scene, |c| {
             c.current_pose = pose;
         });
     }
@@ -158,7 +159,7 @@ impl ComponentReset for ComponentAnimator {
 
 impl ComponentUpdate for ComponentAnimator {
     fn update(
-        &self,
+        this: ComponentRef<Self>,
         ComponentEventContext {
             registries: assets,
             scene,
@@ -168,7 +169,7 @@ impl ComponentUpdate for ComponentAnimator {
         _input: &Input,
     ) {
         // init and step_fsm only touch animator fields — no Scene needed.
-        scene.write_component::<ComponentAnimator, _>(game_object, |c| {
+        this.write(scene, |c| {
             c.init(assets);
             c.step_fsm(assets);
         });
@@ -181,7 +182,7 @@ impl ComponentUpdate for ComponentAnimator {
 
         // Write back the pose and advance time.
         let time = resources.time();
-        scene.write_component::<ComponentAnimator, _>(game_object, |c| {
+        this.write(scene, |c| {
             c.current_pose = pose;
             c.update_time(time);
         });

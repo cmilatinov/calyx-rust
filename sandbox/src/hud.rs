@@ -5,8 +5,8 @@ mod scoreboard;
 use crate::spawn::ComponentRespawnState;
 use crate::tank::{ComponentHealth, ComponentTankController};
 use calyx_engine::component::{
-    Component, ComponentEventContext, ComponentHud, ComponentUpdate, ReflectComponent,
-    ReflectComponentHud, ReflectComponentUpdate,
+    Component, ComponentEventContext, ComponentHud, ComponentRef, ComponentUpdate,
+    ReflectComponent, ReflectComponentHud, ReflectComponentUpdate,
 };
 use calyx_engine::input::Input;
 use calyx_engine::reflect::{Reflect, ReflectDefault};
@@ -52,15 +52,13 @@ impl Component for ComponentTankHud {}
 
 impl ComponentUpdate for ComponentTankHud {
     fn update(
-        &self,
-        ComponentEventContext {
-            scene, game_object, ..
-        }: ComponentEventContext,
+        this: ComponentRef<Self>,
+        ComponentEventContext { scene, .. }: ComponentEventContext,
         _resources: &mut ResourceMap,
         input: &Input,
     ) {
         let open = input.action("scoreboard").pressed();
-        let _ = scene.write_component::<ComponentTankHud, _>(game_object, |hud| {
+        let _ = this.write(scene, |hud| {
             hud.scoreboard_open = open;
         });
     }
@@ -68,13 +66,12 @@ impl ComponentUpdate for ComponentTankHud {
 
 impl ComponentHud for ComponentTankHud {
     fn build_hud(
-        &self,
+        hud: &Self,
         scene: &Scene,
         game_object: GameObject,
         ui: &mut UiArena,
         viewport: UiRect,
     ) -> Option<UiNodeHandle> {
-        let hud = scene.read_component::<ComponentTankHud, _, _>(game_object, |hud| *hud)?;
         let state = tank_hud_state(scene, game_object)?;
         Some(
             SandboxHud {
