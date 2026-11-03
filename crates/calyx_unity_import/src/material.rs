@@ -28,6 +28,13 @@ pub struct UnityMaterial {
 }
 
 impl UnityMaterial {
+    /// Whether a renderer drawing this material casts shadows in Unity. The
+    /// built-in Unlit shaders have no shadow caster pass, so the pack's sky
+    /// dome and clouds cast none whatever their renderer's `m_CastShadows`.
+    pub fn casts_shadows(&self) -> bool {
+        !UNLIT_SHADERS.contains(&self.shader)
+    }
+
     /// Reads the material from a `.mat` file's `Material` document body.
     pub fn from_body(body: &Value) -> Self {
         let props = body.get("m_SavedProperties");
@@ -292,6 +299,7 @@ Material:
                 shader: 46,
             }
         );
+        assert!(material.casts_shadows());
     }
 
     #[test]
@@ -330,7 +338,12 @@ Material:
     - _Color: {r: 1, g: 1, b: 1, a: 1}
 ";
         let body = &parse_documents(text)[0].body;
-        let calyx = UnityMaterial::from_body(body).to_calyx(None);
+        let material = UnityMaterial::from_body(body);
+        assert!(
+            !material.casts_shadows(),
+            "Unity's Unlit shaders cast no shadow"
+        );
+        let calyx = material.to_calyx(None);
         assert_eq!(
             variable(&calyx, "base_color_factor"),
             &Json::object([("Color", Json::floats([0.0, 0.0, 0.0, 1.0]))])

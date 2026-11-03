@@ -62,6 +62,17 @@ The directional light's shadow is 4 cascades, the 4 layers of one
   up.
 - **Depth range.** Depth spans the sphere plus `shadow_distance` towards the
   light, so casters outside the slice, between it and the light, still draw.
+- **Depth clamping.** The cascades' pipelines clamp depth instead of clipping
+  it (`unclipped_depth`, the `DEPTH_CLIP_CONTROL` device feature): a caster
+  further towards the light than the depth range is flattened onto the near
+  plane and still casts. Without it, a large caster beyond the range, such as
+  a mountain or a sky dome, is cut at the near plane, which moves with the
+  camera, so the part of it that casts, and its shadow, changed as the camera
+  moved (#486). The flattened caster keeps its outline, which is all a
+  directional shadow needs, and its depth is still in front of every
+  receiver in the sphere. The editor and the player request the feature when
+  the adapter has it; without it the cascades clip as before and the shadow
+  renderer logs a warning.
 
 ## Spot atlas
 
@@ -89,7 +100,9 @@ pass, on the same command encoder.
   projection's near and far planes in light view space, and the map's size
   (2048 for a cascade, 1024 for a spot tile) as the viewport.
 - It is single-sample, whatever the scene's MSAA, and draws both faces (no
-  culling), so open meshes such as planes and cards cast too. The light's
+  culling), so open meshes such as planes and cards cast too. The cascades
+  clamp depth (see Cascades); the spot atlas clips at its near and far
+  planes. The light's
   `DepthBiasState` is part of the pipeline options, so each distinct bias
   builds and caches one pipeline.
 - It draws from the scene pass's own draw list (`DrawBatch`), so a mesh the

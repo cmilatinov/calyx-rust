@@ -78,6 +78,12 @@ pub struct PipelineOptions {
     /// layout; particles add a per-instance layout in slot 1.
     #[builder(default = vec![VertexLayout::of::<mesh::Vertex>(wgpu::VertexStepMode::Vertex)])]
     pub(crate) vertex_layouts: Vec<VertexLayout>,
+    /// Whether depth outside the viewport's range is clamped to it instead
+    /// of clipping the primitive: the shadow cascades flatten casters past
+    /// their near plane onto it this way. `true` needs the device's
+    /// `DEPTH_CLIP_CONTROL` feature. Defaults to clipping.
+    #[builder(default = false)]
+    pub(crate) unclipped_depth: bool,
 }
 
 /// Pipeline options of a draw of `shaders/common/fullscreen.wgsl`'s triangle, which

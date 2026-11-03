@@ -3983,6 +3983,44 @@ mod tests {
     }
 
     #[test]
+    fn a_caster_beyond_a_cascades_depth_range_towards_the_light_still_casts() {
+        if !test_adapter()
+            .features()
+            .contains(wgpu::Features::DEPTH_CLIP_CONTROL)
+        {
+            eprintln!("skipping: the test adapter cannot clamp depth");
+            return;
+        }
+        // The sun of `sun_over_box`, with its box 300 units up the beam from
+        // `BOX_SHADOW`: further towards the light than any cascade's depth
+        // range reaches past its sphere (the default shadow distance, 50),
+        // and out of the camera's view, like a mountain or a sky dome
+        // seen from a valley.
+        let far_box = |builder: &mut SceneBuilder,
+                       _: &ReadOnlyAssetContext,
+                       cube: &Ref<Mesh>,
+                       material: &Ref<Material>| {
+            let sun = spawn_sun(builder, vec3(1.0, -1.0, 0.0));
+            let up_the_beam = vec3(-1.0, 1.0, 0.0).normalize() * 300.0;
+            let occluder = spawn_box(
+                builder,
+                "far box",
+                cube,
+                material,
+                BOX_SHADOW + up_the_beam,
+                Vec3::repeat(2.0),
+            );
+            vec![sun, occluder]
+        };
+        let [shadowed, lit] = shadow_frames(true, far_box, [BOX_SHADOW, BOX_LIT], vec![])[0].pixels;
+        assert!(lit > 40, "the plane is lit away from the box, got {lit}");
+        assert!(
+            shadowed <= 2,
+            "the far box shadows the plane as a near one does: {shadowed}, lit {lit}"
+        );
+    }
+
+    #[test]
     fn a_mesh_that_casts_no_shadow_or_is_disabled_drops_out_of_the_shadow_pass() {
         let set_cast = |cast_shadows: bool| -> ShadowEdit {
             Box::new(move |scene: &mut Scene, objects: &[GameObject]| {

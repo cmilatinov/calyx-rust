@@ -137,10 +137,18 @@ impl ProjectRuntimeSettings {
     }
 }
 
-/// Describes the GPU device the player and the editor both request.
-pub fn device_descriptor(_adapter: &wgpu::Adapter) -> wgpu::DeviceDescriptor<'static> {
-    shared_device_descriptor()
+/// Describes the GPU device the player and the editor both request: the
+/// shared features and limits, plus the optional features `adapter` has.
+pub fn device_descriptor(adapter: &wgpu::Adapter) -> wgpu::DeviceDescriptor<'static> {
+    let mut descriptor = shared_device_descriptor();
+    descriptor.required_features |= OPTIONAL_FEATURES & adapter.features();
+    descriptor
 }
+
+/// Features used when the adapter has them, with a fallback otherwise:
+/// `DEPTH_CLIP_CONTROL` lets the shadow cascades clamp casters past their
+/// near plane instead of clipping them.
+const OPTIONAL_FEATURES: wgpu::Features = wgpu::Features::DEPTH_CLIP_CONTROL;
 
 fn shared_device_descriptor() -> wgpu::DeviceDescriptor<'static> {
     wgpu::DeviceDescriptor {
@@ -238,8 +246,8 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        physical_size, shared_device_descriptor, FrameCounter, ProjectRuntimeSettings,
-        RuntimeSettings, WindowSettings,
+        device_descriptor, physical_size, shared_device_descriptor, FrameCounter,
+        ProjectRuntimeSettings, RuntimeSettings, WindowSettings,
     };
 
     fn temp_project(manifest: &str) -> PathBuf {
@@ -345,6 +353,18 @@ mod tests {
         assert_eq!(counter.fps(), 3);
         assert!(!counter.record_frame(0.1));
         assert_eq!(counter.fps(), 3);
+    }
+
+    #[test]
+    fn device_descriptor_adds_depth_clamping_where_the_adapter_has_it() {
+        let adapter = crate::test_support::test_adapter();
+        let requested = device_descriptor(adapter).required_features;
+        assert!(requested.contains(shared_device_descriptor().required_features));
+        let clamp = egui_wgpu::wgpu::Features::DEPTH_CLIP_CONTROL;
+        assert_eq!(
+            requested.contains(clamp),
+            adapter.features().contains(clamp)
+        );
     }
 
     #[test]

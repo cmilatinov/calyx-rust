@@ -20,7 +20,7 @@ pub mod prefab;
 pub mod scene;
 pub mod yaml;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::blender::{MeshJob, TextureJob, NORMALS_IMPORT};
@@ -281,9 +281,21 @@ pub fn build_scene(package: &UnityPackage, layout: &Layout) -> Result<String, St
         .into_iter()
         .map(|(path, guid)| (guid, layout.asset_id(&layout.material_name(&path))))
         .collect();
+    let mut shadowless_materials = HashSet::new();
+    for guid in materials.keys() {
+        let casts = package
+            .documents(guid)?
+            .into_iter()
+            .next()
+            .is_none_or(|document| UnityMaterial::from_body(&document.body).casts_shadows());
+        if !casts {
+            shadowless_materials.insert(guid.clone());
+        }
+    }
     let ids = scene::AssetIds {
         meshes: &meshes,
         materials: &materials,
+        shadowless_materials: &shadowless_materials,
         default_material: pack.default_material,
     };
     let mut writer = scene::SceneWriter::new(pack.namespace);

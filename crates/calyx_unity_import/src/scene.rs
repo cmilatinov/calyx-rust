@@ -6,7 +6,7 @@
 //! Cameras and lights are collected rather than converted, so the pack's
 //! config decides how a scene is lit and framed in Calyx.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexMap;
 use uuid::Uuid;
@@ -149,6 +149,9 @@ pub struct Converted {
 pub struct AssetIds<'a> {
     pub meshes: &'a HashMap<String, String>,
     pub materials: &'a HashMap<String, String>,
+    /// The GUIDs of the materials whose shader casts no shadow in Unity: a
+    /// renderer drawing one casts none.
+    pub shadowless_materials: &'a HashSet<String>,
     /// The material a model file's own renderer uses when nothing overrides it.
     pub default_material: &'a str,
 }
@@ -289,10 +292,11 @@ impl<'a> Converter<'a> {
                 .material
                 .as_deref()
                 .unwrap_or(self.ids.default_material);
+            let shadows = placed.shadows && !self.ids.shadowless_materials.contains(material);
             components.push((
                 C_MESH.to_string(),
                 Json::object([
-                    ("cast_shadows", Json::Bool(placed.shadows)),
+                    ("cast_shadows", Json::Bool(shadows)),
                     (
                         "material",
                         self.ids
