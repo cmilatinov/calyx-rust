@@ -38,8 +38,9 @@ use crate::assets::{Asset, AssetAccess, AssetRegistry, LoadedAsset};
 use crate::class_registry::ComponentRegistry;
 use crate::component::{
     ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom, ComponentColorGrading,
-    ComponentDepthOfField, ComponentGlobalPostProcessVolume, ComponentLocalPostProcessVolume,
-    ComponentTonemap, ComponentVignette, PostProcessEffect, ReflectPostProcessEffect,
+    ComponentDepthOfField, ComponentFog, ComponentGlobalPostProcessVolume,
+    ComponentLocalPostProcessVolume, ComponentTonemap, ComponentVignette, PostProcessEffect,
+    ReflectPostProcessEffect,
 };
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
@@ -285,6 +286,7 @@ impl PostProcessProfile {
         PostProcessEffects {
             tonemapping: self.effect::<ComponentTonemap>(),
             ambient_occlusion: self.effect::<ComponentAmbientOcclusion>(),
+            fog: self.effect::<ComponentFog>(),
             depth_of_field: self.effect::<ComponentDepthOfField>(),
             bloom: self.effect::<ComponentBloom>(),
             color_grading: self.effect::<ComponentColorGrading>(),

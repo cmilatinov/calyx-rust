@@ -5,8 +5,8 @@
 use super::*;
 use crate::assets::{Asset, AssetRef};
 use crate::component::{
-    ComponentBloom, ComponentCamera, ComponentGlobalPostProcessVolume,
-    ComponentLocalPostProcessVolume, ComponentTonemap, ComponentVignette,
+    ComponentBloom, ComponentCamera, ComponentFog, ComponentGlobalPostProcessVolume,
+    ComponentLocalPostProcessVolume, ComponentTonemap, ComponentVignette, FogMode,
 };
 use crate::context::ReadOnlyRegistryContext;
 use crate::render::postprocess::{PostProcessEffects, PostProcessSettings};
@@ -167,6 +167,44 @@ fn a_profile_saves_and_loads_through_the_asset_registry() {
 }
 
 #[test]
+fn a_fog_entry_round_trips_and_switches_fog_on() {
+    let root = TempRoot::new();
+    let path = root.path("fog.cxpostfx");
+    let fog = ComponentFog {
+        mode: FogMode::Exponential,
+        color: egui::Color32::from_rgb(120, 160, 200),
+        intensity: 1.5,
+        start: 10.0,
+        end: 400.0,
+        density: 0.004,
+        opacity: 0.9,
+    };
+    let profile = PostProcessProfile::from_entries([ProfileEntry::new(fog)]);
+    save(&profile, &path);
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(
+        saved["entries"][0]["type"],
+        serde_json::json!(ComponentFog::type_uuid()),
+        "the entry is keyed by the fog component's type"
+    );
+    assert_eq!(saved["entries"][0]["settings"]["mode"], "Exponential");
+
+    let (registries, id) = registries_with_profile(&root, &path);
+    let loaded = load(&registries, id);
+
+    assert_eq!(*loaded.read(), profile);
+    assert_eq!(loaded.read().effects().fog, Some(fog));
+    let mut scene = registries.scene();
+    spawn_global(&mut scene, id);
+    assert_eq!(
+        PostProcessSettings::resolve(&scene, &nalgebra_glm::Vec3::zeros()).fog,
+        Some(fog),
+        "a volume using the profile renders with its fog"
+    );
+}
+
+#[test]
 fn an_empty_profile_round_trips() {
     let root = TempRoot::new();
     let path = root.path("empty.cxpostfx");
@@ -244,6 +282,7 @@ fn the_effect_types_are_the_registered_effect_components() {
         crate::component::ComponentColorGrading::type_uuid(),
         ComponentVignette::type_uuid(),
         crate::component::ComponentAntiAliasing::type_uuid(),
+        ComponentFog::type_uuid(),
     ];
     expected.sort();
 

@@ -12,8 +12,8 @@ use crate::math::Transform;
 use crate::render::asset_render_state::AssetRenderState;
 use crate::render::overlay::{OverlayCompositor, OverlayContext, OverlayPass};
 use crate::render::postprocess::{
-    BloomPass, CameraPlanes, ChainPlan, ChainTargets, ColorGradingPass, DepthOfFieldPass, FxaaPass,
-    PostProcessChain, PostProcessSettings, SceneInput, SsaoPass, TonemapPass,
+    BloomPass, CameraPlanes, ChainPlan, ChainTargets, ColorGradingPass, DepthOfFieldPass, FogPass,
+    FxaaPass, PostProcessChain, PostProcessSettings, SceneInput, SsaoPass, TonemapPass,
 };
 use crate::render::render_utils::RenderUtils;
 use crate::render::{
@@ -355,6 +355,10 @@ impl SceneRenderer {
         let mut post_process = PostProcessChain::new(context)?;
         // SSAO runs first in the Hdr stage, on the unblurred scene.
         post_process.push(Box::new(SsaoPass::new(context)?));
+        // Fog runs after SSAO, so occlusion never darkens the fog, and
+        // before depth of field and bloom, which blur and spread the fogged
+        // light as a lens would see it.
+        post_process.push(Box::new(FogPass::new(context)?));
         // Depth of field runs after SSAO, before bloom, so bloom
         // spreads already blurred highlights.
         post_process.push(Box::new(DepthOfFieldPass::new(context)?));
