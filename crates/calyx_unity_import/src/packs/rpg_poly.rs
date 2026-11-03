@@ -249,7 +249,7 @@ fn post_process() -> Vec<(String, Json)> {
         ),
         (
             C_FXAA.into(),
-            Json::object([("edge_threshold", f(0.166)), ("subpixel", f(0.75))]),
+            Json::object([("edge_threshold", f(0.063)), ("subpixel", f(1.0))]),
         ),
     ]
 }

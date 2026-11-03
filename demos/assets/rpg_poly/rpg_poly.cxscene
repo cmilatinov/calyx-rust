@@ -2604,7 +2604,7 @@
         }
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "cast_shadows": true,
+        "cast_shadows": false,
         "material": "e6521f85-7c07-5f0c-9ef5-fb7fa998ff86",
         "mesh": "bf4b62d6-dee8-51d8-8d59-a5d09fea3ad6"
       }
@@ -2636,7 +2636,7 @@
         }
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "cast_shadows": true,
+        "cast_shadows": false,
         "material": "e6521f85-7c07-5f0c-9ef5-fb7fa998ff86",
         "mesh": "bf4b62d6-dee8-51d8-8d59-a5d09fea3ad6"
       }
@@ -2668,7 +2668,7 @@
         }
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "cast_shadows": true,
+        "cast_shadows": false,
         "material": "e6521f85-7c07-5f0c-9ef5-fb7fa998ff86",
         "mesh": "2402a0fb-b033-5b7a-95d4-7da9cbf27290"
       }
@@ -2700,7 +2700,7 @@
         }
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "cast_shadows": true,
+        "cast_shadows": false,
         "material": "e6521f85-7c07-5f0c-9ef5-fb7fa998ff86",
         "mesh": "bf4b62d6-dee8-51d8-8d59-a5d09fea3ad6"
       }
@@ -2732,7 +2732,7 @@
         }
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "cast_shadows": true,
+        "cast_shadows": false,
         "material": "e6521f85-7c07-5f0c-9ef5-fb7fa998ff86",
         "mesh": "2402a0fb-b033-5b7a-95d4-7da9cbf27290"
       }
@@ -2764,7 +2764,7 @@
         }
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "cast_shadows": true,
+        "cast_shadows": false,
         "material": "e6521f85-7c07-5f0c-9ef5-fb7fa998ff86",
         "mesh": "2402a0fb-b033-5b7a-95d4-7da9cbf27290"
       }
@@ -2796,7 +2796,7 @@
         }
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "cast_shadows": true,
+        "cast_shadows": false,
         "material": "e6521f85-7c07-5f0c-9ef5-fb7fa998ff86",
         "mesh": "bf4b62d6-dee8-51d8-8d59-a5d09fea3ad6"
       }
@@ -2828,7 +2828,7 @@
         }
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "cast_shadows": true,
+        "cast_shadows": false,
         "material": "f9c78b57-c8c3-5716-bc7a-f2a75003d5e6",
         "mesh": "f32a3921-e5df-5d31-9555-c8ddc156b7cf"
       }
@@ -2860,7 +2860,7 @@
         }
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "cast_shadows": true,
+        "cast_shadows": false,
         "material": "e6521f85-7c07-5f0c-9ef5-fb7fa998ff86",
         "mesh": "bf4b62d6-dee8-51d8-8d59-a5d09fea3ad6"
       }
@@ -2892,7 +2892,7 @@
         }
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "cast_shadows": true,
+        "cast_shadows": false,
         "material": "e6521f85-7c07-5f0c-9ef5-fb7fa998ff86",
         "mesh": "2402a0fb-b033-5b7a-95d4-7da9cbf27290"
       }
@@ -2924,7 +2924,7 @@
         }
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "cast_shadows": true,
+        "cast_shadows": false,
         "material": "e6521f85-7c07-5f0c-9ef5-fb7fa998ff86",
         "mesh": "2402a0fb-b033-5b7a-95d4-7da9cbf27290"
       }
@@ -2956,7 +2956,7 @@
         }
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "cast_shadows": true,
+        "cast_shadows": false,
         "material": "e6521f85-7c07-5f0c-9ef5-fb7fa998ff86",
         "mesh": "2402a0fb-b033-5b7a-95d4-7da9cbf27290"
       }
@@ -2988,7 +2988,7 @@
         }
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "cast_shadows": true,
+        "cast_shadows": false,
         "material": "e6521f85-7c07-5f0c-9ef5-fb7fa998ff86",
         "mesh": "2402a0fb-b033-5b7a-95d4-7da9cbf27290"
       }
@@ -3020,7 +3020,7 @@
         }
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "cast_shadows": true,
+        "cast_shadows": false,
         "material": "e6521f85-7c07-5f0c-9ef5-fb7fa998ff86",
         "mesh": "bf4b62d6-dee8-51d8-8d59-a5d09fea3ad6"
       }
@@ -3052,7 +3052,7 @@
         }
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
-        "cast_shadows": true,
+        "cast_shadows": false,
         "material": "e6521f85-7c07-5f0c-9ef5-fb7fa998ff86",
         "mesh": "bf4b62d6-dee8-51d8-8d59-a5d09fea3ad6"
       }
@@ -12693,8 +12693,8 @@
         "smoothness": 0.5
       },
       "c19ff2b7-c3ed-4f04-9dfa-e026efdedf82": {
-        "edge_threshold": 0.166,
-        "subpixel": 0.75
+        "edge_threshold": 0.063,
+        "subpixel": 1.0
       }
     },
     "29b96bcc-6d9a-5783-85f1-90065b582d92": {

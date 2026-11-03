@@ -581,6 +581,9 @@ pub(crate) struct ShadowRenderer {
     /// One camera uniform per cascade, then per atlas tile.
     view_buffers: Vec<wgpu::Buffer>,
     view_bind_groups: Vec<CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer)>>,
+    /// Whether the device clamps depth (`DEPTH_CLIP_CONTROL`), so the
+    /// cascades flatten casters past their near plane onto it.
+    clamp_cascade_depth: bool,
     /// Allocated only while the directional light casts a shadow.
     cascades: Option<ShadowTexture>,
     /// Allocated only while a spot light casts a shadow.
@@ -609,6 +612,14 @@ impl ShadowRenderer {
             })
         };
         let views = SHADOW_CASCADE_COUNT + MAX_SPOT_SHADOWS;
+        let clamp_cascade_depth = device
+            .features()
+            .contains(wgpu::Features::DEPTH_CLIP_CONTROL);
+        if !clamp_cascade_depth {
+            log::warn!(
+                "The device cannot clamp depth (DEPTH_CLIP_CONTROL): directional shadows clip                  casters further towards the light than their shadow distance"
+            );
+        }
         Ok(Self {
             shader,
             masked_shader,
@@ -618,6 +629,7 @@ impl ShadowRenderer {
                 .map(|_| uniform("shadow_view", size_of::<CameraUniform>()))
                 .collect(),
             view_bind_groups: (0..views).map(|_| Default::default()).collect(),
+            clamp_cascade_depth,
             cascades: None,
             atlas: None,
             fallback_cascades: ShadowTexture::new(device, "shadow_cascades_fallback", 1, 1, true),
@@ -707,8 +719,8 @@ impl ShadowRenderer {
             masking,
             draw_list,
         };
-        let pipelines = |settings: &ShadowSettings| {
-            let options = Self::pipeline_options(settings);
+        let pipelines = |settings: &ShadowSettings, clamp_depth: bool| {
+            let options = Self::pipeline_options(settings, clamp_depth);
             CasterPipelines {
                 plain: shader.pipeline(&options),
                 masked: masked_shader.pipeline(&options),
@@ -750,7 +762,7 @@ impl ShadowRenderer {
                     true,
                 )
             });
-            let pipelines = pipelines(&cascade_plan.settings);
+            let pipelines = pipelines(&cascade_plan.settings, self.clamp_cascade_depth);
             for (i, view) in cascade_plan.views.iter().enumerate() {
                 let bind_group = view_bind_group(i, view.camera_uniform(SHADOW_CASCADE_RESOLUTION));
                 let mut pass =
@@ -786,7 +798,8 @@ impl ShadowRenderer {
                 pass.set_viewport(x as f32, y as f32, tile as f32, tile as f32, 0.0, 1.0);
                 pass.set_scissor_rect(x, y, tile, tile);
                 pass.set_bind_group(0, bind_group, &[]);
-                self.stats.caster_instances += casters.draw(&mut pass, &pipelines(&spot.settings));
+                self.stats.caster_instances +=
+                    casters.draw(&mut pass, &pipelines(&spot.settings, false));
                 self.stats.spot_tiles += 1;
             }
         }
@@ -794,11 +807,13 @@ impl ShadowRenderer {
 
     /// The depth-only pipeline of a light with `settings`: single-sample, no
     /// color, both faces drawn so open meshes such as planes still cast, and
-    /// the light's depth bias.
-    fn pipeline_options(settings: &ShadowSettings) -> PipelineOptions {
+    /// the light's depth bias. With `clamp_depth`, a caster past the near
+    /// plane is flattened onto it rather than clipped, so it still casts.
+    fn pipeline_options(settings: &ShadowSettings, clamp_depth: bool) -> PipelineOptions {
         PipelineOptions::builder()
             .samples(1)
             .cull_mode(None)
+            .unclipped_depth(clamp_depth)
             .fragment_targets(vec![])
             .depth_stencil(Some(wgpu::DepthStencilState {
                 bias: settings.depth_bias_state(),

@@ -1076,6 +1076,7 @@ impl Shader {
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: options.cull_mode,
                 polygon_mode: options.polygon_mode,
+                unclipped_depth: options.unclipped_depth,
                 ..Default::default()
             },
             depth_stencil: options.depth_stencil.clone(),
