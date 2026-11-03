@@ -531,30 +531,102 @@ fn sandbox_action_map_binds_every_action_and_axis_the_game_reads() {
     }
 }
 
-/// The vertex bounds `(min, max)` of a sandbox mesh, read from its OBJ positions.
-fn obj_bounds(name: &str) -> (Vec3, Vec3) {
+/// A sandbox mesh's vertex positions and triangles (faces fanned), read from its OBJ.
+fn obj_mesh(name: &str) -> (Vec<Vec3>, Vec<[usize; 3]>) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("assets/game/meshes")
         .join(format!("{name}.obj"));
     let source = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("{} does not read: {e}", path.display()));
-    source
-        .lines()
-        .filter_map(|line| line.strip_prefix("v "))
-        .map(|position| {
+    let mut positions = Vec::new();
+    let mut triangles = Vec::new();
+    for line in source.lines() {
+        if let Some(position) = line.strip_prefix("v ") {
             let mut coordinates = position
                 .split_whitespace()
                 .map(|value| value.parse::<f32>().unwrap());
-            vec3(
+            positions.push(vec3(
                 coordinates.next().unwrap(),
                 coordinates.next().unwrap(),
                 coordinates.next().unwrap(),
-            )
+            ));
+        } else if let Some(face) = line.strip_prefix("f ") {
+            let corners: Vec<usize> = face
+                .split_whitespace()
+                .map(|corner| corner.split('/').next().unwrap().parse::<usize>().unwrap() - 1)
+                .collect();
+            for i in 1..corners.len() - 1 {
+                triangles.push([corners[0], corners[i], corners[i + 1]]);
+            }
+        }
+    }
+    (positions, triangles)
+}
+
+fn bounds(points: impl IntoIterator<Item = Vec3>) -> (Vec3, Vec3) {
+    points.into_iter().fold(
+        (Vec3::repeat(f32::INFINITY), Vec3::repeat(f32::NEG_INFINITY)),
+        |(min, max), point| (min.inf(&point), max.sup(&point)),
+    )
+}
+
+/// Whether segment `p`..`q` passes through the interior of triangle `t`. A
+/// segment that only touches the triangle's plane or edge, within a small
+/// tolerance, does not count, so faces that merely meet are not intersections.
+fn segment_pierces_triangle(p: Vec3, q: Vec3, t: [Vec3; 3]) -> bool {
+    let (e1, e2) = (t[1] - t[0], t[2] - t[0]);
+    let normal = e1.cross(&e2);
+    if normal.norm() < 1e-12 {
+        return false;
+    }
+    let normal = normal.normalize();
+    let (dp, dq) = ((p - t[0]).dot(&normal), (q - t[0]).dot(&normal));
+    if !((dp > 1e-5 && dq < -1e-5) || (dp < -1e-5 && dq > 1e-5)) {
+        return false;
+    }
+    let x = p + (q - p) * (dp / (dp - dq)) - t[0];
+    let (d00, d01, d11) = (e1.dot(&e1), e1.dot(&e2), e2.dot(&e2));
+    let (d20, d21) = (x.dot(&e1), x.dot(&e2));
+    let denominator = d00 * d11 - d01 * d01;
+    let v = (d11 * d20 - d01 * d21) / denominator;
+    let w = (d00 * d21 - d01 * d20) / denominator;
+    (1.0 - v - w).min(v).min(w) > 1e-4
+}
+
+/// Whether two triangles interpenetrate: an edge of one passes through the other.
+fn triangles_intersect(a: [Vec3; 3], b: [Vec3; 3]) -> bool {
+    (0..3).any(|i| segment_pierces_triangle(a[i], a[(i + 1) % 3], b))
+        || (0..3).any(|i| segment_pierces_triangle(b[i], b[(i + 1) % 3], a))
+}
+
+/// How many triangle pairs of two sandbox meshes interpenetrate.
+fn intersecting_triangle_pairs(a: &str, b: &str) -> usize {
+    let (positions_a, triangles_a) = obj_mesh(a);
+    let (positions_b, triangles_b) = obj_mesh(b);
+    let corners = |positions: &[Vec3], t: &[usize; 3]| t.map(|i| positions[i]);
+    let (min_b, max_b) = bounds(positions_b.iter().copied());
+    let boxed_b: Vec<_> = triangles_b
+        .iter()
+        .map(|t| {
+            let c = corners(&positions_b, t);
+            (c, bounds(c))
         })
-        .fold(
-            (Vec3::repeat(f32::INFINITY), Vec3::repeat(f32::NEG_INFINITY)),
-            |(min, max), position| (min.inf(&position), max.sup(&position)),
-        )
+        .collect();
+    let mut count = 0;
+    for t in &triangles_a {
+        let c = corners(&positions_a, t);
+        let (min, max) = bounds(c);
+        if (max.inf(&max_b) - min.sup(&min_b)).min() < 0.0 {
+            continue;
+        }
+        for (other, (other_min, other_max)) in &boxed_b {
+            let overlap = max.inf(other_max) - min.sup(other_min);
+            if overlap.min() >= 0.0 && triangles_intersect(c, *other) {
+                count += 1;
+            }
+        }
+    }
+    count
 }
 
 #[test]
@@ -562,8 +634,8 @@ fn tank_right_side_meshes_mirror_the_left_ones_across_the_centre_plane() {
     // The tank prefab places every part with an identity transform, so each
     // right-side mesh must be its left twin reflected across x = 0.
     for part in ["wheels", "tracks"] {
-        let (left_min, left_max) = obj_bounds(&format!("{part}_left"));
-        let (right_min, right_max) = obj_bounds(&format!("{part}_right"));
+        let (left_min, left_max) = bounds(obj_mesh(&format!("{part}_left")).0);
+        let (right_min, right_max) = bounds(obj_mesh(&format!("{part}_right")).0);
         let mirrored_min = vec3(-left_max.x, left_min.y, left_min.z);
         let mirrored_max = vec3(-left_min.x, left_max.y, left_max.z);
         assert!(
@@ -571,6 +643,19 @@ fn tank_right_side_meshes_mirror_the_left_ones_across_the_centre_plane() {
                 && (right_max - mirrored_max).abs().max() < 1e-3,
             "{part}_right bounds {right_min:?}..{right_max:?} should mirror \
              {part}_left's: {mirrored_min:?}..{mirrored_max:?}"
+        );
+    }
+}
+
+#[test]
+fn tank_hull_clears_the_wheels_and_tracks() {
+    // As in the authored Tank_002.fbx, the hull sits above the running gear:
+    // no hull triangle cuts into a wheel or a track.
+    for part in ["wheels_left", "wheels_right", "tracks_left", "tracks_right"] {
+        assert_eq!(
+            intersecting_triangle_pairs("body", part),
+            0,
+            "the hull intersects {part}"
         );
     }
 }
