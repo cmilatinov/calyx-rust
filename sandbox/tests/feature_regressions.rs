@@ -659,3 +659,161 @@ fn tank_hull_clears_the_wheels_and_tracks() {
         );
     }
 }
+
+fn descendant_named(
+    scene: &Scene,
+    root: calyx_engine::scene::GameObject,
+    name: &str,
+) -> calyx_engine::scene::GameObject {
+    scene
+        .descendants(root)
+        .find(|game_object| scene.name(*game_object) == name)
+        .unwrap_or_else(|| panic!("{} should contain {name}", scene.name(root)))
+}
+
+/// The bounds of a tank part's mesh in the tank's own space, where the
+/// source model's layout is measured.
+fn tank_space_bounds(
+    scene: &Scene,
+    tank: calyx_engine::scene::GameObject,
+    part: &str,
+    mesh: &str,
+) -> (Vec3, Vec3) {
+    let part = descendant_named(scene, tank, part);
+    let to_tank =
+        scene.world_transform(tank).inverse_matrix() * scene.world_transform(part).matrix();
+    bounds(
+        obj_mesh(mesh)
+            .0
+            .into_iter()
+            .map(|p| (to_tank * nalgebra_glm::vec4(p.x, p.y, p.z, 1.0)).xyz()),
+    )
+}
+
+/// Asserts a tank's parts sit where Tank_002.fbx puts them: its bounds, read
+/// in Blender and moved into the game's Y-up tank space (with the export's
+/// 0.289567 lift that the tracks and wheels carry).
+fn assert_tank_matches_the_source_layout(scene: &Scene, tank: calyx_engine::scene::GameObject) {
+    let near = |actual: f32, expected: f32, what: &str| {
+        assert!(
+            (actual - expected).abs() < 0.01,
+            "{what} is {actual}, the source model has {expected}"
+        );
+    };
+    let full = [
+        (
+            "Body",
+            "body",
+            [-2.5639, 0.4759, -3.4473],
+            [2.5639, 2.6559, 2.5436],
+        ),
+        (
+            "Turret Pivot",
+            "turret_pivot",
+            [-0.8379, 2.4479, -0.5675],
+            [0.8666, 3.0172, 1.1374],
+        ),
+        (
+            "Gun",
+            "gun",
+            [-0.3991, 3.2214, 1.2124],
+            [0.3738, 3.9846, 4.5622],
+        ),
+    ];
+    for (part, mesh, min, max) in full {
+        let (actual_min, actual_max) = tank_space_bounds(scene, tank, part, mesh);
+        for axis in 0..3 {
+            near(actual_min[axis], min[axis], &format!("{part} min[{axis}]"));
+            near(actual_max[axis], max[axis], &format!("{part} max[{axis}]"));
+        }
+    }
+    // The exported head lacks some low rear geometry of the source head, so
+    // only the corners that geometry does not reach are compared.
+    let (min, max) = tank_space_bounds(scene, tank, "Turret Head", "turret_head");
+    near(min.x, -1.437, "Turret Head min x");
+    near(max.x, 1.437, "Turret Head max x");
+    near(max.y, 6.2127, "Turret Head top");
+    near(max.z, 1.9523, "Turret Head front");
+}
+
+#[test]
+fn tank_turret_and_gun_sit_where_the_source_model_puts_them() {
+    let (copy, assets) = sandbox_assets();
+    let mut scene = load_sandbox_scene(&copy, &assets);
+    let arena_tank = object_named(&scene, "Tank");
+    assert_tank_matches_the_source_layout(&scene, arena_tank);
+
+    let prefab = assets
+        .registries
+        .assets
+        .read()
+        .reload_by_path::<Prefab>(&copy.sandbox_root().join("game/prefabs/tank.cxprefab"))
+        .expect("tank prefab should load");
+    let (root, _) = scene
+        .instantiate_prefab_reporting(&prefab.read(), None)
+        .expect("tank prefab should instantiate");
+    let prefab_tank = descendant_named(&scene, root, "Tank");
+    assert_tank_matches_the_source_layout(&scene, prefab_tank);
+}
+
+#[test]
+fn tank_rounds_leave_from_the_barrel_tip() {
+    let (copy, assets) = sandbox_assets();
+    let scene = load_sandbox_scene(&copy, &assets);
+    let tank = object_named(&scene, "Tank");
+    let barrel = scene
+        .read_component::<ComponentTankController, _, _>(tank, |controller| {
+            controller.barrel.game_object(&scene)
+        })
+        .flatten()
+        .expect("sandbox tank should reference its barrel");
+    let mut runner = HeadlessSceneRunner::from_scene(scene);
+
+    runner.press_key(egui::Key::Space);
+    let mut steps = 0;
+    let (round, projectile) = loop {
+        runner.step();
+        let scene = runner.scene();
+        if let Some(round) = find_named(scene, "Projectile") {
+            let projectile = scene
+                .read_component::<sandbox::tank::ComponentProjectile, _, _>(round, |p| *p)
+                .unwrap();
+            break (round, projectile);
+        }
+        steps += 1;
+        assert!(steps < 60, "the tank should fire a round");
+    };
+    let scene = runner.scene();
+    let controller = scene
+        .read_component::<ComponentTankController, _, _>(tank, |controller| controller.clone())
+        .unwrap();
+    // Where the round started, before it flew for the time it has used.
+    let flown = controller.projectile_lifetime - projectile.lifetime_remaining;
+    let start =
+        scene.world_transform(round).position - projectile.direction * projectile.speed * flown;
+
+    let barrel_transform = scene.world_transform(barrel);
+    let to_world = barrel_transform.matrix();
+    let gun: Vec<Vec3> = obj_mesh("gun")
+        .0
+        .into_iter()
+        .map(|p| (to_world * nalgebra_glm::vec4(p.x, p.y, p.z, 1.0)).xyz())
+        .collect();
+    let forward = projectile.direction;
+    let along = |p: &Vec3| (p - barrel_transform.position).dot(&forward);
+    let tip = gun.iter().map(along).fold(f32::NEG_INFINITY, f32::max);
+    let muzzle: Vec<&Vec3> = gun.iter().filter(|p| along(p) > tip - 0.01).collect();
+    let muzzle_centre = muzzle.iter().copied().sum::<Vec3>() / muzzle.len() as f32;
+
+    let past_tip = along(&start) - tip;
+    assert!(
+        (0.0..=projectile.radius).contains(&past_tip),
+        "a round should start at the barrel tip, not {past_tip} m past it"
+    );
+    let off_bore = (start - muzzle_centre) - forward * (start - muzzle_centre).dot(&forward);
+    assert!(
+        off_bore.norm() < 0.05,
+        "a round should start on the barrel's bore, not {} m off it",
+        off_bore.norm()
+    );
+}
