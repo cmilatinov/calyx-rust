@@ -1300,11 +1300,21 @@ fn set_parent_keeping_world(
     let world = scene.world_transform(game_object).matrix();
     let local = calyx_engine::math::Transform::from(&(parent_world.inverse_matrix() * world));
     let kept = parent_world.matrix() * local.matrix();
-    let tolerance = 1e-4 * world.amax().max(1.0);
-    // Written so a non-finite difference is refused too.
-    let error = (kept - world).amax();
+    // Rotation and scale are compared apart from translation, so an object
+    // far from the origin cannot hide a deformation in the translation's
+    // tolerance. Written so a non-finite difference is refused too.
+    let error = kept - world;
+    let close = |error: f32, magnitude: f32| error <= 1e-4 * magnitude.max(1.0);
+    let linear_kept = close(
+        error.fixed_view::<3, 3>(0, 0).amax(),
+        world.fixed_view::<3, 3>(0, 0).amax(),
+    );
+    let translation_kept = close(
+        error.fixed_view::<3, 1>(0, 3).amax(),
+        world.fixed_view::<3, 1>(0, 3).amax(),
+    );
     let finite = local.matrix().iter().all(|value| value.is_finite());
-    if !finite || error.is_nan() || error > tolerance {
+    if !finite || !linear_kept || !translation_kept {
         return Err((
             ErrorKind::BadRequest,
             format!(
@@ -2160,18 +2170,28 @@ mod tests {
         scene.set_transform(tilted, &turn(45.0).matrix());
         let square = named(scene, "Square", None);
         scene.set_transform(square, &turn(90.0).matrix());
+        // Far from the origin, the translation must not hide the shear.
+        let far = named(scene, "Far", None);
+        let far_transform = calyx_engine::math::Transform {
+            position: Vec3::new(10000.0, 0.0, 0.0),
+            ..turn(45.0)
+        };
+        scene.set_transform(far, &far_transform.matrix());
 
-        let (kind, message) = as_one_edit(&mut game, &mut document, |scene| {
-            set_parent_keeping_world(scene, "Tilted", Some("Stretched"))
-        })
-        .expect_err("a sheared object is refused");
-        assert_eq!(kind, ErrorKind::BadRequest);
-        assert!(
-            message.contains("\"Tilted\"") && message.contains("\"Stretched\""),
-            "{message}"
-        );
+        for object in ["Tilted", "Far"] {
+            let (kind, message) = as_one_edit(&mut game, &mut document, |scene| {
+                set_parent_keeping_world(scene, object, Some("Stretched"))
+            })
+            .expect_err("a sheared object is refused");
+            assert_eq!(kind, ErrorKind::BadRequest);
+            assert!(
+                message.contains(&format!("\"{object}\"")) && message.contains("\"Stretched\""),
+                "{message}"
+            );
+        }
         let scene = game.scenes.current_scene();
         assert_eq!(scene.parent(tilted), Some(scene.root()));
+        assert_eq!(scene.parent(far), Some(scene.root()));
         assert!(!document.can_undo(&game), "a refused move records nothing");
 
         // A turn that stays on the parent's axes needs no shear.
