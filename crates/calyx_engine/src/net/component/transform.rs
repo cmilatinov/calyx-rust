@@ -1,7 +1,7 @@
 use crate as calyx_engine;
 use crate::component::{
-    Component, ComponentEventContext, ComponentTransform, ComponentUpdate, ReflectComponent,
-    ReflectComponentUpdate,
+    Component, ComponentEventContext, ComponentRef, ComponentTransform, ComponentUpdate,
+    ReflectComponent, ReflectComponentUpdate,
 };
 use crate::input::Input;
 use crate::math::Transform;
@@ -39,11 +39,17 @@ impl Default for ComponentNetworkTransform {
 impl Component for ComponentNetworkTransform {}
 
 impl ComponentUpdate for ComponentNetworkTransform {
-    fn update(&self, mut ctx: ComponentEventContext, resources: &mut ResourceMap, _input: &Input) {
-        let Some(mut net_transform) = ctx
-            .scene
-            .read_component::<ComponentNetworkTransform, _, _>(ctx.game_object, |c| c.clone())
-        else {
+    fn update(
+        this: ComponentRef<Self>,
+        mut ctx: ComponentEventContext,
+        resources: &mut ResourceMap,
+        _input: &Input,
+    ) {
+        // The synchronizer needs the whole context while it changes its own
+        // state, so it runs on a copy of this component that is written back
+        // after. Nothing it calls writes this component through the context,
+        // so the write-back overwrites no other write.
+        let Some(mut net_transform) = this.read(ctx.scene, |c| c.clone()) else {
             return;
         };
         if let Some(value) = net_transform.transform.update(
@@ -66,9 +72,8 @@ impl ComponentUpdate for ComponentNetworkTransform {
                     c_transform.transform = value;
                 });
         }
-        ctx.scene
-            .write_component::<ComponentNetworkTransform, _>(ctx.game_object, |c| {
-                *c = net_transform;
-            });
+        this.write(ctx.scene, |c| {
+            *c = net_transform;
+        });
     }
 }

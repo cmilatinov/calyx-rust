@@ -40,4 +40,6 @@ mod tps_camera;
 mod transform;
 
 #[cfg(test)]
+mod hook_tests;
+#[cfg(test)]
 mod tests;

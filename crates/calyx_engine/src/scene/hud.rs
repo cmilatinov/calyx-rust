@@ -14,12 +14,12 @@ impl Scene {
         let objects: Vec<_> = self.objects().collect();
         let layers: Vec<UiNodeHandle> = registry
             .components_with_hud()
-            .flat_map(|(type_uuid, hud)| {
+            .flat_map(|(type_uuid, hook)| {
                 let prototype = registry.component(type_uuid);
                 objects
                     .iter()
                     .filter(|&&game_object| self.runs_hooks(game_object, prototype))
-                    .filter_map(|&game_object| hud.build_hud(self, game_object, ui, viewport))
+                    .filter_map(|&game_object| hook.build_hud(self, game_object, ui, viewport))
                     .collect::<Vec<_>>()
             })
             .collect();
@@ -116,14 +116,12 @@ mod tests {
 
     impl ComponentHud for TestHudCounter {
         fn build_hud(
-            &self,
-            scene: &Scene,
-            game_object: GameObject,
+            counter: &Self,
+            _scene: &Scene,
+            _game_object: GameObject,
             ui: &mut UiArena,
             _viewport: UiRect,
         ) -> Option<UiNodeHandle> {
-            let counter =
-                scene.read_component::<TestHudCounter, _, _>(game_object, |counter| *counter)?;
             (!counter.hidden).then(|| ui.text(format!("count {}", counter.value)))
         }
     }

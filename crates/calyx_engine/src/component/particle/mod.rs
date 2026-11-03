@@ -39,7 +39,8 @@ pub use modules::{
 };
 
 use super::{
-    Component, ComponentEventContext, ComponentReset, ReflectComponent, ReflectComponentReset,
+    Component, ComponentEventContext, ComponentRef, ComponentReset, ReflectComponent,
+    ReflectComponentReset,
 };
 use crate as calyx_engine;
 use crate::reflect::{Reflect, ReflectDefault};
@@ -126,13 +127,8 @@ impl Component for ComponentParticleSystem {
 }
 
 impl ComponentReset for ComponentParticleSystem {
-    fn reset(
-        &self,
-        ComponentEventContext {
-            scene, game_object, ..
-        }: ComponentEventContext,
-    ) {
-        scene.write_component::<ComponentParticleSystem, _>(game_object, |system| {
+    fn reset(this: ComponentRef<Self>, ctx: ComponentEventContext) {
+        this.write(ctx.scene, |system| {
             system.restart();
         });
     }
