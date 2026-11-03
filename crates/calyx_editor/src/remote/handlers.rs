@@ -1254,7 +1254,8 @@ fn instantiate_prefab_under(
 
 /// Moves the object `object` selects under the object `parent` selects, or
 /// to the scene root, after the new parent's children, keeping its world
-/// transform. Refuses a parent inside the object's own subtree.
+/// transform. Refuses a parent inside the object's own subtree, and a parent
+/// under which the object's world transform would need shear.
 fn set_parent_keeping_world(
     scene: &mut Scene,
     object: &str,
@@ -1277,11 +1278,30 @@ fn set_parent_keeping_world(
             ));
         }
     }
-    let world = scene.world_transform(game_object);
+    // A local transform holds no shear, so under a parent with non-uniform
+    // scale an object turned off the parent's axes cannot keep its world
+    // transform. Check before the hierarchy changes.
+    let target = new_parent.unwrap_or_else(|| scene.root());
+    let parent_world = scene.world_transform(target);
+    let world = scene.world_transform(game_object).matrix();
+    let local = calyx_engine::math::Transform::from(&(parent_world.inverse_matrix() * world));
+    let kept = parent_world.matrix() * local.matrix();
+    let tolerance = 1e-4 * world.amax().max(1.0);
+    if (kept - world).amax() > tolerance {
+        return Err((
+            ErrorKind::BadRequest,
+            format!(
+                "cannot parent {:?} under {:?} keeping its world transform: the parent's \
+                 non-uniform scale would shear it",
+                scene.name(game_object),
+                scene.name(target)
+            ),
+        ));
+    }
     scene
         .set_parent(game_object, new_parent)
         .map_err(|error| (ErrorKind::BadRequest, error.to_string()))?;
-    scene.set_world_transform(game_object, world.matrix());
+    scene.set_transform(game_object, &local.matrix());
     Ok(Some(object_placement_json(scene, game_object)))
 }
 
@@ -2104,6 +2124,52 @@ mod tests {
         assert_eq!(scene.parent(house), Some(scene.root()));
         assert_eq!(scene.parent(roof), Some(house));
         assert!(!document.can_undo(&game), "a refused move records nothing");
+    }
+
+    /// Under a parent with non-uniform scale, an object turned off the
+    /// parent's axes would need shear, which a local transform cannot hold.
+    #[test]
+    fn reparenting_that_would_shear_the_object_is_refused() {
+        let mut game = calyx_engine::test_support::test_game_context();
+        let mut document = document();
+        let scene = game.scenes.current_scene_mut();
+        let stretched = named(scene, "Stretched", None);
+        scene.set_transform(stretched, &nalgebra_glm::scaling(&Vec3::new(2.0, 1.0, 1.0)));
+        let turn = |degrees: f32| calyx_engine::math::Transform {
+            rotation: UnitQuaternion::from_euler_angles(0.0, 0.0, degrees.to_radians()),
+            ..Default::default()
+        };
+        let tilted = named(scene, "Tilted", None);
+        scene.set_transform(tilted, &turn(45.0).matrix());
+        let square = named(scene, "Square", None);
+        scene.set_transform(square, &turn(90.0).matrix());
+
+        let (kind, message) = as_one_edit(&mut game, &mut document, |scene| {
+            set_parent_keeping_world(scene, "Tilted", Some("Stretched"))
+        })
+        .expect_err("a sheared object is refused");
+        assert_eq!(kind, ErrorKind::BadRequest);
+        assert!(
+            message.contains("\"Tilted\"") && message.contains("\"Stretched\""),
+            "{message}"
+        );
+        let scene = game.scenes.current_scene();
+        assert_eq!(scene.parent(tilted), Some(scene.root()));
+        assert!(!document.can_undo(&game), "a refused move records nothing");
+
+        // A turn that stays on the parent's axes needs no shear.
+        as_one_edit(&mut game, &mut document, |scene| {
+            set_parent_keeping_world(scene, "Square", Some("Stretched"))
+        })
+        .expect("an object on the parent's axes moves");
+        let scene = game.scenes.current_scene();
+        assert_eq!(scene.parent(square), Some(stretched));
+        let world = scene.world_transform(square);
+        assert!(
+            near(world.rotation * Vec3::x(), [0.0, 1.0, 0.0]),
+            "{world:?}"
+        );
+        assert!(near(world.scale, [1.0, 1.0, 1.0]), "{world:?}");
     }
 
     #[test]
