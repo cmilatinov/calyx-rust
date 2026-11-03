@@ -4,8 +4,8 @@ use std::ops::Deref;
 use uuid::Uuid;
 
 use crate::component::{
-    Component, ComponentHud, ComponentReset, ComponentStart, ComponentUpdate, ReflectComponent,
-    ReflectComponentHud, ReflectComponentReset, ReflectComponentStart, ReflectComponentUpdate,
+    Component, ReflectComponent, ReflectComponentHud, ReflectComponentReset, ReflectComponentStart,
+    ReflectComponentUpdate,
 };
 use crate::reflect::type_registry::TypeRegistry;
 use crate::reflect::ReflectDefault;
@@ -13,12 +13,17 @@ use crate::type_uuids;
 use crate::utils::ReflectTypeUuidDynamic;
 
 /// Registry of reflected component types and their optional lifecycle hooks.
+///
+/// Each component type has one prototype, a default instance that binds,
+/// reads and serializes components of its type. The lifecycle hooks are kept
+/// as the type's reflected hook functions instead, with no instance: the
+/// scene runs each one on the component the object holds.
 pub struct ComponentRegistry {
     components: HashMap<Uuid, Box<dyn Component>>,
-    start_components: Vec<(Uuid, Box<dyn ComponentStart>)>,
-    update_components: Vec<(Uuid, Box<dyn ComponentUpdate>)>,
-    hud_components: Vec<(Uuid, Box<dyn ComponentHud>)>,
-    reset_components: HashMap<Uuid, Box<dyn ComponentReset>>,
+    start_components: Vec<(Uuid, ReflectComponentStart)>,
+    update_components: Vec<(Uuid, ReflectComponentUpdate)>,
+    hud_components: Vec<(Uuid, ReflectComponentHud)>,
+    reset_components: HashMap<Uuid, ReflectComponentReset>,
 }
 
 impl ComponentRegistry {
@@ -48,30 +53,27 @@ impl ComponentRegistry {
         self.component(id).is_some_and(Component::can_disable)
     }
 
-    /// Iterates components that implement [`ComponentUpdate`].
-    pub fn components_with_update(&self) -> impl Iterator<Item = (Uuid, &dyn ComponentUpdate)> {
-        self.update_components
-            .iter()
-            .map(|(id, updater)| (*id, updater.deref()))
+    /// Iterates the update hooks of the components that implement
+    /// [`ComponentUpdate`](crate::component::ComponentUpdate).
+    pub fn components_with_update(&self) -> impl Iterator<Item = (Uuid, &ReflectComponentUpdate)> {
+        self.update_components.iter().map(|(id, hook)| (*id, hook))
     }
 
-    /// Iterates components that implement [`ComponentHud`].
-    pub fn components_with_hud(&self) -> impl Iterator<Item = (Uuid, &dyn ComponentHud)> {
-        self.hud_components
-            .iter()
-            .map(|(id, hud)| (*id, hud.deref()))
+    /// Iterates the HUD hooks of the components that implement
+    /// [`ComponentHud`](crate::component::ComponentHud).
+    pub fn components_with_hud(&self) -> impl Iterator<Item = (Uuid, &ReflectComponentHud)> {
+        self.hud_components.iter().map(|(id, hook)| (*id, hook))
     }
 
-    /// Iterates components that implement [`ComponentStart`].
-    pub fn components_with_start(&self) -> impl Iterator<Item = (Uuid, &dyn ComponentStart)> {
-        self.start_components
-            .iter()
-            .map(|(id, starter)| (*id, starter.deref()))
+    /// Iterates the start hooks of the components that implement
+    /// [`ComponentStart`](crate::component::ComponentStart).
+    pub fn components_with_start(&self) -> impl Iterator<Item = (Uuid, &ReflectComponentStart)> {
+        self.start_components.iter().map(|(id, hook)| (*id, hook))
     }
 
     /// Returns the reset hook registered for `id`, if any.
-    pub fn reset_component(&self, id: Uuid) -> Option<&dyn ComponentReset> {
-        self.reset_components.get(&id).map(|b| b.deref())
+    pub fn reset_component(&self, id: Uuid) -> Option<&ReflectComponentReset> {
+        self.reset_components.get(&id)
     }
 
     /// Iterates every registered component binder keyed by type UUID.
@@ -109,50 +111,17 @@ impl ComponentRegistry {
             };
             self.components.insert(type_id, component);
 
-            if let Some(meta_start) = type_registry.trait_meta::<ReflectComponentStart>(type_id) {
-                let instance = meta_default.default();
-                if let Ok(starter) = meta_start.get_boxed(instance) {
-                    self.start_components.push((type_id, starter));
-                } else {
-                    log::warn!(
-                        "Skipping start hook for component {type_id}: failed to bind metadata"
-                    );
-                }
+            if let Some(hook) = type_registry.trait_meta::<ReflectComponentStart>(type_id) {
+                self.start_components.push((type_id, hook.clone()));
             }
-
-            // Discover ComponentUpdate implementations via reflection
-            if let Some(meta_update) = type_registry.trait_meta::<ReflectComponentUpdate>(type_id) {
-                let instance = meta_default.default();
-                if let Ok(updater) = meta_update.get_boxed(instance) {
-                    self.update_components.push((type_id, updater));
-                } else {
-                    log::warn!(
-                        "Skipping update hook for component {type_id}: failed to bind metadata"
-                    );
-                }
+            if let Some(hook) = type_registry.trait_meta::<ReflectComponentUpdate>(type_id) {
+                self.update_components.push((type_id, hook.clone()));
             }
-
-            if let Some(meta_hud) = type_registry.trait_meta::<ReflectComponentHud>(type_id) {
-                let instance = meta_default.default();
-                if let Ok(hud) = meta_hud.get_boxed(instance) {
-                    self.hud_components.push((type_id, hud));
-                } else {
-                    log::warn!(
-                        "Skipping HUD hook for component {type_id}: failed to bind metadata"
-                    );
-                }
+            if let Some(hook) = type_registry.trait_meta::<ReflectComponentHud>(type_id) {
+                self.hud_components.push((type_id, hook.clone()));
             }
-
-            // Discover ComponentReset implementations via reflection
-            if let Some(meta_reset) = type_registry.trait_meta::<ReflectComponentReset>(type_id) {
-                let instance = meta_default.default();
-                if let Ok(resetter) = meta_reset.get_boxed(instance) {
-                    self.reset_components.insert(type_id, resetter);
-                } else {
-                    log::warn!(
-                        "Skipping reset hook for component {type_id}: failed to bind metadata"
-                    );
-                }
+            if let Some(hook) = type_registry.trait_meta::<ReflectComponentReset>(type_id) {
+                self.reset_components.insert(type_id, hook.clone());
             }
         }
     }

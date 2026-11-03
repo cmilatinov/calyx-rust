@@ -4,6 +4,7 @@ use bimap::BiHashMap;
 use legion::storage::ComponentTypeId;
 use legion::world::{Entry, EntryMut, EntryRef, SubWorld};
 use legion::World;
+use std::marker::PhantomData;
 use uuid::Uuid;
 
 use calyx_engine_derive::reflect_trait;
@@ -12,13 +13,13 @@ pub use calyx_engine_derive::Component;
 use crate as calyx_engine;
 use crate::context::ReadOnlyRegistryContext;
 use crate::input::Input;
-use crate::reflect::Reflect;
+use crate::reflect::{Reflect, TraitMeta, TraitMetaFrom};
 use crate::render::Gizmos;
 use crate::resource::ResourceMap;
 use crate::scene::game_object_ref::RemapScope;
 use crate::scene::{GameObject, Scene};
 use crate::ui::{UiArena, UiNodeHandle, UiRect};
-use crate::utils::TypeUuidDynamic;
+use crate::utils::{TypeUuid, TypeUuidDynamic};
 
 /// Provides type-erased access to a concrete component stored in a Legion entity.
 ///
@@ -199,82 +200,153 @@ pub trait Component: TypeUuidDynamic + ComponentInstance {
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {}
 }
 
+/// A typed handle to the component of type `T` on one game object, given to
+/// the lifecycle hooks that also receive `&mut Scene`.
+///
+/// The component stays in the scene's ECS world while its hook runs, so the
+/// hook reads and writes it through this handle and the scene the hook was
+/// given, one access at a time. A hook therefore never holds its component
+/// and the scene mutably at once, and the stored component is the only copy:
+/// writes through the handle and writes through `ctx.scene`, by the hook or by
+/// anything it calls, apply at once and in the order they are made, so none
+/// of them can overwrite another. Once the hook removes its own component,
+/// the handle reads and writes nothing; once it replaces it, the handle
+/// reaches the replacement.
+///
+/// `ComponentRef` is `Copy`, and only names the game object. A hook can pass
+/// it on, but should not keep it past the call: store a
+/// [`GameObjectRef`](crate::scene::GameObjectRef) instead.
+pub struct ComponentRef<T> {
+    game_object: GameObject,
+    _component: PhantomData<fn() -> T>,
+}
+
+impl<T> Clone for ComponentRef<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for ComponentRef<T> {}
+
+impl<T> std::fmt::Debug for ComponentRef<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ComponentRef")
+            .field("game_object", &self.game_object)
+            .field("component", &std::any::type_name::<T>())
+            .finish()
+    }
+}
+
+impl<T: Component + 'static> ComponentRef<T> {
+    /// The handle to `game_object`'s component of type `T`, whether or not
+    /// the object has one.
+    pub fn new(game_object: GameObject) -> Self {
+        Self {
+            game_object,
+            _component: PhantomData,
+        }
+    }
+
+    /// The game object whose component this handle reaches.
+    pub fn game_object(self) -> GameObject {
+        self.game_object
+    }
+
+    /// Reads the component through `reader`, or returns `None` when the
+    /// object no longer has it.
+    pub fn read<R>(self, scene: &Scene, reader: impl FnOnce(&T) -> R) -> Option<R> {
+        scene.read_component::<T, R, _>(self.game_object, reader)
+    }
+
+    /// Writes the component through `writer`, as [`Scene::write_component`]
+    /// does, or returns `None` when the object no longer has it.
+    pub fn write<R>(self, scene: &mut Scene, writer: impl FnOnce(&mut T) -> R) -> Option<R> {
+        scene.write_component::<T, R>(self.game_object, writer)
+    }
+
+    /// Whether the object has the component.
+    pub fn exists(self, scene: &Scene) -> bool {
+        self.read(scene, |_| ()).is_some()
+    }
+}
+
 /// One-time hook invoked when a scene begins runtime simulation.
 ///
-/// The `&self` receiver is the prototype instance from the registry. Read the
-/// actual component through `ctx.scene`, matching [`ComponentUpdate`]. Start
-/// hooks run before the scene's first physics preparation and frame update.
-/// A component the scene holds disabled when it starts skips the hook, and
-/// does not run it later once enabled.
+/// Discovered via `#[reflect(ComponentStart)]`. The scene calls it once for
+/// every game object holding the component, except one whose component the
+/// scene holds disabled, before the scene's first physics preparation and
+/// frame update. A component disabled when the scene starts skips the hook,
+/// and does not run it later once enabled.
+///
+/// `this` reaches the object's own component; see [`ComponentRef`] and
+/// [`ComponentUpdate`].
 #[allow(missing_docs)]
-#[reflect_trait]
-pub trait ComponentStart: Send + Sync {
-    fn start(&self, ctx: ComponentEventContext);
+pub trait ComponentStart: Component + Sized + 'static {
+    fn start(this: ComponentRef<Self>, ctx: ComponentEventContext);
 }
 
 /// Per-frame update hook, discovered via `#[reflect(ComponentUpdate)]`.
 ///
-/// The `&self` receiver is the prototype instance from the registry, not the
-/// actual component on the entity. Implementations access the real component
-/// through `ctx.scene.read_component` / `ctx.scene.write_component`.
-///
-/// This is a separate trait, not a method on `Component`, because `update`
-/// needs `&mut Scene` and would otherwise alias with `&mut self` when the
-/// component lives inside the scene's ECS world.
+/// The hook is an associated function, not a method: it gets no `self`.
+/// `this` is a handle to the object's own component, which stays in the
+/// scene's ECS world while the hook runs, because the hook also gets
+/// `&mut Scene` and a `&mut self` into the world would alias it. Read and
+/// write the component through `this` and `ctx.scene`; every write applies at
+/// once, in the order the hook makes it (see [`ComponentRef`]).
 ///
 /// Typical usage:
 ///
 /// ```ignore
 /// impl ComponentUpdate for PlayerController {
 ///     fn update(
-///         &self,
+///         this: ComponentRef<Self>,
 ///         ctx: ComponentEventContext,
 ///         resources: &mut ResourceMap,
 ///         input: &Input,
 ///     ) {
-///         let speed = ctx
-///             .scene
-///             .read_component::<PlayerController, _, _>(ctx.game_object, |controller| {
-///                 controller.speed
-///             })
-///             .unwrap_or_default();
-///
+///         let Some(speed) = this.read(ctx.scene, |controller| controller.speed) else {
+///             return;
+///         };
 ///         if input.action("jump").just_pressed() {
-///             // Mutate the scene or resources for this frame.
+///             this.write(ctx.scene, |controller| controller.jumps += 1);
 ///         }
 ///     }
 /// }
 /// ```
 #[allow(missing_docs)]
-#[reflect_trait]
-pub trait ComponentUpdate: Send + Sync {
-    /// Runs once per simulated frame for components whose type reflects this
-    /// trait, except a component the scene holds disabled.
+pub trait ComponentUpdate: Component + Sized + 'static {
+    /// Runs once per simulated frame for every game object holding the
+    /// component, except one whose component the scene holds disabled.
     ///
     /// `resources` contains global runtime state such as time and networking.
     /// `input` is the active frame input view. Update hooks are skipped when the
     /// scene manager is not simulating.
-    fn update(&self, ctx: ComponentEventContext, resources: &mut ResourceMap, input: &Input);
+    fn update(
+        this: ComponentRef<Self>,
+        ctx: ComponentEventContext,
+        resources: &mut ResourceMap,
+        input: &Input,
+    );
 }
 
 /// Runtime HUD hook, discovered via `#[reflect(ComponentHud)]`.
 ///
-/// The `&self` receiver is the prototype instance from the registry, as with
-/// [`ComponentUpdate`]. Implementations read the actual component through
-/// `scene` and build its HUD into `ui`, laid out for `viewport`, or return
-/// `None` to draw nothing this frame.
+/// `this` is the object's own component, borrowed from the scene's ECS world:
+/// the hook only reads the scene, so the component and the scene can be
+/// borrowed together. Implementations build the component's HUD into `ui`,
+/// laid out for `viewport`, or return `None` to draw nothing this frame.
 ///
 /// The hook runs once per frame after the scene update, for every game object
-/// except one whose component the scene holds disabled.
-/// The player and the editor's Game panel paint the result over the game view
-/// through [`SceneHud`](crate::scene::SceneHud), so the HUD reads the same
-/// frame the view shows. It receives `&Scene`: gameplay belongs in
+/// holding the component, except one whose component the scene holds
+/// disabled. The player and the editor's Game panel paint the result over the
+/// game view through [`SceneHud`](crate::scene::SceneHud), so the HUD reads
+/// the same frame the view shows. It receives `&Scene`: gameplay belongs in
 /// `ComponentUpdate`.
 #[allow(missing_docs)]
-#[reflect_trait]
-pub trait ComponentHud: Send + Sync {
+pub trait ComponentHud: Component + Sized + 'static {
     fn build_hud(
-        &self,
+        this: &Self,
         scene: &Scene,
         game_object: GameObject,
         ui: &mut UiArena,
@@ -287,13 +359,139 @@ pub trait ComponentHud: Send + Sync {
 /// Discovered via `#[reflect(ComponentReset)]`. Use this to initialize related
 /// scene state that depends on the owning game object existing, such as syncing
 /// a rigid body from the current transform or creating helper child objects.
+/// `this` reaches the object's own component, as in [`ComponentUpdate`].
 ///
 /// `reset` runs after binding, before normal per-frame updates. It may also run
 /// when editor tooling rebinds or reconstructs a component, so implementations
 /// should be idempotent where possible.
 #[allow(missing_docs)]
-#[reflect_trait]
-pub trait ComponentReset: Send + Sync {
+pub trait ComponentReset: Component + Sized + 'static {
     /// Initialize scene-side state for the component's owning game object.
-    fn reset(&self, ctx: ComponentEventContext);
+    fn reset(this: ComponentRef<Self>, ctx: ComponentEventContext);
+}
+
+/// Reflected [`ComponentStart`] hook of one component type: the hook,
+/// monomorphized for that type, so the scene calls it without a prototype
+/// instance.
+#[derive(Clone, TypeUuid)]
+pub struct ReflectComponentStart {
+    start: fn(ComponentEventContext),
+}
+
+impl ReflectComponentStart {
+    /// Runs the hook on `ctx.game_object`'s component, when it has one.
+    pub fn start(&self, ctx: ComponentEventContext) {
+        (self.start)(ctx)
+    }
+}
+
+impl TraitMeta for ReflectComponentStart {}
+
+impl<T: ComponentStart> TraitMetaFrom<T> for ReflectComponentStart {
+    fn trait_meta() -> Self {
+        Self {
+            start: |ctx| {
+                let this = ComponentRef::<T>::new(ctx.game_object);
+                if this.exists(ctx.scene) {
+                    T::start(this, ctx);
+                }
+            },
+        }
+    }
+}
+
+/// Reflected [`ComponentUpdate`] hook of one component type; see
+/// [`ReflectComponentStart`].
+#[derive(Clone, TypeUuid)]
+pub struct ReflectComponentUpdate {
+    update: fn(ComponentEventContext, &mut ResourceMap, &Input),
+}
+
+impl ReflectComponentUpdate {
+    /// Runs the hook on `ctx.game_object`'s component, when it has one.
+    pub fn update(&self, ctx: ComponentEventContext, resources: &mut ResourceMap, input: &Input) {
+        (self.update)(ctx, resources, input)
+    }
+}
+
+impl TraitMeta for ReflectComponentUpdate {}
+
+impl<T: ComponentUpdate> TraitMetaFrom<T> for ReflectComponentUpdate {
+    fn trait_meta() -> Self {
+        Self {
+            update: |ctx, resources, input| {
+                let this = ComponentRef::<T>::new(ctx.game_object);
+                if this.exists(ctx.scene) {
+                    T::update(this, ctx, resources, input);
+                }
+            },
+        }
+    }
+}
+
+/// Reflected [`ComponentHud`] hook of one component type; see
+/// [`ReflectComponentStart`].
+#[derive(Clone, TypeUuid)]
+pub struct ReflectComponentHud {
+    #[allow(clippy::type_complexity)]
+    build_hud: fn(&Scene, GameObject, &mut UiArena, UiRect) -> Option<UiNodeHandle>,
+}
+
+impl ReflectComponentHud {
+    /// Builds the HUD of `game_object`'s component, or returns `None` when
+    /// the object has none or the hook draws nothing.
+    pub fn build_hud(
+        &self,
+        scene: &Scene,
+        game_object: GameObject,
+        ui: &mut UiArena,
+        viewport: UiRect,
+    ) -> Option<UiNodeHandle> {
+        (self.build_hud)(scene, game_object, ui, viewport)
+    }
+}
+
+impl TraitMeta for ReflectComponentHud {}
+
+impl<T: ComponentHud> TraitMetaFrom<T> for ReflectComponentHud {
+    fn trait_meta() -> Self {
+        Self {
+            build_hud: |scene, game_object, ui, viewport| {
+                scene
+                    .read_component::<T, _, _>(game_object, |this| {
+                        T::build_hud(this, scene, game_object, ui, viewport)
+                    })
+                    .flatten()
+            },
+        }
+    }
+}
+
+/// Reflected [`ComponentReset`] hook of one component type; see
+/// [`ReflectComponentStart`].
+#[derive(Clone, TypeUuid)]
+pub struct ReflectComponentReset {
+    reset: fn(ComponentEventContext),
+}
+
+impl ReflectComponentReset {
+    /// Runs the hook on `ctx.game_object`'s component, when it has one.
+    pub fn reset(&self, ctx: ComponentEventContext) {
+        (self.reset)(ctx)
+    }
+}
+
+impl TraitMeta for ReflectComponentReset {}
+
+impl<T: ComponentReset> TraitMetaFrom<T> for ReflectComponentReset {
+    fn trait_meta() -> Self {
+        Self {
+            reset: |ctx| {
+                let this = ComponentRef::<T>::new(ctx.game_object);
+                if this.exists(ctx.scene) {
+                    T::reset(this, ctx);
+                }
+            },
+        }
+    }
 }

@@ -1,6 +1,7 @@
 use crate as calyx_engine;
 use crate::component::{
-    Component, ComponentEventContext, ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
+    Component, ComponentEventContext, ComponentRef, ComponentUpdate, ReflectComponent,
+    ReflectComponentUpdate,
 };
 use crate::input::Input;
 use crate::reflect::{Reflect, ReflectDefault};
@@ -54,7 +55,7 @@ impl Component for ComponentThirdPersonCamera {
 
 impl ComponentUpdate for ComponentThirdPersonCamera {
     fn update(
-        &self,
+        this: ComponentRef<Self>,
         ComponentEventContext {
             scene, game_object, ..
         }: ComponentEventContext,
@@ -68,7 +69,7 @@ impl ComponentUpdate for ComponentThirdPersonCamera {
         let zoom_delta = input.scroll_delta().y;
 
         let Some((target, sensitivity, zoom_sensitivity, distance, rotation)) =
-            scene.read_component::<ComponentThirdPersonCamera, _, _>(game_object, |c| {
+            this.read(scene, |c| {
                 (
                     c.target,
                     c.sensitivity,
@@ -88,7 +89,7 @@ impl ComponentUpdate for ComponentThirdPersonCamera {
         new_rotation.y =
             nalgebra::clamp(new_rotation.y, -89.0f32.to_radians(), 89.0f32.to_radians());
 
-        scene.write_component::<ComponentThirdPersonCamera, _>(game_object, |c| {
+        this.write(scene, |c| {
             c.distance = new_distance;
             c.rotation = new_rotation;
         });

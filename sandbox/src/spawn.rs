@@ -1,6 +1,7 @@
 use crate::tank::ComponentHealth;
 use calyx_engine::component::{
-    Component, ComponentEventContext, ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
+    Component, ComponentEventContext, ComponentRef, ComponentUpdate, ReflectComponent,
+    ReflectComponentUpdate,
 };
 use calyx_engine::input::Input;
 use calyx_engine::math::Transform;
@@ -133,14 +134,12 @@ enum RespawnAction {
 
 impl ComponentUpdate for ComponentRespawnState {
     fn update(
-        &self,
-        ComponentEventContext {
-            scene, game_object, ..
-        }: ComponentEventContext,
+        this: ComponentRef<Self>,
+        ComponentEventContext { scene, .. }: ComponentEventContext,
         resources: &mut ResourceMap,
         _input: &Input,
     ) {
-        update_respawn_state(scene, game_object, resources.time().delta_time());
+        update_respawn_state(scene, this.game_object(), resources.time().delta_time());
     }
 }
 
