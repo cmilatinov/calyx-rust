@@ -200,8 +200,24 @@ enum PrefabAction {
         #[arg(long)]
         discard: bool,
     },
-    /// Instantiate a prefab asset at the scene root, linked to the prefab.
-    Instantiate { path: PathBuf },
+    /// Instantiate a prefab asset, linked to the prefab, as one undo step:
+    /// under `--parent`, or at the scene root without it. The instance root
+    /// keeps the prefab root's local transform except for the parts given.
+    Instantiate {
+        path: PathBuf,
+        /// Game-object selector (UUID or name) of the parent.
+        #[arg(long)]
+        parent: Option<String>,
+        /// Local position of the instance root.
+        #[arg(long, num_args = 3, value_names = ["X", "Y", "Z"], allow_negative_numbers = true)]
+        position: Option<Vec<f32>>,
+        /// Local rotation of the instance root as XYZ Euler angles in degrees.
+        #[arg(long, num_args = 3, value_names = ["X", "Y", "Z"], allow_negative_numbers = true)]
+        rotation: Option<Vec<f32>>,
+        /// Local scale of the instance root.
+        #[arg(long, num_args = 3, value_names = ["X", "Y", "Z"], allow_negative_numbers = true)]
+        scale: Option<Vec<f32>>,
+    },
     /// Update the scene's instances of a prefab (of every prefab when no
     /// path is given) from the saved prefab, as one undo step.
     Update { path: Option<PathBuf> },
@@ -248,6 +264,18 @@ enum ObjectAction {
     },
     /// Delete a game object and its descendants.
     Delete { object: String },
+    /// Move an object under another object, or to the scene root with
+    /// `--root`, keeping its world transform, as one undo step.
+    Parent {
+        /// Game-object selector (UUID or name) of the object to move.
+        object: String,
+        /// Game-object selector (UUID or name) of the new parent.
+        #[arg(required_unless_present = "root", conflicts_with = "root")]
+        parent: Option<String>,
+        /// Move the object to the scene root.
+        #[arg(long)]
+        root: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -500,6 +528,11 @@ fn frame_timeout(base: Duration, frames: u32) -> Duration {
     base + Duration::from_millis(frames as u64 * 50)
 }
 
+/// The three values of a `num_args = 3` option.
+fn triple(values: &Option<Vec<f32>>) -> Option<[f32; 3]> {
+    values.as_ref().map(|v| [v[0], v[1], v[2]])
+}
+
 fn build_command(action: &Action, base: Duration) -> Result<(Command, Duration), String> {
     let simple = |command: Command| Ok((command, base));
     match action {
@@ -532,9 +565,19 @@ fn build_command(action: &Action, base: Duration) -> Result<(Command, Duration),
             PrefabAction::Open { path } => simple(Command::OpenPrefab { path: path.clone() }),
             PrefabAction::Save => simple(Command::SavePrefab),
             PrefabAction::Close { discard } => simple(Command::ClosePrefab { discard: *discard }),
-            PrefabAction::Instantiate { path } => {
-                simple(Command::InstantiatePrefab { path: path.clone() })
-            }
+            PrefabAction::Instantiate {
+                path,
+                parent,
+                position,
+                rotation,
+                scale,
+            } => simple(Command::InstantiatePrefab {
+                path: path.clone(),
+                parent: parent.clone(),
+                position: triple(position),
+                rotation_euler_deg: triple(rotation),
+                scale: triple(scale),
+            }),
             PrefabAction::Update { path } => {
                 simple(Command::UpdatePrefabInstances { path: path.clone() })
             }
@@ -574,6 +617,10 @@ fn build_command(action: &Action, base: Duration) -> Result<(Command, Duration),
             }),
             ObjectAction::Delete { object } => simple(Command::DeleteObject {
                 object: object.clone(),
+            }),
+            ObjectAction::Parent { object, parent, .. } => simple(Command::SetParent {
+                object: object.clone(),
+                parent: parent.clone(),
             }),
         },
         Action::Component(component) => match component {
@@ -624,22 +671,17 @@ fn build_command(action: &Action, base: Duration) -> Result<(Command, Duration),
             rotation,
             scale,
             world,
-        } => {
-            let triple = |values: &Option<Vec<f32>>| -> Option<[f32; 3]> {
-                values.as_ref().map(|v| [v[0], v[1], v[2]])
-            };
-            simple(Command::SetTransform {
-                object: object.clone(),
-                position: triple(position),
-                rotation_euler_deg: triple(rotation),
-                scale: triple(scale),
-                space: if *world {
-                    TransformSpace::World
-                } else {
-                    TransformSpace::Local
-                },
-            })
-        }
+        } => simple(Command::SetTransform {
+            object: object.clone(),
+            position: triple(position),
+            rotation_euler_deg: triple(rotation),
+            scale: triple(scale),
+            space: if *world {
+                TransformSpace::World
+            } else {
+                TransformSpace::Local
+            },
+        }),
         Action::Select { objects } => simple(Command::Select {
             objects: objects.clone(),
         }),
@@ -657,15 +699,10 @@ fn build_command(action: &Action, base: Duration) -> Result<(Command, Duration),
                 PickTargetArg::Game => PickTarget::Game,
             },
         }),
-        Action::ViewportCamera { position, look_at } => {
-            let triple = |values: &Option<Vec<f32>>| -> Option<[f32; 3]> {
-                values.as_ref().map(|v| [v[0], v[1], v[2]])
-            };
-            simple(Command::ViewportCamera {
-                position: triple(position),
-                look_at: triple(look_at),
-            })
-        }
+        Action::ViewportCamera { position, look_at } => simple(Command::ViewportCamera {
+            position: triple(position),
+            look_at: triple(look_at),
+        }),
         Action::View { view } => simple(Command::SetSceneView {
             view: match view {
                 SceneViewArg::Lit => SceneView::Lit,
@@ -732,6 +769,91 @@ fn build_command(action: &Action, base: Duration) -> Result<(Command, Duration),
             let command = serde_json::from_str(json)
                 .map_err(|error| format!("invalid command JSON: {error}"))?;
             Ok((command, frame_timeout(base, 300)))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn command(args: &[&str]) -> Command {
+        let cli = Cli::try_parse_from(std::iter::once("calyx_ctl").chain(args.iter().copied()))
+            .expect("arguments should parse");
+        build_command(&cli.action, Duration::from_secs(1))
+            .expect("command should build")
+            .0
+    }
+
+    #[test]
+    fn prefab_instantiate_passes_the_parent_and_local_transform() {
+        assert_eq!(
+            command(&[
+                "prefab",
+                "instantiate",
+                "crate.cxprefab",
+                "--parent",
+                "House",
+                "--position",
+                "1",
+                "-2",
+                "3",
+                "--rotation",
+                "0",
+                "90",
+                "0",
+                "--scale",
+                "2",
+                "2",
+                "2",
+            ]),
+            Command::InstantiatePrefab {
+                path: PathBuf::from("crate.cxprefab"),
+                parent: Some("House".into()),
+                position: Some([1.0, -2.0, 3.0]),
+                rotation_euler_deg: Some([0.0, 90.0, 0.0]),
+                scale: Some([2.0, 2.0, 2.0]),
+            }
+        );
+        assert_eq!(
+            command(&["prefab", "instantiate", "crate.cxprefab"]),
+            Command::InstantiatePrefab {
+                path: PathBuf::from("crate.cxprefab"),
+                parent: None,
+                position: None,
+                rotation_euler_deg: None,
+                scale: None,
+            }
+        );
+    }
+
+    #[test]
+    fn object_parent_moves_under_a_parent_or_to_the_root() {
+        assert_eq!(
+            command(&["object", "parent", "Roof", "House"]),
+            Command::SetParent {
+                object: "Roof".into(),
+                parent: Some("House".into()),
+            }
+        );
+        assert_eq!(
+            command(&["object", "parent", "Roof", "--root"]),
+            Command::SetParent {
+                object: "Roof".into(),
+                parent: None,
+            }
+        );
+    }
+
+    /// Leaving the parent out by mistake must not move the object to the
+    /// root, so the root is asked for by name.
+    #[test]
+    fn object_parent_needs_a_parent_or_root() {
+        for args in [
+            &["calyx_ctl", "object", "parent", "Roof"][..],
+            &["calyx_ctl", "object", "parent", "Roof", "House", "--root"][..],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err(), "{args:?}");
         }
     }
 }
