@@ -928,6 +928,102 @@ fn tone_mapping_matches_the_aces_fit_and_keeps_alpha() {
     );
 }
 
+/// Settings that tone-map with the neutral preset at `exposure_ev`.
+fn neutral(exposure_ev: f32) -> PostProcessSettings {
+    PostProcessSettings {
+        tonemapping: ComponentTonemap {
+            preset: TonemappingPreset::Neutral,
+            exposure_ev,
+        },
+        ..Default::default()
+    }
+}
+
+#[test]
+fn the_neutral_preset_leaves_display_range_colors_unchanged_at_zero_exposure() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let context = context.lock_read();
+    let render_context = context.render_context.clone();
+    let mut chain = PostProcessChain::new(&context).expect("chain shaders load");
+    chain.push(Box::new(TonemapPass::new(&context).expect("tonemap loads")));
+    let depth = depth_target(&render_context, 1);
+
+    for color in [
+        [0.0, 0.0, 0.0],
+        [0.18, 0.18, 0.18],
+        [1.0, 1.0, 1.0],
+        [1.0, 0.0, 0.0],
+        [0.5, 0.25, 0.75],
+        [0.9, 0.6, 0.05],
+        [0.01, 0.99, 0.5],
+    ] {
+        let (texel, _) = run_chain(
+            &render_context,
+            &mut chain,
+            &neutral(0.0),
+            [color[0], color[1], color[2], 0.25],
+            &depth,
+        );
+        for channel in 0..3 {
+            assert_close(
+                texel[channel],
+                color[channel] as f32,
+                &format!("Neutral({color:?}) channel {channel}"),
+            );
+        }
+        assert_eq!(texel[3], 0.25, "tone mapping keeps alpha");
+    }
+
+    // Exposure still scales the input before the curve.
+    let (texel, _) = run_chain(
+        &render_context,
+        &mut chain,
+        &neutral(-1.0),
+        [1.6, 0.4, 0.2, 1.0],
+        &depth,
+    );
+    for (channel, expected) in [0.8, 0.2, 0.1].into_iter().enumerate() {
+        assert_close(texel[channel], expected, "Neutral at -1 EV");
+    }
+}
+
+#[test]
+fn the_neutral_preset_rolls_bright_colors_off_toward_white_keeping_their_hue() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let context = context.lock_read();
+    let render_context = context.render_context.clone();
+    let mut chain = PostProcessChain::new(&context).expect("chain shaders load");
+    chain.push(Box::new(TonemapPass::new(&context).expect("tonemap loads")));
+    let depth = depth_target(&render_context, 1);
+
+    // A bright grey clips to white.
+    let (texel, _) = run_chain(
+        &render_context,
+        &mut chain,
+        &neutral(0.0),
+        [4.0, 4.0, 4.0, 1.0],
+        &depth,
+    );
+    for channel in 0..3 {
+        assert_close(texel[channel], 1.0, "Neutral(4.0)");
+    }
+
+    // (2, 0.5, 0.1) is scaled by its peak to (1, 0.25, 0.05), then moved
+    // 1 - 1 / (0.15 * (2 - 1) + 1) = 3/23 of the way to white: worked by hand.
+    let (texel, _) = run_chain(
+        &render_context,
+        &mut chain,
+        &neutral(0.0),
+        [2.0, 0.5, 0.1, 1.0],
+        &depth,
+    );
+    for (channel, expected) in [1.0, 8.0 / 23.0, 4.0 / 23.0].into_iter().enumerate() {
+        assert_close(texel[channel], expected, "Neutral of a bright orange");
+    }
+}
+
 /// A volume of `priority` whose tone-mapping component sets `exposure_ev`,
 /// with whether the scene holds the volume enabled.
 #[derive(Clone, Copy)]

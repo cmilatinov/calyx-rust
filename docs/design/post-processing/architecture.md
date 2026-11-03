@@ -201,7 +201,8 @@ blur    input + coc     -> output                  scatter-as-gather disc blur
 
 - Its uniform holds the exposure scale `2^EV` and the preset.
 - It draws one full-screen triangle (`shaders/common/fullscreen.wgsl`, no vertex buffers).
-- `TonemappingPreset::Aces` is Stephen Hill's fit of the ACES RRT and ODT (BakingLab, MIT): the ACES input matrix, the rational RRT/ODT curve, then the output matrix, clamped to `[0, 1]`. It maps linear 0.18 to about 0.106 and 1.0 to about 0.619.
+- `TonemappingPreset::Aces` is Stephen Hill's fit of the ACES RRT and ODT (BakingLab, MIT): the ACES input matrix, the rational RRT/ODT curve, then the output matrix, clamped to `[0, 1]`. It maps linear 0.18 to about 0.106 and 1.0 to about 0.619. It is the default, so a scene or profile that does not name a preset, and every scene saved before `Neutral` existed, keeps it.
+- `TonemappingPreset::Neutral` ("Neutral" in the inspector) is for content authored for a plain LDR pipeline, such as the Unity scene the RPG Poly demo recreates: a color whose channels are all in `[0, 1]` after exposure reaches the display unchanged, so an unlit color shows exactly at 0 EV. A brighter color is divided by its largest channel, which keeps its hue, then mixed toward white by `1 - 1 / (0.15 (peak - 1) + 1)`: Khronos PBR Neutral's highlight roll-off with its compression start moved to 1 and its toe offset dropped, both of which would change display-range color. A grey of 4 maps to white and `(2, 0.5, 0.1)` to `(1, 8/23, 4/23)`. Unlike ACES it has no shoulder below 1, so a lit scene clips sooner and wants a lower exposure or dimmer lights than under ACES.
 - Alpha passes through unchanged, so views cleared to transparent, such as thumbnails, keep their transparency.
 
 ## Ambient Occlusion
@@ -319,7 +320,7 @@ pub struct ComponentGlobalPostProcessVolume { pub priority: i32, pub profile: As
 
 // Effect components, each `#[serde(default)]` and switchable (`can_disable`).
 pub struct ComponentTonemap { pub preset: TonemappingPreset, pub exposure_ev: f32 }  // Aces, 0.0
-pub enum TonemappingPreset { Aces }
+pub enum TonemappingPreset { Aces, Neutral }  // default Aces
 pub struct ComponentAmbientOcclusion { pub radius: f32, pub intensity: f32, pub bias: f32, pub sample_count: u32 }  // 0.5, 1.0, 0.025, 16
 pub struct ComponentDepthOfField { pub focus_distance: f32, pub focus_range: f32, pub max_blur: f32 }  // 10.0, 10.0, 8.0
 pub struct ComponentBloom { pub threshold: f32, pub knee: f32, pub intensity: f32, pub radius: u32 }  // 1.0, 0.5, 0.5, 6
@@ -460,6 +461,7 @@ Headless tests in `crates/calyx_engine/src/render/postprocess/`:
 - Two non-commuting test passes produce the result of their declared order.
 - Tone mapping preserves alpha.
 - ACES maps known HDR inputs to the reference fit within tolerance.
+- The neutral preset leaves display-range colors and their alpha unchanged at 0 EV, still applies exposure, and maps a bright grey to white and a bright orange to the worked roll-off value. In `scene_renderer.rs`, an unlit color reaches the screen as its own sRGB encoding under it, and not under ACES. The preset switches at a blend factor of 0.5 between volumes (`local_volume_tests.rs`), and a profile's neutral entry round-trips and selects the curve (`post_process_profile/tests.rs`).
 - The display-encoding test above.
 - Depth reaches a pass that requests it, single-sample at one and four samples; velocity reports unavailable.
 - A pass that requests normals or albedo is planned with them, and a plan without such a pass reads neither.

@@ -55,7 +55,14 @@ pub enum TonemappingPreset {
     /// Stephen Hill's fit of the ACES reference rendering and output
     /// transforms.
     #[default]
+    #[reflect_attr(name = "ACES")]
     Aces,
+    /// Display-range color unchanged: every color whose channels are all in
+    /// `[0, 1]` reaches the display as it is. A brighter color is scaled
+    /// down by its largest channel, keeping its hue, and moved toward white
+    /// the further it was over 1, as the highlights of Khronos PBR Neutral
+    /// are.
+    Neutral,
 }
 
 impl TonemappingPreset {
@@ -63,6 +70,7 @@ impl TonemappingPreset {
     pub(crate) fn shader_index(self) -> u32 {
         match self {
             Self::Aces => 0,
+            Self::Neutral => 1,
         }
     }
 }

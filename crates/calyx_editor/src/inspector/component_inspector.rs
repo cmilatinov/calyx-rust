@@ -852,7 +852,7 @@ mod tests {
     use crate::widgets::ListContainer;
     use calyx_engine::component::{
         Component, ComponentBone, ComponentCamera, ComponentParticleSystem, ComponentPointLight,
-        ComponentTonemap,
+        ComponentTonemap, TonemappingPreset,
     };
     use calyx_engine::reflect::type_registry::TypeRegistry;
     use calyx_engine::reflect::{ListInfo, Reflect, ReflectDefault, TypeInfo};
@@ -1667,16 +1667,18 @@ mod tests {
 
     /// The Tone Mapping component's `preset` shows its variant, both as an
     /// object's component and as a profile's effect entry, which the
-    /// profile inspector draws unpinned.
+    /// profile inspector draws unpinned, and the neutral curve is picked
+    /// from it.
     #[test]
-    fn tone_mapping_shows_its_preset_in_a_dropdown() {
+    fn tone_mapping_picks_its_preset_from_a_dropdown() {
         for pinned in [true, false] {
             let mut h = InspectorHarness::new();
             h.type_info = ComponentTonemap::type_uuid();
             let registry = h.inspector_registry();
             let inspector = ComponentInspector::new(&registry);
-            let mut tonemap = ComponentTonemap::default();
+            let tonemap = std::cell::RefCell::new(ComponentTonemap::default());
             let mut draw = |ui: &mut Ui, ctx: &InspectorContext| {
+                let mut tonemap = tonemap.borrow_mut();
                 let instance = tonemap.as_reflect_mut();
                 let response = if pinned {
                     inspector.show(ui, ctx, instance, PinState::default(), Some(true))
@@ -1690,8 +1692,19 @@ mod tests {
             let dropdowns = h.widgets(Role::ComboBox);
             assert_eq!(dropdowns.len(), 1, "{:#?}", h.nodes());
             assert_eq!(dropdowns[0].label.as_deref(), Some("Preset"));
-            assert_eq!(dropdowns[0].value.as_deref(), Some("Aces"));
+            assert_eq!(dropdowns[0].value.as_deref(), Some("ACES"));
             assert!(!h.labels().contains(&"TonemappingPreset"));
+
+            h.click(h.widget(Role::ComboBox, 0), &mut draw);
+            let options = h
+                .labels()
+                .into_iter()
+                .filter(|label| ["ACES", "Neutral"].contains(label))
+                .collect::<Vec<_>>();
+            assert_eq!(options, ["ACES", "Neutral"]);
+            let picked = h.click(h.labelled(Role::Button, "Neutral"), &mut draw);
+            assert!(any_changed(&picked), "{picked:?}");
+            assert_eq!(tonemap.borrow().preset, TonemappingPreset::Neutral);
         }
     }
 

@@ -7,6 +7,7 @@ use crate::assets::{Asset, AssetRef};
 use crate::component::{
     ComponentBloom, ComponentCamera, ComponentFog, ComponentGlobalPostProcessVolume,
     ComponentLocalPostProcessVolume, ComponentTonemap, ComponentVignette, FogMode,
+    TonemappingPreset,
 };
 use crate::context::ReadOnlyRegistryContext;
 use crate::render::postprocess::{PostProcessEffects, PostProcessSettings};
@@ -201,6 +202,33 @@ fn a_fog_entry_round_trips_and_switches_fog_on() {
         PostProcessSettings::resolve(&scene, &nalgebra_glm::Vec3::zeros()).fog,
         Some(fog),
         "a volume using the profile renders with its fog"
+    );
+}
+
+#[test]
+fn a_neutral_tone_mapping_entry_round_trips_and_selects_the_curve() {
+    let root = TempRoot::new();
+    let path = root.path("neutral.cxpostfx");
+    let tonemap = ComponentTonemap {
+        preset: TonemappingPreset::Neutral,
+        exposure_ev: 0.5,
+    };
+    let profile = PostProcessProfile::from_entries([ProfileEntry::new(tonemap)]);
+    save(&profile, &path);
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(saved["entries"][0]["settings"]["preset"], "Neutral");
+
+    let (registries, id) = registries_with_profile(&root, &path);
+    let loaded = load(&registries, id);
+
+    assert_eq!(*loaded.read(), profile);
+    let mut scene = registries.scene();
+    spawn_global(&mut scene, id);
+    assert_eq!(
+        PostProcessSettings::resolve(&scene, &nalgebra_glm::Vec3::zeros()).tonemapping,
+        tonemap,
+        "a volume using the profile tone-maps with the neutral curve"
     );
 }
 
