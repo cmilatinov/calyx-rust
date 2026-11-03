@@ -86,12 +86,20 @@ impl Default for CameraUniform {
     }
 }
 
+/// What the view tells component gizmos about the editor around it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct GizmoOptions {
+    /// The game view's aspect, which a camera's frustum gizmo takes; 16:9 when `None`.
+    pub game_view_aspect: Option<f32>,
+}
+
 /// Scene renderer feature toggles and default clear settings.
 pub struct SceneRendererOptions {
     /// Whether to draw the editor grid.
     pub grid: bool,
-    /// Whether to draw debug gizmos.
-    pub gizmos: bool,
+    /// The debug gizmos to draw, with what the view tells them, or `None`
+    /// to draw no gizmos.
+    pub gizmos: Option<GizmoOptions>,
     /// Clear color used for the scene color target.
     pub clear_color: Color32,
     /// Mesh face-culling mode used for scene geometry.
@@ -131,7 +139,7 @@ impl Default for SceneRendererOptions {
     fn default() -> Self {
         Self {
             grid: false,
-            gizmos: false,
+            gizmos: None,
             clear_color: Color32::TRANSPARENT,
             mesh_cull_mode: Some(wgpu::Face::Back),
             samples: 0,
@@ -299,7 +307,7 @@ impl SceneRenderer {
             height,
             options.samples,
             options.grid,
-            options.gizmos
+            options.gizmos.is_some()
         );
 
         // Textures
@@ -498,7 +506,7 @@ impl SceneRenderer {
         self.build_asset_data(&render_context, scene);
         self.post_process_settings =
             PostProcessSettings::resolve(scene, &camera_transform.position);
-        if self.options.gizmos {
+        if let Some(gizmo_options) = &self.options.gizmos {
             let object_id_lookup = &mut self.object_id_lookup;
             let object_ids_build = &mut self.object_ids_build;
             self.gizmo_renderer.draw_gizmos(
@@ -511,6 +519,7 @@ impl SceneRenderer {
                     self.scene_texture_msaa.descriptor.size.height as f32,
                 ],
                 scene,
+                gizmo_options,
                 physics_debug_pipeline,
                 |game_object_id| {
                     register_object_id(object_id_lookup, object_ids_build, game_object_id)
@@ -616,7 +625,10 @@ impl SceneRenderer {
             },
             &self.camera_uniform_buffer,
             &draw_list,
-            self.options.gizmos.then_some(&mut self.gizmo_renderer),
+            self.options
+                .gizmos
+                .is_some()
+                .then_some(&mut self.gizmo_renderer),
         );
         drop(assets);
         self.skybox_renderer.render(
@@ -3249,7 +3261,7 @@ mod tests {
 
         let editor = frame(SceneRendererOptions {
             grid: true,
-            gizmos: true,
+            gizmos: Some(GizmoOptions::default()),
             ..Default::default()
         });
         let target = editor

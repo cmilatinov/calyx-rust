@@ -274,7 +274,7 @@ impl ThumbnailGenerator {
                         context,
                         SceneRendererOptions {
                             grid: false,
-                            gizmos: false,
+                            gizmos: None,
                             samples: 1,
                             clear_color: Color32::TRANSPARENT,
                             mesh_cull_mode: None,
@@ -342,7 +342,7 @@ pub(super) fn scene_thumbnail_view(
 ) -> SceneThumbnailView {
     if let Some((game_object, camera)) = scene.main_camera() {
         return SceneThumbnailView {
-            camera: Camera::new(1.0, camera.fov, camera.near_plane, camera.far_plane),
+            camera: camera.camera(1.0),
             camera_transform: scene.world_transform(game_object),
             clear_color: camera.clear_color,
             from_main_camera: true,

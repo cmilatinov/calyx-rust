@@ -19,6 +19,7 @@ use crate::physics::PhysicsDebugRenderer;
 use crate::render::gizmos::Gizmos;
 use crate::render::overlay::{OverlayContext, OverlayPass};
 use crate::render::render_utils::RenderUtils;
+use crate::render::GizmoOptions;
 use crate::scene::Scene;
 
 use super::buffer::wgpu_buffer_init_desc;
@@ -260,18 +261,21 @@ impl GizmoRenderer {
         self.icons_mesh.rebuild_mesh_data(device);
     }
 
-    /// Returns a gizmo command recorder for the current frame.
+    /// Returns a gizmo command recorder for the current frame, telling the
+    /// gizmos what `gizmo_options` says about the view.
     pub fn gizmos<'a>(
         &'a mut self,
         camera: &'a Camera,
         camera_transform: &'a Transform,
         viewport_size: [f32; 2],
+        gizmo_options: &GizmoOptions,
     ) -> Gizmos<'a> {
         self.clear();
         Gizmos {
             camera,
             camera_transform,
             viewport_size,
+            game_view_aspect: gizmo_options.game_view_aspect,
             object_id: 0,
             color: vec4(1.0, 1.0, 1.0, 1.0),
             opacity: 1.0,
@@ -294,6 +298,7 @@ impl GizmoRenderer {
         camera_transform: &Transform,
         viewport_size: [f32; 2],
         scene: &Scene,
+        gizmo_options: &GizmoOptions,
         physics_debug_pipeline: Option<&mut DebugRenderPipeline>,
         mut object_id_for_game_object: impl FnMut(Uuid) -> u32,
     ) {
@@ -302,7 +307,7 @@ impl GizmoRenderer {
             let mut gizmos;
             {
                 let registry = registry_ref.read();
-                gizmos = self.gizmos(camera, camera_transform, viewport_size);
+                gizmos = self.gizmos(camera, camera_transform, viewport_size, gizmo_options);
                 let mut query = <Entity>::query();
                 let world = scene.world();
                 for entity in query.iter(world) {
@@ -639,7 +644,7 @@ impl OverlayPass for GizmoRenderer {
     }
 
     fn enabled(&self, context: &OverlayContext) -> bool {
-        context.options.gizmos
+        context.options.gizmos.is_some()
     }
 
     fn prepare(&mut self, _context: &OverlayContext) {}
