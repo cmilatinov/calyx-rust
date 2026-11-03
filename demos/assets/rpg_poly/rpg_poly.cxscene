@@ -12693,8 +12693,8 @@
         "smoothness": 0.5
       },
       "c19ff2b7-c3ed-4f04-9dfa-e026efdedf82": {
-        "edge_threshold": 0.166,
-        "subpixel": 0.75
+        "edge_threshold": 0.063,
+        "subpixel": 1.0
       }
     },
     "29b96bcc-6d9a-5783-85f1-90065b582d92": {
