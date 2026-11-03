@@ -275,7 +275,7 @@ impl GizmoRenderer {
             camera,
             camera_transform,
             viewport_size,
-            game_view_aspect: gizmo_options.game_view_aspect,
+            options: *gizmo_options,
             object_id: 0,
             color: vec4(1.0, 1.0, 1.0, 1.0),
             opacity: 1.0,

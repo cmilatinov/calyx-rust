@@ -598,6 +598,7 @@ impl EditorApp {
                         GameContext {
                             scenes, particles, ..
                         },
+                    selection,
                     scene_renderer,
                     game_renderer,
                     game_size,
@@ -620,9 +621,12 @@ impl EditorApp {
         camera.update_projection();
         prefab_mode.dress_scene_view(scene_renderer.options_mut());
         let game_view_size = Self::get_physical_size(ctx, *game_size);
+        // Gizmos that only draw for the selection, such as a camera path's,
+        // see it while the scene renders; the outline gets it afterwards.
         scene_renderer.options_mut().gizmos = Some(GizmoOptions {
             game_view_aspect: Self::has_renderable_size(game_view_size.0, game_view_size.1)
                 .then(|| game_view_size.0 as f32 / game_view_size.1 as f32),
+            selected: selection.first(SelectionType::GameObject),
         });
         scene_renderer.set_hovered_game_object(None);
         scene_renderer.set_selected_game_object(None);

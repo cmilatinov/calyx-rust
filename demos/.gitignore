@@ -1,0 +1,4 @@
+# RPG Poly Pack - Lite, built by `cargo run -p calyx_unity_import`; its licence keeps it out of git.
+assets/rpg_poly/vendor/
+# calyx_unity_import's scratch folder while it runs.
+.unity-import-*/

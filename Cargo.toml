@@ -7,7 +7,9 @@ members = [
     "crates/calyx_icon_atlas",
     "crates/calyx_remote_protocol",
     "crates/calyx_ctl",
+    "crates/calyx_unity_import",
     "sandbox",
+    "demos",
 ]
 resolver = "2"
 

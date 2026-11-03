@@ -1,0 +1,12 @@
+[package]
+name = "demos"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "demos"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+calyx_engine = { path = "../crates/calyx_engine" }

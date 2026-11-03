@@ -1,0 +1,17 @@
+[package]
+name = "calyx_unity_import"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap.workspace = true
+indexmap.workspace = true
+# The engine's crates, with no features beyond what the engine already
+# enables: a workspace build unifies features across members, and an extra
+# feature on a crate the engine uses would change the engine build the
+# editor links against the project assemblies' (see
+# crates/calyx_engine_feature_pins). So no `uuid/v5` (SHA-1 from `sha-1`
+# instead) and no `tar` crate (the small reader in `package.rs`).
+uuid.workspace = true
+sha-1.workspace = true
+flate2 = "1.1"

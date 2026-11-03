@@ -1,0 +1,3 @@
+name = "demos"
+creation_date = "2026-11-02T00:00:00.000000000+00:00"
+startup_scene = "assets/rpg_poly/rpg_poly.cxscene"

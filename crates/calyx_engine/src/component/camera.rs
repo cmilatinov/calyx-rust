@@ -127,7 +127,7 @@ mod tests {
             camera: &view,
             camera_transform: &view_transform,
             viewport_size: [1920.0, 1080.0],
-            game_view_aspect: gizmo_options.game_view_aspect,
+            options: gizmo_options,
             object_id: 0,
             color: Vec4::new(1.0, 1.0, 1.0, 1.0),
             opacity: 1.0,
@@ -166,6 +166,7 @@ mod tests {
             &camera,
             GizmoOptions {
                 game_view_aspect: Some(4.0 / 3.0),
+                ..Default::default()
             },
         );
         assert_abs_diff_eq!(right, half_width, epsilon = 1e-3);

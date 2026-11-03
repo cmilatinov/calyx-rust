@@ -86,11 +86,15 @@ impl Default for CameraUniform {
     }
 }
 
-/// What the view tells component gizmos about the editor around it.
+/// What the view tells component gizmos about the editor around it, read
+/// through [`crate::render::Gizmos`].
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct GizmoOptions {
     /// The game view's aspect, which a camera's frustum gizmo takes; 16:9 when `None`.
     pub game_view_aspect: Option<f32>,
+    /// The game object selected in the editor, for gizmos that only draw while
+    /// their object, or one related to it, is selected (a camera path's).
+    pub selected: Option<Uuid>,
 }
 
 /// Scene renderer feature toggles and default clear settings.
