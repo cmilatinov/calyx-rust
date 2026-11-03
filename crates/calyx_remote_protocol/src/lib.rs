@@ -162,13 +162,28 @@ pub enum Command {
         #[serde(default)]
         discard: bool,
     },
-    /// Instantiates a prefab asset at the authoring scene's root, linked to
-    /// the prefab so `update_prefab_instances` can update it later. Responds
-    /// with the instance's root object id.
+    /// Instantiates a prefab asset in the authoring scene, linked to the
+    /// prefab so `update_prefab_instances` can update it later, as one undo
+    /// step: under `parent`, or at the scene root without one. The instance
+    /// root keeps the prefab root's local transform except for the parts
+    /// given. Responds with the instance's root object id and transforms.
     InstantiatePrefab {
         /// Path to the prefab file, absolute or relative to the editor's
         /// working directory.
         path: PathBuf,
+        /// Game-object selector (UUID or name) of the parent, when given.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent: Option<String>,
+        /// Local position of the instance root, when given.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        position: Option<[f32; 3]>,
+        /// Local rotation of the instance root as XYZ Euler angles in
+        /// degrees, when given.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rotation_euler_deg: Option<[f32; 3]>,
+        /// Local scale of the instance root, when given.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scale: Option<[f32; 3]>,
     },
     /// Updates the open scene's instances of a prefab from the prefab asset
     /// as last saved, as one undo step: of every prefab with instances in
@@ -307,6 +322,18 @@ pub enum Command {
     DeleteObject {
         /// Game-object selector (UUID or name).
         object: String,
+    },
+    /// Moves an object, with its descendants, under another object or to
+    /// the scene root, keeping its world transform, as one undo step. The
+    /// object goes after the new parent's existing children. Refused when the
+    /// new parent is the object itself or one of its descendants.
+    SetParent {
+        /// Game-object selector (UUID or name) of the object to move.
+        object: String,
+        /// Game-object selector (UUID or name) of the new parent; the scene
+        /// root when omitted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent: Option<String>,
     },
     /// Adds a default-constructed component to an object.
     AddComponent {
@@ -632,6 +659,17 @@ mod tests {
             Command::ClosePrefab { discard: true },
             Command::InstantiatePrefab {
                 path: PathBuf::from("assets/prefabs/crate.cxprefab"),
+                parent: None,
+                position: None,
+                rotation_euler_deg: None,
+                scale: None,
+            },
+            Command::InstantiatePrefab {
+                path: PathBuf::from("assets/prefabs/crate.cxprefab"),
+                parent: Some("House".into()),
+                position: Some([1.0, 2.0, 3.0]),
+                rotation_euler_deg: Some([0.0, 90.0, 0.0]),
+                scale: Some([2.0, 2.0, 2.0]),
             },
             Command::UpdatePrefabInstances { path: None },
             Command::OpenAsset {
@@ -698,6 +736,14 @@ mod tests {
             },
             Command::DeleteObject {
                 object: "Probe".into(),
+            },
+            Command::SetParent {
+                object: "Roof".into(),
+                parent: Some("House".into()),
+            },
+            Command::SetParent {
+                object: "Roof".into(),
+                parent: None,
             },
             Command::AddComponent {
                 object: "Probe".into(),
@@ -799,6 +845,58 @@ mod tests {
         );
         let parsed: RequestEnvelope = serde_json::from_str(r#"{"id":1,"cmd":"play"}"#).unwrap();
         assert_eq!(parsed.command, Command::Play { scene: None });
+    }
+
+    /// `instantiate_prefab` without a parent or transform keeps its wire
+    /// format, so older clients still instantiate at the scene root.
+    #[test]
+    fn instantiate_prefab_without_a_parent_keeps_its_wire_format() {
+        let line = r#"{"id":1,"cmd":"instantiate_prefab","path":"crate.cxprefab"}"#;
+        let parsed: RequestEnvelope = serde_json::from_str(line).unwrap();
+        assert_eq!(
+            parsed.command,
+            Command::InstantiatePrefab {
+                path: PathBuf::from("crate.cxprefab"),
+                parent: None,
+                position: None,
+                rotation_euler_deg: None,
+                scale: None,
+            }
+        );
+        assert_eq!(serde_json::to_string(&parsed).unwrap(), line);
+    }
+
+    #[test]
+    fn instantiate_prefab_under_a_parent_names_its_fields() {
+        let parsed: RequestEnvelope = serde_json::from_str(
+            r#"{"id":2,"cmd":"instantiate_prefab","path":"crate.cxprefab","parent":"House","position":[1.0,0.0,0.0],"rotation_euler_deg":[0.0,90.0,0.0],"scale":[2.0,2.0,2.0]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            parsed.command,
+            Command::InstantiatePrefab {
+                path: PathBuf::from("crate.cxprefab"),
+                parent: Some("House".into()),
+                position: Some([1.0, 0.0, 0.0]),
+                rotation_euler_deg: Some([0.0, 90.0, 0.0]),
+                scale: Some([2.0, 2.0, 2.0]),
+            }
+        );
+    }
+
+    /// A `set_parent` without a parent moves the object to the scene root.
+    #[test]
+    fn set_parent_without_a_parent_means_the_root() {
+        let line = r#"{"id":3,"cmd":"set_parent","object":"Roof"}"#;
+        let parsed: RequestEnvelope = serde_json::from_str(line).unwrap();
+        assert_eq!(
+            parsed.command,
+            Command::SetParent {
+                object: "Roof".into(),
+                parent: None,
+            }
+        );
+        assert_eq!(serde_json::to_string(&parsed).unwrap(), line);
     }
 
     #[test]

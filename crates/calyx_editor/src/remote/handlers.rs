@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use calyx_engine::assets::post_process_profile::{PostProcessProfile, PostProcessProfileData};
 use calyx_engine::class_registry::ComponentRegistry;
 use calyx_engine::component::{Component, ComponentID};
+use calyx_engine::context::GameContext;
 use calyx_engine::core::Ref;
 use calyx_engine::render::GBufferView;
 use calyx_engine::scene::{GameObject, Scene};
@@ -246,22 +247,30 @@ impl EditorApp {
                 self.state.prefab_mode_mut().close();
                 Ok(Some(self.remote_prefab_state()))
             }
-            Command::InstantiatePrefab { path } => {
+            Command::InstantiatePrefab {
+                path,
+                parent,
+                position,
+                rotation_euler_deg,
+                scale,
+            } => {
                 let asset_id = self.remote_prefab_asset(path)?;
                 self.state.flush_pending_inspector_value_edits();
                 let mut edit = SceneEdit::begin("Remote instantiate prefab");
-                match prefab_instances::instantiate_prefab(
+                match instantiate_prefab_under(
                     &mut edit,
                     &mut self.state.game,
                     asset_id,
+                    parent.as_deref(),
+                    [position, rotation_euler_deg, scale],
                 ) {
-                    Ok(root) => {
+                    Ok(data) => {
                         self.state.commit_scene_edit(edit);
-                        Ok(Some(serde_json::json!({ "id": root.to_string() })))
+                        Ok(Some(data))
                     }
                     Err(error) => {
                         edit.cancel();
-                        Err((ErrorKind::BadRequest, error))
+                        Err(error)
                     }
                 }
             }
@@ -397,6 +406,11 @@ impl EditorApp {
                 space,
             } => self.remote_set_transform(&object, position, rotation_euler_deg, scale, space),
             Command::CreateObject { name, parent } => self.remote_create_object(name, parent),
+            Command::SetParent { object, parent } => set_parent_keeping_world(
+                self.state.game.scenes.simulation_scene_mut(),
+                &object,
+                parent.as_deref(),
+            ),
             Command::DeleteObject { object } => {
                 let scene = self.state.game.scenes.simulation_scene_mut();
                 let game_object = resolve_object(scene, &object)?;
@@ -945,16 +959,7 @@ impl EditorApp {
             TransformSpace::Local => scene.transform(game_object),
             TransformSpace::World => scene.world_transform(game_object),
         };
-        if let Some([x, y, z]) = position {
-            transform.position = Vec3::new(x, y, z);
-        }
-        if let Some([x, y, z]) = rotation_euler_deg {
-            transform.rotation =
-                UnitQuaternion::from_euler_angles(x.to_radians(), y.to_radians(), z.to_radians());
-        }
-        if let Some([x, y, z]) = scale {
-            transform.scale = Vec3::new(x, y, z);
-        }
+        apply_transform_parts(&mut transform, [position, rotation_euler_deg, scale]);
         match space {
             TransformSpace::Local => scene.set_transform(game_object, &transform.matrix()),
             TransformSpace::World => scene.set_world_transform(game_object, transform.matrix()),
@@ -1195,6 +1200,151 @@ fn delete_now(scene: &mut Scene, game_object: GameObject) -> Vec<Uuid> {
     removed
 }
 
+/// The parts of a transform a command gives: position, rotation as XYZ Euler
+/// angles in degrees, and scale, each left as it is when `None`.
+type TransformParts = [Option<[f32; 3]>; 3];
+
+/// Overwrites the parts of `transform` that `parts` gives.
+fn apply_transform_parts(
+    transform: &mut calyx_engine::math::Transform,
+    [position, rotation_euler_deg, scale]: TransformParts,
+) {
+    if let Some([x, y, z]) = position {
+        transform.position = Vec3::new(x, y, z);
+    }
+    if let Some([x, y, z]) = rotation_euler_deg {
+        transform.rotation =
+            UnitQuaternion::from_euler_angles(x.to_radians(), y.to_radians(), z.to_radians());
+    }
+    if let Some([x, y, z]) = scale {
+        transform.scale = Vec3::new(x, y, z);
+    }
+}
+
+/// Instantiates the prefab asset `asset_id` through `edit`, linked to the
+/// prefab, under the object `parent` selects or at the scene root, then
+/// overwrites the parts of the instance root's local transform that `local`
+/// gives. Responds as [`object_placement_json`] does.
+fn instantiate_prefab_under(
+    edit: &mut SceneEdit,
+    game: &mut GameContext,
+    asset_id: Uuid,
+    parent: Option<&str>,
+    local: TransformParts,
+) -> Result<serde_json::Value, (ErrorKind, String)> {
+    let parent = parent
+        .map(|selector| resolve_object(game.scenes.simulation_scene(), selector))
+        .transpose()?;
+    let id = prefab_instances::instantiate_prefab_under(edit, game, asset_id, parent)
+        .map_err(|error| (ErrorKind::BadRequest, error))?;
+    let scene = edit.scene_mut(game);
+    let instance = scene.find(id).ok_or_else(|| {
+        (
+            ErrorKind::Internal,
+            format!("the instance {id} is missing from the scene"),
+        )
+    })?;
+    if local.iter().any(Option::is_some) {
+        let mut transform = scene.transform(instance);
+        apply_transform_parts(&mut transform, local);
+        scene.set_transform(instance, &transform.matrix());
+    }
+    Ok(object_placement_json(scene, instance))
+}
+
+/// Moves the object `object` selects under the object `parent` selects, or
+/// to the scene root, after the new parent's children, keeping its world
+/// transform. Refuses a parent inside the object's own subtree, a parent with
+/// zero scale on an axis, and a parent under which the object's world
+/// transform would need shear.
+fn set_parent_keeping_world(
+    scene: &mut Scene,
+    object: &str,
+    parent: Option<&str>,
+) -> CommandResult {
+    let game_object = resolve_object(scene, object)?;
+    let new_parent = parent
+        .map(|selector| resolve_object(scene, selector))
+        .transpose()?;
+    if let Some(new_parent) = new_parent {
+        if scene.is_descendant(game_object, new_parent) {
+            let reason = if new_parent == game_object {
+                "itself".to_string()
+            } else {
+                format!("{:?}, which is inside it", scene.name(new_parent))
+            };
+            return Err((
+                ErrorKind::BadRequest,
+                format!("cannot parent {:?} under {reason}", scene.name(game_object)),
+            ));
+        }
+    }
+    // A local transform holds no shear, so under a parent with non-uniform
+    // scale an object turned off the parent's axes cannot keep its world
+    // transform. Check before the hierarchy changes.
+    let target = new_parent.unwrap_or_else(|| scene.root());
+    let parent_world = scene.world_transform(target);
+    // A parent scaled to zero on an axis has no inverse: everything under it
+    // is flattened.
+    if parent_world.scale.iter().any(|scale| scale.abs() < 1e-6) {
+        return Err((
+            ErrorKind::BadRequest,
+            format!(
+                "cannot parent {:?} under {:?} keeping its world transform: the parent has \
+                 zero scale on an axis",
+                scene.name(game_object),
+                scene.name(target)
+            ),
+        ));
+    }
+    let world = scene.world_transform(game_object).matrix();
+    let local = calyx_engine::math::Transform::from(&(parent_world.inverse_matrix() * world));
+    let kept = parent_world.matrix() * local.matrix();
+    // Each column, the object's three world axes and its position, is
+    // compared against its own length, so neither a long axis nor a distant
+    // position can hide a deformation of the others. The position also
+    // allows for the rounding of the parent's own position. Written so a
+    // non-finite difference is refused too.
+    let error = kept - world;
+    let parent_distance = parent_world.position.norm();
+    let kept_exactly = (0..4).all(|column| {
+        let error = error.fixed_view::<3, 1>(0, column).norm();
+        let mut length = world.fixed_view::<3, 1>(0, column).norm();
+        if column == 3 {
+            length = length.max(parent_distance);
+        }
+        error <= 1e-4 * length + 1e-6
+    });
+    let finite = local.matrix().iter().all(|value| value.is_finite());
+    if !finite || !kept_exactly {
+        return Err((
+            ErrorKind::BadRequest,
+            format!(
+                "cannot parent {:?} under {:?} keeping its world transform: the parent's \
+                 non-uniform scale would shear it",
+                scene.name(game_object),
+                scene.name(target)
+            ),
+        ));
+    }
+    scene
+        .set_parent(game_object, new_parent)
+        .map_err(|error| (ErrorKind::BadRequest, error.to_string()))?;
+    scene.set_transform(game_object, &local.matrix());
+    Ok(Some(object_placement_json(scene, game_object)))
+}
+
+/// An object's id, its parent's id (the scene root's at the top level, as
+/// `get_object` reports it), and its local and world transforms.
+fn object_placement_json(scene: &Scene, game_object: GameObject) -> serde_json::Value {
+    serde_json::json!({
+        "id": scene.uuid(game_object).to_string(),
+        "parent": scene.parent_uuid(game_object).map(|parent| parent.to_string()),
+        "local_transform": transform_json(&scene.transform(game_object)),
+        "world_transform": transform_json(&scene.world_transform(game_object)),
+    })
+}
+
 /// `profile` as its file holds it. An entry `set_post_process_profile`
 /// skipped is not in it.
 fn profile_json(profile: &PostProcessProfile) -> Result<serde_json::Value, (ErrorKind, String)> {
@@ -1209,6 +1359,7 @@ fn scene_edit_label(command: &Command) -> Option<&'static str> {
         Command::SetTransform { .. } => Some("Remote set transform"),
         Command::CreateObject { .. } => Some("Remote create game object"),
         Command::DeleteObject { .. } => Some("Remote delete game object"),
+        Command::SetParent { .. } => Some("Remote set parent"),
         Command::AddComponent { .. } => Some("Remote add component"),
         Command::SetComponentEnabled { enabled: true, .. } => Some("Remote enable component"),
         Command::SetComponentEnabled { enabled: false, .. } => Some("Remote disable component"),
@@ -1713,5 +1864,425 @@ mod tests {
         // The response must not land before the waited-out frames elapse.
         assert_eq!(buckets.len(), 4);
         assert_eq!(buckets[0].len(), 1);
+    }
+
+    /// A scratch asset root holding a crate prefab, a "Crate" at z = 7 with a
+    /// "Lid" child, removed on drop.
+    struct PrefabRoot(std::path::PathBuf);
+
+    impl PrefabRoot {
+        fn new() -> Self {
+            let dir =
+                std::env::temp_dir().join(format!("calyx-remote-prefab-test-{}", Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).expect("asset root should be created");
+            let root = Self(dunce::canonicalize(&dir).expect("asset root should canonicalize"));
+            let mut authoring = calyx_engine::test_support::test_game_context();
+            let scene = authoring.scenes.current_scene_mut();
+            let body = named(scene, "Crate", None);
+            named(scene, "Lid", Some(body));
+            scene.set_transform(body, &nalgebra_glm::translation(&Vec3::new(0.0, 0.0, 7.0)));
+            let prefab = scene.create_prefab(body);
+            crate::scene_file::write_prefab_file(&root.prefab_file(), &prefab)
+                .expect("prefab should be written");
+            root
+        }
+
+        fn prefab_file(&self) -> std::path::PathBuf {
+            self.0.join("crate.cxprefab")
+        }
+
+        /// A game whose assets include the prefab, and the prefab's asset id.
+        fn game(&self) -> (GameContext, Uuid) {
+            let game = GameContext::new(
+                calyx_engine::test_support::test_asset_context_with_assets(vec![self.0.clone()]),
+            );
+            let asset_id = game
+                .assets
+                .registries
+                .assets
+                .read()
+                .asset_id_from_path(&self.prefab_file())
+                .expect("prefab should be registered");
+            (game, asset_id)
+        }
+    }
+
+    impl Drop for PrefabRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn named(scene: &mut Scene, name: &str, parent: Option<GameObject>) -> GameObject {
+        let id = ComponentID {
+            name: name.into(),
+            ..Default::default()
+        };
+        scene.create(Some(id), parent)
+    }
+
+    fn document() -> crate::scene_document::SceneDocument {
+        crate::scene_document::SceneDocument::new(std::path::Path::new("remote-test-project"))
+    }
+
+    fn near(actual: Vec3, expected: [f32; 3]) -> bool {
+        (actual - Vec3::new(expected[0], expected[1], expected[2])).norm() < 1e-4
+    }
+
+    /// Runs `command` on the scene as the remote handler runs a scene
+    /// command: inside one scene edit, committed when it succeeds.
+    fn as_one_edit(
+        game: &mut GameContext,
+        document: &mut crate::scene_document::SceneDocument,
+        command: impl FnOnce(&mut Scene) -> CommandResult,
+    ) -> Result<serde_json::Value, (ErrorKind, String)> {
+        let mut edit = SceneEdit::begin("Remote test edit");
+        edit.capture(game);
+        let result = command(game.scenes.simulation_scene_mut());
+        match result {
+            Ok(_) => edit.commit(document, game),
+            Err(_) => edit.cancel(),
+        }
+        result.map(|data| data.expect("a scene command responds at once"))
+    }
+
+    /// A "House" at x = 10 turned 90 degrees about y, and a "Roof" at the
+    /// scene root at (0, 5, 0).
+    fn house_and_roof(game: &mut GameContext) -> (GameObject, GameObject) {
+        let scene = game.scenes.current_scene_mut();
+        let house = named(scene, "House", None);
+        let transform = calyx_engine::math::Transform {
+            position: Vec3::new(10.0, 0.0, 0.0),
+            rotation: UnitQuaternion::from_euler_angles(0.0, 90f32.to_radians(), 0.0),
+            ..Default::default()
+        };
+        scene.set_transform(house, &transform.matrix());
+        let roof = named(scene, "Roof", None);
+        scene.set_transform(roof, &nalgebra_glm::translation(&Vec3::new(0.0, 5.0, 0.0)));
+        (house, roof)
+    }
+
+    #[test]
+    fn a_prefab_instantiates_under_a_parent_at_a_local_transform() {
+        let root = PrefabRoot::new();
+        let (mut game, asset_id) = root.game();
+        let mut document = document();
+        let house = named(game.scenes.current_scene_mut(), "House", None);
+        game.scenes.current_scene_mut().set_transform(
+            house,
+            &nalgebra_glm::translation(&Vec3::new(10.0, 0.0, 0.0)),
+        );
+
+        let mut edit = SceneEdit::begin("Remote instantiate prefab");
+        let data = instantiate_prefab_under(
+            &mut edit,
+            &mut game,
+            asset_id,
+            Some("House"),
+            [
+                Some([1.0, 0.0, 0.0]),
+                Some([0.0, 90.0, 0.0]),
+                Some([2.0, 2.0, 2.0]),
+            ],
+        )
+        .expect("the prefab should instantiate");
+        edit.commit(&mut document, &game);
+
+        let scene = game.scenes.current_scene();
+        let id: Uuid = data["id"].as_str().unwrap().parse().unwrap();
+        let instance = scene.find(id).expect("the instance exists");
+        assert_eq!(scene.name(instance), "Crate");
+        assert_eq!(scene.parent(instance), Some(house));
+        let local = scene.transform(instance);
+        assert!(near(local.position, [1.0, 0.0, 0.0]), "{local:?}");
+        assert!(near(local.scale, [2.0, 2.0, 2.0]), "{local:?}");
+        // 90 degrees about y turns +x into -z.
+        assert!(
+            near(local.rotation * Vec3::x(), [0.0, 0.0, -1.0]),
+            "{local:?}"
+        );
+        assert!(near(
+            scene.world_transform(instance).position,
+            [11.0, 0.0, 0.0]
+        ));
+        assert!(
+            scene
+                .children(instance)
+                .any(|child| scene.name(child) == "Lid"),
+            "the instance holds the prefab's objects"
+        );
+
+        // The instance is one undo step.
+        document.undo(&mut game);
+        assert!(game.scenes.current_scene().find(id).is_none());
+    }
+
+    #[test]
+    fn a_prefab_keeps_its_root_transform_where_none_is_given() {
+        let root = PrefabRoot::new();
+        let (mut game, asset_id) = root.game();
+        let mut edit = SceneEdit::begin("Remote instantiate prefab");
+        let data = instantiate_prefab_under(
+            &mut edit,
+            &mut game,
+            asset_id,
+            None,
+            [None, None, Some([3.0, 3.0, 3.0])],
+        )
+        .expect("the prefab should instantiate");
+        edit.cancel();
+
+        let scene = game.scenes.current_scene();
+        let instance = scene
+            .find(data["id"].as_str().unwrap().parse().unwrap())
+            .unwrap();
+        assert_eq!(
+            scene.parent(instance),
+            Some(scene.root()),
+            "at the scene root"
+        );
+        let local = scene.transform(instance);
+        assert!(near(local.position, [0.0, 0.0, 7.0]), "{local:?}");
+        assert!(near(local.scale, [3.0, 3.0, 3.0]), "{local:?}");
+    }
+
+    #[test]
+    fn a_prefab_under_an_unknown_parent_instantiates_nothing() {
+        let root = PrefabRoot::new();
+        let (mut game, asset_id) = root.game();
+        let before = game.scenes.current_scene().objects().count();
+        let mut edit = SceneEdit::begin("Remote instantiate prefab");
+        let (kind, message) =
+            instantiate_prefab_under(&mut edit, &mut game, asset_id, Some("Nowhere"), [None; 3])
+                .expect_err("an unknown parent is refused");
+        edit.cancel();
+
+        assert_eq!(kind, ErrorKind::NotFound);
+        assert!(message.contains("Nowhere"), "{message}");
+        assert_eq!(game.scenes.current_scene().objects().count(), before);
+    }
+
+    #[test]
+    fn reparenting_keeps_the_world_transform_as_one_undo_step() {
+        let mut game = calyx_engine::test_support::test_game_context();
+        let mut document = document();
+        let (house, roof) = house_and_roof(&mut game);
+
+        let data = as_one_edit(&mut game, &mut document, |scene| {
+            set_parent_keeping_world(scene, "Roof", Some("House"))
+        })
+        .expect("the roof should move under the house");
+
+        let scene = game.scenes.current_scene();
+        assert_eq!(scene.parent(roof), Some(house));
+        assert!(near(scene.world_transform(roof).position, [0.0, 5.0, 0.0]));
+        // (-10, 5, 0) from the house, which is turned 90 degrees about y, is
+        // (0, 5, -10) in the house's frame.
+        assert!(
+            near(scene.transform(roof).position, [0.0, 5.0, -10.0]),
+            "{:?}",
+            scene.transform(roof)
+        );
+        assert_eq!(data["parent"], scene.uuid(house).to_string());
+
+        document.undo(&mut game);
+        let scene = game.scenes.current_scene();
+        let roof = scene
+            .objects()
+            .find(|object| scene.name(*object) == "Roof")
+            .unwrap();
+        assert_eq!(
+            scene.parent(roof),
+            Some(scene.root()),
+            "undo puts the roof back at the root"
+        );
+        assert!(near(scene.transform(roof).position, [0.0, 5.0, 0.0]));
+    }
+
+    #[test]
+    fn reparenting_to_the_root_keeps_the_world_transform() {
+        let mut game = calyx_engine::test_support::test_game_context();
+        let mut document = document();
+        let (house, _) = house_and_roof(&mut game);
+        let chimney = named(game.scenes.current_scene_mut(), "Chimney", Some(house));
+        game.scenes.current_scene_mut().set_transform(
+            chimney,
+            &nalgebra_glm::translation(&Vec3::new(1.0, 2.0, 0.0)),
+        );
+        let world = game
+            .scenes
+            .current_scene()
+            .world_transform(chimney)
+            .position;
+        // The house turns the chimney's local +x into world -z.
+        assert!(near(world, [10.0, 2.0, -1.0]), "{world:?}");
+
+        let data = as_one_edit(&mut game, &mut document, |scene| {
+            set_parent_keeping_world(scene, "Chimney", None)
+        })
+        .expect("the chimney should move to the root");
+
+        let scene = game.scenes.current_scene();
+        assert_eq!(scene.parent(chimney), Some(scene.root()));
+        assert!(near(scene.transform(chimney).position, [10.0, 2.0, -1.0]));
+        assert_eq!(data["parent"], scene.uuid(scene.root()).to_string());
+    }
+
+    #[test]
+    fn reparenting_under_itself_or_a_descendant_is_refused() {
+        let mut game = calyx_engine::test_support::test_game_context();
+        let mut document = document();
+        let (house, roof) = house_and_roof(&mut game);
+        game.scenes
+            .current_scene_mut()
+            .set_parent(roof, Some(house))
+            .unwrap();
+
+        for parent in ["Roof", "House"] {
+            let (kind, message) = as_one_edit(&mut game, &mut document, |scene| {
+                set_parent_keeping_world(scene, "House", Some(parent))
+            })
+            .expect_err("a cycle is refused");
+            assert_eq!(kind, ErrorKind::BadRequest);
+            assert!(
+                message.contains("\"House\"") && message.contains(&format!("\"{parent}\"")),
+                "{message}"
+            );
+        }
+        let scene = game.scenes.current_scene();
+        assert_eq!(scene.parent(house), Some(scene.root()));
+        assert_eq!(scene.parent(roof), Some(house));
+        assert!(!document.can_undo(&game), "a refused move records nothing");
+    }
+
+    /// Under a parent with non-uniform scale, an object turned off the
+    /// parent's axes would need shear, which a local transform cannot hold.
+    #[test]
+    fn reparenting_that_would_shear_the_object_is_refused() {
+        let mut game = calyx_engine::test_support::test_game_context();
+        let mut document = document();
+        let scene = game.scenes.current_scene_mut();
+        let stretched = named(scene, "Stretched", None);
+        scene.set_transform(stretched, &nalgebra_glm::scaling(&Vec3::new(2.0, 1.0, 1.0)));
+        let turn = |degrees: f32| calyx_engine::math::Transform {
+            rotation: UnitQuaternion::from_euler_angles(0.0, 0.0, degrees.to_radians()),
+            ..Default::default()
+        };
+        let tilted = named(scene, "Tilted", None);
+        scene.set_transform(tilted, &turn(45.0).matrix());
+        let square = named(scene, "Square", None);
+        scene.set_transform(square, &turn(90.0).matrix());
+        // Far from the origin, the translation must not hide the shear.
+        let far = named(scene, "Far", None);
+        let far_transform = calyx_engine::math::Transform {
+            position: Vec3::new(10000.0, 0.0, 0.0),
+            ..turn(45.0)
+        };
+        scene.set_transform(far, &far_transform.matrix());
+        // A long axis must not hide the shear of the short ones either.
+        let long = named(scene, "Long", None);
+        let long_transform = calyx_engine::math::Transform {
+            scale: Vec3::new(1.0, 1.0, 10000.0),
+            ..turn(45.0)
+        };
+        scene.set_transform(long, &long_transform.matrix());
+
+        for object in ["Tilted", "Far", "Long"] {
+            let (kind, message) = as_one_edit(&mut game, &mut document, |scene| {
+                set_parent_keeping_world(scene, object, Some("Stretched"))
+            })
+            .expect_err("a sheared object is refused");
+            assert_eq!(kind, ErrorKind::BadRequest);
+            assert!(
+                message.contains(&format!("\"{object}\"")) && message.contains("\"Stretched\""),
+                "{message}"
+            );
+        }
+        let scene = game.scenes.current_scene();
+        assert_eq!(scene.parent(tilted), Some(scene.root()));
+        assert_eq!(scene.parent(far), Some(scene.root()));
+        assert_eq!(scene.parent(long), Some(scene.root()));
+        assert!(!document.can_undo(&game), "a refused move records nothing");
+
+        // A turn that stays on the parent's axes needs no shear.
+        as_one_edit(&mut game, &mut document, |scene| {
+            set_parent_keeping_world(scene, "Square", Some("Stretched"))
+        })
+        .expect("an object on the parent's axes moves");
+        let scene = game.scenes.current_scene();
+        assert_eq!(scene.parent(square), Some(stretched));
+        let world = scene.world_transform(square);
+        assert!(
+            near(world.rotation * Vec3::x(), [0.0, 1.0, 0.0]),
+            "{world:?}"
+        );
+        assert!(near(world.scale, [1.0, 1.0, 1.0]), "{world:?}");
+    }
+
+    /// A parent scaled to zero on an axis flattens anything under it, so no
+    /// local transform can keep the object's world transform.
+    #[test]
+    fn reparenting_under_a_zero_scale_parent_is_refused() {
+        let mut game = calyx_engine::test_support::test_game_context();
+        let mut document = document();
+        let (_, roof) = house_and_roof(&mut game);
+        let scene = game.scenes.current_scene_mut();
+        let flat = named(scene, "Flat", None);
+        scene.set_transform(flat, &nalgebra_glm::scaling(&Vec3::new(1.0, 0.0, 1.0)));
+
+        let (kind, message) = as_one_edit(&mut game, &mut document, |scene| {
+            set_parent_keeping_world(scene, "Roof", Some("Flat"))
+        })
+        .expect_err("a zero-scale parent is refused");
+        assert_eq!(kind, ErrorKind::BadRequest);
+        assert!(message.contains("zero scale"), "{message}");
+        let scene = game.scenes.current_scene();
+        assert_eq!(scene.parent(roof), Some(scene.root()));
+        assert!(near(scene.transform(roof).position, [0.0, 5.0, 0.0]));
+        assert!(!document.can_undo(&game), "a refused move records nothing");
+    }
+
+    /// Rounding grows with the parent's distance from the origin, so an
+    /// object near the origin still moves under a distant parent.
+    #[test]
+    fn reparenting_under_a_distant_parent_keeps_the_world_transform() {
+        let mut game = calyx_engine::test_support::test_game_context();
+        let mut document = document();
+        let scene = game.scenes.current_scene_mut();
+        let distant = named(scene, "Distant", None);
+        let transform = calyx_engine::math::Transform {
+            position: Vec3::new(123456.7, -98765.4, 54321.1),
+            rotation: UnitQuaternion::from_euler_angles(0.3, 1.1, -0.7),
+            ..Default::default()
+        };
+        scene.set_transform(distant, &transform.matrix());
+        let pebble = named(scene, "Pebble", None);
+        scene.set_transform(
+            pebble,
+            &nalgebra_glm::translation(&Vec3::new(0.0, 0.0, 0.0)),
+        );
+
+        as_one_edit(&mut game, &mut document, |scene| {
+            set_parent_keeping_world(scene, "Pebble", Some("Distant"))
+        })
+        .expect("the pebble should move under the distant parent");
+
+        let scene = game.scenes.current_scene();
+        assert_eq!(scene.parent(pebble), Some(distant));
+        let world = scene.world_transform(pebble).position;
+        assert!(world.norm() < 0.05, "{world:?}");
+    }
+
+    #[test]
+    fn reparenting_an_unknown_object_or_parent_is_not_found() {
+        let mut game = calyx_engine::test_support::test_game_context();
+        house_and_roof(&mut game);
+        for (object, parent) in [("Nowhere", Some("House")), ("Roof", Some("Nowhere"))] {
+            let (kind, message) =
+                set_parent_keeping_world(game.scenes.current_scene_mut(), object, parent)
+                    .expect_err("an unknown selector is refused");
+            assert_eq!(kind, ErrorKind::NotFound);
+            assert!(message.contains("Nowhere"), "{message}");
+        }
     }
 }

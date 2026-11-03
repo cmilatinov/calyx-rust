@@ -9,7 +9,9 @@
 //! overrides.
 
 use calyx_engine::context::GameContext;
-use calyx_engine::scene::{dropped_components_report, Prefab, PrefabData, PrefabUpdate};
+use calyx_engine::scene::{
+    dropped_components_report, GameObject, Prefab, PrefabData, PrefabUpdate,
+};
 use calyx_engine::utils::TypeUuid;
 use uuid::Uuid;
 
@@ -25,10 +27,22 @@ pub(crate) fn instantiate_prefab(
     game: &mut GameContext,
     asset_id: Uuid,
 ) -> Result<Uuid, String> {
+    instantiate_prefab_under(edit, game, asset_id, None)
+}
+
+/// Instantiates the prefab asset `asset_id` as [`instantiate_prefab`] does,
+/// under `parent`, or at the scene root when it is `None`. The instance root
+/// keeps the prefab root's transform as its local transform.
+pub(crate) fn instantiate_prefab_under(
+    edit: &mut SceneEdit,
+    game: &mut GameContext,
+    asset_id: Uuid,
+    parent: Option<GameObject>,
+) -> Result<Uuid, String> {
     let prefab = load_prefab(game, asset_id)?;
     let (game_object, dropped) = edit
         .scene_mut(game)
-        .instantiate_linked_prefab(asset_id, &prefab.prefab, None)
+        .instantiate_linked_prefab(asset_id, &prefab.prefab, parent)
         .map_err(|err| format!("failed to instantiate prefab {}: {err}", prefab.label))?;
     if let Some(report) =
         dropped_components_report(&format!("the prefab {}", prefab.label), &dropped)
