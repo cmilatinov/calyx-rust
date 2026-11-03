@@ -1254,8 +1254,9 @@ fn instantiate_prefab_under(
 
 /// Moves the object `object` selects under the object `parent` selects, or
 /// to the scene root, after the new parent's children, keeping its world
-/// transform. Refuses a parent inside the object's own subtree, and a parent
-/// under which the object's world transform would need shear.
+/// transform. Refuses a parent inside the object's own subtree, a parent with
+/// zero scale on an axis, and a parent under which the object's world
+/// transform would need shear.
 fn set_parent_keeping_world(
     scene: &mut Scene,
     object: &str,
@@ -1283,11 +1284,27 @@ fn set_parent_keeping_world(
     // transform. Check before the hierarchy changes.
     let target = new_parent.unwrap_or_else(|| scene.root());
     let parent_world = scene.world_transform(target);
+    // A parent scaled to zero on an axis has no inverse: everything under it
+    // is flattened.
+    if parent_world.scale.iter().any(|scale| scale.abs() < 1e-6) {
+        return Err((
+            ErrorKind::BadRequest,
+            format!(
+                "cannot parent {:?} under {:?} keeping its world transform: the parent has \
+                 zero scale on an axis",
+                scene.name(game_object),
+                scene.name(target)
+            ),
+        ));
+    }
     let world = scene.world_transform(game_object).matrix();
     let local = calyx_engine::math::Transform::from(&(parent_world.inverse_matrix() * world));
     let kept = parent_world.matrix() * local.matrix();
     let tolerance = 1e-4 * world.amax().max(1.0);
-    if (kept - world).amax() > tolerance {
+    // Written so a non-finite difference is refused too.
+    let error = (kept - world).amax();
+    let finite = local.matrix().iter().all(|value| value.is_finite());
+    if !finite || error.is_nan() || error > tolerance {
         return Err((
             ErrorKind::BadRequest,
             format!(
@@ -2170,6 +2187,29 @@ mod tests {
             "{world:?}"
         );
         assert!(near(world.scale, [1.0, 1.0, 1.0]), "{world:?}");
+    }
+
+    /// A parent scaled to zero on an axis flattens anything under it, so no
+    /// local transform can keep the object's world transform.
+    #[test]
+    fn reparenting_under_a_zero_scale_parent_is_refused() {
+        let mut game = calyx_engine::test_support::test_game_context();
+        let mut document = document();
+        let (_, roof) = house_and_roof(&mut game);
+        let scene = game.scenes.current_scene_mut();
+        let flat = named(scene, "Flat", None);
+        scene.set_transform(flat, &nalgebra_glm::scaling(&Vec3::new(1.0, 0.0, 1.0)));
+
+        let (kind, message) = as_one_edit(&mut game, &mut document, |scene| {
+            set_parent_keeping_world(scene, "Roof", Some("Flat"))
+        })
+        .expect_err("a zero-scale parent is refused");
+        assert_eq!(kind, ErrorKind::BadRequest);
+        assert!(message.contains("zero scale"), "{message}");
+        let scene = game.scenes.current_scene();
+        assert_eq!(scene.parent(roof), Some(scene.root()));
+        assert!(near(scene.transform(roof).position, [0.0, 5.0, 0.0]));
+        assert!(!document.can_undo(&game), "a refused move records nothing");
     }
 
     #[test]
