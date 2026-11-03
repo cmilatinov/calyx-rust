@@ -53,6 +53,15 @@ pub trait Reflect: TypeUuidDynamic + TypeNameDynamic + Any + Send + Sync {
     fn as_list_mut(&mut self) -> Option<&mut dyn ReflectList> {
         None
     }
+    /// Returns this value as an enum when it is one, which
+    /// `#[derive(Reflect)]` makes every enum it derives.
+    fn as_enum(&self) -> Option<&dyn ReflectEnum> {
+        None
+    }
+    /// Returns this value as a mutable enum when it is one.
+    fn as_enum_mut(&mut self) -> Option<&mut dyn ReflectEnum> {
+        None
+    }
     /// Registers the container metadata this type needs when a reflected
     /// struct holds it in a field. `Vec<E>` registers its list info and
     /// default, then recurses into `E`; other types need nothing.
@@ -90,6 +99,20 @@ pub trait ReflectList {
     fn insert(&mut self, index: usize, value: Box<dyn Reflect>) -> Result<(), Box<dyn Reflect>>;
     /// Removes and returns the element at `index`, or `None` past the end.
     fn remove(&mut self, index: usize) -> Option<Box<dyn Reflect>>;
+}
+
+/// Type-erased access to a reflected enum's current variant.
+///
+/// [`crate::reflect::EnumInfo`] lists the variants; this trait reads which
+/// one a value holds and switches it to a unit variant by name.
+/// `#[derive(Reflect)]` implements it for every enum it derives.
+pub trait ReflectEnum {
+    /// The name of the variant this value holds, as declared.
+    fn variant_name(&self) -> &'static str;
+    /// Sets this value to the unit variant `name`. Returns `false`, leaving
+    /// the value as it was, when the enum has no variant `name` or that
+    /// variant carries data.
+    fn set_unit_variant(&mut self, name: &str) -> bool;
 }
 
 impl dyn Reflect {

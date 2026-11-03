@@ -19,6 +19,8 @@ const SCREEN: Vec2 = Vec2::new(800.0, 600.0);
 pub(crate) struct WidgetNode {
     pub role: Role,
     pub label: Option<String>,
+    /// The widget's text value, such as a dropdown's selected option.
+    pub value: Option<String>,
     pub rect: Rect,
 }
 
@@ -107,6 +109,7 @@ impl InspectorHarness {
                     Some(WidgetNode {
                         role: node.role(),
                         label: node.label().map(str::to_owned),
+                        value: node.value().map(str::to_owned),
                         rect: Rect::from_min_max(
                             Pos2::new(bounds.x0 as f32, bounds.y0 as f32),
                             Pos2::new(bounds.x1 as f32, bounds.y1 as f32),
