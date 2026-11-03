@@ -6,7 +6,7 @@ use crate::component::{
     ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom, ComponentColorGrading,
     ComponentDepthOfField, ComponentFog, ComponentGlobalPostProcessVolume,
     ComponentLocalPostProcessVolume, ComponentTonemap, ComponentVignette, FogMode,
-    LocalVolumeShape,
+    LocalVolumeShape, TonemappingPreset,
 };
 use crate::math::{compose_transform, Transform};
 use crate::scene::{GameObject, Scene};
@@ -361,22 +361,28 @@ fn integer_and_enum_fields_switch_at_half_while_floats_interpolate() {
 }
 
 #[test]
-fn enum_fields_switch_at_half() {
-    // The tone-mapping preset is the effects' only enum field, and it has a
-    // single curve, so the switch is checked on a two-valued enum directly.
-    #[derive(Clone, Copy, Debug, PartialEq)]
-    enum Curve {
-        Below,
-        Volume,
-    }
-    assert_eq!(
-        super::blend::switch(Curve::Below, Curve::Volume, 0.49),
-        Curve::Below
+fn the_tone_mapping_preset_switches_at_half_while_exposure_interpolates() {
+    let registries = test_registries();
+    let mut scene = registries.scene();
+    // A global ACES volume at 0 EV, and a local neutral one at 2 EV whose
+    // factor is 1 inside, 0.5 at x = 2 and 0.45 at x = 2.1.
+    spawn_global(&mut scene, 0.0, None);
+    let local = spawn_local(&mut scene, Vec3::zeros(), 1.0, 0);
+    scene.add_component(
+        local,
+        ComponentTonemap {
+            preset: TonemappingPreset::Neutral,
+            exposure_ev: 2.0,
+        },
     );
-    assert_eq!(
-        super::blend::switch(Curve::Below, Curve::Volume, 0.5),
-        Curve::Volume
-    );
+    let resolve = |x: f32| PostProcessSettings::resolve(&scene, &vec3(x, 0.0, 0.0)).tonemapping;
+
+    assert_eq!(resolve(0.0).preset, TonemappingPreset::Neutral, "inside");
+    assert_eq!(resolve(2.0).preset, TonemappingPreset::Neutral, "at half");
+    assert_close(resolve(2.0).exposure_ev, 1.0, "exposure at half");
+    assert_eq!(resolve(2.1).preset, TonemappingPreset::Aces, "below half");
+    assert_close(resolve(2.1).exposure_ev, 0.9, "exposure below half");
+    assert_eq!(resolve(10.0), ComponentTonemap::default(), "outside");
 }
 
 #[test]

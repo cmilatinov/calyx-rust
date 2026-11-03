@@ -1734,7 +1734,7 @@ mod tests {
         ComponentAmbientOcclusion, ComponentDepthOfField, ComponentGlobalPostProcessVolume,
         ComponentID, ComponentMesh, ComponentParticleSystem, ComponentTonemap, ParticleBlendMode,
         ParticleColorOverLifetime, ParticleEmission, ParticleForces, ParticleScalarRange,
-        ParticleSizeOverLifetime, ParticleSpawnShape, ParticleVelocity,
+        ParticleSizeOverLifetime, ParticleSpawnShape, ParticleVelocity, TonemappingPreset,
     };
     use crate::math::Transform;
     use crate::render::postprocess::{
@@ -5603,6 +5603,80 @@ fn fs_main(in: PbrVertexOut) -> @location(0) vec4f {
             shade(true),
             (hdr, presented),
             "SSAO changes nothing of the forward mesh"
+        );
+    }
+
+    #[test]
+    fn an_unlit_color_reaches_the_screen_unchanged_under_the_neutral_preset() {
+        const SIZE: (u32, u32) = (32, 32);
+        let assets = TestAssets::engine();
+        write_unlit_shader(&assets);
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let camera = front_camera(1.0, 5.0);
+        let center = (SIZE.0 / 2, SIZE.1 / 2);
+        // The screen shows a pixel of the unlit box filling the view, under a
+        // global volume tone-mapping with `preset` at 0 EV.
+        let presented = |color: [f32; 3], preset: TonemappingPreset| {
+            let unlit = unlit_material(
+                &read_only_context,
+                &format!("test/neutral_unlit_{color:?}"),
+                [color[0], color[1], color[2], 1.0],
+            );
+            let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+            spawn_box(
+                &mut builder,
+                "unlit",
+                &cube,
+                &unlit,
+                Vec3::zeros(),
+                Vec3::repeat(4.0),
+            );
+            let volume = builder.spawn("volume");
+            builder.add_component(volume, ComponentGlobalPostProcessVolume::default());
+            builder.add_component(
+                volume,
+                ComponentTonemap {
+                    preset,
+                    exposure_ev: 0.0,
+                },
+            );
+            let scene = builder.finish();
+            let renderer = render_lit(&read_only_context, &scene, &camera, 1, SIZE);
+            let [r, g, b, _] = read_scene_texture(&renderer, &render_context)
+                .get_pixel(center.0, center.1)
+                .0;
+            [r, g, b]
+        };
+
+        for color in [
+            [0.0, 0.0, 0.0],
+            [1.0, 1.0, 1.0],
+            [0.214, 0.5, 1.0],
+            [0.9, 0.05, 0.3],
+        ] {
+            let expected = color.map(linear_to_srgb);
+            let shown = presented(color, TonemappingPreset::Neutral);
+            assert!(
+                shown
+                    .iter()
+                    .zip(expected)
+                    .all(|(shown, expected)| shown.abs_diff(expected) <= 1),
+                "the unlit {color:?} shows as its own sRGB encoding {expected:?}, got {shown:?}"
+            );
+        }
+        // ACES, the default, does change the same color.
+        let aces = presented([0.214, 0.5, 1.0], TonemappingPreset::Aces);
+        assert!(
+            aces[1].abs_diff(linear_to_srgb(0.5)) > 10,
+            "ACES darkens the midtones, got {aces:?}"
         );
     }
 }

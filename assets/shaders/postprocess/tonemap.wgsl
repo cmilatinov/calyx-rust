@@ -7,7 +7,7 @@
 struct TonemapUniform {
     // 2^EV, applied before the curve.
     exposure_scale: f32,
-    // 0 = ACES.
+    // 0 = ACES, 1 = Neutral.
     preset: u32,
     _padding: vec2u,
 };
@@ -45,12 +45,37 @@ fn aces_fitted(color: vec3f) -> vec3f {
     return clamp(fitted, vec3f(0.0), vec3f(1.0));
 }
 
+// How fast a color over 1 moves toward white, from Khronos PBR Neutral.
+const NEUTRAL_DESATURATION: f32 = 0.15;
+
+// The identity on display-range color, with the highlight roll-off of
+// Khronos PBR Neutral (Apache-2.0,
+// https://github.com/KhronosGroup/ToneMapping/blob/main/PBR_Neutral/pbrNeutral.glsl)
+// taken to its limit of a compression start at 1 and no toe offset: a color
+// whose largest channel is at most 1 is returned as it is. A brighter one is
+// scaled down by that channel, which keeps its hue, then moved toward white
+// by 1 - 1 / (0.15 * (peak - 1) + 1), so highlights desaturate the further
+// they were over 1.
+fn neutral(color: vec3f) -> vec3f {
+    let peak = max(color.r, max(color.g, color.b));
+    if peak <= 1.0 {
+        return color;
+    }
+    let scaled = color / peak;
+    let g = 1.0 - 1.0 / (NEUTRAL_DESATURATION * (peak - 1.0) + 1.0);
+    return mix(scaled, vec3f(1.0), g);
+}
+
 @fragment
 fn fs_main(in: FullscreenVertexOut) -> @location(0) vec4f {
     let texel = textureLoad(input_texture, vec2i(in.position.xy), 0);
     let exposed = max(texel.rgb, vec3f(0.0)) * tonemap.exposure_scale;
-    // Only one preset exists; `tonemap.preset` selects among later curves.
-    let mapped = aces_fitted(exposed);
+    var mapped: vec3f;
+    if tonemap.preset == 1u {
+        mapped = neutral(exposed);
+    } else {
+        mapped = aces_fitted(exposed);
+    }
     // Alpha is coverage, not color, and passes through untouched.
     return vec4f(mapped, texel.a);
 }
