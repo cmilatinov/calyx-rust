@@ -31,11 +31,11 @@ RPG Poly village needs a one-time local import:
 2. Close the Calyx editor, then run from the repository root:
 
    ```
-   python demos/tools/rpg_poly/import_pack.py
+   cargo run --release -p calyx_unity_import
    ```
 
-   It needs Python 3 and Blender 4.x, and builds the models, textures and
-   materials into the gitignored `assets/rpg_poly/vendor/`.
+   It needs Blender 4.x, which converts the models, and builds the models,
+   textures and materials into the gitignored `assets/rpg_poly/vendor/`.
 
 Without it the scene opens with only its sky, and the editor log names the
 missing assets. [`THIRD_PARTY_ASSETS.md`](THIRD_PARTY_ASSETS.md) has the

@@ -1,7 +1,7 @@
-"""Blender side of `import_pack.py`: converts the pack's FBX meshes to OBJ and
+"""Blender side of `calyx_unity_import`: converts a pack's FBX meshes to OBJ and
 its TGA textures to PNG.
 
-Run by `import_pack.py` as
+Embedded in the importer, which writes it beside its job and runs
 `blender --background --factory-startup --python blender_convert.py -- job.json`.
 The job lists `{"meshes": [[fbx, obj, normal mode, smoothing angle], ...], "textures": [[tga, png, fog], ...]}`,
 where `fog` is null or `[r, g, b, fraction]` to blend the texture towards.
@@ -119,7 +119,7 @@ def write_obj(path, mesh, scale, normal_mode=NORMALS_CALCULATE, smooth_angle=0.0
                 corners.append("%d//%d" % (v, n))
         faces.append("f " + " ".join(corners))
     with open(path, "w", newline="\n") as f:
-        f.write("# Converted from RPG Poly Pack - Lite by demos/tools/rpg_poly/import_pack.py\n")
+        f.write("# Converted from a Unity package by calyx_unity_import\n")
         for kind in ("v", "vt", "vn"):
             for text in tables[kind]:
                 f.write(f"{kind} {text}\n")

@@ -37,12 +37,12 @@ themselves and imports it locally.
 2. With the Calyx editor closed, run from the repository root:
 
    ```
-   python demos/tools/rpg_poly/import_pack.py
+   cargo run --release -p calyx_unity_import
    ```
 
-   It needs Python 3 and Blender 4.x (`--blender <blender.exe>` if Blender
-   is not in its default place, `--package <path>` for another copy of the
-   pack). It writes the converted models, textures and materials to
+   It needs Blender 4.x, which converts the models (`--blender <blender.exe>`
+   if Blender is not in its default place, `--package <path>` for another
+   copy of the pack, `--help` for the rest). It writes the converted models, textures and materials to
    `assets/rpg_poly/vendor/`, which `.gitignore` keeps out of git.
 
 Without the import the scene still opens and plays, showing only the sky,
@@ -52,9 +52,9 @@ and the editor log names each missing asset once.
 
 - `assets/rpg_poly/rpg_poly.cxscene`: the demo scene's layout, generated
   from the pack's `rpgpp_lt_scene_1.0.unity` by
-  `import_pack.py --scene`. It holds object names, transforms and references
+  `cargo run --release -p calyx_unity_import -- --scene`. It holds object names, transforms and references
   to the vendor assets by id, and no geometry, textures or materials.
-- `tools/rpg_poly/`: the importer.
+- `crates/calyx_unity_import/`: the importer, with the pack's settings in `src/packs/rpg_poly.rs`.
 
 ## Kloofendal 48d Partly Cloudy (Pure Sky) HDRI
 

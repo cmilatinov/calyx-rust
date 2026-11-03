@@ -1,3 +1,2 @@
-__pycache__/
-# RPG Poly Pack - Lite, built by tools/rpg_poly/import_pack.py; its licence keeps it out of git.
+# RPG Poly Pack - Lite, built by `cargo run -p calyx_unity_import`; its licence keeps it out of git.
 assets/rpg_poly/vendor/
