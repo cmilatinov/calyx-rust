@@ -530,3 +530,47 @@ fn sandbox_action_map_binds_every_action_and_axis_the_game_reads() {
         assert!(map.axis(&name, &input).is_some(), "unbound axis {name}");
     }
 }
+
+/// The vertex bounds `(min, max)` of a sandbox mesh, read from its OBJ positions.
+fn obj_bounds(name: &str) -> (Vec3, Vec3) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/game/meshes")
+        .join(format!("{name}.obj"));
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("{} does not read: {e}", path.display()));
+    source
+        .lines()
+        .filter_map(|line| line.strip_prefix("v "))
+        .map(|position| {
+            let mut coordinates = position
+                .split_whitespace()
+                .map(|value| value.parse::<f32>().unwrap());
+            vec3(
+                coordinates.next().unwrap(),
+                coordinates.next().unwrap(),
+                coordinates.next().unwrap(),
+            )
+        })
+        .fold(
+            (Vec3::repeat(f32::INFINITY), Vec3::repeat(f32::NEG_INFINITY)),
+            |(min, max), position| (min.inf(&position), max.sup(&position)),
+        )
+}
+
+#[test]
+fn tank_right_side_meshes_mirror_the_left_ones_across_the_centre_plane() {
+    // The tank prefab places every part with an identity transform, so each
+    // right-side mesh must be its left twin reflected across x = 0.
+    for part in ["wheels", "tracks"] {
+        let (left_min, left_max) = obj_bounds(&format!("{part}_left"));
+        let (right_min, right_max) = obj_bounds(&format!("{part}_right"));
+        let mirrored_min = vec3(-left_max.x, left_min.y, left_min.z);
+        let mirrored_max = vec3(-left_min.x, left_max.y, left_max.z);
+        assert!(
+            (right_min - mirrored_min).abs().max() < 1e-3
+                && (right_max - mirrored_max).abs().max() < 1e-3,
+            "{part}_right bounds {right_min:?}..{right_max:?} should mirror \
+             {part}_left's: {mirrored_min:?}..{mirrored_max:?}"
+        );
+    }
+}
