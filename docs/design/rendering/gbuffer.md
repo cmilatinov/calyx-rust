@@ -144,8 +144,12 @@ decodes both normals and brings them to world space with `inverse_view`. It
 shades with the shading normal through `pbr_lighting`
 (`shaders/common/pbr_lighting.wgsl`), which offsets shadow lookups along the
 geometric normal and applies
-ambient occlusion to the ambient and image-based terms only. It discards
-pixels whose albedo alpha is 0: the forward pass or the skybox owns them.
+ambient occlusion to the ambient and image-based terms only: the material's
+occlusion times SSAO's, which runs between the geometry and the lighting pass
+on this G-buffer's depth and geometric normals (see
+[Ambient Occlusion](../post-processing/architecture.md#ambient-occlusion)).
+It discards pixels whose albedo alpha is 0: the forward pass or the skybox
+owns them.
 
 ## Testing
 

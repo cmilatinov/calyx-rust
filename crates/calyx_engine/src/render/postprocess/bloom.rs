@@ -801,20 +801,19 @@ mod tests {
         assert_eq!(
             names,
             [
-                "ssao",
                 "depth_of_field",
                 "bloom",
                 "tonemap",
                 "color_grading",
                 "fxaa"
             ],
-            "the renderer runs bloom after ssao and depth of field"
+            "the renderer runs bloom after depth of field"
         );
         assert_eq!(
             *renderer.last_post_process_plan(),
             ChainPlan {
                 passes: vec![PlannedPass {
-                    pass: 3,
+                    pass: 2,
                     input: PassTarget::Source,
                     output: PassTarget::Output,
                 }],

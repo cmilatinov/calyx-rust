@@ -1,18 +1,24 @@
 //#include "shaders/common/fullscreen_pass.wgsl"
+//#include "shaders/deferred/gbuffer_encoding.wgsl"
 //#include "shaders/postprocess/ssao_common.wgsl"
 
-// Screen-space ambient occlusion at half resolution. Each pixel rebuilds its
-// view-space position and normal from depth, then tests a hemisphere of
-// kernel samples around the normal, rotated per pixel by a 4x4 noise
-// pattern, against the depth buffer. Writes the unoccluded fraction, raised
-// to the intensity, to red, and the pixel's view depth to green for the
-// depth-aware blur and upsample.
+// Screen-space ambient occlusion at half resolution, between the geometry pass and the deferred
+// lighting pass. Each texel takes its view-space position from the G-buffer's depth and its
+// normal from the G-buffer, then tests a hemisphere of kernel samples around the normal,
+// rotated per texel by a 4x4 noise pattern, against the depth. Writes the unoccluded fraction,
+// raised to the intensity, to red, and the view depth to green for the depth-aware blur and the
+// lighting pass's upsample.
 
+// The G-buffer's depth: at this point in the frame it holds the opaque PBR surfaces only.
 @group(0) @binding(0)
 var depth_texture: texture_depth_2d;
 
 @group(0) @binding(1)
 var<uniform> ssao: SsaoUniform;
+
+// The G-buffer's normals: the view-space geometric normal, octahedral, in BA.
+@group(0) @binding(2)
+var normals_texture: texture_2d<f32>;
 
 // Rotation of each pixel of a 4x4 tile, in sixteenths of a turn, in Bayer
 // order so neighbouring pixels differ most. The 4x4 blur averages a full
@@ -36,45 +42,22 @@ fn linear_depth(depth: f32) -> f32 {
     return ssao_linear_depth(ssao.near, ssao.far, depth);
 }
 
-fn view_at(pixel: vec2i) -> vec3f {
-    let uv = (vec2f(pixel) + 0.5) / vec2f(full_size());
-    return ssao_view_position(ssao.tan_half_fov, uv, linear_depth(load_depth(pixel)));
-}
-
-// The difference to the neighbour on one axis that lies on the same surface:
-// of the two in bounds, the one closer in depth. Picking the closer side
-// keeps silhouettes from bending normals.
-fn surface_delta(pixel: vec2i, center: vec3f, step: vec2i, limit: i32, along: i32) -> vec3f {
-    let before = view_at(pixel - step);
-    let after = view_at(pixel + step);
-    let has_before = along > 0;
-    let has_after = along + 1 < limit;
-    let before_closer = abs(before.z - center.z) < abs(after.z - center.z);
-    if has_before && (!has_after || before_closer) {
-        return center - before;
-    }
-    return after - center;
-}
-
 @fragment
 fn fs_main(in: FullscreenVertexOut) -> @location(0) vec4f {
     let half_pixel = vec2i(in.position.xy);
-    let pixel = half_pixel * 2;
+    let size = full_size();
+    let pixel = min(half_pixel * 2, size - 1);
     let depth = load_depth(pixel);
     if ssao_is_sky(depth) {
         return vec4f(1.0, SSAO_SKY_VIEW_Z, 0.0, 1.0);
     }
-    let size = full_size();
-    let center = view_at(pixel);
+    let uv = (vec2f(pixel) + 0.5) / vec2f(size);
+    let center = ssao_view_position(ssao.tan_half_fov, uv, linear_depth(depth));
 
-    // The normal, rebuilt from depth and turned toward the camera.
-    let dx = surface_delta(pixel, center, vec2i(1, 0), size.x, pixel.x);
-    let dy = surface_delta(pixel, center, vec2i(0, 1), size.y, pixel.y);
-    var normal = cross(dx, dy);
-    if length(normal) < 1e-12 {
-        normal = -center;
-    }
-    normal = normalize(normal);
+    // The geometric normal, not the shading one: the hemisphere is tested against the depth,
+    // which holds the geometry, so a normal map would tip it into its own surface. It is
+    // turned toward the camera for a back face drawn double-sided.
+    var normal = gbuffer_decode_normal(textureLoad(normals_texture, pixel, 0).ba);
     if dot(normal, center) > 0.0 {
         normal = -normal;
     }
@@ -98,12 +81,12 @@ fn fs_main(in: FullscreenVertexOut) -> @location(0) vec4f {
         if sample_position.z <= 0.0 {
             continue;
         }
-        let uv = ssao_project(ssao.tan_half_fov, sample_position);
+        let sample_uv = ssao_project(ssao.tan_half_fov, sample_position);
         // Samples off screen have nothing to test against.
-        if any(uv < vec2f(0.0)) || any(uv >= vec2f(1.0)) {
+        if any(sample_uv < vec2f(0.0)) || any(sample_uv >= vec2f(1.0)) {
             continue;
         }
-        let scene_depth = load_depth(vec2i(uv * vec2f(size)));
+        let scene_depth = load_depth(vec2i(sample_uv * vec2f(size)));
         if ssao_is_sky(scene_depth) {
             continue;
         }

@@ -13,7 +13,7 @@ use crate::render::asset_render_state::AssetRenderState;
 use crate::render::overlay::{OverlayCompositor, OverlayContext, OverlayPass};
 use crate::render::postprocess::{
     BloomPass, CameraPlanes, ChainPlan, ChainTargets, ColorGradingPass, DepthOfFieldPass, FxaaPass,
-    PostProcessChain, PostProcessSettings, SceneInput, SsaoPass, TonemapPass,
+    PostProcessChain, PostProcessSettings, SceneInput, SsaoInputs, SsaoPass, TonemapPass,
 };
 use crate::render::render_utils::RenderUtils;
 use crate::render::{
@@ -253,6 +253,8 @@ pub struct SceneRenderer {
     light_manager: LightManager,
     shadow_renderer: ShadowRenderer,
     gbuffer_renderer: GBufferRenderer,
+    /// Ambient occlusion from the G-buffer, read by the lighting pass.
+    ssao: SsaoPass,
     deferred_lighting: DeferredLightingRenderer,
     gizmo_renderer: GizmoRenderer,
     outline_renderer: OutlineRenderer,
@@ -338,6 +340,7 @@ impl SceneRenderer {
         let mesh_renderer = MeshRenderer::new(context)?;
         let shadow_renderer = ShadowRenderer::new(context)?;
         let gbuffer_renderer = GBufferRenderer::new(context)?;
+        let ssao = SsaoPass::new(context)?;
         let deferred_lighting = DeferredLightingRenderer::new(context)?;
         let skybox_renderer = SkyboxRenderer::new(context)?;
 
@@ -353,10 +356,9 @@ impl SceneRenderer {
         let outline_renderer = OutlineRenderer::new(context)?;
         let particle_renderer = ParticleRenderer::new(context)?;
         let mut post_process = PostProcessChain::new(context)?;
-        // SSAO runs first in the Hdr stage, on the unblurred scene.
-        post_process.push(Box::new(SsaoPass::new(context)?));
-        // Depth of field runs after SSAO, before bloom, so bloom
-        // spreads already blurred highlights.
+        // Depth of field runs first, before bloom, so bloom spreads already
+        // blurred highlights. SSAO is not a chain pass: the lighting pass
+        // applies it to the ambient light.
         post_process.push(Box::new(DepthOfFieldPass::new(context)?));
         post_process.push(Box::new(TonemapPass::new(context)?));
         post_process.push(Box::new(BloomPass::new(context)?));
@@ -401,6 +403,7 @@ impl SceneRenderer {
             light_manager: Default::default(),
             shadow_renderer,
             gbuffer_renderer,
+            ssao,
             deferred_lighting,
             gizmo_renderer,
             outline_renderer,
@@ -488,11 +491,12 @@ impl SceneRenderer {
         let device = render_context.device();
 
         self.load_camera_uniforms(queue, camera, camera_transform);
-        self.post_process.set_camera(CameraPlanes {
+        let camera_planes = CameraPlanes {
             near: camera.near_plane,
             far: camera.far_plane,
             tan_half_fov: CameraPlanes::tan_half_fov_of(&camera.projection),
-        });
+        };
+        self.post_process.set_camera(camera_planes);
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("encoder"),
@@ -583,9 +587,10 @@ impl SceneRenderer {
             color: &self.scene_texture_msaa,
             depth: &self.scene_depth_texture,
         };
-        // The geometry pass draws the PBR meshes and owns the depth, the
-        // lighting pass shades them, and the forward pass draws every other
-        // mesh after them, against the deferred depth.
+        // The geometry pass draws the PBR meshes and owns the depth, SSAO
+        // measures their ambient occlusion, the lighting pass shades them,
+        // and the forward pass draws every other mesh after them, against the
+        // deferred depth.
         self.gbuffer_renderer.render(
             &render_context,
             &mut encoder,
@@ -600,12 +605,26 @@ impl SceneRenderer {
             .gbuffer_renderer
             .targets()
             .expect("the geometry pass just drew the G-buffer");
+        let gbuffer_depth = gbuffer.own_depth().unwrap_or(&self.scene_depth_texture);
+        // SSAO reads the G-buffer before anything else draws into its depth,
+        // so the depth, normals and occlusion all describe the PBR surfaces.
+        let occlusion = self.ssao.render(
+            &render_context,
+            &mut encoder,
+            self.post_process_settings.ambient_occlusion.as_ref(),
+            SsaoInputs {
+                depth: gbuffer_depth,
+                normals: &gbuffer.normals,
+                camera: camera_planes,
+            },
+        );
         self.deferred_lighting.render(
             &render_context,
             &mut encoder,
             gbuffer,
-            gbuffer.own_depth().unwrap_or(&self.scene_depth_texture),
+            gbuffer_depth,
             &lighting,
+            occlusion,
             &self.scene_texture_msaa,
             &self.scene_depth_texture,
             self.options.clear_color,
@@ -726,6 +745,11 @@ impl SceneRenderer {
     /// resolved from its scene.
     pub fn post_process_settings(&self) -> &PostProcessSettings {
         &self.post_process_settings
+    }
+
+    /// The ambient occlusion pass, which runs before the lighting pass.
+    pub fn ambient_occlusion(&self) -> &SsaoPass {
+        &self.ssao
     }
 
     /// The post-processing chain this renderer runs.
@@ -1578,6 +1602,7 @@ impl SceneRenderer {
         );
         self.gbuffer_renderer
             .resize(&self.asset_context.render_context, (width, height));
+        self.ssao.release_targets();
         self.post_process.clear_targets();
         self.overlay.clear_targets();
     }
@@ -1704,10 +1729,10 @@ mod tests {
     use crate::assets::skybox::Skybox;
     use crate::assets::AssetRef;
     use crate::component::{
-        ComponentDepthOfField, ComponentGlobalPostProcessVolume, ComponentID, ComponentMesh,
-        ComponentParticleSystem, ComponentTonemap, ParticleBlendMode, ParticleColorOverLifetime,
-        ParticleEmission, ParticleForces, ParticleScalarRange, ParticleSizeOverLifetime,
-        ParticleSpawnShape, ParticleVelocity,
+        ComponentAmbientOcclusion, ComponentDepthOfField, ComponentGlobalPostProcessVolume,
+        ComponentID, ComponentMesh, ComponentParticleSystem, ComponentTonemap, ParticleBlendMode,
+        ParticleColorOverLifetime, ParticleEmission, ParticleForces, ParticleScalarRange,
+        ParticleSizeOverLifetime, ParticleSpawnShape, ParticleVelocity,
     };
     use crate::math::Transform;
     use crate::render::postprocess::{
@@ -5360,6 +5385,223 @@ fn fs_main(in: PbrVertexOut) -> @location(0) vec4f {
                 &format!("the unlit box behind shows beside the green one at {samples} samples"),
             );
         }
+    }
+
+    /// The crease of [`crease_scene`]: the ground 0.1 in front of the wall.
+    const CREASE: Vec3 = Vec3::new(0.0, 0.05, 0.4);
+    /// Open ground of [`crease_scene`], far from the wall.
+    const OPEN_GROUND: Vec3 = Vec3::new(0.0, 0.05, -0.8);
+
+    /// A camera 3 units up and 3 back from the crease of [`crease_scene`],
+    /// looking down at it.
+    fn crease_camera() -> (Camera, Transform) {
+        let camera = Camera::new(1.0, 60f32.to_radians(), 0.1, 200.0);
+        let position = vec3(0.0, 3.0, -3.0);
+        let transform = Transform::from_components(
+            position,
+            UnitQuaternion::face_towards(&(CREASE - position), &Vec3::y()),
+            vec3(1.0, 1.0, 1.0),
+        );
+        (camera, transform)
+    }
+
+    /// A rough grey ground, top face at y = 0.05 spanning -4..4 in X and Z,
+    /// with a rough grey wall standing on it, its face towards the camera at z = 0.5, so the ground
+    /// meets it in a crease along X. `sun` adds a sun shining straight down
+    /// into the crease, `ambient` a flat ambient light of 1, and `ssao` a
+    /// global volume with ambient occlusion of radius 1. `build` adds the rest.
+    fn crease_scene(
+        context: &ReadOnlyAssetContext,
+        sun: bool,
+        ambient: bool,
+        ssao: bool,
+        build: impl FnOnce(&mut SceneBuilder),
+    ) -> Scene {
+        let cube = context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        // Rough grey with the material's own occlusion at 1, so the ambient
+        // light reaches it whole and only SSAO darkens it.
+        let material = pbr_material_with(
+            context,
+            "test/crease",
+            vec![
+                (
+                    "base_color_factor",
+                    ShaderVariableValue::Color([0.5, 0.5, 0.5, 1.0]),
+                ),
+                ("metallic", ShaderVariableValue::Float(0.0)),
+                ("roughness", ShaderVariableValue::Float(1.0)),
+                ("ambient_occlusion", ShaderVariableValue::Float(1.0)),
+                ("occlusion_strength", ShaderVariableValue::Float(0.0)),
+            ],
+        );
+        let mut builder = SceneBuilder::new(context.registries.clone());
+        spawn_box(
+            &mut builder,
+            "ground",
+            &cube,
+            &material,
+            Vec3::zeros(),
+            vec3(8.0, 0.1, 8.0),
+        );
+        spawn_box(
+            &mut builder,
+            "wall",
+            &cube,
+            &material,
+            vec3(0.0, 1.05, 1.0),
+            vec3(8.0, 2.0, 1.0),
+        );
+        if sun {
+            let sun = builder.spawn("sun");
+            builder.add_component(
+                sun,
+                crate::component::ComponentDirectionalLight {
+                    intensity: 3.0,
+                    ..Default::default()
+                },
+            );
+            builder.set_transform(sun, pointing(-Vec3::y()));
+        }
+        if ambient {
+            let light = builder.spawn("ambient");
+            builder.add_component(
+                light,
+                crate::component::ComponentAmbientLight {
+                    color: Color32::WHITE,
+                    intensity: 1.0,
+                },
+            );
+        }
+        if ssao {
+            let volume = builder.spawn("volume");
+            builder.add_component(volume, ComponentGlobalPostProcessVolume::default());
+            builder.add_component(
+                volume,
+                ComponentAmbientOcclusion {
+                    radius: 1.0,
+                    ..Default::default()
+                },
+            );
+        }
+        build(&mut builder);
+        builder.finish()
+    }
+
+    #[test]
+    fn ssao_darkens_the_ambient_light_of_a_crease_and_keeps_its_direct_light() {
+        const SIZE: (u32, u32) = (128, 128);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        let camera = crease_camera();
+
+        for samples in [1, 4] {
+            if !renders_at(&render_context, samples) {
+                continue;
+            }
+            let shade = |sun: bool, ambient: bool, ssao: bool, point: Vec3| {
+                let scene = crease_scene(&read_only_context, sun, ambient, ssao, |_| {});
+                let renderer = render_lit(&read_only_context, &scene, &camera, samples, SIZE);
+                hdr_texel(
+                    &renderer,
+                    &render_context,
+                    project(&camera.0, &camera.1, point, SIZE),
+                )
+            };
+
+            // The sun shines straight into the crease: its light is direct,
+            // so SSAO leaves it.
+            let direct = shade(true, false, false, CREASE);
+            assert!(direct.x > 0.1, "the sun lights the crease: {direct:?}");
+            assert_radiance(
+                shade(true, false, true, CREASE),
+                direct.x,
+                &format!("the sun's light in the crease with SSAO at {samples} samples"),
+            );
+
+            // The ambient light is indirect: SSAO darkens it in the crease
+            // and leaves it on the open ground.
+            let ambient = shade(false, true, false, CREASE);
+            let occluded = shade(false, true, true, CREASE);
+            assert!(
+                ambient.x > 0.1,
+                "the ambient light lights the crease: {ambient:?}"
+            );
+            assert!(
+                occluded.x < 0.85 * ambient.x,
+                "SSAO darkens the crease's ambient light at {samples} samples: {occluded:?} \
+                 against {ambient:?}"
+            );
+            assert_radiance(
+                shade(false, true, true, OPEN_GROUND),
+                shade(false, true, false, OPEN_GROUND).x,
+                &format!("the open ground's ambient light with SSAO at {samples} samples"),
+            );
+
+            // Both together: the direct light stays whole on top of the
+            // darkened ambient light.
+            assert_radiance(
+                shade(true, true, true, CREASE),
+                direct.x + occluded.x,
+                &format!("the crease lit by both with SSAO at {samples} samples"),
+            );
+        }
+    }
+
+    #[test]
+    fn ssao_leaves_a_forward_mesh_in_a_crease_as_it_is() {
+        const SIZE: (u32, u32) = (64, 64);
+        let assets = TestAssets::engine();
+        write_unlit_shader(&assets);
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let unlit = unlit_material(&read_only_context, "test/crease_unlit", [0.5; 4]);
+        let camera = crease_camera();
+        // A small unlit box sitting in the crease. The forward pass draws it
+        // with no ambient term for SSAO to darken, and over the deferred
+        // surfaces SSAO did darken.
+        let in_crease = vec3(0.0, 0.25, 0.3);
+        let pixel = project(&camera.0, &camera.1, in_crease, SIZE);
+        let shade = |ssao: bool| {
+            let scene = crease_scene(&read_only_context, true, true, ssao, |builder| {
+                spawn_box(
+                    builder,
+                    "unlit",
+                    &cube,
+                    &unlit,
+                    in_crease,
+                    Vec3::repeat(0.4),
+                );
+            });
+            let renderer = render_lit(&read_only_context, &scene, &camera, 1, SIZE);
+            (
+                hdr_texel(&renderer, &render_context, pixel),
+                read_scene_texture(&renderer, &render_context)
+                    .get_pixel(pixel.0, pixel.1)
+                    .0,
+            )
+        };
+
+        let (hdr, presented) = shade(false);
+        assert_near(hdr, Vec3::repeat(0.5), "the unlit box shows its color");
+        assert_eq!(
+            shade(true),
+            (hdr, presented),
+            "SSAO changes nothing of the forward mesh"
+        );
     }
 }
 
