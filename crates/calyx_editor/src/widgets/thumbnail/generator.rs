@@ -274,7 +274,7 @@ impl ThumbnailGenerator {
                         context,
                         SceneRendererOptions {
                             grid: false,
-                            gizmos: false,
+                            gizmos: None,
                             samples: 1,
                             clear_color: Color32::TRANSPARENT,
                             mesh_cull_mode: None,

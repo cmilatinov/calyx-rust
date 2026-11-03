@@ -64,7 +64,7 @@ impl Component for ComponentCamera {
         let transform = scene.world_transform(game_object);
         gizmos.set_color(&Vec4::new(1.0, 1.0, 1.0, 1.0));
         gizmos.icon(GizmoIcon::Camera, &transform.position, 1.0);
-        let camera = self.camera(gizmos.preview_aspect());
+        let camera = self.camera(gizmos.game_view_aspect());
         gizmos.wire_frustum(&transform, &camera);
     }
 }
@@ -74,6 +74,7 @@ mod tests {
     use super::*;
     use crate::assets::mesh::Mesh;
     use crate::math::Transform;
+    use crate::render::GizmoOptions;
     use crate::test_support::{test_scene, TestAssets};
     use approx::assert_abs_diff_eq;
     use nalgebra_glm::Vec3;
@@ -105,11 +106,10 @@ mod tests {
     }
 
     /// The half extents, right and up, of the far plane the camera gizmo of
-    /// a camera at the origin draws while the editor previews a view of
-    /// `preview_aspect`.
+    /// a camera at the origin draws in a view with `gizmo_options`.
     fn gizmo_far_plane_half_extents(
         camera: &ComponentCamera,
-        preview_aspect: Option<f32>,
+        gizmo_options: GizmoOptions,
     ) -> (f32, f32) {
         let assets = TestAssets::engine();
         let context = assets.asset_context();
@@ -127,7 +127,7 @@ mod tests {
             camera: &view,
             camera_transform: &view_transform,
             viewport_size: [1920.0, 1080.0],
-            preview_aspect,
+            game_view_aspect: gizmo_options.game_view_aspect,
             object_id: 0,
             color: Vec4::new(1.0, 1.0, 1.0, 1.0),
             opacity: 1.0,
@@ -153,7 +153,7 @@ mod tests {
     }
 
     #[test]
-    fn camera_gizmo_frames_the_previewed_view_with_the_horizontal_fov() {
+    fn camera_gizmo_frames_the_game_view_aspect_with_the_horizontal_fov() {
         let camera = ComponentCamera {
             fov: 60.0f32.to_radians(),
             far_plane: 10.0,
@@ -162,12 +162,17 @@ mod tests {
         // tan(30 degrees) * 10, the far plane's half width at a 60 degree horizontal angle.
         let half_width = 5.773_502_7;
 
-        let (right, up) = gizmo_far_plane_half_extents(&camera, Some(4.0 / 3.0));
+        let (right, up) = gizmo_far_plane_half_extents(
+            &camera,
+            GizmoOptions {
+                game_view_aspect: Some(4.0 / 3.0),
+            },
+        );
         assert_abs_diff_eq!(right, half_width, epsilon = 1e-3);
         assert_abs_diff_eq!(up, half_width * 3.0 / 4.0, epsilon = 1e-3);
 
-        // Without a previewed view, the gizmo falls back to 16:9.
-        let (right, up) = gizmo_far_plane_half_extents(&camera, None);
+        // Without a game view aspect, the gizmo falls back to 16:9.
+        let (right, up) = gizmo_far_plane_half_extents(&camera, GizmoOptions::default());
         assert_abs_diff_eq!(right, half_width, epsilon = 1e-3);
         assert_abs_diff_eq!(up, half_width * 9.0 / 16.0, epsilon = 1e-3);
     }

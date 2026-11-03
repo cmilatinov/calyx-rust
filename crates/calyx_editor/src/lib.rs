@@ -29,7 +29,7 @@ use calyx_engine::error::BoxedError;
 use calyx_engine::input::Input;
 use calyx_engine::logging::{DefaultLogger, Log};
 use calyx_engine::render::{
-    ParticleSimulation, SceneRenderer, SceneRendererError, SceneRendererOptions,
+    GizmoOptions, ParticleSimulation, SceneRenderer, SceneRendererError, SceneRendererOptions,
 };
 use calyx_engine::runtime::{initial_render_size, wgpu_configuration, FrameCounter};
 use calyx_engine::scene::Scene;
@@ -172,7 +172,7 @@ impl EditorAppState {
             &asset_context,
             SceneRendererOptions {
                 grid: true,
-                gizmos: true,
+                gizmos: Some(GizmoOptions::default()),
                 samples: 1,
                 clear_color: prefab_mode::SCENE_VIEW_BACKDROP,
                 shadows: true,
@@ -620,10 +620,10 @@ impl EditorApp {
         camera.update_projection();
         prefab_mode.dress_scene_view(scene_renderer.options_mut());
         let game_view_size = Self::get_physical_size(ctx, *game_size);
-        scene_renderer.set_preview_aspect(
-            Self::has_renderable_size(game_view_size.0, game_view_size.1)
+        scene_renderer.options_mut().gizmos = Some(GizmoOptions {
+            game_view_aspect: Self::has_renderable_size(game_view_size.0, game_view_size.1)
                 .then(|| game_view_size.0 as f32 / game_view_size.1 as f32),
-        );
+        });
         scene_renderer.set_hovered_game_object(None);
         scene_renderer.set_selected_game_object(None);
 

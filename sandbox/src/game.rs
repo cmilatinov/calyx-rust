@@ -230,7 +230,7 @@ mod tests {
     fn player_renders_without_the_editor_grid_or_gizmos() {
         let options = renderer_options();
         assert!(!options.grid);
-        assert!(!options.gizmos);
+        assert!(options.gizmos.is_none());
     }
 
     #[test]
