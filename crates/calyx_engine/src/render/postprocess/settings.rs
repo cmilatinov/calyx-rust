@@ -27,7 +27,7 @@ pub struct PostProcessSettings {
     pub tonemapping: ComponentTonemap,
     /// Screen-space ambient occlusion, first in the `Hdr` stage.
     pub ambient_occlusion: Option<ComponentAmbientOcclusion>,
-    /// Distance fog, in the `Hdr` stage after SSAO.
+    /// Distance fog, first in the `Hdr` stage.
     pub fog: Option<ComponentFog>,
     /// Depth of field, in the `Hdr` stage.
     pub depth_of_field: Option<ComponentDepthOfField>,

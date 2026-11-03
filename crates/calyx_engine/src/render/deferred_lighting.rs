@@ -1,10 +1,12 @@
 //! The deferred lighting pass: shades the opaque PBR surfaces of the
-//! G-buffer into the scene's HDR target through `pbr_lighting`. The pass
-//! order is in `docs/design/post-processing/architecture.md`.
+//! G-buffer into the scene's HDR target through `pbr_lighting`, with SSAO's
+//! occlusion on their ambient light. The pass order is in
+//! `docs/design/post-processing/architecture.md`.
 
 use crate::assets::texture::Texture;
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
+use crate::render::postprocess::SsaoPass;
 use crate::render::{
     CachedBindGroup, GBufferTargets, LightingBindGroups, PipelineOptions, RenderContext,
     RenderUtils, SceneRendererError, Shader,
@@ -12,9 +14,10 @@ use crate::render::{
 use egui::Color32;
 use egui_wgpu::wgpu;
 
-/// The shader layouts and the G-buffer's views the pass binds in group 1:
-/// albedo, normals, material, emissive, then depth.
-type GBufferBindGroupKey = (u64, [wgpu::TextureView; 5]);
+/// The shader layouts and the views the pass binds in group 1: the
+/// G-buffer's albedo, normals, material, emissive and depth, then SSAO's
+/// occlusion.
+type GBufferBindGroupKey = (u64, [wgpu::TextureView; 6]);
 
 /// Shades the G-buffer into the scene target with a full-screen pass.
 pub(crate) struct DeferredLightingRenderer {
@@ -24,6 +27,10 @@ pub(crate) struct DeferredLightingRenderer {
     /// the G-buffer's depth into the multisampled scene depth.
     msaa_shader: Ref<Shader>,
     gbuffer_bind_group: CachedBindGroup<GBufferBindGroupKey>,
+    /// The occlusion bound while SSAO is off: one texel of visibility 1 at
+    /// the sky's view depth, which no surface's upsample weighs, so every
+    /// surface keeps its ambient light.
+    unoccluded: Texture,
 }
 
 impl DeferredLightingRenderer {
@@ -35,12 +42,34 @@ impl DeferredLightingRenderer {
                 "shaders/deferred/lighting_msaa",
             )?,
             gbuffer_bind_group: Default::default(),
+            unoccluded: Self::unoccluded(context),
         })
+    }
+
+    /// The single texel of [`Self::unoccluded`]: visibility 1.0 and view
+    /// depth 60000.0 (`SSAO_SKY_VIEW_Z`), as half floats.
+    fn unoccluded(context: &ReadOnlyAssetContext) -> Texture {
+        const TEXEL: [u16; 2] = [0x3c00, 0x7b53];
+        let render_context = context.render_context.clone();
+        let texture = SsaoPass::create_target(render_context.clone(), (1, 1), "ssao_unoccluded");
+        render_context.queue().write_texture(
+            texture.texture.as_image_copy(),
+            bytemuck::cast_slice(&TEXEL),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: None,
+                rows_per_image: None,
+            },
+            texture.descriptor.size,
+        );
+        texture
     }
 
     /// Clears `color` to `clear_color` and writes the lit color of every
     /// pixel the geometry pass drew into `gbuffer`, against `gbuffer_depth`,
-    /// lit through `lighting`.
+    /// lit through `lighting`. `occlusion`, SSAO's blurred occlusion, dims
+    /// their ambient and image-based light; without it nothing does but the
+    /// materials' own occlusion.
     ///
     /// At one sample the geometry pass drew `scene_depth` itself and the pass
     /// leaves it. Above one, `color` and `scene_depth` are multisampled: the
@@ -55,6 +84,7 @@ impl DeferredLightingRenderer {
         gbuffer: &GBufferTargets,
         gbuffer_depth: &Texture,
         lighting: &LightingBindGroups,
+        occlusion: Option<&Texture>,
         color: &Texture,
         scene_depth: &Texture,
         clear_color: Color32,
@@ -84,6 +114,7 @@ impl DeferredLightingRenderer {
             material.view.clone(),
             emissive.view.clone(),
             gbuffer_depth.view.clone(),
+            occlusion.unwrap_or(&self.unoccluded).view.clone(),
         ];
         // Bound by name, so a reload that renumbers the G-buffer's bindings
         // rebuilds the group for its new layout.
@@ -96,6 +127,7 @@ impl DeferredLightingRenderer {
                     "material_texture",
                     "emissive_texture",
                     "depth_texture",
+                    "occlusion_texture",
                 ];
                 let resources = names
                     .iter()

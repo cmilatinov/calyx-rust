@@ -801,7 +801,6 @@ mod tests {
         assert_eq!(
             names,
             [
-                "ssao",
                 "fog",
                 "depth_of_field",
                 "bloom",
@@ -809,7 +808,7 @@ mod tests {
                 "color_grading",
                 "fxaa"
             ],
-            "the renderer runs bloom after ssao, fog and depth of field"
+            "the renderer runs bloom after fog and depth of field"
         );
         assert_eq!(
             *renderer.last_post_process_plan(),

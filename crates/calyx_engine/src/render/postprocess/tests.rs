@@ -1,9 +1,9 @@
 use super::*;
 use crate::assets::texture::Texture;
 use crate::component::{
-    Component, ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom,
-    ComponentColorGrading, ComponentDepthOfField, ComponentFog, ComponentGlobalPostProcessVolume,
-    ComponentTonemap, ComponentVignette, TonemappingPreset,
+    Component, ComponentAntiAliasing, ComponentBloom, ComponentColorGrading, ComponentDepthOfField,
+    ComponentFog, ComponentGlobalPostProcessVolume, ComponentTonemap, ComponentVignette,
+    TonemappingPreset,
 };
 use crate::render::scene_renderer::{half_to_f32, linear_to_srgb};
 use crate::render::{
@@ -1147,7 +1147,6 @@ fn adding_or_disabling_an_effect_component_switches_its_pass_in_the_plan() {
     let mut scene = context.registries.scene();
     let volume = scene.create(None, None);
     scene.add_component(volume, ComponentGlobalPostProcessVolume::default());
-    check_effect::<ComponentAmbientOcclusion>(passes, &mut scene, volume, "ssao");
     check_effect::<ComponentDepthOfField>(passes, &mut scene, volume, "depth_of_field");
     check_effect::<ComponentBloom>(passes, &mut scene, volume, "bloom");
     check_effect::<ComponentColorGrading>(passes, &mut scene, volume, "color_grading");

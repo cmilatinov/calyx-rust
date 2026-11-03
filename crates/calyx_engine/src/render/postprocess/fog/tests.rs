@@ -526,7 +526,7 @@ fn the_far_surface_is_closer_to_the_fog_colour_than_the_near_one() {
 }
 
 #[test]
-fn the_renderer_runs_fog_after_ssao_and_before_depth_of_field_and_bloom() {
+fn the_renderer_runs_fog_first_and_before_depth_of_field_and_bloom() {
     let assets = TestAssets::engine();
     let context = assets.asset_context();
     let context = context.lock_read();
@@ -541,5 +541,6 @@ fn the_renderer_runs_fog_after_ssao_and_before_depth_of_field_and_bloom() {
         .map(|pass| pass.name())
         .collect();
 
-    assert_eq!(hdr, ["ssao", "fog", "depth_of_field", "bloom"]);
+    // SSAO is not a chain pass: the lighting pass applies it, before fog.
+    assert_eq!(hdr, ["fog", "depth_of_field", "bloom"]);
 }
