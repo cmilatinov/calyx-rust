@@ -3,7 +3,8 @@
 
 use crate as calyx_engine;
 use crate::component::{
-    Component, ComponentEventContext, ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
+    Component, ComponentEventContext, ComponentRef, ComponentUpdate, ReflectComponent,
+    ReflectComponentUpdate,
 };
 use crate::input::Input;
 use crate::math::{self, Transform};
@@ -138,19 +139,14 @@ impl Component for ComponentCameraPath {
 
 impl ComponentUpdate for ComponentCameraPath {
     fn update(
-        &self,
+        this: ComponentRef<Self>,
         ComponentEventContext {
             scene, game_object, ..
         }: ComponentEventContext,
         resources: &mut ResourceMap,
         _input: &Input,
     ) {
-        // The hook runs on the registry's prototype, not this object's
-        // component (#481), so the path and its progress are read from the
-        // scene.
-        let Some(follower) =
-            scene.read_component::<ComponentCameraPath, _, _>(game_object, |c| c.clone())
-        else {
+        let Some(follower) = this.read(scene, |c| c.clone()) else {
             return;
         };
         let stops: Vec<Transform> = follower
@@ -164,16 +160,12 @@ impl ComponentUpdate for ComponentCameraPath {
                      it does nothing",
                     scene.name(game_object)
                 );
-                let _ = scene.write_component::<ComponentCameraPath, _>(game_object, |c| {
-                    c.warned = true;
-                });
+                this.write(scene, |c| c.warned = true);
             }
             return;
         }
         let elapsed = follower.elapsed + resources.time().delta_time().max(0.0);
-        let _ = scene.write_component::<ComponentCameraPath, _>(game_object, |c| {
-            c.elapsed = elapsed;
-        });
+        this.write(scene, |c| c.elapsed = elapsed);
         let t = elapsed / follower.duration.max(0.1);
         let Some(pose) = sample_path(&stops, t, follower.looping) else {
             return;

@@ -39,6 +39,8 @@ pub struct Layout<'a> {
     pub pack: &'a Pack,
     /// The folder the pack's scene goes in, holding `vendor/`.
     pub root: PathBuf,
+    /// Where the import's scratch folder goes, outside every asset root.
+    pub work_root: PathBuf,
 }
 
 impl Layout<'_> {
@@ -108,15 +110,20 @@ fn write(path: &Path, text: &str) -> Result<(), String> {
 
 /// Converts the package's models, textures and materials into the vendor
 /// folder, replacing what an earlier import left there.
+///
+/// Files are rewritten in place and only the ones this import no longer
+/// writes are removed afterwards, so an open editor sees assets change
+/// rather than disappear and come back.
 pub fn import_assets(
     package: &UnityPackage,
     layout: &Layout,
     blender: &Path,
 ) -> Result<String, String> {
     let vendor = layout.vendor();
-    for sub in ["models", "textures", "materials"] {
+    let subdirs = ["models", "textures", "materials"];
+    let before = files_in(&vendor, &subdirs);
+    for sub in subdirs {
         let dir = vendor.join(sub);
-        let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir)
             .map_err(|err| format!("cannot create {}: {err}", dir.display()))?;
     }
@@ -129,7 +136,9 @@ pub fn import_assets(
         ),
     )?;
 
-    let work = vendor.join(format!(".import-{}", std::process::id()));
+    let work = layout
+        .work_root
+        .join(format!(".unity-import-{}", std::process::id()));
     std::fs::create_dir_all(&work)
         .map_err(|err| format!("cannot create {}: {err}", work.display()))?;
     let result = convert_models_and_textures(package, layout, blender, &work);
@@ -156,11 +165,47 @@ pub fn import_assets(
         )?;
         layout.write_meta(&target, &layout.material_name(path), TYPE_MATERIAL)?;
     }
+    let written = written_files(package, layout);
+    for stale in before.difference(&written) {
+        let _ = std::fs::remove_file(stale);
+    }
     Ok(format!(
         "imported {models} models, {textures} textures and {} materials into {}",
         materials.len(),
         vendor.display()
     ))
+}
+
+/// The files directly in `subdirs` of `root`.
+fn files_in(root: &Path, subdirs: &[&str]) -> std::collections::HashSet<PathBuf> {
+    subdirs
+        .iter()
+        .filter_map(|sub| std::fs::read_dir(root.join(sub)).ok())
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file())
+        .collect()
+}
+
+/// Every file an import of `package` writes in the vendor folder's subfolders.
+fn written_files(package: &UnityPackage, layout: &Layout) -> std::collections::HashSet<PathBuf> {
+    let vendor = layout.vendor();
+    let mut files = std::collections::HashSet::new();
+    let kinds: [(&str, &str, &[&str]); 3] = [
+        (".fbx", "models", &["obj", "meta"]),
+        (".tga", "textures", &["png", "meta"]),
+        (".mat", "materials", &["cxmat", "meta"]),
+    ];
+    for (extension, sub, outputs) in kinds {
+        for (path, _) in package.with_extension(extension) {
+            let base = vendor.join(sub).join(stem(&path));
+            for output in outputs {
+                files.insert(with_extension(&base, output));
+            }
+        }
+    }
+    files
 }
 
 fn convert_models_and_textures(

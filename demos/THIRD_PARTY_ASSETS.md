@@ -34,7 +34,7 @@ themselves and imports it locally.
 1. Get the pack (free) from its store page with a Unity account, and download
    it through the Unity editor's Package Manager (My Assets). Unity saves it
    to `%APPDATA%\Unity\Asset Store-5.x\Gigel3d\3D ModelsEnvironmentsLandscapes\RPG Poly Pack - Lite.unitypackage`.
-2. With the Calyx editor closed, run from the repository root:
+2. Run from the repository root:
 
    ```
    cargo run --release -p calyx_unity_import

@@ -19,6 +19,7 @@ pub const PACK: Pack = Pack {
         "RPG Poly Pack - Lite.unitypackage",
     ],
     root: "demos/assets/rpg_poly",
+    work_root: "demos",
     asset_prefix: "rpg_poly",
     namespace: NAMESPACE,
     demo_scene: "Assets/RPGPP_LT/Scene/rpgpp_lt_scene_1.0.unity",

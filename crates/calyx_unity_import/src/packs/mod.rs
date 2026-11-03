@@ -23,6 +23,9 @@ pub struct Pack {
     pub asset_store_path: &'static [&'static str],
     /// The output folder, relative to the repository root.
     pub root: &'static str,
+    /// A folder outside every asset root for the import's scratch files (the
+    /// raw FBX and TGA files Blender reads), so an open editor never sees them.
+    pub work_root: &'static str,
     /// The asset-name prefix of everything generated, its folder under the
     /// project's assets.
     pub asset_prefix: &'static str,

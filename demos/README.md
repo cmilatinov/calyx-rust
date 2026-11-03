@@ -28,7 +28,7 @@ RPG Poly village needs a one-time local import:
 
 1. Download the free pack through the Unity editor's Package Manager
    (My Assets) after adding it to your Unity account from its store page.
-2. Close the Calyx editor, then run from the repository root:
+2. Run from the repository root:
 
    ```
    cargo run --release -p calyx_unity_import

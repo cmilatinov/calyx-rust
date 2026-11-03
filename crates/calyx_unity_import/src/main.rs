@@ -41,6 +41,10 @@ struct Cli {
     /// The output folder; defaults to the pack's folder in the demos project.
     #[arg(long)]
     out: Option<PathBuf>,
+    /// Where to put the import's scratch folder, outside every asset root;
+    /// defaults to the pack's project folder.
+    #[arg(long)]
+    work: Option<PathBuf>,
 }
 
 fn default_package(pack: &Pack) -> PathBuf {
@@ -79,7 +83,12 @@ fn run(cli: Cli) -> Result<(), String> {
         ));
     }
     let package = UnityPackage::open(&package_path)?;
-    let layout = Layout { pack, root };
+    let work_root = cli.work.unwrap_or_else(|| PathBuf::from(pack.work_root));
+    let layout = Layout {
+        pack,
+        root,
+        work_root,
+    };
     if !cli.skip_assets {
         if !cli.blender.is_file() {
             return Err(format!(
