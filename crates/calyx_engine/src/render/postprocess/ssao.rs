@@ -20,9 +20,7 @@ const MAX_SAMPLES: usize = ComponentAmbientOcclusion::MAX_SAMPLES as usize;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct SsaoUniform {
-    near: f32,
-    far: f32,
-    tan_half_fov: [f32; 2],
+    camera: CameraPlanes,
     radius: f32,
     bias: f32,
     intensity: f32,
@@ -199,9 +197,7 @@ impl SsaoPass {
     ) -> Result<(), NoPipeline> {
         let samples = ao.samples();
         let uniform = SsaoUniform {
-            near: inputs.camera.near,
-            far: inputs.camera.far,
-            tan_half_fov: inputs.camera.tan_half_fov,
+            camera: inputs.camera,
             radius: ao.radius.max(0.0),
             bias: ao.bias.max(0.0),
             intensity: ao.intensity.max(0.0),
@@ -939,6 +935,8 @@ mod tests {
                     particle_depth: false,
                     normals: false,
                     albedo: false,
+                    gbuffer_depth: false,
+                    material: false,
                 },
                 "with or without SSAO the chain tone maps alone and builds no depth"
             );

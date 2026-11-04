@@ -2,8 +2,8 @@
 //! camera, on linear HDR color before tone mapping.
 
 use super::{
-    NoPipeline, PassContext, PassInputs, PassIo, PostProcessPass, PostProcessSettings,
-    PostProcessStage, SceneInput,
+    CameraPlanes, NoPipeline, PassContext, PassInputs, PassIo, PostProcessPass,
+    PostProcessSettings, PostProcessStage, SceneInput,
 };
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
@@ -15,9 +15,7 @@ use egui_wgpu::wgpu;
 struct FogUniform {
     /// Linear HDR fog colour in rgb, opacity in a.
     color: [f32; 4],
-    near_plane: f32,
-    far_plane: f32,
-    tan_half_fov: [f32; 2],
+    camera: CameraPlanes,
     mode: u32,
     start: f32,
     end: f32,
@@ -93,9 +91,7 @@ impl PostProcessPass for FogPass {
                 color.b() * intensity,
                 fog.opacity,
             ],
-            near_plane: context.camera.near,
-            far_plane: context.camera.far,
-            tan_half_fov: context.camera.tan_half_fov,
+            camera: context.camera,
             mode: fog.mode.shader_index(),
             start: fog.start,
             end: fog.end,

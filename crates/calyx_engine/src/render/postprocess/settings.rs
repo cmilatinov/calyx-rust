@@ -7,7 +7,7 @@ use crate::assets::post_process_profile::PostProcessProfile;
 use crate::component::{
     Component, ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom,
     ComponentColorGrading, ComponentDepthOfField, ComponentFog, ComponentGlobalPostProcessVolume,
-    ComponentLocalPostProcessVolume, ComponentTonemap, ComponentVignette,
+    ComponentLocalPostProcessVolume, ComponentOutline, ComponentTonemap, ComponentVignette,
 };
 use crate::scene::{GameObject, Scene};
 use legion::storage::ComponentTypeId;
@@ -21,7 +21,7 @@ use uuid::Uuid;
 /// An effect is `None`, and its pass off, when the volume's object has no
 /// enabled component for it. Tone mapping always runs, with its defaults
 /// when there is no enabled tone-mapping component.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct PostProcessSettings {
     /// Tone mapping, the display transform. It always runs.
     pub tonemapping: ComponentTonemap,
@@ -37,6 +37,8 @@ pub struct PostProcessSettings {
     pub color_grading: Option<ComponentColorGrading>,
     /// Darkened screen edges, after tone mapping.
     pub vignette: Option<ComponentVignette>,
+    /// Ink outlines, after colour grading and before FXAA.
+    pub outline: Option<ComponentOutline>,
     /// Screen-space anti-aliasing (FXAA), after tone mapping.
     pub anti_aliasing: Option<ComponentAntiAliasing>,
 }
@@ -46,7 +48,7 @@ pub struct PostProcessSettings {
 ///
 /// Tone mapping is optional here too: a local volume without a tone-mapping
 /// component leaves the exposure below it alone.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct PostProcessEffects {
     /// Tone mapping.
     pub tonemapping: Option<ComponentTonemap>,
@@ -62,6 +64,8 @@ pub struct PostProcessEffects {
     pub color_grading: Option<ComponentColorGrading>,
     /// Vignette.
     pub vignette: Option<ComponentVignette>,
+    /// Ink outlines.
+    pub outline: Option<ComponentOutline>,
     /// Anti-aliasing (FXAA).
     pub anti_aliasing: Option<ComponentAntiAliasing>,
 }
@@ -90,6 +94,7 @@ impl PostProcessEffects {
             bloom: over.bloom.or(self.bloom),
             color_grading: over.color_grading.or(self.color_grading),
             vignette: over.vignette.or(self.vignette),
+            outline: over.outline.clone().or_else(|| self.outline.clone()),
             anti_aliasing: over.anti_aliasing.or(self.anti_aliasing),
         }
     }
@@ -105,6 +110,7 @@ impl PostProcessEffects {
             bloom: effect(scene, game_object),
             color_grading: effect(scene, game_object),
             vignette: effect(scene, game_object),
+            outline: effect(scene, game_object),
             anti_aliasing: effect(scene, game_object),
         }
     }
@@ -122,6 +128,7 @@ impl From<PostProcessEffects> for PostProcessSettings {
             bloom: effects.bloom,
             color_grading: effects.color_grading,
             vignette: effects.vignette,
+            outline: effects.outline,
             anti_aliasing: effects.anti_aliasing,
         }
     }
@@ -191,9 +198,9 @@ pub(crate) fn select_volume<T>(
 
 /// `game_object`'s effect component `T`, or `None` when it has none or the
 /// scene holds it disabled.
-fn effect<T: Component + Copy + 'static>(scene: &Scene, game_object: GameObject) -> Option<T> {
+fn effect<T: Component + Clone + 'static>(scene: &Scene, game_object: GameObject) -> Option<T> {
     scene
-        .read_component::<T, _, _>(game_object, |effect| *effect)
+        .read_component::<T, _, _>(game_object, |effect| effect.clone())
         .filter(|_| scene.is_component_enabled::<T>(game_object))
 }
 
@@ -272,6 +279,7 @@ impl PostProcessSettings {
             bloom: blend_effect(self.bloom, effects.bloom, factor),
             color_grading: blend_effect(self.color_grading, effects.color_grading, factor),
             vignette: blend_effect(self.vignette, effects.vignette, factor),
+            outline: blend_effect(self.outline.clone(), effects.outline.clone(), factor),
             anti_aliasing: blend_effect(self.anti_aliasing, effects.anti_aliasing, factor),
         }
     }

@@ -1,8 +1,8 @@
 //! The depth of field pass: blurs the scene by distance from a focus plane.
 
 use super::{
-    NoPipeline, PassContext, PassInputs, PassIo, PostProcessPass, PostProcessSettings,
-    PostProcessStage, SceneInput,
+    CameraPlanes, NoPipeline, PassContext, PassInputs, PassIo, PostProcessPass,
+    PostProcessSettings, PostProcessStage, SceneInput,
 };
 use crate::assets::texture::Texture;
 use crate::context::ReadOnlyAssetContext;
@@ -13,13 +13,11 @@ use egui_wgpu::wgpu;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 struct DofUniform {
-    near_plane: f32,
-    far_plane: f32,
+    camera: CameraPlanes,
     focus_distance: f32,
     focus_range: f32,
     max_blur: f32,
     radius_scale: f32,
-    _padding: [f32; 2],
 }
 
 /// Depth of field in the `Hdr` stage. It computes each pixel's signed circle
@@ -140,13 +138,11 @@ impl PostProcessPass for DepthOfFieldPass {
             return;
         };
         let uniform = DofUniform {
-            near_plane: context.camera.near,
-            far_plane: context.camera.far,
+            camera: context.camera,
             focus_distance: dof.focus_distance,
             focus_range: dof.focus_range,
             max_blur: dof.blur_radius(),
             radius_scale: dof.radius_scale(),
-            _padding: Default::default(),
         };
         context.render_context.queue().write_buffer(
             &self.uniform_buffer,
@@ -587,6 +583,8 @@ mod tests {
                 particle_depth: None,
                 normals: None,
                 albedo: None,
+                gbuffer_depth: None,
+                material: None,
             },
         );
         render_context.queue().submit(Some(encoder.finish()));
@@ -825,6 +823,8 @@ mod tests {
                     particle_depth: None,
                     normals: None,
                     albedo: None,
+                    gbuffer_depth: None,
+                    material: None,
                 },
             );
             render_context.queue().submit(Some(encoder.finish()));

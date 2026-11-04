@@ -2,8 +2,8 @@ use super::*;
 use crate::assets::texture::Texture;
 use crate::component::{
     Component, ComponentAntiAliasing, ComponentBloom, ComponentColorGrading, ComponentDepthOfField,
-    ComponentFog, ComponentGlobalPostProcessVolume, ComponentTonemap, ComponentVignette,
-    TonemappingPreset,
+    ComponentFog, ComponentGlobalPostProcessVolume, ComponentOutline, ComponentTonemap,
+    ComponentVignette, TonemappingPreset,
 };
 use crate::render::scene_renderer::{half_to_f32, linear_to_srgb};
 use crate::render::{
@@ -620,6 +620,8 @@ fn run_frame(
             particle_depth: None,
             normals: None,
             albedo: None,
+            gbuffer_depth: None,
+            material: None,
         },
     );
     render_context.queue().submit(Some(encoder.finish()));
@@ -1117,6 +1119,7 @@ fn no_enabled_volume_selects_nothing_and_the_defaults_tone_map_alone() {
             bloom: None,
             color_grading: None,
             vignette: None,
+            outline: None,
             anti_aliasing: None,
         },
         "every effect but tone mapping is off"
@@ -1249,6 +1252,7 @@ fn adding_or_disabling_an_effect_component_switches_its_pass_in_the_plan() {
     check_effect::<ComponentVignette>(passes, &mut scene, volume, "color_grading");
     check_effect::<ComponentAntiAliasing>(passes, &mut scene, volume, "fxaa");
     check_effect::<ComponentFog>(passes, &mut scene, volume, "fog");
+    check_effect::<ComponentOutline>(passes, &mut scene, volume, "outline");
 
     // A disabled volume's effects are off too.
     scene.add_component(volume, ComponentBloom::default());
@@ -1504,6 +1508,8 @@ fn run_fxaa(context: &crate::context::ReadOnlyAssetContext, image: &Image) -> Im
             particle_depth: None,
             normals: None,
             albedo: None,
+            gbuffer_depth: None,
+            material: None,
         },
     );
     render_context.queue().submit(Some(encoder.finish()));
@@ -1606,5 +1612,113 @@ fn fxaa_leaves_a_flat_colour_and_its_alpha_unchanged() {
 
     for texel in output {
         assert_eq!(texel, flat);
+    }
+}
+
+#[test]
+fn the_camera_planes_shader_struct_matches_the_rust_one() {
+    let source = crate::render::test_kernel::preprocess(
+        "//#include \"shaders/postprocess/camera_planes.wgsl\"\n",
+    )
+    .expect("the camera planes module preprocesses");
+    let module = naga::front::wgsl::parse_str(&source).expect("the camera planes module parses");
+
+    let (size, members) = crate::render::test_kernel::wgsl_layout(&module, "CameraPlanes");
+
+    assert_eq!(size as usize, size_of::<CameraPlanes>());
+    assert_eq!(
+        members,
+        [("near", 0), ("far", 4), ("tan_half_fov", 8)]
+            .map(|(name, offset)| (name.to_string(), offset))
+    );
+}
+
+#[test]
+fn the_camera_planes_helpers_match_the_formulas_the_passes_used_before() {
+    const KERNEL: &str = r#"//#include "shaders/postprocess/camera_planes.wgsl"
+@group(0) @binding(0) var<storage, read> input_planes: CameraPlanes;
+@group(0) @binding(1) var<storage, read> samples: array<vec4f>;
+@group(0) @binding(2) var<storage, read_write> results: array<vec4f>;
+
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) id: vec3u) {
+    let i = id.x;
+    if i >= arrayLength(&samples) {
+        return;
+    }
+    let depth = samples[i].x;
+    let uv = samples[i].yz;
+    let ndc = camera_ndc(uv);
+    let z = camera_linear_depth(input_planes, depth);
+    let position = camera_view_position(input_planes, ndc, z);
+    results[3u * i] = vec4f(
+        z,
+        camera_inverse_depth(input_planes, depth),
+        camera_ray_distance(input_planes, ndc, z),
+        0.0,
+    );
+    results[3u * i + 1u] = vec4f(position, 0.0);
+    results[3u * i + 2u] = vec4f(camera_uv(camera_project(input_planes, position)), ndc);
+}
+"#;
+    let planes = CameraPlanes {
+        near: 0.1,
+        far: 250.0,
+        tan_half_fov: [0.7, 0.4],
+    };
+    let samples: Vec<[f32; 4]> = [
+        (planes.depth_of(0.5), 0.1, 0.2),
+        (planes.depth_of(12.0), 0.5, 0.5),
+        (planes.depth_of(40.0), 0.9, 0.25),
+        (planes.depth_of(180.0), 0.03, 0.97),
+    ]
+    .map(|(depth, u, v)| [depth, u, v, 0.0])
+    .to_vec();
+
+    let results: Vec<[f32; 4]> = crate::render::test_kernel::run_kernel(
+        KERNEL,
+        &[bytemuck::bytes_of(&planes), bytemuck::cast_slice(&samples)],
+        samples.len() * 3,
+    );
+
+    let close = |actual: f32, expected: f32, what: &str| {
+        assert!(
+            (actual - expected).abs() <= 1e-3 * expected.abs().max(1.0),
+            "{what}: expected {expected}, got {actual}"
+        );
+    };
+    for (index, [depth, u, v, _]) in samples.iter().copied().enumerate() {
+        let [z, inverse, distance, _] = results[3 * index];
+        let [x, y, view_z, _] = results[3 * index + 1];
+        let [back_u, back_v, ndc_x, ndc_y] = results[3 * index + 2];
+        let what = |name: &str| format!("sample {index}: {name}");
+        // The old `linear_depth` of fog, depth of field and SSAO, as
+        // `CameraPlanes::linear_depth`.
+        let (n, f) = (planes.near, planes.far);
+        let old_z = 2.0 * n * f / (f + n - depth * (f - n));
+        close(z, old_z, &what("linear depth"));
+        close(
+            z,
+            planes.linear_depth(depth),
+            &what("CameraPlanes::linear_depth"),
+        );
+        close(inverse, 1.0 / old_z, &what("inverse depth"));
+        // The old SSAO `ssao_view_position` and fog's ndc.
+        let old_ndc = [u * 2.0 - 1.0, 1.0 - v * 2.0];
+        close(ndc_x, old_ndc[0], &what("ndc x"));
+        close(ndc_y, old_ndc[1], &what("ndc y"));
+        let slope = [
+            old_ndc[0] * planes.tan_half_fov[0],
+            old_ndc[1] * planes.tan_half_fov[1],
+        ];
+        close(x, slope[0] * old_z, &what("view x"));
+        close(y, slope[1] * old_z, &what("view y"));
+        close(view_z, old_z, &what("view z"));
+        // Fog's old `view_distance`.
+        let old_distance = old_z * (slope[0] * slope[0] + slope[1] * slope[1] + 1.0).sqrt();
+        close(distance, old_distance, &what("distance along the ray"));
+        // The old `ssao_project` brings the position back to its uv.
+        close(back_u, u, &what("projected u"));
+        close(back_v, v, &what("projected v"));
     }
 }

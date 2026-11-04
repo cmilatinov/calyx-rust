@@ -39,8 +39,8 @@ use crate::class_registry::ComponentRegistry;
 use crate::component::{
     ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom, ComponentColorGrading,
     ComponentDepthOfField, ComponentFog, ComponentGlobalPostProcessVolume,
-    ComponentLocalPostProcessVolume, ComponentTonemap, ComponentVignette, PostProcessEffect,
-    ReflectPostProcessEffect,
+    ComponentLocalPostProcessVolume, ComponentOutline, ComponentTonemap, ComponentVignette,
+    PostProcessEffect, ReflectPostProcessEffect,
 };
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
@@ -291,16 +291,17 @@ impl PostProcessProfile {
             bloom: self.effect::<ComponentBloom>(),
             color_grading: self.effect::<ComponentColorGrading>(),
             vignette: self.effect::<ComponentVignette>(),
+            outline: self.effect::<ComponentOutline>(),
             anti_aliasing: self.effect::<ComponentAntiAliasing>(),
         }
     }
 
     /// The settings of `T`'s entry when it is enabled.
-    fn effect<T: PostProcessEffect + TypeUuid + Copy>(&self) -> Option<T> {
+    fn effect<T: PostProcessEffect + TypeUuid + Clone>(&self) -> Option<T> {
         self.entry(T::type_uuid())
             .filter(|entry| entry.enabled)
             .and_then(ProfileEntry::settings::<T>)
-            .copied()
+            .cloned()
     }
 
     /// A profile that keeps the look of the volume on `game_object`: its

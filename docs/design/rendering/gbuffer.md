@@ -19,7 +19,7 @@ Four color targets, single-sample at the scene's size, plus depth.
 | --- | --- | --- | --- | --- | --- |
 | `albedo` | `Rgba8UnormSrgb` | base color R | base color G | base color B | 1 where a surface was drawn, 0 elsewhere |
 | `normals` | `Rgba16Float` | shading normal, octahedral X | shading normal, octahedral Y | geometric normal, octahedral X | geometric normal, octahedral Y |
-| `material` | `Rgba8Unorm` | metallic | roughness | ambient occlusion | unused (1) |
+| `material` | `Rgba8Unorm` | metallic | roughness | ambient occlusion | outline style / 255 |
 | `emissive` | `Rgba16Float` | emission R | emission G | emission B | unused (1) |
 | depth | `Depth32Float` | the scene's depth at one sample (see MSAA) | | | |
 
@@ -46,6 +46,13 @@ reads it for both the forward and the geometry pass:
   and image-based light only.
 - **Emission**: `emission_color * emission_strength * emissive texture`
   (sRGB view), linear HDR radiance.
+- **Outline style**: the material's `outline_style` (`u32`, 0 by default, so
+  every material saved before it existed loads with no outline), stored as
+  `style / 255`, at most 255. The Outline post-processing effect reads it
+  back as `round(a * 255)`: 0 draws no ink, `N` draws the effect's style
+  `N - 1` (see Outlines in the post-processing architecture). The lighting
+  pass and the debug view read only the material's RGB, so the alpha changes
+  neither the shading nor the Material view.
 
 Both normals are in view space, `camera.view` applied to the world-space
 normal (the camera looks down +Z of its view space). A world normal is
@@ -112,9 +119,12 @@ multisampled G-buffer multiplies its memory by the sample count.
   into the scene depth. Meshes drawn with other shaders are drawn after the
   geometry pass, so they never occlude a surface in the G-buffer; the debug
   view shows the PBR surface behind them.
-- **Post-processing** reads the `normals` and `albedo` targets as they are, as
-  `SceneInput::Normals` and `SceneInput::Albedo`, at every sample count: there
-  is no resolve to do. See
+- **Post-processing** reads the `normals`, `albedo` and `material` targets as
+  they are, as `SceneInput::Normals`, `SceneInput::Albedo` and
+  `SceneInput::Material`, at every sample count: there is no resolve to do. A pass that needs the depth of these surfaces alone
+  reads `SceneInput::GBufferDepth`: above one sample the geometry pass's own
+  depth, at one sample a copy of the scene depth taken right after the
+  geometry pass, made only on frames whose chain reads it. See
   [Shared Inputs](../post-processing/architecture.md#shared-inputs).
 
 ## Debug view

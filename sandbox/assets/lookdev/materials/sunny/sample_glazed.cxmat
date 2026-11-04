@@ -55,6 +55,16 @@
       "value": {
         "Float": 1.0
       }
+    },
+    {
+      "group": 3,
+      "binding": 2,
+      "offset": 60,
+      "name": "outline_style",
+      "span": 4,
+      "value": {
+        "Uint": 1
+      }
     }
   ]
 }

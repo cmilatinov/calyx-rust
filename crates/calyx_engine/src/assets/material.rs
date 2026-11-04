@@ -502,6 +502,19 @@ impl Material {
             .unwrap_or(0.0)
     }
 
+    /// The material's `outline_style`: 0 for no ink outline, `N` for the
+    /// Outline effect's style `N - 1`. 0 for a material without one.
+    pub fn outline_style(&self) -> u32 {
+        self.variables
+            .iter()
+            .find(|variable| variable.name == "outline_style")
+            .and_then(|variable| match variable.value {
+                ShaderVariableValue::Uint(style) => Some(style),
+                _ => None,
+            })
+            .unwrap_or(0)
+    }
+
     /// Sets the variable named `name` to `value`. Returns false, and changes nothing, when the
     /// material has no variable of that name.
     pub fn set_variable(&mut self, name: &str, value: ShaderVariableValue) -> bool {
@@ -1146,6 +1159,11 @@ mod tests {
             color_texture(&material, "normal_texture"),
             [0.5, 0.5, 1.0, 1.0]
         );
+        assert_eq!(
+            material.outline_style(),
+            0,
+            "a material saved before outline styles draws no outline"
+        );
         let reflected = pbr_from_shader(&context);
         assert_eq!(
             material.variables.len(),
@@ -1167,6 +1185,31 @@ mod tests {
             .get(&3)
             .map(|entries| entries.keys().copied().collect::<Vec<_>>());
         assert_eq!(bindings, Some((0..=10).collect()));
+    }
+
+    #[test]
+    fn the_outline_style_defaults_to_none_and_round_trips_through_the_material_file() {
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let mut material = pbr_from_shader(&context);
+        assert!(matches!(
+            value(&material, "outline_style"),
+            ShaderVariableValue::Uint(0)
+        ));
+        assert_eq!(material.outline_style(), 0, "a new material has no outline");
+
+        assert!(material.set_variable("outline_style", ShaderVariableValue::Uint(3)));
+        let saved = serde_json::to_value(&material).expect("the material serializes");
+        let data: MaterialData = serde_json::from_value(saved).expect("the saved material parses");
+        let loaded = Material::from((&context, data));
+
+        assert_eq!(loaded.outline_style(), 3);
+        assert_eq!(
+            float(&loaded, "alpha_cutoff"),
+            0.0,
+            "the fields before it keep theirs"
+        );
     }
 
     #[test]

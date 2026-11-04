@@ -169,6 +169,8 @@ fn run_grading(settings: &PostProcessSettings, image: &Image) -> Image {
             particle_depth: None,
             normals: None,
             albedo: None,
+            gbuffer_depth: None,
+            material: None,
         },
     );
     render_context.queue().submit(Some(encoder.finish()));

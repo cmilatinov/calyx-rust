@@ -5,8 +5,8 @@ use super::*;
 use crate::component::{
     ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom, ComponentColorGrading,
     ComponentDepthOfField, ComponentFog, ComponentGlobalPostProcessVolume,
-    ComponentLocalPostProcessVolume, ComponentTonemap, ComponentVignette, FogMode,
-    LocalVolumeShape, TonemappingPreset,
+    ComponentLocalPostProcessVolume, ComponentOutline, ComponentTonemap, ComponentVignette,
+    FogMode, LocalVolumeShape, OutlineStyle, TonemappingPreset,
 };
 use crate::math::{compose_transform, Transform};
 use crate::scene::{GameObject, Scene};
@@ -594,4 +594,147 @@ fn fog_off_below_fades_in_from_no_opacity() {
     assert_close(fog.end, 50.0, "keeps the volume's end");
     assert_eq!(fog.color, Color32::WHITE, "keeps the volume's colour");
     assert_eq!(below.blend(&effects, 0.0).fog.map(|f| f.opacity), Some(0.0));
+}
+
+fn ink(color: Color32, width: f32, inner_width: f32, opacity: f32) -> OutlineStyle {
+    OutlineStyle {
+        color,
+        width,
+        inner_width,
+        inner_opacity: 0.5,
+        opacity,
+    }
+}
+
+#[test]
+fn outline_styles_blend_entry_by_entry_between_a_global_and_a_local_volume() {
+    let registries = test_registries();
+    let mut scene = registries.scene();
+    let global = spawn_global(&mut scene, 0.0, None);
+    // One style below; the local volume changes it and adds a second.
+    let below = ComponentOutline {
+        styles: vec![ink(Color32::BLACK, 1.0, 1.0, 1.0)],
+        depth_threshold: 0.02,
+        silhouette_threshold: 0.04,
+        normal_threshold: 60.0,
+    };
+    scene.add_component(global, below.clone());
+    let local = spawn_local(&mut scene, Vec3::zeros(), 1.0, 0);
+    let volume = ComponentOutline {
+        styles: vec![
+            ink(Color32::WHITE, 3.0, 2.0, 0.5),
+            ink(Color32::WHITE, 4.0, 2.0, 0.8),
+        ],
+        depth_threshold: 0.04,
+        silhouette_threshold: 0.08,
+        normal_threshold: 20.0,
+    };
+    scene.add_component(local, volume.clone());
+
+    let resolve = |x: f32| {
+        PostProcessSettings::resolve(&scene, &vec3(x, 0.0, 0.0))
+            .outline
+            .expect("outlines are on")
+    };
+    assert_eq!(resolve(0.0), volume, "inside, the volume's outlines");
+    // Halfway through the blend distance.
+    let halfway = resolve(2.0);
+    assert_close(
+        halfway.depth_threshold,
+        0.03,
+        "depth threshold interpolates",
+    );
+    assert_close(
+        halfway.silhouette_threshold,
+        0.06,
+        "silhouette threshold interpolates",
+    );
+    assert_close(
+        halfway.normal_threshold,
+        40.0,
+        "normal threshold interpolates",
+    );
+    assert_eq!(halfway.styles.len(), 2, "over the longer list");
+    let first = halfway.styles[0];
+    assert_close(first.width, 2.0, "the first style's width interpolates");
+    assert_close(
+        first.inner_width,
+        1.5,
+        "inner width interpolates as a float",
+    );
+    assert_close(first.opacity, 0.75, "opacity interpolates");
+    // Linear 0.5 encodes to sRGB 188; a gamma-space blend would give 128.
+    assert!(
+        (187..=189).contains(&first.color.r()),
+        "the ink blends in linear space: {:?}",
+        first.color
+    );
+    let second = halfway.styles[1];
+    assert_close(
+        second.opacity,
+        0.4,
+        "a style below lacks fades in from opacity 0",
+    );
+    assert_close(second.width, 4.0, "with the volume's own values");
+    assert_eq!(second.color, Color32::WHITE);
+    assert_eq!(resolve(3.0), below, "outside, the global outlines apply");
+
+    // A style the volume lacks fades out towards opacity 0.
+    let fewer = PostProcessEffects {
+        outline: Some(ComponentOutline {
+            styles: vec![ink(Color32::BLACK, 1.0, 1.0, 1.0)],
+            ..volume.clone()
+        }),
+        ..Default::default()
+    };
+    let two_below = PostProcessSettings {
+        outline: Some(volume.clone()),
+        ..Default::default()
+    };
+    let faded = two_below
+        .blend(&fewer, 0.25)
+        .outline
+        .expect("outlines stay on");
+    assert_eq!(faded.styles.len(), 2);
+    assert_close(faded.styles[1].opacity, 0.6, "0.8 towards 0 by a quarter");
+    assert_close(faded.styles[1].width, 4.0, "keeping its values");
+}
+
+#[test]
+fn outlines_off_below_fade_in_from_no_opacity() {
+    let below = PostProcessSettings::default();
+    let effects = PostProcessEffects {
+        outline: Some(ComponentOutline {
+            styles: vec![
+                ink(Color32::BLACK, 2.0, 1.0, 1.0),
+                ink(Color32::WHITE, 3.0, 1.0, 0.6),
+            ],
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    let faded = below
+        .blend(&effects, 0.25)
+        .outline
+        .expect("outlines fade in");
+
+    assert_close(faded.styles[0].opacity, 0.25, "opacity from 0");
+    assert_close(faded.styles[1].opacity, 0.15, "every style from 0");
+    assert_close(faded.styles[0].width, 2.0, "keeps the volume's width");
+    assert_eq!(
+        faded.styles[1].color,
+        Color32::WHITE,
+        "keeps the volume's ink"
+    );
+    assert!(
+        below
+            .blend(&effects, 0.0)
+            .outline
+            .expect("on at a factor of 0")
+            .styles
+            .iter()
+            .all(|style| style.opacity == 0.0),
+        "invisible at a factor of 0"
+    );
 }

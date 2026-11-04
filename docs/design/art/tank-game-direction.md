@@ -131,15 +131,35 @@ Adding a player colour, or changing one:
 
 ## Ink outlines
 
-- Inverted hulls: each mesh has a copy pushed out along its smoothed normals
-  with its winding flipped, drawn in the ink material with shadows off, so
-  back-face culling leaves only a rim.
-- Thickness: 0.07 m on rounded props and walls (thinner hulls look patchy on
-  soft bevels); 0.1 mesh units (0.045 m) on the tank parts.
-- The ink is `#121212`, matte (roughness 1).
-- A screen-space outline pass (edges from depth and normals in the
-  post-processing chain) would replace the hulls and halve the draw count;
-  until then every new mesh needs its hull.
+- Drawn by the Outline effect on each map's post-process volume: a
+  screen-space pass that inks silhouettes and creases of opaque PBR meshes
+  from the depth, normals and material in the G-buffer (see Outlines in
+  `docs/design/post-processing/architecture.md`). No mesh needs an outline
+  copy.
+- A material picks its outline with `outline_style`: 0 draws none (the
+  default), `N` draws the volume's style `N`, the `N`th entry of the
+  effect's style list. Both maps define one style today; more can be added
+  to the list later, for example a heavier ink for the tanks.
+
+| Style | Ink | Silhouette | Inner lines | Used by |
+| --- | --- | --- | --- | --- |
+| 1, ink | `#121212`, opacity 1 | 2 px | 1 px at 0.55 | tanks (hull, turret, pivot, tracks, guns, wheels), walls, barriers, crates, rocks, trees, sample materials |
+
+- Ground, roads and the emissive signals (projectiles, muzzle flashes,
+  lamps) use style 0: the ground draws no lines across its lanes, and the
+  signals keep their glow. An object against the ground is still outlined,
+  in its own style.
+- Thresholds, both maps: depth 0.01, silhouette 0.04, normal 40°.
+  Silhouettes are a surface against the background or the ground, a change
+  of style, or one surface well in front of another; inner lines are creases
+  and small steps within a surface, such as the turret's hatch and rivets,
+  thin and light so the silhouette reads first at the Far framing.
+- The lines draw after tone mapping and grading, so the ink shows as its
+  hex, and their width is in pixels, so a line is as wide around a tank at
+  the Far framing as around a rock at the screen's edge.
+- Particles and meshes with other shaders get no lines.
+- Keep the dark player at least 14 ΔE from the ink (see Tank colours), so it
+  never merges with its outline.
 
 ## Lighting and post-processing
 
@@ -182,6 +202,8 @@ the game view is very wide and the vignette is round.
 ## Evidence
 
 Final look-dev captures (Far and the match scenario at Far):
-<https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-492/final>.
+<https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-492/final>, with
+inverted-hull outlines; the outline pass against them (`v2_*` for the
+styled pass): <https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-509>.
 Earlier rounds, including the dropped candidates and pattern experiments,
 are beside them under `et-492/`.

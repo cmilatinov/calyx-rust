@@ -198,6 +198,11 @@ impl GBufferRenderer {
         self.targets.as_ref()
     }
 
+    /// The PBR shader, whose draws are the ones the geometry pass draws.
+    pub(crate) fn pbr_shader_id(&self) -> AssetId {
+        self.pbr_shader_id
+    }
+
     /// Instances the last frame's geometry pass drew.
     pub fn drawn_instances(&self) -> u32 {
         self.drawn_instances

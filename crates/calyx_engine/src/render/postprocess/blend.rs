@@ -3,7 +3,8 @@
 
 use crate::component::{
     ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom, ComponentColorGrading,
-    ComponentDepthOfField, ComponentFog, ComponentTonemap, ComponentVignette,
+    ComponentDepthOfField, ComponentFog, ComponentOutline, ComponentTonemap, ComponentVignette,
+    OutlineStyle,
 };
 use egui::{Color32, Rgba};
 
@@ -11,7 +12,7 @@ use egui::{Color32, Rgba};
 ///
 /// `f32` fields and colours interpolate, colours in linear space; integer
 /// and enum fields switch to the target at a factor of 0.5.
-pub trait BlendEffect: Copy {
+pub trait BlendEffect: Clone {
     /// `self` blended toward `target` by `factor`: `self` at 0, `target` at
     /// 1.
     fn blend(&self, target: &Self, factor: f32) -> Self;
@@ -192,6 +193,67 @@ impl BlendEffect for ComponentVignette {
             intensity: 0.0,
             ..*target
         })
+    }
+}
+
+impl BlendEffect for ComponentOutline {
+    /// The thresholds interpolate, and the styles blend entry by entry, by
+    /// index, over the longer of the two lists: an entry one side lacks
+    /// blends from, or to, an invisible copy of the other side's entry (its
+    /// values at opacity 0), so a style a volume adds fades in and one it
+    /// lacks fades out.
+    fn blend(&self, target: &Self, factor: f32) -> Self {
+        let count = self.styles.len().max(target.styles.len());
+        let styles = (0..count)
+            .map(
+                |index| match (self.styles.get(index), target.styles.get(index)) {
+                    (Some(from), Some(to)) => from.blend(to, factor),
+                    (Some(from), None) => from.blend(&from.invisible(), factor),
+                    (None, Some(to)) => to.invisible().blend(to, factor),
+                    (None, None) => unreachable!("index is below the longer list's length"),
+                },
+            )
+            .collect();
+        Self {
+            styles,
+            depth_threshold: lerp(self.depth_threshold, target.depth_threshold, factor),
+            silhouette_threshold: lerp(
+                self.silhouette_threshold,
+                target.silhouette_threshold,
+                factor,
+            ),
+            normal_threshold: lerp(self.normal_threshold, target.normal_threshold, factor),
+        }
+    }
+
+    /// No lines: every style at opacity 0.
+    fn neutral(target: &Self) -> Option<Self> {
+        Some(Self {
+            styles: target.styles.iter().map(OutlineStyle::invisible).collect(),
+            ..target.clone()
+        })
+    }
+}
+
+impl OutlineStyle {
+    /// `self` blended toward `target` by `factor`: colours in linear space,
+    /// widths as floats (the pass rounds them), opacities linearly.
+    fn blend(&self, target: &Self, factor: f32) -> Self {
+        Self {
+            color: lerp_color(self.color, target.color, factor),
+            width: lerp(self.width, target.width, factor),
+            inner_width: lerp(self.inner_width, target.inner_width, factor),
+            inner_opacity: lerp(self.inner_opacity, target.inner_opacity, factor),
+            opacity: lerp(self.opacity, target.opacity, factor),
+        }
+    }
+
+    /// `self` drawing nothing.
+    fn invisible(&self) -> Self {
+        Self {
+            opacity: 0.0,
+            ..*self
+        }
     }
 }
 

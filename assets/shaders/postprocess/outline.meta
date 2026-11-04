@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "7cdce924-2f0b-48f6-803b-3ffd9dbc5606",
+    "name": "shaders/postprocess/outline",
+    "display_name": "outline",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

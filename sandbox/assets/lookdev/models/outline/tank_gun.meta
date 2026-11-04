@@ -1,9 +1,0 @@
-{
-  "main": {
-    "id": "292c6c19-5f19-5c35-bf80-62d8adf79fe9",
-    "name": "lookdev/models/outline/tank_gun",
-    "display_name": "tank_gun",
-    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
-  },
-  "inner": []
-}

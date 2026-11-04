@@ -169,6 +169,47 @@ impl FieldTrail {
     }
 }
 
+/// How a list's elements are labelled: `"{prefix} {index + base}"`.
+///
+/// A list field picks its own with the `element_label` and `element_base`
+/// reflect attributes, as the Outline effect's styles do
+/// (`#[reflect_attr(element_label = "Style", element_base = 1)]`) to match
+/// the 1-based `outline_style` materials pick them by; any other list shows
+/// "Element 0", "Element 1", and so on.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ElementLabel {
+    prefix: &'static str,
+    base: usize,
+}
+
+impl Default for ElementLabel {
+    fn default() -> Self {
+        Self {
+            prefix: "Element",
+            base: 0,
+        }
+    }
+}
+
+impl ElementLabel {
+    /// The labels `field`'s attributes ask for, or the default.
+    fn of_field(field: &NamedField) -> Self {
+        let mut label = Self::default();
+        if let Some(AttributeValue::String(prefix)) = field.attrs.get("element_label") {
+            label.prefix = prefix;
+        }
+        if let Some(AttributeValue::Integer(base)) = field.attrs.get("element_base") {
+            label.base = (*base).max(0) as usize;
+        }
+        label
+    }
+
+    /// The label of the element at `index`.
+    fn text(self, index: usize) -> String {
+        format!("{} {}", self.prefix, index + self.base)
+    }
+}
+
 /// How the inspector draws one list element.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum ElementView {
@@ -540,6 +581,7 @@ impl<'a> ComponentInspector<'a> {
                 id,
                 instance,
                 Some(info),
+                ElementLabel::of_field(field),
                 trail,
             ),
             Some(TypeInfo::Enum(info)) if info.is_unit_only() && instance.as_enum().is_some() => {
@@ -561,8 +603,8 @@ impl<'a> ComponentInspector<'a> {
     }
 
     /// Shows a list with the editor's [`List`] widget: a collapsing header
-    /// with the element count and add/remove buttons, selectable elements and
-    /// drag-and-drop reordering. An add, remove or move is reported as a
+    /// with the element count and add/remove buttons, selectable elements
+    /// labelled by `labels`, and drag-and-drop reordering. An add, remove or move is reported as a
     /// discrete change, so it is one undo step; element edits report as their
     /// inspectors do.
     #[allow(clippy::too_many_arguments)]
@@ -575,6 +617,7 @@ impl<'a> ComponentInspector<'a> {
         id: Id,
         instance: &mut dyn Reflect,
         info: Option<&ListInfo>,
+        labels: ElementLabel,
         trail: &FieldTrail,
     ) -> InspectorResponse {
         let Some(list) = instance.as_list_mut() else {
@@ -597,7 +640,7 @@ impl<'a> ComponentInspector<'a> {
                             ctx,
                             type_registry,
                             id.with(index),
-                            index,
+                            labels.text(index),
                             selected,
                             value,
                             &trail.child(index),
@@ -622,12 +665,11 @@ impl<'a> ComponentInspector<'a> {
         ctx: &InspectorContext,
         type_registry: &TypeRegistry,
         id: Id,
-        index: usize,
+        label: String,
         selected: bool,
         element: &mut dyn Reflect,
         trail: &FieldTrail,
     ) -> (InspectorResponse, ShowCollapsingResponse<()>) {
-        let label = format!("Element {index}");
         let element_info = type_registry.type_info_by_id(element.uuid());
         let inspector = self.registry.type_inspector_lookup(element.uuid());
         let view = element_view(
@@ -696,6 +738,7 @@ impl<'a> ComponentInspector<'a> {
                         id.with("elements"),
                         element,
                         info,
+                        ElementLabel::default(),
                         trail,
                     );
                 }
@@ -851,8 +894,8 @@ mod tests {
     use crate::scene_history::{InspectorValueEdit, SceneHistory, SceneHistoryRestore};
     use crate::widgets::ListContainer;
     use calyx_engine::component::{
-        Component, ComponentBone, ComponentCamera, ComponentParticleSystem, ComponentPointLight,
-        ComponentTonemap, TonemappingPreset,
+        Component, ComponentBone, ComponentCamera, ComponentOutline, ComponentParticleSystem,
+        ComponentPointLight, ComponentTonemap, OutlineStyle, TonemappingPreset,
     };
     use calyx_engine::reflect::type_registry::TypeRegistry;
     use calyx_engine::reflect::{ListInfo, Reflect, ReflectDefault, TypeInfo};
@@ -1663,6 +1706,59 @@ mod tests {
         let picked = h.click(h.labelled(Role::Button, "Low"), &mut draw);
         assert!(any_changed(&picked), "{picked:?}");
         assert_eq!(holder.levels, vec![TestQuality::Low]);
+    }
+
+    /// The Outline effect labels its style list "Style 1", "Style 2", ...,
+    /// the numbers materials pick them by, while a list without the label
+    /// attributes keeps "Element 0", "Element 1", ...
+    #[test]
+    fn the_outline_style_list_counts_from_style_1_and_other_lists_from_element_0() {
+        let mut h = InspectorHarness::new();
+        h.type_info = ComponentOutline::type_uuid();
+        let registry = h.inspector_registry();
+        let inspector = ComponentInspector::new(&registry);
+        let mut outline = ComponentOutline {
+            styles: vec![OutlineStyle::default(), OutlineStyle::default()],
+            ..Default::default()
+        };
+        let mut draw = |ui: &mut Ui, ctx: &InspectorContext| {
+            inspector.show_fields(
+                ui,
+                ctx,
+                outline.as_reflect_mut(),
+                &FieldTrail::root(Id::new("outline_styles")),
+            )
+        };
+
+        h.idle(3, &mut draw);
+        let labels = h.labels();
+        assert!(labels.contains(&"Style 1"), "{labels:?}");
+        assert!(labels.contains(&"Style 2"), "{labels:?}");
+        assert!(
+            !labels.iter().any(|label| label.starts_with("Element")),
+            "{labels:?}"
+        );
+
+        let mut h = InspectorHarness::new();
+        h.type_info = QualityHolder::type_uuid();
+        let registry = h.inspector_registry();
+        let inspector = ComponentInspector::new(&registry);
+        let mut holder = QualityHolder {
+            quality: TestQuality::Low,
+            levels: vec![TestQuality::Medium, TestQuality::Low],
+        };
+        let mut draw = |ui: &mut Ui, ctx: &InspectorContext| {
+            inspector.show_fields(
+                ui,
+                ctx,
+                holder.as_reflect_mut(),
+                &FieldTrail::root(Id::new("quality_list")),
+            )
+        };
+
+        h.idle(3, &mut draw);
+        h.labelled(Role::ComboBox, "Element 0");
+        h.labelled(Role::ComboBox, "Element 1");
     }
 
     /// The Tone Mapping component's `preset` shows its variant, both as an
