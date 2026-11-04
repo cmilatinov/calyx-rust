@@ -25,7 +25,10 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct ComponentOutline {
     /// The styles materials pick by index: a material's `outline_style` `N`
-    /// is entry `N - 1`. At most [`MAX_OUTLINE_STYLES`] are drawn.
+    /// is entry `N - 1`. At most [`MAX_OUTLINE_STYLES`] are drawn. The
+    /// inspector labels the entries "Style 1", "Style 2", ..., the numbers
+    /// materials use.
+    #[reflect_attr(element_label = "Style", element_base = 1)]
     pub styles: Vec<OutlineStyle>,
     /// The smallest jump in distance across an edge, as a fraction of the
     /// distance, that draws an inner line. Measured against the distance the
