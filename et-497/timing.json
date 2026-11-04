@@ -1,0 +1,30 @@
+{
+  "date": "2026-11-04",
+  "revision": "5dca6de",
+  "environment": "Windows, NVIDIA GeForce RTX2070, nightly-2026-10-22, debug editor, game texture1657x932",
+  "method": "Uncontended wall time around calyx_ctl wait --frames120, including client overhead; not a release-player benchmark.",
+  "stack_workaround": "Built executable only, PE stack reserve1MiB to16MiB for existing #514.",
+  "samples": [
+    {
+      "stage": "idle",
+      "frames": 120,
+      "wall_seconds": 4.278711199993268,
+      "mean_frame_ms": 35.65592666661056
+    },
+    {
+      "stage": "one_shooter",
+      "frames": 120,
+      "wall_seconds": 4.632468500058167,
+      "mean_frame_ms": 38.60390416715139,
+      "transient_objects": 5
+    },
+    {
+      "stage": "busy",
+      "frames": 120,
+      "wall_seconds": 11.076558799948543,
+      "mean_frame_ms": 92.30465666623786,
+      "transient_objects": 60
+    }
+  ],
+  "cleanup_transient_objects": 0
+}
