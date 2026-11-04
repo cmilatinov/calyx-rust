@@ -1,6 +1,6 @@
 # Tank materials
 
-These materials apply the [tank visual direction](../../../../../../docs/design/art/tank-game-direction.md)
+These materials apply the [tank visual direction](../../../../../docs/design/art/tank-game-direction.md)
 to the existing `Tank_002` meshes. Each map has four body colours and two
 neutral materials. They are ordinary material assets, so two tank instances
 can use different colours without changing a shared material at runtime.
