@@ -1,4 +1,5 @@
 //#include "shaders/common/fullscreen_pass.wgsl"
+//#include "shaders/postprocess/camera_planes.wgsl"
 
 // Distance fog on linear HDR color, before tone mapping. Each pixel fades
 // towards the fog colour by its distance from the camera, rebuilt from the
@@ -9,11 +10,8 @@
 struct FogUniform {
     // Linear HDR fog colour (colour times intensity) in rgb, opacity in a.
     color: vec4f,
-    // The camera's clip planes, to turn depth into view distance.
-    near_plane: f32,
-    far_plane: f32,
-    // Tangents of half the horizontal and vertical fields of view.
-    tan_half_fov: vec2f,
+    // The camera, to turn depth into distance along each pixel's ray.
+    camera: CameraPlanes,
     // 0: linear, 1: exponential.
     mode: u32,
     start: f32,
@@ -31,16 +29,11 @@ var depth_texture: texture_depth_2d;
 var<uniform> fog: FogUniform;
 
 // Distance from the camera to the surface at `pixel`, along its ray: the
-// view depth of a depth-buffer value (`perspective_lh` with OpenGL's [-1, 1]
-// depth range, of which the buffer keeps [0, 1]), stretched by the ray's
-// slope, so the fog does not change as the camera turns.
+// view depth of a depth-buffer value stretched by the ray's slope, so the fog
+// does not change as the camera turns.
 fn view_distance(pixel: vec2f, depth: f32) -> f32 {
-    let near = fog.near_plane;
-    let far = fog.far_plane;
-    let z = 2.0 * near * far / (far + near - depth * (far - near));
-    let size = vec2f(textureDimensions(input_texture));
-    let ndc = vec2f(pixel.x / size.x * 2.0 - 1.0, 1.0 - pixel.y / size.y * 2.0);
-    return z * length(vec3f(ndc * fog.tan_half_fov, 1.0));
+    let ndc = camera_ndc(pixel / vec2f(textureDimensions(input_texture)));
+    return camera_ray_distance(fog.camera, ndc, camera_linear_depth(fog.camera, depth));
 }
 
 // How much of the fog colour a surface `distance` away takes.

@@ -39,7 +39,7 @@ fn load_depth(pixel: vec2i) -> f32 {
 }
 
 fn linear_depth(depth: f32) -> f32 {
-    return ssao_linear_depth(ssao.near, ssao.far, depth);
+    return camera_linear_depth(ssao.camera, depth);
 }
 
 @fragment
@@ -52,7 +52,7 @@ fn fs_main(in: FullscreenVertexOut) -> @location(0) vec4f {
         return vec4f(1.0, SSAO_SKY_VIEW_Z, 0.0, 1.0);
     }
     let uv = (vec2f(pixel) + 0.5) / vec2f(size);
-    let center = ssao_view_position(ssao.tan_half_fov, uv, linear_depth(depth));
+    let center = camera_view_position(ssao.camera, camera_ndc(uv), linear_depth(depth));
 
     // The geometric normal, not the shading one: the hemisphere is tested against the depth,
     // which holds the geometry, so a normal map would tip it into its own surface. It is
@@ -81,7 +81,7 @@ fn fs_main(in: FullscreenVertexOut) -> @location(0) vec4f {
         if sample_position.z <= 0.0 {
             continue;
         }
-        let sample_uv = ssao_project(ssao.tan_half_fov, sample_position);
+        let sample_uv = camera_uv(camera_project(ssao.camera, sample_position));
         // Samples off screen have nothing to test against.
         if any(sample_uv < vec2f(0.0)) || any(sample_uv >= vec2f(1.0)) {
             continue;

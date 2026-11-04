@@ -191,16 +191,23 @@
         "smoothness": 0.45
       },
       "bac082cd-d184-4584-8b58-b1a652577c79": {
-        "color": [
-          18,
-          18,
-          18,
-          255
+        "styles": [
+          {
+            "color": [
+              18,
+              18,
+              18,
+              255
+            ],
+            "width": 2.0,
+            "inner_width": 1.0,
+            "inner_opacity": 0.55,
+            "opacity": 1.0
+          }
         ],
-        "width": 2.0,
         "depth_threshold": 0.01,
-        "normal_threshold": 40.0,
-        "opacity": 1.0
+        "silhouette_threshold": 0.04,
+        "normal_threshold": 40.0
       }
     },
     "b363a373-ed67-578c-9d6a-687f54033ff1": {
@@ -7238,16 +7245,23 @@
         "opacity": 0.45
       },
       "bac082cd-d184-4584-8b58-b1a652577c79": {
-        "color": [
-          18,
-          18,
-          18,
-          255
+        "styles": [
+          {
+            "color": [
+              18,
+              18,
+              18,
+              255
+            ],
+            "width": 2.0,
+            "inner_width": 1.0,
+            "inner_opacity": 0.55,
+            "opacity": 1.0
+          }
         ],
-        "width": 2.0,
         "depth_threshold": 0.01,
-        "normal_threshold": 40.0,
-        "opacity": 1.0
+        "silhouette_threshold": 0.04,
+        "normal_threshold": 40.0
       }
     },
     "cb5e3895-c71c-5a39-b26f-4803e2e9f531": {

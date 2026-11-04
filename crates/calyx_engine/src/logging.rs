@@ -25,6 +25,15 @@ pub fn warn_once(key: impl Into<String>, message: impl FnOnce() -> String) {
     }
 }
 
+/// Whether [`warn_once`] has warned under `key`.
+#[cfg(test)]
+pub(crate) fn has_warned(key: &str) -> bool {
+    WARNED_KEYS
+        .get()
+        .and_then(|warned| warned.lock().ok().map(|keys| keys.contains(key)))
+        .unwrap_or(false)
+}
+
 /// One log entry retained for editor console display.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LogEntry {

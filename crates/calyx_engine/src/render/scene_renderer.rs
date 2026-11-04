@@ -9,12 +9,12 @@ use crate::component::{ComponentMesh, ComponentSkinnedMesh, ComponentSkyLight};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::math::Transform;
-use crate::render::asset_render_state::AssetRenderState;
+use crate::render::asset_render_state::{AssetRenderState, LockedAssetRenderState};
 use crate::render::overlay::{OverlayCompositor, OverlayContext, OverlayPass};
 use crate::render::postprocess::{
-    BloomPass, CameraPlanes, ChainPlan, ChainTargets, ColorGradingPass, DepthOfFieldPass, FogPass,
-    FxaaPass, OutlinePass, PostProcessChain, PostProcessSettings, SceneInput, SsaoInputs, SsaoPass,
-    TonemapPass,
+    drawn_outline_styles, BloomPass, CameraPlanes, ChainPlan, ChainTargets, ColorGradingPass,
+    DepthOfFieldPass, FogPass, FxaaPass, OutlinePass, PostProcessChain, PostProcessSettings,
+    SceneInput, SsaoInputs, SsaoPass, TonemapPass,
 };
 use crate::render::render_utils::RenderUtils;
 use crate::render::{
@@ -561,6 +561,15 @@ impl SceneRenderer {
         self.skybox_renderer
             .prepare(&render_context, &mut encoder, &self.assets);
         let assets = self.assets.lock();
+        if let Some(outline) = &self.post_process_settings.outline {
+            warn_unknown_outline_styles(
+                &self.asset_context,
+                &assets,
+                &draw_list,
+                self.gbuffer_renderer.pbr_shader_id(),
+                drawn_outline_styles(outline).len(),
+            );
+        }
         let material_bind_groups = self.mesh_renderer.build_material_bind_groups(
             device,
             &self.asset_context,
@@ -772,6 +781,7 @@ impl SceneRenderer {
                 gbuffer_depth: gbuffer
                     .and_then(GBufferTargets::own_depth)
                     .or(self.gbuffer_depth_copy.as_ref()),
+                material: gbuffer.map(|gbuffer| &gbuffer.material),
             },
         );
         self.render_overlays(&render_context, &mut encoder);
@@ -1792,6 +1802,35 @@ fn register_object_id(
     object_id
 }
 
+/// Warns, once per material and style, about each PBR material drawn this
+/// frame whose `outline_style` is past the end of the Outline effect's
+/// `count` styles: its surfaces draw no ink.
+fn warn_unknown_outline_styles(
+    context: &ReadOnlyAssetContext,
+    assets: &LockedAssetRenderState<'_>,
+    draw_list: &[DrawBatch],
+    pbr_shader_id: AssetId,
+    count: usize,
+) {
+    for batch in draw_list
+        .iter()
+        .filter(|batch| batch.shader_id == pbr_shader_id)
+    {
+        let Some(material) = assets.material(batch.mat_id) else {
+            continue;
+        };
+        let style = material.outline_style();
+        if style as usize > count {
+            crate::logging::warn_once(format!("outline-style:{}:{style}", batch.mat_id), || {
+                format!(
+                        "Material `{}` uses outline style {style}, but the Outline effect has {count}                          styles; it draws no outline",
+                        context.registries.assets.read().asset_name(batch.mat_id)
+                    )
+            });
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1801,9 +1840,9 @@ mod tests {
     use crate::component::{
         ComponentAmbientOcclusion, ComponentDepthOfField, ComponentGlobalPostProcessVolume,
         ComponentID, ComponentMesh, ComponentOutline, ComponentParticleSystem, ComponentTonemap,
-        ParticleBlendMode, ParticleColorOverLifetime, ParticleEmission, ParticleForces,
-        ParticleScalarRange, ParticleSizeOverLifetime, ParticleSpawnShape, ParticleVelocity,
-        TonemappingPreset,
+        OutlineStyle, ParticleBlendMode, ParticleColorOverLifetime, ParticleEmission,
+        ParticleForces, ParticleScalarRange, ParticleSizeOverLifetime, ParticleSpawnShape,
+        ParticleVelocity, TonemappingPreset,
     };
     use crate::math::Transform;
     use crate::render::postprocess::{
@@ -5394,6 +5433,7 @@ fn fs_main(in: PbrVertexOut) -> @location(0) vec4f {
                     ShaderVariableValue::Color([1.0, 0.0, 0.0, 1.0]),
                 ),
                 ("emission_strength", ShaderVariableValue::Float(1.0)),
+                ("outline_style", ShaderVariableValue::Uint(1)),
             ],
         );
         // A PBR ground that fills the view, a PBR box on it on the left, an
@@ -5432,8 +5472,11 @@ fn fs_main(in: PbrVertexOut) -> @location(0) vec4f {
         builder.add_component(
             volume,
             ComponentOutline {
-                color: Color32::from_rgb(INK[0], INK[1], INK[2]),
-                width: 2.0,
+                styles: vec![OutlineStyle {
+                    color: Color32::from_rgb(INK[0], INK[1], INK[2]),
+                    inner_opacity: 1.0,
+                    ..Default::default()
+                }],
                 ..Default::default()
             },
         );

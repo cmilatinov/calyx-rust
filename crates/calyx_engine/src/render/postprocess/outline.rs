@@ -2,59 +2,88 @@
 //! G-buffer's surfaces end or crease, on display-linear color.
 
 use super::{
-    NoPipeline, PassContext, PassInputs, PassIo, PostProcessPass, PostProcessSettings,
-    PostProcessStage, SceneInput,
+    CameraPlanes, NoPipeline, PassContext, PassInputs, PassIo, PostProcessPass,
+    PostProcessSettings, PostProcessStage, SceneInput,
 };
-use crate::component::ComponentOutline;
+use crate::component::{ComponentOutline, OutlineStyle, MAX_OUTLINE_STYLES};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::{CachedBindGroup, PipelineOptions, RenderUtils, SceneRendererError, Shader};
 use egui_wgpu::wgpu;
 use enumflags2::make_bitflags;
 
-/// The widest line the shader draws, in pixels: twice its `MAX_REACH`.
+/// The widest line the shader draws, in pixels.
 pub const MAX_OUTLINE_WIDTH: u32 = 8;
 
+/// One style as the shader reads it.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
-struct OutlineUniform {
+struct InkStyle {
     /// Display-linear ink colour in rgb, opacity in a.
     color: [f32; 4],
-    near_plane: f32,
-    far_plane: f32,
     width: u32,
-    depth_threshold: f32,
-    normal_cos: f32,
+    inner_width: u32,
+    inner_opacity: f32,
     _padding: f32,
-    tan_half_fov: [f32; 2],
 }
 
-/// The whole number of pixels a line of `outline.width` draws: rounded, from
-/// 1 to [`MAX_OUTLINE_WIDTH`].
-pub fn outline_pixel_width(outline: &ComponentOutline) -> u32 {
-    let width = if outline.width.is_finite() {
-        outline.width.round()
+/// The outline pass's uniform. Not the editor's selection outline, whose
+/// uniform is `OutlineUniform` in `render/outline_renderer.rs`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+struct InkOutlineUniform {
+    camera: CameraPlanes,
+    style_count: u32,
+    max_width: u32,
+    depth_threshold: f32,
+    silhouette_threshold: f32,
+    normal_cos: f32,
+    _padding: [f32; 3],
+    styles: [InkStyle; MAX_OUTLINE_STYLES],
+}
+
+/// The whole number of pixels a line `width` wide draws: rounded, from 1 to
+/// [`MAX_OUTLINE_WIDTH`].
+pub fn outline_pixel_width(width: f32) -> u32 {
+    let width = if width.is_finite() {
+        width.round()
     } else {
         1.0
     };
     (width.max(1.0) as u32).min(MAX_OUTLINE_WIDTH)
 }
 
+/// The styles of `outline` the pass draws: the first
+/// [`MAX_OUTLINE_STYLES`], with a warning, once, when it has more.
+pub fn drawn_outline_styles(outline: &ComponentOutline) -> &[OutlineStyle] {
+    if outline.styles.len() > MAX_OUTLINE_STYLES {
+        crate::logging::warn_once("outline-styles-over-max".to_string(), || {
+            format!(
+                "The Outline effect has {} styles; only the first {MAX_OUTLINE_STYLES} are drawn",
+                outline.styles.len()
+            )
+        });
+        &outline.styles[..MAX_OUTLINE_STYLES]
+    } else {
+        &outline.styles
+    }
+}
+
 /// Ink outlines in the `Ldr` stage, after colour grading and before FXAA.
 ///
-/// It finds edges in the G-buffer, between an opaque PBR surface and the
-/// background, across a jump in distance the surfaces on either side do not
-/// predict, or across a sharp turn of their geometric normals, and draws
-/// every pixel within the line's reach of one in the ink colour. It reads
-/// the G-buffer's depth and normals, so forward draws, the skybox and
-/// particles draw no lines, and the scene depth, so one of them in front of
-/// a line hides it. It runs while the settings hold a
-/// [`ComponentOutline`].
+/// It finds edges in the G-buffer around and inside the surfaces whose
+/// material picks one of the effect's styles, sorts them into silhouettes
+/// and inner lines, and draws every pixel within an edge's reach in its
+/// style's ink. It reads the G-buffer's depth, normals and material (whose
+/// alpha holds the style), so forward draws, the skybox and particles draw
+/// no lines, and the scene depth, so one of them in front of a line hides
+/// it. It runs while the settings hold a [`ComponentOutline`].
 pub struct OutlinePass {
     shader: Ref<Shader>,
     uniform_buffer: wgpu::Buffer,
     bind_group: CachedBindGroup<(
         wgpu::BindGroupLayout,
+        wgpu::TextureView,
         wgpu::TextureView,
         wgpu::TextureView,
         wgpu::TextureView,
@@ -75,7 +104,7 @@ impl OutlinePass {
                 .device()
                 .create_buffer(&wgpu::BufferDescriptor {
                     label: Some("outline_uniform_buffer"),
-                    size: size_of::<OutlineUniform>() as u64,
+                    size: size_of::<InkOutlineUniform>() as u64,
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
@@ -96,10 +125,11 @@ impl PostProcessPass for OutlinePass {
         PostProcessStage::Ldr
     }
 
-    /// The G-buffer's depth and normals to find edges in, and the scene
-    /// depth to hide a line behind a forward draw or a particle.
+    /// The G-buffer's depth, normals and material to find edges and their
+    /// styles in, and the scene depth to hide a line behind a forward draw
+    /// or a particle.
     fn inputs(&self) -> PassInputs {
-        make_bitflags!(SceneInput::{Depth | GBufferDepth | Normals})
+        make_bitflags!(SceneInput::{Depth | GBufferDepth | Normals | Material})
     }
 
     fn enabled(&self, settings: &PostProcessSettings) -> bool {
@@ -110,26 +140,36 @@ impl PostProcessPass for OutlinePass {
         let Some(outline) = &settings.outline else {
             return;
         };
-        let color = egui::Rgba::from(outline.color);
-        let uniform = OutlineUniform {
-            color: [
-                color.r(),
-                color.g(),
-                color.b(),
-                outline.opacity.clamp(0.0, 1.0),
-            ],
-            near_plane: context.camera.near,
-            far_plane: context.camera.far,
-            width: outline_pixel_width(outline),
+        let drawn = drawn_outline_styles(outline);
+        let mut uniform = InkOutlineUniform {
+            camera: context.camera,
+            style_count: drawn.len() as u32,
+            max_width: 1,
             depth_threshold: outline.depth_threshold.max(0.0),
+            silhouette_threshold: outline.silhouette_threshold.max(0.0),
             normal_cos: outline
                 .normal_threshold
                 .clamp(0.0, 180.0)
                 .to_radians()
                 .cos(),
-            _padding: 0.0,
-            tan_half_fov: context.camera.tan_half_fov,
+            ..Default::default()
         };
+        for (slot, style) in uniform.styles.iter_mut().zip(drawn) {
+            let color = egui::Rgba::from(style.color);
+            *slot = InkStyle {
+                color: [
+                    color.r(),
+                    color.g(),
+                    color.b(),
+                    style.opacity.clamp(0.0, 1.0),
+                ],
+                width: outline_pixel_width(style.width),
+                inner_width: outline_pixel_width(style.inner_width),
+                inner_opacity: style.inner_opacity.clamp(0.0, 1.0),
+                _padding: 0.0,
+            };
+            uniform.max_width = uniform.max_width.max(slot.width).max(slot.inner_width);
+        }
         context.render_context.queue().write_buffer(
             &self.uniform_buffer,
             0,
@@ -146,7 +186,9 @@ impl PostProcessPass for OutlinePass {
         let depth = io
             .depth
             .expect("the chain gives depth to a pass that asks for it");
-        let (Some(gbuffer_depth), Some(normals)) = (io.gbuffer_depth, io.normals) else {
+        let (Some(gbuffer_depth), Some(normals), Some(material)) =
+            (io.gbuffer_depth, io.normals, io.material)
+        else {
             // Before the renderer has drawn a G-buffer there is nothing to
             // outline.
             encoder.copy_texture_to_texture(
@@ -174,6 +216,7 @@ impl PostProcessPass for OutlinePass {
                 io.input.view.clone(),
                 gbuffer_depth.view.clone(),
                 normals.view.clone(),
+                material.view.clone(),
                 depth.view.clone(),
             ),
             || {
@@ -195,10 +238,14 @@ impl PostProcessPass for OutlinePass {
                         },
                         wgpu::BindGroupEntry {
                             binding: 3,
-                            resource: wgpu::BindingResource::TextureView(&depth.view),
+                            resource: wgpu::BindingResource::TextureView(&material.view),
                         },
                         wgpu::BindGroupEntry {
                             binding: 4,
+                            resource: wgpu::BindingResource::TextureView(&depth.view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 5,
                             resource: uniform_buffer.as_entire_binding(),
                         },
                     ],

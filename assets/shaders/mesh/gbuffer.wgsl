@@ -49,7 +49,8 @@ struct GBufferOut {
     @location(0) albedo: vec4f,
     // View-space normals, octahedral: the shading normal in RG, the geometric normal in BA.
     @location(1) normals: vec4f,
-    // Metallic in R, roughness in G, ambient occlusion in B. Alpha is unused.
+    // Metallic in R, roughness in G, ambient occlusion in B, the material's outline style in A
+    // as `style / 255` (styles above 255 store 255).
     @location(2) material: vec4f,
     // Linear HDR emission in RGB. Alpha is unused.
     @location(3) emissive: vec4f,
@@ -80,7 +81,12 @@ fn fs_main(in: PbrVertexOut) -> GBufferOut {
         gbuffer_encode_normal(view_normal(surface.normal)),
         gbuffer_encode_normal(view_normal(surface.geometric_normal)),
     );
-    out.material = vec4f(surface.metallic, surface.roughness, surface.occlusion, 1.0);
+    out.material = vec4f(
+        surface.metallic,
+        surface.roughness,
+        surface.occlusion,
+        f32(min(material.outline_style, 255u)) / 255.0,
+    );
     out.emissive = vec4f(surface.emission, 1.0);
     return out;
 }

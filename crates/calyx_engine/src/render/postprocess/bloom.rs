@@ -639,6 +639,7 @@ mod tests {
                 normals: None,
                 albedo: None,
                 gbuffer_depth: None,
+                material: None,
             },
         );
         assert_eq!(plan.passes.len(), 1, "bloom runs");
@@ -830,6 +831,7 @@ mod tests {
                 normals: false,
                 albedo: false,
                 gbuffer_depth: false,
+                material: false,
             }
         );
         assert_eq!(renderer.post_process().pool().allocated(), 0);
@@ -867,6 +869,7 @@ mod tests {
                     normals: None,
                     albedo: None,
                     gbuffer_depth: None,
+                    material: None,
                 },
             )
             .expect("the pass's shaders build");
@@ -963,6 +966,7 @@ mod tests {
                     normals: None,
                     albedo: None,
                     gbuffer_depth: None,
+                    material: None,
                 },
             );
         };

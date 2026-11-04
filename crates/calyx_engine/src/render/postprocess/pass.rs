@@ -49,6 +49,10 @@ pub enum SceneInput {
     /// forward draw, skybox or particle writes the scene depth. Cleared to 1
     /// where no surface was drawn.
     GBufferDepth = 0b100000,
+    /// The G-buffer's material target, single-sample at every sample count:
+    /// `Rgba8Unorm` holding metallic, roughness and ambient occlusion in RGB
+    /// and the material's outline style in A, as `style / 255`.
+    Material = 0b1000000,
 }
 
 impl fmt::Display for SceneInput {
@@ -60,6 +64,7 @@ impl fmt::Display for SceneInput {
             Self::ParticleDepth => "particle depth",
             Self::Albedo => "albedo",
             Self::GBufferDepth => "G-buffer depth",
+            Self::Material => "material",
         })
     }
 }
@@ -69,8 +74,7 @@ impl fmt::Display for SceneInput {
 pub type PassInputs = BitFlags<SceneInput>;
 
 /// The scene inputs the renderer produces.
-pub const PRODUCED_INPUTS: PassInputs =
-    make_bitflags!(SceneInput::{Depth | ParticleDepth | Normals | Albedo | GBufferDepth});
+pub const PRODUCED_INPUTS: PassInputs = make_bitflags!(SceneInput::{Depth | ParticleDepth | Normals | Albedo | GBufferDepth | Material});
 
 /// Checks the inputs `pass` reads against what the renderer produces, and
 /// reports the first one it does not.
@@ -129,7 +133,11 @@ pub struct PassContext<'a> {
 }
 
 /// The clip planes of the camera a frame was drawn with.
-#[derive(Clone, Copy, Debug, PartialEq)]
+///
+/// Laid out as `CameraPlanes` in `shaders/postprocess/camera_planes.wgsl`
+/// (16 bytes), so a pass's uniform embeds it as written.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct CameraPlanes {
     /// Distance to the near plane.
     pub near: f32,
@@ -198,6 +206,9 @@ pub struct PassIo<'a> {
     /// The G-buffer's single-sample depth, when the pass asked for
     /// [`SceneInput::GBufferDepth`].
     pub gbuffer_depth: Option<&'a Texture>,
+    /// The G-buffer's material target, when the pass asked for
+    /// [`SceneInput::Material`].
+    pub material: Option<&'a Texture>,
 }
 
 /// One full-screen pass of the post-processing chain.

@@ -177,6 +177,7 @@ fn run_fog(context: &ReadOnlyAssetContext, fog: ComponentFog, depth: f32) -> Vec
             normals: None,
             albedo: None,
             gbuffer_depth: None,
+            material: None,
         },
     );
     assert_eq!(plan.passes.len(), 1, "fog runs");

@@ -210,13 +210,27 @@ fn an_outline_entry_round_trips_and_switches_outlines_on() {
     let root = TempRoot::new();
     let path = root.path("outline.cxpostfx");
     let outline = crate::component::ComponentOutline {
-        color: egui::Color32::from_rgb(0x12, 0x12, 0x12),
-        width: 3.0,
+        styles: vec![
+            crate::component::OutlineStyle {
+                color: egui::Color32::from_rgb(0x12, 0x12, 0x12),
+                width: 3.0,
+                inner_width: 1.0,
+                inner_opacity: 0.55,
+                opacity: 0.9,
+            },
+            crate::component::OutlineStyle {
+                color: egui::Color32::from_rgb(40, 20, 10),
+                width: 2.0,
+                inner_width: 2.0,
+                inner_opacity: 0.25,
+                opacity: 1.0,
+            },
+        ],
         depth_threshold: 0.02,
+        silhouette_threshold: 0.05,
         normal_threshold: 35.0,
-        opacity: 0.9,
     };
-    let profile = PostProcessProfile::from_entries([ProfileEntry::new(outline)]);
+    let profile = PostProcessProfile::from_entries([ProfileEntry::new(outline.clone())]);
     save(&profile, &path);
     let saved: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
@@ -225,13 +239,16 @@ fn an_outline_entry_round_trips_and_switches_outlines_on() {
         serde_json::json!(crate::component::ComponentOutline::type_uuid()),
         "the entry is keyed by the outline component's type"
     );
-    assert_eq!(saved["entries"][0]["settings"]["width"], 3.0);
+    assert_eq!(
+        saved["entries"][0]["settings"]["styles"][1]["inner_opacity"], 0.25,
+        "the file holds the style list"
+    );
 
     let (registries, id) = registries_with_profile(&root, &path);
     let loaded = load(&registries, id);
 
     assert_eq!(*loaded.read(), profile);
-    assert_eq!(loaded.read().effects().outline, Some(outline));
+    assert_eq!(loaded.read().effects().outline, Some(outline.clone()));
     let mut scene = registries.scene();
     spawn_global(&mut scene, id);
     assert_eq!(

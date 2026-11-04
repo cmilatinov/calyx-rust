@@ -25,4 +25,8 @@ struct MaterialProperties {
     // Fragments whose base color alpha is below this are discarded, as glTF's alphaCutoff in
     // MASK mode. Defaults to 0, which never discards.
     alpha_cutoff: f32,
+    // Which ink outline the post-processing Outline effect draws around the surface: 0 for none
+    // (the default), N for the effect's style N - 1. The geometry pass stores it in the
+    // material target's alpha.
+    outline_style: u32,
 };
