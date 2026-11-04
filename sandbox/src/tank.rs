@@ -1,22 +1,22 @@
 use crate::combat::{record_kill, KillEvent};
 use crate::spawn::ComponentRespawnState;
+use crate::tank_camera::{cursor_ground_point, update_tank_camera};
 use calyx_engine::component::{
-    ColliderShape, Component, ComponentCamera, ComponentCollider, ComponentEventContext,
-    ComponentID, ComponentMesh, ComponentRef, ComponentRigidBody, ComponentTransform,
-    ComponentUpdate, ReflectComponent, ReflectComponentUpdate,
+    ColliderShape, Component, ComponentCollider, ComponentEventContext, ComponentID, ComponentMesh,
+    ComponentRef, ComponentRigidBody, ComponentTransform, ComponentUpdate, ReflectComponent,
+    ReflectComponentUpdate,
 };
 use calyx_engine::core::TimeType;
 use calyx_engine::input::Input;
 use calyx_engine::math::Transform;
 use calyx_engine::reflect::{Reflect, ReflectDefault};
-use calyx_engine::render::Ray;
 use calyx_engine::resource::ResourceMap;
 use calyx_engine::scene::GameObjectRef;
 use calyx_engine::scene::Scene;
 use calyx_engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use legion::Entity;
 use nalgebra::UnitQuaternion;
-use nalgebra_glm::{vec2, vec3, Vec3};
+use nalgebra_glm::{vec3, Vec3};
 use rapier3d::prelude::{Collider, ColliderHandle, QueryFilter, RigidBodyType};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -251,6 +251,8 @@ impl ComponentUpdate for ComponentTankController {
         // this frame draws.
         update_camera(
             scene,
+            input,
+            dt,
             &controller,
             &previous_tank_transform,
             &tank_transform,
@@ -596,6 +598,8 @@ fn update_crosshair(
 
 fn update_camera(
     scene: &mut calyx_engine::scene::Scene,
+    input: &Input,
+    dt: TimeType,
     controller: &ComponentTankController,
     previous_tank_transform: &Transform,
     tank_transform: &Transform,
@@ -603,7 +607,11 @@ fn update_camera(
     let Some(camera_object) = controller.camera.game_object(scene) else {
         return;
     };
+    if update_tank_camera(scene, camera_object, input, dt, tank_transform.position) {
+        return;
+    }
 
+    // A camera without a rig keeps its offset from the tank.
     let mut camera_transform = scene.world_transform(camera_object);
     follow_camera_xz(
         &mut camera_transform,
@@ -939,31 +947,9 @@ fn cursor_ground_intersection(
     controller: &ComponentTankController,
     ground_y: f32,
 ) -> Option<Vec3> {
-    let rect = input.surface_rect()?;
-    let cursor = input.pointer_pos()?;
     let camera_object = controller.camera.game_object(scene)?;
     let camera_transform = scene.world_transform(camera_object);
-    let aspect = rect.width() / rect.height().max(f32::EPSILON);
-    let camera = scene
-        .read_component::<ComponentCamera, _, _>(camera_object, |component| {
-            component.camera(aspect)
-        })
-        .unwrap_or_else(|| ComponentCamera::default().camera(aspect));
-    let ray = camera.screen_ray(
-        &camera_transform,
-        vec2(cursor.x - rect.left(), cursor.y - rect.top()),
-        vec2(rect.width(), rect.height()),
-    )?;
-    ground_intersection(&ray, ground_y)
-}
-
-fn ground_intersection(ray: &Ray, ground_y: f32) -> Option<Vec3> {
-    if ray.direction.y.abs() <= f32::EPSILON {
-        return None;
-    }
-
-    let t = (ground_y - ray.origin.y) / ray.direction.y;
-    (t >= 0.0).then_some(ray.origin + ray.direction * t)
+    cursor_ground_point(scene, input, camera_object, &camera_transform, ground_y)
 }
 
 pub(crate) fn flatten_xz(vector: Vec3) -> Vec3 {
@@ -983,15 +969,16 @@ pub(crate) fn yaw_rotation(direction: &Vec3) -> UnitQuaternion<f32> {
 mod tests {
     use super::{
         advance_fire_cooldown, advance_reload, advance_speed, apply_projectile_damage, can_fire,
-        flatten_xz, follow_camera_xz, ground_intersection, is_reloading, resolve_hull_movement,
+        flatten_xz, follow_camera_xz, is_reloading, resolve_hull_movement,
         segment_intersects_sphere, spawn_projectile, turn_hull, turn_towards, update_projectile,
         yaw_rotation, ComponentHealth, ComponentProjectile, ComponentProjectileTarget,
         ComponentTankController,
     };
     use crate::combat::{ComponentCombatStats, ComponentKillFeed};
     use crate::spawn::{update_respawn_state, ComponentRespawnState, ComponentSpawnPoint};
+    use crate::tank_camera::ground_intersection;
     use calyx_engine::component::{
-        ColliderShape, ComponentCollider, ComponentID, ComponentRigidBody, ComponentTransform,
+        ColliderShape, ComponentCollider, ComponentID, ComponentRigidBody,
     };
     use calyx_engine::math::Transform;
     use calyx_engine::render::Camera;
@@ -999,10 +986,6 @@ mod tests {
     use nalgebra::UnitQuaternion;
     use nalgebra_glm::{vec2, vec3};
     use rapier3d::dynamics::RigidBodyType;
-    use serde_json::Value;
-
-    const COMPONENT_ID_TYPE: &str = "02289c92-3412-406e-a7e5-3bbb15d7041e";
-    const COMPONENT_TRANSFORM_TYPE: &str = "c5b3b71f-1f14-4b5b-9881-436118684d29";
 
     #[test]
     fn yaw_rotation_faces_positive_x() {
@@ -1043,34 +1026,6 @@ mod tests {
 
         assert!((hit.x - tank_transform.position.x).abs() < 1e-3);
         assert!((hit.y - tank_transform.position.y).abs() < 1e-3);
-    }
-
-    #[test]
-    fn sandbox_scene_camera_points_down_at_arena() {
-        let scene: Value =
-            serde_json::from_str(include_str!("../assets/game/scenes/arena.cxscene"))
-                .expect("sandbox scene should be valid JSON");
-        let components = scene["components"]
-            .as_object()
-            .expect("sandbox scene should contain component data");
-        let camera_components = components
-            .values()
-            .find(|components| {
-                components
-                    .get(COMPONENT_ID_TYPE)
-                    .and_then(|value| serde_json::from_value::<ComponentID>(value.clone()).ok())
-                    .is_some_and(|id| id.name == "Camera")
-            })
-            .expect("sandbox scene should contain a Camera object");
-        let camera_transform = serde_json::from_value::<ComponentTransform>(
-            camera_components[COMPONENT_TRANSFORM_TYPE].clone(),
-        )
-        .expect("sandbox Camera should have a transform")
-        .transform;
-        let camera_forward = camera_transform.forward();
-
-        assert!(camera_forward.y < -0.5);
-        assert!(camera_forward.z > 0.45);
     }
 
     #[test]

@@ -9,6 +9,7 @@ pub mod hud;
 pub mod sentry;
 pub mod spawn;
 pub mod tank;
+pub mod tank_camera;
 
 use calyx_engine::reflect::type_registry::TypeRegistry;
 
@@ -27,6 +28,7 @@ mod tests {
     use crate::sentry::ComponentSentry;
     use crate::spawn::{ComponentRespawnState, ComponentSpawnPoint};
     use crate::tank::ComponentTankController;
+    use crate::tank_camera::ComponentTankCamera;
     use calyx_engine::component::ComponentTransform;
 
     #[test]
@@ -54,6 +56,9 @@ mod tests {
             .is_some());
         assert!(registry
             .type_registration::<ComponentRespawnState>()
+            .is_some());
+        assert!(registry
+            .type_registration::<ComponentTankCamera>()
             .is_some());
         assert!(registry.type_registration::<ComponentTransform>().is_none());
     }
