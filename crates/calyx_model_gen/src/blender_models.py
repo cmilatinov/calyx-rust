@@ -169,6 +169,9 @@ def build_import(shape):
     parts = []
     for obj in meshes:
         # Bake the object's transform, parents included, into its vertices.
+        # A mirroring transform (negative determinant) turns the faces
+        # inside out, so their winding is reversed with it.
+        mirrored = obj.matrix_world.determinant() < 0
         obj.data = obj.data.copy()
         obj.data.transform(obj.matrix_world)
         obj.parent = None
@@ -178,6 +181,8 @@ def build_import(shape):
         # bevel rounds the real edges.
         mesh = bmesh.new()
         mesh.from_mesh(obj.data)
+        if mirrored:
+            bmesh.ops.reverse_faces(mesh, faces=mesh.faces)
         bmesh.ops.remove_doubles(mesh, verts=mesh.verts, dist=1e-4)
         mesh.to_mesh(obj.data)
         mesh.free()
