@@ -1,0 +1,5 @@
+kind = "import"
+role = "barriers"
+source = "../sources/wall-low.glb"
+scale = 1.15
+credit = { title = "Wall (low)", author = "Kenney", licence = "CC0-1.0", url = "https://example.com/kit" }

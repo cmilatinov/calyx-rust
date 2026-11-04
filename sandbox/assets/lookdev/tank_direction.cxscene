@@ -21799,6 +21799,316 @@
         "intensity": 3.0,
         "radius": 5.0
       }
+    },
+    "30c70806-0e02-4535-bc32-63b29efce700": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "30c70806-0e02-4535-bc32-63b29efce700",
+        "name": "Outline",
+        "visible": true
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": false,
+        "material": "5063c3dd-a38c-5aa7-888d-a3f98a6d5b67",
+        "mesh": "b706a217-a3a6-50fd-8353-02a97233021f"
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    "52231518-a09f-40a2-818c-4cf7ef58df8c": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "52231518-a09f-40a2-818c-4cf7ef58df8c",
+        "name": "Kenney Wall Low",
+        "visible": true
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
+        "material": "06cff4e8-3049-511f-8a56-9b449835f1ab",
+        "mesh": "541c1405-b012-57de-9d41-2d40027dbc2c"
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            14.300000190734863,
+            0.0,
+            -0.800000011920929
+          ],
+          "rotation": [
+            0.0,
+            -0.08715573698282242,
+            0.0,
+            0.9961947202682495
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    "90bf79f0-4daf-49cd-8162-a4a2f14b0136": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "90bf79f0-4daf-49cd-8162-a4a2f14b0136",
+        "name": "Kenney Wall Low",
+        "visible": true
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
+        "material": "21231552-2a77-56d5-8205-41a6d9f519dc",
+        "mesh": "541c1405-b012-57de-9d41-2d40027dbc2c"
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            14.300000190734863,
+            0.0,
+            -0.800000011920929
+          ],
+          "rotation": [
+            0.0,
+            -0.08715573698282242,
+            0.0,
+            0.9961947202682495
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    "b25b87bf-ebe8-46e2-8adf-40502e04c2e9": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "b25b87bf-ebe8-46e2-8adf-40502e04c2e9",
+        "name": "Outline",
+        "visible": true
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": false,
+        "material": "0ab296a5-c45b-589f-8e31-c16d20d138f1",
+        "mesh": "b706a217-a3a6-50fd-8353-02a97233021f"
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    "b8a88a63-157d-4aa8-aefa-3ca3e560f437": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "b8a88a63-157d-4aa8-aefa-3ca3e560f437",
+        "name": "Outline",
+        "visible": true
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": false,
+        "material": "0ab296a5-c45b-589f-8e31-c16d20d138f1",
+        "mesh": "612c0a08-4480-55cf-89d8-f1223142c4ff"
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    "c88c9368-01cc-4dba-8dde-1486d8b2d4de": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "c88c9368-01cc-4dba-8dde-1486d8b2d4de",
+        "name": "Asset Pipeline",
+        "visible": true
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    "cf9d7c73-698f-4887-8cfd-c99ff16df943": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "cf9d7c73-698f-4887-8cfd-c99ff16df943",
+        "name": "Generated Crate",
+        "visible": true
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
+        "material": "62004568-6c7f-5d40-b296-721f4dea7f3a",
+        "mesh": "ab200de6-0ee5-55ab-885c-66964e1f6681"
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            11.199999809265137,
+            0.0,
+            -1.2000000476837158
+          ],
+          "rotation": [
+            0.0,
+            0.13052619993686676,
+            0.0,
+            0.9914448857307434
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    "d7042f0c-ce06-4943-993f-0082b66e922f": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "d7042f0c-ce06-4943-993f-0082b66e922f",
+        "name": "Generated Crate",
+        "visible": true
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
+        "material": "c5fc3ec7-b22c-53f7-b019-a0ed23f7e84c",
+        "mesh": "ab200de6-0ee5-55ab-885c-66964e1f6681"
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            11.199999809265137,
+            0.0,
+            -1.2000000476837158
+          ],
+          "rotation": [
+            0.0,
+            0.13052619993686676,
+            0.0,
+            0.9914448857307434
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    "db6af917-2b53-4f13-8171-eb232fecd9e4": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "db6af917-2b53-4f13-8171-eb232fecd9e4",
+        "name": "Outline",
+        "visible": true
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": false,
+        "material": "5063c3dd-a38c-5aa7-888d-a3f98a6d5b67",
+        "mesh": "612c0a08-4480-55cf-89d8-f1223142c4ff"
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    "fcf2e92c-c46e-41fb-b9fe-488ee4c01664": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "fcf2e92c-c46e-41fb-b9fe-488ee4c01664",
+        "name": "Asset Pipeline",
+        "visible": true
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
     }
   },
   "hierarchy": {
@@ -21820,7 +22130,8 @@
       "dfdda8ba-8870-5258-bb11-ab3ec5217040",
       "aad1b6ad-cf62-578a-b3ad-dddd73f6fc29",
       "863e5a95-b477-5825-b08b-71907b6b4f17",
-      "918ea79c-d52c-58e9-bcee-eab02e25e523"
+      "918ea79c-d52c-58e9-bcee-eab02e25e523",
+      "fcf2e92c-c46e-41fb-b9fe-488ee4c01664"
     ],
     "dfdda8ba-8870-5258-bb11-ab3ec5217040": [
       "19d8877e-55f1-54d2-8f60-cdf7d72da187",
@@ -22491,7 +22802,8 @@
       "f98833fa-2ee5-5754-aaf8-0762f8101571",
       "464df29a-c592-5f52-a63e-1b7109e0f1da",
       "63e77b6e-e598-5ae1-9e82-9efd74320b20",
-      "f6a7d32b-e2c0-50e1-979b-6c32217da693"
+      "f6a7d32b-e2c0-50e1-979b-6c32217da693",
+      "c88c9368-01cc-4dba-8dde-1486d8b2d4de"
     ],
     "f98833fa-2ee5-5754-aaf8-0762f8101571": [
       "4d484a1d-2824-525c-84c5-1d48305fc058",
@@ -23143,6 +23455,26 @@
       "d509d445-d0dc-5e69-87c6-553336134ab5",
       "e5e32d39-9024-5121-b002-f3af5bc58b89",
       "eb056758-b681-5a3b-bbad-56ba62089190"
+    ],
+    "52231518-a09f-40a2-818c-4cf7ef58df8c": [
+      "db6af917-2b53-4f13-8171-eb232fecd9e4"
+    ],
+    "90bf79f0-4daf-49cd-8162-a4a2f14b0136": [
+      "b8a88a63-157d-4aa8-aefa-3ca3e560f437"
+    ],
+    "c88c9368-01cc-4dba-8dde-1486d8b2d4de": [
+      "d7042f0c-ce06-4943-993f-0082b66e922f",
+      "52231518-a09f-40a2-818c-4cf7ef58df8c"
+    ],
+    "cf9d7c73-698f-4887-8cfd-c99ff16df943": [
+      "b25b87bf-ebe8-46e2-8adf-40502e04c2e9"
+    ],
+    "d7042f0c-ce06-4943-993f-0082b66e922f": [
+      "30c70806-0e02-4535-bc32-63b29efce700"
+    ],
+    "fcf2e92c-c46e-41fb-b9fe-488ee4c01664": [
+      "cf9d7c73-698f-4887-8cfd-c99ff16df943",
+      "90bf79f0-4daf-49cd-8162-a4a2f14b0136"
     ]
   },
   "roots": [

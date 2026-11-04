@@ -1,0 +1,11 @@
+# Kenney's low wall (CC0), restyled as a clay barrier: scaled to barrier
+# height and its hard edges rounded.
+kind = "import"
+role = "barriers"
+outline = 0.07
+
+source = "../third_party/kenney_starter_kit_fps/wall-low.glb"
+scale = 1.15
+bevel = 0.06
+segments = 2
+credit = { title = "wall-low (Starter Kit FPS)", author = "Kenney", licence = "CC0-1.0", url = "https://github.com/KenneyNL/Starter-Kit-FPS" }

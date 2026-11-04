@@ -1,0 +1,17 @@
+[package]
+name = "calyx_model_gen"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap.workspace = true
+# Only crates the engine already uses, with no features beyond what it
+# enables: a workspace build unifies features across members, and an extra
+# feature on a crate the engine uses would change the engine build the editor
+# links against the project assemblies' (see crates/calyx_engine_feature_pins).
+# So no `uuid/v5` (SHA-1 from `sha-1` instead, as calyx_unity_import does).
+serde.workspace = true
+serde_json.workspace = true
+sha-1.workspace = true
+toml.workspace = true
+uuid.workspace = true

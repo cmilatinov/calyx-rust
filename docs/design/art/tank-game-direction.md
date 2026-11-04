@@ -168,11 +168,21 @@ the game view is very wide and the vignette is round.
 
 ## Sourcing
 
-- Models are generated: low-poly meshes built by headless Blender scripts,
-  as the asset pipeline (#493) sets up. Smooth shading for the clay look.
+- Models are generated: low-poly meshes built in headless Blender by
+  `calyx_model_gen` from one parameter file per model in
+  `sandbox/asset_sources/models/`, into `sandbox/assets/generated/`. Smooth
+  shading for the clay look; `shading = "flat"` for a faceted prop.
+- The generator writes each palette role's material for both maps from the
+  table above, sRGB-decoded, so props take their colour from their role,
+  never from a hand-typed colour.
 - Bought or downloaded assets must be CC0 or CC-BY (credited in
   `sandbox/THIRD_PARTY_ASSETS.md`); Unity Asset Store packs cannot be
-  committed.
+  committed. They come in as `import` models, restyled in a palette role
+  like a generated prop; the generator refuses one the credits file does
+  not list.
+- Outline hulls are generated with `outline = <thickness>`. Once the
+  screen-space outline pass replaces the hulls, drop `outline` from the
+  parameter files and regenerate: the hulls and the ink material go.
 - No textures are needed for the style itself.
 
 ## Evidence

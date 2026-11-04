@@ -1,0 +1,10 @@
+# A lumpy rock, about 1.3 m across: faceted, as low-poly cover.
+kind = "rock"
+role = "rocks"
+shading = "flat"
+outline = 0.07
+
+size = [1.3, 1.0, 1.1]
+jitter = 0.12
+seed = 3
+subdivisions = 2
