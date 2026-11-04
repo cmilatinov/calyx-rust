@@ -16,8 +16,8 @@ source this file does not credit.
 - Source file: `Assets/Plugins/Tank_Controller/Art/Objects/Tank/Tank_002.fbx`
 - Files:
   - `assets/game/models/Tank_002.fbx`
-  - `assets/game/meshes/*.obj` (all but `arena_cube.obj`)
-  - `assets/game/materials/*.cxmat`
+  - `assets/game/meshes/*.obj` (all but `arena_cube.obj` and `shell.obj`)
+  - `assets/game/materials/tank_*.cxmat`
 - Notes: exported from the source FBX into OBJ parts for the Calyx mesh loader; the source repository does not include an explicit license file.
 - License: not recorded. This entry predates the CC0 / CC-BY rule above; its licence still needs confirming.
 

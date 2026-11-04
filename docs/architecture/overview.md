@@ -67,6 +67,7 @@ Example game project. Compiles as dynamic library (plugin) with `plugin_main` en
 - `game.rs` — Standalone game binary.
 - `assets/input.cxinput` — The sandbox's action map: `shoot` (primary button, Space), `jump` (Space), `scoreboard` (Tab), and the `move_forward` (W/S) and `move_right` (D/A) axes.
 - `combat.rs` — Kill events. A projectile records its shooter, and a lethal hit becomes a `KillEvent` passed to `record_kill`, which counts kills and deaths on `ComponentCombatStats` and adds the kill to every `ComponentKillFeed`. Networked kills are meant to enter through the same `record_kill`.
+- `combat_vfx.rs` — The tank and sentry share a signal-amber shell, a muzzle burst and world-space smoke. Hits spawn additive sparks on targets or alpha-blended dust on static cover. A `ComponentCombatEffectLifetime` follows each round with its trail emitter, stops emission when the round disappears, and deletes the emitter after the last particles drain. One-shot emitters also expire; the particle simulation drops their GPU state. The original shell mesh is regenerated with `python sandbox/asset_sources/combat/shell.py`.
 - `hud.rs` and `hud/` — The tank HUD (`ComponentTankHud`): health, weapon, a minimap drawn from world positions, the kill feed, and a scoreboard while the `scoreboard` action (Tab in the sandbox's `input.cxinput`) is held.
 
 ## Key Patterns

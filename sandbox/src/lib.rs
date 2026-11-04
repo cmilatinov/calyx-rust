@@ -4,6 +4,7 @@
 
 pub mod arena;
 pub mod combat;
+pub mod combat_vfx;
 pub mod game_state;
 pub mod hud;
 pub mod sentry;

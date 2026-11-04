@@ -208,6 +208,12 @@ the game view is very wide and the vignette is round.
   screen-space outline pass replaces the hulls, drop `outline` from the
   parameter files and regenerate: the hulls and the ink material go.
 - No textures are needed for the style itself.
+- The tiny combat shell is an original eight-sided mesh generated directly by
+  `python sandbox/asset_sources/combat/shell.py` into
+  `sandbox/assets/game/meshes/shell.obj`. Its signal-amber material uses the
+  Sunny Battlefield signal colour in linear RGB, emission 30 and outline
+  style 0. Muzzle flashes and tank hits use warm additive particles; smoke
+  and cover dust use soft alpha-blended puffs from the existing shared texture.
 
 ## Evidence
 
